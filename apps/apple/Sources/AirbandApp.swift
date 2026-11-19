@@ -1101,7 +1101,7 @@ struct AgentsMenu: View {
     /// The small line under an agent's name: what it runs on, and the computer it is on when there are several.
     private func under(_ agent: DeskMember) -> String {
         // one he started in a terminal says so: it only gets messages from outside until it is taken over
-        [agent.engine, agent.station, agent.held ? "" : "in a terminal"].filter { !$0.isEmpty }.joined(separator: " \u{b7} ")
+        [agent.engine, agent.station, agent.held ? "" : "terminal"].filter { !$0.isEmpty }.joined(separator: " \u{b7} ")
     }
 
     /// An agent dropped on a team, or on one of its agents, joins that team.
