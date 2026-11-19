@@ -141,8 +141,15 @@ struct FeedView: View {
                                 }
                                 .padding(.horizontal, 12).padding(.vertical, 5).frosted(Capsule())
                             } else if !model.online {
-                                Text("Can\u{2019}t reach your computer").font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.ask)
-                                    .padding(.horizontal, 12).padding(.vertical, 5).frosted(Capsule())
+                                // a tap tries again at once
+                                Button { model.reconnect() } label: {
+                                    HStack(spacing: 6) {
+                                        Text("Can\u{2019}t reach your computer").foregroundStyle(Palette.ask)
+                                        Image(systemName: "arrow.clockwise").font(.system(size: 11, weight: .bold)).foregroundStyle(Palette.soft)
+                                    }
+                                    .font(.system(size: 13, weight: .medium)).padding(.horizontal, 12).frame(minHeight: 30).frosted(Capsule())
+                                }
+                                .buttonStyle(.plain).accessibilityLabel("Cannot reach your computer. Try again.")
                             }
                             bar
                         }
@@ -336,6 +343,11 @@ struct FeedView: View {
                 Text("Can\u{2019}t reach your computer").font(.system(size: 19, weight: .semibold))
                 (Text("Check it\u{2019}s awake and online.\nThen run ") + Text("airband status").font(.system(size: 15, weight: .medium, design: .monospaced)).foregroundColor(Palette.ink) + Text(" on it."))
                     .font(.system(size: 16)).foregroundStyle(Palette.quiet).multilineTextAlignment(.center).lineSpacing(3)
+                Button { model.reconnect() } label: {
+                    Label("Try again", systemImage: "arrow.clockwise").font(.system(size: 16, weight: .semibold)).foregroundStyle(Palette.ground)
+                        .padding(.horizontal, 20).frame(minHeight: 46).background(Palette.ink, in: RoundedRectangle(cornerRadius: 15))
+                }
+                .buttonStyle(.plain).padding(.top, 12)
             }
             Spacer()
         }

@@ -102,6 +102,7 @@ impl Store {
                     to_agents: r.get::<_, Option<String>>(14)?.and_then(|p| serde_json::from_str(&p).ok()).unwrap_or_default(),
                     rev: r.get::<_, Option<i64>>(15)?.unwrap_or(0) as u64,
                     read: r.get(16)?,
+                    background: false,
                     queued: r.get::<_, Option<String>>(17)?.as_deref() == Some("queued"),
                     cancelled: r.get::<_, Option<String>>(17)?.as_deref() == Some("cancelled"),
                     permit: None,

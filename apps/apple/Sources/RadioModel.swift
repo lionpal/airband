@@ -155,6 +155,11 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         desk.send(text: words.isEmpty && !tray.isEmpty ? "Look at what I attached." : text, re: target?.id, room: room, agent: only)
     }
 
+    /// Try the computers again, now.
+    func reconnect() {
+        DispatchQueue.global(qos: .userInitiated).async { self.desk.reconnect() }
+    }
+
     /// The agents he could stop right now: at work, run by their computer, and in the room or agent he is looking at.
     var stoppable: [DeskMember] {
         view.rooms.filter { room == nil || $0.name == room }.flatMap(\.members).filter { $0.held && $0.state == "working" && (only == nil || $0.callsign == only) }

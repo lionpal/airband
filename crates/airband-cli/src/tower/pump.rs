@@ -33,7 +33,7 @@ pub(super) async fn pump(app: &Arc<App>) {
 
     let mut inner = app.inner.lock().unwrap();
     for (id, j) in done {
-        inner.fill(&id, j.kind, &j.say, &j.options, j.recommended, j.read.as_deref());
+        inner.fill(&id, j.kind, &j.say, &j.options, j.recommended, j.read.as_deref(), j.background);
     }
     // not worth his ears: it stays in the chat log, dimmed, and leaves the call queue
     inner.pending.retain(|p| p.kind != Some(Kind::Fyi) || p.say.is_none());

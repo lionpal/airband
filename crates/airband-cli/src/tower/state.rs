@@ -96,6 +96,10 @@ pub(super) struct Entry {
     #[serde(default)]
     pub(super) read: Option<String>,
     /// His words, waiting for the agent to stop what it is doing; and whether he took them back first.
+    /// The agent that said this had stopped only to wait for work of its own still running. While this is the
+    /// last thing it said, it counts as at work.
+    #[serde(default)]
+    pub(super) background: bool,
     #[serde(default)]
     pub(super) queued: bool,
     #[serde(default)]
@@ -426,7 +430,7 @@ impl Inner {
         }
     }
     /// The short version of a message is ready: for the call queue and for the chat alike.
-    pub(super) fn fill(&mut self, id: &str, kind: Kind, say: &str, options: &[String], recommended: Option<u32>, read: Option<&str>) {
+    pub(super) fn fill(&mut self, id: &str, kind: Kind, say: &str, options: &[String], recommended: Option<u32>, read: Option<&str>, background: bool) {
         self.judging.remove(id);
         if let Some(p) = self.pending.iter_mut().find(|p| p.id == id) {
             p.kind = Some(kind);
@@ -438,6 +442,7 @@ impl Inner {
             e.options = options.to_vec();
             e.recommended = recommended;
             e.read = read.map(String::from);
+            e.background = background;
             self.touch(id);
         }
     }
@@ -509,6 +514,10 @@ impl Inner {
     /// stopped without finishing or asking), or `idle` (it finished and said so).
     pub(super) fn state_of(&self, s: &Session, open: &HashSet<String>) -> &'static str {
         if !s.waiting {
+            return "working";
+        }
+        // it stopped only to wait for something of its own that is still running: that is still work
+        if self.log.iter().rev().find(|e| e.agent.as_deref() == Some(s.agent.id.as_str())).is_some_and(|e| e.background) {
             return "working";
         }
         match self.last_said(&s.agent.id) {

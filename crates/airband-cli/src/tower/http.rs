@@ -252,7 +252,7 @@ fn judge_later(app: &Arc<App>, entries: Vec<Entry>) {
                 let _slot = limit.acquire().await;
                 let j = judge_entry(&app, e.clone()).await;
                 let mut inner = app.inner.lock().unwrap();
-                inner.fill(&e.id, j.kind, &j.say, &j.options, j.recommended, j.read.as_deref());
+                inner.fill(&e.id, j.kind, &j.say, &j.options, j.recommended, j.read.as_deref(), j.background);
                 app.save(&inner);
             });
         }
@@ -330,7 +330,7 @@ async fn feed(State(app): State<Arc<App>>, Query(q): Query<HashMap<String, Strin
             let done = tasks.join_all().await;
             let mut inner = app.inner.lock().unwrap();
             for (id, j) in done {
-                inner.fill(&id, j.kind, &j.say, &j.options, j.recommended, j.read.as_deref());
+                inner.fill(&id, j.kind, &j.say, &j.options, j.recommended, j.read.as_deref(), j.background);
             }
             app.save(&inner);
         }

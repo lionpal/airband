@@ -487,6 +487,14 @@ impl Desk {
         }
     }
 
+    /// He asked for it: ask every computer afresh, now, whatever was last heard from them.
+    pub fn reconnect(&self) {
+        let links: Vec<String> = self.shared.state.lock().unwrap().stations.iter().map(|s| s.link.clone()).collect();
+        if !links.is_empty() {
+            self.set_links(links);
+        }
+    }
+
     /// What to show. `room` narrows the feed to one team, `agent` to one callsign; with neither, everything.
     pub fn view(&self, room: Option<String>, agent: Option<String>) -> DeskView {
         let state = self.shared.state.lock().unwrap();

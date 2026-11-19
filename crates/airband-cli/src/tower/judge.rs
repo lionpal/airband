@@ -77,6 +77,8 @@ pub(super) struct Judged {
     pub recommended: Option<u32>,
     /// What the message holds that he should be able to read whole, in two or three words, if anything.
     pub read: Option<String>,
+    /// It stopped only to wait for work of its own that is still running: it is still at work.
+    pub background: bool,
 }
 
 /// The tower's main job: decide how much of his attention a message deserves, what to tell him of it, and, when
@@ -84,7 +86,7 @@ pub(super) struct Judged {
 pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
     let asks = item.full.trim_end().ends_with('?');
     if item.notice {
-        return Judged { kind: Kind::NeedsYou, say: spoken(&item.full), options: Vec::new(), recommended: None, read: None };
+        return Judged { kind: Kind::NeedsYou, say: spoken(&item.full), options: Vec::new(), recommended: None, read: None, background: false };
     }
     let prompt = format!(
         "{name} runs several coding agents at once and is away from his desk. You are his dispatcher: you decide \
@@ -135,7 +137,9 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
          then offered the whole message to read under that name. A line or two that says everything needs \
          nothing to read: null.\n\n\
          Reply with one line of JSON and nothing else: \
-         {{\"kind\":\"needs-you\" or \"report\" or \"stalled\" or \"fyi\",\"say\":\"...\",\"options\":[],\"recommended\":null,\"read\":null}}\n\n\
+         {{\"kind\":\"needs-you\" or \"report\" or \"stalled\" or \"fyi\",\"say\":\"...\",\"options\":[],\"recommended\":null,\"read\":null,\"background\":false}}\n\
+         \"background\": true when it has stopped only to wait for work of its own that is still running and will \
+         bring it back by itself (a build, a test run, a background agent or task it started): it is still at work.\n\n\
          {asked}<message>\n{msg}\n</message>",
         asked = item.asked.as_deref().map(|a| format!("The last thing he told this agent was:\n<asked>\n{}\n</asked>\nIf the message below says that is done, or cannot be done, that is at least a report.\n\n", tail(a, 2000))).unwrap_or_default(),
         name = cfg.name,
@@ -151,6 +155,8 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
         recommended: Option<u32>,
         #[serde(default)]
         read: Option<String>,
+        #[serde(default)]
+        background: bool,
     }
     let parsed = ask_model(cfg, prompt).await.and_then(|out| {
         let (a, b) = (out.find('{').ok_or("no JSON in the answer")?, out.rfind('}').ok_or("no JSON in the answer")?);
@@ -175,13 +181,13 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
             let recommended = o.recommended.filter(|i| (*i as usize) < options.len());
             // only for a message with more in it than its line: a name of a few words, and nothing for chatter
             let read = o.read.map(|r| r.trim().to_string()).filter(|r| !r.is_empty() && r.chars().count() <= 32 && kind != Kind::Fyi && spoken(&item.full) != say);
-            Judged { kind, say, options, recommended, read }
+            Judged { kind, say, options, recommended, read, background: o.background && kind != Kind::NeedsYou }
         }
         other => {
             if let Err(e) = other {
                 log(format!("no summary, reading the opening instead: {e}"));
             }
-            Judged { kind: item.kind.unwrap_or(guess), say: opening(&item.full), options: Vec::new(), recommended: None, read: None }
+            Judged { kind: item.kind.unwrap_or(guess), say: opening(&item.full), options: Vec::new(), recommended: None, read: None, background: false }
         }
     }
 }
