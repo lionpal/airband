@@ -152,7 +152,10 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                  He now says: \"{rest}\"\n\n\
                  Who is it for? Each agent's letters are the label his phone shows for it. If he names one by its \
                  letters (\"to SR\", \"tell M3\", \"S R, go ahead\"; speech may write them apart, or as words that sound \
-                 like them) it is for that agent and you can be sure of it. If his words are plainly about one agent's work or answer one agent's question, it is that agent, \
+                 like them) it is for that agent and you can be sure of it. A team's name by itself (\"to catalog\", \"catalog, how is…\": the \
+                 first word or words of its agents' callsigns) names the team, not one of its agents, even when a number \
+                 stands near it: among that team's agents it is for the one whose work his words are about, and you ask \
+                 if that is not plain. If his words are plainly about one agent's work or answer one agent's question, it is that agent, \
                  and you can be sure of it however recently another one spoke: \"refund them all\" is for whoever is working on refunds. \
                  Otherwise a reply right after an agent speaks is to that agent, and with nobody having spoken since he last did \
                  it carries on with the agent he last spoke with: words that only make sense as more of what he was just saying \

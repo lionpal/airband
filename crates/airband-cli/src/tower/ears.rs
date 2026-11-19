@@ -47,10 +47,18 @@ async fn azure(app: &Arc<App>, key: String, region: String, language: String) ->
     }
 }
 
+/// Words of the trade that a recogniser otherwise hears as everyday ones ("sync" as "sink", "cache" as "cash").
+const SOFTWARE: [&str; 40] = [
+    "sync", "cache", "repo", "commit", "merge", "rebase", "deploy", "staging", "prod", "branch", "pull request", "diff", "lint", "regex", "API", "SDK", "CLI", "JSON", "YAML", "SQL",
+    "Postgres", "Redis", "Docker", "Kubernetes", "AWS", "S3", "Lambda", "NAS", "SSH", "cron", "webhook", "endpoint", "refactor", "async", "queue", "token", "TestFlight", "Xcode", "Claude", "airband",
+];
+
 /// The names he is likely to say, for a recogniser that can be told what to expect.
 fn phrases(app: &App) -> Vec<String> {
     let inner = app.inner.lock().unwrap();
     let mut out: Vec<String> = inner.sessions.iter().flat_map(|s| [s.callsign.text(), s.callsign.project.clone()]).collect();
+    // he is talking to coding agents: where a sound could be two words, the one from software is the likelier
+    out.extend(SOFTWARE.iter().map(|w| w.to_string()));
     out.sort();
     out.dedup();
     out

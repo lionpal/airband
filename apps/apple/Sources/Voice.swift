@@ -313,6 +313,14 @@ final class Voice: NSObject, @unchecked Sendable {
 
     // MARK: tones
 
+    /// Something went wrong and he may not be looking: two short low notes, the second lower.
+    func uhOh() {
+        micQueue.async {
+            self.beep(392)
+            self.beep(294)
+        }
+    }
+
     private func beep(_ frequency: Double) {
         tone = try? AVAudioPlayer(data: Voice.wav(frequency: frequency, seconds: 0.12))
         tone?.volume = 0.5

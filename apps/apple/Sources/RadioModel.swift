@@ -21,7 +21,13 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     @Published var full: [String: String] = [:] // message id → exactly what the agent wrote
     @Published var pictureFiles: [String: String] = [:] // picture id → the file it was fetched into
     @Published var replyingTo: ChatMessage?
-    @Published var problem: String?
+    /// Something he must be told. It goes by itself after a few seconds; a tap takes it away sooner.
+    @Published var problem: String? {
+        didSet {
+            guard let shown = problem else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in if self?.problem == shown { self?.problem = nil } }
+        }
+    }
     // call mode
     @Published var calling = false
     @Published var status: RadioStatus = .idle
@@ -384,7 +390,11 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         guard let caption, let position = voice.clipPosition() else { return 0 }
         return caption.reached(position)
     }
-    func note(text: String) { DispatchQueue.main.async { self.problem = text } }
+    func note(text: String) {
+        // he may not be looking at the screen: it is heard as well as shown
+        voice.uhOh()
+        DispatchQueue.main.async { self.problem = text }
+    }
     func watching() -> Bool {
         frontLock.lock()
         defer { frontLock.unlock() }
