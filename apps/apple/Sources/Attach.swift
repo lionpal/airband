@@ -90,6 +90,9 @@ enum Prepare {
 /// a cross to take it off again. When they are all there, an arrow sends them as they are.
 struct Tray: View {
     @EnvironmentObject var model: RadioModel
+    /// Its own send button: for sending the files with nothing said. Hidden while he is talking or typing, when
+    /// the one send button is the microphone's or the text box's and takes the files along.
+    var sends = true
     @State private var trimming: TrayItem?
 
     var body: some View {
@@ -109,12 +112,14 @@ struct Tray: View {
             }
             .scrollClipDisabled()
             // send them with nothing said: "look at this"
-            Button { model.send("") } label: {
-                Image(systemName: "arrow.up").font(.system(size: 19, weight: .bold)).foregroundStyle(Palette.ground)
-                    .frame(width: 46, height: 46).background(model.trayReady ? Palette.ink : Palette.dim, in: Circle())
+            if sends {
+                Button { model.send("") } label: {
+                    Image(systemName: "arrow.up").font(.system(size: 19, weight: .bold)).foregroundStyle(Palette.ground)
+                        .frame(width: 46, height: 46).background(model.trayReady ? Palette.ink : Palette.dim, in: Circle())
+                }
+                .buttonStyle(.plain).disabled(!model.trayReady).padding(.trailing, 16)
+                .accessibilityLabel("Send what is attached").accessibilityHint(model.trayReady ? "" : "Still on its way to your computer")
             }
-            .buttonStyle(.plain).disabled(!model.trayReady).padding(.trailing, 16)
-            .accessibilityLabel("Send what is attached").accessibilityHint(model.trayReady ? "" : "Still on its way to your computer")
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.8), value: model.tray)
         .fullScreenCover(item: $trimming) { item in

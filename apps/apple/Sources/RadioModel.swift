@@ -147,6 +147,12 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         desk.send(text: words.isEmpty && !tray.isEmpty ? "Look at what I attached." : text, re: target?.id, room: room, agent: only)
     }
 
+    /// Send the words of one of his messages again, to another agent.
+    func resend(_ m: ChatMessage, to agent: DeskMember) {
+        if m.long { loadFull(m) }
+        desk.send(text: "@\(agent.callsign.replacingOccurrences(of: " ", with: "")) \(full[m.id] ?? m.text)", re: nil, room: nil, agent: nil)
+    }
+
     /// The phone has made a picked photo or video ready (or could not): hand it to the desk, which sends it to
     /// whoever he is looking at, and remember the id it travels under.
     @MainActor func prepared(_ item: UUID, _ made: (URL, String, UIImage?)?, source: URL?) {

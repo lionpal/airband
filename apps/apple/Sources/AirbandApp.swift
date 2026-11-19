@@ -377,8 +377,10 @@ struct FeedView: View {
     private var listeningNow: Bool { model.listening }
     /// One quiet line above the buttons: who he is answering, or what the radio is doing.
     private var statusLine: String? {
-        if model.micOpen { return "listening \u{b7} tap to send" }
-        if let re = model.replyingTo { return "answering \(name(of: re))" }
+        // who it will go to, whenever that is already settled: the message he picked, or the agent he is looking at
+        let aim = model.replyingTo.map { name(of: $0) } ?? model.only
+        if model.micOpen { return aim.map { "to \($0) \u{b7} tap to send" } ?? "listening \u{b7} tap to send" }
+        if let re = model.replyingTo { return "to \(name(of: re)) \u{b7} tap here to undo" }
         switch model.status {
         case .listening: return "listening \u{b7} tap to send"
         case .sending: return "sending"
@@ -394,7 +396,7 @@ struct FeedView: View {
                     .buttonStyle(.plain).padding(.horizontal, 8)
             }
             if let ask = model.view.asking { AskCard(ask: ask) }
-            if !model.tray.isEmpty { Tray() }
+            if !model.tray.isEmpty { Tray(sends: !listeningNow && !typingOpen) }
             if showQuick { quickGrid }
             if typingOpen {
                 HStack(spacing: 10) {
@@ -437,8 +439,14 @@ struct FeedView: View {
                     Text(statusLine ?? " ").font(.system(size: 14, weight: .medium)).foregroundStyle(statusLine == nil ? Palette.quiet : Palette.soft)
                         .frame(height: 18).padding(.horizontal, 12).padding(.vertical, 4)
                         .frosted(Capsule(), shown: statusLine != nil).accessibilityHidden(statusLine == nil)
+                        // a tap lets go of the message he picked: what he says next is placed afresh
+                        .onTapGesture { if !model.micOpen { model.replyingTo = nil } }
                 } else {
                     // his own words, as he says them: the end of a long sentence stays in view
+                    if let aim = model.replyingTo.map({ name(of: $0) }) ?? model.only {
+                        Text("to \(aim)").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.soft)
+                            .padding(.horizontal, 10).padding(.vertical, 3).frosted(Capsule())
+                    }
                     Text("\u{201C}\(model.hearing)\u{201D}").font(.system(size: 17, weight: .medium)).foregroundStyle(Palette.ink)
                         .lineLimit(2).truncationMode(.head).multilineTextAlignment(.center)
                         .frame(minHeight: 18).padding(.horizontal, 14).padding(.vertical, 4)
@@ -555,13 +563,15 @@ struct Report: View {
             }
             .buttonStyle(.plain)
             .accessibilityHint(expanded ? "Show the short version" : "Show everything it wrote, and answer this agent")
-            if m.read != nil { ReadButton(m: m).padding(.top, 3) }
             if !m.pictures.isEmpty { PictureStrip(m: m, height: 150).padding(.top, 3) }
             if !m.links.isEmpty { LinkRow(m: m).padding(.top, 3) }
         }
         .padding(.horizontal, 6).padding(.vertical, picked ? 8 : 0)
         .background(picked ? Palette.card : .clear, in: RoundedRectangle(cornerRadius: 16))
         .padding(.horizontal, picked ? -4 : 0)
+        .contextMenu {
+            Button { UIPasteboard.general.string = model.full[m.id] ?? m.text } label: { Label("Copy", systemImage: "doc.on.doc") }
+        }
     }
 }
 
@@ -591,7 +601,6 @@ struct Question: View {
             .buttonStyle(.plain).accessibilityHint(m.open ? (picked ? "Stop answering this one" : "Answer this one: what you say or type next goes to it") : "Show what was behind this question")
             .accessibilityAddTraits(picked ? .isSelected : [])
             if !m.pictures.isEmpty { PictureStrip(m: m, height: m.open ? 150 : 96) }
-            if m.read != nil { ReadButton(m: m) }
             if !m.links.isEmpty { LinkRow(m: m) }
             if m.open { Answers(m: m) }
         }
@@ -650,6 +659,15 @@ struct Mine: View {
             .padding(.horizontal, 14).padding(.vertical, 9)
             .background(Palette.ink, in: UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 18, bottomTrailingRadius: 6, topTrailingRadius: 18))
             .contentShape(Rectangle())
+            // hold it: copy it, or send the same words to someone else
+            .contextMenu {
+                Button { UIPasteboard.general.string = model.full[m.id] ?? m.text } label: { Label("Copy", systemImage: "doc.on.doc") }
+                Menu {
+                    ForEach(model.view.rooms.flatMap(\.members), id: \.id) { agent in
+                        Button(agent.callsign) { model.resend(m, to: agent) }
+                    }
+                } label: { Label("Send to someone else", systemImage: "arrowshape.turn.up.right") }
+            }
             .onTapGesture {
                 guard long else { return }
                 // what the chat carries of a very long one is its opening: the rest is fetched when he opens it
