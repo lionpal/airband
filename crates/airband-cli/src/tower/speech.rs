@@ -76,7 +76,7 @@ impl Synth for Azure {
     }
     fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8]), _mark: &mut dyn FnMut(u32, u32)) -> Result<(), String> {
         let escaped = text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;");
-        let ssml = format!("<speak version='1.0' xml:lang='en-US'><voice name='{}'>{escaped}</voice></speak>", self.voice);
+        let ssml = format!("<speak version='1.0' xml:lang='en-US'><voice name='{}'><prosody rate='+20%'>{escaped}</prosody></voice></speak>", self.voice);
         let res = airband_radio::net::agent(Duration::from_secs(30))
             .post(format!("https://{}.tts.speech.microsoft.com/cognitiveservices/v1", self.region))
             .header(if self.pass { "Authorization" } else { "Ocp-Apim-Subscription-Key" }, if self.pass { format!("Bearer {}", self.key) } else { self.key.clone() })
@@ -116,7 +116,8 @@ impl Synth for Elevenlabs {
         let res = airband_radio::net::agent(Duration::from_secs(60))
             .post(format!("https://api.elevenlabs.io/v1/text-to-speech/{}/stream/with-timestamps?output_format=pcm_24000", self.voice))
             .header("xi-api-key", &self.key)
-            .send_json(json!({ "text": text, "model_id": self.model }))
+            // a fifth faster than ordinary speech: he is listening for the outcome, not being read to
+            .send_json(json!({ "text": text, "model_id": self.model, "voice_settings": { "speed": 1.2 } }))
             .map_err(|e| e.to_string())?;
         if res.status().as_u16() != 200 {
             return Err(format!("ElevenLabs answered {}", res.status()));
