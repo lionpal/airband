@@ -195,6 +195,23 @@ pub fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// `airband lan [on | off]`: whether a paired phone on the same network may reach this computer straight.
+pub fn lan(mut cfg: Config, args: &[String]) -> Result<(), String> {
+    match args.first().map(String::as_str) {
+        None => {
+            println!("{}", if cfg.lan { "On: a paired phone on the same network reaches this computer straight, sealed with its pairing key. Away from it, through the relay." } else { "Off: a paired phone always goes through the relay." });
+            println!("Change it:  airband lan on  |  airband lan off");
+            return Ok(());
+        }
+        Some("on") => cfg.lan = true,
+        Some("off") => cfg.lan = false,
+        Some(other) => return Err(format!("airband lan takes on or off, not \"{other}\"")),
+    }
+    config::save(&cfg)?;
+    println!("Saved. A running tower uses it from its next start: airband install");
+    Ok(())
+}
+
 /// `airband voice [device | gemini … | azure …]`: what speaks to him on a call. Separate from `ears`.
 pub fn voice(mut cfg: Config, args: &[String]) -> Result<(), String> {
     use config::Voice;

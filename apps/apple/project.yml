@@ -50,7 +50,7 @@ targets:
         UIBackgroundModes: [audio]
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSMicrophoneUsageDescription: Airband listens for your reply after an agent speaks, and when you press Talk.
-        NSLocalNetworkUsageDescription: Airband reaches the tower running on your computer.
+        NSLocalNetworkUsageDescription: Airband talks straight to your computer when your phone is on the same network.
         NSCameraUsageDescription: airband uses the camera to scan the pairing code your computer shows.
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true

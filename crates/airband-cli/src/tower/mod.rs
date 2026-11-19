@@ -275,22 +275,28 @@ pub fn run(cfg: Config) -> Result<(), String> {
 
         let local = tokio::net::TcpListener::bind(("127.0.0.1", port)).await.map_err(|e| format!("cannot listen on 127.0.0.1:{port}: {e} (is a tower already running?)"))?;
         log(format!("listening on 127.0.0.1:{port}"));
+        // every address also takes sealed requests from a paired radio that can reach it without the relay
+        let router = router.merge(relay_link::sealed_router());
         {
             let router = router.clone();
             tokio::spawn(async move { axum::serve(local, router).await });
         }
-        // Tailscale may come up after the tower does, or change address
+        // Tailscale may come up after the tower does, or change address; so may the local network. On the local
+        // network, when that is allowed (`airband lan`), only sealed requests are served: nothing there is
+        // trusted with a token.
+        let lan = app.cfg.lan;
         let mut bound = HashSet::new();
         loop {
-            for addr in config::tailscale_addrs() {
+            let wanted = config::tailscale_addrs().into_iter().map(|a| (a, false)).chain(config::lan_addrs().into_iter().filter(|_| lan).map(|a| (a, true)));
+            for (addr, sealed_only) in wanted {
                 if bound.contains(&addr) {
                     continue;
                 }
                 match tokio::net::TcpListener::bind((addr, port)).await {
                     Ok(l) => {
-                        log(format!("listening on {addr}:{port}"));
+                        log(format!("listening on {addr}:{port}{}", if sealed_only { ", for a paired radio on this network" } else { "" }));
                         bound.insert(addr);
-                        let router = router.clone();
+                        let router = if sealed_only { relay_link::sealed_router() } else { router.clone() };
                         tokio::spawn(async move { axum::serve(l, router).await });
                     }
                     Err(e) => log(format!("cannot listen on {addr}:{port}: {e}")),

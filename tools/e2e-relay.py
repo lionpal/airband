@@ -84,6 +84,25 @@ try:
     check("each of them once", text.count("the second thing") == 1 and text.count("the third thing") == 1)
     if not LIVE: check("the relay keeps nothing once it is handed over, the unreadable one included", not kept(), kept())
     check("and what he says now goes straight through again", "Delivered." in send("the fourth thing") and received().count("the fourth thing") == 1)
+    if not LIVE:
+        print("Without the relay")
+        # a radio that has heard where the tower is talks to it straight: the relay can go and the chat goes on
+        say = lambda words: subprocess.run([BIN, "report", "--id", "a1", "--harness", "script", "--cwd", project, "said", words], env=tower_env)
+        watch = subprocess.Popen([BIN, "feed", "--link", link], env=phone_env, stdout=open(os.path.join(work, "feed.out"), "w"), stderr=subprocess.STDOUT)
+        seen = lambda words: words in open(os.path.join(work, "feed.out")).read()
+        time.sleep(2)
+        say("said with the relay still there")
+        for _ in range(60):
+            if seen("relay still there"): break
+            time.sleep(0.25)
+        time.sleep(1.5)
+        relay.terminate(); relay.wait(10)
+        say("said after the relay went")
+        for _ in range(60):
+            if seen("after the relay went"): break
+            time.sleep(0.25)
+        check("a radio on the tower's own network goes on hearing it with the relay gone", seen("relay still there") and seen("after the relay went") and watch.poll() is None, open(os.path.join(work, "feed.out")).read()[-300:])
+        watch.terminate()
 finally:
     if LIVE:
         subprocess.run([BIN, "unpair", "test"], env=tower_env, capture_output=True)  # closes the channel on the relay

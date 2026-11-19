@@ -49,6 +49,9 @@ pub struct Keys {
     pub channel: String,
     /// Proves to the relay that this is the tower for the channel. The relay stores only its hash.
     pub pull_token: String,
+    /// Proves to the relay that this is the radio paired on the channel, for the little the relay does for a
+    /// radio by itself. The tower tells the relay its hash; the relay never sees the token until a radio shows it.
+    pub radio_token: String,
     to_tower: [u8; 32],
     to_radio: [u8; 32],
 }
@@ -85,7 +88,7 @@ impl Keys {
             hk.expand(label.as_bytes(), &mut out).expect("32 bytes is a valid length");
             out
         };
-        Ok(Keys { channel: hex(&take("channel")[..16]), pull_token: hex(&take("pull")), to_tower: take("to tower"), to_radio: take("to radio") })
+        Ok(Keys { channel: hex(&take("channel")[..16]), pull_token: hex(&take("pull")), radio_token: hex(&take("radio")), to_tower: take("to tower"), to_radio: take("to radio") })
     }
 
     fn cipher(&self, dir: Direction) -> ChaCha20Poly1305 {

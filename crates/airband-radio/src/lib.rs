@@ -491,6 +491,7 @@ impl Radio {
         let (status, v) = self.link.request("GET", &format!("/feed?scope=all&since={since}&after={after}&roster={roster}&wait={}", wait_seconds.min(25)), None)?;
         let feed: Feed = (status == 200).then(|| serde_json::from_value(v).ok()).flatten().ok_or(RadioError::Refused)?;
         self.roster.store(feed.roster_rev, Ordering::SeqCst);
+        self.link.set_direct(feed.direct.clone());
         // the tower's log is behind ours: it was reset. Start over rather than wait for numbers that will not come.
         let reset = feed.seq < after || feed.rev < since;
         self.store.change(|s| {
@@ -530,6 +531,7 @@ impl Radio {
         let scope: String = scope.bytes().map(|b| if b.is_ascii_alphanumeric() || b == b':' { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
         let (status, v) = self.link.request("GET", &format!("/feed?scope={scope}&after={after}&wait={}", wait_seconds.min(25)), None)?;
         let feed: Feed = (status == 200).then(|| serde_json::from_value(v).ok()).flatten().ok_or(RadioError::Refused)?;
+        self.link.set_direct(feed.direct.clone());
         Ok(chat_feed(feed))
     }
 

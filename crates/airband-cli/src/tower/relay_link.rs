@@ -19,6 +19,30 @@ use tower::ServiceExt;
 use airband_core::relay::{Answer, Call, Direction, FRESH_MS, Keys, fresh};
 
 
+/// Every pairing being served, by its channel: a request that comes straight to the tower is answered by the
+/// same code, with the same key, as one pulled from the relay.
+static SERVED: std::sync::OnceLock<Mutex<HashMap<String, Serve>>> = std::sync::OnceLock::new();
+fn served() -> &'static Mutex<HashMap<String, Serve>> {
+    SERVED.get_or_init(Default::default)
+}
+
+/// The one route a radio uses to reach the tower without the relay: the sealed request it would have given the
+/// relay, answered with the sealed answer. Whoever sends it needs the pairing key to make a request the tower
+/// will open, and to read what comes back; nothing else is served here.
+pub fn sealed_router() -> Router {
+    Router::new().route("/v1/sealed/{channel}", axum::routing::post(sealed))
+}
+
+async fn sealed(axum::extract::Path(channel): axum::extract::Path<String>, body: axum::body::Bytes) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let serve = served().lock().unwrap().get(&channel).cloned();
+    let Some(serve) = serve else { return axum::http::StatusCode::NOT_FOUND.into_response() };
+    match serve.answer_here(&body).await {
+        Some(sealed) => sealed.into_response(),
+        None => axum::http::StatusCode::BAD_REQUEST.into_response(),
+    }
+}
+
 /// Watch the config: a pairing added by `airband pair` starts being served, one removed by `airband unpair`
 /// stops, and a changed relay address moves everything, all without restarting the tower.
 pub fn start(app: Arc<App>, router: Router, handle: Handle) {
@@ -31,6 +55,9 @@ pub fn start(app: Arc<App>, router: Router, handle: Handle) {
                 let keep = wanted.contains(key);
                 if !keep {
                     stop.store(true, Ordering::SeqCst);
+                    if let Ok(keys) = Keys::derive(&key.1.secret) {
+                        served().lock().unwrap().remove(&keys.channel);
+                    }
                     log(format!("\"{}\" is no longer served", key.1.name));
                 }
                 keep
@@ -49,6 +76,7 @@ pub fn start(app: Arc<App>, router: Router, handle: Handle) {
                 let stop = Arc::new(AtomicBool::new(false));
                 running.insert(key.clone(), stop.clone());
                 let serve = Serve { relay: key.0, name: key.1.name, keys, admission: cfg.relay_admission.clone(), token: app.cfg.radio_token.clone(), router: router.clone(), handle: handle.clone(), stop, seen: Arc::new(Mutex::new(HashMap::new())), replies: airband_radio::net::agent(Duration::from_secs(15)) };
+                served().lock().unwrap().insert(serve.keys.channel.clone(), serve.clone());
                 std::thread::spawn(move || serve.run());
             }
             std::thread::sleep(Duration::from_secs(10));
@@ -109,7 +137,7 @@ impl Serve {
                 }
                 continue;
             }
-            match agent.get(format!("{base}/pull")).header("authorization", &auth).call() {
+            match agent.get(format!("{base}/pull")).header("authorization", &auth).header("x-airband-radio-hash", airband_core::relay::token_hash(&self.keys.radio_token)).call() {
                 Ok(mut res) => match res.status().as_u16() {
                     200 => {
                         wait = 1;
@@ -135,6 +163,26 @@ impl Serve {
                 }
             }
         }
+    }
+
+    /// A request that came straight to the tower: opened, checked and run as one from the relay is, and its
+    /// answer sealed. Nothing for one this pairing's key does not open, that is stale, or that was seen before.
+    async fn answer_here(&self, sealed: &[u8]) -> Option<Vec<u8>> {
+        let call: Call = self.keys.open(Direction::ToTower, sealed).ok().and_then(|p| serde_json::from_slice(&p).ok())?;
+        let now = now_ms();
+        let (status, body) = if !fresh(call.t, now) {
+            (408, serde_json::json!({ "error": "this request's time is more than two minutes from the tower's clock" }))
+        } else {
+            {
+                let mut seen = self.seen.lock().unwrap();
+                seen.retain(|_, t| t.abs_diff(now) <= FRESH_MS * 2);
+                if seen.insert(call.id.clone(), now).is_some() {
+                    return None;
+                }
+            }
+            self.dispatch(&call).await
+        };
+        Some(self.keys.seal(Direction::ToRadio, &serde_json::to_vec(&Answer { id: call.id, status, body }).unwrap()))
     }
 
     async fn answer(self, request_id: String, sealed: Vec<u8>) {

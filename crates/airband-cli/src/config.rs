@@ -21,6 +21,11 @@ pub struct Config {
     /// What this computer is called on a phone paired with several. Left out, its short host name is used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub station: Option<String>,
+    /// Let a paired radio on the same network reach this tower straight, without the relay: faster, and it
+    /// works when the relay does not. The tower then listens on this computer's local network addresses, for
+    /// sealed requests only. `airband lan off` turns it off.
+    #[serde(default = "yes")]
+    pub lan: bool,
     /// What cuts a long message down to a spoken sentence or two. Any model, through any command.
     #[serde(default)]
     pub summarizer: Summarizer,
@@ -316,6 +321,22 @@ pub fn load() -> Config {
 }
 
 /// This machine's Tailscale addresses (100.64.0.0/10): the only way in from outside the machine.
+fn yes() -> bool {
+    true
+}
+
+/// This computer's addresses on its local network: the private ranges, and nothing a stranger could route to.
+pub fn lan_addrs() -> Vec<std::net::Ipv4Addr> {
+    if_addrs::get_if_addrs()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|i| match i.ip() {
+            std::net::IpAddr::V4(a) if a.is_private() => Some(a),
+            _ => None,
+        })
+        .collect()
+}
+
 pub fn tailscale_addrs() -> Vec<std::net::Ipv4Addr> {
     if_addrs::get_if_addrs()
         .unwrap_or_default()

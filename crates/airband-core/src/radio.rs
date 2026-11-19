@@ -463,6 +463,12 @@ pub struct Feed {
     /// What this tower's computer is called ("mini", "macbook"), for a client paired with more than one.
     #[serde(default)]
     pub station: String,
+    /// Addresses a radio may try to reach this tower at without the relay, when it is on the same network:
+    /// `http://<address>:<port>`. A radio paired through a relay posts the same sealed request it would give
+    /// the relay to `<address>/v1/sealed/<channel>` and gets the sealed answer back, so nothing on that network
+    /// can read it or stand in for the tower. Empty when the tower offers none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub direct: Vec<String>,
     /// The ids of every message that needs him and is still unanswered, whether or not it is in `messages`:
     /// the whole inbox, current as of this answer.
     #[serde(default)]

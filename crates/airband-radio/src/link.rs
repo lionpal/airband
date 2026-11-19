@@ -26,9 +26,23 @@ pub(crate) enum LinkError {
 /// What he is told when what he said was left with the relay for a computer that is away.
 pub(crate) const AWAY: &str = "Your computer is away. It gets this when it is back.";
 
+/// The tower's own addresses, for reaching it without the relay when the radio is on its network.
+#[derive(Default)]
+struct Direct {
+    /// What the tower last said it can be reached at.
+    addrs: Vec<String>,
+    /// The one that last worked.
+    good: Option<String>,
+    /// None of them answered: not tried again before this.
+    rest_until: Option<std::time::Instant>,
+}
+
 pub(crate) struct Link {
     route: Route,
     agent: ureq::Agent,
+    /// For the tower's own addresses: quick to give up when it is not there.
+    near: ureq::Agent,
+    direct: Mutex<Direct>,
     /// Files he has attached and that have reached the tower: the next thing he says takes them with it.
     armed: Mutex<Vec<String>>,
 }
@@ -46,7 +60,46 @@ impl Link {
             Pairing::Direct { url, token } => Route::Direct { url, auth: format!("Bearer {token}"), radio: radio.to_string() },
             Pairing::Relay { relay, secret } => Route::Relay { relay, keys: Keys::derive(&secret)? },
         };
-        Ok(Link { route, agent, armed: Mutex::new(Vec::new()) })
+        Ok(Link { route, agent, near: crate::net::agent_quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct::default()), armed: Mutex::new(Vec::new()) })
+    }
+
+    /// The tower said where it can be reached without the relay. Anything new is tried at the next request.
+    pub(crate) fn set_direct(&self, addrs: Vec<String>) {
+        let mut d = self.direct.lock().unwrap();
+        if d.addrs != addrs {
+            *d = Direct { addrs, good: None, rest_until: None };
+        }
+    }
+
+    /// Make a request straight to the tower, sealed exactly as it would be for the relay. Nothing when the tower
+    /// is not at any of its addresses (he is away from its network), which is remembered for a while so the
+    /// relay is not kept waiting behind a dead address each time.
+    fn straight(&self, keys: &Keys, method: &str, path: &str, body: &Option<Value>) -> Option<(u16, Value)> {
+        let tries: Vec<String> = {
+            let d = self.direct.lock().unwrap();
+            if d.addrs.is_empty() || d.rest_until.is_some_and(|t| std::time::Instant::now() < t) {
+                return None;
+            }
+            match &d.good {
+                Some(good) => vec![good.clone()],
+                None => d.addrs.clone(),
+            }
+        };
+        for addr in tries {
+            let call = Call { t: now_ms(), id: random_hex(12), method: method.into(), path: path.into(), body: body.clone().unwrap_or(Value::Null), schema: airband_core::radio::SCHEMA.into() };
+            let sealed = keys.seal(Direction::ToTower, &serde_json::to_vec(&call).unwrap());
+            let answer = self.near.post(format!("{addr}/v1/sealed/{}", keys.channel)).header("content-type", "application/octet-stream").send(&sealed[..]).ok().filter(|res| res.status().as_u16() == 200).and_then(|mut res| res.body_mut().read_to_vec().ok());
+            // only the tower can make an answer this key opens: anything else at that address is not it
+            let answer: Option<Answer> = answer.and_then(|bytes| keys.open(Direction::ToRadio, &bytes).ok()).and_then(|p| serde_json::from_slice(&p).ok());
+            if let Some(answer) = answer.filter(|a| a.id == call.id) {
+                self.direct.lock().unwrap().good = Some(addr);
+                return Some((answer.status, answer.body));
+            }
+        }
+        let mut d = self.direct.lock().unwrap();
+        d.good = None;
+        d.rest_until = Some(std::time::Instant::now() + Duration::from_secs(40));
+        None
     }
 
     /// One `airband.radio/1` request. `path` is what follows `/v1/radio`.
@@ -70,13 +123,24 @@ impl Link {
                 Ok((status, if status == 200 { res.body_mut().read_json().map_err(|_| LinkError::Offline)? } else { Value::Null }))
             }
             Route::Relay { relay, keys } => {
-                let call = Call { t: now_ms(), id: random_hex(12), method: method.into(), path, body: body.unwrap_or(Value::Null), schema: airband_core::radio::SCHEMA.into() };
+                // Straight to the tower when it is on this network: no trip to the relay and back, and it works
+                // when the relay does not. Something he said goes by the relay first all the same, so it keeps
+                // its place behind anything of his the relay is still holding; straight only if the relay is gone.
+                if !ordered {
+                    if let Some(answer) = self.straight(keys, method, &path, &body) {
+                        return Ok(answer);
+                    }
+                }
+                let call = Call { t: now_ms(), id: random_hex(12), method: method.into(), path: path.clone(), body: body.clone().unwrap_or(Value::Null), schema: airband_core::radio::SCHEMA.into() };
                 let sealed = keys.seal(Direction::ToTower, &serde_json::to_vec(&call).unwrap());
                 let mut req = self.agent.post(format!("{relay}/v1/channels/{}/call", keys.channel)).header("content-type", "application/octet-stream");
                 if ordered {
                     req = req.header("x-airband-ordered", "1");
                 }
-                let mut res = req.send(&sealed[..]).map_err(|_| LinkError::Offline)?;
+                let mut res = match req.send(&sealed[..]) {
+                    Ok(res) => res,
+                    Err(_) => return if ordered { self.straight(keys, method, &path, &body).ok_or(LinkError::Offline) } else { Err(LinkError::Offline) },
+                };
                 // anything but 200 is the relay speaking (tower offline, timed out, unknown channel), not the tower
                 match res.status().as_u16() {
                     200 => {}
@@ -118,7 +182,7 @@ impl Link {
     /// ask. Only through a relay that lends one.
     pub(crate) fn relay_ears(&self) -> Option<airband_core::radio::EarsGrant> {
         let Route::Relay { relay, keys } = &self.route else { return None };
-        let mut res = self.agent.get(format!("{relay}/v1/channels/{}/ears", keys.channel)).call().ok()?;
+        let mut res = self.agent.get(format!("{relay}/v1/channels/{}/ears", keys.channel)).header("authorization", format!("Bearer {}", keys.radio_token)).call().ok()?;
         if res.status().as_u16() != 200 {
             return None;
         }

@@ -72,6 +72,13 @@ impl Resolver for Fallback {
     }
 }
 
+/// The same, for an address that may not be there at all (his computer's, on a network he may have left): it
+/// gives up on making the connection after `connect`, so finding that out costs a moment and not a minute.
+pub fn agent_quick(timeout: Duration, connect: Duration) -> ureq::Agent {
+    let config = ureq::Agent::config_builder().timeout_global(Some(timeout)).timeout_connect(Some(connect)).http_status_as_error(false).build();
+    ureq::Agent::with_parts(config, DefaultConnector::default(), Fallback::default())
+}
+
 /// An agent that gives up after `timeout`, treats every HTTP status as an answer and not an error, and can find a
 /// host the local network's DNS has wrong.
 pub fn agent(timeout: Duration) -> ureq::Agent {

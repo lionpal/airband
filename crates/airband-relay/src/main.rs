@@ -46,6 +46,8 @@ struct Channel {
     has_held: bool,
     /// The kept message the tower has been handed and has not yet said it took, and when.
     holding: Option<(String, Instant)>,
+    /// The hash of the token the paired radio proves itself with, as the tower last gave it (with each pull).
+    radio_hash: Option<String>,
 }
 
 /// A kept message the tower was handed and never answered for is handed over again after this long.
@@ -88,14 +90,18 @@ async fn speech_pass(State(relay): State<Arc<Relay>>, headers: HeaderMap) -> Res
 /// The same pass, for a radio of a channel this relay knows: so he can still speak to his agents when his
 /// computer cannot be reached to ask. What he says is then kept here, sealed, until it is back. Knowing a
 /// channel's name is what a paired radio has; the pass is the one every tower shares, so asking costs nothing.
-async fn ears_pass(State(relay): State<Arc<Relay>>, Path(channel): Path<String>) -> Response {
+async fn ears_pass(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, headers: HeaderMap) -> Response {
     if relay.speech.is_none() || relay.admission.is_none() {
         return say(StatusCode::NOT_FOUND, "this relay has no speech service to lend");
     }
-    if !relay.channels.lock().unwrap().contains_key(&channel) {
-        return say(StatusCode::NOT_FOUND, "no such channel");
+    // only the radio paired on this channel: it shows a token made from the pairing secret, whose hash the
+    // channel's tower has given. A channel's name alone gets nothing, and neither does a channel whose tower
+    // has not said who its radio is.
+    let known = relay.channels.lock().unwrap().get(&channel).and_then(|ch| ch.radio_hash.clone());
+    match known {
+        Some(hash) if same(&token_hash(bearer(&headers)), &hash) => lend(&relay).await,
+        _ => say(StatusCode::UNAUTHORIZED, "a pass is only for this channel's radio"),
     }
-    lend(&relay).await
 }
 
 async fn lend(relay: &Arc<Relay>) -> Response {
@@ -165,7 +171,7 @@ async fn open(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, head
     if let Some(answer) = known(&channels) {
         return answer;
     }
-    channels.insert(channel, Channel { pull_hash: hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, holding: None });
+    channels.insert(channel, Channel { pull_hash: hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, holding: None, radio_hash: None });
     StatusCode::CREATED.into_response()
 }
 
@@ -179,6 +185,9 @@ async fn pull(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, head
                 Err(r) => return r,
             };
             ch.last_pull = Some(Instant::now());
+            if let Some(hash) = headers.get("x-airband-radio-hash").and_then(|v| v.to_str().ok()).filter(|h| h.len() == 64) {
+                ch.radio_hash = Some(hash.to_string());
+            }
             // a radio that gave up leaves its request behind; skip those
             while let Some((id, sealed)) = ch.queue.pop_front() {
                 if ch.waiting.contains_key(&id) {
@@ -460,7 +469,7 @@ async fn main() {
     if let Err(e) = store.held_purge(HELD_FOR_MS / 86_400_000).await {
         eprintln!("airband-relay: could not clear old kept messages: {e}");
     }
-    let channels = saved.into_iter().map(|(c, pull_hash)| (c, Channel { pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, holding: None })).collect::<HashMap<_, _>>();
+    let channels = saved.into_iter().map(|(c, pull_hash)| (c, Channel { pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, holding: None, radio_hash: None })).collect::<HashMap<_, _>>();
     let admission = std::env::var("AIRBAND_RELAY_ADMISSION").ok().filter(|a| !a.is_empty());
     println!("airband-relay on port {port}: {} channels known; opening a channel {}", channels.len(), if admission.is_some() { "needs the admission key" } else { "is open to anyone" });
     let speech = std::env::var("AZURE_SPEECH_KEY").ok().filter(|k| !k.is_empty()).zip(std::env::var("AZURE_SPEECH_REGION").ok().filter(|r| !r.is_empty()));
