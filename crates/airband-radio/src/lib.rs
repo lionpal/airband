@@ -86,6 +86,23 @@ pub trait RadioHost: Send + Sync {
     /// What he has said so far, while he is still speaking: the whole of it each time, revised as the service
     /// hears more. For showing; what is sent is what the listening returns.
     fn hearing(&self, text: String);
+    /// Are this host's own `speak` and `listen` worth using? A terminal's are (it prints, and a typed line is
+    /// what he "said"). A phone's are not: its own recognition and voice are too poor to hand him, so with no
+    /// listening service there is no listening, and with no audio from the tower nothing is spoken.
+    fn own_voice(&self) -> bool;
+    /// The tower did not deliver this message of his. Either it is for an agent another of his computers has
+    /// (`elsewhere`, a callsign), or the tower could not tell who it is for (`ask`: who it might be, likeliest
+    /// first). A host with a screen offers the choice; nothing more is sent until he makes it.
+    fn unplaced(&self, message: Outgoing, elsewhere: Option<String>, ask: Vec<String>);
+}
+
+/// What came of opening the microphone.
+pub(crate) enum Listened {
+    Said(String),
+    /// He said nothing, or took it back.
+    Nothing,
+    /// There is nothing to listen with: no service, or it could not be reached.
+    Cannot,
 }
 
 /// A message he typed that is on its way.
@@ -106,6 +123,9 @@ pub struct Outgoing {
     /// Files that go with it, by the ids they reached the tower under.
     #[serde(default)]
     pub attachments: Vec<String>,
+    /// For the tower, not for a host to read: the agents on his screen that other computers have, as JSON.
+    #[serde(default)]
+    pub others: String,
 }
 
 fn chat(m: airband_core::radio::Message) -> ChatMessage {
@@ -334,6 +354,8 @@ pub struct Radio {
     wake: Arc<Wake>,
     /// The roster as last seen, by the tower's number for it: sent back so a wait also ends when it changes.
     roster: std::sync::atomic::AtomicU64,
+    /// Goes up each time a reading aloud is started or stopped: one that finds it changed leaves off.
+    reading: std::sync::atomic::AtomicU64,
 }
 
 #[uniffi::export]
@@ -366,7 +388,7 @@ impl Radio {
             let (link, store, host, stop, wake) = (link.clone(), store.clone(), host.clone(), stop.clone(), wake.clone());
             thread::spawn(move || deliver_outbox(link, store, host, stop, wake));
         }
-        Ok(Arc::new(Radio { jobs: Mutex::new(tx), stop, calling, link, store, host, wake, roster: std::sync::atomic::AtomicU64::new(0) }))
+        Ok(Arc::new(Radio { jobs: Mutex::new(tx), stop, calling, link, store, host, wake, roster: std::sync::atomic::AtomicU64::new(0), reading: std::sync::atomic::AtomicU64::new(0) }))
     }
 
     /// Chat, for a bad connection: take what he typed and keep trying until the tower has it. Returns at
@@ -378,9 +400,37 @@ impl Radio {
     /// project's room; nothing for all of them).
     /// `label`, for a quick message, is the button's words: the chat shows those and the agent gets `text`.
     pub fn queue(&self, text: String, re: Option<String>, scope: Option<String>, label: Option<String>) {
+        self.queue_with(text, re, scope, label, String::new());
+    }
+}
+
+impl Radio {
+    /// Read a whole message aloud in the tower's voice. Blocks until it has been heard or [`Radio::hush`] is
+    /// called. False when the tower has no voice to read it with.
+    pub(crate) fn read_aloud(&self, id: &str) -> bool {
+        let mine = self.reading.fetch_add(1, Ordering::SeqCst) + 1;
+        let speech = match self.link.request("GET", &format!("/message/{id}?form=speech"), None) {
+            Ok((200, v)) => v["speech"].as_str().map(String::from),
+            _ => None,
+        };
+        speech.is_some_and(|speech| voice::play(&self.link, &*self.host, &speech, &|| self.reading.load(Ordering::SeqCst) != mine))
+    }
+    /// Leave off reading aloud.
+    pub(crate) fn hush(&self) {
+        self.reading.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// He opened the microphone himself: listen until the host closes it and hand over what he said. Nothing
+    /// is sent; the caller decides where it goes.
+    pub(crate) fn dictate(&self, done: Box<dyn FnOnce(Listened) + Send>) {
+        let _ = self.jobs.lock().unwrap().send(Job::Dictate(done));
+    }
+
+    /// As [`Radio::queue`], with the agents on his screen that other computers have (JSON, for the tower).
+    pub(crate) fn queue_with(&self, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, others: String) {
         let waiting = self.store.change(|s| {
             // whatever he attached and has reached the tower goes with this
-            s.outbox.push(Outgoing { id: random_hex(12), text, re, at: now_ms(), scope, label, attachments: self.link.take_armed() });
+            s.outbox.push(Outgoing { id: random_hex(12), text, re, at: now_ms(), scope, label, attachments: self.link.take_armed(), others });
             s.outbox.clone()
         });
         self.wake.ring();

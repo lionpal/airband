@@ -12,10 +12,6 @@ use std::sync::Condvar;
 /// block; `changed`, `status` and `note` arrive on any thread and must return quickly.
 #[uniffi::export(with_foreign)]
 pub trait DeskHost: Send + Sync {
-    /// Say this aloud with the device's own voice; return when it has finished.
-    fn speak(&self, text: String);
-    /// Open the microphone and return what he said, by the device's own recognition, or nothing.
-    fn listen(&self) -> Option<String>;
     /// Play 16-bit little-endian mono PCM at `rate`, queued after anything already playing. Returns at once,
     /// except with `last`: then it returns when everything queued has been heard.
     fn play(&self, rate: u32, pcm: Vec<u8>, last: bool);
@@ -26,7 +22,7 @@ pub trait DeskHost: Send + Sync {
     fn record_stop(&self);
     /// What the desk shows has changed: ask for [`Desk::view`] again.
     fn changed(&self);
-    /// For a call screen: what is happening, and the words being said by the device's own voice ("" if none).
+    /// For a call screen: what is happening. `saying` is always empty: nothing is said with the device's own voice.
     fn status(&self, status: RadioStatus, saying: String);
     /// Something he must be told: a message could not be placed, or expired unsent.
     fn note(&self, text: String);
@@ -99,6 +95,26 @@ pub struct DeskView {
     /// Files he has attached and not yet sent, in the order he added them: on their way to the computer, there
     /// and waiting for his words, or failed.
     pub uploads: Vec<DeskUpload>,
+    /// Something he said that could not be placed: who is it for? Shown until he picks one or lets it go.
+    pub asking: Option<DeskAsk>,
+}
+
+/// His words, waiting to be told who they are for.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct DeskAsk {
+    /// What he said (or the words on the button, for a quick message).
+    pub text: String,
+    /// Who it could be for: the tower's guesses first, then everyone else he can see.
+    pub choices: Vec<DeskChoice>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct DeskChoice {
+    /// The agent's id: what [`Desk::choose`] takes.
+    pub id: String,
+    pub callsign: String,
+    pub badge: String,
+    pub colour: u8,
 }
 
 /// One file he attached. `state` is `sending` (with `sent` of `total` bytes there so far), `ready` (it goes with
@@ -132,8 +148,18 @@ struct Station {
     messages: Vec<ChatMessage>,
 }
 
+/// Words of his that no tower could place, with who the asked tower thought they might be for.
+struct Asking {
+    message: Outgoing,
+    guesses: Vec<String>,
+}
+
 #[derive(Default)]
 struct State {
+    /// What he said that is waiting to be told who it is for.
+    asking: Option<Asking>,
+    /// He took back what he was saying: when the microphone closes, nothing is sent.
+    discard: bool,
     stations: Vec<Station>,
     /// Answered here a moment ago: hidden from "waiting" before the tower confirms.
     answered: HashSet<String>,
@@ -243,14 +269,32 @@ struct StationHost {
 }
 
 impl RadioHost for StationHost {
-    fn speak(&self, text: String) {
-        self.shared.floor.take(self.index);
-        self.shared.host.status(RadioStatus::Speaking { callsign: String::new() }, text.clone());
-        self.shared.host.speak(text);
-    }
+    // a phone's own voice and recognition are never used
+    fn speak(&self, _: String) {}
     fn listen(&self) -> Option<String> {
-        self.shared.floor.take(self.index);
-        self.shared.host.listen()
+        None
+    }
+    fn own_voice(&self) -> bool {
+        false
+    }
+    fn unplaced(&self, message: Outgoing, elsewhere: Option<String>, ask: Vec<String>) {
+        {
+            let mut state = self.shared.state.lock().unwrap();
+            if state.generation != self.generation {
+                return;
+            }
+            // the tower read his words as for an agent another computer has: they go there, addressed to it
+            let there = elsewhere.as_ref().and_then(|c| state.stations.iter().enumerate().find(|(i, s)| *i != self.index && s.agents.iter().any(|a| a.callsign == *c)).map(|(_, s)| s.radio.clone()));
+            match (there, elsewhere) {
+                (Some(radio), Some(callsign)) => {
+                    let text = format!("@{} {}", callsign.replace(' ', ""), message.text);
+                    drop(state);
+                    radio.queue_with(text, None, None, message.label.clone(), String::new());
+                }
+                (_, gone) => state.asking = Some(Asking { message, guesses: gone.into_iter().chain(ask).collect() }),
+            }
+        }
+        self.shared.host.changed();
     }
     fn play(&self, rate: u32, pcm: Vec<u8>, last: bool) {
         self.shared.floor.take(self.index);
@@ -417,7 +461,43 @@ impl Desk {
             sending: state.stations.iter().flat_map(|s| s.sending.clone()).collect(),
             stations: state.stations.iter().map(|s| s.name.clone()).collect(),
             uploads: state.uploads.iter().map(|u| u.shown.clone()).collect(),
+            asking: state.asking.as_ref().map(|asking| {
+                // the tower's guesses first, in its order; then everyone else, whoever spoke last first
+                let mut rest: Vec<&ChatAgent> = agents.iter().copied().filter(|a| !asking.guesses.contains(&a.callsign)).collect();
+                let spoke = |a: &ChatAgent| state.stations.iter().flat_map(|s| s.messages.iter()).filter(|m| m.from == a.callsign).map(|m| m.at).max().unwrap_or(0);
+                rest.sort_by_key(|a| std::cmp::Reverse(spoke(a)));
+                let guessed = asking.guesses.iter().filter_map(|c| agents.iter().copied().find(|a| a.callsign == *c));
+                DeskAsk {
+                    text: asking.message.label.clone().unwrap_or_else(|| asking.message.text.clone()),
+                    choices: guessed.chain(rest).take(8).map(|a| DeskChoice { id: a.id.clone(), callsign: a.callsign.clone(), badge: airband_core::routing::badge(&a.group, &a.callsign), colour: state.stations.iter().find_map(|s| s.colours.get(&a.group).copied()).unwrap_or(0) }).collect(),
+                }
+            }),
         }
+    }
+
+    /// He said who his unplaced words are for: they go to that agent, on whichever computer has it.
+    pub fn choose(&self, agent: String) {
+        let sent = {
+            let mut state = self.shared.state.lock().unwrap();
+            let to = state.stations.iter().find_map(|s| s.agents.iter().find(|a| a.id == agent).map(|a| (s.radio.clone(), a.callsign.clone())));
+            match (to, state.asking.take()) {
+                (Some((radio, callsign)), Some(asking)) => Some((radio, format!("@{} {}", callsign.replace(' ', ""), asking.message.text), asking.message.label)),
+                (_, asking) => {
+                    state.asking = asking;
+                    None
+                }
+            }
+        };
+        if let Some((radio, text, label)) = sent {
+            radio.queue_with(text, None, None, label, String::new());
+        }
+        self.shared.host.changed();
+    }
+
+    /// He let his unplaced words go: they are sent to nobody.
+    pub fn drop_ask(&self) {
+        self.shared.state.lock().unwrap().asking = None;
+        self.shared.host.changed();
     }
 
     /// What was said between him and an agent just before one of its messages, oldest first: the context for
@@ -471,7 +551,7 @@ impl Desk {
 
     /// He wants to speak: open the microphone when free. What he says goes to the message `re` if he picked
     /// one; otherwise the tower works out who it is for, among the agents of `room` or all of them.
-    pub fn talk(&self, re: Option<String>, room: Option<String>) {
+    pub fn talk(&self, re: Option<String>, room: Option<String>, agent: Option<String>) {
         let radio = {
             let mut state = self.shared.state.lock().unwrap();
             if state.stations.is_empty() {
@@ -480,11 +560,29 @@ impl Desk {
             if let Some(id) = &re {
                 state.answered.insert(id.clone());
             }
-            let pick = state.uploads.first().map(|u| u.station).unwrap_or_else(|| pick_station(&state, "", re.as_deref(), room.as_deref(), None));
+            state.discard = false;
+            // any computer that is there can do the listening; where the words go is worked out when he sends them
+            let pick = state.uploads.first().map(|u| u.station).unwrap_or_else(|| pick_station(&state, "", re.as_deref(), room.as_deref(), agent.as_deref()));
+            let pick = if state.stations[pick].online { pick } else { state.stations.iter().position(|s| s.online).unwrap_or(pick) };
             state.stations[pick].radio.clone()
         };
-        let scope = room.filter(|_| re.is_none()).map(|r| format!("group:{r}"));
-        radio.talk(re, scope);
+        let shared = self.shared.clone();
+        radio.dictate(Box::new(move |heard| {
+            shared.host.hearing(String::new());
+            if std::mem::take(&mut shared.state.lock().unwrap().discard) {
+                return;
+            }
+            match heard {
+                Listened::Said(text) => deliver(&shared, text, None, re, room, agent),
+                Listened::Nothing => {}
+                Listened::Cannot => shared.host.note("Can\u{2019}t listen right now. Type it instead.".into()),
+            }
+        }));
+    }
+
+    /// He took back what he was saying. The host closes the microphone next; nothing is sent.
+    pub fn cancel_talk(&self) {
+        self.shared.state.lock().unwrap().discard = true;
     }
 
     /// Attach a file from the device (a photo, a video): it starts on its way to the computer at once, and goes
@@ -565,6 +663,18 @@ impl Desk {
         self.radio_of(&message_id).ok_or(RadioError::Refused)?.more(message_id, true)
     }
 
+    /// Read a whole message aloud, in the voice of the computer that has it. Blocks until it has been heard or
+    /// [`Desk::stop_reading`] is called: call it off the main thread. False when that computer has no voice.
+    pub fn read_aloud(&self, message_id: String) -> bool {
+        self.radio_of(&message_id).is_some_and(|radio| radio.read_aloud(&message_id))
+    }
+
+    /// Leave off reading aloud. The host stops what is already playing.
+    pub fn stop_reading(&self) {
+        let radios: Vec<Arc<Radio>> = self.shared.state.lock().unwrap().stations.iter().map(|s| s.radio.clone()).collect();
+        radios.iter().for_each(|r| r.hush());
+    }
+
     /// One of a message's pictures, as a file on the device. Blocks: call it off the main thread.
     pub fn picture(&self, message_id: String, picture_id: String) -> Result<String, RadioError> {
         self.radio_of(&message_id).ok_or(RadioError::Refused)?.picture(picture_id)
@@ -625,40 +735,75 @@ impl Desk {
 
 impl Desk {
     fn deliver(&self, text: String, label: Option<String>, re: Option<String>, room: Option<String>, agent: Option<String>) {
-        let text = text.trim().to_string();
-        if text.is_empty() {
-            return;
-        }
-        let (radio, text, re, scope) = {
-            let mut state = self.shared.state.lock().unwrap();
-            if state.stations.is_empty() {
-                return;
-            }
-            let tagged = text.starts_with('@') || text.starts_with('/');
-            let re = re.filter(|_| !tagged);
-            if let Some(id) = &re {
-                state.answered.insert(id.clone());
-            }
-            // files he attached are already on one computer: his words go there with them
-            let pick = state.uploads.first().map(|u| u.station).unwrap_or_else(|| pick_station(&state, &text, re.as_deref(), room.as_deref(), agent.as_deref()));
-            // the ones that have arrived leave with this message
-            state.uploads.retain(|u| !(u.station == pick && u.shown.state == "ready"));
-            // looking at one agent, with nobody tagged and no message picked: it is for that agent
-            let text = match (&agent, tagged, &re) {
-                (Some(callsign), false, None) => format!("@{} {text}", callsign.replace(' ', "")),
-                _ => text,
-            };
-            let scope = room.filter(|_| re.is_none() && agent.is_none() && !tagged).map(|r| format!("group:{r}"));
-            (state.stations[pick].radio.clone(), text, re, scope)
-        };
-        radio.queue(text, re, scope, label);
-        self.shared.host.changed();
+        deliver(&self.shared, text, label, re, room, agent);
     }
 
     fn radio_of(&self, message: &str) -> Option<Arc<Radio>> {
         let state = self.shared.state.lock().unwrap();
         state.owner(message).map(|i| state.stations[i].radio.clone())
     }
+}
+
+/// Send something of his: typed, tapped or said. Who it is for, and so which computer it goes to, is worked out
+/// from what he can see; the tower it goes to is told about the agents the other computers have, so it can say
+/// the words are for one of those.
+fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>, re: Option<String>, room: Option<String>, agent: Option<String>) {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return;
+    }
+    let (radio, text, re, scope, others) = {
+        let mut state = shared.state.lock().unwrap();
+        if state.stations.is_empty() {
+            return;
+        }
+        // something new said: whatever was waiting to be placed is let go
+        state.asking = None;
+        let tagged = text.starts_with('@') || text.starts_with('/');
+        let re = re.filter(|_| !tagged);
+        if let Some(id) = &re {
+            state.answered.insert(id.clone());
+        }
+        // files he attached are already on one computer: his words go there with them
+        let pick = state.uploads.first().map(|u| u.station).unwrap_or_else(|| pick_station(&state, &text, re.as_deref(), room.as_deref(), agent.as_deref()));
+        // the ones that have arrived leave with this message
+        state.uploads.retain(|u| !(u.station == pick && u.shown.state == "ready"));
+        // looking at one agent, with nobody tagged and no message picked: it is for that agent
+        let aimed = matches!((&agent, tagged, &re), (Some(_), false, None));
+        let text = match (&agent, aimed) {
+            (Some(callsign), true) => format!("@{} {text}", callsign.replace(' ', "")),
+            _ => text,
+        };
+        let scope = room.clone().filter(|_| re.is_none() && agent.is_none() && !tagged).map(|r| format!("group:{r}"));
+        // when the tower has to work out who it is for, it is told who else is on his screen
+        let others = if tagged || aimed || re.is_some() || state.stations.len() < 2 { String::new() } else { others(&state, pick, room.as_deref()) };
+        (state.stations[pick].radio.clone(), text, re, scope, others)
+    };
+    radio.queue_with(text, re, scope, label, others);
+    shared.host.changed();
+}
+
+/// The agents on his screen that computers other than `pick` have, each with the last thing it said: for the
+/// tower his words are going to. In one room, only that room's.
+fn others(state: &State, pick: usize, room: Option<&str>) -> String {
+    let now = now_ms();
+    let mut seen = HashSet::new();
+    state.stations[pick].agents.iter().for_each(|a| {
+        seen.insert(a.id.clone());
+    });
+    let list: Vec<airband_core::radio::Other> = state
+        .stations
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != pick)
+        .flat_map(|(_, s)| s.agents.iter().map(move |a| (s, a)))
+        .filter(|(_, a)| room.is_none_or(|r| a.group == r) && seen.insert(a.id.clone()))
+        .map(|(s, a)| {
+            let last = s.messages.iter().rev().find(|m| m.from == a.callsign && !m.fyi);
+            airband_core::radio::Other { callsign: a.callsign.clone(), group: a.group.clone(), said: last.map(|m| m.text.chars().take(240).collect()).unwrap_or_default(), ago: last.map(|m| now.saturating_sub(m.at) / 1000).unwrap_or(0) }
+        })
+        .collect();
+    if list.is_empty() { String::new() } else { serde_json::to_string(&list).unwrap_or_default() }
 }
 
 /// Which computer a message of his goes to.
@@ -680,12 +825,22 @@ fn pick_station(state: &State, text: &str, re: Option<&str>, room: Option<&str>,
     if let Some(i) = agent.and_then(|c| state.stations.iter().position(|s| s.agents.iter().any(|a| a.callsign == c))) {
         return i;
     }
+    // Nothing says. Go by what is on his screen: the computer of the latest thing in the room he is looking at
+    // (or anywhere), whether an agent said it or he did. A reply follows what was just said; a second message
+    // of his follows his first. The tower there is told who else he can see, and passes it on if it is for them.
+    let here = |s: &Station, m: &ChatMessage| match room {
+        None => true,
+        Some(r) if m.from == "you" => m.to.iter().any(|c| s.agents.iter().any(|a| a.callsign == *c && a.group == r)),
+        Some(r) => m.group == r,
+    };
+    let last = state.stations.iter().enumerate().filter_map(|(i, s)| s.messages.iter().rev().find(|m| !m.fyi && here(s, m)).map(|m| (m.at, i))).max();
+    if let Some((_, i)) = last {
+        return i;
+    }
     if let Some(i) = room.and_then(|r| state.stations.iter().position(|s| s.agents.iter().any(|a| a.group == r))) {
         return i;
     }
-    // nothing says: the computer that last had something to say
-    let last = state.stations.iter().enumerate().filter_map(|(i, s)| s.messages.iter().rev().find(|m| m.from != "you").map(|m| (m.at, i))).max();
-    last.map(|(_, i)| i).unwrap_or(0)
+    0
 }
 
 /// Keeps one computer's part of the chat current. One request is always open with its tower.
@@ -744,6 +899,10 @@ mod tests {
 
     struct Quiet;
     impl RadioHost for Quiet {
+        fn own_voice(&self) -> bool {
+            false
+        }
+        fn unplaced(&self, _: Outgoing, _: Option<String>, _: Vec<String>) {}
         fn speak(&self, _: String) {}
         fn listen(&self) -> Option<String> {
             None

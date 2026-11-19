@@ -44,6 +44,8 @@ const of = (key) => {
   return INFRA[key];
 };
 const ACCOUNT = of('account'), REGION = of('region');
+// "speechRegion" is optional: with it, the relay lends its speech service (see the task's secrets below)
+const SPEECH_REGION = INFRA.speechRegion;
 const ZONE_NAME = of('zoneName'), ZONE_ID = of('zoneId'), DOMAIN = of('domain');
 // an existing load balancer and its network, by id: the relay is one more rule on its listener
 const VPC_ID = of('vpcId'), PUBLIC_SUBNETS = of('publicSubnets'), ZONES = of('zones');
@@ -68,8 +70,11 @@ class AirbandRelay extends Stack {
     task.addContainer('relay', {
       image: ecs.ContainerImage.fromAsset(join(HERE, '..'), { platform: Platform.LINUX_AMD64 }),
       portMappings: [{ containerPort: PORT }],
-      environment: { PORT: String(PORT), DB_HOST, DB_PORT: '5432', DB_NAME },
+      environment: { PORT: String(PORT), DB_HOST, DB_PORT: '5432', DB_NAME, ...(SPEECH_REGION ? { AZURE_SPEECH_REGION: SPEECH_REGION } : {}) },
       secrets: {
+        // optional: a speech service this relay lends to towers that have none. The key is written once by hand
+        // (aws ssm put-parameter --name /airband/speech-key --type SecureString --value <key>) and never in the repo
+        ...(SPEECH_REGION ? { AZURE_SPEECH_KEY: ecs.Secret.fromSsmParameter(ssm.StringParameter.fromSecureStringParameterAttributes(this, 'SpeechKey', { parameterName: '/airband/speech-key' })) } : {}),
         DB_USER: ecs.Secret.fromSecretsManager(dbSecret, 'username'), DB_PASS: ecs.Secret.fromSecretsManager(dbSecret, 'password'),
         // without this anyone on the internet could open channels here; written once by hand, never in the repo
         AIRBAND_RELAY_ADMISSION: ecs.Secret.fromSsmParameter(ssm.StringParameter.fromSecureStringParameterAttributes(this, 'Admission', { parameterName: '/airband/relay-admission' })),

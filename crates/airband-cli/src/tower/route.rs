@@ -20,6 +20,8 @@ pub(super) enum Routed {
     Ask(Vec<String>),
     /// It is not for anyone running: he wants a new agent started.
     New(Idea),
+    /// It is for an agent on another of his computers, by this callsign.
+    Elsewhere(String),
 }
 
 /// What the plain rules make of his words, for a typed command and for when no model answers: `/launch shop
@@ -40,7 +42,7 @@ fn new_by_rule(app: &App, text: &str, projects: &[String]) -> Option<Idea> {
 /// Who an untagged reply is for, or that it asks for a new agent. What is certain without reading comes first
 /// (the message he tapped). After that a model reads his words: against what each agent has been saying, and
 /// against the projects, models and efforts a new agent could be started with.
-pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&str>, scope: Option<&str>) -> Routed {
+pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&str>, scope: Option<&str>, others: &[airband_core::radio::Other]) -> Routed {
     // the room he was looking at, when he was in one: only its agents can be meant
     let room = scope.and_then(|s| s.strip_prefix("group:")).map(str::to_string);
     let within = |s: &Session| room.as_ref().is_none_or(|g| s.callsign.project == *g);
@@ -79,7 +81,9 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
     // what a new agent could be started in and on, if anything
     let launcher = app.cfg.launchers.get(&app.cfg.launcher);
     let projects: Vec<String> = app.inner.lock().unwrap().launchable(&app.cfg).into_keys().collect();
-    let can_start = launcher.is_some() && !projects.is_empty();
+    // with agents of another computer on his screen there is always more than one it could be for
+    let can_start = (launcher.is_some() && !projects.is_empty()) || !others.is_empty();
+    let launcher = launcher.filter(|_| !projects.is_empty());
     match (candidates.as_slice(), all.as_slice()) {
         (_, []) if !can_start => Routed::Ask(Vec::new()),
         // only one agent it could be, and nothing else it could mean
@@ -98,13 +102,18 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                 Some(e) => line(s, e, false),
                 None => format!("- {} (letters {}; has said nothing yet)", s.callsign.text(), letters(s)),
             }));
+            // the agents he can see that another of his computers has: his words may be for one of them
+            lines.extend(others.iter().take(8).map(|o| {
+                let letters = airband_core::routing::badge(&o.group, &o.callsign);
+                if o.said.is_empty() { format!("- {} (letters {letters}; on another of his computers; has said nothing yet)", o.callsign) } else { format!("- {} (letters {letters}; on another of his computers; {} ago): {}", o.callsign, ago(o.ago * 1000), o.said) }
+            }));
             let last = match &focus {
                 Some((_, Some((at, to, said)))) => format!("The last thing he said, {} ago, was to {}: \"{said}\"\n", ago(now.saturating_sub(*at)), list(to)),
                 Some((s, None)) => format!("The agent he last spoke with is {}.\n", s.callsign.text()),
                 None => String::new(),
             };
             // the other thing his words can be: a request for a new agent, on a model and at an effort he may name
-            let starting = match launcher.filter(|_| can_start) {
+            let starting = match launcher {
                 None => String::new(),
                 Some(l) => {
                     let lately: Vec<String> = {
@@ -203,6 +212,10 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
             if all.is_empty() {
                 return Routed::Ask(Vec::new());
             }
+            // one of the agents on another computer, and none here: the radio takes it there
+            if let Some(o) = others.iter().find(|o| judged.to.iter().any(|c| c.trim().eq_ignore_ascii_case(&o.callsign))).filter(|_| judged.sure && !everyone.iter().any(|s| judged.to.iter().any(|c| c.trim().eq_ignore_ascii_case(&s.callsign.text())))) {
+                return Routed::Elsewhere(o.callsign.clone());
+            }
             let judged = Some(judged);
             // the model names an agent by its callsign; its letters are taken too when they are one agent's alone
             let answers = |c: &str, s: &Session| {
@@ -235,7 +248,7 @@ pub(super) fn ago(ms: u64) -> String {
 /// picks the best fit: he is told where it started, so a fair guess beats a question. Only when nothing in the
 /// idea points anywhere is he asked, and the idea is kept for his answer.
 async fn place_idea(app: &Arc<App>, idea: &str, projects: &[String]) -> Result<String, Reply> {
-    let say = |s: String, listen: bool| Reply { say: s, listen, speech: None };
+    let say = |s: String, listen: bool| Reply { say: s, listen, ..Reply::default() };
     if idea.is_empty() {
         return Err(say("What should it do? Say new idea, then the idea.".into(), true));
     }
@@ -292,11 +305,11 @@ async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, projects: &[
                 return reply;
             }
         },
-        (None, false) if idea.task.is_empty() || projects.is_empty() => return place_idea(app, &idea.task, projects).await.err().unwrap_or(Reply { say: String::new(), listen: false, speech: None }),
+        (None, false) if idea.task.is_empty() || projects.is_empty() => return place_idea(app, &idea.task, projects).await.err().unwrap_or(Reply { say: String::new(), listen: false, ..Reply::default() }),
         (None, false) => {
             app.inner.lock().unwrap().call(radio).unplaced_idea = Some((idea, Instant::now()));
             log(format!("← radio: \"{text}\" → a new agent, project not clear"));
-            return Reply { say: format!("Which project is that for? {}.", projects.join(", ")), listen: true, speech: None };
+            return Reply { say: format!("Which project is that for? {}.", projects.join(", ")), listen: true, ..Reply::default() };
         }
     };
     log(format!("← radio: \"{text}\" → launch in {project}"));
@@ -306,7 +319,7 @@ async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, projects: &[
 /// `uid` is the utterance's own id, when the radio gave one: deliveries are recorded against it, so a retry after
 /// a crash can tell that the message already reached its agent.
 /// `label` is the button's words when this is a quick message: the chat shows those, and the agent gets `text`.
-pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>, text: &str, re: Option<&str>, scope: Option<&str>, label: Option<&str>, attached: &[String]) -> Reply {
+pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>, text: &str, re: Option<&str>, scope: Option<&str>, label: Option<&str>, attached: &[String], others: &[airband_core::radio::Other]) -> Reply {
     // an answer to a request for permission goes back to the harness that asked, not to the agent as a message
     if let Some(reply) = permit::answer(app, text, re) {
         return reply;
@@ -332,8 +345,8 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
             return start(app, radio, text, idea, &projects, true).await;
         }
     }
-    let say = |s: String| Reply { say: s, listen: false, speech: None };
-    let ask = |s: String| Reply { say: s, listen: true, speech: None };
+    let say = |s: String| Reply { say: s, ..Reply::default() };
+    let ask = |s: String| Reply { say: s, listen: true, ..Reply::default() };
     let (mut parsed, named, roster, names, pending, held_text) = {
         let mut inner = app.inner.lock().unwrap();
         inner.reap();
@@ -360,8 +373,12 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
         let inner = app.inner.lock().unwrap();
         inner.calls.get(radio).and_then(|c| c.focus.clone()).and_then(|f| inner.find(&f).cloned()).or((inner.sessions.len() == 1).then(|| inner.sessions[0].clone())).into_iter().collect()
     } else {
-        match route(app, radio, &parsed.rest, re, scope).await {
+        match route(app, radio, &parsed.rest, re, scope, others).await {
             Routed::Sure(t) => t,
+            Routed::Elsewhere(callsign) => {
+                log(format!("← radio: \"{text}\" → {callsign}, on another computer"));
+                return Reply { elsewhere: Some(callsign), ..Reply::default() };
+            }
             Routed::New(mut idea) => {
                 idea.task.push_str(&files);
                 return start(app, radio, text, idea, &projects, false).await;
@@ -371,7 +388,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
                 // held with its files, so they go along when he says who it was for
                 app.inner.lock().unwrap().call(radio).asked = Some((format!("{}{files}", parsed.rest), Instant::now()));
                 log(format!("← radio: \"{text}\" → unsure; asking between {}", options.join(", ")));
-                return ask(format!("Who is that for? {}.", options.join(", or ")));
+                return Reply { ask: options.clone(), ..ask(format!("Who is that for? {}.", options.join(", or "))) };
             }
         }
     };
@@ -421,20 +438,25 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
     if targets.is_empty() {
         return if names.is_empty() { say("No agents are running.".into()) } else { ask(format!("Who is that for? {}.", names.join(", "))) };
     }
-    let content = format!(
+    // His words, as he said them. How to answer him through the radio is explained with the first thing he sends
+    // an agent and again after some hours, not with every "OK".
+    let many = if targets.len() > 1 { format!(" This same message went to {} agents.", targets.len()) } else { String::new() };
+    let briefed = format!(
         "Message from {name}, sent through Airband by voice or from his phone. If by voice a word may be mis-heard. He is away from the keyboard: \
          he will get your reply cut to one or two sentences, so put the outcome and any question first.{many}\n\n\
          {rest}{files}\n\n\
-         If this reads as garbled, or acting on it would be hard to undo, ask him to confirm in one short question before doing it.",
+         If this reads as garbled, or acting on it would be hard to undo, ask him to confirm in one short question before doing it. \
+         Later messages from him through Airband come with one line in front and nothing after; the same holds for them.",
         name = app.cfg.name,
-        many = if targets.len() > 1 { format!(" This same message went to {} agents.", targets.len()) } else { String::new() },
         rest = parsed.rest
     );
+    let plain = format!("From {name}, through Airband:{many}\n\n{rest}{files}", name = app.cfg.name, rest = parsed.rest);
+    const BRIEF_AGAIN_MS: u64 = 6 * 3600 * 1000;
     let message_id = config::random_hex(8);
     let (mut sent, mut failed) = (Vec::new(), Vec::new());
     for t in &targets {
         let outcome = match &t.agent.deliver {
-            Some(how) => deliver(how, &t.agent.id, &content).await,
+            Some(how) => deliver(how, &t.agent.id, if now().saturating_sub(t.briefed_at) > BRIEF_AGAIN_MS { &briefed } else { &plain }).await,
             None => Err("its harness gave no way to reach it".into()),
         };
         app.store.delivery(&message_id, uid, &t.callsign.text(), &outcome);
@@ -451,6 +473,9 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
         let id = t.agent.id.clone();
         if let Some(s) = inner.session(&id) {
             s.waiting = false;
+            if now().saturating_sub(s.briefed_at) > BRIEF_AGAIN_MS {
+                s.briefed_at = now();
+            }
         }
         inner.drop_pending(&id, None);
     }

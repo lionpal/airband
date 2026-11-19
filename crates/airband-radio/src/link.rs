@@ -152,14 +152,14 @@ impl Link {
         v["next"].as_u64().ok_or(LinkError::Refused)
     }
 
-    pub(crate) fn utterance_once(&self, id: &str, text: &str, re: Option<String>, scope: Option<String>, label: Option<String>, attachments: Vec<String>) -> Result<Reply, LinkError> {
-        let u = Utterance { text: text.to_string(), id: Some(id.to_string()), re, scope, label, attachments };
+    pub(crate) fn utterance_once(&self, id: &str, text: &str, re: Option<String>, scope: Option<String>, label: Option<String>, attachments: Vec<String>, others: &str) -> Result<Reply, LinkError> {
+        let u = Utterance { text: text.to_string(), id: Some(id.to_string()), re, scope, label, attachments, others: serde_json::from_str(others).unwrap_or_default() };
         match self.post_ordered("/utterance", &u) {
             Ok(v) => serde_json::from_value(v).map_err(|_| LinkError::Refused),
             // his computer is away, or still catching up: the relay keeps it for it. If that fails too, the
             // caller is told which it was and tries again later.
             Err(away @ (LinkError::Away | LinkError::Behind)) => match self.hold(&u) {
-                Ok(()) => Ok(Reply { say: if matches!(away, LinkError::Away) { AWAY.into() } else { String::new() }, listen: false, speech: None }),
+                Ok(()) => Ok(Reply { say: if matches!(away, LinkError::Away) { AWAY.into() } else { String::new() }, listen: false, ..Reply::default() }),
                 Err(_) => Err(away),
             },
             Err(e) => Err(e),
@@ -169,7 +169,7 @@ impl Link {
     pub(crate) fn utterance(&self, text: &str, re: Option<String>, scope: Option<String>) -> Result<Reply, LinkError> {
         // what he has attached goes with what he says; if this fails for good they are his to send again
         let attachments = self.take_armed();
-        let u = Utterance { text: text.to_string(), id: Some(random_hex(12)), re, scope, label: None, attachments: attachments.clone() };
+        let u = Utterance { text: text.to_string(), id: Some(random_hex(12)), re, scope, label: None, attachments: attachments.clone(), others: Vec::new() };
         let mut last = LinkError::Offline;
         for attempt in 0..3 {
             if attempt > 0 {
@@ -180,7 +180,7 @@ impl Link {
                 Err(LinkError::Refused) => return Err(LinkError::Refused),
                 // his computer is away: no use trying again in two seconds. The relay keeps it for it.
                 Err(away @ (LinkError::Away | LinkError::Behind)) => match self.hold(&u) {
-                    Ok(()) => return Ok(Reply { say: if matches!(away, LinkError::Away) { AWAY.into() } else { String::new() }, listen: false, speech: None }),
+                    Ok(()) => return Ok(Reply { say: if matches!(away, LinkError::Away) { AWAY.into() } else { String::new() }, listen: false, ..Reply::default() }),
                     Err(e) => last = e,
                 },
                 Err(e) => last = e,

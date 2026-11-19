@@ -89,9 +89,57 @@ pub struct App {
     speech: speech::Speech,
     /// Microsoft's short-lived pass for the phone's ears, and when it was made.
     ears_pass: Mutex<Option<(String, Instant)>>,
+    /// The pass the relay lends for speech, for a tower with no voice or no ears of its own: region, token,
+    /// and when it was fetched.
+    lent_pass: Mutex<Option<(String, String, Instant)>>,
     inner: Mutex<Inner>,
     kick: Notify,
     accounts: accounts::Kept,
+}
+
+impl App {
+    /// The relay's speech pass, while it is fresh: (region, token).
+    fn lent(&self) -> Option<(String, String)> {
+        self.lent_pass.lock().unwrap().clone().filter(|(_, _, when)| when.elapsed() < Duration::from_secs(540)).map(|(region, token, _)| (region, token))
+    }
+    /// What speaks: the voice he set, or with none set, Microsoft's through the relay's pass when there is one.
+    /// The phone's own voice is never the fallback: with nothing here, nothing is spoken.
+    fn voice(&self) -> config::Voice {
+        match (&self.cfg.voice, self.lent()) {
+            (config::Voice::Device, Some((region, token))) => config::Voice::AzurePass { region, token },
+            (set, _) => set.clone(),
+        }
+    }
+}
+
+/// A tower with no voice or no listening service of its own borrows the relay's: a pass that lasts ten minutes,
+/// fetched again every seven. A relay that lends none is asked again every ten minutes, in case it starts to.
+async fn lent_pass_loop(app: Arc<App>) {
+    let wanted = matches!(app.cfg.voice, config::Voice::Device) || matches!(app.cfg.ears, config::Ears::Device);
+    let (Some(relay), true) = (app.cfg.relay.clone(), wanted) else { return };
+    let admission = app.cfg.relay_admission.clone().unwrap_or_default();
+    loop {
+        let (url, key) = (format!("{}/v1/speech/pass", relay.trim_end_matches('/')), admission.clone());
+        let got = tokio::task::spawn_blocking(move || {
+            let mut res = airband_radio::net::agent(Duration::from_secs(10)).post(&url).header("x-airband-admission", &key).header("Content-Length", "0").send_empty().ok()?;
+            let v: Value = (res.status().as_u16() == 200).then(|| res.body_mut().read_json().ok()).flatten()?;
+            Some((v["region"].as_str()?.to_string(), v["token"].as_str()?.to_string()))
+        })
+        .await
+        .ok()
+        .flatten();
+        let had = app.lent_pass.lock().unwrap().is_some();
+        match got {
+            Some((region, token)) => {
+                if !had {
+                    log("speech: using the relay's service, as none is set here");
+                }
+                *app.lent_pass.lock().unwrap() = Some((region, token, Instant::now()));
+                tokio::time::sleep(Duration::from_secs(420)).await;
+            }
+            None => tokio::time::sleep(Duration::from_secs(if had { 30 } else { 600 })).await,
+        }
+    }
 }
 
 /// What each working agent is doing and what it runs on, asked of its harness's adapter every couple of seconds,
@@ -194,12 +242,13 @@ pub fn run(cfg: Config) -> Result<(), String> {
         let live: HashSet<String> = inner.sessions.iter().map(|s| s.agent.id.clone()).collect();
         inner.pending.retain(|p| live.contains(&p.agent_id));
         let port = cfg.port;
-        let app = Arc::new(App { cfg, store, speech: speech::Speech::default(), ears_pass: Mutex::new(None), inner: Mutex::new(inner), kick: Notify::new(), accounts: accounts::Kept::default() });
+        let app = Arc::new(App { cfg, store, speech: speech::Speech::default(), ears_pass: Mutex::new(None), lent_pass: Mutex::new(None), inner: Mutex::new(inner), kick: Notify::new(), accounts: accounts::Kept::default() });
         let router = http::router(app.clone());
 
         tokio::spawn(pump_loop(app.clone()));
         tokio::spawn(accounts::keep_alive(app.clone()));
         tokio::spawn(activity_loop(app.clone()));
+        tokio::spawn(lent_pass_loop(app.clone()));
         relay_link::start(app.clone(), router.clone(), tokio::runtime::Handle::current());
         {
             let app = app.clone();

@@ -119,6 +119,16 @@ impl RadioHost for Terminal {
     fn record_stop(&self) {}
     fn outbox(&self, _: Vec<Outgoing>, _: Option<String>) {}
     fn hearing(&self, _text: String) {}
+    // a terminal prints what is said and takes a typed line as what he said
+    fn own_voice(&self) -> bool {
+        true
+    }
+    fn unplaced(&self, message: airband_radio::Outgoing, elsewhere: Option<String>, ask: Vec<String>) {
+        match elsewhere {
+            Some(callsign) => println!("Not sent: “{}” is for {callsign}, on another computer.", message.text),
+            None => println!("Who is that for? {}. Say the name.", ask.join(", or ")),
+        }
+    }
     fn status(&self, status: RadioStatus) {
         if matches!(status, RadioStatus::Speaking { .. }) {
             *self.asked.lock().unwrap() = std::time::Instant::now();
@@ -200,6 +210,15 @@ impl RadioHost for Silent {
         }
     }
     fn hearing(&self, _text: String) {}
+    fn own_voice(&self) -> bool {
+        true
+    }
+    fn unplaced(&self, message: airband_radio::Outgoing, elsewhere: Option<String>, ask: Vec<String>) {
+        match elsewhere {
+            Some(callsign) => eprintln!("Not sent: “{}” is for {callsign}, on another computer.", message.text),
+            None => eprintln!("Not sent: “{}” could be for {}. Tag one: @name.", message.text, ask.join(", or ")),
+        }
+    }
 }
 
 fn link_from(cfg: &Config, args: &[String]) -> String {

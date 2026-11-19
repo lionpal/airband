@@ -87,6 +87,23 @@ pub struct Utterance {
     /// Files he attached, by the ids they were sent under (`POST attachment`). The agent is told where each is.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<String>,
+    /// Agents on his screen that this tower does not have: they are on another of his computers. With them the
+    /// tower reads his words against everything he can see, and can answer that they are for one of these.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub others: Vec<Other>,
+}
+
+/// An agent on another of his computers, as his screen shows it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Other {
+    pub callsign: String,
+    pub group: String,
+    /// The last thing it said, in its short form. Empty if it has said nothing.
+    #[serde(default)]
+    pub said: String,
+    /// How long ago that was, in seconds.
+    #[serde(default)]
+    pub ago: u64,
 }
 
 /// `POST attachment`: one part of a file he is attaching. Parts are sent in order; the answer says how many bytes
@@ -201,9 +218,18 @@ pub struct Reply {
     pub say: String,
     /// Open the microphone again after speaking.
     #[serde(default)]
-    pub listen: bool,    /// The id of `say` as speech, when the tower is making it.
+    pub listen: bool,
+    /// The id of `say` as speech, when the tower is making it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speech: Option<String>,
+    /// The tower could not tell who his words are for: the agents it could be, likeliest first. A radio with a
+    /// screen offers them to tap; `say` asks the same thing in words for one without.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ask: Vec<String>,
+    /// His words are for this agent, which another of his computers has (one of the utterance's `others`).
+    /// Nothing was delivered: the radio sends them there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elsewhere: Option<String>,
 }
 
 /// `GET ears`: what should turn his speech into text. `kind` is "device" (the phone's own recognition) or the

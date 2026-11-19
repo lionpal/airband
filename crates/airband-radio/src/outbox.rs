@@ -23,7 +23,14 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, store: Arc<Store>, host: Arc<dyn R
             done(Some(format!("Not sent, no connection for half an hour: “{}”", next.text)));
             continue;
         }
-        match link.utterance_once(&next.id, &next.text, next.re.clone(), next.scope.clone(), next.label.clone(), next.attachments.clone()) {
+        match link.utterance_once(&next.id, &next.text, next.re.clone(), next.scope.clone(), next.label.clone(), next.attachments.clone(), &next.others) {
+            // not delivered: it is for an agent on another computer, or the tower cannot tell who it is for.
+            // The host takes it from here; it has left this radio's list either way
+            Ok(reply) if reply.elsewhere.is_some() || !reply.ask.is_empty() => {
+                wait = 1;
+                done(None);
+                host.unplaced(next.clone(), reply.elsewhere, reply.ask);
+            }
             Ok(reply) => {
                 wait = 1;
                 // "Sent to …" shows up as his own line in the chat; anything else he has to see

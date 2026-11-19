@@ -61,7 +61,9 @@ impl Synth for Gemini {
 }
 
 struct Azure {
+    /// The service's key, or a pass made with it.
     key: String,
+    pass: bool,
     region: String,
     voice: String,
 }
@@ -75,7 +77,7 @@ impl Synth for Azure {
         let ssml = format!("<speak version='1.0' xml:lang='en-US'><voice name='{}'>{escaped}</voice></speak>", self.voice);
         let res = airband_radio::net::agent(Duration::from_secs(30))
             .post(format!("https://{}.tts.speech.microsoft.com/cognitiveservices/v1", self.region))
-            .header("Ocp-Apim-Subscription-Key", &self.key)
+            .header(if self.pass { "Authorization" } else { "Ocp-Apim-Subscription-Key" }, if self.pass { format!("Bearer {}", self.key) } else { self.key.clone() })
             .header("Content-Type", "application/ssml+xml")
             .header("X-Microsoft-OutputFormat", "raw-24khz-16bit-mono-pcm")
             .header("User-Agent", "airband")
@@ -100,7 +102,8 @@ fn synth_for(voice: &Voice) -> Option<Box<dyn Synth>> {
     match voice {
         Voice::Device => None,
         Voice::Gemini { key, model, voice } => Some(Box::new(Gemini { key: key.clone(), model: model.clone(), voice: voice.clone() })),
-        Voice::Azure { key, region, voice } => Some(Box::new(Azure { key: key.clone(), region: region.clone(), voice: voice.clone() })),
+        Voice::Azure { key, region, voice } => Some(Box::new(Azure { key: key.clone(), pass: false, region: region.clone(), voice: voice.clone() })),
+        Voice::AzurePass { region, token } => Some(Box::new(Azure { key: token.clone(), pass: true, region: region.clone(), voice: "en-US-AvaMultilingualNeural".into() })),
     }
 }
 
@@ -114,8 +117,10 @@ struct Clip {
     failed: bool,
 }
 
-/// How many clips are kept. Each is a few tens of kilobytes.
+/// How many clips are kept. Each is a few tens of kilobytes, unless it is a whole message read aloud.
 const KEEP: usize = 40;
+/// And how much sound in all.
+const KEEP_BYTES: usize = 4 * 1024 * 1024;
 /// Blocks in one answer: four seconds. Small enough to pass the relay sealed, large enough to stay ahead of playback.
 const PART_BLOCKS: usize = 40;
 
@@ -144,6 +149,13 @@ impl Speech {
             clips.1.retain(|k| k != &id);
             clips.1.push_back(id.clone());
             while clips.1.len() > KEEP {
+                if let Some(old) = clips.1.pop_front() {
+                    clips.0.remove(&old);
+                }
+            }
+            // a whole message read aloud is minutes of sound: the oldest clips go when there are megabytes of it
+            let held = |clips: &HashMap<String, Arc<Mutex<Clip>>>| clips.values().map(|c| c.lock().unwrap().blocks.len()).sum::<usize>();
+            while clips.1.len() > 2 && held(&clips.0) > KEEP_BYTES {
                 if let Some(old) = clips.1.pop_front() {
                     clips.0.remove(&old);
                 }

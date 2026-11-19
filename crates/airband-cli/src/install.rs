@@ -175,7 +175,7 @@ pub fn voice(mut cfg: Config, args: &[String]) -> Result<(), String> {
     cfg.voice = match args.first().map(String::as_str) {
         None => {
             println!("{}", match &cfg.voice {
-                Voice::Device => "Voice: the phone's own.".to_string(),
+                Voice::Device | Voice::AzurePass { .. } => "Voice: none set here. The relay's is used when it lends one; without, nothing is spoken.".to_string(),
                 Voice::Gemini { model, voice, .. } => format!("Voice: Gemini, {voice} on {model}, made by the tower."),
                 Voice::Azure { region, voice, .. } => format!("Voice: Microsoft, {voice} in {region}, made by the tower."),
             });
@@ -212,7 +212,7 @@ pub fn ears(mut cfg: Config, args: &[String]) -> Result<(), String> {
     cfg.ears = match args.first().map(String::as_str) {
         None => {
             println!("{}", match &cfg.ears {
-                Ears::Device => "Ears: the phone's own recognition.".to_string(),
+                Ears::Device => "Ears: none set here. The relay's are used when it lends them; without, he types.".to_string(),
                 Ears::Azure { region, language, .. } => format!("Ears: Microsoft in {region}, {language}; the phone reaches it with a pass from the tower."),
             });
             println!("Change it:  airband ears device  |  airband ears azure --key-env AZURE_SPEECH_KEY --region <region> [--language en-US]");

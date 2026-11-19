@@ -11,7 +11,11 @@ const AZURE_PASS: Duration = Duration::from_secs(480);
 /// What the phone should listen with right now.
 pub(super) async fn grant(app: &Arc<App>) -> EarsGrant {
     match app.cfg.ears.clone() {
-        config::Ears::Device => EarsGrant::default(),
+        // none set here: the relay's, when it lends one. Never the phone's own recognition
+        config::Ears::Device => match app.lent() {
+            Some((region, token)) => EarsGrant { kind: "azure".into(), region, token, language: "en-US".into(), phrases: phrases(app) },
+            None => EarsGrant::default(),
+        },
         config::Ears::Azure { key, region, language } => azure(app, key, region, language).await,
     }
 }

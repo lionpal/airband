@@ -99,7 +99,7 @@ fn verdict(text: &str) -> Option<bool> {
 /// (`re`), or when exactly one request is waiting and he said a plain yes or no. Otherwise nothing here
 /// touches it. Words of his own on the question itself refuse it, and are passed on as the reason.
 pub(super) fn answer(app: &App, text: &str, re: Option<&str>) -> Option<Reply> {
-    let say = |s: &str| Some(Reply { say: s.into(), listen: false, speech: None });
+    let say = |s: &str| Some(Reply { say: s.into(), listen: false, ..Reply::default() });
     let mut inner = app.inner.lock().unwrap();
     let waiting = |p: &Permit| p.decided.is_none();
     let on_question = re.and_then(|r| inner.permits.iter().find(|(_, p)| p.entry == r && waiting(p)).map(|(id, _)| id.clone()));

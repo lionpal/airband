@@ -12,7 +12,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     static let shared = RadioModel()
 
     /// What the screen shows, as the desk last gave it, for the room or agent he is looking at.
-    @Published var view = DeskView(paired: false, online: false, connecting: false, feed: [], rooms: [], canPoke: false, quick: [], sending: [], stations: [], uploads: [])
+    @Published var view = DeskView(paired: false, online: false, connecting: false, feed: [], rooms: [], canPoke: false, quick: [], sending: [], stations: [], uploads: [], asking: nil)
     /// A project: show just its agents, and keep what he says among them.
     @Published var room: String? { didSet { refresh() } }
     /// A callsign: show just that agent.
@@ -49,7 +49,6 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     init() {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("radio")
-        voice.onPartial = { [weak self] text in DispatchQueue.main.async { self?.hearing = text } }
         desk = Desk.open(dataDir: dir.path, host: self)
         var links = (try? JSONDecoder().decode([String].self, from: Data((Keychain.read("airband.links") ?? "[]").utf8))) ?? []
         if let old = Keychain.read("airband.link"), !old.isEmpty, !links.contains(old) { links.append(old) } // from the first builds
@@ -174,23 +173,28 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
     }
 
-    /// Read a whole message aloud in the phone's own voice, or stop if it is the one being read.
-    func readAloud(_ m: ChatMessage, _ text: String) {
+    /// Read a whole message aloud, in the voice of the computer it came from, or stop if it is the one being read.
+    func readAloud(_ m: ChatMessage) {
         if reading == m.id {
             stopReading()
             return
         }
-        voice.hush()
+        stopReading()
         reading = m.id
-        fetch.async {
-            self.voice.speak(text)
-            DispatchQueue.main.async { if self.reading == m.id { self.reading = nil } }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let read = self.desk.readAloud(messageId: m.id)
+            DispatchQueue.main.async {
+                guard self.reading == m.id else { return }
+                self.reading = nil
+                if !read { self.problem = "That computer has no voice to read with." }
+            }
         }
     }
 
     func stopReading() {
         guard reading != nil else { return }
         reading = nil
+        desk.stopReading()
         voice.hush()
     }
 
@@ -277,21 +281,40 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// The big button: he wants to say something now. It is the answer to the message he picked, if he picked one;
     /// otherwise the tower works out who it is for, in the room he is looking at or among everyone.
+    /// The microphone stays open until he taps again, however long he pauses: that second tap sends what he
+    /// said. Nothing is ever sent because he stopped talking.
     @MainActor func talk(about message: ChatMessage? = nil) async {
+        // the microphone is open: this tap closes it, and what he said goes
+        if case .listening = status {
+            voice.recordStop()
+            return
+        }
         if let missing = await voice.authorize() {
             problem = missing
             return
         }
+        stopReading()
         // `message`: he is looking at something of one agent's (a picture, say) and this is about that
         let target = message ?? replyingTo
         replyingTo = nil
-        desk.talk(re: target?.id, room: only == nil ? room : nil)
+        hearing = ""
+        desk.talk(re: target?.id, room: only == nil ? room : nil, agent: target == nil ? only : nil)
+    }
+
+    /// He took back what he was saying: the microphone closes and nothing is sent.
+    func cancelTalk() {
+        desk.cancelTalk()
+        voice.recordStop()
+        hearing = ""
+    }
+
+    /// His words could not be placed and he has said who they are for, or let them go.
+    func choose(_ choice: DeskChoice?) {
+        if let choice { desk.choose(agent: choice.id) } else { desk.dropAsk() }
     }
 
     // MARK: DeskHost: called by the core, on its own threads
 
-    func speak(text: String) { voice.speak(text) }
-    func listen() -> String? { voice.listen() }
     func play(rate: UInt32, pcm: Data, last: Bool) { voice.play(rate: rate, pcm: pcm, last: last) }
     func recordStart(rate: UInt32) -> Bool { voice.recordStart(rate: rate) }
     func recordRead() -> Data { voice.recordRead() }

@@ -18,8 +18,6 @@ const PASS_LIFE: Duration = Duration::from_secs(300);
 #[derive(Default)]
 pub(crate) struct Ears {
     grant: Mutex<Option<(EarsGrant, Instant)>>,
-    /// After a service fails, the host's own recognition is used until this time.
-    device_until: Mutex<Option<Instant>>,
 }
 
 impl Ears {
@@ -33,39 +31,45 @@ impl Ears {
             Ok((200, v)) => serde_json::from_value(v).unwrap_or_default(),
             _ => EarsGrant::default(),
         };
-        *self.grant.lock().unwrap() = Some((g.clone(), Instant::now()));
+        // only a pass that can be used is kept: with none, the tower is asked again next time
+        if g.kind != "device" {
+            *self.grant.lock().unwrap() = Some((g.clone(), Instant::now()));
+        }
         g
     }
 
-    /// Listen for one reply. None if he said nothing.
-    pub(crate) fn hear(&self, link: &Link, host: &dyn RadioHost) -> Option<String> {
-        let resting = self.device_until.lock().unwrap().is_some_and(|t| Instant::now() < t);
-        let grant = if resting { EarsGrant::default() } else { self.grant(link) };
+    /// Open the microphone and listen. With `manual` he opened it himself: it stays open, through any pause,
+    /// until the host closes it, and everything he said comes back. Without, it is open for one reply and
+    /// closes by itself when he stops talking.
+    pub(crate) fn hear(&self, link: &Link, host: &dyn RadioHost, manual: bool) -> Listened {
+        let said = |t: Option<String>| t.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).map(Listened::Said).unwrap_or(Listened::Nothing);
+        let grant = self.grant(link);
         match grant.kind.as_str() {
             "azure" if host.record_start(RATE) => {
                 // as he speaks, with the words coming back while he talks. If that connection cannot be made, the
                 // same microphone is listened to again the plain way (one upload, the words at the end).
-                let heard = crate::ears_stream::azure(&grant, host, RATE, wav_header());
+                let heard = crate::ears_stream::azure(&grant, host, RATE, wav_header(), manual);
                 host.record_stop();
                 let heard = match heard {
                     Err(()) if host.record_start(RATE) => {
-                        let plain = azure(&grant, host);
+                        let plain = azure(&grant, host, manual);
                         host.record_stop();
                         plain
                     }
                     other => other,
                 };
                 match heard {
-                    Ok(text) => text,
+                    Ok(text) => said(text),
                     Err(_) => {
-                        // the service or the line failed: use the host's own recognition for the next minute
-                        *self.device_until.lock().unwrap() = Some(Instant::now() + Duration::from_secs(60));
+                        // the service or the line failed: ask for a fresh pass next time
                         *self.grant.lock().unwrap() = None;
-                        host.listen()
+                        if host.own_voice() { said(host.listen()) } else { Listened::Cannot }
                     }
                 }
             }
-            _ => host.listen(),
+            // no service: a terminal's typed line will do; a phone's own recognition will not
+            _ if host.own_voice() => said(host.listen()),
+            _ => Listened::Cannot,
         }
     }
 }
@@ -89,7 +93,7 @@ impl Read for Feed {
 
 /// Microsoft's speech-to-text, fed while he is still talking so the answer is ready almost as he stops.
 /// Ok(None) is silence; Err is a failure of the service or the line.
-fn azure(grant: &EarsGrant, host: &dyn RadioHost) -> Result<Option<String>, ()> {
+fn azure(grant: &EarsGrant, host: &dyn RadioHost, manual: bool) -> Result<Option<String>, ()> {
     let mut end = Endpointer::new(RATE);
     // a little audio from before he was judged to be speaking, so the first word is not clipped
     let mut lead: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
@@ -106,7 +110,11 @@ fn azure(grant: &EarsGrant, host: &dyn RadioHost) -> Result<Option<String>, ()> 
                 break;
             }
         }
-        if end.speaking && upload.is_none() {
+        // he opened the microphone himself: it is all sent, and only he ends it
+        if manual {
+            verdict = Heard::Waiting;
+        }
+        if (end.speaking || manual) && upload.is_none() {
             let (tx, rx) = sync_channel::<Vec<u8>>(256);
             let url = format!("https://{}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language={}&format=simple", grant.region, grant.language);
             let auth = format!("Bearer {}", grant.token);

@@ -70,6 +70,10 @@ pub enum Voice {
     Device,
     Gemini { key: String, #[serde(default = "gemini_model")] model: String, #[serde(default = "gemini_voice")] voice: String },
     Azure { key: String, region: String, #[serde(default = "azure_voice")] voice: String },
+    /// Never written in the configuration: Microsoft's voice by a short-lived pass the relay lends, for a tower
+    /// with no voice of its own set.
+    #[serde(skip)]
+    AzurePass { region: String, token: String },
 }
 
 /// What listens. `device` is the phone's own recognition (Apple's on an iPhone). With `azure` the phone sends

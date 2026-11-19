@@ -11,9 +11,8 @@
 // voice processing on the input gives echo cancellation and noise suppression, and is only held while listening,
 // because it makes everything played sound quiet.
 import AVFoundation
-import Speech
 
-final class Voice: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
+final class Voice: NSObject, @unchecked Sendable {
     private let session = AVAudioSession.sharedInstance()
     private var keepAlive: AVAudioPlayer?
     private var tone: AVAudioPlayer?
@@ -26,17 +25,14 @@ final class Voice: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
 
     override init() {
         super.init()
-        synth.delegate = self
         NotificationCenter.default.addObserver(self, selector: #selector(interrupted(_:)), name: AVAudioSession.interruptionNotification, object: nil)
     }
 
-    /// Ask for the microphone and speech recognition. Returns what is missing, or nil when both are granted.
+    /// Ask for the microphone. Returns what is missing, or nil when it is granted. The phone's own speech
+    /// recognition is never used, so it is never asked for.
     func authorize() async -> String? {
         let mic = await withCheckedContinuation { c in AVAudioApplication.requestRecordPermission { c.resume(returning: $0) } }
-        let speech = await withCheckedContinuation { c in SFSpeechRecognizer.requestAuthorization { c.resume(returning: $0 == .authorized) } }
-        if !mic { return "airband needs the microphone to hear you. Turn it on in Settings." }
-        if !speech { return "airband needs speech recognition to hear you. Turn it on in Settings." }
-        return nil
+        return mic ? nil : "airband needs the microphone to hear you. Turn it on in Settings."
     }
 
     /// On a call: hold the audio session open, quietly, so iOS keeps the app running with the screen off and other
@@ -51,11 +47,10 @@ final class Voice: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
         keepAlive?.play()
     }
 
-    /// Stop saying whatever is being said.
-    func hush() { synth.stopSpeaking(at: .immediate) }
+    /// Stop whatever is playing.
+    func hush() { stopPlayback() }
 
     func goOffDuty() {
-        synth.stopSpeaking(at: .immediate)
         stopPlayback()
         recordStop()
         keepAlive?.stop()
@@ -238,114 +233,6 @@ final class Voice: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
         try? recEngine.inputNode.setVoiceProcessingEnabled(false) // held only while listening: it quietens playback
         beep(660) // "got it"
         set(.idle)
-    }
-
-    // MARK: Apple's own voice
-
-    /// Told what he has said so far, as the phone's own recognition hears it.
-    var onPartial: ((String) -> Void)?
-    private let synth = AVSpeechSynthesizer()
-    private var spoken: DispatchSemaphore?
-
-    /// The best English voice installed: a Premium or Enhanced one if he has downloaded one, else the default.
-    private lazy var bestVoice: AVSpeechSynthesisVoice? = {
-        let english = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("en") }
-        let ranked = english.sorted { a, b in
-            if a.quality.rawValue != b.quality.rawValue { return a.quality.rawValue > b.quality.rawValue }
-            return (a.language == "en-US" ? 1 : 0) > (b.language == "en-US" ? 1 : 0)
-        }
-        return ranked.first ?? AVSpeechSynthesisVoice(language: "en-US")
-    }()
-
-    func speak(_ text: String) {
-        set(.speaking)
-        let done = DispatchSemaphore(value: 0)
-        spoken = done
-        let u = AVSpeechUtterance(string: text)
-        u.voice = bestVoice
-        u.rate = AVSpeechUtteranceDefaultSpeechRate * 1.06
-        synth.speak(u)
-        // generous: about 2.5 words a second, plus slack; never wait forever on a callback that does not come
-        _ = done.wait(timeout: .now() + 10 + Double(text.count) / 8)
-        spoken = nil
-        set(.idle)
-    }
-
-    func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish u: AVSpeechUtterance) { spoken?.signal() }
-    func speechSynthesizer(_ s: AVSpeechSynthesizer, didCancel u: AVSpeechUtterance) { spoken?.signal() }
-
-    // MARK: Apple's own recognition
-
-    func listen() -> String? {
-        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US")), recognizer.isAvailable else {
-            NSLog("airband: speech recognition is not available")
-            return nil
-        }
-        set(.listening)
-        defer { set(.idle) }
-        beep(880) // "your turn"
-
-        let engine = AVAudioEngine()
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        // on the phone itself: works with no signal, and nothing he says leaves the device as audio
-        if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = true }
-        let input = engine.inputNode
-        try? input.setVoiceProcessingEnabled(true)
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else {
-            NSLog("airband: no microphone input")
-            return nil
-        }
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in request.append(buffer) }
-        engine.prepare()
-        do { try engine.start() } catch {
-            NSLog("airband: microphone did not start: \(error.localizedDescription)")
-            input.removeTap(onBus: 0)
-            return nil
-        }
-
-        let lock = NSLock()
-        var text = ""
-        var lastChange = Date()
-        var finished = false
-        let task = recognizer.recognitionTask(with: request) { result, error in
-            lock.lock()
-            defer { lock.unlock() }
-            if let result {
-                let heard = result.bestTranscription.formattedString
-                if heard != text {
-                    text = heard
-                    lastChange = Date()
-                    self.onPartial?(heard)
-                }
-                if result.isFinal { finished = true }
-            }
-            if error != nil { finished = true }
-        }
-
-        let start = Date()
-        while true {
-            Thread.sleep(forTimeInterval: 0.1)
-            lock.lock()
-            let (heard, changed, done) = (text, lastChange, finished)
-            lock.unlock()
-            let now = Date()
-            if done { break }
-            if heard.isEmpty && now.timeIntervalSince(start) > openWindow { break } // he said nothing
-            if !heard.isEmpty && now.timeIntervalSince(changed) > pause { break } // he stopped
-            if now.timeIntervalSince(start) > 60 { break }
-        }
-        engine.stop()
-        input.removeTap(onBus: 0)
-        try? input.setVoiceProcessingEnabled(false)
-        request.endAudio()
-        task.cancel()
-        lock.lock()
-        let heard = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        lock.unlock()
-        if !heard.isEmpty { beep(660) } // "got it"
-        return heard.isEmpty ? nil : heard
     }
 
     // MARK: tones

@@ -39,6 +39,10 @@ pub(super) struct Session {
     /// How far into its harness's record the tower has read what he typed to it at its own keyboard.
     #[serde(default)]
     pub(super) told_upto: u64,
+    /// When it was last told how to answer him through the radio (keep it short, ask if unsure), in milliseconds
+    /// since 1970. Said with the first thing he sends it and again after some hours, not with every message.
+    #[serde(default)]
+    pub(super) briefed_at: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -295,7 +299,7 @@ impl Inner {
             if let Some(cwd) = agent.cwd.clone().filter(|_| agent.name.is_none()) {
                 self.projects.insert(callsign.project.clone(), cwd);
             }
-            self.sessions.push(Session { agent: agent.clone(), callsign, waiting: false, last: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0 });
+            self.sessions.push(Session { agent: agent.clone(), callsign, waiting: false, last: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, briefed_at: 0 });
         } else if let Some(want) = wanted.filter(|c| free(self, c)) {
             self.rename(&agent.id, want);
         }

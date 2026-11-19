@@ -9,6 +9,9 @@ pub(crate) enum Job {
     Transmission(Transmission),
     /// He wants to speak: the message he is answering, if he picked one, and the room he is looking at.
     Talk(Option<String>, Option<String>),
+    /// He opened the microphone himself: listen until he closes it, and hand over what he said. Nothing is sent
+    /// from here; where it goes is the caller's to work out.
+    Dictate(Box<dyn FnOnce(Listened) + Send>),
 }
 
 /// Asks the tower for the next transmission, over and over. The tower only hands one out when the radio has
@@ -61,11 +64,19 @@ pub(crate) fn work(jobs: Receiver<Job>, link: Arc<Link>, host: Arc<dyn RadioHost
                 voice::say(&link, &*host, &t.say, t.speech.as_deref());
                 // "heard" is what takes it off the tower's list: if this is lost, he hears it once more, never zero times
                 let _ = link.post("/heard", &Heard { id: t.id.clone() });
-                // what he says next answers this transmission, whoever else has spoken meanwhile
-                converse(&link, &*host, &ears, Some(t.id), None);
+                // a question waits for his answer, so the microphone opens for it: what he says answers this
+                // transmission, whoever else has spoken meanwhile. Anything else is only told to him; he opens
+                // the microphone himself when he has something to say.
+                if t.kind == Kind::NeedsYou {
+                    converse(&link, &*host, &ears, Some(t.id), None);
+                }
                 let _ = link.post("/ready", &serde_json::json!({}));
             }
             Job::Talk(re, scope) => converse(&link, &*host, &ears, re, scope),
+            Job::Dictate(done) => {
+                host.status(RadioStatus::Listening);
+                done(ears.hear(&link, &*host, true));
+            }
         }
         busy.store(false, Ordering::SeqCst);
         host.status(RadioStatus::Idle);
@@ -76,13 +87,15 @@ pub(crate) fn work(jobs: Receiver<Job>, link: Arc<Link>, host: Arc<dyn RadioHost
 pub(crate) fn converse(link: &Link, host: &dyn RadioHost, ears: &ears::Ears, mut re: Option<String>, scope: Option<String>) {
     for _ in 0..MAX_ROUNDS {
         host.status(RadioStatus::Listening);
-        let Some(text) = ears.hear(link, host).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) else { return };
+        let Listened::Said(text) = ears.hear(link, host, false) else { return };
         host.status(RadioStatus::Sending);
         let reply = match link.utterance(&text, re.take(), scope.clone()) {
             Ok(r) => r,
             Err(_) => {
-                host.status(RadioStatus::Speaking { callsign: "tower".into() });
-                host.speak("No connection. That was not sent.".into());
+                if host.own_voice() {
+                    host.status(RadioStatus::Speaking { callsign: "tower".into() });
+                    host.speak("No connection. That was not sent.".into());
+                }
                 return;
             }
         };

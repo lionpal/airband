@@ -23,5 +23,6 @@
   "auroraSgId": "\u2026",
   "dbSecretArn": "\u2026",
   "rulePriority": 50,
-  "albIngressNote": "load balancer to the airband relay task"
+  "albIngressNote": "load balancer to the airband relay task",
+  "speechRegion": "eastus"
 }

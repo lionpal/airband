@@ -57,6 +57,10 @@ struct Relay {
     channels: Mutex<HashMap<String, Channel>>,
     store: store::Store,
     admission: Option<String>,
+    /// A speech service's key and region, when this relay lends its own to towers that have none
+    /// (`AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`), and the pass last made with it.
+    speech: Option<(String, String)>,
+    speech_pass: Mutex<Option<(String, Instant)>>,
     /// How many sign-ups the waiting list has taken lately.
     signups: Mutex<Signups>,
     /// At most two sign-ups are being written to the database at any moment.
@@ -69,6 +73,39 @@ fn same(a: &str, b: &str) -> bool {
 fn bearer(headers: &HeaderMap) -> &str {
     headers.get("authorization").and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).unwrap_or("")
 }
+/// A tower with no speech service of its own asks for a pass to this relay's: a token from Microsoft that works
+/// for ten minutes, for listening and for speaking. The key itself never leaves here. Only a tower that holds
+/// the admission key is given one, and a relay open to anyone lends nothing. One pass is made every eight
+/// minutes at most, however many towers ask.
+async fn speech_pass(State(relay): State<Arc<Relay>>, headers: HeaderMap) -> Response {
+    let (Some((key, region)), Some(want)) = (relay.speech.clone(), relay.admission.as_ref()) else { return say(StatusCode::NOT_FOUND, "this relay has no speech service to lend") };
+    if !same(headers.get("x-airband-admission").and_then(|v| v.to_str().ok()).unwrap_or(""), want) {
+        return say(StatusCode::UNAUTHORIZED, "a speech pass needs the admission key");
+    }
+    let fresh = relay.speech_pass.lock().unwrap().clone().filter(|(_, when)| when.elapsed() < Duration::from_secs(480));
+    let token = match fresh {
+        Some((token, _)) => token,
+        None => {
+            let url = format!("https://{region}.api.cognitive.microsoft.com/sts/v1.0/issueToken");
+            let made = tokio::task::spawn_blocking(move || {
+                let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(8))).http_status_as_error(false).build().into();
+                let mut res = agent.post(&url).header("Ocp-Apim-Subscription-Key", &key).header("Content-Length", "0").send_empty().ok()?;
+                (res.status().as_u16() == 200).then(|| res.body_mut().read_to_string().ok()).flatten()
+            })
+            .await
+            .ok()
+            .flatten();
+            let Some(token) = made else {
+                eprintln!("airband-relay: the speech service gave no pass");
+                return say(StatusCode::BAD_GATEWAY, "the speech service gave no pass");
+            };
+            *relay.speech_pass.lock().unwrap() = Some((token.clone(), Instant::now()));
+            token
+        }
+    };
+    axum::Json(serde_json::json!({ "kind": "azure", "region": region, "token": token })).into_response()
+}
+
 fn valid_channel(c: &str) -> bool {
     c.len() == 32 && c.bytes().all(|b| b.is_ascii_hexdigit())
 }
@@ -408,13 +445,16 @@ async fn main() {
     let channels = saved.into_iter().map(|(c, pull_hash)| (c, Channel { pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, holding: None })).collect::<HashMap<_, _>>();
     let admission = std::env::var("AIRBAND_RELAY_ADMISSION").ok().filter(|a| !a.is_empty());
     println!("airband-relay on port {port}: {} channels known; opening a channel {}", channels.len(), if admission.is_some() { "needs the admission key" } else { "is open to anyone" });
-    let relay = Arc::new(Relay { channels: Mutex::new(channels), store, admission, signups: Mutex::new(Signups::default()), writing: tokio::sync::Semaphore::new(2) });
+    let speech = std::env::var("AZURE_SPEECH_KEY").ok().filter(|k| !k.is_empty()).zip(std::env::var("AZURE_SPEECH_REGION").ok().filter(|r| !r.is_empty()));
+    println!("airband-relay: {}", if speech.is_some() { "lends its speech service to towers that have none" } else { "has no speech service to lend" });
+    let relay = Arc::new(Relay { channels: Mutex::new(channels), store, admission, speech, speech_pass: Mutex::new(None), signups: Mutex::new(Signups::default()), writing: tokio::sync::Semaphore::new(2) });
     let app = Router::new()
         .route("/v1/channels/{channel}", put(open).delete(close))
         .route("/v1/channels/{channel}/pull", get(pull))
         .route("/v1/channels/{channel}/reply/{id}", post(reply))
         .route("/v1/channels/{channel}/call", post(call))
         .route("/v1/channels/{channel}/queue", post(hold))
+        .route("/v1/speech/pass", post(speech_pass))
         .route("/v1/waitlist", post(waitlist).options(waitlist_preflight))
         .route("/healthz", get(|| async { "ok" }))
         .layer(DefaultBodyLimit::max(MAX_MESSAGE))

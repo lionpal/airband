@@ -182,7 +182,7 @@ impl Store {
             // A receipt with no answer: the tower stopped part way. If the words had already reached their
             // agents, say so and deliver nothing again; a message arriving twice can be acted on twice.
             Some(_) if !Self::delivered(&db, id).is_empty() => {
-                let reply = Reply { say: format!("Sent to {}.", list(&Self::delivered(&db, id))), listen: false, speech: None };
+                let reply = Reply { say: format!("Sent to {}.", list(&Self::delivered(&db, id))), listen: false, ..Reply::default() };
                 Self::warn("closing a receipt", db.execute("update receipts set reply = ?2 where id = ?1", params![id, serde_json::to_string(&reply).unwrap()]));
                 Receipt::Done(reply)
             }
@@ -238,7 +238,7 @@ mod tests {
         let (s, path) = store("receipts");
         assert!(matches!(s.begin_receipt("u1"), Receipt::Begun));
         assert!(matches!(s.begin_receipt("u1"), Receipt::InProgress));
-        s.finish_receipt("u1", &Reply { say: "Sent to shop one.".into(), listen: false, speech: None });
+        s.finish_receipt("u1", &Reply { say: "Sent to shop one.".into(), listen: false, ..Reply::default() });
         assert!(matches!(s.begin_receipt("u1"), Receipt::Done(r) if r.say == "Sent to shop one."));
         let _ = std::fs::remove_file(path);
     }

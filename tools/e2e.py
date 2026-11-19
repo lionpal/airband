@@ -340,6 +340,17 @@ try:
     check("a follow-up with nobody named goes to the same agent (model)", say("and keep the price next to it") == "Sent to catalog part page.")
     check("words about another team's work reach that team (model)", say("send the payout email on Fridays") == "Sent to payouts schedule.")
     check("an agent named by the two letters his phone shows for it gets it (model)", say("C I, run the import again with the new supplier file") == "Sent to catalog import.")
+    check("the second thing he sends an agent comes with one line in front, not the whole explanation again", "From Charles, through Airband:\n\nand keep the price next to it" in received("page") and received("page").count("sent through Airband by voice") == 1, received("page")[-400:])
+    # what his phone adds when he is paired with a second computer: the agents he can see that this tower does not have
+    there = [{"callsign": "warehouse stock", "group": "warehouse", "said": "Counted the shelves in bay 4: 212 units, 9 short of what the system says.", "ago": 40}]
+    told = http("POST", "/v1/radio/utterance", {"text": "recount bay 4 and tell me which units are missing", "id": os.urandom(6).hex(), "others": there})[1]
+    check("words about the work of an agent on another computer are handed back for that computer (model)", told.get("elsewhere") == "warehouse stock" and not told.get("say") and "bay 4" not in "".join(received(a) for a in ("page", "import", "rates", "refunds", "schedule")), told)
+    told = http("POST", "/v1/radio/utterance", {"text": "make the photo on the part page a bit smaller again", "id": os.urandom(6).hex(), "others": there})[1]
+    check("and words about this computer's work still go to its own agent (model)", told.get("say") == "Sent to catalog part page." and not told.get("elsewhere"), told)
+    unsure = http("POST", "/v1/radio/utterance", {"text": "hm, what about the other thing", "id": os.urandom(6).hex(), "others": there})[1]
+    check("when it cannot tell, it says who it might be for, to tap, and delivers nothing (model)", len(unsure.get("ask", [])) >= 2 and unsure["say"].startswith("Who is that for?"), unsure)
+    say("@catalogpartpage never mind")  # so the words it was holding are not waiting for a name
+    check("with no voice set and no relay to lend one, there is nothing to read a message aloud with", http("GET", f"/v1/radio/message/{p['id']}?form=speech")[0] == 404)
     check("a tag for a team reaches every agent in it", say("@catalog commit what you have") in ("Sent to catalog part page and catalog import.", "Sent to catalog import and catalog part page."))
     check("a quick message sends the whole instruction and shows its label", say("Send me a picture of the result.", label="Screenshot", re=p["id"]) == "Sent to catalog part page."
           and "picture of the result" in received("page") and message(feed(), "you", "Screenshot") is not None)

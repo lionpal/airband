@@ -8,9 +8,9 @@ use super::*;
 
 pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply {
     let task = idea.task.as_str();
-    let say = |s: String| Reply { say: s, listen: false, speech: None };
+    let say = |s: String| Reply { say: s, listen: false, ..Reply::default() };
     if task.is_empty() {
-        return Reply { say: format!("What should it do? Say launch {project}, then the task."), listen: true, speech: None };
+        return Reply { say: format!("What should it do? Say launch {project}, then the task."), listen: true, ..Reply::default() };
     }
     let Some(cwd) = app.inner.lock().unwrap().launchable(&app.cfg).get(project).cloned() else {
         return say(format!("I do not know a project called {project}."));

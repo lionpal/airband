@@ -379,7 +379,7 @@ struct FeedView: View {
     private var statusLine: String? {
         if let re = model.replyingTo { return "answering \(name(of: re))" }
         switch model.status {
-        case .listening: return "listening"
+        case .listening: return "listening \u{b7} tap to send"
         case .sending: return "sending"
         case .speaking(let callsign): return callsign.isEmpty ? "speaking" : callsign
         default: return nil
@@ -392,6 +392,7 @@ struct FeedView: View {
                 Button { model.problem = nil } label: { Text(problem).font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.vertical, 7).frosted(RoundedRectangle(cornerRadius: 12)) }
                     .buttonStyle(.plain).padding(.horizontal, 8)
             }
+            if let ask = model.view.asking { AskCard(ask: ask) }
             if !model.tray.isEmpty { Tray() }
             if showQuick { quickGrid }
             if typingOpen {
@@ -432,18 +433,22 @@ struct FeedView: View {
                 }
                 HStack {
                     // +: attach a photo or a video, or send one of the things he says all the time
-                    Button { withAnimation(.snappy(duration: 0.2)) { showQuick.toggle() } } label: { PlusButtonLabel(open: showQuick) }
-                        .buttonStyle(.plain).accessibilityLabel("Attach, or quick messages").accessibilityAddTraits(showQuick ? .isSelected : [])
+                    // while he is talking it is the way out: a cross that closes the microphone and sends nothing
+                    Button {
+                        if listeningNow { model.cancelTalk() } else { withAnimation(.snappy(duration: 0.2)) { showQuick.toggle() } }
+                    } label: { PlusButtonLabel(open: showQuick || listeningNow) }
+                        .buttonStyle(.plain).accessibilityLabel(listeningNow ? "Cancel" : "Attach, or quick messages").accessibilityAddTraits(showQuick ? .isSelected : [])
                     Spacer()
                     Button { showQuick = false; Task { await model.talk() } } label: {
                         ZStack {
                             Circle().fill(Palette.signal.opacity(listeningNow ? 0.25 : 0)).frame(width: 112, height: 112)
                             Circle().fill(listeningNow ? Palette.signal : Palette.ink).frame(width: 88, height: 88)
-                            Image(systemName: "mic.fill").font(.system(size: 34, weight: .semibold)).foregroundStyle(Palette.ground)
+                            // open, it is the send button: nothing goes until he taps it
+                            Image(systemName: listeningNow ? "arrow.up" : "mic.fill").font(.system(size: 34, weight: .semibold)).foregroundStyle(Palette.ground)
                         }
                         .frame(width: 112, height: 112)
                     }
-                    .buttonStyle(.plain).accessibilityLabel(listeningNow ? "Listening" : "Talk")
+                    .buttonStyle(.plain).accessibilityLabel(listeningNow ? "Send what you said" : "Talk")
                     Spacer()
                     Button { showQuick = false; typingOpen = true; typing = true } label: {
                         Image(systemName: "keyboard").font(.system(size: 20, weight: .semibold))
@@ -597,7 +602,11 @@ struct Question: View {
 
 /// Something he said: on the right, with who it went to.
 struct Mine: View {
+    @EnvironmentObject var model: RadioModel
     let m: ChatMessage
+    /// A long one shows its first lines; a tap opens it whole, and another closes it.
+    @State private var whole = false
+    private var long: Bool { m.long || m.text.count > 280 || m.text.filter { $0 == "\n" }.count > 6 }
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 3) {
@@ -610,12 +619,67 @@ struct Mine: View {
                 }
             }
             if !m.pictures.isEmpty { PictureStrip(m: m, height: 120) }
-            Text(m.text).font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.ground)
-                .padding(.horizontal, 14).padding(.vertical, 9)
-                .background(Palette.ink, in: UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 18, bottomTrailingRadius: 6, topTrailingRadius: 18))
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(whole ? (model.full[m.id] ?? m.text) : m.text).font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.ground)
+                    .lineLimit(whole ? nil : 5)
+                if long {
+                    Image(systemName: whole ? "chevron.up" : "chevron.down").font(.system(size: 11, weight: .bold)).foregroundStyle(Palette.ground.opacity(0.45))
+                }
+            }
+            .padding(.horizontal, 14).padding(.vertical, 9)
+            .background(Palette.ink, in: UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 18, bottomTrailingRadius: 6, topTrailingRadius: 18))
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard long else { return }
+                // what the chat carries of a very long one is its opening: the rest is fetched when he opens it
+                if !whole && m.long { model.loadFull(m) }
+                withAnimation(.snappy(duration: 0.2)) { whole.toggle() }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .trailing).padding(.leading, 50)
         .accessibilityElement(children: .combine).accessibilityLabel("You, to \(m.to.joined(separator: ", ")): \(m.text)")
+        .accessibilityAddTraits(long ? .isButton : [])
+    }
+}
+
+/// His words could not be placed: who are they for? One tap sends them; the cross lets them go.
+struct AskCard: View {
+    @EnvironmentObject var model: RadioModel
+    let ask: DeskAsk
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Who is this for?").font(.system(size: 16, weight: .semibold))
+                    Text("\u{201C}\(ask.text)\u{201D}").font(.system(size: 14)).foregroundStyle(Palette.quiet).lineLimit(2)
+                }
+                Spacer(minLength: 8)
+                Button { model.choose(nil) } label: {
+                    Image(systemName: "xmark").font(.system(size: 12, weight: .bold)).frame(width: 32, height: 32).background(Palette.raised, in: Circle())
+                }
+                .buttonStyle(.plain).accessibilityLabel("Send it to nobody")
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(ask.choices, id: \.id) { choice in
+                        Button { model.choose(choice) } label: {
+                            HStack(spacing: 7) {
+                                Badge(text: choice.badge, colour: choice.colour, size: 20)
+                                Text(choice.callsign).font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                            }
+                            .padding(.horizontal, 12).frame(minHeight: 44).background(Palette.raised, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(Palette.card, in: RoundedRectangle(cornerRadius: 22))
+        .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(Palette.ask.opacity(0.5), lineWidth: 1))
+        .padding(.horizontal, 8)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 }
 
@@ -836,8 +900,8 @@ struct ReaderView: View {
                     Text(m.from).font(.system(size: 13)).foregroundStyle(Palette.quiet).lineLimit(1)
                 }
                 Spacer()
-                // read it to him: the whole thing, in the phone's own voice. Tap again to stop.
-                Button { model.readAloud(m, String(text.characters)) } label: {
+                // read it to him: the whole thing, in his computer's voice. Tap again to stop.
+                Button { model.readAloud(m) } label: {
                     Image(systemName: reading ? "stop.fill" : "speaker.wave.2.fill").font(.system(size: 14, weight: .bold))
                         .foregroundStyle(reading ? Palette.ground : Palette.ink)
                         .frame(width: 40, height: 40).background(reading ? Palette.ink : Palette.raised, in: Circle())
@@ -859,15 +923,16 @@ struct ReaderView: View {
         // agent that wrote it
         .overlay(alignment: .bottom) {
             VStack(spacing: 8) {
-                Text(listening ? "listening" : "tell \(m.from)").font(.system(size: 14, weight: .medium)).foregroundStyle(Palette.quiet)
+                Text(listening ? (model.hearing.isEmpty ? "listening" : model.hearing) : "tell \(m.from)").font(.system(size: 14, weight: .medium)).foregroundStyle(Palette.quiet)
+                    .lineLimit(2).truncationMode(.head).multilineTextAlignment(.center).padding(.horizontal, 24)
                 Button {
                     model.stopReading()
                     Task { await model.talk(about: m) }
                 } label: {
-                    Image(systemName: "mic.fill").font(.system(size: 28, weight: .semibold)).foregroundStyle(Palette.ground)
+                    Image(systemName: listening ? "arrow.up" : "mic.fill").font(.system(size: 28, weight: .semibold)).foregroundStyle(Palette.ground)
                         .frame(width: 76, height: 76).background(listening ? Palette.signal : Palette.ink, in: Circle())
                 }
-                .buttonStyle(.plain).accessibilityLabel(listening ? "Listening" : "Talk to \(m.from) about this")
+                .buttonStyle(.plain).accessibilityLabel(listening ? "Send what you said" : "Talk to \(m.from) about this")
             }
             .padding(.top, 26).padding(.bottom, 26).frame(maxWidth: .infinity)
             .background(LinearGradient(colors: [Palette.ground.opacity(0), Palette.ground], startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.35)).allowsHitTesting(false))
@@ -875,11 +940,10 @@ struct ReaderView: View {
         .background(Palette.ground.ignoresSafeArea())
         .foregroundStyle(Palette.ink)
         .preferredColorScheme(.dark)
-        // with read-aloud on, it starts reading once the whole text is here (what is on screen first is the short one)
+        // with read-aloud on, it starts reading as it opens
         .task {
-            guard model.calling else { return }
-            for _ in 0..<40 where model.full[m.id] == nil || model.full[m.id] == m.text { try? await Task.sleep(for: .milliseconds(150)) }
-            if !Task.isCancelled, !reading { model.readAloud(m, String(text.characters)) }
+            guard model.calling, !reading else { return }
+            model.readAloud(m)
         }
         .onDisappear { if reading { model.stopReading() } }
     }
@@ -891,16 +955,20 @@ struct ReaderView: View {
     @Published var room: String?
     @Published var shown = ""
     private var turn = 0
+    /// The last step shown for each team.
+    private var told: [String: String] = [:]
 
     func run(_ rooms: @escaping () -> [DeskRoom]) async {
         while !Task.isCancelled {
-            let busy = rooms().filter { $0.doing != nil }
+            // only what is new: a step a team is still on is shown once, not typed out again and again
+            let busy = rooms().filter { $0.doing != nil && told[$0.name] != $0.doing }
             guard !busy.isEmpty, !UIAccessibility.isReduceMotionEnabled else {
                 try? await Task.sleep(for: .milliseconds(700))
                 continue
             }
             let pick = busy[turn % busy.count]
             turn += 1
+            told[pick.name] = pick.doing
             shown = ""
             room = pick.name
             for letter in pick.doing ?? "" {

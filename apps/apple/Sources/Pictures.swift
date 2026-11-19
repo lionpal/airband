@@ -120,12 +120,13 @@ struct PictureViewer: View {
         // that sent it
         .overlay(alignment: .bottom) {
             VStack(spacing: 8) {
-                Text(listening ? "listening" : "tell \(m.from)").font(.system(size: 14, weight: .medium)).foregroundStyle(.white.opacity(0.7))
+                Text(listening ? (model.hearing.isEmpty ? "listening" : model.hearing) : "tell \(m.from)").font(.system(size: 14, weight: .medium)).foregroundStyle(.white.opacity(0.7))
+                    .lineLimit(2).truncationMode(.head).multilineTextAlignment(.center).padding(.horizontal, 24)
                 Button { Task { await model.talk(about: m) } } label: {
-                    Image(systemName: "mic.fill").font(.system(size: 28, weight: .semibold)).foregroundStyle(Palette.ground)
+                    Image(systemName: listening ? "arrow.up" : "mic.fill").font(.system(size: 28, weight: .semibold)).foregroundStyle(Palette.ground)
                         .frame(width: 76, height: 76).background(listening ? Palette.signal : Palette.ink, in: Circle())
                 }
-                .buttonStyle(.plain).accessibilityLabel(listening ? "Listening" : "Talk to \(m.from) about this picture")
+                .buttonStyle(.plain).accessibilityLabel(listening ? "Send what you said" : "Talk to \(m.from) about this picture")
             }
             .padding(.bottom, 26).opacity(1 - away)
         }

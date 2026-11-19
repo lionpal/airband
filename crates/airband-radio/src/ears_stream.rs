@@ -109,24 +109,28 @@ fn drain(socket: &mut Socket, kept: &mut Vec<String>, ended: &mut bool) -> Resul
     }
 }
 
-/// Listen for one reply over the streaming connection, telling `hearing` what he has said so far as it changes.
-/// Ok(None) is silence. Err is a failure of the service or the line: nothing was lost that the caller cannot
-/// get by listening again another way.
-pub(crate) fn azure(grant: &EarsGrant, host: &dyn RadioHost, rate: u32, header: Vec<u8>) -> Result<Option<String>, ()> {
-    let request = random_hex(16);
+/// Listen over the streaming connection, telling `hearing` what he has said so far as it changes. Without
+/// `manual` it is one reply: it ends when he stops talking. With it he opened the microphone himself: all of it
+/// is sent, pauses and all, until the host closes the microphone, and if the service ends its turn before then
+/// (a long silence) a new one is opened and what he said so far is kept.
+/// Ok(None) is silence. Err is a failure of the service or the line before anything was heard: nothing was lost
+/// that the caller cannot get by listening again another way.
+pub(crate) fn azure(grant: &EarsGrant, host: &dyn RadioHost, rate: u32, header: Vec<u8>, manual: bool) -> Result<Option<String>, ()> {
     // opened now, on its own thread, so it is ready by the time he has said a word
-    let opening: Receiver<Result<Socket, ()>> = {
+    let open = |request: &str| -> Receiver<Result<Socket, ()>> {
         let (tx, rx) = channel();
-        let (grant, request) = (grant.clone(), request.clone());
+        let (grant, request) = (grant.clone(), request.to_string());
         thread::spawn(move || {
             let _ = tx.send(connect(&grant, &request));
         });
         rx
     };
+    let mut request = random_hex(16);
+    let mut opening = open(&request);
     let mut socket: Option<Socket> = None;
     let mut end = Endpointer::new(rate);
     // audio from just before he was judged to be speaking, and whatever is said before the connection is up
-    let mut waiting: VecDeque<Vec<u8>> = VecDeque::from([header]);
+    let mut waiting: VecDeque<Vec<u8>> = VecDeque::from([header.clone()]);
     let (mut kept, mut ended, mut shown) = (Vec::<String>::new(), false, String::new());
     let tell = |kept: &[String], now: &str, shown: &mut String| {
         let all = [kept.join(" "), now.to_string()].join(" ").trim().to_string();
@@ -135,20 +139,26 @@ pub(crate) fn azure(grant: &EarsGrant, host: &dyn RadioHost, rate: u32, header: 
             host.hearing(all);
         }
     };
+    // a microphone he left open is closed for him after this long: what he said is kept, and nothing is sent
+    let began = Instant::now();
+    const LEFT_OPEN: Duration = Duration::from_secs(240);
     loop {
         let bytes = host.record_read();
         if bytes.is_empty() {
             break; // the host stopped the microphone
         }
         let mut verdict = Heard::Waiting;
-        for frame in samples(&bytes).chunks(320) {
-            verdict = end.feed(frame);
-            if matches!(verdict, Heard::Finished | Heard::Silence) {
-                break;
+        if !manual {
+            for frame in samples(&bytes).chunks(320) {
+                verdict = end.feed(frame);
+                if matches!(verdict, Heard::Finished | Heard::Silence) {
+                    break;
+                }
             }
         }
+        let sending = manual || end.speaking;
         waiting.push_back(bytes);
-        if !end.speaking {
+        if !sending {
             // not speaking yet: keep only the header and the last half second
             while waiting.len() > 6 {
                 waiting.remove(1);
@@ -157,44 +167,66 @@ pub(crate) fn azure(grant: &EarsGrant, host: &dyn RadioHost, rate: u32, header: 
         if socket.is_none() {
             match opening.try_recv() {
                 Ok(Ok(s)) => socket = Some(s),
-                Ok(Err(())) => return Err(()),
+                // nothing heard yet: the caller can listen another way. Something heard: keep it, and try again
+                Ok(Err(())) if kept.is_empty() => return Err(()),
+                Ok(Err(())) => opening = open(&request),
                 Err(_) => {}
             }
         }
-        if let (Some(s), true) = (socket.as_mut(), end.speaking) {
-            for chunk in waiting.drain(..) {
-                s.send(audio(&request, &chunk)).map_err(|_| ())?;
+        if let (Some(s), true) = (socket.as_mut(), sending) {
+            let sent = waiting.drain(..).try_for_each(|chunk| s.send(audio(&request, &chunk)).map_err(|_| ()));
+            let heard = sent.and_then(|()| drain(s, &mut kept, &mut ended));
+            match heard {
+                Ok(Some(now)) => tell(&kept, &now, &mut shown),
+                Ok(None) => {}
+                Err(()) if manual && !kept.is_empty() => ended = true,
+                Err(()) => return Err(()),
             }
-            if let Some(now) = drain(s, &mut kept, &mut ended)? {
-                tell(&kept, &now, &mut shown);
-            }
+        }
+        if manual && ended {
+            // the service closed its turn and he has not closed the microphone: carry on in a new one
+            socket = None;
+            ended = false;
+            request = random_hex(16);
+            opening = open(&request);
+            waiting = VecDeque::from([header.clone()]);
         }
         match verdict {
             Heard::Finished => break,
             Heard::Silence => return Ok(None),
             _ => {}
         }
+        if manual && began.elapsed() > LEFT_OPEN {
+            break;
+        }
     }
-    if !end.speaking {
+    if !manual && !end.speaking {
         return Ok(None);
     }
     host.status(RadioStatus::Sending);
     // he has stopped: whatever was not sent yet goes now, then the end of the audio, then the last words come back
-    let mut s = match socket {
-        Some(s) => s,
-        None => opening.recv_timeout(Duration::from_secs(6)).map_err(|_| ())??,
-    };
-    for chunk in waiting.drain(..) {
-        s.send(audio(&request, &chunk)).map_err(|_| ())?;
-    }
-    s.send(audio(&request, &[])).map_err(|_| ())?;
-    let until = Instant::now() + Duration::from_secs(5);
-    while !ended && Instant::now() < until {
-        if let Some(now) = drain(&mut s, &mut kept, &mut ended)? {
-            tell(&kept, &now, &mut shown);
+    let last = || -> Result<(), ()> {
+        let mut s = match socket {
+            Some(s) => s,
+            None => opening.recv_timeout(Duration::from_secs(6)).map_err(|_| ())??,
+        };
+        for chunk in waiting.drain(..) {
+            s.send(audio(&request, &chunk)).map_err(|_| ())?;
         }
+        s.send(audio(&request, &[])).map_err(|_| ())?;
+        let until = Instant::now() + Duration::from_secs(5);
+        while !ended && Instant::now() < until {
+            if let Some(now) = drain(&mut s, &mut kept, &mut ended)? {
+                tell(&kept, &now, &mut shown);
+            }
+        }
+        let _ = s.close(None);
+        Ok(())
+    };
+    // with something already heard, a failure at the very end loses only the last words, not all of them
+    if last().is_err() && kept.is_empty() {
+        return Err(());
     }
-    let _ = s.close(None);
     let said = kept.join(" ");
     Ok((!said.is_empty()).then_some(said))
 }
@@ -231,6 +263,8 @@ mod tests {
             }
             fn record_stop(&self) {}
             fn outbox(&self, _: Vec<Outgoing>, _: Option<String>) {}
+            fn own_voice(&self) -> bool { false }
+            fn unplaced(&self, _: Outgoing, _: Option<String>, _: Vec<String>) {}
             fn hearing(&self, text: String) {
                 println!("{:>5} ms  {text}", self.2.elapsed().as_millis());
                 self.1.lock().unwrap().push((self.2.elapsed().as_millis(), text));
@@ -240,7 +274,7 @@ mod tests {
         let pcm = &wav[44..];
         let tape = Tape(Mutex::new(pcm.chunks(3200).map(|c| c.to_vec()).collect()), Mutex::new(Vec::new()), Instant::now());
         let grant = EarsGrant { kind: "azure".into(), token: std::env::var("AZURE_TOKEN").unwrap(), region: std::env::var("AZURE_REGION").unwrap(), language: "en-US".into(), phrases: vec![] };
-        let said = azure(&grant, &tape, 16000, crate::ears::wav_header()).unwrap();
+        let said = azure(&grant, &tape, 16000, crate::ears::wav_header(), false).unwrap();
         println!("{:>5} ms  FINAL: {said:?} (the recording is {} ms long)", tape.2.elapsed().as_millis(), pcm.len() / 32);
         assert!(said.is_some_and(|s| !s.is_empty()));
         assert!(tape.1.lock().unwrap().len() >= 2, "words should arrive while he is still speaking");

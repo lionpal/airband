@@ -102,6 +102,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",
+ "ureq",
 ]
 
 [[package]]
