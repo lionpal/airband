@@ -156,7 +156,7 @@ pub(super) fn answer(app: &App, text: &str, re: Option<&str>) -> Option<Reply> {
     inner.pending.retain(|p| p.id != entry);
     let Some(session) = inner.find(&agent_id).cloned() else { return say("That agent has gone.") };
     inner.session(&agent_id).unwrap().waiting = false;
-    log(format!("← radio: \"{text}\" → {} is {} {}", session.callsign.text(), if allow { "allowed" } else { "refused" }, if reason.is_empty() { String::new() } else { "with his reason".into() }));
+    log(format!("← radio: \"{text}\" → {} is {} {}", session.callsign.text(), if question { "answered" } else if allow { "allowed" } else { "refused" }, if reason.is_empty() || question { String::new() } else { "with his reason".into() }));
     let shown = if allow { "Allow".to_string() } else if reason.is_empty() { "Deny".into() } else { reason };
     inner.record(Entry::his(config::random_hex(8), &[session.clone()], shown));
     inner.touch(&entry);
