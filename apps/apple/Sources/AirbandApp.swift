@@ -207,7 +207,7 @@ struct FeedView: View {
                 .accessibilityAddTraits(model.calling ? .isSelected : [])
             }
         }
-        .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 14)
+        .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 8)
     }
 
     /// The teams bar: one cell per project, each showing what its agents are doing. Tap one to see only that team
@@ -252,10 +252,22 @@ struct FeedView: View {
                     .overlay {
                         if ticker.room == room.name {
                             GeometryReader { chip in
-                                let right = chip.frame(in: .global).midX > UIScreen.main.bounds.width / 2
-                                DoingBubble(text: ticker.shown, right: right)
-                                    .frame(width: chip.size.width, alignment: right ? .trailing : .leading)
-                                    .offset(x: right ? -6 : 6, y: chip.size.height + 3)
+                                let (at, screen) = (chip.frame(in: .global), UIScreen.main.bounds.width)
+                                let wide = min(300, screen - 44)
+                                if at.minX > screen - 24 {
+                                    // its chip is off the right of the screen: the bubble stays on screen, at the
+                                    // edge, and points off that way
+                                    DoingBubble(text: ticker.shown, right: true, tail: .trailing)
+                                        .offset(x: screen - 14 - wide - at.minX, y: chip.size.height + 3)
+                                } else if at.maxX < 24 {
+                                    DoingBubble(text: ticker.shown, right: false, tail: .leading)
+                                        .offset(x: 14 - at.minX, y: chip.size.height + 3)
+                                } else {
+                                    let right = at.midX > screen / 2
+                                    DoingBubble(text: ticker.shown, right: right)
+                                        .frame(width: chip.size.width, alignment: right ? .trailing : .leading)
+                                        .offset(x: right ? -6 : 6, y: chip.size.height + 3)
+                                }
                             }
                             .transition(.opacity)
                         }
@@ -1026,6 +1038,8 @@ struct DoingBubble: View {
     let text: String
     /// It hangs from the chip's right end and grows leftwards, for a chip near the right edge of the screen.
     var right = false
+    /// Where its tail is: up to the chip it comes out of, or off the side of the screen its chip has scrolled to.
+    var tail: Edge = .top
     @State private var caret = true
 
     var body: some View {
@@ -1049,8 +1063,9 @@ struct DoingBubble: View {
         .padding(.horizontal, 9).padding(.vertical, 5)
         .background(Color(red: 0.118, green: 0.129, blue: 0.133), in: RoundedRectangle(cornerRadius: 9))
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color(red: 0.18, green: 0.192, blue: 0.2), lineWidth: 1))
-        .overlay(alignment: right ? .topTrailing : .topLeading) {
-            Rectangle().fill(Color(red: 0.118, green: 0.129, blue: 0.133)).frame(width: 7, height: 7).rotationEffect(.degrees(45)).offset(x: right ? -12 : 12, y: -3.5)
+        .overlay(alignment: tail == .top ? (right ? .topTrailing : .topLeading) : (tail == .trailing ? .trailing : .leading)) {
+            Rectangle().fill(Color(red: 0.118, green: 0.129, blue: 0.133)).frame(width: 7, height: 7).rotationEffect(.degrees(45))
+                .offset(x: tail == .top ? (right ? -12 : 12) : (tail == .trailing ? 3.5 : -3.5), y: tail == .top ? -3.5 : 0)
         }
     }
 }
