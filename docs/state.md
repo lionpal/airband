@@ -37,6 +37,15 @@ What each agent is doing: pushed by a script and read from a made-up Claude Code
 (62 checks with `--claude`), and seen in the simulator as the bubble under the teams bar and in the agents list.
 Not yet seen with a real Claude Code session's own transcript.
 
+Homebrew: the formula was installed on a second Mac (Apple silicon, no airband on it) with
+`brew install airband-dev/airband/airband`, from a copy of the tap on that Mac's disk; the binary came from
+`https://airband.dev/releases/` and `airband --version` answered from Homebrew's folder. Not done: the public tap
+repository `airband-dev/homebrew-airband` does not exist yet (the tap is kept in `lionpal/homebrew-airband`,
+private), so the command does not work for anyone else yet. Not run: `airband install` from Homebrew's copy (its
+choice of Homebrew's path has a unit test only), `brew test` (that Mac's developer tools were too old for
+Homebrew to run any test), the Intel Mac binary, and the Release workflow itself (0.1.1 was built and published
+by hand; the two Linux binaries printed their version in a container).
+
 Not checked: the phone app on a phone. The iPhone app has never run on a phone, so
 nothing about its audio, CarPlay or background behaviour is known. The tower has not been run on Windows or Linux
 (it builds and its tests pass there). Android: no Kotlin app. No push notifications: the phone sees new messages while the app is open or call mode is on.

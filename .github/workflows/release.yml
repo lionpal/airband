@@ -1,6 +1,8 @@
 name: Release
 # Builds the `airband` command for macOS and Linux and publishes it where anyone can download it:
-#   https://airband.dev/releases/<version>/airband-<version>-<target>.tar.gz   (and the same name with .sha256)
+#   https://airband.dev/releases/<version>/airband-<version>-<target>.tar.gz    the binary, for anyone
+#   https://airband.dev/releases/<version>/airband-<version>.<tag>.bottle.tar.gz   the same, as Homebrew wants it
+#   (each with its checksum at the same address plus .sha256)
 #   https://airband.dev/releases/latest.json                                    ({"version": "<version>"})
 # This repository is private, so its own release assets cannot be downloaded without signing in. The files go in
 # the homepage's bucket under releases/, which the site's deploy leaves alone (see `exclude` in infra/cdk.mjs).
@@ -15,6 +17,10 @@ name: Release
 # If GitHub has no macOS runner to give, run it with "skip macOS" ticked and publish the two Mac files by hand
 # from a Mac:  scripts/package.sh aarch64-apple-darwin x86_64-apple-darwin, then copy dist/* to
 # s3://<the site's bucket>/releases/<version>/ with the same cache-control as below.
+#
+# 0.1.1 was published by hand in that way, all four systems, because Actions was not running jobs for this
+# account that day (a billing notice). The Linux binaries were built in a Debian 12 container. This workflow has
+# not yet run to the end.
 on:
   workflow_dispatch:
     inputs:
@@ -43,7 +49,7 @@ jobs:
       - run: scripts/package.sh ${{ matrix.target }}
       - name: Check the binary says its version
         run: |
-          tar -xzf dist/*.tar.gz -C "$RUNNER_TEMP" airband
+          tar -xzf dist/airband-*-${{ matrix.target }}.tar.gz -C "$RUNNER_TEMP" airband
           "$RUNNER_TEMP/airband" --version
       - uses: actions/upload-artifact@v4
         with: { name: 'dist-${{ matrix.target }}', path: dist/, if-no-files-found: error }
