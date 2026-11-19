@@ -178,11 +178,20 @@ pub fn voice(mut cfg: Config, args: &[String]) -> Result<(), String> {
                 Voice::Device | Voice::AzurePass { .. } => "Voice: none set here. The relay's is used when it lends one; without, nothing is spoken.".to_string(),
                 Voice::Gemini { model, voice, .. } => format!("Voice: Gemini, {voice} on {model}, made by the tower."),
                 Voice::Azure { region, voice, .. } => format!("Voice: Microsoft, {voice} in {region}, made by the tower."),
+                Voice::Elevenlabs { voice, model, .. } => format!("Voice: ElevenLabs, voice {voice} on {model}, made by the tower."),
             });
-            println!("Change it:  airband voice device  |  airband voice gemini --key-env GEMINI_API_KEY [--voice Leda] [--model …]  |  airband voice azure --key-env AZURE_SPEECH_KEY --region <region> [--voice …]");
+            println!("Change it:  airband voice device  |  airband voice gemini --key-env GEMINI_API_KEY [--voice Leda] [--model …]  |  airband voice azure --key-env AZURE_SPEECH_KEY --region <region> [--voice …]  |  airband voice elevenlabs --key-env ELEVENLABS_API_KEY [--voice <id>] [--model …]");
             return Ok(());
         }
         Some("device") => Voice::Device,
+        Some("elevenlabs") => {
+            let mut v: Voice = serde_json::from_value(json!({ "kind": "elevenlabs", "key": key(args)? })).map_err(|e| e.to_string())?;
+            if let Voice::Elevenlabs { model, voice, .. } = &mut v {
+                *model = option(args, "--model").unwrap_or(model.clone());
+                *voice = option(args, "--voice").unwrap_or(voice.clone());
+            }
+            v
+        }
         Some("gemini") => {
             let mut v: Voice = serde_json::from_value(json!({ "kind": "gemini", "key": key(args)? })).map_err(|e| e.to_string())?;
             if let Voice::Gemini { model, voice, .. } = &mut v {

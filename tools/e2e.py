@@ -340,7 +340,7 @@ try:
     check("a follow-up with nobody named goes to the same agent (model)", say("and keep the price next to it") == "Sent to catalog part page.")
     check("words about another team's work reach that team (model)", say("send the payout email on Fridays") == "Sent to payouts schedule.")
     check("an agent named by the two letters his phone shows for it gets it (model)", say("C I, run the import again with the new supplier file") == "Sent to catalog import.")
-    check("the second thing he sends an agent comes with one line in front, not the whole explanation again", "From Charles, through Airband:\n\nand keep the price next to it" in received("page") and received("page").count("sent through Airband by voice") == 1, received("page")[-400:])
+    check("what an agent gets is his words with one line in front and nothing after", received("page").rstrip().endswith("and keep the price next to it") and "From Charles, on his phone through Airband." in received("page"), received("page")[-300:])
     # what his phone adds when he is paired with a second computer: the agents he can see that this tower does not have
     there = [{"callsign": "warehouse stock", "group": "warehouse", "said": "Counted the shelves in bay 4: 212 units, 9 short of what the system says.", "ago": 40}]
     told = http("POST", "/v1/radio/utterance", {"text": "recount bay 4 and tell me which units are missing", "id": os.urandom(6).hex(), "others": there})[1]

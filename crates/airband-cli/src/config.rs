@@ -70,6 +70,7 @@ pub enum Voice {
     Device,
     Gemini { key: String, #[serde(default = "gemini_model")] model: String, #[serde(default = "gemini_voice")] voice: String },
     Azure { key: String, region: String, #[serde(default = "azure_voice")] voice: String },
+    Elevenlabs { key: String, #[serde(default = "elevenlabs_voice")] voice: String, #[serde(default = "elevenlabs_model")] model: String },
     /// Never written in the configuration: Microsoft's voice by a short-lived pass the relay lends, for a tower
     /// with no voice of its own set.
     #[serde(skip)]
@@ -91,6 +92,13 @@ fn gemini_model() -> String {
 }
 fn gemini_voice() -> String {
     "Leda".into()
+}
+/// Jessica: young, bright and warm.
+fn elevenlabs_voice() -> String {
+    "cgSgspJ2msm6clMCkdW9".into()
+}
+fn elevenlabs_model() -> String {
+    "eleven_flash_v2_5".into()
 }
 fn azure_voice() -> String {
     "en-US-AvaMultilingualNeural".into()

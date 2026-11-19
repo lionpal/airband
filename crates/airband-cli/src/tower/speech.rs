@@ -98,11 +98,44 @@ impl Synth for Azure {
     }
 }
 
+struct Elevenlabs {
+    key: String,
+    voice: String,
+    model: String,
+}
+
+impl Synth for Elevenlabs {
+    fn rate(&self) -> u32 {
+        24000
+    }
+    fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8])) -> Result<(), String> {
+        // the streaming endpoint: plain PCM comes back as it is made, the first of it in a fraction of a second
+        let res = airband_radio::net::agent(Duration::from_secs(60))
+            .post(format!("https://api.elevenlabs.io/v1/text-to-speech/{}/stream?output_format=pcm_24000", self.voice))
+            .header("xi-api-key", &self.key)
+            .send_json(json!({ "text": text, "model_id": self.model }))
+            .map_err(|e| e.to_string())?;
+        if res.status().as_u16() != 200 {
+            return Err(format!("ElevenLabs answered {}", res.status()));
+        }
+        let mut reader = res.into_body().into_reader();
+        let mut buf = [0u8; 4800]; // a tenth of a second
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => return Ok(()),
+                Ok(n) => sink(&buf[..n]),
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+    }
+}
+
 fn synth_for(voice: &Voice) -> Option<Box<dyn Synth>> {
     match voice {
         Voice::Device => None,
         Voice::Gemini { key, model, voice } => Some(Box::new(Gemini { key: key.clone(), model: model.clone(), voice: voice.clone() })),
         Voice::Azure { key, region, voice } => Some(Box::new(Azure { key: key.clone(), pass: false, region: region.clone(), voice: voice.clone() })),
+        Voice::Elevenlabs { key, voice, model } => Some(Box::new(Elevenlabs { key: key.clone(), voice: voice.clone(), model: model.clone() })),
         Voice::AzurePass { region, token } => Some(Box::new(Azure { key: token.clone(), pass: true, region: region.clone(), voice: "en-US-AvaMultilingualNeural".into() })),
     }
 }

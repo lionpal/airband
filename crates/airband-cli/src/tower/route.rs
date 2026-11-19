@@ -438,25 +438,14 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
     if targets.is_empty() {
         return if names.is_empty() { say("No agents are running.".into()) } else { ask(format!("Who is that for? {}.", names.join(", "))) };
     }
-    // His words, as he said them. How to answer him through the radio is explained with the first thing he sends
-    // an agent and again after some hours, not with every "OK".
-    let many = if targets.len() > 1 { format!(" This same message went to {} agents.", targets.len()) } else { String::new() };
-    let briefed = format!(
-        "Message from {name}, sent through Airband by voice or from his phone. If by voice a word may be mis-heard. He is away from the keyboard: \
-         he will get your reply cut to one or two sentences, so put the outcome and any question first.{many}\n\n\
-         {rest}{files}\n\n\
-         If this reads as garbled, or acting on it would be hard to undo, ask him to confirm in one short question before doing it. \
-         Later messages from him through Airband come with one line in front and nothing after; the same holds for them.",
-        name = app.cfg.name,
-        rest = parsed.rest
-    );
-    let plain = format!("From {name}, through Airband:{many}\n\n{rest}{files}", name = app.cfg.name, rest = parsed.rest);
-    const BRIEF_AGAIN_MS: u64 = 6 * 3600 * 1000;
+    // His words as he said them, with one line in front that says who they are from and how to answer.
+    let many = if targets.len() > 1 { format!(" Sent to {} agents.", targets.len()) } else { String::new() };
+    let content = format!("From {name}, on his phone through Airband. Answer in a sentence or two, outcome first.{many}\n\n{rest}{files}", name = app.cfg.name, rest = parsed.rest);
     let message_id = config::random_hex(8);
     let (mut sent, mut failed) = (Vec::new(), Vec::new());
     for t in &targets {
         let outcome = match &t.agent.deliver {
-            Some(how) => deliver(how, &t.agent.id, if now().saturating_sub(t.briefed_at) > BRIEF_AGAIN_MS { &briefed } else { &plain }).await,
+            Some(how) => deliver(how, &t.agent.id, &content).await,
             None => Err("its harness gave no way to reach it".into()),
         };
         app.store.delivery(&message_id, uid, &t.callsign.text(), &outcome);
@@ -473,9 +462,6 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
         let id = t.agent.id.clone();
         if let Some(s) = inner.session(&id) {
             s.waiting = false;
-            if now().saturating_sub(s.briefed_at) > BRIEF_AGAIN_MS {
-                s.briefed_at = now();
-            }
         }
         inner.drop_pending(&id, None);
     }
