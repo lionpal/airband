@@ -42,7 +42,8 @@ struct Adapter {
     touched: Option<fn(&airband_core::agent::Agent) -> Vec<String>>,
     /// What he has said to an agent at its own keyboard since `from`, a place in the harness's record that an
     /// earlier call returned (0 the first time). Returns his words, oldest first, and the place to ask from next
-    /// time. Only what he typed himself: nothing the tower passed on, nothing another agent sent.
+    /// time. What he typed himself comes back with `his` set; what the tower passed on comes back without, when
+    /// the agent has taken it in.
     told: Option<fn(&airband_core::agent::Agent, u64) -> (Vec<Told>, u64)>,
 }
 
@@ -55,6 +56,9 @@ pub struct Told {
     pub at: u64,
     /// His words, as he typed them.
     pub text: String,
+    /// False for something the tower passed on to the agent, seen here at the moment the agent took it in:
+    /// that is how the tower knows a message of his has been read.
+    pub his: bool,
 }
 
 /// What a look at an agent can tell. Anything the harness cannot say is left out.

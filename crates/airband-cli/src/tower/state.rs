@@ -100,6 +100,9 @@ pub(super) struct Entry {
     /// last thing it said, it counts as at work.
     #[serde(default)]
     pub(super) background: bool,
+    /// For his words: when the agent took them in, once its harness shows that.
+    #[serde(default)]
+    pub(super) seen: Option<u64>,
     #[serde(default)]
     pub(super) queued: bool,
     #[serde(default)]
@@ -401,14 +404,23 @@ impl Inner {
         let Some(to) = self.find(agent_id).cloned() else { return };
         // nothing from before the chat he has; with no chat yet, the last day
         let oldest = self.log.first().map(|e| e.at).unwrap_or_else(|| now().saturating_sub(24 * 3600 * 1000));
-        for t in told.into_iter().filter(|t| t.at >= oldest) {
+        // what the tower passed on, now taken in by the agent: his message is marked read, the oldest unread first
+        for t in told.iter().filter(|t| !t.his) {
+            let read = self.log.iter().position(|e| e.from == "you" && e.seen.is_none() && !e.queued && !e.cancelled && e.to_agents.iter().any(|a| a == agent_id) && e.at <= t.at + 5000 && t.text.contains(e.full.trim()));
+            if let Some(i) = read {
+                self.log[i].seen = Some(t.at);
+                let id = self.log[i].id.clone();
+                self.touch(&id);
+            }
+        }
+        for t in told.into_iter().filter(|t| t.his && t.at >= oldest) {
             // the harness's own id for it, so the same words are never added twice
             let id: String = t.id.chars().filter(|c| c.is_ascii_alphanumeric()).take(40).collect();
             if id.is_empty() || self.log.iter().any(|e| e.id == id) {
                 continue;
             }
             // his words as he typed them. Something very long (a pasted log) is shown by its opening and kept whole
-            let short: String = if t.text.chars().count() > 600 { format!("{}…", t.text.chars().take(600).collect::<String>().trim_end()) } else { t.text.clone() };
+            let short: String = if t.text.chars().count() > 1500 { format!("{}…", t.text.chars().take(1500).collect::<String>().trim_end()) } else { t.text.clone() };
             self.record_at(Entry { short: Some(short), ..Entry::his(id, std::slice::from_ref(&to), t.text) }, t.at);
         }
         if let Some(s) = self.session(agent_id) {
@@ -484,6 +496,7 @@ impl Inner {
             options: e.options.clone(),
             recommended: e.recommended,
             read: e.read.clone(),
+            seen: e.seen,
             queued: e.queued,
             cancelled: e.cancelled,
             permission: e.permit.is_some(),

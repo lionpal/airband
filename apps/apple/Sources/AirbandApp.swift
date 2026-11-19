@@ -116,6 +116,9 @@ struct FeedView: View {
     @StateObject private var ticker = Ticker()
     @State private var showQuick = false
     @State private var typingOpen = false
+    /// Is the end of the chat on screen, and a count that goes up each time he asks to be taken there.
+    @State private var atEnd = true
+    @State private var toEnd = 0
     @FocusState private var typing: Bool
 
     var body: some View {
@@ -240,6 +243,14 @@ struct FeedView: View {
 
     /// The teams bar: one cell per project, each showing what its agents are doing. Tap one to see only that team
     /// and keep what he says among them; tap it again for everyone.
+    /// An agent's badge and its team's colour, by its callsign.
+    private func badge(of callsign: String) -> (String, UInt8)? {
+        for room in model.view.rooms {
+            if let agent = room.members.first(where: { $0.callsign == callsign }) { return (agent.badge, room.colour) }
+        }
+        return nil
+    }
+
     /// The team he is in: the one he picked, or the team of the agent he is looking at.
     private var team: DeskRoom? {
         if let room = model.room { return model.view.rooms.first { $0.name == room } }
@@ -253,11 +264,17 @@ struct FeedView: View {
     /// and round again. Inside a team: the whole team, then each of its agents.
     private func step(_ by: Int) {
         if let team {
-            let stops: [String?] = [nil] + team.members.map { Optional($0.callsign) }
-            let at = stops.firstIndex { $0 == model.only } ?? 0
-            let to = stops[(at + by + stops.count) % stops.count]
-            model.room = team.name
-            model.only = to
+            // inside a team a swipe to the left goes on to its next agent; a swipe to the right leaves, back to
+            // where he came from
+            if by < 0 {
+                model.only = nil
+                model.room = nil
+            } else {
+                let stops: [String?] = [nil] + team.members.map { Optional($0.callsign) }
+                let at = stops.firstIndex { $0 == model.only } ?? 0
+                model.room = team.name
+                model.only = stops[min(at + 1, stops.count - 1)]
+            }
         } else {
             let stops: [String?] = [nil] + model.view.rooms.map { Optional($0.name) }
             let at = stops.firstIndex { $0 == model.room } ?? 0
@@ -267,9 +284,10 @@ struct FeedView: View {
         model.replyingTo = nil
     }
 
-    private func chip(_ label: String, on: Bool, dot: String? = nil, working: Bool = false, colour: UInt8? = nil) -> some View {
+    private func chip(_ label: String, on: Bool, dot: String? = nil, working: Bool = false, colour: UInt8? = nil, badge: (String, UInt8)? = nil) -> some View {
         HStack(spacing: 7) {
             if let dot { StateDot(state: dot, working: working).id(dot + (working ? "+" : "")) }
+            if let badge { Badge(text: badge.0, colour: badge.1, size: 20) }
             Text(label).font(.system(size: 14, weight: on ? .semibold : .medium)).lineLimit(1)
                 .padding(.bottom, 2).overlay(alignment: .bottom) { if let colour { Capsule().fill(Palette.team(colour)).frame(height: 2) } }
         }
@@ -294,7 +312,7 @@ struct FeedView: View {
                     ForEach(team.members, id: \.id) { agent in
                         let short = agent.callsign.hasPrefix(team.name + " ") ? String(agent.callsign.dropFirst(team.name.count + 1)) : agent.callsign
                         Button { model.room = team.name; model.only = model.only == agent.callsign ? nil : agent.callsign; model.replyingTo = nil } label: {
-                            chip(short, on: model.only == agent.callsign, dot: agent.state)
+                            chip(short, on: model.only == agent.callsign, dot: agent.state, badge: (agent.badge, team.colour))
                         }
                         .buttonStyle(.plain).id("agent:" + agent.callsign).accessibilityLabel(agent.callsign)
                     }
@@ -438,6 +456,9 @@ struct FeedView: View {
                             .accessibilityLabel("Sending: \(o.label ?? o.text)")
                     }
                     Color.clear.frame(height: 1).id("end")
+                        // whether the end of the chat is on screen: when it is not, a bar offers the way back to it
+                        .onAppear { atEnd = true }
+                        .onDisappear { atEnd = false }
                 }
                 .padding(.horizontal, 8).padding(.top, 6).padding(.bottom, 10)
             }
@@ -451,6 +472,7 @@ struct FeedView: View {
             })
             .onChange(of: model.view.feed.last?.id) { _, _ in withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("end", anchor: .bottom) } }
             .onChange(of: model.view.sending.count) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
+            .onChange(of: toEnd) { _, _ in withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("end", anchor: .bottom) } }
             // a long chat of messages of very different heights can open on empty space past its end, because the
             // list only guesses the heights of what it has not drawn: go to the end once it is laid out
             .task {
@@ -551,7 +573,13 @@ struct FeedView: View {
                     }
                     .accessibilityHidden(true)
                 } else if model.hearing.isEmpty {
-                    Text(statusLine ?? " ").font(.system(size: 14, weight: .medium)).foregroundStyle(statusLine == nil ? Palette.quiet : Palette.soft)
+                    HStack(spacing: 6) {
+                        // whoever it will go to, with its badge, when that is settled
+                        if statusLine?.hasPrefix("to ") == true, let aim = model.replyingTo.map({ name(of: $0) }) ?? model.only, let badge = badge(of: aim) {
+                            Badge(text: badge.0, colour: badge.1, size: 16)
+                        }
+                        Text(statusLine ?? " ").font(.system(size: 14, weight: .medium)).foregroundStyle(statusLine == nil ? Palette.quiet : Palette.soft)
+                    }
                         .frame(height: 18).padding(.horizontal, 12).padding(.vertical, 4)
                         .frosted(Capsule(), shown: statusLine != nil).accessibilityHidden(statusLine == nil)
                         // a tap lets go of the message he picked: what he says next is placed afresh
@@ -559,8 +587,13 @@ struct FeedView: View {
                 } else {
                     // his own words, as he says them: the end of a long sentence stays in view
                     if let aim = model.replyingTo.map({ name(of: $0) }) ?? model.only {
-                        Text("to \(aim)").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.soft)
-                            .padding(.horizontal, 10).padding(.vertical, 3).frosted(Capsule())
+                        HStack(spacing: 5) {
+                            Text("to")
+                            if let badge = badge(of: aim) { Badge(text: badge.0, colour: badge.1, size: 16) }
+                            Text(aim)
+                        }
+                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.soft)
+                        .padding(.horizontal, 10).padding(.vertical, 3).frosted(Capsule())
                     }
                     Text("\u{201C}\(model.hearing)\u{201D}").font(.system(size: 17, weight: .medium)).foregroundStyle(Palette.ink)
                         .lineLimit(2).truncationMode(.head).multilineTextAlignment(.center)
@@ -604,6 +637,20 @@ struct FeedView: View {
             }
         }
         .padding(.top, 6).padding(.bottom, 6)
+        // scrolled back: a thin bar at the very bottom takes him to the latest again
+        .overlay(alignment: .bottom) {
+            if !atEnd, !typingOpen, !model.view.feed.isEmpty {
+                Button { toEnd += 1 } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.down").font(.system(size: 10, weight: .bold))
+                        Text("latest").font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundStyle(Palette.soft).padding(.horizontal, 14).frame(height: 24).frosted(Capsule(), strength: 0.8)
+                }
+                .buttonStyle(.plain).offset(y: 14).transition(.opacity).accessibilityLabel("Go to the latest message")
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: atEnd)
         .onChange(of: model.replyingTo?.id) { _, id in if id != nil && typingOpen { typing = true } }
     }
 
@@ -667,17 +714,25 @@ struct Report: View {
                 Speaker(m: m)
                 if m.stalled { Text("stopped").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.quiet).padding(.horizontal, 8).padding(.vertical, 2).background(Palette.raised, in: Capsule()) }
             }
-            Button {
-                expanded.toggle()
-                if expanded { model.loadFull(m) }
-                model.replyingTo = expanded ? m : (picked ? nil : model.replyingTo)
-            } label: {
-                Text(expanded ? (model.full[m.id] ?? m.text) : m.text)
-                    .font(.system(size: 16)).lineSpacing(3).foregroundStyle(Palette.soft)
-                    .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
+            // a tap picks it as the message he is answering, and nothing else: it does not change size under his
+            // finger. Seeing all of what it wrote is the small button beside it.
+            HStack(alignment: .bottom, spacing: 6) {
+                Button { model.replyingTo = picked ? nil : m } label: {
+                    Prose(text: expanded ? (model.full[m.id] ?? m.text) : m.text)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint(picked ? "Stop answering this one" : "Answer this agent: what you say or type next goes to it")
+                if m.long {
+                    Button {
+                        expanded.toggle()
+                        if expanded { model.loadFull(m) }
+                    } label: {
+                        Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.system(size: 11, weight: .bold)).foregroundStyle(Palette.quiet)
+                            .frame(width: 30, height: 30).background(Palette.field, in: Circle())
+                    }
+                    .buttonStyle(.plain).accessibilityLabel(expanded ? "Show the short version" : "Show everything it wrote")
+                }
             }
-            .buttonStyle(.plain)
-            .accessibilityHint(expanded ? "Show the short version" : "Show everything it wrote, and answer this agent")
             if !m.pictures.isEmpty { PictureStrip(m: m, height: 150).padding(.top, 3) }
             if !m.links.isEmpty { LinkRow(m: m).padding(.top, 3) }
         }
@@ -751,7 +806,7 @@ struct Mine: View {
     let m: ChatMessage
     /// A long one shows its first lines; a tap opens it whole, and another closes it.
     @State private var whole = false
-    private var long: Bool { m.long || m.text.count > 140 || m.text.filter { $0 == "\n" }.count > 4 }
+    private var long: Bool { m.long || m.text.count > 520 || m.text.filter { $0 == "\n" }.count > 14 }
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 3) {
@@ -784,7 +839,7 @@ struct Mine: View {
             if !m.pictures.isEmpty { PictureStrip(m: m, height: 120, still: true) }
             VStack(alignment: .trailing, spacing: 4) {
                 Text(whole ? (model.full[m.id] ?? m.text) : m.text).font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.ground)
-                    .lineLimit(whole ? nil : 5)
+                    .lineLimit(whole ? nil : 15)
                 if long {
                     Image(systemName: whole ? "chevron.up" : "chevron.down").font(.system(size: 11, weight: .bold)).foregroundStyle(Palette.ground.opacity(0.45))
                 }
@@ -808,6 +863,17 @@ struct Mine: View {
                 if !whole && m.long { model.loadFull(m) }
                 withAnimation(.snappy(duration: 0.2)) { whole.toggle() }
             }
+            }
+            // has it got there, and has the agent read it: one tick when it is delivered, two and the time once
+            // the agent has taken it in (an agent busy with something else may not for a long while)
+            if !m.queued, !m.to.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: m.seen > 0 ? "checkmark.circle.fill" : "checkmark").font(.system(size: 10, weight: .bold))
+                    Text(m.seen > 0 ? "read " + Date(timeIntervalSince1970: Double(m.seen) / 1000).formatted(date: .omitted, time: .shortened) : "delivered")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundStyle(m.seen > 0 ? Palette.signal.opacity(0.85) : Palette.dim)
+                .accessibilityLabel(m.seen > 0 ? "Read" : "Delivered, not read yet")
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing).padding(.leading, 50)
@@ -854,6 +920,54 @@ struct AskCard: View {
         .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(Palette.ask.opacity(0.5), lineWidth: 1))
         .padding(.horizontal, 8)
         .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+}
+
+/// Text an agent wrote, with what it fenced in triple backticks set as it was written: smaller, in a fixed-width
+/// face, each line on its own line and never wrapped. A wide block scrolls sideways.
+struct Prose: View {
+    let text: String
+    var size: CGFloat = 16
+    var colour: Color = Palette.soft
+    /// Read bold, links and inline code in the prose (the reader does; a chat line shows it plain).
+    var marked = false
+
+    /// The text in pieces: prose, and fenced blocks without their fences.
+    private var pieces: [(code: Bool, text: String)] {
+        var out: [(Bool, String)] = []
+        for (i, part) in text.components(separatedBy: "```").enumerated() {
+            if i % 2 == 0 {
+                let prose = part.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !prose.isEmpty { out.append((false, prose)) }
+            } else {
+                // the first line of a block may only name its language
+                var lines = part.components(separatedBy: "\n")
+                if let first = lines.first, !first.contains(" "), first.count < 16 { lines.removeFirst() }
+                let code = lines.joined(separator: "\n").trimmingCharacters(in: .newlines)
+                if !code.isEmpty { out.append((true, code)) }
+            }
+        }
+        return out.map { (code: $0.0, text: $0.1) }
+    }
+
+    var body: some View {
+        let pieces = pieces
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(pieces.indices, id: \.self) { i in
+                if pieces[i].code {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        Text(pieces[i].text).font(.system(size: size - 3.5, design: .monospaced)).foregroundStyle(colour)
+                            .lineSpacing(2).fixedSize(horizontal: true, vertical: true).padding(10)
+                    }
+                    .background(Palette.field, in: RoundedRectangle(cornerRadius: 10))
+                } else if marked, let rich = try? AttributedString(markdown: pieces[i].text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+                    Text(rich).font(.system(size: size)).lineSpacing(marked ? 5 : 3).foregroundStyle(colour).frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Text(pieces[i].text).font(.system(size: size)).lineSpacing(3).foregroundStyle(colour)
+                        .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
     }
 }
 
@@ -1116,8 +1230,8 @@ struct ReaderView: View {
             }
             .padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 12)
             ScrollView {
-                Text(text).font(.system(size: 17)).lineSpacing(5).foregroundStyle(Palette.soft)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 20).padding(.bottom, 150)
+                Prose(text: model.full[m.id] ?? m.text, size: 17, marked: true)
+                    .padding(.horizontal, 20).padding(.bottom, 150)
                     .textSelection(.enabled)
             }
         }

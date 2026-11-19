@@ -134,7 +134,7 @@ pub struct Outgoing {
 }
 
 fn chat(m: airband_core::radio::Message) -> ChatMessage {
-    ChatMessage { seq: m.seq, id: m.id, at: m.at, from: m.from, group: m.group, to: m.to, needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), text: m.text, long: m.long, queued: m.queued, options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links, agent: m.agent, station: String::new(), open: m.open, badge: String::new(), colour: 0, read: m.read }
+    ChatMessage { seq: m.seq, id: m.id, at: m.at, from: m.from, group: m.group, to: m.to, needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), text: m.text, long: m.long, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links, agent: m.agent, station: String::new(), open: m.open, badge: String::new(), colour: 0, read: m.read }
 }
 
 fn chat_feed(feed: Feed) -> ChatFeed {
@@ -204,6 +204,8 @@ pub struct ChatMessage {
     pub long: bool,
     /// His own words, waiting for the agent to stop what it is doing. He can still take them back.
     pub queued: bool,
+    /// For his own words: when the agent took them in, in milliseconds since 1970; 0 while that is not known.
+    pub seen: u64,
     /// Answers he can give with one tap: show each as a button and send the one tapped with `re` set to this message.
     pub options: Vec<String>,
     /// Which of `options` the agent itself recommended, if it said. Mark only that one; with none, mark none.

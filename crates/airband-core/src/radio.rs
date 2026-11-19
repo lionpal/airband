@@ -369,6 +369,10 @@ pub struct Message {
     /// holds this until it stops. He can still take it back (`POST unsend`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub queued: bool,
+    /// For something he said: when the agent it went to took it in, in milliseconds since 1970, once that is
+    /// known. An agent in the middle of something may not read a message for a long while after it is delivered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seen: Option<u64>,
     /// He took it back before it was delivered. A radio stops showing it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub cancelled: bool,
@@ -486,7 +490,7 @@ mod tests {
     use super::*;
 
     fn m(from: &str, group: &str, to: &[&str]) -> Message {
-        Message { seq: 1, id: "x".into(), at: 0, from: from.into(), group: group.into(), to: to.iter().map(|s| s.to_string()).collect(), kind: None, text: String::new(), long: false, options: Vec::new(), recommended: None, read: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: None, rev: 0, open: false, queued: false, cancelled: false }
+        Message { seq: 1, id: "x".into(), at: 0, from: from.into(), group: group.into(), to: to.iter().map(|s| s.to_string()).collect(), kind: None, text: String::new(), long: false, options: Vec::new(), recommended: None, read: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: None, rev: 0, open: false, queued: false, seen: None, cancelled: false }
     }
     #[test]
     fn a_feed_from_a_newer_tower_still_reads() {

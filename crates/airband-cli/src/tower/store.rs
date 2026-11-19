@@ -57,6 +57,7 @@ impl Store {
         let _ = db.execute("alter table messages add column rev integer", []);
         let _ = db.execute("alter table messages add column read text", []);
         let _ = db.execute("alter table messages add column waiting text", []);
+        let _ = db.execute("alter table messages add column seen integer", []);
         let _ = db.execute("alter table events add column agent_doc text", []);
         let _ = db.execute("alter table deliveries add column utterance text", []);
         Ok(Store { db: Mutex::new(db) })
@@ -82,7 +83,7 @@ impl Store {
             }
         };
         let mut entries = Vec::new();
-        if let Some(mut q) = Self::warn("reading messages", db.prepare("select seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting from messages order by seq desc limit ?1")) {
+        if let Some(mut q) = Self::warn("reading messages", db.prepare("select seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen from messages order by seq desc limit ?1")) {
             let rows = q.query_map(params![keep as i64], |r| {
                 Ok(Entry {
                     seq: r.get::<_, i64>(0)? as u64,
@@ -103,6 +104,7 @@ impl Store {
                     rev: r.get::<_, Option<i64>>(15)?.unwrap_or(0) as u64,
                     read: r.get(16)?,
                     background: false,
+                    seen: r.get::<_, Option<i64>>(18)?.map(|t| t as u64),
                     queued: r.get::<_, Option<String>>(17)?.as_deref() == Some("queued"),
                     cancelled: r.get::<_, Option<String>>(17)?.as_deref() == Some("cancelled"),
                     permit: None,
@@ -135,9 +137,9 @@ impl Store {
             Self::warn(
                 "saving a message",
                 db.execute(
-                    "insert into messages (seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
-                     on conflict (seq) do update set kind = excluded.kind, short = excluded.short, detail = excluded.detail, options = excluded.options, recommended = excluded.recommended, rev = excluded.rev, read = excluded.read, waiting = excluded.waiting",
-                    params![e.seq as i64, e.id, e.at as i64, e.from, e.group, serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, if e.cancelled { Some("cancelled") } else if e.queued { Some("queued") } else { None }],
+                    "insert into messages (seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+                     on conflict (seq) do update set kind = excluded.kind, short = excluded.short, detail = excluded.detail, options = excluded.options, recommended = excluded.recommended, rev = excluded.rev, read = excluded.read, waiting = excluded.waiting, seen = excluded.seen",
+                    params![e.seq as i64, e.id, e.at as i64, e.from, e.group, serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, if e.cancelled { Some("cancelled") } else if e.queued { Some("queued") } else { None }, e.seen.map(|t| t as i64)],
                 ),
             );
         }

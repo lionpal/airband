@@ -144,7 +144,8 @@ pub fn told(agent: &Agent, from: u64) -> (Vec<super::Told>, u64) {
                 break;
             }
             at += n as u64;
-            if !std::mem::take(&mut skip) && line.windows(7).any(|w| w == b"\"human\"") {
+            let wanted = |mark: &[u8]| line.windows(mark.len()).any(|w| w == mark);
+            if !std::mem::take(&mut skip) && (wanted(b"\"human\"") || wanted(b"\"peer\"") || wanted(b"\"sdk\"")) {
                 told.extend(told_in(&String::from_utf8_lossy(&line)));
             }
         }
@@ -168,7 +169,7 @@ fn told_in(piece: &str) -> Vec<super::Told> {
     };
     piece
         .lines()
-        .filter(|l| l.contains("\"human\""))
+        .filter(|l| l.contains("\"human\"") || l.contains("\"peer\"") || l.contains("\"sdk\""))
         .filter_map(|line| {
             let entry: Value = serde_json::from_str(line).ok()?;
             if entry["isSidechain"] == true || entry["isMeta"] == true {
@@ -179,11 +180,15 @@ fn told_in(piece: &str) -> Vec<super::Told> {
                 "attachment" if entry["attachment"]["type"] == "queued_command" => (&entry["attachment"], entry["attachment"]["source_uuid"].as_str().or(entry["uuid"].as_str())?, words(&entry["attachment"]["prompt"])?),
                 _ => return None,
             };
-            if from["origin"]["kind"] != "human" && entry["origin"]["kind"] != "human" {
+            // typed by him; or left for it from outside (a message the tower passed on arrives so), or given to
+            // it as its input by whoever runs it (the tower, for one it holds): those it has now taken in
+            let of = |kind: &str| from["origin"]["kind"] == kind || entry["origin"]["kind"] == kind;
+            let his = of("human");
+            if !his && !of("peer") && entry["promptSource"] != "sdk" {
                 return None;
             }
             let at = from["timestamp"].as_str().or(entry["timestamp"].as_str()).and_then(super::claude_accounts::iso_ms)?;
-            Some(super::Told { id: id.to_string(), at, text })
+            Some(super::Told { id: id.to_string(), at, text, his })
         })
         .collect()
 }
@@ -555,9 +560,12 @@ mod tests {
             r#"{"type":"attachment","uuid":"a6","attachment":{"type":"queued_command","prompt":[{"type":"image","source":{"data":"…"}},{"type":"text","text":"Swiping on the pop-up should get rid of it."}],"source_uuid":"q6","origin":{"kind":"human"},"timestamp":"2026-11-19T17:40:46.000Z"}}"#,
         ]
         .join("\n");
-        let told = told_in(&transcript);
+        let all = told_in(&transcript);
+        let told: Vec<_> = all.iter().filter(|t| t.his).collect();
         assert_eq!(told.iter().map(|t| (t.id.as_str(), t.text.as_str())).collect::<Vec<_>>(), vec![("a1", "ok so how do i get a qr code"), ("q6", "Swiping on the pop-up should get rid of it.")]);
         assert_eq!(told[0].at, 1795109854021);
+        // what the tower passed on is seen too, as taken in and not as something he typed
+        assert_eq!(all.iter().filter(|t| !t.his).map(|t| t.id.as_str()).collect::<Vec<_>>(), vec!["a2"]);
     }
 
     #[test]
