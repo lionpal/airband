@@ -53,6 +53,17 @@ pub(crate) fn poll(jobs: Sender<Job>, link: Arc<Link>, host: Arc<dyn RadioHost>,
 
 pub(crate) fn work(jobs: Receiver<Job>, link: Arc<Link>, host: Arc<dyn RadioHost>, stop: Arc<AtomicBool>, busy: Arc<AtomicBool>) {
     let ears = ears::Ears::default();
+    {
+        // the pass for the listening service is fetched before he first needs it, and again now and then, so
+        // opening the microphone never waits on it
+        let (ears, link, stop) = (ears.clone(), link.clone(), stop.clone());
+        thread::spawn(move || {
+            while !stop.load(Ordering::SeqCst) {
+                ears.warm(&link);
+                thread::sleep(Duration::from_secs(240));
+            }
+        });
+    }
     while let Ok(job) = jobs.recv() {
         if stop.load(Ordering::SeqCst) {
             return;
@@ -84,7 +95,7 @@ pub(crate) fn work(jobs: Receiver<Job>, link: Arc<Link>, host: Arc<dyn RadioHost
 }
 
 /// Open the microphone; send what he says; speak the tower's answer; listen again if the tower asks.
-pub(crate) fn converse(link: &Link, host: &dyn RadioHost, ears: &ears::Ears, mut re: Option<String>, scope: Option<String>) {
+pub(crate) fn converse(link: &Arc<Link>, host: &dyn RadioHost, ears: &ears::Ears, mut re: Option<String>, scope: Option<String>) {
     for _ in 0..MAX_ROUNDS {
         host.status(RadioStatus::Listening);
         let Listened::Said(text) = ears.hear(link, host, false) else { return };

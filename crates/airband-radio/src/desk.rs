@@ -138,6 +138,9 @@ struct Station {
     online: bool,
     /// It has been asked at least once and has answered or failed.
     tried: bool,
+    /// When it last answered, and how many times in a row it has not since.
+    answered_at: Option<std::time::Instant>,
+    fails: u32,
     agents: Vec<ChatAgent>,
     open: HashSet<String>,
     sending: Vec<Outgoing>,
@@ -393,7 +396,24 @@ impl Desk {
             let host = Arc::new(StationHost { shared: self.shared.clone(), index: made.len(), generation });
             let Ok(radio) = Radio::start(link.clone(), dir, host) else { continue };
             radio.set_call_mode(calling);
-            made.push(Station { link, messages: radio.history(), radio, name: String::new(), online: false, tried: false, agents: Vec::new(), open: HashSet::new(), sending: Vec::new(), quick: Vec::new(), colours: Default::default() });
+            // a computer that was already there keeps what was last seen of it, so the screen does not empty while
+            // it is asked again
+            let was = old.iter().find(|s| s.link == link);
+            made.push(Station {
+                messages: radio.history(),
+                radio,
+                name: was.map(|s| s.name.clone()).unwrap_or_default(),
+                online: was.is_some_and(|s| s.online),
+                tried: false,
+                answered_at: None,
+                fails: 0,
+                agents: was.map(|s| s.agents.clone()).unwrap_or_default(),
+                open: was.map(|s| s.open.clone()).unwrap_or_default(),
+                sending: Vec::new(),
+                quick: was.map(|s| s.quick.clone()).unwrap_or_default(),
+                colours: was.map(|s| s.colours.clone()).unwrap_or_default(),
+                link,
+            });
         }
         let taken: Vec<String> = made.iter().map(|s| s.link.clone()).collect();
         let radios: Vec<Arc<Radio>> = made.iter().map(|s| s.radio.clone()).collect();
@@ -404,6 +424,21 @@ impl Desk {
         }
         self.shared.host.changed();
         taken
+    }
+
+    /// The app is in front of him again. A request that was open when it went to the background is dead and
+    /// would not be noticed for most of a minute, so if no computer has answered lately they are all asked
+    /// afresh, now. Cheap to call whenever the app comes forward.
+    pub fn wake(&self) {
+        let stale = {
+            let state = self.shared.state.lock().unwrap();
+            // a request waits up to 25 seconds for news, so an answer older than that plus a margin is a dead line
+            !state.stations.is_empty() && state.stations.iter().any(|s| s.answered_at.is_none_or(|t| t.elapsed() > Duration::from_secs(32)))
+        };
+        if stale {
+            let links: Vec<String> = self.shared.state.lock().unwrap().stations.iter().map(|s| s.link.clone()).collect();
+            self.set_links(links);
+        }
     }
 
     /// What to show. `room` narrows the feed to one team, `agent` to one callsign; with neither, everything.
@@ -858,10 +893,12 @@ fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64)
             let calling = state.calling;
             let open: HashSet<String> = state.stations.iter().flat_map(|s| s.open.iter().cloned()).collect();
             let Some(station) = state.stations.get_mut(index) else { return };
-            station.tried = true;
             match &got {
                 Ok(feed) => {
                     first = false;
+                    station.tried = true;
+                    station.fails = 0;
+                    station.answered_at = Some(std::time::Instant::now());
                     station.online = true;
                     station.name = feed.station.clone();
                     station.agents = feed.agents.clone();
@@ -875,7 +912,15 @@ fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64)
                         seen = feed.messages.iter().filter(|m| m.from != "you" && !m.needs_you).map(|m| m.id.clone()).collect();
                     }
                 }
-                Err(_) => station.online = false,
+                // one request lost is not a computer out of reach: it is asked again at once, and only a second
+                // failure says so
+                Err(_) => {
+                    station.fails += 1;
+                    if station.fails >= 2 {
+                        station.tried = true;
+                        station.online = false;
+                    }
+                }
             }
             // once the tower agrees a message is answered, stop tracking it here
             let now_open: HashSet<String> = state.stations.iter().flat_map(|s| s.open.iter().cloned()).collect();
@@ -888,7 +933,8 @@ fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64)
             radio.seen(seen);
         }
         if got.is_err() {
-            thread::sleep(Duration::from_secs(3));
+            let fails = shared.state.lock().unwrap().stations.get(index).map(|s| s.fails).unwrap_or(1);
+            thread::sleep(Duration::from_millis(if fails <= 1 { 300 } else { 2500 }));
         }
     }
 }
@@ -933,6 +979,8 @@ mod tests {
             name: name.into(),
             online: true,
             tried: true,
+            answered_at: None,
+            fails: 0,
             agents: agents.iter().map(|(c, g)| ChatAgent { id: c.to_string(), callsign: c.to_string(), group: g.to_string(), harness: "h".into(), waiting: false, reachable: true, state: "working".into(), subagents: 0, doing: None, model: None, effort: None }).collect(),
             open: messages.iter().filter(|m| m.needs_you).map(|m| m.id.clone()).collect(),
             sending: Vec::new(),

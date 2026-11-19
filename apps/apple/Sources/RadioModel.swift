@@ -3,6 +3,7 @@
 // This file passes the desk's view to SwiftUI, lends it the phone's speaker and microphone, and keeps the
 // pairing links in the Keychain. Nothing here would have to be written again in the same way for Android or
 // Windows beyond these three things.
+import AVFoundation
 import Foundation
 import Security
 import SwiftUI
@@ -26,6 +27,14 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     @Published var status: RadioStatus = .idle
     @Published var said = "" // what the device's own voice is saying on a call
     @Published var hearing = "" // what he has said so far, while he is still speaking
+    @Published var micOpen = false // he opened the microphone and has not sent or taken back what he said
+    private var dictating = false // from his tap until the core has dealt with what he said
+    /// The microphone is open: his own tap opened it, or on a call it opened by itself for a question.
+    var listening: Bool {
+        if micOpen { return true }
+        if case .listening = status { return !dictating }
+        return false
+    }
     @Published var reading: String? // the message being read aloud from its full text, by id
     @Published var tray: [TrayItem] = [] // photos and videos he has attached and not yet sent
     @Published var accounts: [StationAccounts] = [] // each computer's accounts, as last read
@@ -60,9 +69,23 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
         #endif
         let center = NotificationCenter.default
-        center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.setFront(true) }
+        center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.setFront(true)
+            // a request left open when the app went away is dead by now: ask the computers again, at once
+            DispatchQueue.global(qos: .userInitiated).async { self?.desk.wake() }
+        }
+        center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in self?.wentAway() }
         center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.setFront(false) }
         connect(links)
+    }
+
+    /// The app was put away. Reading messages aloud goes on only where that is wanted with the screen off:
+    /// through headphones or a car. From the phone's own speaker it stops.
+    private func wentAway() {
+        guard calling else { return }
+        let onPhone: [AVAudioSession.Port] = [.builtInSpeaker, .builtInReceiver]
+        let handsFree = AVAudioSession.sharedInstance().currentRoute.outputs.contains(where: { !onPhone.contains($0.portType) })
+        if !handsFree { Task { await setCalling(false) } }
     }
 
     private func setFront(_ on: Bool) {
@@ -285,27 +308,36 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// said. Nothing is ever sent because he stopped talking.
     @MainActor func talk(about message: ChatMessage? = nil) async {
         // the microphone is open: this tap closes it, and what he said goes
-        if case .listening = status {
-            voice.recordStop()
+        if listening {
+            micOpen = false
+            voice.closeMic()
             return
         }
         if let missing = await voice.authorize() {
             problem = missing
             return
         }
+        // open at once, on its own queue: the screen and the microphone do not wait for anything else
+        micOpen = true
+        dictating = true
+        hearing = ""
+        voice.openMic()
         stopReading()
         // `message`: he is looking at something of one agent's (a picture, say) and this is about that
         let target = message ?? replyingTo
         replyingTo = nil
-        hearing = ""
         desk.talk(re: target?.id, room: only == nil ? room : nil, agent: target == nil ? only : nil)
     }
 
-    /// He took back what he was saying: the microphone closes and nothing is sent.
-    func cancelTalk() {
+    /// He took back what he was saying: the microphone closes and nothing is sent. Returns what had been heard,
+    /// for when he wants to finish it by hand.
+    @discardableResult func cancelTalk() -> String {
+        let heard = hearing
+        micOpen = false
         desk.cancelTalk()
-        voice.recordStop()
+        voice.closeMic()
         hearing = ""
+        return heard
     }
 
     /// His words could not be placed and he has said who they are for, or let them go.
@@ -324,6 +356,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         DispatchQueue.main.async {
             self.status = status
             if !saying.isEmpty { self.said = saying }
+            // the core has dealt with what he said (and not merely finished something else while he talks)
+            if case .listening = status {} else if case .sending = status {} else if !self.voice.micBusy { self.dictating = false; self.micOpen = false }
             // his words stay up while they are being sent, and go when the microphone has closed and they have gone
             if case .listening = status {} else if case .sending = status {} else { self.hearing = "" }
         }

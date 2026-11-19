@@ -98,7 +98,7 @@ struct PictureViewer: View {
     @State var start: String
     /// How far he has dragged the picture away, up or down. The chat comes through behind as it goes.
     @State private var pull: CGFloat = 0
-    private var listening: Bool { if case .listening = model.status { return true }; return false }
+    private var listening: Bool { model.listening }
     private var away: Double { min(abs(pull) / 260, 1) }
 
     var body: some View {

@@ -115,13 +115,15 @@ fn drain(socket: &mut Socket, kept: &mut Vec<String>, ended: &mut bool) -> Resul
 /// (a long silence) a new one is opened and what he said so far is kept.
 /// Ok(None) is silence. Err is a failure of the service or the line before anything was heard: nothing was lost
 /// that the caller cannot get by listening again another way.
-pub(crate) fn azure(grant: &EarsGrant, host: &dyn RadioHost, rate: u32, header: Vec<u8>, manual: bool) -> Result<Option<String>, ()> {
-    // opened now, on its own thread, so it is ready by the time he has said a word
+pub(crate) fn azure(pass: Arc<dyn Fn() -> EarsGrant + Send + Sync>, host: &dyn RadioHost, rate: u32, header: Vec<u8>, manual: bool) -> Result<Option<String>, ()> {
+    // The pass is asked for and the connection opened on a thread of their own, while the microphone is already
+    // being read here: he does not wait for either before he can talk.
     let open = |request: &str| -> Receiver<Result<Socket, ()>> {
         let (tx, rx) = channel();
-        let (grant, request) = (grant.clone(), request.to_string());
+        let (pass, request) = (pass.clone(), request.to_string());
         thread::spawn(move || {
-            let _ = tx.send(connect(&grant, &request));
+            let grant = pass();
+            let _ = tx.send(if grant.kind == "azure" { connect(&grant, &request) } else { Err(()) });
         });
         rx
     };
@@ -158,6 +160,10 @@ pub(crate) fn azure(grant: &EarsGrant, host: &dyn RadioHost, rate: u32, header: 
         }
         let sending = manual || end.speaking;
         waiting.push_back(bytes);
+        // with no connection for a long while, the oldest sound goes: two minutes are kept
+        while waiting.len() > 1200 {
+            waiting.remove(1);
+        }
         if !sending {
             // not speaking yet: keep only the header and the last half second
             while waiting.len() > 6 {
@@ -208,7 +214,7 @@ pub(crate) fn azure(grant: &EarsGrant, host: &dyn RadioHost, rate: u32, header: 
     let last = || -> Result<(), ()> {
         let mut s = match socket {
             Some(s) => s,
-            None => opening.recv_timeout(Duration::from_secs(6)).map_err(|_| ())??,
+            None => opening.recv_timeout(Duration::from_secs(12)).map_err(|_| ())??,
         };
         for chunk in waiting.drain(..) {
             s.send(audio(&request, &chunk)).map_err(|_| ())?;
@@ -274,7 +280,7 @@ mod tests {
         let pcm = &wav[44..];
         let tape = Tape(Mutex::new(pcm.chunks(3200).map(|c| c.to_vec()).collect()), Mutex::new(Vec::new()), Instant::now());
         let grant = EarsGrant { kind: "azure".into(), token: std::env::var("AZURE_TOKEN").unwrap(), region: std::env::var("AZURE_REGION").unwrap(), language: "en-US".into(), phrases: vec![] };
-        let said = azure(&grant, &tape, 16000, crate::ears::wav_header(), false).unwrap();
+        let said = azure(Arc::new(move || grant.clone()), &tape, 16000, crate::ears::wav_header(), false).unwrap();
         println!("{:>5} ms  FINAL: {said:?} (the recording is {} ms long)", tape.2.elapsed().as_millis(), pcm.len() / 32);
         assert!(said.is_some_and(|s| !s.is_empty()));
         assert!(tape.1.lock().unwrap().len() >= 2, "words should arrive while he is still speaking");

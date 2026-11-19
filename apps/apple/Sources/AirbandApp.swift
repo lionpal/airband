@@ -374,9 +374,10 @@ struct FeedView: View {
         if let room = model.room { return "message \(room)" }
         return "say anything"
     }
-    private var listeningNow: Bool { if case .listening = model.status { return true }; return false }
+    private var listeningNow: Bool { model.listening }
     /// One quiet line above the buttons: who he is answering, or what the radio is doing.
     private var statusLine: String? {
+        if model.micOpen { return "listening \u{b7} tap to send" }
         if let re = model.replyingTo { return "answering \(name(of: re))" }
         switch model.status {
         case .listening: return "listening \u{b7} tap to send"
@@ -429,7 +430,14 @@ struct FeedView: View {
                         .lineLimit(2).truncationMode(.head).multilineTextAlignment(.center)
                         .frame(minHeight: 18).padding(.horizontal, 14).padding(.vertical, 4)
                         .frosted(RoundedRectangle(cornerRadius: 16), strength: 0.8).padding(.horizontal, 8).frame(maxWidth: .infinity)
-                        .animation(.easeOut(duration: 0.12), value: model.hearing).accessibilityHidden(true)
+                        .animation(.easeOut(duration: 0.12), value: model.hearing)
+                        // a tap on his words closes the microphone and puts them in the box, to finish by hand
+                        .onTapGesture {
+                            draft = model.cancelTalk()
+                            typingOpen = true
+                            typing = true
+                        }
+                        .accessibilityLabel("What you said. Tap to edit.").accessibilityAddTraits(.isButton)
                 }
                 HStack {
                     // +: attach a photo or a video, or send one of the things he says all the time
@@ -606,7 +614,7 @@ struct Mine: View {
     let m: ChatMessage
     /// A long one shows its first lines; a tap opens it whole, and another closes it.
     @State private var whole = false
-    private var long: Bool { m.long || m.text.count > 280 || m.text.filter { $0 == "\n" }.count > 6 }
+    private var long: Bool { m.long || m.text.count > 140 || m.text.filter { $0 == "\n" }.count > 4 }
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 3) {
@@ -882,7 +890,7 @@ struct ReaderView: View {
     @EnvironmentObject var model: RadioModel
     @Environment(\.dismiss) private var dismiss
     let m: ChatMessage
-    private var listening: Bool { if case .listening = model.status { return true }; return false }
+    private var listening: Bool { model.listening }
     private var reading: Bool { model.reading == m.id }
 
     /// What the agent wrote, with its bold, links and code kept and its line breaks as written.

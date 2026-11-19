@@ -18,11 +18,6 @@ final class Voice: NSObject, @unchecked Sendable {
     private var tone: AVAudioPlayer?
     private enum Mode { case idle, speaking, listening }
 
-    /// Seconds to wait for him to start talking, and the quiet that means he has finished (Apple's recognition only;
-    /// a listening service uses the core's own rule).
-    var openWindow: TimeInterval = 6
-    var pause: TimeInterval = 1.6
-
     override init() {
         super.init()
         NotificationCenter.default.addObserver(self, selector: #selector(interrupted(_:)), name: AVAudioSession.interruptionNotification, object: nil)
@@ -155,13 +150,56 @@ final class Voice: NSObject, @unchecked Sendable {
     // MARK: the microphone, as plain audio
 
     private let recEngine = AVAudioEngine()
+    /// The microphone is being captured.
     private var recording = false
+    /// He opened it himself, and the core has not come for the audio yet.
+    private var held = false
+    /// He has just tapped, and the microphone is on its way open.
+    private var opening = false
     private var captured = Data()
     private let recLock = NSCondition()
+    /// Everything that starts or stops the microphone runs here, in order, and never on the main thread: opening
+    /// the audio session takes a moment, and a tap must not wait for it.
+    private let micQueue = DispatchQueue(label: "dev.airband.mic", qos: .userInitiated)
+    private static let micRate: Double = 16000
 
-    /// Start capturing 16-bit mono PCM at `rate`. False if the microphone cannot be opened.
+    /// He tapped the microphone: start capturing now. The core comes for the audio a moment later, when it has
+    /// a pass for the listening service; nothing he says meanwhile is lost.
+    func openMic() {
+        recLock.lock(); opening = true; recLock.unlock()
+        micQueue.async {
+            let started = self.start()
+            self.recLock.lock(); self.held = started; self.opening = false; self.recLock.unlock()
+        }
+    }
+
+    /// He has the microphone open, or it is on its way open, or what he said is still waiting to be read.
+    var micBusy: Bool {
+        recLock.lock()
+        defer { recLock.unlock() }
+        return opening || recording || held
+    }
+
+    /// He tapped again: stop capturing. What was captured stays until the core has read it all.
+    func closeMic() {
+        micQueue.async { self.halt() }
+    }
+
+    /// The core wants the microphone at `rate`. If he has already opened it, this is that same capture, from
+    /// its beginning, whether or not he has closed it again since. False if the microphone cannot be opened.
     func recordStart(rate: UInt32) -> Bool {
-        recordStop()
+        micQueue.sync {
+            recLock.lock()
+            let mine = held
+            held = false
+            recLock.unlock()
+            return mine ? true : start()
+        }
+    }
+
+    private func start() -> Bool {
+        halt()
+        recLock.lock(); captured.removeAll(); recLock.unlock()
         set(.listening)
         beep(880) // "your turn"
         let input = recEngine.inputNode
@@ -169,13 +207,13 @@ final class Voice: NSObject, @unchecked Sendable {
         try? input.setVoiceProcessingEnabled(true)
         let from = input.outputFormat(forBus: 0)
         guard from.sampleRate > 0, from.channelCount > 0,
-              let to = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Double(rate), channels: 1, interleaved: true),
+              let to = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Voice.micRate, channels: 1, interleaved: true),
               let converter = AVAudioConverter(from: from, to: to) else {
             NSLog("airband: no microphone input")
             set(.idle)
             return false
         }
-        recLock.lock(); captured.removeAll(); recording = true; recLock.unlock()
+        recLock.lock(); recording = true; recLock.unlock()
         input.installTap(onBus: 0, bufferSize: 2048, format: from) { [weak self] buffer, _ in
             guard let self else { return }
             let capacity = AVAudioFrameCount(Double(buffer.frameLength) * to.sampleRate / from.sampleRate) + 32
@@ -191,7 +229,8 @@ final class Voice: NSObject, @unchecked Sendable {
             guard error == nil, out.frameLength > 0, let data = out.int16ChannelData else { return }
             let bytes = Data(bytes: data[0], count: Int(out.frameLength) * 2)
             self.recLock.lock()
-            if self.recording { self.captured.append(bytes); self.recLock.signal() }
+            // four minutes at most are held for a core that has not come for them: the oldest sound goes first
+            if self.recording, self.captured.count < 8_000_000 { self.captured.append(bytes); self.recLock.signal() }
             self.recLock.unlock()
         }
         recEngine.prepare()
@@ -205,26 +244,11 @@ final class Voice: NSObject, @unchecked Sendable {
         return true
     }
 
-    /// The next tenth of a second or so of the microphone. Empty once stopped.
-    func recordRead() -> Data {
-        recLock.lock()
-        defer { recLock.unlock() }
-        let deadline = Date().addingTimeInterval(0.5)
-        while recording && captured.count < 3200 {
-            if !recLock.wait(until: deadline) { break }
-        }
-        guard recording else { return Data() }
-        let out = captured
-        captured.removeAll(keepingCapacity: true)
-        // a host must never hand back nothing while still recording: that means "stopped" to the core
-        return out.isEmpty ? Data(count: 320) : out
-    }
-
-    func recordStop() {
+    /// Stop capturing, keeping what was captured for whoever is reading it.
+    private func halt() {
         recLock.lock()
         let was = recording
         recording = false
-        captured.removeAll()
         recLock.broadcast()
         recLock.unlock()
         guard was else { return }
@@ -233,6 +257,32 @@ final class Voice: NSObject, @unchecked Sendable {
         try? recEngine.inputNode.setVoiceProcessingEnabled(false) // held only while listening: it quietens playback
         beep(660) // "got it"
         set(.idle)
+    }
+
+    /// The next tenth of a second or so of the microphone. Once it has been stopped, what is left of what was
+    /// captured, and then nothing: that is how the core knows he has finished.
+    func recordRead() -> Data {
+        recLock.lock()
+        defer { recLock.unlock() }
+        let deadline = Date().addingTimeInterval(0.5)
+        while recording && captured.count < 3200 {
+            if !recLock.wait(until: deadline) { break }
+        }
+        if !captured.isEmpty {
+            let out = captured
+            captured.removeAll(keepingCapacity: true)
+            return out
+        }
+        // a host must never hand back nothing while still recording: that means "stopped" to the core
+        return recording ? Data(count: 320) : Data()
+    }
+
+    /// The core has finished with the microphone.
+    func recordStop() {
+        micQueue.sync {
+            halt()
+            recLock.lock(); captured.removeAll(); held = false; recLock.unlock()
+        }
     }
 
     // MARK: tones

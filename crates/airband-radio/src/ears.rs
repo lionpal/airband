@@ -15,9 +15,9 @@ const RATE: u32 = 16000;
 /// A pass is asked for again after this long (Microsoft's last ten minutes).
 const PASS_LIFE: Duration = Duration::from_secs(300);
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct Ears {
-    grant: Mutex<Option<(EarsGrant, Instant)>>,
+    grant: Arc<Mutex<Option<(EarsGrant, Instant)>>>,
 }
 
 impl Ears {
@@ -38,38 +38,50 @@ impl Ears {
         g
     }
 
-    /// Open the microphone and listen. With `manual` he opened it himself: it stays open, through any pause,
-    /// until the host closes it, and everything he said comes back. Without, it is open for one reply and
-    /// closes by itself when he stops talking.
-    pub(crate) fn hear(&self, link: &Link, host: &dyn RadioHost, manual: bool) -> Listened {
+    /// Ask for the pass now, so it is there before he next opens the microphone.
+    pub(crate) fn warm(&self, link: &Link) {
+        let _ = self.grant(link);
+    }
+
+    /// Open the microphone and listen. The microphone opens first, at once: the pass for the listening service
+    /// and the connection to it are made while he is already talking, and what he said meanwhile is sent when
+    /// they are ready. With `manual` he opened it himself: it stays open, through any pause, until the host
+    /// closes it, and everything he said comes back. Without, it is open for one reply and closes by itself
+    /// when he stops talking.
+    pub(crate) fn hear(&self, link: &Arc<Link>, host: &dyn RadioHost, manual: bool) -> Listened {
         let said = |t: Option<String>| t.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).map(Listened::Said).unwrap_or(Listened::Nothing);
-        let grant = self.grant(link);
-        match grant.kind.as_str() {
-            "azure" if host.record_start(RATE) => {
-                // as he speaks, with the words coming back while he talks. If that connection cannot be made, the
-                // same microphone is listened to again the plain way (one upload, the words at the end).
-                let heard = crate::ears_stream::azure(&grant, host, RATE, wav_header(), manual);
-                host.record_stop();
-                let heard = match heard {
-                    Err(()) if host.record_start(RATE) => {
-                        let plain = azure(&grant, host, manual);
-                        host.record_stop();
-                        plain
-                    }
-                    other => other,
-                };
-                match heard {
-                    Ok(text) => said(text),
-                    Err(_) => {
-                        // the service or the line failed: ask for a fresh pass next time
-                        *self.grant.lock().unwrap() = None;
-                        if host.own_voice() { said(host.listen()) } else { Listened::Cannot }
-                    }
+        if !host.record_start(RATE) {
+            // no microphone to read: a terminal's typed line will do; a phone's own recognition will not
+            return if host.own_voice() { said(host.listen()) } else { Listened::Cannot };
+        }
+        let pass: Arc<dyn Fn() -> EarsGrant + Send + Sync> = {
+            let (ears, link) = (self.clone(), link.clone());
+            Arc::new(move || ears.grant(&link))
+        };
+        // as he speaks, with the words coming back while he talks. If that connection cannot be made, the same
+        // microphone is listened to again the plain way (one upload, the words at the end).
+        let heard = crate::ears_stream::azure(pass, host, RATE, wav_header(), manual);
+        host.record_stop();
+        let heard = match heard {
+            Err(()) => {
+                let grant = self.grant(link);
+                if grant.kind == "azure" && !manual && host.record_start(RATE) {
+                    let plain = azure(&grant, host, manual);
+                    host.record_stop();
+                    plain
+                } else {
+                    Err(())
                 }
             }
-            // no service: a terminal's typed line will do; a phone's own recognition will not
-            _ if host.own_voice() => said(host.listen()),
-            _ => Listened::Cannot,
+            other => other,
+        };
+        match heard {
+            Ok(text) => said(text),
+            Err(_) => {
+                // the service or the line failed, or there is none: ask for a fresh pass next time
+                *self.grant.lock().unwrap() = None;
+                if host.own_voice() { said(host.listen()) } else { Listened::Cannot }
+            }
         }
     }
 }
