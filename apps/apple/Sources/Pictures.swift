@@ -209,13 +209,16 @@ struct LinkRow: View {
             HStack(spacing: 8) {
                 ForEach(m.links.compactMap { URL(string: $0) }, id: \.absoluteString) { url in
                     Button { openURL(url) } label: {
+                        let kind = LinkRow.label(url)
                         HStack(spacing: 6) {
-                            Text(LinkRow.label(url)).font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                            // a pull request carries its number and the mark people know it by
+                            if kind == "pull request" { Image(systemName: "arrow.triangle.pull").font(.system(size: 13, weight: .bold)) }
+                            Text(kind == "pull request" ? "pull request #" + url.lastPathComponent : kind).font(.system(size: 15, weight: .semibold)).lineLimit(1)
                             Image(systemName: "arrow.up.right").font(.system(size: 12, weight: .bold))
                         }
-                        // an artifact is purple, so it is found at a glance among everything else in the feed
-                        .foregroundStyle(LinkRow.label(url) == "artifact" ? Color.white : Palette.ink).padding(.horizontal, 14).frame(minHeight: 44)
-                        .background(LinkRow.label(url) == "artifact" ? Palette.art : Palette.raised, in: Capsule())
+                        // an artifact is purple and a pull request green, so each is found at a glance in the feed
+                        .foregroundStyle(kind == "artifact" || kind == "pull request" ? Color.white : Palette.ink).padding(.horizontal, 14).frame(minHeight: 44)
+                        .background(kind == "artifact" ? Palette.art : kind == "pull request" ? Color(red: 0.14, green: 0.53, blue: 0.21) : Palette.raised, in: Capsule())
                     }
                     .buttonStyle(.plain).accessibilityLabel("Open \(LinkRow.label(url))")
                 }
