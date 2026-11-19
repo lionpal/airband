@@ -96,7 +96,8 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
     // said in the chat and not aloud: the name he knew it by has changed
     if let Some(s) = inner.find(&agent_id).cloned() {
         let line = format!("{} is now {}: it is working on {}.", was.spoken(), now.text(), now.project);
-        inner.record(Entry { short: Some(line.clone()), ..Entry::said(config::random_hex(8), &s, Some(Kind::Report), line) });
+        // a note in the chat under its new name, and not something the agent said: a question it has open stays open
+        inner.record(Entry { short: Some(line.clone()), agent: None, ..Entry::said(config::random_hex(8), &s, Some(Kind::Report), line) });
     }
     app.save(&inner);
     app.kick.notify_one();

@@ -125,7 +125,7 @@ struct FeedView: View {
                 unpaired
             } else {
                 // above the feed, so what a team is doing can hang down over the top of it
-                if model.view.rooms.count > 1 || model.only != nil { teams.zIndex(1) }
+                if model.view.rooms.count > 1 || model.only != nil || model.room != nil { teams.zIndex(1) }
                 if model.view.feed.isEmpty {
                     blank
                     bar
@@ -240,21 +240,69 @@ struct FeedView: View {
 
     /// The teams bar: one cell per project, each showing what its agents are doing. Tap one to see only that team
     /// and keep what he says among them; tap it again for everyone.
+    /// The team he is in: the one he picked, or the team of the agent he is looking at.
+    private var team: DeskRoom? {
+        if let room = model.room { return model.view.rooms.first { $0.name == room } }
+        if let only = model.only { return model.view.rooms.first { $0.members.contains { $0.callsign == only } } }
+        return nil
+    }
+    /// What is selected, as the id of its chip: for scrolling the row to it.
+    private var chosen: String { model.only.map { "agent:" + $0 } ?? model.room.map { "team:" + $0 } ?? "all" }
+
+    /// A swipe across the chat goes to the next or the one before. Outside a team: everyone, then each team,
+    /// and round again. Inside a team: the whole team, then each of its agents.
+    private func step(_ by: Int) {
+        if let team {
+            let stops: [String?] = [nil] + team.members.map { Optional($0.callsign) }
+            let at = stops.firstIndex { $0 == model.only } ?? 0
+            let to = stops[(at + by + stops.count) % stops.count]
+            model.room = team.name
+            model.only = to
+        } else {
+            let stops: [String?] = [nil] + model.view.rooms.map { Optional($0.name) }
+            let at = stops.firstIndex { $0 == model.room } ?? 0
+            model.only = nil
+            model.room = stops[(at + by + stops.count) % stops.count]
+        }
+        model.replyingTo = nil
+    }
+
+    private func chip(_ label: String, on: Bool, dot: String? = nil, working: Bool = false, colour: UInt8? = nil) -> some View {
+        HStack(spacing: 7) {
+            if let dot { StateDot(state: dot, working: working).id(dot + (working ? "+" : "")) }
+            Text(label).font(.system(size: 14, weight: on ? .semibold : .medium)).lineLimit(1)
+                .padding(.bottom, 2).overlay(alignment: .bottom) { if let colour { Capsule().fill(Palette.team(colour)).frame(height: 2) } }
+        }
+        .padding(.horizontal, 14).frame(minHeight: 40)
+        .background(on ? Palette.ink : Palette.field, in: Capsule()).foregroundStyle(on ? Palette.ground : Palette.ink)
+    }
+
     private var teams: some View {
+        ScrollViewReader { row in
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                if let only = model.only {
-                    Button { model.only = nil } label: {
-                        HStack(spacing: 7) {
-                            Text(only).font(.system(size: 14, weight: .semibold))
-                            Image(systemName: "xmark").font(.system(size: 11, weight: .bold))
-                        }
-                        .padding(.horizontal, 14).frame(minHeight: 40)
-                        .background(Palette.ink, in: Capsule()).foregroundStyle(Palette.ground)
+                if let team {
+                    // inside a team: back to all the teams, the team itself, then its agents
+                    Button { model.only = nil; model.room = nil; model.replyingTo = nil } label: {
+                        Image(systemName: "chevron.left").font(.system(size: 14, weight: .bold)).frame(width: 40, height: 40).background(Palette.field, in: Circle())
                     }
-                    .buttonStyle(.plain).accessibilityLabel("Showing only \(only). Show everyone.")
+                    .buttonStyle(.plain).accessibilityLabel("All teams")
+                    Button { model.room = team.name; model.only = nil; model.replyingTo = nil } label: {
+                        chip(team.name, on: model.only == nil, dot: team.state, working: team.members.contains { $0.state == "working" }, colour: team.colour)
+                    }
+                    .buttonStyle(.plain).id("team:" + team.name)
+                    ForEach(team.members, id: \.id) { agent in
+                        let short = agent.callsign.hasPrefix(team.name + " ") ? String(agent.callsign.dropFirst(team.name.count + 1)) : agent.callsign
+                        Button { model.room = team.name; model.only = model.only == agent.callsign ? nil : agent.callsign; model.replyingTo = nil } label: {
+                            chip(short, on: model.only == agent.callsign, dot: agent.state)
+                        }
+                        .buttonStyle(.plain).id("agent:" + agent.callsign).accessibilityLabel(agent.callsign)
+                    }
+                } else {
+                    Button { model.only = nil; model.room = nil } label: { chip("all", on: true) }
+                        .buttonStyle(.plain).id("all").accessibilityLabel("Everyone").accessibilityAddTraits(.isSelected)
                 }
-                ForEach(model.view.rooms, id: \.name) { room in
+                ForEach(team == nil ? model.view.rooms : [], id: \.name) { room in
                     let on = model.room == room.name
                     Button {
                         model.only = nil
@@ -301,6 +349,7 @@ struct FeedView: View {
                         }
                     }
                     .zIndex(ticker.room == room.name ? 1 : 0)
+                    .id("team:" + room.name)
                 }
             }
             .padding(.horizontal, 8)
@@ -308,6 +357,9 @@ struct FeedView: View {
         .scrollClipDisabled()
         .animation(.easeOut(duration: 0.18), value: ticker.room)
         .padding(.bottom, 8)
+        // the chip for where he is stays in view, however he got there
+        .onChange(of: chosen) { _, now in withAnimation(.easeOut(duration: 0.2)) { row.scrollTo(now, anchor: .center) } }
+        }
     }
 
     private var unpaired: some View {
@@ -391,6 +443,12 @@ struct FeedView: View {
             }
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
+            // a sideways swipe goes to the next team or agent; an up-and-down one is the chat's own
+            .simultaneousGesture(DragGesture(minimumDistance: 30).onEnded { g in
+                let (dx, dy) = (g.translation.width, g.translation.height)
+                guard abs(dx) > 70, abs(dx) > abs(dy) * 2.2 else { return }
+                withAnimation(.snappy(duration: 0.2)) { step(dx < 0 ? 1 : -1) }
+            })
             .onChange(of: model.view.feed.last?.id) { _, _ in withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("end", anchor: .bottom) } }
             .onChange(of: model.view.sending.count) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
             // a long chat of messages of very different heights can open on empty space past its end, because the
