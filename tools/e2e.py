@@ -322,13 +322,13 @@ try:
     with open(transcript, "w") as f:
         f.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "/x/orders/webhook.ts"}}]}}) + "\n")
         f.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "npm test -- payments", "description": "Run the payments tests"}}]}}) + "\n")
-    http("POST", "/v1/agent/events", {"schema": "airband.agent/1", "agent": {"id": "tr", "harness": "claude-code", "cwd": os.path.join(projects, "orders"), "title": "orders webhook", "meta": {"transcript": transcript}}, "event": {"type": "working"}}, token=OWN)
+    http("POST", "/v1/agent/events", {"schema": "airband.agent/1", "agent": {"id": "tr-again", "harness": "claude-code", "cwd": os.path.join(projects, "orders"), "title": "orders webhook", "meta": {"transcript": transcript}}, "event": {"type": "working"}}, token=OWN)
     for _ in range(12):
         asked = roster(feed()).get("orders webhook", {})
         if asked.get("doing"): break
         time.sleep(0.5)
     check("a Claude Code session's latest step is read from the end of its transcript", asked.get("doing") == "Run the payments tests", asked)
-    http("POST", "/v1/agent/events", {"schema": "airband.agent/1", "agent": {"id": "tr", "harness": "claude-code"}, "event": {"type": "signoff"}}, token=OWN)
+    http("POST", "/v1/agent/events", {"schema": "airband.agent/1", "agent": {"id": "tr-again", "harness": "claude-code"}, "event": {"type": "signoff"}}, token=OWN)
     report("import", "catalog", "catalog import", "said", "Imported 1,240 parts from the new supplier. All tests pass.")
     check("once it has spoken it is no longer doing anything", "doing" not in roster(feed())["catalog import"])
     report("import", "catalog", "catalog import", "working")
