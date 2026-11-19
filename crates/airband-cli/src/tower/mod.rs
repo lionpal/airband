@@ -211,6 +211,8 @@ pub fn run(cfg: Config) -> Result<(), String> {
                     // old copies of pictures go once an hour, not only when the tower starts: it runs for weeks
                     if ticks % 120 == 0 {
                         tokio::task::spawn_blocking(pictures::prune);
+                        let app = app.clone();
+                        tokio::task::spawn_blocking(move || app.store.prune());
                     }
                     let mut inner = app.inner.lock().unwrap();
                     if inner.reap() {

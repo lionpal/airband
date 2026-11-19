@@ -39,6 +39,7 @@ impl Store {
         }
         db.execute_batch(
             "pragma journal_mode = wal;
+             pragma cache_size = -256;
              create table if not exists messages (seq integer primary key, id text not null unique, at integer not null, sender text not null,
                  grp text not null, recipients text not null, kind text, short text, full text not null, detail text);
              create table if not exists events (n integer primary key autoincrement, at integer not null, agent text not null, harness text not null, event text not null);
@@ -147,6 +148,18 @@ impl Store {
     /// The record of what an agent's harness reported, as it arrived: the event and what the agent said of
     /// itself, whether or not this build understands them. The one thing left out is a token for reaching the
     /// agent, which is not this file's to keep.
+    /// Drop what is too old to be wanted, so the file does not grow for ever: the record of raw events and of
+    /// deliveries after a month, the ids of what he said after a month (the relay holds a message for a week at
+    /// most, so none can come again later than that), and all but the newest 5,000 messages.
+    pub(super) fn prune(&self) {
+        let before = now().saturating_sub(30 * 24 * 3600 * 1000) as i64;
+        let db = self.db.lock().unwrap();
+        for table in ["events", "deliveries", "receipts"] {
+            Self::warn("dropping old records", db.execute(&format!("delete from {table} where at < ?1"), params![before]));
+        }
+        Self::warn("dropping old messages", db.execute("delete from messages where seq <= (select max(seq) from messages) - 5000", []));
+    }
+
     pub(super) fn event(&self, raw: &Value) {
         let mut about = raw["agent"].clone();
         if let Some(deliver) = about.get_mut("deliver").and_then(Value::as_object_mut) {
