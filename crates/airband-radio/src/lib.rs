@@ -134,7 +134,7 @@ pub struct Outgoing {
 }
 
 fn chat(m: airband_core::radio::Message) -> ChatMessage {
-    ChatMessage { seq: m.seq, id: m.id, at: m.at, from: m.from, group: m.group, to: m.to, needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi), stalled: m.kind == Some(Kind::Stalled), text: m.text, long: m.long, options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links, agent: m.agent, station: String::new(), open: m.open, badge: String::new(), colour: 0, read: m.read }
+    ChatMessage { seq: m.seq, id: m.id, at: m.at, from: m.from, group: m.group, to: m.to, needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), text: m.text, long: m.long, queued: m.queued, options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links, agent: m.agent, station: String::new(), open: m.open, badge: String::new(), colour: 0, read: m.read }
 }
 
 fn chat_feed(feed: Feed) -> ChatFeed {
@@ -202,6 +202,8 @@ pub struct ChatMessage {
     pub text: String,
     /// There is more than `text` says; `more(id)` has it.
     pub long: bool,
+    /// His own words, waiting for the agent to stop what it is doing. He can still take them back.
+    pub queued: bool,
     /// Answers he can give with one tap: show each as a button and send the one tapped with `re` set to this message.
     pub options: Vec<String>,
     /// Which of `options` the agent itself recommended, if it said. Mark only that one; with none, mark none.
@@ -412,6 +414,17 @@ impl Radio {
 }
 
 impl Radio {
+    /// A request whose answer is nothing or a reason in words.
+    fn ask(&self, path: &str, body: Value) -> Result<(), RadioError> {
+        let (status, v) = self.link.request("POST", path, Some(body))?;
+        match (status, v["error"].as_str()) {
+            (200, Some(why)) => Err(RadioError::Told { reason: why.into() }),
+            (200, None) => Ok(()),
+            (404, _) => Err(RadioError::Told { reason: "Update airband on this computer first.".into() }),
+            _ => Err(RadioError::Refused),
+        }
+    }
+
     /// Read a whole message aloud in the tower's voice. Blocks until it has been heard or [`Radio::hush`] is
     /// called. False when the tower has no voice to read it with.
     pub(crate) fn read_aloud(&self, id: &str) -> bool {
@@ -562,6 +575,15 @@ impl Radio {
             (404, _, _, _) => Err(RadioError::Told { reason: "Update airband on this computer to move its agents.".into() }),
             _ => Err(RadioError::Refused),
         }
+    }
+
+    /// Stop what an agent the tower runs is doing, now. Blocks: call it off the main thread.
+    pub fn stop_agent(&self, agent: String) -> Result<(), RadioError> {
+        self.ask("/stop", serde_json::json!({ "agent": agent }))
+    }
+    /// Take back something he said that is still waiting its turn. Blocks: call it off the main thread.
+    pub fn unsend(&self, message: String) -> Result<(), RadioError> {
+        self.ask("/unsend", serde_json::json!({ "message": message }))
     }
 
     /// Have the tower take over an agent he started in a terminal: that session ends there and carries on in a

@@ -39,6 +39,10 @@ pub(super) struct Session {
     /// How far into its harness's record the tower has read what he typed to it at its own keyboard.
     #[serde(default)]
     pub(super) told_upto: u64,
+    /// For one the tower runs itself: what he has said to it while it was in the middle of something, by the
+    /// id of the chat line and the words. Held here, where he can still take it back, until it stops.
+    #[serde(default)]
+    pub(super) queue: Vec<(String, String)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -91,6 +95,11 @@ pub(super) struct Entry {
     /// What it holds that he should be able to read whole, by name, if the judge found something.
     #[serde(default)]
     pub(super) read: Option<String>,
+    /// His words, waiting for the agent to stop what it is doing; and whether he took them back first.
+    #[serde(default)]
+    pub(super) queued: bool,
+    #[serde(default)]
+    pub(super) cancelled: bool,
     /// Pictures that go with it.
     #[serde(default)]
     pub(super) pictures: Vec<airband_core::radio::Picture>,
@@ -299,7 +308,7 @@ impl Inner {
             if let Some(cwd) = agent.cwd.clone().filter(|_| agent.name.is_none()) {
                 self.projects.insert(callsign.project.clone(), cwd);
             }
-            self.sessions.push(Session { agent: agent.clone(), callsign, waiting: false, last: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0 });
+            self.sessions.push(Session { agent: agent.clone(), callsign, waiting: false, last: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new() });
         } else if let Some(want) = wanted.filter(|c| free(self, c)) {
             self.rename(&agent.id, want);
         }
@@ -455,6 +464,8 @@ impl Inner {
             options: e.options.clone(),
             recommended: e.recommended,
             read: e.read.clone(),
+            queued: e.queued,
+            cancelled: e.cancelled,
             permission: e.permit.is_some(),
             pictures: e.pictures.clone(),
             links: if e.from == "you" { Vec::new() } else { airband_core::speech::links(&e.full) },

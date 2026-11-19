@@ -786,6 +786,18 @@ impl Desk {
         Ok(())
     }
 
+    /// Stop what an agent is doing, now: one its computer runs itself. What he said to it meanwhile it then
+    /// reads together. Blocks: call it off the main thread.
+    pub fn stop_agent(&self, agent: String) -> Result<(), RadioError> {
+        let radio = self.shared.state.lock().unwrap().stations.iter().find(|s| s.agents.iter().any(|a| a.id == agent)).map(|s| s.radio.clone()).ok_or(RadioError::Refused)?;
+        radio.stop_agent(agent)
+    }
+
+    /// Take back something he said that is still waiting its turn. Blocks: call it off the main thread.
+    pub fn unsend(&self, message_id: String) -> Result<(), RadioError> {
+        self.radio_of(&message_id).ok_or(RadioError::Refused)?.unsend(message_id)
+    }
+
     /// Have its computer take over an agent he started in a terminal. Blocks: call it off the main thread.
     pub fn take_over(&self, agent: String) -> Result<(), RadioError> {
         let radio = self.shared.state.lock().unwrap().stations.iter().find(|s| s.agents.iter().any(|a| a.id == agent)).map(|s| s.radio.clone()).ok_or(RadioError::Refused)?;

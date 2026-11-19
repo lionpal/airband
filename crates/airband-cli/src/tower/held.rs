@@ -104,6 +104,102 @@ pub(super) async fn tell(app: &Arc<App>, id: &str, text: &str) -> Result<(), Str
     input.flush().await.map_err(|e| e.to_string())
 }
 
+/// A held agent has stopped (it finished its turn, or he stopped it): everything he said to it meanwhile, and
+/// did not take back, goes to it now as one turn, in the order he said it.
+pub(super) async fn flush(app: &Arc<App>, id: &str) {
+    let waiting: Vec<(String, String)> = {
+        let mut inner = app.inner.lock().unwrap();
+        let Some(s) = inner.session(id).filter(|s| s.waiting && !s.queue.is_empty()) else { return };
+        s.waiting = false;
+        let waiting = std::mem::take(&mut s.queue);
+        inner.drop_pending(id, None);
+        waiting
+    };
+    let words = waiting.iter().map(|(_, text)| text.as_str()).collect::<Vec<_>>().join("\n\n");
+    let told = tell(app, id, &words).await;
+    let mut inner = app.inner.lock().unwrap();
+    match told {
+        Ok(()) => {
+            for (line, _) in &waiting {
+                if let Some(e) = inner.log.iter_mut().find(|e| e.id == *line) {
+                    e.queued = false;
+                }
+                inner.touch(line);
+            }
+        }
+        Err(e) => {
+            // not lost: they wait for its next stop
+            log(format!("could not pass on what was waiting for a held agent: {e}"));
+            if let Some(s) = inner.session(id) {
+                s.waiting = true;
+                s.queue.splice(0..0, waiting);
+            }
+        }
+    }
+    app.save(&inner);
+    app.kick.notify_one();
+}
+
+/// Stop what a held agent is doing, now. What he said to it meanwhile is then read together as its next turn.
+pub(super) async fn stop(app: &Arc<App>, id: &str) -> Result<(), String> {
+    let (session, line) = {
+        let inner = app.inner.lock().unwrap();
+        let s = inner.find(id).cloned().ok_or("That agent is no longer running.")?;
+        if s.agent.deliver != Some(Deliver::Held) {
+            return Err("Only an agent airband runs can be stopped from here. Take it over first.".into());
+        }
+        let line = inner.held.iter().find(|k| k.id == id).and_then(|k| app.cfg.launchers.get(&k.launcher)).and_then(|l| l.held.as_ref()).and_then(|h| h.stop.clone());
+        (s, line.ok_or("Its launcher has no way to stop it.")?)
+    };
+    if session.waiting {
+        return Err("It is not doing anything.".into());
+    }
+    let run = running().lock().unwrap().get(id).cloned().ok_or("Its process has gone.")?;
+    {
+        let mut input = run.input.lock().await;
+        input.write_all(format!("{}\n", line.replace("{id}", &config::random_hex(8))).as_bytes()).await.map_err(|e| format!("its input is closed: {e}"))?;
+        input.flush().await.map_err(|e| e.to_string())?;
+    }
+    log(format!("stopped {}", session.callsign.text()));
+    // a harness may or may not report a stopped turn as finished: either way it is waiting from now
+    {
+        let mut inner = app.inner.lock().unwrap();
+        if let Some(s) = inner.session(id) {
+            s.waiting = true;
+            s.doing = None;
+            s.subagents = 0;
+        }
+        app.save(&inner);
+    }
+    app.kick.notify_one();
+    // let it settle before it is given more
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    flush(app, id).await;
+    Ok(())
+}
+
+/// He took back something he said that had not been delivered yet.
+pub(super) fn unsend(app: &App, line: &str) -> Result<(), String> {
+    let mut inner = app.inner.lock().unwrap();
+    let mut found = false;
+    for s in inner.sessions.iter_mut() {
+        let before = s.queue.len();
+        s.queue.retain(|(id, _)| id != line);
+        found |= s.queue.len() != before;
+    }
+    if !found {
+        return Err("It has already been delivered.".into());
+    }
+    if let Some(e) = inner.log.iter_mut().find(|e| e.id == line) {
+        e.queued = false;
+        e.cancelled = true;
+    }
+    inner.touch(line);
+    app.save(&inner);
+    app.kick.notify_one();
+    Ok(())
+}
+
 /// Start a new held agent in `cwd` and give it its task.
 pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, options: Vec<String>, task: &str) -> Result<String, String> {
     let kept = Kept { id: new_id(), cwd: cwd.to_string(), launcher: launcher.to_string(), options };

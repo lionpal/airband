@@ -197,6 +197,16 @@ struct FeedView: View {
                 }
                 .buttonStyle(.plain).disabled(!model.view.canPoke).opacity(model.view.canPoke ? 1 : 0.3)
                 .accessibilityHint("Tells every agent that has stopped without finishing to keep going") }
+                // stop what an agent is doing, when one he can stop is at work in what he is looking at
+                let stoppable = model.stoppable
+                if stoppable.count == 1 {
+                    Button { model.stop(stoppable[0]) } label: { stopLabel }.buttonStyle(.plain).accessibilityLabel("Stop \(stoppable[0].callsign)")
+                } else if stoppable.count > 1 {
+                    Menu {
+                        ForEach(stoppable, id: \.id) { agent in Button("Stop \(agent.callsign)") { model.stop(agent) } }
+                    } label: { stopLabel }
+                    .accessibilityLabel("Stop an agent")
+                }
                 // the headset: whether what arrives is also read aloud. Lit while it is.
                 Button { Task { await model.setCalling(!model.calling) } } label: {
                     Image(systemName: "headphones").font(.system(size: 16, weight: .semibold))
@@ -319,6 +329,11 @@ struct FeedView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity).padding(.horizontal, 32)
+    }
+
+    private var stopLabel: some View {
+        Image(systemName: "stop.fill").font(.system(size: 14, weight: .bold)).foregroundStyle(Palette.ink)
+            .frame(width: 40, height: 40).background(Palette.raised, in: Circle())
     }
 
     // MARK: the feed
@@ -661,6 +676,17 @@ struct Mine: View {
                 }
             }
             if !m.pictures.isEmpty { PictureStrip(m: m, height: 120) }
+            if m.queued {
+                // it waits until the agent stops what it is doing: until then he can take it back
+                Button { model.unsend(m) } label: {
+                    HStack(spacing: 5) {
+                        Text("waiting its turn").foregroundStyle(Palette.quiet)
+                        Text("\u{b7} take back").foregroundStyle(Palette.soft)
+                    }
+                    .font(.system(size: 12, weight: .semibold)).frame(minHeight: 28)
+                }
+                .buttonStyle(.plain).accessibilityLabel("Waiting its turn. Take it back.")
+            }
             VStack(alignment: .trailing, spacing: 4) {
                 Text(whole ? (model.full[m.id] ?? m.text) : m.text).font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.ground)
                     .lineLimit(whole ? nil : 5)
@@ -670,6 +696,7 @@ struct Mine: View {
             }
             .padding(.horizontal, 14).padding(.vertical, 9)
             .background(Palette.ink, in: UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 18, bottomTrailingRadius: 6, topTrailingRadius: 18))
+            .opacity(m.queued ? 0.6 : 1)
             .contentShape(Rectangle())
             // hold it: copy it, or send the same words to someone else
             .contextMenu {
@@ -1147,6 +1174,9 @@ struct AgentsMenu: View {
                             Button { newTeam = ""; founding = agent } label: { Label("New team", systemImage: "plus") }
                             if !agent.held {
                                 Button { taking = agent } label: { Label("Take over from the terminal", systemImage: "arrow.down.to.line") }
+                            }
+                            if agent.held, agent.state == "working" {
+                                Button(role: .destructive) { model.stop(agent) } label: { Label("Stop", systemImage: "stop.fill") }
                             }
                         }
                     }

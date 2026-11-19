@@ -446,10 +446,30 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
     let content = format!("From {name}, on his phone through Airband. Answer in a sentence or two, outcome first.{many}\n\n{rest}{files}", name = app.cfg.name, rest = parsed.rest);
     let message_id = config::random_hex(8);
     let (mut sent, mut failed) = (Vec::new(), Vec::new());
+    let mut queued: Vec<String> = Vec::new();
     for t in &targets {
         let outcome = match &t.agent.deliver {
-            // one the tower runs itself gets his words as his own turn, with nothing in front
-            Some(Deliver::Held) => deliver(app, &Deliver::Held, &t.agent.id, &format!("{}{files}", parsed.rest)).await,
+            // One the tower runs itself gets his words as his own turn, with nothing in front. If it is in the
+            // middle of something they wait here, where he can still take them back, until it stops.
+            Some(Deliver::Held) => {
+                let words = format!("{}{files}", parsed.rest);
+                let busy = {
+                    let mut inner = app.inner.lock().unwrap();
+                    match inner.session(&t.agent.id).filter(|s| !s.waiting) {
+                        Some(s) => {
+                            s.queue.push((message_id.clone(), words.clone()));
+                            true
+                        }
+                        None => false,
+                    }
+                };
+                if busy {
+                    queued.push(t.agent.id.clone());
+                    Ok(())
+                } else {
+                    deliver(app, &Deliver::Held, &t.agent.id, &words).await
+                }
+            }
             Some(how) => deliver(app, how, &t.agent.id, &content).await,
             None => Err("its harness gave no way to reach it".into()),
         };
@@ -478,7 +498,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
         // what he sees of his own message is his words, without the list of file paths that the agent got
         let said = parsed.rest.split("\n\nHe attached ").next().unwrap_or(&parsed.rest).to_string();
         let entry = Entry::his(message_id, &sent, said);
-        inner.record(Entry { short: shown.or(entry.short.clone()), pictures: shown_files, ..entry });
+        inner.record(Entry { short: shown.or(entry.short.clone()), pictures: shown_files, queued: !queued.is_empty(), ..entry });
     }
     app.save(&inner);
     let sent_names: Vec<String> = sent.iter().map(|s| s.callsign.text()).collect();

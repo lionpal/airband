@@ -140,6 +140,10 @@ pub struct Held {
     pub resume: Vec<String>,
     /// One line of input for one message of his, with `{text}` where his words go as a JSON string.
     pub line: String,
+    /// One line of input that stops what it is doing, with `{id}` a new id for the request. Without one, an
+    /// agent started this way cannot be stopped from a radio.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop: Option<String>,
 }
 
 fn default_launcher() -> String {
@@ -163,7 +167,7 @@ fn default_launchers() -> BTreeMap<String, Launcher> {
     // line at a time. What he says is his own turn there, and it reports through the same hooks as any other.
     let held = Launcher {
         argv: list(&["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "{options}"]),
-        held: Some(Held { fresh: list(&["--session-id", "{id}"]), resume: list(&["--resume", "{id}"]), line: r#"{"type":"user","message":{"role":"user","content":{text}}}"#.into() }),
+        held: Some(Held { fresh: list(&["--session-id", "{id}"]), resume: list(&["--resume", "{id}"]), line: r#"{"type":"user","message":{"role":"user","content":{text}}}"#.into(), stop: Some(r#"{"type":"control_request","request_id":"{id}","request":{"subtype":"interrupt"}}"#.into()) }),
         ..claude.clone()
     };
     BTreeMap::from([(LAUNCHER_HANDED_OFF.to_string(), claude), (default_launcher(), held)])
@@ -296,6 +300,12 @@ pub fn load() -> Config {
         }
         if cfg.launcher == LAUNCHER_HANDED_OFF {
             cfg.launcher = default_launcher();
+        }
+    }
+    // the held launcher as first shipped could not stop its agent: one still exactly that gets the line that does
+    if let (Some(mine), Some(now)) = (cfg.launchers.get_mut(&default_launcher()).and_then(|l| l.held.as_mut()), default_launchers().remove(&default_launcher()).and_then(|l| l.held)) {
+        if mine.stop.is_none() && mine.line == now.line {
+            mine.stop = now.stop;
         }
     }
     let text = format!("{}\n", serde_json::to_string_pretty(&cfg).unwrap());

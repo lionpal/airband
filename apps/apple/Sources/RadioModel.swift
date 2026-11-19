@@ -153,6 +153,36 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         desk.send(text: words.isEmpty && !tray.isEmpty ? "Look at what I attached." : text, re: target?.id, room: room, agent: only)
     }
 
+    /// The agents he could stop right now: at work, run by their computer, and in the room or agent he is looking at.
+    var stoppable: [DeskMember] {
+        view.rooms.filter { room == nil || $0.name == room }.flatMap(\.members).filter { $0.held && $0.state == "working" && (only == nil || $0.callsign == only) }
+    }
+
+    /// Stop what an agent is doing, now. What he said to it meanwhile it then reads together.
+    func stop(_ agent: DeskMember) {
+        fetch.async {
+            let result = Result { try self.desk.stopAgent(agent: agent.id) }
+            DispatchQueue.main.async {
+                switch result {
+                case .success: break
+                case .failure(RadioError.Told(let reason)): self.problem = reason
+                case .failure(RadioError.Offline): self.problem = "Cannot reach that computer."
+                case .failure: self.problem = "It did not stop."
+                }
+            }
+        }
+    }
+
+    /// Take back something he said that is still waiting its turn.
+    func unsend(_ m: ChatMessage) {
+        fetch.async {
+            let result = Result { try self.desk.unsend(messageId: m.id) }
+            DispatchQueue.main.async {
+                if case .failure(RadioError.Told(let reason)) = result { self.problem = reason }
+            }
+        }
+    }
+
     /// Have its computer take over an agent he started in a terminal, so his words reach it as his own.
     func takeOver(_ agent: DeskMember) {
         fetch.async {

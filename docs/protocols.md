@@ -135,6 +135,8 @@ when a message does.
 
 A roster entry may also carry `model` and `effort`: what the agent runs on, when its harness can say.
 
+A roster entry with `held` is an agent the tower runs itself: his words reach it as his own turn, it can be stopped, and what he says while it works is `queued` on his message until it stops (or he takes it back, and the message comes again as `cancelled`).
+
 A message from `you` is something he said: through a radio, or typed to an agent at its own keyboard, which the tower adds when the harness keeps a record it can read. Those are added after the fact with the time he typed them, so a radio orders messages by `at`.
 
 The feed's `colours` gives each team a number from 0: its place in the client's own list of team colours. A team
@@ -151,6 +153,9 @@ Accounts, for a harness whose sessions can be moved between logins while they ru
 | `GET accounts?fresh=1` | → `{ schema, accounts, note, checked_at }` | Every account of every such harness on this computer. Kept for five minutes; `fresh` checks again (at most every 20 s). |
 | `POST accounts/use` | `{ harness, id }` → the same, or `{ error }` | Move that harness's sessions to that account. `error` is words for him. |
 | `POST team` | `{ agent, team }` → `{ callsign, team }`, or `{ error }` | Put an agent in another team: one that exists, or a new one of that name. A name he gave the agent goes with it; a number is replaced by the next free one there. It stays where he put it. |
+| `POST takeover` | `{ agent }` → `{}`, or `{ error }` | Have the tower take over an agent he started in a terminal: that session ends there and carries on in a process the tower holds. Refused while it is in the middle of something. |
+| `POST stop` | `{ agent }` → `{}`, or `{ error }` | Stop what an agent the tower runs is doing, now. What he said to it meanwhile it then reads as one turn. |
+| `POST unsend` | `{ message }` → `{}`, or `{ error }` | Take back something he said that is still `queued`. |
 
 An account is `{ id, harness, label, live, limits, problem }`. `id` means something only to the adapter that listed
 it; `label` is what to show (for Claude Code, the email); `live` marks the one in use. Each of `limits` is

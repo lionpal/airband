@@ -36,6 +36,13 @@ async fn events(State(app): State<Arc<App>>, body: String) -> Response {
     // an event with a picture is slow to take in (the picture is shrunk); the other requests must not wait behind it
     match tokio::task::block_in_place(|| on_event(&app, ev)) {
         Ok(()) => {
+            if let Some(id) = &reported {
+                // one the tower runs has stopped: what he said to it meanwhile goes to it now
+                if app.inner.lock().unwrap().find(id).is_some_and(|s| !s.queue.is_empty()) {
+                    let (app, id) = (app.clone(), id.clone());
+                    tokio::spawn(async move { held::flush(&app, &id).await });
+                }
+            }
             if let Some(id) = reported.filter(|id| app.inner.lock().unwrap().find(id).is_some_and(|s| place::due(s.reports))) {
                 tokio::spawn(place::look(app.clone(), id));
             }
@@ -78,6 +85,21 @@ async fn team(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::M
 /// He asked the tower to take over an agent he started in a terminal.
 async fn takeover(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::TakeOver>) -> Json<Value> {
     Json(match held::take_over(&app, &to.agent).await {
+        Ok(()) => json!({}),
+        Err(why) => json!({ "error": why }),
+    })
+}
+
+/// He stopped what an agent is doing.
+async fn stop_agent(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::StopAgent>) -> Json<Value> {
+    Json(match held::stop(&app, &to.agent).await {
+        Ok(()) => json!({}),
+        Err(why) => json!({ "error": why }),
+    })
+}
+/// He took back something he said that was still waiting its turn.
+async fn unsend(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::Unsend>) -> Json<Value> {
+    Json(match held::unsend(&app, &to.message) {
         Ok(()) => json!({}),
         Err(why) => json!({ "error": why }),
     })
@@ -410,6 +432,8 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/radio/accounts/use", post(accounts_use))
         .route("/v1/radio/team", post(team))
         .route("/v1/radio/takeover", post(takeover))
+        .route("/v1/radio/stop", post(stop_agent))
+        .route("/v1/radio/unsend", post(unsend))
         .route("/v1/status", get(status))
         .layer(middleware::from_fn_with_state(app.clone(), auth))
         .with_state(app)

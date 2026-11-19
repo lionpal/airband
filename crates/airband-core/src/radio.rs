@@ -203,6 +203,19 @@ pub struct TakeOver {
     pub agent: String,
 }
 
+/// `POST stop`: stop what an agent is doing, now. Only for one the tower runs itself (`held`). Whatever he said
+/// to it meanwhile, and has not taken back, it then reads together as its next turn. `{}` or `{error}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StopAgent {
+    pub agent: String,
+}
+
+/// `POST unsend`: take back something he said that is still `queued`. `{}`, or `{error}` when it has gone.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Unsend {
+    pub message: String,
+}
+
 /// The quick messages every tower offers. A tower adds his own after these (`quick` in its configuration).
 pub fn quick_defaults() -> Vec<Quick> {
     [
@@ -345,6 +358,13 @@ pub struct Message {
     /// to read under that name. Nothing when a line is enough.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read: Option<String>,
+    /// Something he said that is waiting its turn: the agent is in the middle of something, and the tower
+    /// holds this until it stops. He can still take it back (`POST unsend`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub queued: bool,
+    /// He took it back before it was delivered. A radio stops showing it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cancelled: bool,
     /// This is a request for permission to do one thing, and its answer lets that thing happen on his computer.
     /// The only answers are the two given (allow, deny) or his own words, which refuse it and are passed on as
     /// the reason. A client must not offer a "do what you think best" answer on it.
