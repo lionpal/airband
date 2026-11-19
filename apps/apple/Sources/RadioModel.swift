@@ -36,6 +36,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// What the voice is saying now, when the voice service says when each word is spoken: the text, where each
     /// word starts in it, when each is said (seconds into the clip), and when the clip began to sound.
     @Published var caption: Caption?
+    /// A question's keyboard button was tapped: the screen opens the text box for it.
+    @Published var typeNow = false
     @Published var micOpen = false // he opened the microphone and has not sent or taken back what he said
     private var dictating = false // from his tap until the core has dealt with what he said
     /// The microphone is open: his own tap opened it, or on a call it opened by itself for a question.
@@ -168,6 +170,21 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
                 case .failure(RadioError.Told(let reason)): self.problem = reason
                 case .failure(RadioError.Offline): self.problem = "Cannot reach that computer."
                 case .failure: self.problem = "It did not stop."
+                }
+            }
+        }
+    }
+
+    /// End an agent its computer runs: it finishes and leaves the radio.
+    func end(_ agent: DeskMember) {
+        fetch.async {
+            let result = Result { try self.desk.endAgent(agent: agent.id) }
+            DispatchQueue.main.async {
+                switch result {
+                case .success: if self.only == agent.callsign { self.only = nil }
+                case .failure(RadioError.Told(let reason)): self.problem = reason
+                case .failure(RadioError.Offline): self.problem = "Cannot reach that computer."
+                case .failure: self.problem = "It did not end."
                 }
             }
         }

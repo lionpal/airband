@@ -183,8 +183,41 @@ struct Upload {
     shown: DeskUpload,
     /// Which computer it is going to: what he sends next goes there too.
     station: usize,
-    /// He took it off: stop sending.
+    /// He took it off, or it is being sent somewhere else instead: stop sending.
     dropped: Arc<AtomicBool>,
+    /// The file on the device and what to call it, kept so it can be sent to another computer if his words turn
+    /// out to be for an agent there.
+    file_path: String,
+    name: String,
+}
+
+/// Send one attached file to a computer, keeping the tray's picture of it up to date. When it is there it is
+/// armed on that computer's radio: the next thing he sends there takes it along.
+fn send_file(shared: Arc<Shared>, radio: Arc<Radio>, id: String, file_path: String, name: String, dropped: Arc<AtomicBool>) {
+    thread::spawn(move || {
+        let step = |sent: u64, _total: u64| {
+            if dropped.load(Ordering::SeqCst) {
+                return false;
+            }
+            if let Some(u) = shared.state.lock().unwrap().uploads.iter_mut().find(|u| u.shown.id == id && Arc::ptr_eq(&u.dropped, &dropped)) {
+                u.shown.sent = sent;
+            }
+            shared.host.changed();
+            true
+        };
+        let outcome = radio.upload(&id, &file_path, &name, step);
+        {
+            let mut state = shared.state.lock().unwrap();
+            // only if this is still the sending that counts: it may have been taken off, or started again elsewhere
+            if let Some(u) = state.uploads.iter_mut().find(|u| u.shown.id == id && Arc::ptr_eq(&u.dropped, &dropped)) {
+                u.shown.state = if outcome.is_ok() { "ready".into() } else { "failed".into() };
+                if outcome.is_ok() {
+                    radio.arm(id.clone());
+                }
+            }
+        }
+        shared.host.changed();
+    });
 }
 
 impl State {
@@ -647,34 +680,11 @@ impl Desk {
             }
             // everything attached to one message goes to one computer: the first file's
             let station = state.uploads.first().map(|u| u.station).unwrap_or_else(|| pick_station(&state, "", re.as_deref(), room.as_deref(), agent.as_deref()));
-            state.uploads.push(Upload { shown: DeskUpload { id: id.clone(), name: name.clone(), sent: 0, total, state: "sending".into() }, station, dropped: dropped.clone() });
+            state.uploads.push(Upload { shown: DeskUpload { id: id.clone(), name: name.clone(), sent: 0, total, state: "sending".into() }, station, dropped: dropped.clone(), file_path: file_path.clone(), name: name.clone() });
             state.stations[station].radio.clone()
         };
         self.shared.host.changed();
-        let (shared, mine) = (self.shared.clone(), id.clone());
-        thread::spawn(move || {
-            let step = |sent: u64, _total: u64| {
-                if dropped.load(Ordering::SeqCst) {
-                    return false;
-                }
-                if let Some(u) = shared.state.lock().unwrap().uploads.iter_mut().find(|u| u.shown.id == mine) {
-                    u.shown.sent = sent;
-                }
-                shared.host.changed();
-                true
-            };
-            let outcome = radio.upload(&mine, &file_path, &name, step);
-            {
-                let mut state = shared.state.lock().unwrap();
-                if let Some(u) = state.uploads.iter_mut().find(|u| u.shown.id == mine) {
-                    u.shown.state = if outcome.is_ok() { "ready".into() } else { "failed".into() };
-                    if outcome.is_ok() {
-                        radio.arm(mine.clone());
-                    }
-                }
-            }
-            shared.host.changed();
-        });
+        send_file(self.shared.clone(), radio, id.clone(), file_path, name, dropped);
         id
     }
 
@@ -793,6 +803,12 @@ impl Desk {
         radio.stop_agent(agent)
     }
 
+    /// End an agent its computer runs itself: it finishes and leaves the radio. Blocks: call it off the main thread.
+    pub fn end_agent(&self, agent: String) -> Result<(), RadioError> {
+        let radio = self.shared.state.lock().unwrap().stations.iter().find(|s| s.agents.iter().any(|a| a.id == agent)).map(|s| s.radio.clone()).ok_or(RadioError::Refused)?;
+        radio.end_agent(agent)
+    }
+
     /// Take back something he said that is still waiting its turn. Blocks: call it off the main thread.
     pub fn unsend(&self, message_id: String) -> Result<(), RadioError> {
         self.radio_of(&message_id).ok_or(RadioError::Refused)?.unsend(message_id)
@@ -843,12 +859,51 @@ fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>, re: Option
         if let Some(id) = &re {
             state.answered.insert(id.clone());
         }
-        // files he attached are already on one computer: his words go there with them
-        let pick = state.uploads.first().map(|u| u.station).unwrap_or_else(|| pick_station(&state, &text, re.as_deref(), room.as_deref(), agent.as_deref()));
-        // the ones that have arrived leave with this message
-        state.uploads.retain(|u| !(u.station == pick && u.shown.state == "ready"));
         // looking at one agent, with nobody tagged and no message picked: it is for that agent
         let aimed = matches!((&agent, tagged, &re), (Some(_), false, None));
+        let wanted = pick_station(&state, &text, re.as_deref(), room.as_deref(), agent.as_deref());
+        // Files he attached are already on one computer. Words with no address go there with them. Words he
+        // addressed (a tag, a message he picked, the agent he is looking at) go where they are addressed, and
+        // if that is another computer the files are sent there first: the words wait for them.
+        let files_at = state.uploads.first().map(|u| u.station);
+        let pick = match files_at {
+            Some(at) if at != wanted && (tagged || aimed || re.is_some()) => {
+                let to = state.stations[wanted].radio.clone();
+                let mut moved = Vec::new();
+                for u in state.uploads.iter_mut() {
+                    u.dropped.store(true, Ordering::SeqCst);
+                    u.dropped = Arc::new(AtomicBool::new(false));
+                    moved.push((u.station, u.shown.id.clone(), u.file_path.clone(), u.name.clone(), u.dropped.clone()));
+                    u.station = wanted;
+                    u.shown.sent = 0;
+                    u.shown.state = "sending".into();
+                }
+                for (was, id, file_path, name, dropped) in moved {
+                    if let Some(old) = state.stations.get(was) {
+                        old.radio.disarm(id.clone());
+                    }
+                    send_file(shared.clone(), to.clone(), id, file_path, name, dropped);
+                }
+                // send the words when the files are there (or have failed, or he gave up on them)
+                let (again, text, label, re, room, agent) = (shared.clone(), text.clone(), label.clone(), re.clone(), room.clone(), agent.clone());
+                thread::spawn(move || {
+                    for _ in 0..1200 {
+                        thread::sleep(Duration::from_millis(250));
+                        if !again.state.lock().unwrap().uploads.iter().any(|u| u.shown.state == "sending") {
+                            break;
+                        }
+                    }
+                    deliver(&again, text, label, re, room, agent);
+                });
+                drop(state);
+                shared.host.changed();
+                return;
+            }
+            Some(at) => at,
+            None => wanted,
+        };
+        // the ones that have arrived leave with this message
+        state.uploads.retain(|u| !(u.station == pick && u.shown.state == "ready"));
         let text = match (&agent, aimed) {
             (Some(callsign), true) => format!("@{} {text}", callsign.replace(' ', "")),
             _ => text,

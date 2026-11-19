@@ -32,6 +32,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
                 agent.meta.insert(k.to_string(), v.into());
             }
             "--tmux" => agent.deliver = Some(Deliver::Tmux { target: value("--tmux")? }),
+            // the tower started this agent and holds its input
+            "--held" => agent.deliver = Some(Deliver::Held),
             "--deliver-command" => agent.deliver = Some(Deliver::Command { argv: value("--deliver-command")?.split_whitespace().map(String::from).collect() }),
             _ => rest.push(a.clone()),
         }

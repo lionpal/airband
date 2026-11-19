@@ -80,6 +80,9 @@ struct Badge: View {
 /// and still when it has stopped without finishing, an empty ring when it has finished and has nothing on.
 struct StateDot: View {
     let state: String
+    /// Someone here is at work, whatever else the dot says: a team with a question waiting and an agent busy
+    /// is amber with the green ring going.
+    var working = false
     @State private var out = false
 
     private var color: Color {
@@ -95,8 +98,8 @@ struct StateDot: View {
         Circle().fill(state == "idle" || state.isEmpty ? Color.clear : color).frame(width: 8, height: 8)
             .overlay { if state == "idle" || state.isEmpty { Circle().strokeBorder(Palette.dim, lineWidth: 1.5) } }
             .overlay {
-                if state == "working" {
-                    Circle().stroke(color.opacity(out ? 0 : 0.6), lineWidth: 2).scaleEffect(out ? 2.4 : 1)
+                if state == "working" || working {
+                    Circle().stroke(Palette.signal.opacity(out ? 0 : 0.6), lineWidth: 2).scaleEffect(out ? 2.4 : 1)
                         .onAppear { withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) { out = true } }
                 }
             }
@@ -145,7 +148,7 @@ struct FeedView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .background(alignment: .bottom) {
-                            LinearGradient(stops: [.init(color: Palette.ground.opacity(0), location: 0), .init(color: Palette.ground.opacity(0.5), location: 0.4), .init(color: Palette.ground.opacity(0.82), location: 1)], startPoint: .top, endPoint: .bottom)
+                            LinearGradient(stops: [.init(color: Palette.ground.opacity(0), location: 0), .init(color: Palette.ground.opacity(typingOpen || !model.tray.isEmpty ? 0.97 : 0.5), location: typingOpen || !model.tray.isEmpty ? 0.12 : 0.4), .init(color: Palette.ground.opacity(typingOpen || !model.tray.isEmpty ? 1 : 0.82), location: 1)], startPoint: .top, endPoint: .bottom)
                                 .ignoresSafeArea(edges: .bottom).allowsHitTesting(false)
                         }
                     }
@@ -158,6 +161,14 @@ struct FeedView: View {
         .fullScreenCover(isPresented: $showScan) { ScanSheet().environmentObject(model) }
         .sheet(isPresented: $showAgents) { AgentsMenu(openSetup: { showAgents = false; showSetup = true }).environmentObject(model).presentationDetents([.medium, .large]) }
         .task { await ticker.run { model.view.rooms } }
+        // a question's keyboard button: open the text box, for that question
+        .onChange(of: model.typeNow) { _, now in
+            guard now else { return }
+            model.typeNow = false
+            showQuick = false
+            typingOpen = true
+            typing = true
+        }
         #if DEBUG
         // development only: `-airband.devQuick 1` opens the quick messages, for a screenshot
         .onAppear {
@@ -244,7 +255,7 @@ struct FeedView: View {
                         model.replyingTo = nil
                     } label: {
                         HStack(spacing: 7) {
-                            StateDot(state: room.state).id(room.state)
+                            StateDot(state: room.state, working: room.members.contains { $0.state == "working" }).id(room.state + (room.members.contains { $0.state == "working" } ? "+" : ""))
                             Text(room.name).font(.system(size: 14, weight: on ? .semibold : .medium))
                                 .padding(.bottom, 2).overlay(alignment: .bottom) { Capsule().fill(Palette.team(room.colour)).frame(height: 2) }
                             if room.subagents > 0 {
@@ -427,6 +438,13 @@ struct FeedView: View {
             if showQuick { quickGrid }
             if typingOpen {
                 HStack(spacing: 10) {
+                    // attach, or a quick message, without leaving the keyboard
+                    Button { withAnimation(.snappy(duration: 0.2)) { showQuick.toggle() } } label: {
+                        Image(systemName: "plus").font(.system(size: 20, weight: .semibold)).rotationEffect(.degrees(showQuick ? 45 : 0))
+                            .foregroundStyle(showQuick ? Palette.ground : Palette.ink)
+                            .frame(width: 44, height: 54).background(showQuick ? Palette.ink : Palette.field, in: RoundedRectangle(cornerRadius: 22))
+                    }
+                    .buttonStyle(.plain).accessibilityLabel("Attach, or quick messages")
                     TextField("", text: $draft, prompt: Text(placeholder).foregroundColor(Palette.quiet), axis: .vertical)
                         .lineLimit(1...4).focused($typing).font(.system(size: 17))
                         .padding(.horizontal, 20).frame(minHeight: 54)
@@ -668,14 +686,18 @@ struct Mine: View {
     var body: some View {
         VStack(alignment: .trailing, spacing: 3) {
             if !m.to.isEmpty {
-                // who it went to, with that agent's badge when it went to one
-                HStack(spacing: 5) {
-                    Text("to").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.quiet)
-                    if !m.badge.isEmpty { Badge(text: m.badge, colour: m.colour, size: 16) }
-                    Text(m.to.joined(separator: ", ")).font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.quiet).lineLimit(1)
+                // who it went to, with that agent's badge when it went to one. A tap shows only that agent, so
+                // what he says next goes to it
+                Button { if m.to.count == 1 { model.room = nil; model.only = m.to[0] } } label: {
+                    HStack(spacing: 5) {
+                        Text("to").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.quiet)
+                        if !m.badge.isEmpty { Badge(text: m.badge, colour: m.colour, size: 16) }
+                        Text(m.to.joined(separator: ", ")).font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.quiet).lineLimit(1)
+                    }
+                    .frame(minHeight: 26).contentShape(Rectangle())
                 }
+                .buttonStyle(.plain).accessibilityLabel("To \(m.to.joined(separator: ", ")). Show only this agent.")
             }
-            if !m.pictures.isEmpty { PictureStrip(m: m, height: 120) }
             if m.queued {
                 // it waits until the agent stops what it is doing: until then he can take it back
                 Button { model.unsend(m) } label: {
@@ -687,6 +709,9 @@ struct Mine: View {
                 }
                 .buttonStyle(.plain).accessibilityLabel("Waiting its turn. Take it back.")
             }
+            // what he attached sits over his words, its left edge on theirs
+            VStack(alignment: .leading, spacing: 6) {
+            if !m.pictures.isEmpty { PictureStrip(m: m, height: 120, still: true) }
             VStack(alignment: .trailing, spacing: 4) {
                 Text(whole ? (model.full[m.id] ?? m.text) : m.text).font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.ground)
                     .lineLimit(whole ? nil : 5)
@@ -712,6 +737,7 @@ struct Mine: View {
                 // what the chat carries of a very long one is its opening: the rest is fetched when he opens it
                 if !whole && m.long { model.loadFull(m) }
                 withAnimation(.snappy(duration: 0.2)) { whole.toggle() }
+            }
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing).padding(.leading, 50)
@@ -798,19 +824,33 @@ struct Answers: View {
         .buttonStyle(.plain).accessibilityLabel("Do whatever you think is best")
     }
 
-    /// Answer in his own words: the microphone, aimed at this question. With no choices to tap it is the main
-    /// button and says so; beside choices it is a small one.
+    /// Answer in his own words. It picks this question and opens the ordinary microphone at the bottom, which is
+    /// where he sends from; nothing here changes while he talks. With no choices to tap it is the main button and
+    /// says so; beside choices it is a small one. The keyboard beside it opens the text box for the same question.
     private func respond(wide: Bool) -> some View {
-        Button { Task { await model.talk(about: m) } } label: {
-            HStack(spacing: 8) {
-                Image(systemName: model.listening ? "arrow.up" : "mic.fill").font(.system(size: 17, weight: .semibold))
-                if wide { Text(model.listening ? "Send" : "Respond").font(.system(size: 17, weight: .semibold)) }
+        HStack(spacing: 10) {
+            Button {
+                model.replyingTo = m
+                Task { await model.talk() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "mic.fill").font(.system(size: 17, weight: .semibold))
+                    if wide { Text("Respond").font(.system(size: 17, weight: .semibold)) }
+                }
+                .foregroundStyle(wide ? Palette.ground : Palette.ink)
+                .frame(maxWidth: wide ? .infinity : nil, minHeight: 52).frame(width: wide ? nil : 52)
+                .background(wide ? Palette.ink : Palette.raised, in: RoundedRectangle(cornerRadius: 16))
             }
-            .foregroundStyle(wide ? Palette.ground : Palette.ink)
-            .frame(maxWidth: wide ? .infinity : nil, minHeight: 52).frame(width: wide ? nil : 52)
-            .background(wide ? Palette.ink : Palette.raised, in: RoundedRectangle(cornerRadius: 16))
+            .buttonStyle(.plain).accessibilityLabel("Answer by voice")
+            Button {
+                model.replyingTo = m
+                model.typeNow = true
+            } label: {
+                Image(systemName: "keyboard").font(.system(size: 16, weight: .semibold)).foregroundStyle(Palette.ink)
+                    .frame(width: 52, height: 52).background(Palette.raised, in: RoundedRectangle(cornerRadius: 16))
+            }
+            .buttonStyle(.plain).accessibilityLabel("Type an answer")
         }
-        .buttonStyle(.plain).accessibilityLabel(model.listening ? "Send what you said" : "Answer by voice")
     }
 
     var body: some View {
@@ -1123,7 +1163,15 @@ struct AgentsMenu: View {
     @State private var founding: DeskMember?
     /// The agent he is about to have its computer take over.
     @State private var taking: DeskMember?
+    /// The agent he is about to end.
+    @State private var ending: DeskMember?
     @State private var newTeam = ""
+
+    /// An agent's name; with its computer when another computer has an agent of the same name.
+    private func titled(_ agent: DeskMember, in room: DeskRoom) -> String {
+        let twins = room.members.filter { $0.callsign == agent.callsign }.count > 1
+        return twins && !agent.station.isEmpty ? "\(agent.callsign) (\(agent.station))" : agent.callsign
+    }
 
     /// The small line under an agent's name: what it runs on, and the computer it is on when there are several.
     private func under(_ agent: DeskMember) -> String {
@@ -1147,16 +1195,19 @@ struct AgentsMenu: View {
                 }
                 ForEach(model.view.rooms, id: \.name) { room in
                     row(dot: room.state, title: room.name, detail: room.subagents > 0 ? "+\(room.subagents) subagents" : nil, strong: true, on: model.room == room.name && model.only == nil, inset: 0, colour: room.colour) {
+                        // a second tap on the one he is looking at goes back to everyone
+                        let was = model.room == room.name && model.only == nil
                         model.only = nil
-                        model.room = room.name
+                        model.room = was ? nil : room.name
                     }
                     .overlay { if over == room.name { RoundedRectangle(cornerRadius: 14).strokeBorder(Palette.team(room.colour), lineWidth: 2) } }
                     .dropDestination(for: String.self) { ids, _ in drop(ids, on: room.name) } isTargeted: { over = $0 ? room.name : (over == room.name ? nil : over) }
                     .padding(.top, 4)
                     ForEach(room.members, id: \.id) { agent in
-                        row(dot: agent.state, title: agent.callsign, detail: agent.doing, strong: false, on: model.only == agent.callsign, inset: 22, colour: room.colour, badge: agent.badge, engine: under(agent)) {
+                        row(dot: agent.state, title: titled(agent, in: room), detail: nil, strong: false, on: model.only == agent.callsign, inset: 22, colour: room.colour, badge: agent.badge, engine: under(agent), doing: agent.doing) {
+                            let was = model.only == agent.callsign
                             model.room = nil
-                            model.only = agent.callsign
+                            model.only = was ? nil : agent.callsign
                         }
                         // hold and drag it onto another team; or hold, and pick the team from the list
                         .draggable(agent.id) {
@@ -1176,7 +1227,10 @@ struct AgentsMenu: View {
                                 Button { taking = agent } label: { Label("Take over from the terminal", systemImage: "arrow.down.to.line") }
                             }
                             if agent.held, agent.state == "working" {
-                                Button(role: .destructive) { model.stop(agent) } label: { Label("Stop", systemImage: "stop.fill") }
+                                Button { model.stop(agent) } label: { Label("Stop what it is doing", systemImage: "stop.fill") }
+                            }
+                            if agent.held {
+                                Button(role: .destructive) { ending = agent } label: { Label("End this agent", systemImage: "xmark.circle") }
                             }
                         }
                     }
@@ -1198,6 +1252,12 @@ struct AgentsMenu: View {
         } message: {
             Text("Its terminal session ends, and the same conversation carries on run by airband. What you say then reaches it as your own words.")
         }
+        .alert("End \(ending?.callsign ?? "")?", isPresented: Binding(get: { ending != nil }, set: { if !$0 { ending = nil } })) {
+            Button("End", role: .destructive) { if let agent = ending { model.end(agent) }; ending = nil }
+            Button("Cancel", role: .cancel) { ending = nil }
+        } message: {
+            Text("It finishes and leaves. What it has done stays done.")
+        }
         .alert("New team", isPresented: Binding(get: { founding != nil }, set: { if !$0 { founding = nil } })) {
             TextField("Name", text: $newTeam).textInputAutocapitalization(.never).autocorrectionDisabled()
             Button("Move") { if let agent = founding { model.moveAgent(agent, to: newTeam) }; founding = nil }
@@ -1207,7 +1267,7 @@ struct AgentsMenu: View {
         }
     }
 
-    private func row(dot: String?, title: String, detail: String?, strong: Bool, on: Bool, inset: CGFloat, colour: UInt8? = nil, badge: String? = nil, engine: String = "", pick: @escaping () -> Void) -> some View {
+    private func row(dot: String?, title: String, detail: String?, strong: Bool, on: Bool, inset: CGFloat, colour: UInt8? = nil, badge: String? = nil, engine: String = "", doing: String? = nil, pick: @escaping () -> Void) -> some View {
         Button {
             pick()
             model.replyingTo = nil
@@ -1222,6 +1282,8 @@ struct AgentsMenu: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(title).font(.system(size: 17, weight: strong ? .semibold : .regular)).lineLimit(1)
                     if !engine.isEmpty { Text(engine).font(.system(size: 12, weight: .medium)).foregroundStyle(Palette.quiet).lineLimit(1) }
+                    // what it is doing right now, on a line of its own so there is room to read it
+                    if let doing { Text(doing).font(.system(size: 13)).foregroundStyle(Palette.signal.opacity(0.85)).lineLimit(1).padding(.top, 1) }
                 }
                 .layoutPriority(1)
                 Spacer(minLength: 8)
@@ -1229,6 +1291,7 @@ struct AgentsMenu: View {
                 if on { Image(systemName: "checkmark").font(.system(size: 14, weight: .bold)).foregroundStyle(Palette.signal) }
             }
             .padding(.leading, 14 + inset).padding(.trailing, 14)
+            .padding(.vertical, doing == nil ? 0 : 4)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .background(on ? Palette.card : .clear, in: RoundedRectangle(cornerRadius: 14))
             .contentShape(RoundedRectangle(cornerRadius: 14))

@@ -61,6 +61,9 @@ struct PictureStrip: View {
     @EnvironmentObject var model: RadioModel
     let m: ChatMessage
     var height: CGFloat = 132
+    /// Laid out as wide as its pictures and no wider, without scrolling: for a few pictures that must line up
+    /// with something else.
+    var still = false
     @State private var viewing: Viewing?
 
     struct Viewing: Identifiable {
@@ -73,17 +76,21 @@ struct PictureStrip: View {
         return min(max(height * ratio, height * 0.4), height * 2.4)
     }
 
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(m.pictures, id: \.id) { p in
-                    Button { viewing = Viewing(id: p.id) } label: {
-                        PictureImage(m: m, p: p, side: 720)
-                            .frame(width: width(p), height: height).clipShape(RoundedRectangle(cornerRadius: 14))
-                    }
-                    .buttonStyle(.plain).accessibilityLabel("Picture. Opens full screen.")
+    private var row: some View {
+        HStack(spacing: 8) {
+            ForEach(still ? Array(m.pictures.prefix(3)) : m.pictures, id: \.id) { p in
+                Button { viewing = Viewing(id: p.id) } label: {
+                    PictureImage(m: m, p: p, side: 720)
+                        .frame(width: still ? min(width(p), 96) : width(p), height: height).clipShape(RoundedRectangle(cornerRadius: 14))
                 }
+                .buttonStyle(.plain).accessibilityLabel("Picture. Opens full screen.")
             }
+        }
+    }
+
+    var body: some View {
+        Group {
+            if still { row } else { ScrollView(.horizontal, showsIndicators: false) { row } }
         }
         .fullScreenCover(item: $viewing) { v in PictureViewer(m: m, start: v.id).environmentObject(model) }
     }

@@ -156,6 +156,7 @@ Accounts, for a harness whose sessions can be moved between logins while they ru
 | `POST takeover` | `{ agent }` → `{}`, or `{ error }` | Have the tower take over an agent he started in a terminal: that session ends there and carries on in a process the tower holds. Refused while it is in the middle of something. |
 | `POST stop` | `{ agent }` → `{}`, or `{ error }` | Stop what an agent the tower runs is doing, now. What he said to it meanwhile it then reads as one turn. |
 | `POST unsend` | `{ message }` → `{}`, or `{ error }` | Take back something he said that is still `queued`. |
+| `POST end` | `{ agent }` → `{}`, or `{ error }` | End an agent the tower runs itself: its input is closed, and it finishes and signs off. |
 
 An account is `{ id, harness, label, live, limits, problem }`. `id` means something only to the adapter that listed
 it; `label` is what to show (for Claude Code, the email); `live` marks the one in use. Each of `limits` is

@@ -21,6 +21,8 @@
 //!   airband --version            which version this is
 mod adapters;
 mod config;
+#[cfg(unix)]
+mod hold;
 mod install;
 mod terminal;
 mod tower;
@@ -31,6 +33,8 @@ fn main() {
         Some("--version" | "-V" | "version") => Ok(println!("airband {}", env!("CARGO_PKG_VERSION"))),
         Some("hook") => adapters::hook(args.get(1).map(String::as_str).unwrap_or("claude-code")),
         Some("report") => adapters::report::run(&args[1..]),
+        #[cfg(unix)]
+        Some("hold") => hold::run(&args[1..]),
         None | Some("run") => tower::run(config::load()),
         Some("install") => install::install(),
         Some("uninstall") => install::uninstall(),

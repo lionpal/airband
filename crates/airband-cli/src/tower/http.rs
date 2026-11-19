@@ -97,6 +97,16 @@ async fn stop_agent(State(app): State<Arc<App>>, Json(to): Json<airband_core::ra
         Err(why) => json!({ "error": why }),
     })
 }
+/// He ended an agent the tower runs.
+async fn end_agent(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::EndAgent>) -> Json<Value> {
+    let held = app.inner.lock().unwrap().find(&to.agent).map(|s| s.agent.deliver == Some(Deliver::Held));
+    Json(match held {
+        None => json!({ "error": "That agent is no longer running." }),
+        Some(false) => json!({ "error": "Only an agent airband runs can be ended from here." }),
+        Some(true) if held::end(&app, &to.agent).await => json!({}),
+        Some(true) => json!({ "error": "It had already ended." }),
+    })
+}
 /// He took back something he said that was still waiting its turn.
 async fn unsend(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::Unsend>) -> Json<Value> {
     Json(match held::unsend(&app, &to.message) {
@@ -107,7 +117,7 @@ async fn unsend(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio:
 
 /// End an agent the tower runs itself (`airband end <id>`).
 async fn held_end(State(app): State<Arc<App>>, Path(id): Path<String>) -> StatusCode {
-    if held::end(&app, &id) { StatusCode::NO_CONTENT } else { StatusCode::NOT_FOUND }
+    if held::end(&app, &id).await { StatusCode::NO_CONTENT } else { StatusCode::NOT_FOUND }
 }
 
 /// A harness asks whether its agent may do something. The answer is fetched separately, so nothing is held open
@@ -434,6 +444,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/radio/takeover", post(takeover))
         .route("/v1/radio/stop", post(stop_agent))
         .route("/v1/radio/unsend", post(unsend))
+        .route("/v1/radio/end", post(end_agent))
         .route("/v1/status", get(status))
         .layer(middleware::from_fn_with_state(app.clone(), auth))
         .with_state(app)

@@ -210,6 +210,13 @@ pub struct StopAgent {
     pub agent: String,
 }
 
+/// `POST end`: end an agent the tower runs itself. Its input is closed and it finishes and signs off; what it
+/// has done stays done. `{}` or `{error}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EndAgent {
+    pub agent: String,
+}
+
 /// `POST unsend`: take back something he said that is still `queued`. `{}`, or `{error}` when it has gone.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Unsend {

@@ -8,12 +8,11 @@
 //! `held.resume`), and what a line of input looks like (`held.line`). The agent reports through its harness's
 //! adapter like any other; its output on this pipe is read only so the pipe does not fill.
 //!
-//! A held agent lives as long as the tower: when the tower stops, the agent's input closes and it exits. So
-//! every one is remembered, and a tower that starts carries each on from where its session was.
+//! Each runs in a holder of its own (`airband hold`), a process apart from the tower that keeps the program
+//! and its input open and listens on a socket. The tower writes there. So an agent goes on working while the
+//! tower is restarted or updated; the tower that starts finds the socket again. Every one is also remembered,
+//! so one whose holder has gone (the computer was restarted) is carried on from where its session was.
 use super::*;
-use std::sync::OnceLock;
-use tokio::io::AsyncReadExt;
-use tokio::process::ChildStdin;
 
 /// One held agent, as remembered across restarts.
 #[derive(Clone, Serialize, Deserialize)]
@@ -27,14 +26,28 @@ pub(crate) struct Kept {
     pub(super) options: Vec<String>,
 }
 
-struct Running {
-    input: tokio::sync::Mutex<ChildStdin>,
-    pid: Option<u32>,
+/// Where a held agent's holder listens: a short path (a socket's may not be long), of this user's own, that is
+/// the same for the same agent of the same tower every time.
+fn socket(id: &str) -> std::path::PathBuf {
+    use sha2::{Digest, Sha256};
+    let name: String = Sha256::digest(format!("{}|{id}", config::dir().display()).as_bytes()).iter().take(8).map(|b| format!("{b:02x}")).collect();
+    #[cfg(unix)]
+    let user = unsafe { libc::getuid() };
+    #[cfg(not(unix))]
+    let user = 0;
+    std::path::PathBuf::from(format!("/tmp/airband-{user}")).join(format!("h-{name}.sock"))
 }
 
-static RUNNING: OnceLock<Mutex<HashMap<String, Arc<Running>>>> = OnceLock::new();
-fn running() -> &'static Mutex<HashMap<String, Arc<Running>>> {
-    RUNNING.get_or_init(Default::default)
+/// Write to a held agent's holder. Fails when there is none listening: it has ended, or was never started.
+#[cfg(unix)]
+async fn write(id: &str, bytes: &[u8]) -> Result<(), String> {
+    let mut to = tokio::net::UnixStream::connect(socket(id)).await.map_err(|e| format!("it is not running: {e}"))?;
+    to.write_all(bytes).await.map_err(|e| e.to_string())?;
+    to.shutdown().await.map_err(|e| e.to_string())
+}
+#[cfg(not(unix))]
+async fn write(_: &str, _: &[u8]) -> Result<(), String> {
+    Err("the tower cannot run agents itself on this system yet".into())
 }
 
 /// A session id of the usual shape, made here so the agent is known by it before it has said a word.
@@ -43,65 +56,77 @@ pub(super) fn new_id() -> String {
     format!("{}-{}-4{}-a{}-{}", &h[0..8], &h[8..12], &h[13..16], &h[17..20], &h[20..32])
 }
 
-/// Start the program for `kept`, new or carried on, and hold its input.
-fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Arc<Running>, String> {
+/// Start the program for `kept`, new or carried on, in a holder of its own (`airband hold`): a process apart
+/// from the tower, so the agent goes on when the tower is restarted.
+#[cfg(unix)]
+async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<(), String> {
     let launcher = app.cfg.launchers.get(&kept.launcher).ok_or_else(|| format!("no launcher called {} is configured", kept.launcher))?;
     let held = launcher.held.as_ref().ok_or_else(|| format!("the launcher {} does not hold its agents", kept.launcher))?;
     let session: Vec<String> = if fresh { &held.fresh } else { &held.resume }.iter().map(|a| a.replace("{id}", &kept.id)).collect();
-    let argv: Vec<String> = launcher.argv.iter().flat_map(|a| if a == "{options}" { kept.options.clone() } else { vec![a.replace("{cwd}", &kept.cwd)] }).chain(session).collect();
-    let (program, args) = argv.split_first().ok_or("the launcher command is empty")?;
-    let mut child = tokio::process::Command::new(program)
-        .args(args)
-        .current_dir(&kept.cwd)
+    let argv: Vec<String> = launcher.argv.iter().flat_map(|a| if a == "{options}" { kept.options.clone() } else { vec![a.replace("{cwd}", &kept.cwd).replace("{id}", &kept.id)] }).chain(session).collect();
+    let sock = socket(&kept.id);
+    if let Some(dir) = sock.parent() {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    }
+    let me = std::env::current_exe().map_err(|e| e.to_string())?;
+    let mut holder = std::process::Command::new(me);
+    holder
+        .arg("hold")
+        .arg("--sock")
+        .arg(&sock)
+        .arg("--cwd")
+        .arg(&kept.cwd)
+        .arg("--")
+        .args(&argv)
         // AIRBAND_INTERNAL must not leak in: the agent has to report to the tower. AIRBAND_HELD tells its
         // adapter that this tower holds it, so it says so when it reports in.
         .env_remove("AIRBAND_INTERNAL")
         .env("AIRBAND_HELD", "1")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(false)
-        .spawn()
-        .map_err(|e| format!("{program} did not start: {e}"))?;
-    let input = child.stdin.take().ok_or("its input could not be held")?;
-    let output = child.stdout.take();
-    let pid = child.id();
-    let run = Arc::new(Running { input: tokio::sync::Mutex::new(input), pid });
-    running().lock().unwrap().insert(kept.id.clone(), run.clone());
-    let id = kept.id.clone();
-    tokio::spawn(async move {
-        // what it prints is its own business: read and dropped, so it never waits on a full pipe
-        if let Some(mut output) = output {
-            let mut sink = [0u8; 16 * 1024];
-            while matches!(output.read(&mut sink).await, Ok(n) if n > 0) {}
-        }
-        let status = child.wait().await;
-        log(format!("held agent {} ended ({})", &id[..8.min(id.len())], status.map(|s| s.to_string()).unwrap_or_else(|e| e.to_string())));
-        // unless it has been started again since: then the one in the list is the new one
-        let mut all = running().lock().unwrap();
-        if all.get(&id).is_some_and(|r| r.pid == pid) {
-            all.remove(&id);
-        }
+        .env("AIRBAND_HELD_ID", &kept.id)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    // a session of its own: whatever stops the tower and its children leaves this alone
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        holder.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    let _ = std::fs::remove_file(&sock);
+    let mut child = holder.spawn().map_err(|e| format!("its holder did not start: {e}"))?;
+    // it is not waited for as a child would be: collect it when it ends, so it does not linger as a dead entry
+    std::thread::spawn(move || {
+        let _ = child.wait();
     });
-    Ok(run)
+    for _ in 0..50 {
+        if tokio::net::UnixStream::connect(&sock).await.is_ok() {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    Err(format!("{} did not start", argv.first().cloned().unwrap_or_default()))
+}
+#[cfg(not(unix))]
+async fn spawn(_: &Arc<App>, _: &Kept, _: bool) -> Result<(), String> {
+    Err("the tower cannot run agents itself on this system yet".into())
 }
 
 /// Write one message of his to a held agent as its next turn. One whose process has gone (the tower restarted,
 /// or it crashed) is carried on first.
 pub(super) async fn tell(app: &Arc<App>, id: &str, text: &str) -> Result<(), String> {
-    let run = running().lock().unwrap().get(id).cloned();
-    let run = match run {
-        Some(run) => run,
-        None => {
-            let kept = app.inner.lock().unwrap().held.iter().find(|k| k.id == id).cloned().ok_or("the tower no longer holds this agent")?;
-            spawn(app, &kept, false)?
-        }
-    };
-    let held = app.inner.lock().unwrap().held.iter().find(|k| k.id == id).and_then(|k| app.cfg.launchers.get(&k.launcher)).and_then(|l| l.held.clone()).ok_or("its launcher is no longer configured")?;
+    let kept = app.inner.lock().unwrap().held.iter().find(|k| k.id == id).cloned().ok_or("the tower no longer holds this agent")?;
+    let held = app.cfg.launchers.get(&kept.launcher).and_then(|l| l.held.clone()).ok_or("its launcher is no longer configured")?;
     let line = format!("{}\n", held.line.replace("{text}", &Value::String(text.to_string()).to_string()));
-    let mut input = run.input.lock().await;
-    input.write_all(line.as_bytes()).await.map_err(|e| format!("its input is closed: {e}"))?;
-    input.flush().await.map_err(|e| e.to_string())
+    if write(id, line.as_bytes()).await.is_ok() {
+        return Ok(());
+    }
+    // its holder has gone (the computer restarted, or it crashed): carry the session on, then say it
+    spawn(app, &kept, false).await?;
+    write(id, line.as_bytes()).await
 }
 
 /// A held agent has stopped (it finished its turn, or he stopped it): everything he said to it meanwhile, and
@@ -154,12 +179,7 @@ pub(super) async fn stop(app: &Arc<App>, id: &str) -> Result<(), String> {
     if session.waiting {
         return Err("It is not doing anything.".into());
     }
-    let run = running().lock().unwrap().get(id).cloned().ok_or("Its process has gone.")?;
-    {
-        let mut input = run.input.lock().await;
-        input.write_all(format!("{}\n", line.replace("{id}", &config::random_hex(8))).as_bytes()).await.map_err(|e| format!("its input is closed: {e}"))?;
-        input.flush().await.map_err(|e| e.to_string())?;
-    }
+    write(id, format!("{}\n", line.replace("{id}", &config::random_hex(8))).as_bytes()).await.map_err(|_| "Its process has gone.".to_string())?;
     log(format!("stopped {}", session.callsign.text()));
     // a harness may or may not report a stopped turn as finished: either way it is waiting from now
     {
@@ -203,7 +223,7 @@ pub(super) fn unsend(app: &App, line: &str) -> Result<(), String> {
 /// Start a new held agent in `cwd` and give it its task.
 pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, options: Vec<String>, task: &str) -> Result<String, String> {
     let kept = Kept { id: new_id(), cwd: cwd.to_string(), launcher: launcher.to_string(), options };
-    spawn(app, &kept, true)?;
+    spawn(app, &kept, true).await?;
     {
         let mut inner = app.inner.lock().unwrap();
         inner.held.push(kept.clone());
@@ -222,15 +242,22 @@ pub(super) async fn carry_on(app: &Arc<App>) {
         if app.inner.lock().unwrap().find(&k.id).is_none() {
             continue;
         }
-        if let Err(e) = spawn(app, &k, false) {
+        // its holder outlived the last tower: it is still running, and there is nothing to do
+        if write(&k.id, b"").await.is_ok() {
+            continue;
+        }
+        if let Err(e) = spawn(app, &k, false).await {
             log(format!("could not carry on held agent {}: {e}", &k.id[..8.min(k.id.len())]));
         }
     }
 }
 
 /// Let a held agent go: its input is closed, and it ends by itself and signs off.
-pub(super) fn end(app: &Arc<App>, id: &str) -> bool {
-    let was = running().lock().unwrap().remove(id).is_some();
+pub(super) async fn end(app: &Arc<App>, id: &str) -> bool {
+    #[cfg(unix)]
+    let was = write(id, crate::hold::END).await.is_ok();
+    #[cfg(not(unix))]
+    let was = false;
     let mut inner = app.inner.lock().unwrap();
     let kept = inner.held.len();
     inner.held.retain(|k| k.id != id);
@@ -243,7 +270,6 @@ pub(super) fn end(app: &Arc<App>, id: &str) -> bool {
 /// An agent has signed off: if the tower held it, it holds it no more.
 pub(super) fn forget(inner: &mut Inner, id: &str) {
     inner.held.retain(|k| k.id != id);
-    running().lock().unwrap().remove(id);
 }
 
 /// Take over an agent he started in a terminal of his own: end that process and carry the same session on in
@@ -281,7 +307,7 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
     }
     let kept = Kept { id: id.to_string(), cwd, launcher, options: Vec::new() };
     // ending it signed it off; it reports in again from the new process, under the same id
-    spawn(app, &kept, false)?;
+    spawn(app, &kept, false).await?;
     let mut inner = app.inner.lock().unwrap();
     inner.held.retain(|k| k.id != id);
     inner.held.push(kept);
