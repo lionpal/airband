@@ -340,6 +340,9 @@ impl RadioHost for StationHost {
         self.shared.host.hearing(text);
     }
     fn words(&self, text: String, starts: Vec<u32>, at_ms: Vec<u32>) {
+        // only the computer whose turn it is to speak says what is being said: another one's words wait with
+        // its sound, or they would be shown over the voice of the one speaking
+        self.shared.floor.take(self.index);
         self.shared.host.words(text, starts, at_ms);
     }
     fn outbox(&self, waiting: Vec<Outgoing>, note: Option<String>) {
