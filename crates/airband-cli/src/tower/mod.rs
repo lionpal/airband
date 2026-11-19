@@ -26,6 +26,7 @@
 //! - `store`: the database: the chat log, the raw event record, receipts, delivery attempts
 //! - `relay_link`: the outbound connection to the relay, one per paired radio
 mod accounts;
+mod attachments;
 mod deliver;
 mod ears;
 mod http;
@@ -168,6 +169,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         inner.colour_teams();
         inner.adopt_old_lines();
         pictures::prune();
+        attachments::prune();
         let live: HashSet<String> = inner.sessions.iter().map(|s| s.agent.id.clone()).collect();
         inner.pending.retain(|p| live.contains(&p.agent_id));
         let port = cfg.port;

@@ -99,6 +99,9 @@ pub struct Outgoing {
     /// For a quick message: the words on the button. `text` is then the whole instruction.
     #[serde(default)]
     pub label: Option<String>,
+    /// Files that go with it, by the ids they reached the tower under.
+    #[serde(default)]
+    pub attachments: Vec<String>,
 }
 
 fn chat(m: airband_core::radio::Message) -> ChatMessage {
@@ -369,11 +372,25 @@ impl Radio {
     /// `label`, for a quick message, is the button's words: the chat shows those and the agent gets `text`.
     pub fn queue(&self, text: String, re: Option<String>, scope: Option<String>, label: Option<String>) {
         let waiting = self.store.change(|s| {
-            s.outbox.push(Outgoing { id: random_hex(12), text, re, at: now_ms(), scope, label });
+            // whatever he attached and has reached the tower goes with this
+            s.outbox.push(Outgoing { id: random_hex(12), text, re, at: now_ms(), scope, label, attachments: self.link.take_armed() });
             s.outbox.clone()
         });
         self.wake.ring();
         self.host.outbox(waiting, None);
+    }
+
+    /// A file he attached has reached the tower: the next thing he says or sends from this radio takes it along.
+    pub fn arm(&self, id: String) {
+        self.link.arm(id);
+    }
+    /// He took it off again before sending.
+    pub fn disarm(&self, id: String) {
+        self.link.disarm(&id);
+    }
+    /// The attached files still waiting for something to go with.
+    pub fn armed(&self) -> Vec<String> {
+        self.link.armed()
     }
 
     /// The recent chat as last seen, from the device: there at once, with or without a connection.
@@ -525,3 +542,47 @@ impl Drop for Radio {
     }
 }
 
+impl Radio {
+    /// Send a file to the tower in parts, under `id`. `sent` is told how far it has got after each part and
+    /// returns false to give up. Blocks until it is all there, the tower refuses it, or it is given up on.
+    pub(crate) fn upload(&self, id: &str, path: &str, name: &str, mut sent: impl FnMut(u64, u64) -> bool) -> Result<(), RadioError> {
+        use std::io::Read;
+        let mut file = std::fs::File::open(path).map_err(|_| RadioError::Refused)?;
+        let total = file.metadata().map_err(|_| RadioError::Refused)?.len();
+        // 90 KB of file is 120 KB of text, which fits one sealed message through a relay
+        let mut buf = vec![0u8; 90_000];
+        let mut from = 0u64;
+        loop {
+            let mut n = 0;
+            while n < buf.len() {
+                match file.read(&mut buf[n..]) {
+                    Ok(0) => break,
+                    Ok(k) => n += k,
+                    Err(_) => return Err(RadioError::Refused),
+                }
+            }
+            let done = from + n as u64 >= total;
+            let part = airband_core::radio::AttachmentPart { id: id.into(), name: name.into(), from, data: airband_core::audio::base64_encode(&buf[..n]), done };
+            // a part lost on a bad connection is sent again, to the same place, a few times before giving up
+            let mut tries = 0;
+            let next = loop {
+                match self.link.attachment_part(&part) {
+                    Ok(next) => break next,
+                    Err(LinkError::Refused) => return Err(RadioError::Refused),
+                    Err(LinkError::Offline) if tries < 6 => {
+                        tries += 1;
+                        thread::sleep(Duration::from_secs(tries.min(4)));
+                    }
+                    Err(LinkError::Offline) => return Err(RadioError::Offline),
+                }
+            };
+            from = next;
+            if !sent(from, total) {
+                return Err(RadioError::Refused);
+            }
+            if done {
+                return Ok(());
+            }
+        }
+    }
+}

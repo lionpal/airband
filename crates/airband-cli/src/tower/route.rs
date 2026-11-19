@@ -295,11 +295,14 @@ async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, projects: &[
 /// `uid` is the utterance's own id, when the radio gave one: deliveries are recorded against it, so a retry after
 /// a crash can tell that the message already reached its agent.
 /// `label` is the button's words when this is a quick message: the chat shows those, and the agent gets `text`.
-pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>, text: &str, re: Option<&str>, scope: Option<&str>, label: Option<&str>) -> Reply {
+pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>, text: &str, re: Option<&str>, scope: Option<&str>, label: Option<&str>, attached: &[String]) -> Reply {
     // an answer to a request for permission goes back to the harness that asked, not to the agent as a message
     if let Some(reply) = permit::answer(app, text, re) {
         return reply;
     }
+    // files that came with his words: where each is on this computer, for whoever the words go to, and the
+    // pictures to show beside them in the chat
+    let (files, shown_files) = if attached.is_empty() { (String::new(), Vec::new()) } else { attachments::describe(attached).await };
     // starting a new agent comes next: it is addressed to the tower, not to anyone on the radio
     let projects: Vec<String> = app.inner.lock().unwrap().launchable(&app.cfg).into_keys().collect();
     // "Which project?" was just asked about an idea, and this names one
@@ -313,7 +316,8 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
     }
     // a typed command says what it is and needs no reading
     if text.trim_start().starts_with('/') {
-        if let Some(idea) = new_by_rule(app, text, &projects) {
+        if let Some(mut idea) = new_by_rule(app, text, &projects) {
+            idea.task.push_str(&files);
             return start(app, radio, text, idea, &projects, true).await;
         }
     }
@@ -347,10 +351,14 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
     } else {
         match route(app, radio, &parsed.rest, re, scope).await {
             Routed::Sure(t) => t,
-            Routed::New(idea) => return start(app, radio, text, idea, &projects, false).await,
+            Routed::New(mut idea) => {
+                idea.task.push_str(&files);
+                return start(app, radio, text, idea, &projects, false).await;
+            }
             Routed::Ask(options) if options.is_empty() => return say("No agents are running.".into()),
             Routed::Ask(options) => {
-                app.inner.lock().unwrap().call(radio).asked = Some((parsed.rest.clone(), Instant::now()));
+                // held with its files, so they go along when he says who it was for
+                app.inner.lock().unwrap().call(radio).asked = Some((format!("{}{files}", parsed.rest), Instant::now()));
                 log(format!("← radio: \"{text}\" → unsure; asking between {}", options.join(", ")));
                 return ask(format!("Who is that for? {}.", options.join(", or ")));
             }
@@ -405,7 +413,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
     let content = format!(
         "Message from {name}, sent through Airband by voice or from his phone. If by voice a word may be mis-heard. He is away from the keyboard: \
          he will get your reply cut to one or two sentences, so put the outcome and any question first.{many}\n\n\
-         {rest}\n\n\
+         {rest}{files}\n\n\
          If this reads as garbled, or acting on it would be hard to undo, ask him to confirm in one short question before doing it.",
         name = app.cfg.name,
         many = if targets.len() > 1 { format!(" This same message went to {} agents.", targets.len()) } else { String::new() },
@@ -440,8 +448,10 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
     }
     if !sent.is_empty() {
         // a quick message shows as the button he tapped; the whole instruction is still what was sent and kept
-        let entry = Entry::his(message_id, &sent, parsed.rest.clone());
-        inner.record(Entry { short: shown.or(entry.short.clone()), ..entry });
+        // what he sees of his own message is his words, without the list of file paths that the agent got
+        let said = parsed.rest.split("\n\nHe attached ").next().unwrap_or(&parsed.rest).to_string();
+        let entry = Entry::his(message_id, &sent, said);
+        inner.record(Entry { short: shown.or(entry.short.clone()), pictures: shown_files, ..entry });
     }
     app.save(&inner);
     let sent_names: Vec<String> = sent.iter().map(|s| s.callsign.text()).collect();

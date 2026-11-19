@@ -291,21 +291,6 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
 @keyframes doingcaret { 50% { opacity: 0; } }
 .picking .doing, .phone:has(.look.open) .doing, .phone:has(.quick.open) .doing { opacity: 0; }
 
-/* who can read it: what is on his phone, beside all that the relay ever sees of it */
-.sec { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
-.pane { min-width: 0; height: 268px; overflow: hidden; display: flex; flex-direction: column; padding: 20px 20px 0; border-radius: 22px; border: 1px solid #1B1D1E; background: #0D0E0F; }
-.pane h3 { margin: 0 0 18px; font-size: 13px; font-weight: 600; color: var(--quiet); }
-.pane.yours small { font-size: 12px; font-weight: 600; color: var(--quiet); }
-.pane.yours p { margin: 4px 0 0; font-size: 18px; line-height: 1.28; font-weight: 600; letter-spacing: -0.015em; }
-.pane.yours .said { align-self: flex-end; margin-top: 16px; padding: 7px 13px; border-radius: 14px 14px 5px 14px; background: var(--ink); color: var(--ground); font-size: 15px; font-weight: 600; opacity: 0; transform: translateY(4px); transition: opacity 0.25s, transform 0.25s; }
-.pane.yours .said.on { opacity: 1; transform: none; }
-.pane.yours .asked { transition: opacity 0.25s; }
-.pane.ours { background: var(--term); font-family: var(--mono); }
-.pane.ours h3 { font-family: var(--sans); }
-.pane.ours .req { font-size: 12px; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pane.ours .size { margin-top: 3px; font-size: 12px; color: var(--dim); }
-.pane.ours .hex { margin-top: 14px; font-size: 12.5px; line-height: 1.75; color: var(--signal); opacity: 0.8; word-spacing: 0.25em; overflow-wrap: anywhere; }
-
 /* as in the app: a menu button, each team's own colour under its name, and a two-letter badge on that colour
    beside whoever is speaking */
 .menu { width: 30px; height: 30px; flex: none; border-radius: 50%; background: var(--raised); display: grid; place-items: center; }
@@ -919,6 +904,9 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
     touch(thumb);
     await wait(260);
     big.innerHTML = SHOTS[0];
+    // it covers the feed down to the line of what he is saying, wherever that falls in this browser's fonts:
+    // a fixed distance from the bottom left a sliver of the last line showing on some phones
+    big.style.bottom = Math.max(0, phone.clientHeight - $("heard").offsetTop + 3) + "px";
     big.classList.add("open");
     await wait(1100);
     await listen(text);

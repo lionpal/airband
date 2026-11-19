@@ -21,6 +21,8 @@ pub(crate) enum LinkError {
 pub(crate) struct Link {
     route: Route,
     agent: ureq::Agent,
+    /// Files he has attached and that have reached the tower: the next thing he says takes them with it.
+    armed: Mutex<Vec<String>>,
 }
 
 pub(crate) fn now_ms() -> u64 {
@@ -36,7 +38,7 @@ impl Link {
             Pairing::Direct { url, token } => Route::Direct { url, auth: format!("Bearer {token}"), radio: radio.to_string() },
             Pairing::Relay { relay, secret } => Route::Relay { relay, keys: Keys::derive(&secret)? },
         };
-        Ok(Link { route, agent })
+        Ok(Link { route, agent, armed: Mutex::new(Vec::new()) })
     }
 
     /// One `airband.radio/1` request. `path` is what follows `/v1/radio`.
@@ -94,13 +96,37 @@ impl Link {
     /// Retried, because a reply lost in a tunnel is worse than a short wait. Every try carries the same id, so
     /// the tower delivers it once however many arrive.
     /// One try. The id makes a later retry of the same message safe.
-    pub(crate) fn utterance_once(&self, id: &str, text: &str, re: Option<String>, scope: Option<String>, label: Option<String>) -> Result<Reply, LinkError> {
-        let u = Utterance { text: text.to_string(), id: Some(id.to_string()), re, scope, label };
+    pub(crate) fn arm(&self, id: String) {
+        let mut armed = self.armed.lock().unwrap();
+        if !armed.contains(&id) {
+            armed.push(id);
+        }
+    }
+    pub(crate) fn disarm(&self, id: &str) {
+        self.armed.lock().unwrap().retain(|a| a != id);
+    }
+    pub(crate) fn armed(&self) -> Vec<String> {
+        self.armed.lock().unwrap().clone()
+    }
+    pub(crate) fn take_armed(&self) -> Vec<String> {
+        std::mem::take(&mut *self.armed.lock().unwrap())
+    }
+
+    /// One part of a file he is attaching. Returns where the next part starts.
+    pub(crate) fn attachment_part(&self, part: &airband_core::radio::AttachmentPart) -> Result<u64, LinkError> {
+        let v = self.post("/attachment", part)?;
+        v["next"].as_u64().ok_or(LinkError::Refused)
+    }
+
+    pub(crate) fn utterance_once(&self, id: &str, text: &str, re: Option<String>, scope: Option<String>, label: Option<String>, attachments: Vec<String>) -> Result<Reply, LinkError> {
+        let u = Utterance { text: text.to_string(), id: Some(id.to_string()), re, scope, label, attachments };
         serde_json::from_value(self.post("/utterance", &u)?).map_err(|_| LinkError::Refused)
     }
 
     pub(crate) fn utterance(&self, text: &str, re: Option<String>, scope: Option<String>) -> Result<Reply, LinkError> {
-        let u = Utterance { text: text.to_string(), id: Some(random_hex(12)), re, scope, label: None };
+        // what he has attached goes with what he says; if this fails for good they are his to send again
+        let attachments = self.take_armed();
+        let u = Utterance { text: text.to_string(), id: Some(random_hex(12)), re, scope, label: None, attachments: attachments.clone() };
         let mut last = LinkError::Offline;
         for attempt in 0..3 {
             if attempt > 0 {
@@ -112,6 +138,8 @@ impl Link {
                 Err(e) => last = e,
             }
         }
+        // it never got there: what was attached is still his to send
+        attachments.into_iter().for_each(|id| self.arm(id));
         Err(last)
     }
 }

@@ -340,6 +340,7 @@ struct FeedView: View {
                 Button { model.problem = nil } label: { Text(problem).font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading) }
                     .buttonStyle(.plain).padding(.horizontal, 22)
             }
+            if !model.tray.isEmpty { Tray() }
             if showQuick { quickGrid }
             if typingOpen {
                 HStack(spacing: 10) {
@@ -368,15 +369,9 @@ struct FeedView: View {
                 Text(statusLine ?? " ").font(.system(size: 14, weight: .medium)).foregroundStyle(Palette.quiet)
                     .frame(height: 18).accessibilityHidden(statusLine == nil)
                 HStack {
-                    // quick messages: the things he says all the time, one tap each
-                    Button { withAnimation(.snappy(duration: 0.2)) { showQuick.toggle() } } label: {
-                        // a speech bubble with a bolt in it: a message, sent quickly
-                        Image(systemName: "bubble.left.fill").font(.system(size: 25, weight: .semibold))
-                            .foregroundStyle(showQuick ? Palette.ground : Palette.ink)
-                            .overlay(Image(systemName: "bolt.fill").font(.system(size: 11, weight: .bold)).foregroundStyle(showQuick ? Palette.ink : Palette.field).offset(y: -2))
-                            .frame(width: 56, height: 56).background(showQuick ? Palette.ink : Palette.field, in: Circle())
-                    }
-                    .buttonStyle(.plain).accessibilityLabel("Quick messages").accessibilityAddTraits(showQuick ? .isSelected : [])
+                    // +: attach a photo or a video, or send one of the things he says all the time
+                    Button { withAnimation(.snappy(duration: 0.2)) { showQuick.toggle() } } label: { PlusButtonLabel(open: showQuick) }
+                        .buttonStyle(.plain).accessibilityLabel("Attach, or quick messages").accessibilityAddTraits(showQuick ? .isSelected : [])
                     Spacer()
                     Button { showQuick = false; Task { await model.talk() } } label: {
                         ZStack {
@@ -406,6 +401,7 @@ struct FeedView: View {
     private var quickGrid: some View {
         let all = model.view.quick
         return VStack(spacing: 8) {
+            AttachTile { withAnimation(.snappy(duration: 0.2)) { showQuick = false } }
             // two to a row; an odd one out, usually one of his own, takes the whole row
             ForEach(Array(stride(from: 0, to: all.count, by: 2)), id: \.self) { i in
                 HStack(spacing: 8) {
@@ -546,6 +542,7 @@ struct Mine: View {
             if !m.to.isEmpty {
                 Text("to " + m.to.joined(separator: ", ")).font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.quiet).lineLimit(1)
             }
+            if !m.pictures.isEmpty { PictureStrip(m: m, height: 120) }
             Text(m.text).font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.ground)
                 .padding(.horizontal, 14).padding(.vertical, 9)
                 .background(Palette.ink, in: UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 18, bottomTrailingRadius: 6, topTrailingRadius: 18))

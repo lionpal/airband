@@ -23,7 +23,7 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, store: Arc<Store>, host: Arc<dyn R
             done(Some(format!("Not sent, no connection for half an hour: “{}”", next.text)));
             continue;
         }
-        match link.utterance_once(&next.id, &next.text, next.re.clone(), next.scope.clone(), next.label.clone()) {
+        match link.utterance_once(&next.id, &next.text, next.re.clone(), next.scope.clone(), next.label.clone(), next.attachments.clone()) {
             Ok(reply) => {
                 wait = 1;
                 // "Sent to …" shows up as his own line in the chat; anything else he has to see

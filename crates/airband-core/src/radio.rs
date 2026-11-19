@@ -84,6 +84,26 @@ pub struct Utterance {
     /// instruction it stands for. The chat shows the label; the agent gets the text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Files he attached, by the ids they were sent under (`POST attachment`). The agent is told where each is.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<String>,
+}
+
+/// `POST attachment`: one part of a file he is attaching. Parts are sent in order; the answer says how many bytes
+/// the tower now has, which is where the next part starts. One sent again lands in the same place.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentPart {
+    /// Random hex, chosen by the radio, the same for every part of the file. An utterance names it.
+    pub id: String,
+    /// What the file is called. The tower keeps the extension and makes the rest safe.
+    pub name: String,
+    /// Where in the file this part starts.
+    pub from: u64,
+    /// The bytes, base64: 120 KB of them at most, to fit one sealed message.
+    pub data: String,
+    /// This is the last part.
+    #[serde(default)]
+    pub done: bool,
 }
 
 /// A quick message: something he says all the time, sent with one tap. The label is what the button says; the

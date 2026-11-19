@@ -12,7 +12,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     static let shared = RadioModel()
 
     /// What the screen shows, as the desk last gave it, for the room or agent he is looking at.
-    @Published var view = DeskView(paired: false, online: false, feed: [], rooms: [], canPoke: false, quick: [], sending: [], stations: [])
+    @Published var view = DeskView(paired: false, online: false, feed: [], rooms: [], canPoke: false, quick: [], sending: [], stations: [], uploads: [])
     /// A project: show just its agents, and keep what he says among them.
     @Published var room: String? { didSet { refresh() } }
     /// A callsign: show just that agent.
@@ -26,6 +26,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     @Published var status: RadioStatus = .idle
     @Published var said = "" // what the device's own voice is saying on a call
     @Published var reading: String? // the message being read aloud from its full text, by id
+    @Published var tray: [TrayItem] = [] // photos and videos he has attached and not yet sent
     @Published var accounts: [StationAccounts] = [] // each computer's accounts, as last read
     @Published var accountsLoading = false
     @Published var switching: String? // the account being switched to, as "station|id"
@@ -91,6 +92,12 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     private func refresh() {
         view = desk.view(room: room, agent: only)
+        // what has gone with a message has left the desk's list: it leaves the tray too
+        if !tray.isEmpty {
+            let gone = tray.filter { item in item.attachment.map { id in !view.uploads.contains { $0.id == id } } ?? false }
+            gone.forEach { if let source = $0.source { try? FileManager.default.removeItem(at: source) } }
+            tray.removeAll { item in gone.contains { $0.id == item.id } }
+        }
         // a room that has gone (its last agent left) is not somewhere he can stay
         if let room, view.online, !view.rooms.contains(where: { $0.name == room }) { self.room = nil }
         if full.count > 60 { full.removeAll() } // opened long ago: fetched again if he looks again
@@ -107,7 +114,37 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     func send(_ text: String) {
         let target = replyingTo
         replyingTo = nil
-        desk.send(text: text, re: target?.id, room: room, agent: only)
+        // with nothing typed there is still something to send when files are attached: the files themselves
+        let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        desk.send(text: words.isEmpty && !tray.isEmpty ? "Look at what I attached." : text, re: target?.id, room: room, agent: only)
+    }
+
+    /// The phone has made a picked photo or video ready (or could not): hand it to the desk, which sends it to
+    /// whoever he is looking at, and remember the id it travels under.
+    @MainActor func prepared(_ item: UUID, _ made: (URL, String, UIImage?)?, source: URL?) {
+        guard let i = tray.firstIndex(where: { $0.id == item }) else {
+            // he took it off while it was being made
+            if let made { try? FileManager.default.removeItem(at: made.0) }
+            if let source { try? FileManager.default.removeItem(at: source) }
+            return
+        }
+        tray[i].source = source
+        guard let made else {
+            tray[i].failed = true
+            return
+        }
+        tray[i].thumb = made.2
+        tray[i].attachment = desk.attach(filePath: made.0.path, name: made.1, re: replyingTo?.id, room: room, agent: only)
+    }
+
+    /// Stop sending something that is on its way, without taking it out of the tray.
+    func dropUpload(_ id: String) { desk.detach(id: id) }
+
+    /// Take one off again before it is sent.
+    func detach(_ item: TrayItem) {
+        if let id = item.attachment { desk.detach(id: id) }
+        if let source = item.source { try? FileManager.default.removeItem(at: source) }
+        tray.removeAll { $0.id == item.id }
     }
 
     /// One tap on a quick message: the feed shows its label and the agent gets the whole instruction. It goes to

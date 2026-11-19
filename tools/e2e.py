@@ -226,6 +226,31 @@ try:
     check("a quick message sends the whole instruction and shows its label", say("Send me a picture of the result.", label="Screenshot", re=p["id"]) == "Sent to catalog part page."
           and "picture of the result" in received("page") and message(feed(), "you", "Screenshot") is not None)
 
+    print("Attaching a photo and a video")
+    import base64 as b64
+    def attach(path, name):
+        raw, ident, at = open(path, "rb").read(), os.urandom(8).hex(), 0
+        while True:
+            piece = raw[at:at + 90_000]
+            last = at + len(piece) >= len(raw)
+            code, r = http("POST", "/v1/radio/attachment", {"id": ident, "name": name, "from": at, "data": b64.b64encode(piece).decode(), "done": last})
+            assert code == 200 and "next" in (r or {}), r
+            at = r["next"]
+            if last: return ident
+    photo = attach(shot, "../../Photo 1.png")
+    check("a photo sent in parts is kept whole, under a safe name, in the tower's own folder", open(os.path.join(home, ".airband", "attachments", photo, "Photo-1.png"), "rb").read() == open(shot, "rb").read())
+    check("with it, his words reach the agent along with where the file is", say("make the header look like this", re=p["id"], attachments=[photo]) == "Sent to catalog part page."
+          and os.path.join(".airband", "attachments", photo, "Photo-1.png") in received("page") and "(an image" in received("page"), received("page")[-300:])
+    mine = message(feed(), "you", "make the header look like this")
+    check("and his message in the chat shows the photo, without the file path", mine and mine.get("pictures") and "attachments" not in mine["text"], mine)
+    check("a part that skips ahead is refused", "error" in (http("POST", "/v1/radio/attachment", {"id": os.urandom(8).hex(), "name": "x.png", "from": 500, "data": "", "done": False})[1] or {}))
+    if shutil.which("ffmpeg"):
+        clip = os.path.join(work, "clip.mp4")
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=duration=3:size=320x240:rate=10", "-pix_fmt", "yuv420p", clip], check=True)
+        video = attach(clip, "clip.mp4")
+        check("a video goes too, and with nothing said the agent is asked to look at it", say("", re=p["id"], attachments=[video]) == "Sent to catalog part page." and "(a video" in received("page") and "Look at what I attached." in received("page"), received("page")[-400:])
+        check("with a frame from each second pulled out for the agent to look at", len(os.listdir(os.path.join(home, ".airband", "attachments", video, "frames"))) == 3 and "frames" in received("page"))
+
     print("Poke")
     check("a poke sets the stalled agent going, and only it", say("/poke") == "Sent to logistics rates." and "Keep going" in received("rates") and "Keep going" not in received("import"))
     check("with nobody stalled, a poke says so", say("/poke") == "Nobody has stopped.")

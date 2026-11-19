@@ -38,6 +38,15 @@ async fn events(State(app): State<Arc<App>>, body: String) -> Response {
     }
 }
 
+/// One part of a file he is attaching. Answers with where the next part starts.
+async fn attachment(Json(part): Json<airband_core::radio::AttachmentPart>) -> Response {
+    match tokio::task::spawn_blocking(move || attachments::take(part)).await {
+        Ok(Ok(next)) => Json(json!({ "next": next })).into_response(),
+        Ok(Err(why)) => Json(json!({ "error": why })).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
 /// The accounts the harnesses here can run under, and how full each is. `fresh=1` asks again now.
 async fn accounts_list(State(app): State<Arc<App>>, Query(q): Query<HashMap<String, String>>) -> Json<airband_core::radio::Accounts> {
     Json(accounts::list(&app, q.contains_key("fresh")).await)
@@ -124,10 +133,12 @@ async fn ready(State(app): State<Arc<App>>, headers: HeaderMap) -> Json<Value> {
 
 async fn utterance(State(app): State<Arc<App>>, headers: HeaderMap, Json(u): Json<Utterance>) -> Json<Reply> {
     let radio = radio_of(&headers);
-    let text = u.text.trim();
-    if text.is_empty() {
-        return Json(Reply::default());
-    }
+    // a file with no words still says something: look at it
+    let text = match (u.text.trim(), u.attachments.is_empty()) {
+        ("", true) => return Json(Reply::default()),
+        ("", false) => "Look at what I attached.",
+        (said, _) => said,
+    };
     // take the id before doing anything, so a retry of the same utterance is answered once, however often it
     // arrives and whether or not the tower restarted in between
     if let Some(id) = &u.id {
@@ -145,7 +156,7 @@ async fn utterance(State(app): State<Arc<App>>, headers: HeaderMap, Json(u): Jso
             }
         }
     }
-    let mut reply = on_utterance(&app, &radio, u.id.as_deref(), text, u.re.as_deref(), u.scope.as_deref(), u.label.as_deref()).await;
+    let mut reply = on_utterance(&app, &radio, u.id.as_deref(), text, u.re.as_deref(), u.scope.as_deref(), u.label.as_deref(), &u.attachments).await;
     // on a call the tower's answer is spoken too: start its voice now, and the radio fetches it as it is made
     if !reply.say.is_empty() && app.inner.lock().unwrap().call(&radio).connected() {
         reply.speech = app.speech.start(&app.cfg.voice, &reply.say);
@@ -356,6 +367,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/radio/picture/{id}", get(picture_part))
         .route("/v1/radio/ears", get(ears))
         .route("/v1/radio/message/{id}", get(message))
+        .route("/v1/radio/attachment", post(attachment))
         .route("/v1/radio/accounts", get(accounts_list))
         .route("/v1/radio/accounts/use", post(accounts_use))
         .route("/v1/status", get(status))

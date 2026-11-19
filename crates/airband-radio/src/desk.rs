@@ -87,6 +87,20 @@ pub struct DeskView {
     pub sending: Vec<Outgoing>,
     /// What each paired computer is called.
     pub stations: Vec<String>,
+    /// Files he has attached and not yet sent, in the order he added them: on their way to the computer, there
+    /// and waiting for his words, or failed.
+    pub uploads: Vec<DeskUpload>,
+}
+
+/// One file he attached. `state` is `sending` (with `sent` of `total` bytes there so far), `ready` (it goes with
+/// the next thing he says or sends) or `failed`.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct DeskUpload {
+    pub id: String,
+    pub name: String,
+    pub sent: u64,
+    pub total: u64,
+    pub state: String,
 }
 
 /// How many lines of the feed a view carries.
@@ -115,6 +129,15 @@ struct State {
     /// Goes up each time the set of computers changes, so threads following the old set stop.
     generation: u64,
     calling: bool,
+    uploads: Vec<Upload>,
+}
+
+struct Upload {
+    shown: DeskUpload,
+    /// Which computer it is going to: what he sends next goes there too.
+    station: usize,
+    /// He took it off: stop sending.
+    dropped: Arc<AtomicBool>,
 }
 
 impl State {
@@ -221,6 +244,18 @@ impl RadioHost for StationHost {
     fn status(&self, status: RadioStatus) {
         // idle or offline ends that computer's turn
         let ends = matches!(status, RadioStatus::Idle | RadioStatus::Offline);
+        // what he said has gone, and took with it the files that were waiting: they leave the tray
+        if matches!(status, RadioStatus::Idle) {
+            let mut state = self.shared.state.lock().unwrap();
+            if let Some(waiting) = state.stations.get(self.index).map(|s| s.radio.armed()) {
+                let before = state.uploads.len();
+                state.uploads.retain(|u| !(u.station == self.index && u.shown.state == "ready" && !waiting.contains(&u.shown.id)));
+                if state.uploads.len() != before {
+                    drop(state);
+                    self.shared.host.changed();
+                }
+            }
+        }
         if self.shared.floor.release(self.index, ends) {
             self.shared.host.status(status, String::new());
         }
@@ -352,6 +387,7 @@ impl Desk {
             quick,
             sending: state.stations.iter().flat_map(|s| s.sending.clone()).collect(),
             stations: state.stations.iter().map(|s| s.name.clone()).collect(),
+            uploads: state.uploads.iter().map(|u| u.shown.clone()).collect(),
         }
     }
 
@@ -415,11 +451,71 @@ impl Desk {
             if let Some(id) = &re {
                 state.answered.insert(id.clone());
             }
-            let pick = pick_station(&state, "", re.as_deref(), room.as_deref(), None);
+            let pick = state.uploads.first().map(|u| u.station).unwrap_or_else(|| pick_station(&state, "", re.as_deref(), room.as_deref(), None));
             state.stations[pick].radio.clone()
         };
         let scope = room.filter(|_| re.is_none()).map(|r| format!("group:{r}"));
         radio.talk(re, scope);
+    }
+
+    /// Attach a file from the device (a photo, a video): it starts on its way to the computer at once, and goes
+    /// to whoever his next words go to. `name` is what to call it there; its extension says what it is. Returns
+    /// its id straight away; [`DeskView::uploads`] shows how far it has got.
+    pub fn attach(&self, file_path: String, name: String, re: Option<String>, room: Option<String>, agent: Option<String>) -> String {
+        let id = random_hex(12);
+        let dropped = Arc::new(AtomicBool::new(false));
+        let total = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
+        let radio = {
+            let mut state = self.shared.state.lock().unwrap();
+            if state.stations.is_empty() {
+                return id;
+            }
+            // everything attached to one message goes to one computer: the first file's
+            let station = state.uploads.first().map(|u| u.station).unwrap_or_else(|| pick_station(&state, "", re.as_deref(), room.as_deref(), agent.as_deref()));
+            state.uploads.push(Upload { shown: DeskUpload { id: id.clone(), name: name.clone(), sent: 0, total, state: "sending".into() }, station, dropped: dropped.clone() });
+            state.stations[station].radio.clone()
+        };
+        self.shared.host.changed();
+        let (shared, mine) = (self.shared.clone(), id.clone());
+        thread::spawn(move || {
+            let step = |sent: u64, _total: u64| {
+                if dropped.load(Ordering::SeqCst) {
+                    return false;
+                }
+                if let Some(u) = shared.state.lock().unwrap().uploads.iter_mut().find(|u| u.shown.id == mine) {
+                    u.shown.sent = sent;
+                }
+                shared.host.changed();
+                true
+            };
+            let outcome = radio.upload(&mine, &file_path, &name, step);
+            {
+                let mut state = shared.state.lock().unwrap();
+                if let Some(u) = state.uploads.iter_mut().find(|u| u.shown.id == mine) {
+                    u.shown.state = if outcome.is_ok() { "ready".into() } else { "failed".into() };
+                    if outcome.is_ok() {
+                        radio.arm(mine.clone());
+                    }
+                }
+            }
+            shared.host.changed();
+        });
+        id
+    }
+
+    /// Take an attached file off again before it is sent.
+    pub fn detach(&self, id: String) {
+        let radio = {
+            let mut state = self.shared.state.lock().unwrap();
+            let Some(i) = state.uploads.iter().position(|u| u.shown.id == id) else { return };
+            let gone = state.uploads.remove(i);
+            gone.dropped.store(true, Ordering::SeqCst);
+            state.stations.get(gone.station).map(|s| s.radio.clone())
+        };
+        if let Some(radio) = radio {
+            radio.disarm(id);
+        }
+        self.shared.host.changed();
     }
 
     /// Call mode on every computer: transmissions are spoken one at a time and the microphone opens after each.
@@ -498,7 +594,10 @@ impl Desk {
             if let Some(id) = &re {
                 state.answered.insert(id.clone());
             }
-            let pick = pick_station(&state, &text, re.as_deref(), room.as_deref(), agent.as_deref());
+            // files he attached are already on one computer: his words go there with them
+            let pick = state.uploads.first().map(|u| u.station).unwrap_or_else(|| pick_station(&state, &text, re.as_deref(), room.as_deref(), agent.as_deref()));
+            // the ones that have arrived leave with this message
+            state.uploads.retain(|u| !(u.station == pick && u.shown.state == "ready"));
             // looking at one agent, with nobody tagged and no message picked: it is for that agent
             let text = match (&agent, tagged, &re) {
                 (Some(callsign), false, None) => format!("@{} {text}", callsign.replace(' ', "")),
