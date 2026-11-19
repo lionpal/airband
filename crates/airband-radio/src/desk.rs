@@ -28,6 +28,10 @@ pub trait DeskHost: Send + Sync {
     fn note(&self, text: String);
     /// What he has said so far, while he is still speaking, revised as more is heard. Empty when he has stopped.
     fn hearing(&self, text: String);
+    /// What the voice is saying in the clip now starting to play, and when each word is said: where each word
+    /// starts in `text` (in characters) and how many milliseconds into the clip. With empty `text`: more of the
+    /// same clip's timings. For showing the words as they are spoken.
+    fn words(&self, text: String, starts: Vec<u32>, at_ms: Vec<u32>);
     /// Is the chat on screen in front of him right now? What arrives while it is counts as read, so a call
     /// started later does not read it out.
     fn watching(&self) -> bool;
@@ -334,6 +338,9 @@ impl RadioHost for StationHost {
     }
     fn hearing(&self, text: String) {
         self.shared.host.hearing(text);
+    }
+    fn words(&self, text: String, starts: Vec<u32>, at_ms: Vec<u32>) {
+        self.shared.host.words(text, starts, at_ms);
     }
     fn outbox(&self, waiting: Vec<Outgoing>, note: Option<String>) {
         {
@@ -945,6 +952,7 @@ mod tests {
 
     struct Quiet;
     impl RadioHost for Quiet {
+        fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
         fn own_voice(&self) -> bool {
             false
         }

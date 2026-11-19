@@ -268,6 +268,14 @@ pub struct SpeechPart {
     pub next: u32,
     /// Nothing follows.
     pub done: bool,
+    /// With the first part: the words being spoken, exactly as the voice was given them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// When the voice service says when each word is spoken: pairs of (where the word starts in `text`, counted
+    /// in characters; milliseconds from the start of the clip), for the words that start within this part. A
+    /// radio can show the words as they are said. Empty when the service gives no timings.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub marks: Vec<(u32, u32)>,
 }
 
 /// A picture that goes with a message: one the agent looked at or made for him. The tower holds a compressed

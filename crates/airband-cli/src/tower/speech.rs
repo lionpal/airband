@@ -18,8 +18,10 @@ use std::io::{BufRead, BufReader, Read};
 pub(super) trait Synth: Send + Sync {
     /// Samples a second of the PCM it produces.
     fn rate(&self) -> u32;
-    /// Speak `text`, handing each piece of 16-bit little-endian mono PCM to `sink` as it arrives.
-    fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8])) -> Result<(), String>;
+    /// Speak `text`, handing each piece of 16-bit little-endian mono PCM to `sink` as it arrives. A service that
+    /// says when each word is spoken tells `mark` so, before the sound of that word: where the word starts in
+    /// `text` (in characters) and how many milliseconds into the clip.
+    fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8]), mark: &mut dyn FnMut(u32, u32)) -> Result<(), String>;
 }
 
 struct Gemini {
@@ -32,7 +34,7 @@ impl Synth for Gemini {
     fn rate(&self) -> u32 {
         24000
     }
-    fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8])) -> Result<(), String> {
+    fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8]), _mark: &mut dyn FnMut(u32, u32)) -> Result<(), String> {
         // The words go in bare, and how to say them goes beside them in `speech_metadata`. Put the direction in the
         // text and this generation of model reads it aloud: the first version here opened every message with
         // "Read this aloud exactly as written", found by transcribing its own output. (Backoffice hit the same thing.)
@@ -72,7 +74,7 @@ impl Synth for Azure {
     fn rate(&self) -> u32 {
         24000
     }
-    fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8])) -> Result<(), String> {
+    fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8]), _mark: &mut dyn FnMut(u32, u32)) -> Result<(), String> {
         let escaped = text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;");
         let ssml = format!("<speak version='1.0' xml:lang='en-US'><voice name='{}'>{escaped}</voice></speak>", self.voice);
         let res = airband_radio::net::agent(Duration::from_secs(30))
@@ -108,25 +110,36 @@ impl Synth for Elevenlabs {
     fn rate(&self) -> u32 {
         24000
     }
-    fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8])) -> Result<(), String> {
-        // the streaming endpoint: plain PCM comes back as it is made, the first of it in a fraction of a second
+    fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8]), mark: &mut dyn FnMut(u32, u32)) -> Result<(), String> {
+        // the streaming endpoint with timings: a line of JSON at a time, each with a piece of the sound and
+        // when each character of it is spoken, counted from the start of the clip
         let res = airband_radio::net::agent(Duration::from_secs(60))
-            .post(format!("https://api.elevenlabs.io/v1/text-to-speech/{}/stream?output_format=pcm_24000", self.voice))
+            .post(format!("https://api.elevenlabs.io/v1/text-to-speech/{}/stream/with-timestamps?output_format=pcm_24000", self.voice))
             .header("xi-api-key", &self.key)
             .send_json(json!({ "text": text, "model_id": self.model }))
             .map_err(|e| e.to_string())?;
         if res.status().as_u16() != 200 {
             return Err(format!("ElevenLabs answered {}", res.status()));
         }
-        let mut reader = res.into_body().into_reader();
-        let mut buf = [0u8; 4800]; // a tenth of a second
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => return Ok(()),
-                Ok(n) => sink(&buf[..n]),
-                Err(e) => return Err(e.to_string()),
+        // where in the text the service has got to, and whether the character before was a gap between words
+        let (mut at, mut gap) = (0u32, true);
+        for line in BufReader::new(res.into_body().into_reader()).lines() {
+            let line = line.map_err(|e| e.to_string())?;
+            let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+            let (characters, starts) = (v["alignment"]["characters"].as_array(), v["alignment"]["character_start_times_seconds"].as_array());
+            for (c, start) in characters.into_iter().flatten().zip(starts.into_iter().flatten()) {
+                let space = c.as_str().is_none_or(|c| c.trim().is_empty());
+                if gap && !space {
+                    mark(at, (start.as_f64().unwrap_or(0.0) * 1000.0) as u32);
+                }
+                gap = space;
+                at += c.as_str().map(|c| c.chars().count() as u32).unwrap_or(1);
+            }
+            if let Some(pcm) = v["audio_base64"].as_str().and_then(base64_decode) {
+                sink(&pcm);
             }
         }
+        Ok(())
     }
 }
 
@@ -148,6 +161,9 @@ struct Clip {
     samples: u32,
     done: bool,
     failed: bool,
+    /// What is being said, and when each word of it starts, if the service says.
+    text: String,
+    marks: Vec<(u32, u32)>,
 }
 
 /// How many clips are kept. Each is a few tens of kilobytes, unless it is a whole message read aloud.
@@ -177,7 +193,7 @@ impl Speech {
             if clips.0.get(&id).is_some_and(|c| !c.lock().unwrap().failed) {
                 return Some(id);
             }
-            let clip = Arc::new(Mutex::new(Clip { rate: synth.rate(), ..Clip::default() }));
+            let clip = Arc::new(Mutex::new(Clip { rate: synth.rate(), text: text.clone(), ..Clip::default() }));
             clips.0.insert(id.clone(), clip.clone());
             clips.1.retain(|k| k != &id);
             clips.1.push_back(id.clone());
@@ -219,7 +235,9 @@ impl Speech {
                     c.samples += BLOCK_SAMPLES as u32;
                 }
             };
-            let result = synth.speak(&text, &mut sink);
+            let marked = clip.clone();
+            let mut mark = |at: u32, ms: u32| marked.lock().unwrap().marks.push((at, ms));
+            let result = synth.speak(&text, &mut sink, &mut mark);
             let mut c = clip.lock().unwrap();
             if !waiting.is_empty() {
                 c.samples += waiting.len() as u32;
@@ -259,13 +277,17 @@ impl Speech {
                     let bytes = &c.blocks[(from * BLOCK_BYTES).min(c.blocks.len())..(to * BLOCK_BYTES).min(c.blocks.len())];
                     let last_included = c.done && to == have;
                     let samples = if last_included { c.samples.saturating_sub((from * BLOCK_SAMPLES) as u32) } else { ((to - from.min(to)) * BLOCK_SAMPLES) as u32 };
-                    return Some(SpeechPart { rate: c.rate, data: base64_encode(bytes), samples, next: to as u32, done: last_included });
+                    // the words that start within this stretch of sound (and, with the last of it, any after)
+                    let ms = |block: usize| (block * BLOCK_SAMPLES) as u64 * 1000 / c.rate.max(1) as u64;
+                    let (begins, ends) = (ms(from), if last_included { u64::MAX } else { ms(to) });
+                    let marks = c.marks.iter().filter(|(_, at)| (*at as u64) >= begins && (*at as u64) < ends).copied().collect();
+                    return Some(SpeechPart { rate: c.rate, data: base64_encode(bytes), samples, next: to as u32, done: last_included, text: (from == 0).then(|| c.text.clone()), marks });
                 }
             }
             if Instant::now() >= until {
                 // nothing yet: say so, and let the radio decide whether to keep waiting
                 let rate = clip.lock().unwrap().rate;
-                return Some(SpeechPart { rate, data: String::new(), samples: 0, next: from as u32, done: false });
+                return Some(SpeechPart { rate, data: String::new(), samples: 0, next: from as u32, done: false, ..SpeechPart::default() });
             }
             tokio::time::sleep(Duration::from_millis(40)).await;
         }

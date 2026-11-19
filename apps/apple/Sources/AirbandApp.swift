@@ -420,7 +420,20 @@ struct FeedView: View {
                 }
                 .padding(.horizontal, 8)
             } else {
-                if model.hearing.isEmpty {
+                if let caption = model.caption, model.hearing.isEmpty, !model.micOpen {
+                    // what the voice is saying, the words lighting up as it says them
+                    TimelineView(.periodic(from: .now, by: 0.08)) { now in
+                        let said = min(caption.reached(now.date), caption.text.count)
+                        // a long message is followed along: the words just said, and the ones coming
+                        let from = max(0, said - 70)
+                        let shown = String(caption.text.dropFirst(from).prefix(140))
+                        (Text(shown.prefix(said - from)).foregroundColor(Palette.ink) + Text(shown.dropFirst(said - from)).foregroundColor(Palette.quiet))
+                            .font(.system(size: 15, weight: .medium)).lineLimit(2).multilineTextAlignment(.center)
+                            .frame(minHeight: 18).padding(.horizontal, 14).padding(.vertical, 4)
+                            .frosted(RoundedRectangle(cornerRadius: 16), strength: 0.8).padding(.horizontal, 8).frame(maxWidth: .infinity)
+                    }
+                    .accessibilityHidden(true)
+                } else if model.hearing.isEmpty {
                     Text(statusLine ?? " ").font(.system(size: 14, weight: .medium)).foregroundStyle(statusLine == nil ? Palette.quiet : Palette.soft)
                         .frame(height: 18).padding(.horizontal, 12).padding(.vertical, 4)
                         .frosted(Capsule(), shown: statusLine != nil).accessibilityHidden(statusLine == nil)

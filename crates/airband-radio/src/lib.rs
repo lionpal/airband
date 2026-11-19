@@ -86,6 +86,11 @@ pub trait RadioHost: Send + Sync {
     /// What he has said so far, while he is still speaking: the whole of it each time, revised as the service
     /// hears more. For showing; what is sent is what the listening returns.
     fn hearing(&self, text: String);
+    /// What the voice is saying in the clip now starting to play, and when each word of it is said: where each
+    /// word starts in `text` (in characters) and how many milliseconds into the clip. Called again, with empty
+    /// `text`, as more of a long clip's timings arrive. For showing the words as they are spoken; a clip with no
+    /// timings is not announced at all.
+    fn words(&self, text: String, starts: Vec<u32>, at_ms: Vec<u32>);
     /// Are this host's own `speak` and `listen` worth using? A terminal's are (it prints, and a typed line is
     /// what he "said"). A phone's are not: its own recognition and voice are too poor to hand him, so with no
     /// listening service there is no listening, and with no audio from the tower nothing is spoken.

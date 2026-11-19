@@ -51,6 +51,9 @@ pub(crate) fn play(link: &Link, host: &dyn RadioHost, id: &str, stop: &dyn Fn() 
             }
             continue;
         }
+        if !part.marks.is_empty() {
+            host.words(part.text.clone().unwrap_or_default(), part.marks.iter().map(|m| m.0).collect(), part.marks.iter().map(|m| m.1).collect());
+        }
         let bytes = base64_decode(&part.data).unwrap_or_default();
         let mut left = part.samples as usize;
         let mut pcm = Vec::with_capacity(left * 2);

@@ -269,6 +269,7 @@ mod tests {
             }
             fn record_stop(&self) {}
             fn outbox(&self, _: Vec<Outgoing>, _: Option<String>) {}
+            fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
             fn own_voice(&self) -> bool { false }
             fn unplaced(&self, _: Outgoing, _: Option<String>, _: Vec<String>) {}
             fn hearing(&self, text: String) {

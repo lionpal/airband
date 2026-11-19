@@ -27,6 +27,9 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     @Published var status: RadioStatus = .idle
     @Published var said = "" // what the device's own voice is saying on a call
     @Published var hearing = "" // what he has said so far, while he is still speaking
+    /// What the voice is saying now, when the voice service says when each word is spoken: the text, where each
+    /// word starts in it, when each is said (seconds into the clip), and when the clip began to sound.
+    @Published var caption: Caption?
     @Published var micOpen = false // he opened the microphone and has not sent or taken back what he said
     private var dictating = false // from his tap until the core has dealt with what he said
     /// The microphone is open: his own tap opened it, or on a call it opened by itself for a question.
@@ -356,6 +359,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         DispatchQueue.main.async {
             self.status = status
             if !saying.isEmpty { self.said = saying }
+            if case .speaking = status {} else { self.caption = nil }
             // the core has dealt with what he said (and not merely finished something else while he talks)
             if case .listening = status {} else if case .sending = status {} else if !self.voice.micBusy { self.dictating = false; self.micOpen = false }
             // his words stay up while they are being sent, and go when the microphone has closed and they have gone
@@ -363,11 +367,36 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
     }
     func hearing(text: String) { DispatchQueue.main.async { self.hearing = text } }
+    func words(text: String, starts: [UInt32], atMs: [UInt32]) {
+        DispatchQueue.main.async {
+            let more = zip(starts, atMs).map { (Int($0), Double($1) / 1000) }
+            if text.isEmpty {
+                self.caption?.marks.append(contentsOf: more)
+            } else {
+                // the sound starts a moment after this: the first of it is handed to the speaker next
+                self.caption = Caption(text: text, marks: more, began: Date().addingTimeInterval(0.12))
+            }
+        }
+    }
     func note(text: String) { DispatchQueue.main.async { self.problem = text } }
     func watching() -> Bool {
         frontLock.lock()
         defer { frontLock.unlock() }
         return front
+    }
+}
+
+/// Words being spoken, with their timings.
+struct Caption {
+    let text: String
+    var marks: [(at: Int, time: Double)]
+    let began: Date
+
+    /// How far into `text` the voice has got at `now`, in characters: the end of the word being said.
+    func reached(_ now: Date) -> Int {
+        let t = now.timeIntervalSince(began)
+        guard let i = marks.lastIndex(where: { $0.time <= t }) else { return 0 }
+        return i + 1 < marks.count ? marks[i + 1].at : text.count
     }
 }
 
