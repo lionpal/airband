@@ -1243,6 +1243,13 @@ struct AgentsMenu: View {
         return twins && !agent.station.isEmpty ? "\(agent.callsign) (\(agent.station))" : agent.callsign
     }
 
+    /// Does the line under a name start with a model? It does unless the model is not known, when it starts with
+    /// the computer or "terminal".
+    private func agentHasModel(_ parts: [String]) -> Bool {
+        guard let first = parts.first else { return false }
+        return first != "terminal" && !model.view.stations.contains(first)
+    }
+
     /// The small line under an agent's name: what it runs on, and the computer it is on when there are several.
     private func under(_ agent: DeskMember) -> String {
         // one he started in a terminal says so: it only gets messages from outside until it is taken over
@@ -1351,9 +1358,22 @@ struct AgentsMenu: View {
                 // when there are several; then what it is doing in what room is left
                 VStack(alignment: .leading, spacing: 0) {
                     Text(title).font(.system(size: 17, weight: strong ? .semibold : .regular)).lineLimit(1)
-                    if !engine.isEmpty { Text(engine).font(.system(size: 12, weight: .medium)).foregroundStyle(Palette.quiet).lineLimit(1) }
-                    // what it is doing right now, on a line of its own so there is room to read it
-                    if let doing { Text(doing).font(.system(size: 13)).foregroundStyle(Palette.signal.opacity(0.85)).lineLimit(1).padding(.top, 1) }
+                    if !engine.isEmpty || doing != nil {
+                        // one line, always: the model stays, and while it works what follows gives way to what it
+                        // is doing, in green, and comes back when it stops. The row never changes height.
+                        let parts = engine.components(separatedBy: " \u{b7} ")
+                        let lead = agentHasModel(parts) ? parts[0] : ""
+                        let rest = (agentHasModel(parts) ? Array(parts.dropFirst()) : parts).joined(separator: " \u{b7} ")
+                        HStack(spacing: 0) {
+                            if !lead.isEmpty { Text(lead + " \u{b7} ").foregroundStyle(Palette.quiet) }
+                            ZStack(alignment: .leading) {
+                                Text(rest).foregroundStyle(Palette.quiet).opacity(doing == nil ? 1 : 0)
+                                Text(doing ?? "").foregroundStyle(Palette.signal.opacity(0.9)).opacity(doing == nil ? 0 : 1)
+                            }
+                        }
+                        .font(.system(size: 12, weight: .medium)).lineLimit(1)
+                        .animation(.easeInOut(duration: 0.3), value: doing)
+                    }
                 }
                 .layoutPriority(1)
                 Spacer(minLength: 8)
@@ -1361,7 +1381,6 @@ struct AgentsMenu: View {
                 if on { Image(systemName: "checkmark").font(.system(size: 14, weight: .bold)).foregroundStyle(Palette.signal) }
             }
             .padding(.leading, 14 + inset).padding(.trailing, 14)
-            .padding(.vertical, doing == nil ? 0 : 4)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .background(on ? Palette.card : .clear, in: RoundedRectangle(cornerRadius: 14))
             .contentShape(RoundedRectangle(cornerRadius: 14))
