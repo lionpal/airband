@@ -29,7 +29,8 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, store: Arc<Store>, host: Arc<dyn R
             Ok(reply) if reply.elsewhere.is_some() || !reply.ask.is_empty() => {
                 wait = 1;
                 done(None);
-                host.unplaced(next.clone(), reply.elsewhere, reply.ask);
+                // names as the screen shows them
+                host.unplaced(next.clone(), reply.elsewhere.map(|c| airband_core::routing::shown(&c)), reply.ask.iter().map(|c| airband_core::routing::shown(c)).collect());
             }
             Ok(reply) => {
                 wait = 1;

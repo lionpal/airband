@@ -473,6 +473,15 @@ struct FeedView: View {
             .onChange(of: model.view.feed.last?.id) { _, _ in withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("end", anchor: .bottom) } }
             .onChange(of: model.view.sending.count) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
             .onChange(of: toEnd) { _, _ in withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("end", anchor: .bottom) } }
+            // a different team or agent, or back to everyone: he lands at the latest of it, not part way up
+            .onChange(of: chosen) { _, _ in
+                Task {
+                    for wait in [40, 220] {
+                        try? await Task.sleep(for: .milliseconds(wait))
+                        proxy.scrollTo("end", anchor: .bottom)
+                    }
+                }
+            }
             // a long chat of messages of very different heights can open on empty space past its end, because the
             // list only guesses the heights of what it has not drawn: go to the end once it is laid out
             .task {

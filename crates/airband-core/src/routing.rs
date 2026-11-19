@@ -267,6 +267,18 @@ pub fn parse_with(text: &str, models: &[String], efforts: &[String]) -> Option<W
     Some(With { model, effort, rest })
 }
 
+/// A callsign as a screen shows it: a number said as a word is written as a figure ("shop three" is "shop 3").
+/// Aloud it is still the word; either form is understood when he says or types it.
+pub fn shown(callsign: &str) -> String {
+    match callsign.rsplit_once(' ') {
+        Some((team, last)) => match WORDS.iter().position(|w| *w == last) {
+            Some(n) if n > 0 => format!("{team} {n}"),
+            _ => callsign.to_string(),
+        },
+        None => callsign.to_string(),
+    }
+}
+
 /// Two characters to stand for an agent where its whole callsign will not fit: the team's initial and its
 /// number, or the initial of the name he gave it. "shop three" is S3, "catalog part page" is CP.
 pub fn badge(project: &str, callsign: &str) -> String {

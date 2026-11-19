@@ -134,14 +134,15 @@ pub struct Outgoing {
 }
 
 fn chat(m: airband_core::radio::Message) -> ChatMessage {
-    ChatMessage { seq: m.seq, id: m.id, at: m.at, from: m.from, group: m.group, to: m.to, needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), text: m.text, long: m.long, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links, agent: m.agent, station: String::new(), open: m.open, badge: String::new(), colour: 0, read: m.read }
+    use airband_core::routing::shown;
+    ChatMessage { seq: m.seq, id: m.id, at: m.at, from: shown(&m.from), group: m.group, to: m.to.iter().map(|t| shown(t)).collect(), needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), text: m.text, long: m.long, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links, agent: m.agent, station: String::new(), open: m.open, badge: String::new(), colour: 0, read: m.read }
 }
 
 fn chat_feed(feed: Feed) -> ChatFeed {
     ChatFeed {
         seq: feed.seq,
         messages: feed.messages.into_iter().map(chat).collect(),
-        agents: feed.roster.into_iter().map(|r| ChatAgent { id: r.id, callsign: r.callsign, group: r.group, harness: r.harness, waiting: r.waiting, reachable: r.reachable, state: r.state, subagents: r.subagents, doing: r.doing, held: r.held, model: r.model, effort: r.effort }).collect(),
+        agents: feed.roster.into_iter().map(|r| ChatAgent { id: r.id, callsign: airband_core::routing::shown(&r.callsign), group: r.group, harness: r.harness, waiting: r.waiting, reachable: r.reachable, state: r.state, subagents: r.subagents, doing: r.doing, held: r.held, model: r.model, effort: r.effort }).collect(),
         quick: feed.quick.into_iter().map(|q| QuickMessage { label: q.label, text: q.text }).collect(),
         projects: feed.projects,
         colours: feed.colours.into_iter().collect(),
