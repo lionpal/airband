@@ -479,7 +479,7 @@ mod tests {
     use super::*;
 
     fn m(from: &str, group: &str, to: &[&str]) -> Message {
-        Message { seq: 1, id: "x".into(), at: 0, from: from.into(), group: group.into(), to: to.iter().map(|s| s.to_string()).collect(), kind: None, text: String::new(), long: false, options: Vec::new(), recommended: None, read: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: None, rev: 0, open: false }
+        Message { seq: 1, id: "x".into(), at: 0, from: from.into(), group: group.into(), to: to.iter().map(|s| s.to_string()).collect(), kind: None, text: String::new(), long: false, options: Vec::new(), recommended: None, read: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: None, rev: 0, open: false, queued: false, cancelled: false }
     }
     #[test]
     fn a_feed_from_a_newer_tower_still_reads() {
