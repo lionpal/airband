@@ -1,0 +1,504 @@
+//! Claude Code's accounts: the logins this computer has saved, which one every session is using, how much of
+//! each one's allowance is left, and switching between them. Nothing here leaves the computer except requests
+//! to Anthropic's own servers, and no token is ever printed, logged or sent to a radio.
+//!
+//! The live login is the keychain item `Claude Code-credentials` (account: the user), JSON with the claude.ai
+//! login under `claudeAiOauth` beside the MCP logins. Every running session reads it again within 30 seconds
+//! and before a request, which is why a switch reaches sessions that are already running. `oauthAccount` in
+//! `~/.claude.json` names the account.
+//!
+//! Saved logins are one keychain item each (service `airband`, account: the email), with the list of emails,
+//! and nothing secret, in `~/.airband/claude-code/accounts.json`. A login's refresh token changes every time it
+//! is used: Claude Code refreshes the live one, the tower refreshes saved ones, and a switch saves the outgoing
+//! login back first. So there can be one keeper of saved logins on a computer: a second tool holding copies of
+//! the same logins would log this one out, and be logged out by it.
+//!
+//! macOS only: elsewhere Claude Code keeps its login differently, and that is not written yet.
+use crate::config;
+use airband_core::radio::{Account, Limit};
+use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::Duration;
+
+type Res<T> = Result<T, String>;
+
+pub const HARNESS: &str = "claude-code";
+const LIVE_BASE: &str = "Claude Code-credentials";
+const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+const ADD_AGAIN: &str = "Sign in to it again on the computer: airband accounts add";
+
+/// Where the pieces are. The environment can point them elsewhere so the whole thing can be tried against
+/// made-up logins and a stand-in server, without touching a real login.
+fn place(key: &str, default: &str) -> String {
+    super::env(key).unwrap_or_else(|| default.to_string())
+}
+fn api() -> String {
+    place("AIRBAND_CLAUDE_API", "https://api.anthropic.com")
+}
+fn token_url() -> String {
+    place("AIRBAND_CLAUDE_TOKEN_URL", "https://platform.claude.com/v1/oauth/token")
+}
+fn vault_service() -> String {
+    place("AIRBAND_CLAUDE_VAULT_SERVICE", "airband")
+}
+fn claude_config_dir() -> Option<PathBuf> {
+    super::env("CLAUDE_CONFIG_DIR").map(PathBuf::from)
+}
+fn live_service() -> String {
+    if let Some(named) = super::env("AIRBAND_CLAUDE_LIVE_SERVICE") {
+        return named;
+    }
+    match claude_config_dir() {
+        Some(d) => format!("{LIVE_BASE}-{}", sha8(&d.to_string_lossy())),
+        None => LIVE_BASE.to_string(),
+    }
+}
+fn sha8(s: &str) -> String {
+    Sha256::digest(s.as_bytes()).iter().take(4).map(|b| format!("{b:02x}")).collect()
+}
+fn claude_json_path() -> PathBuf {
+    claude_config_dir().map(|d| d.join(".claude.json")).unwrap_or_else(|| config::home().join(".claude.json"))
+}
+fn user() -> String {
+    super::env("USER").unwrap_or_else(|| "user".into())
+}
+fn dir() -> PathBuf {
+    config::dir().join("claude-code")
+}
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+fn http() -> ureq::Agent {
+    ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(20))).http_status_as_error(false).build().into()
+}
+fn read_json(p: &Path) -> Res<Value> {
+    let s = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
+    serde_json::from_str(&s).map_err(|e| format!("{}: {e}", p.display()))
+}
+/// Replace a file in one step, keeping its permissions: a temporary file beside it, then a rename.
+fn write_atomic(p: &Path, body: &str) -> Res<()> {
+    let tmp = p.with_file_name(format!(".{}.airband-{}", p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), std::process::id()));
+    {
+        let mut f = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
+        f.write_all(body.as_bytes()).map_err(|e| e.to_string())?;
+        f.sync_all().map_err(|e| e.to_string())?;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(p).map(|m| m.permissions().mode()).unwrap_or(0o600);
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode)).map_err(|e| e.to_string())?;
+    }
+    std::fs::rename(&tmp, p).map_err(|e| e.to_string())
+}
+
+/// One thing at a time across every airband process on this computer: a saved login must never be refreshed
+/// twice at once, or switched while it is being refreshed.
+fn locked<T>(work: impl FnOnce() -> T) -> T {
+    let _ = std::fs::create_dir_all(dir());
+    let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(dir().join("accounts.lock")).ok();
+    #[cfg(unix)]
+    if let Some(f) = &file {
+        use std::os::fd::AsRawFd;
+        unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
+    }
+    let out = work();
+    drop(file);
+    out
+}
+
+// ── the keychain, through /usr/bin/security exactly as Claude Code uses it, so Claude Code's own access to its
+//    item never changes (an item written another way would make Claude Code ask him for permission) ──
+
+/// `security`, run as the user it really is: the login keychain is found through the home folder, and with
+/// HOME pointed anywhere else `security` finds no keychain and waits for ever on a dialog.
+fn security() -> Command {
+    let mut c = Command::new("security");
+    #[cfg(unix)]
+    unsafe {
+        let pw = libc::getpwuid(libc::getuid());
+        if !pw.is_null() && !(*pw).pw_dir.is_null() {
+            c.env("HOME", std::ffi::CStr::from_ptr((*pw).pw_dir).to_string_lossy().to_string());
+        }
+    }
+    c.stdin(Stdio::null());
+    c
+}
+
+fn key_read(service: &str, account: &str) -> Res<Option<String>> {
+    let out = security().args(["find-generic-password", "-a", account, "-s", service, "-w"]).stderr(Stdio::piped()).output().map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return if err.contains("could not be found") { Ok(None) } else { Err(format!("the keychain would not give {service}: {}", err.trim())) };
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string();
+    // `security -w` prints anything that is not plain text as hex
+    if !s.is_empty() && s.len() % 2 == 0 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        let bytes: Option<Vec<u8>> = (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok()).collect();
+        if let Some(t) = bytes.and_then(|b| String::from_utf8(b).ok()).filter(|t| t.starts_with('{')) {
+            return Ok(Some(t));
+        }
+    }
+    Ok(Some(s))
+}
+fn key_write(service: &str, account: &str, data: &str) -> Res<()> {
+    let hex: String = data.bytes().map(|b| format!("{b:02x}")).collect();
+    let line = format!("add-generic-password -U -a \"{account}\" -s \"{service}\" -X \"{hex}\"\n");
+    // on standard input, so the login is never in the process list; `security -i` takes a line of about 4 KB
+    // at most, and a longer item has to go as an argument, the same fallback Claude Code uses
+    let status = if line.len() <= 4032 {
+        let mut child = security().arg("-i").stdin(Stdio::piped()).stdout(Stdio::null()).spawn().map_err(|e| e.to_string())?;
+        child.stdin.take().expect("piped").write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+        child.wait().map_err(|e| e.to_string())?
+    } else {
+        security().args(["add-generic-password", "-U", "-a", account, "-s", service, "-X", &hex]).stdout(Stdio::null()).status().map_err(|e| e.to_string())?
+    };
+    if !status.success() {
+        return Err(format!("the keychain would not keep {service} ({status})"));
+    }
+    match key_read(service, account)? {
+        Some(back) if back == data => Ok(()),
+        _ => Err(format!("the keychain did not keep {service}")),
+    }
+}
+fn key_delete(service: &str, account: &str) {
+    let _ = security().args(["delete-generic-password", "-a", account, "-s", service]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+}
+
+// ── saved logins ──
+
+fn index_path() -> PathBuf {
+    dir().join("accounts.json")
+}
+fn index() -> Vec<String> {
+    read_json(&index_path()).ok().and_then(|v| v.get("accounts").and_then(|a| a.as_array().cloned())).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default()
+}
+fn write_index(list: &[String]) -> Res<()> {
+    std::fs::create_dir_all(dir()).map_err(|e| e.to_string())?;
+    config::write_private(&index_path(), &json!({ "accounts": list }).to_string()).map_err(|e| e.to_string())
+}
+fn saved(email: &str) -> Res<Option<Value>> {
+    Ok(match key_read(&vault_service(), email)? {
+        Some(s) => Some(serde_json::from_str(&s).map_err(|e| format!("the saved login for {email} cannot be read: {e}"))?),
+        None => None,
+    })
+}
+fn keep(email: &str, oauth: &Value, account: &Value) -> Res<()> {
+    key_write(&vault_service(), email, &json!({ "email": email, "claudeAiOauth": oauth, "oauthAccount": account, "savedAt": now_ms() }).to_string())?;
+    let mut list = index();
+    if !list.iter().any(|e| e == email) {
+        list.push(email.into());
+        write_index(&list)?;
+    }
+    Ok(())
+}
+
+/// The saved account he means: its whole email, or any part of it that only one has.
+fn resolve(query: &str) -> Res<String> {
+    let list = index();
+    if let Some(e) = list.iter().find(|e| e.as_str() == query) {
+        return Ok(e.clone());
+    }
+    let hits: Vec<&String> = list.iter().filter(|e| e.to_lowercase().contains(&query.to_lowercase())).collect();
+    match hits.as_slice() {
+        [one] => Ok((*one).clone()),
+        [] => Err(format!("No saved account matches \"{query}\". Saved: {}.", if list.is_empty() { "none".into() } else { list.join(", ") })),
+        _ => Err(format!("\"{query}\" matches {} accounts: {}.", hits.len(), hits.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "))),
+    }
+}
+
+// ── the live login ──
+
+fn live_blob() -> Res<Map<String, Value>> {
+    let s = key_read(&live_service(), &user())?.ok_or("Claude Code is not signed in on this computer.")?;
+    match serde_json::from_str::<Value>(&s).map_err(|e| format!("Claude Code's login cannot be read: {e}"))? {
+        Value::Object(m) => Ok(m),
+        _ => Err("Claude Code's login is not in the form expected.".into()),
+    }
+}
+fn live_token() -> Option<String> {
+    live_blob().ok()?.get("claudeAiOauth")?.get("accessToken")?.as_str().map(String::from)
+}
+fn oauth_account() -> Option<Value> {
+    read_json(&claude_json_path()).ok()?.get("oauthAccount").cloned()
+}
+fn email_of(v: &Value) -> Option<String> {
+    v.get("emailAddress").and_then(|e| e.as_str()).map(String::from)
+}
+/// Set `oauthAccount`, reading the file again just before writing so nothing else in it is lost.
+fn set_oauth_account(acct: &Value) -> Res<()> {
+    let p = claude_json_path();
+    let mut d = read_json(&p)?;
+    d.as_object_mut().ok_or("~/.claude.json is not in the form expected")?.insert("oauthAccount".into(), acct.clone());
+    write_atomic(&p, &serde_json::to_string_pretty(&d).map_err(|e| e.to_string())?)
+}
+/// Ask whose token this is. Nothing when the server cannot say (expired, offline).
+fn profile_email(token: &str) -> Option<String> {
+    let mut res = http().get(format!("{}/api/oauth/profile", api())).header("authorization", format!("Bearer {token}")).header("anthropic-beta", "oauth-2025-04-20").call().ok()?;
+    if res.status() != 200 {
+        return None;
+    }
+    let v: Value = serde_json::from_str(&res.body_mut().read_to_string().ok()?).ok()?;
+    v.pointer("/account/email_address").or_else(|| v.pointer("/account/email")).and_then(|e| e.as_str()).map(String::from)
+}
+/// Who the live login belongs to: what the server says about its token, else what `~/.claude.json` says.
+fn live_identity() -> Option<String> {
+    live_token().and_then(|t| profile_email(&t)).or_else(|| oauth_account().as_ref().and_then(email_of))
+}
+
+/// Save the login Claude Code is using now. Returns its email.
+fn save_live() -> Res<String> {
+    let blob = live_blob()?;
+    let oauth = blob.get("claudeAiOauth").cloned().ok_or("Claude Code is signed in with an API key or a setup token, which cannot be switched.")?;
+    let token = oauth.get("accessToken").and_then(|t| t.as_str()).unwrap_or("");
+    let email = profile_email(token).or_else(|| oauth_account().as_ref().and_then(email_of)).ok_or("Could not tell which account Claude Code is signed in to.")?;
+    let mut acct = oauth_account().unwrap_or(json!({}));
+    if email_of(&acct).as_deref() != Some(email.as_str()) {
+        acct = saved(&email)?.and_then(|v| v.get("oauthAccount").cloned()).unwrap_or(json!({ "emailAddress": email }));
+    }
+    keep(&email, &oauth, &acct)?;
+    Ok(email)
+}
+
+/// A saved login's access token, refreshed when it has run out or is about to, with the new login saved at once.
+fn saved_token(email: &str) -> Res<String> {
+    let entry = saved(email)?.ok_or(ADD_AGAIN)?;
+    let o = entry.get("claudeAiOauth").ok_or(ADD_AGAIN)?;
+    let token = o.get("accessToken").and_then(|x| x.as_str()).unwrap_or("");
+    // also while the refresh token has under a week left, so a login unused for weeks never lapses
+    let refresh_good = o.get("refreshTokenExpiresAt").and_then(|x| x.as_i64()).is_none_or(|t| t > now_ms() + 7 * 86_400_000);
+    if refresh_good && !token.is_empty() && o.get("expiresAt").and_then(|x| x.as_i64()).is_some_and(|t| t > now_ms() + 120_000) {
+        return Ok(token.to_string());
+    }
+    let refresh = o.get("refreshToken").and_then(|x| x.as_str()).filter(|x| !x.is_empty()).ok_or(ADD_AGAIN)?;
+    let scopes = o.get("scopes").and_then(|x| x.as_array()).map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(" ")).unwrap_or_default();
+    let client = o.get("clientId").and_then(|x| x.as_str()).unwrap_or(CLIENT_ID);
+    let mut res = http()
+        .post(token_url())
+        .header("content-type", "application/json")
+        .send(json!({ "grant_type": "refresh_token", "refresh_token": refresh, "client_id": client, "scope": scopes }).to_string())
+        .map_err(|_| "Could not reach Anthropic to check it.".to_string())?;
+    let body: Value = serde_json::from_str(&res.body_mut().read_to_string().map_err(|e| e.to_string())?).unwrap_or(json!({}));
+    let new_token = body.get("access_token").and_then(|x| x.as_str()).ok_or(ADD_AGAIN)?;
+    let mut n = o.clone();
+    n["accessToken"] = json!(new_token);
+    if let Some(r) = body.get("refresh_token").and_then(|x| x.as_str()) {
+        n["refreshToken"] = json!(r);
+    }
+    if let Some(e) = body.get("expires_in").and_then(|x| x.as_i64()) {
+        n["expiresAt"] = json!(now_ms() + e * 1000);
+    }
+    if let Some(e) = body.get("refresh_token_expires_in").and_then(|x| x.as_i64()) {
+        n["refreshTokenExpiresAt"] = json!(now_ms() + e * 1000);
+    }
+    keep(email, &n, entry.get("oauthAccount").unwrap_or(&json!({ "emailAddress": email })))?;
+    Ok(new_token.to_string())
+}
+
+// ── allowances ──
+
+/// `2026-11-25T01:00:00.487315+00:00` as milliseconds since 1970.
+fn iso_ms(s: &str) -> Option<u64> {
+    let (date, rest) = s.split_once('T')?;
+    let mut d = date.split('-').map(|x| x.parse::<i64>().ok());
+    let (y, m, day) = (d.next()??, d.next()??, d.next()??);
+    let (clock, offset_minutes) = match rest.rfind(['+', '-', 'Z']) {
+        Some(i) if rest.as_bytes()[i] == b'Z' => (&rest[..i], 0),
+        Some(i) => {
+            let (h, min) = rest[i + 1..].split_once(':')?;
+            let minutes = h.parse::<i64>().ok()? * 60 + min.parse::<i64>().ok()?;
+            (&rest[..i], if rest.as_bytes()[i] == b'-' { -minutes } else { minutes })
+        }
+        None => (rest, 0),
+    };
+    let mut t = clock.split(':');
+    let (h, min, sec) = (t.next()?.parse::<i64>().ok()?, t.next()?.parse::<i64>().ok()?, t.next().and_then(|x| x.parse::<f64>().ok()).unwrap_or(0.0));
+    // days since 1970 for a date in the Gregorian calendar
+    let (y2, m2) = if m <= 2 { (y - 1, m + 9) } else { (y, m - 3) };
+    let era = y2.div_euclid(400);
+    let yoe = y2 - era * 400;
+    let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + (153 * m2 + 2) / 5 + day - 1 - 719_468;
+    let seconds = days * 86_400 + h * 3600 + min * 60 - offset_minutes * 60;
+    u64::try_from(seconds * 1000 + (sec * 1000.0).round() as i64).ok()
+}
+
+/// What Anthropic's usage answer says, as limits: the week, then the 5 hours when that window is open.
+fn limits_in(usage: &Value) -> Vec<Limit> {
+    [("week", "seven_day"), ("5 hours", "five_hour")]
+        .into_iter()
+        .filter_map(|(name, key)| {
+            let w = usage.get(key)?;
+            Some(Limit { name: name.into(), used: (w.get("utilization")?.as_f64()? / 100.0).clamp(0.0, 1.0), resets_at: w.get("resets_at").and_then(|r| r.as_str()).and_then(iso_ms) })
+        })
+        .collect()
+}
+
+/// How much of an account is used. Costs nothing: it is the same question Claude Code's own usage page asks.
+fn usage(token: &str) -> Res<Vec<Limit>> {
+    let mut res = http()
+        .get(format!("{}/api/oauth/usage", api()))
+        .header("authorization", format!("Bearer {token}"))
+        .header("anthropic-beta", "oauth-2025-04-20")
+        .call()
+        .map_err(|_| "Could not reach Anthropic to check it.".to_string())?;
+    match res.status().as_u16() {
+        200 => Ok(limits_in(&serde_json::from_str(&res.body_mut().read_to_string().map_err(|e| e.to_string())?).unwrap_or(json!({})))),
+        401 | 403 => Err("Its login has run out.".into()),
+        n => Err(format!("Anthropic would not say how much is used ({n}).")),
+    }
+}
+
+// ── what the rest of airband calls ──
+
+fn account(email: String, live: bool, checked: Res<Vec<Limit>>) -> Account {
+    let (limits, problem) = match checked {
+        Ok(l) => (l, None),
+        Err(e) => (Vec::new(), Some(e)),
+    };
+    Account { id: email.clone(), harness: HARNESS.into(), label: email, live, limits, problem }
+}
+
+/// Every account, with its allowances, and anything he should know about the list.
+pub fn list() -> (Vec<Account>, Option<String>) {
+    if !cfg!(target_os = "macos") {
+        return (Vec::new(), Some("Switching Claude accounts works on a Mac only for now.".into()));
+    }
+    locked(|| {
+        let live = live_identity();
+        let mut emails = index();
+        if let Some(l) = live.as_ref().filter(|l| !emails.contains(l)) {
+            emails.insert(0, l.clone());
+        }
+        // each account is asked about at the same time; a saved login is only ever refreshed here, under the lock
+        let checks: Vec<_> = emails
+            .into_iter()
+            .map(|e| {
+                let is_live = live.as_deref() == Some(e.as_str());
+                std::thread::spawn(move || {
+                    let checked = if is_live { live_token().ok_or_else(|| "Claude Code is not signed in.".to_string()).and_then(|t| usage(&t)) } else { saved_token(&e).and_then(|t| usage(&t)) };
+                    account(e, is_live, checked)
+                })
+            })
+            .collect();
+        let mut accounts: Vec<Account> = checks.into_iter().filter_map(|h| h.join().ok()).collect();
+        for a in accounts.iter_mut().filter(|a| a.live && a.problem.as_deref() == Some("Its login has run out.")) {
+            a.problem = Some("Not checked: no session has used it lately.".into());
+        }
+        let note = match accounts.len() {
+            0 => Some("Claude Code is not signed in on this computer.".into()),
+            1 => Some("To add another account, on the computer: airband accounts add".into()),
+            _ => None,
+        };
+        (accounts, note)
+    })
+}
+
+static SWITCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Make a saved account the one every running session uses. The login is swapped at once; the returned thread
+/// then holds the account's name in place for a few seconds, because a session still on the old login may
+/// write its own back.
+pub fn switch(id: &str) -> Res<std::thread::JoinHandle<()>> {
+    locked(|| {
+        let target = resolve(id)?;
+        let entry = saved(&target)?.ok_or(ADD_AGAIN)?;
+        let incoming = entry.get("claudeAiOauth").cloned().ok_or(ADD_AGAIN)?;
+        // keep the outgoing account's newest login: its refresh token has changed since it was saved
+        if live_blob().is_ok() {
+            match save_live() {
+                Ok(out) if out == target => return Ok(std::thread::spawn(|| {})),
+                Ok(_) => {}
+                Err(e) => return Err(format!("Did not switch: the current login could not be saved first. {e}")),
+            }
+        }
+        // swap the claude.ai login inside the live item, keeping the MCP logins beside it
+        let mut blob = live_blob().unwrap_or_default();
+        blob.insert("claudeAiOauth".into(), incoming);
+        key_write(&live_service(), &user(), &Value::Object(blob).to_string())?;
+        let acct = entry.get("oauthAccount").cloned().unwrap_or(json!({ "emailAddress": target }));
+        set_oauth_account(&acct)?;
+        // a later switch ends this one's hold, or the two would fight over the name
+        let mine = SWITCHES.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        Ok(std::thread::spawn(move || {
+            for _ in 0..5 {
+                std::thread::sleep(Duration::from_secs(1));
+                if SWITCHES.load(std::sync::atomic::Ordering::SeqCst) != mine {
+                    return;
+                }
+                if oauth_account().as_ref().and_then(email_of).as_deref() != Some(target.as_str()) {
+                    let _ = set_oauth_account(&acct);
+                }
+            }
+        }))
+    })
+}
+
+/// `airband accounts save`: keep the login Claude Code is using now.
+pub fn save() -> Res<String> {
+    locked(save_live)
+}
+
+/// `airband accounts add`: sign in to another account in a private folder, so the login in use and every
+/// running session are untouched, then keep that login.
+pub fn add() -> Res<String> {
+    std::fs::create_dir_all(dir()).map_err(|e| e.to_string())?;
+    let tmp = dir().join(format!("login-{}", now_ms()));
+    std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    let service = format!("{LIVE_BASE}-{}", sha8(&tmp.to_string_lossy()));
+    std::fs::write(tmp.join(".claude.json"), "{\"hasCompletedOnboarding\":true}").map_err(|e| e.to_string())?;
+    println!("A browser opens: sign in to the account to add. The login in use now is not touched.");
+    let status = Command::new("claude").args(["auth", "login"]).env("CLAUDE_CONFIG_DIR", &tmp).status().map_err(|e| format!("could not run claude: {e}"));
+    let result = (|| -> Res<String> {
+        if !status?.success() {
+            return Err("The sign-in did not finish.".into());
+        }
+        let blob: Value = serde_json::from_str(&key_read(&service, &user())?.ok_or("The sign-in saved no login.")?).map_err(|e| e.to_string())?;
+        let oauth = blob.get("claudeAiOauth").cloned().ok_or("The sign-in saved no claude.ai login.")?;
+        let acct = read_json(&tmp.join(".claude.json"))?.get("oauthAccount").cloned().ok_or("The sign-in saved no account record.")?;
+        let email = email_of(&acct).ok_or("The account record has no email.")?;
+        locked(|| keep(&email, &oauth, &acct))?;
+        Ok(email)
+    })();
+    key_delete(&service, &user());
+    let _ = std::fs::remove_dir_all(&tmp);
+    result
+}
+
+/// `airband accounts forget <account>`: delete a saved login.
+pub fn forget(id: &str) -> Res<String> {
+    locked(|| {
+        let email = resolve(id)?;
+        key_delete(&vault_service(), &email);
+        write_index(&index().into_iter().filter(|x| *x != email).collect::<Vec<_>>())?;
+        Ok(email)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_reset_time_is_read_whatever_its_offset() {
+        assert_eq!(iso_ms("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(iso_ms("2026-11-25T01:00:00.487315+00:00"), Some(1_795_568_400_487));
+        // the same moment, written from Tokyo
+        assert_eq!(iso_ms("2026-11-25T10:00:00.487+09:00"), Some(1_795_568_400_487));
+        assert_eq!(iso_ms("2024-02-29T12:00:00-05:00"), Some(1_709_226_000_000));
+        assert_eq!(iso_ms("next week"), None);
+    }
+
+    #[test]
+    fn limits_come_from_the_usage_answer() {
+        let usage = json!({ "five_hour": null, "seven_day": { "utilization": 59.0, "resets_at": "2026-11-25T01:00:00+00:00" }, "seven_day_opus": null });
+        assert_eq!(limits_in(&usage), vec![Limit { name: "week".into(), used: 0.59, resets_at: Some(1_795_568_400_000) }]);
+        let both = json!({ "five_hour": { "utilization": 12, "resets_at": "2026-11-19T10:00:00Z" }, "seven_day": { "utilization": 140.0 } });
+        let limits = limits_in(&both);
+        assert_eq!((limits[0].name.as_str(), limits[0].used, limits[0].resets_at), ("week", 1.0, None));
+        assert_eq!((limits[1].name.as_str(), limits[1].used), ("5 hours", 0.12));
+        assert!(limits_in(&json!({})).is_empty());
+    }
+}

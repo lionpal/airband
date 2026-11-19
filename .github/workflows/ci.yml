@@ -1,0 +1,51 @@
+name: CI
+# Build and test on every system the tower is meant to run on, and check the phone builds.
+on:
+  push:
+    branches: [main]
+    paths: ['crates/**', 'apps/**', 'scripts/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/ci.yml']
+  pull_request:
+  workflow_dispatch:
+concurrency: { group: 'ci-${{ github.ref }}', cancel-in-progress: true }
+permissions: { contents: read }
+jobs:
+  test:
+    name: Test on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: { os: [ubuntu-latest, windows-latest, macos-latest] }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --release
+      - run: cargo test --workspace
+  android:
+    name: Radio core for Android
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: aarch64-linux-android }
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the radio library for Android
+        run: |
+          TOOLS="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export CC_aarch64_linux_android="$TOOLS/aarch64-linux-android24-clang" AR_aarch64_linux_android="$TOOLS/llvm-ar"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TOOLS/aarch64-linux-android24-clang"
+          cargo build --release -p airband-radio --target aarch64-linux-android
+  iphone:
+    name: iPhone app
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: aarch64-apple-ios }
+      - uses: Swatinem/rust-cache@v2
+      - run: brew install xcodegen
+      - name: Build the radio core, generate the Swift module, compile and link the app (unsigned)
+        run: scripts/build-apple.sh --device

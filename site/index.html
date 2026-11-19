@@ -1,0 +1,1179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>airband: squad comms for your Claudes</title>
+<meta name="description" content="Voice channels to manage all your agent teams. Your Claudes report and ask in one feed, and you answer with a tap or out loud.">
+<meta property="og:title" content="airband: squad comms for your Claudes">
+<meta property="og:description" content="Voice channels to manage all your agent teams.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://airband.dev/">
+<meta name="theme-color" content="#0B0B0C">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%230B0B0C'/%3E%3Cg transform='translate(256 350) scale(0.88)'%3E%3Cg fill='none' stroke='%233DDC97' stroke-width='40' stroke-linecap='round'%3E%3Cpath d='M-93.3 -93.3 A132 132 0 0 1 93.3 -93.3'/%3E%3Cpath d='M-151.3 -151.3 A214 214 0 0 1 151.3 -151.3'/%3E%3Cpath d='M-209.3 -209.3 A296 296 0 0 1 209.3 -209.3'/%3E%3C/g%3E%3Cg transform='scale(0.82)' fill='%23F4F4F0'%3E%3Cpath d='M0 -92 C10 -92 14 -70 14 -50 L14 70 C14 82 8 90 0 92 C-8 90 -14 82 -14 70 L-14 -50 C-14 -70 -10 -92 0 -92 Z'/%3E%3Cpath d='M0 -40 L96 20 L96 36 L0 8 L-96 36 L-96 20 Z'/%3E%3Cpath d='M0 54 L40 84 L40 94 L0 82 L-40 94 L-40 84 Z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: the headline, then one live scene. Terminals working at once on either side of a phone; what each one
+   reports or needs arrives in the phone's feed as a sentence, and his answer travels back to the terminal that asked. */
+:root {
+  color-scheme: dark;
+  --ground: #0B0B0C;   /* the app's background */
+  --ink: #F4F4F0;      /* the app's text */
+  --soft: #C9C9C5;     /* long text */
+  --quiet: #8E8E93;    /* secondary text */
+  --dim: #55575A;      /* terminal chrome, idle wires */
+  --card: #141716;     /* a question card */
+  --raised: #26292A;   /* a plain answer button */
+  --field: #1A1B1C;    /* chips and round buttons */
+  --term: #0F1011;     /* a terminal window */
+  --signal: #3DDC97;   /* green: someone is working; and the answer the agent recommends */
+  --ask: #F5C451;      /* amber: someone is waiting on you */
+  --ask-edge: rgba(245, 196, 81, 0.42);
+  --art: #7B61FF;      /* purple: an artifact to open */
+  --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body { background: var(--ground); color: var(--ink); font-family: var(--sans); margin: 0; }
+.page { max-width: 1180px; margin: 0 auto; padding-block: 26px 72px; padding-left: max(20px, env(safe-area-inset-left, 0px)); padding-right: max(20px, env(safe-area-inset-right, 0px)); }
+.brand { display: flex; align-items: center; gap: 10px; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+.hero { display: grid; grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr); gap: 64px; align-items: center; margin-top: 36px; }
+.pitch { min-width: 0; }
+.lead { display: flex; flex-direction: column; align-items: flex-start; gap: 28px; }
+h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.04em; font-weight: 700; margin: 0; text-wrap: balance; min-width: 0; }
+.words { min-width: 0; }
+.sub { margin: 16px 0 0; max-width: 34em; font-size: clamp(18px, 2vw, 22px); line-height: 1.4; color: var(--quiet); }
+.join { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; max-width: 100%; }
+.join input { flex: 1 1 220px; min-width: 0; height: 54px; padding: 0 18px; border-radius: 16px; border: 1px solid #2A2C2D; background: var(--field); color: var(--ink); font: 17px var(--sans); }
+.join input::placeholder { color: var(--dim); }
+.join button { height: 54px; padding: 0 24px; border: 0; border-radius: 16px; background: var(--ink); color: var(--ground); font: 600 17px var(--sans); cursor: pointer; white-space: nowrap; }
+.join button:disabled { opacity: 0.6; cursor: default; }
+.join input:focus-visible, .join button:focus-visible { outline: 3px solid var(--signal); outline-offset: 2px; }
+.join p { flex-basis: 100%; margin: 0; min-height: 20px; font-size: 15px; color: var(--quiet); }
+.join.done input, .join.done button { display: none; }
+.join.done p { font-size: 18px; font-weight: 600; color: var(--ink); }
+.hide { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.foot { margin-top: 64px; font-size: 13px; line-height: 1.6; color: var(--dim); }
+
+/* ---- the scene ---- */
+.stage { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); grid-template-areas: "a p" "b p" "c p" "d p" "e p" "f p"; gap: 8px 16px; align-items: start; min-width: 0; }
+.wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.wires path { fill: none; stroke: var(--dim); stroke-width: 1.5; stroke-dasharray: 2 7; stroke-linecap: round; opacity: 0.55; transition: stroke 0.25s, opacity 0.25s; }
+.wires path.live { stroke: var(--ink); opacity: 0.9; }
+.wires circle { opacity: 0; }
+
+.term { position: relative; min-width: 0; border-radius: 10px; background: var(--term); border: 1px solid #232526; display: flex; flex-direction: column; overflow: hidden; transition: border-color 0.3s; }
+.term.waiting { border-color: var(--ask); }
+/* a place for the next one */
+.term.empty { background: transparent; border-style: dashed; border-color: #2E3032; }
+.term.empty header, .term.empty .lines { visibility: hidden; }
+.slot { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; font: 500 10px var(--sans); color: var(--dim); text-align: center; }
+.term.empty .slot::after { content: ""; }
+.term.empty .slot { display: flex; }
+.term header { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-bottom: 1px solid #1E2021; font: 600 9px var(--mono); color: var(--quiet); white-space: nowrap; }
+.term header i { display: none; }
+.term header b { color: var(--ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.term header span { display: none; }
+.term header em { margin-left: auto; font-style: normal; color: var(--quiet); flex: none; }
+.term.waiting header em { color: var(--ask); }
+.term header em::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: var(--signal); animation: pulse 1.6s ease-in-out infinite; }
+.term.waiting header em::before { background: var(--ask); animation: none; }
+.term.stalled header em::before { background: var(--dim); animation: none; }
+.lines { flex: 1; min-height: 0; padding: 4px 8px 6px; display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden; font: 7.5px/1.5 var(--mono); color: var(--quiet); }
+.lines div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
+.lines .wall { white-space: normal; color: var(--soft); margin: 4px 0; }
+.lines .you { color: var(--ink); font-weight: 600; margin-top: 4px; }
+.lines .ok { color: var(--soft); }
+.cursor::after { content: "▍"; color: var(--quiet); animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* the phone, drawn as the app is */
+.phonewrap { grid-area: p; width: 100%; }
+.phone { position: relative; width: 306px; transform-origin: top left; height: 664px; border-radius: 46px; background: var(--ground); border: 1px solid #2A2C2D; padding: 26px 13px 20px; display: flex; flex-direction: column; gap: 11px; box-shadow: 0 30px 90px rgba(0, 0, 0, 0.7); overflow: hidden; }
+.top { display: flex; align-items: center; justify-content: space-between; padding: 0 6px; }
+.top .brand { font-size: 19px; gap: 7px; }
+/* top right: one button that sets going again whoever has stopped without finishing. Faint until someone has. */
+.poke { display: inline-flex; align-items: center; min-height: 30px; padding: 0 14px; border-radius: 11px; background: var(--raised); font-size: 12.5px; font-weight: 600; color: var(--ink); opacity: 0.28; transition: transform 0.14s, background 0.16s, color 0.16s, opacity 0.3s; }
+.poke.ready { opacity: 1; }
+.poke.chosen { background: var(--ink); color: var(--ground); transform: scale(1.06); }
+.chips { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; }
+.chip { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; padding: 8px 4px; border-radius: 999px; background: var(--field); font-size: 10.5px; font-weight: 500; white-space: nowrap; }
+/* the teams bar: each team shows what it is doing. Green and pulsing, someone is working. Amber, someone is waiting on him. */
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); flex: none; }
+.busy .dot { background: var(--signal); animation: pulse 1.6s ease-in-out infinite; }
+.ask .dot { background: var(--ask); animation: none; }
+@keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(61, 220, 151, 0.55); } 55% { box-shadow: 0 0 0 5px rgba(61, 220, 151, 0); } }
+/* one stream, as in a chat: reports, questions and what he said, in the order they happened */
+.feed { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 44px); mask-image: linear-gradient(to bottom, transparent 0, #000 44px); }
+.it { flex: none; max-height: 340px; margin-top: 10px; overflow: hidden; transition: max-height 0.5s ease, margin 0.5s ease, opacity 0.35s, transform 0.35s; }
+.it.in { max-height: 0; margin-top: 0; opacity: 0; transform: translateY(10px); }
+.r { padding: 0 6px; }
+.r small { display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 600; color: var(--quiet); transition: color 0.2s; }
+.speaking small { color: var(--ink); }
+.r p { margin: 2px 0 0; font-size: 13.5px; line-height: 1.36; color: var(--soft); }
+.r.step p { color: var(--quiet); }
+.r .pics { display: flex; gap: 7px; margin-top: 7px; }
+.r .pics svg { display: block; }
+.link { display: inline-flex; align-items: center; gap: 6px; margin-top: 7px; min-height: 32px; padding: 0 13px; border-radius: 999px; background: var(--art); font-size: 12.5px; font-weight: 600; color: #fff; }
+.r .eq i { background: var(--quiet); }
+.r p b { font-weight: 400; transition: opacity 0.18s; }
+.r.speaking p b { opacity: 0.3; }
+.r.speaking p b.said { opacity: 1; }
+.me { align-self: flex-end; max-width: 84%; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; padding-right: 2px; }
+.me small { font-size: 10.5px; font-weight: 600; color: var(--quiet); }
+.me p { margin: 0; background: var(--ink); color: var(--ground); border-radius: 17px 17px 5px 17px; padding: 8px 13px; font-size: 14px; line-height: 1.3; font-weight: 500; transform-origin: bottom right; animation: pop 0.32s cubic-bezier(0.2, 1.4, 0.4, 1); }
+@keyframes pop { from { transform: scale(0.5); opacity: 0; } to { transform: none; opacity: 1; } }
+.sys { align-self: center; font-size: 11px; font-weight: 500; color: var(--quiet); }
+.q.answered { box-shadow: none; padding-bottom: 12px; }
+.q.answered p { color: var(--soft); font-weight: 500; font-size: 14.5px; }
+.q .answers, .q .shots { max-height: 90px; transition: max-height 0.35s ease, opacity 0.25s, margin 0.35s; }
+.q.answered .answers, .q.answered .shots { max-height: 0; opacity: 0; margin-top: -10px; overflow: hidden; }
+.q { box-shadow: inset 0 0 0 1px var(--ask-edge); background: var(--card); border-radius: 22px; padding: 14px 14px 13px; display: flex; flex-direction: column; gap: 10px; }
+.q.picked { box-shadow: inset 0 0 0 2px var(--ink); }
+.q small { display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 600; color: var(--quiet); transition: color 0.2s; }
+/* it is comms: a question is said, not posted. While it is being said, bars move by its name and the words light up as they are spoken. */
+.eq { display: none; align-items: flex-end; gap: 2px; height: 11px; }
+.speaking .eq { display: inline-flex; }
+.eq i { width: 2.5px; border-radius: 2px; background: var(--ask); animation: eq 0.7s ease-in-out infinite; }
+.eq i:nth-child(1) { height: 5px; animation-delay: -0.1s; } .eq i:nth-child(2) { height: 11px; animation-delay: -0.35s; }
+.eq i:nth-child(3) { height: 7px; animation-delay: -0.2s; } .eq i:nth-child(4) { height: 10px; animation-delay: -0.5s; }
+@keyframes eq { 0%, 100% { transform: scaleY(0.35); } 50% { transform: scaleY(1); } }
+.eq i { transform-origin: bottom; }
+.q p b { font-weight: inherit; transition: opacity 0.18s; }
+.q.speaking p b { opacity: 0.28; }
+.q.speaking p b.said { opacity: 1; }
+.q .answers { transition: opacity 0.3s; }
+.q.speaking .answers { opacity: 0.25; }
+.q p { margin: 0; font-size: 16.5px; line-height: 1.26; font-weight: 600; letter-spacing: -0.02em; }
+.q .shot { width: 46px; height: 82px; border-radius: 8px; background: linear-gradient(#1D2A24, #121514); border: 1px solid #2A2C2D; position: relative; }
+.q .shot::before { content: ""; position: absolute; left: 7px; right: 7px; top: 14px; height: 5px; border-radius: 3px; background: var(--ink); box-shadow: 0 12px 0 -1px var(--dim), 0 21px 0 -1px var(--dim), 0 30px 0 -1px var(--dim); }
+.q .shots { display: flex; gap: 8px; }
+.q .shot.b::before { top: 22px; box-shadow: none; }
+.q .shot::after { content: ""; position: absolute; left: 7px; right: 7px; bottom: 8px; height: 10px; border-radius: 5px; background: var(--signal); }
+.answers { display: flex; gap: 7px; }
+.a { flex: 1; min-height: 42px; border-radius: 13px; background: var(--raised); display: flex; align-items: center; justify-content: center; font-size: 13.5px; font-weight: 600; transition: transform 0.12s, filter 0.12s; }
+.a.rec { background: var(--signal); color: var(--ground); }
+.a.yolo { flex: none; width: 42px; font-size: 9.5px; font-weight: 800; letter-spacing: 0.08em; line-height: 1.1; text-align: center; }
+.a.down { transform: scale(0.94); filter: brightness(1.5); }
+.a { transition: transform 0.16s, filter 0.12s, background 0.16s, color 0.16s, opacity 0.2s; }
+.a.chosen { background: var(--ink); color: var(--ground); transform: scale(1.05); }
+.a.passed { opacity: 0.22; }
+.term.hit { animation: hit 0.75s ease-out; }
+@keyframes hit { 0% { box-shadow: 0 0 0 0 rgba(244, 244, 240, 0.6); border-color: var(--ink); } 100% { box-shadow: 0 0 0 16px rgba(244, 244, 240, 0); } }
+.speaker { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--soft); }
+.speaker .eq { display: inline-flex; height: 14px; }
+.speaker .eq i { width: 3px; }
+.speaker.report .eq i { background: var(--quiet); }
+.heard { min-height: 34px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 2px; font-size: 13px; font-weight: 500; text-align: center; padding: 0 10px; }
+.heard q { quotes: "“" "”"; color: var(--ink); }
+.heard small { font-size: 11px; font-weight: 600; color: var(--quiet); opacity: 0; transition: opacity 0.3s; }
+.heard small.on { opacity: 1; }
+/* A picture opened to look at properly. It covers the feed and nothing else: the talk button stays where it is,
+   so he can say what he thinks of it while he is looking. */
+.look { position: absolute; left: 0; right: 0; top: 0; bottom: 142px; background: rgba(5, 5, 6, 0.96); display: flex; align-items: center; justify-content: center; opacity: 0; transform: scale(0.96); transition: opacity 0.22s, transform 0.22s; pointer-events: none; border-radius: 46px 46px 0 0; }
+.look.open { opacity: 1; transform: none; }
+.look svg { width: 232px; height: 415px; border-radius: 22px; }
+.look::after { content: "✕"; position: absolute; top: 26px; right: 20px; width: 30px; height: 30px; border-radius: 50%; background: rgba(244, 244, 240, 0.16); color: var(--ink); font-size: 13px; display: flex; align-items: center; justify-content: center; }
+/* Quick messages: the button at the bottom left opens a small grid of the things he says all the time, with one
+   of his own across the bottom. One more tap sends it. */
+.quick { position: absolute; left: 14px; right: 14px; bottom: 104px; padding: 8px; border-radius: 24px; background: #17191A; border: 1px solid #2A2C2D; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; opacity: 0; transform: translateY(14px) scale(0.92); transform-origin: 12% 100%; transition: opacity 0.18s, transform 0.24s cubic-bezier(0.2, 1.3, 0.4, 1); pointer-events: none; box-shadow: 0 18px 44px rgba(0, 0, 0, 0.7); }
+.quick.open { opacity: 1; transform: none; }
+.qm { min-height: 44px; border-radius: 15px; background: var(--raised); display: flex; align-items: center; justify-content: center; font-size: 13.5px; font-weight: 600; transition: background 0.14s, color 0.14s, transform 0.14s; }
+.qm.wide { grid-column: 1 / -1; }
+.qm.on { background: var(--ink); color: var(--ground); transform: scale(1.03); }
+.feed, .chips { transition: opacity 0.2s; }
+.picking .feed, .picking .chips { opacity: 0.22; }
+
+.bar { display: flex; align-items: center; justify-content: space-between; padding: 0 24px; }
+.round { width: 44px; height: 44px; border-radius: 50%; background: var(--field); display: flex; align-items: center; justify-content: center; }
+.round { color: var(--ink); transition: background 0.16s, color 0.16s, transform 0.14s; }
+.round.on { background: var(--ink); color: var(--ground); transform: scale(1.06); }
+/* top right: Poke, and the headset. The headset only says whether what arrives is also read aloud; lit, it is. */
+.tools { display: flex; align-items: center; gap: 7px; }
+.air { width: 30px; height: 30px; border-radius: 50%; background: var(--raised); color: var(--quiet); display: flex; align-items: center; justify-content: center; }
+.air.on { background: var(--ink); color: var(--ground); }
+.mic { position: relative; width: 70px; height: 70px; border-radius: 50%; background: var(--ink); color: var(--ground); display: flex; align-items: center; justify-content: center; transition: background 0.2s; }
+.mic.live { background: var(--signal); }
+.mic.live::before, .mic.live::after { content: ""; position: absolute; inset: -9px; border-radius: 50%; border: 2px solid var(--signal); opacity: 0; animation: ring 1.3s ease-out infinite; }
+.mic.live::after { animation-delay: 0.65s; }
+@keyframes ring { from { transform: scale(0.85); opacity: 0.7; } to { transform: scale(1.35); opacity: 0; } }
+.tap { position: absolute; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%; background: rgba(244, 244, 240, 0.35); opacity: 0; pointer-events: none; }
+.tap.go { animation: tap 0.55s ease-out; }
+@keyframes tap { from { transform: scale(0.3); opacity: 0.9; } to { transform: scale(1.5); opacity: 0; } }
+
+.points { list-style: none; margin: 48px 0 0; padding: 0; display: flex; flex-direction: column; gap: 22px; }
+.points b { display: block; font-size: clamp(20px, 2.1vw, 25px); font-weight: 600; letter-spacing: -0.02em; text-wrap: balance; }
+.points span { display: block; margin-top: 6px; font-size: 17px; line-height: 1.4; color: var(--quiet); }
+
+/* ---- further down: in the car, and how little it takes ---- */
+.more { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.7fr); gap: 64px; align-items: center; margin-top: 128px; }
+.more.perf { grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr); }
+.more h2 { font-size: clamp(30px, 3.6vw, 46px); line-height: 1.06; letter-spacing: -0.035em; font-weight: 700; margin: 0; text-wrap: balance; }
+.more .sub2 { margin: 14px 0 0; max-width: 30em; font-size: clamp(17px, 1.8vw, 20px); line-height: 1.4; color: var(--quiet); }
+
+/* the car: the road through the windscreen, the pillars, the mirror and the dash, and the car's own wide screen with airband on it */
+.car { position: relative; aspect-ratio: 800 / 500; border-radius: 28px; overflow: hidden; border: 1px solid #1B1D1E; background: radial-gradient(120% 80% at 50% 0%, #171A1C 0%, #0E0F10 55%, var(--ground) 100%); }
+.car .dash { position: absolute; inset: 0; width: 100%; height: 100%; }
+.car:not(.live) .eq i, .car:not(.live) .cpmic.live { animation-play-state: paused; }
+.cp { position: absolute; left: 11%; top: 29%; width: 78%; aspect-ratio: 1.9; container-type: inline-size; display: flex; overflow: hidden; border-radius: 2.6% / 4.9%; background: #050506; border: 1px solid #2A2C2D; box-shadow: 0 0 0 5px #101112, 0 18px 50px rgba(0, 0, 0, 0.6); }
+.cpdock { width: 10.5cqw; flex: none; padding: 2.2cqw 0; display: flex; flex-direction: column; align-items: center; gap: 2.2cqw; background: #0C0D0E; border-right: 1px solid #1A1B1C; }
+.cpdock time { font: 600 2.5cqw var(--sans); }
+.cpdock .sig { display: flex; align-items: flex-end; gap: 0.5cqw; height: 2cqw; }
+.cpdock .sig i { width: 0.7cqw; border-radius: 1px; background: var(--quiet); }
+.cpdock .app { width: 6cqw; height: 6cqw; border-radius: 1.5cqw; background: #1D1F20; display: grid; place-items: center; }
+.cpdock .app.us { background: var(--ground); box-shadow: 0 0 0 1px #2A2C2D; }
+.cpdock .app svg { width: 4.5cqw; height: 4.5cqw; }
+.cpdock .home { margin-top: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 0.7cqw; }
+.cpdock .home i { width: 1.9cqw; height: 1.9cqw; border-radius: 0.5cqw; background: var(--dim); }
+.cpmain { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 2.4cqw 3.2cqw 2cqw; }
+.cphead { display: flex; align-items: center; gap: 1.3cqw; font: 700 2.9cqw var(--sans); letter-spacing: -0.02em; }
+.cphead svg { width: 3.7cqw; height: 3.7cqw; }
+.cpfeed { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 26%); mask-image: linear-gradient(to bottom, transparent 0, #000 26%); }
+.cl { flex: none; display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 0.45s ease, opacity 0.45s ease; }
+.cl.in { grid-template-rows: 1fr; opacity: 1; }
+.cl > div { min-height: 0; overflow: hidden; }
+.cl .pad { padding-bottom: 2.8cqw; }
+.cl small { display: flex; align-items: center; gap: 1.2cqw; font: 600 2.2cqw var(--sans); color: var(--quiet); }
+.cl p { margin: 0.4cqw 0 0; font: 600 3.6cqw/1.2 var(--sans); letter-spacing: -0.02em; }
+.cl p b { font-weight: inherit; opacity: 1; color: var(--dim); transition: color 0.12s; }
+.cl p b.on { color: var(--ink); }
+.cl.old p b.on { color: var(--quiet); }
+.cl .eq i { background: var(--quiet); }
+.cl.ask .eq i { background: var(--ask); }
+.cl .ccard { border: 1px solid var(--ask-edge); background: var(--card); border-radius: 2.4cqw; padding: 1.5cqw 2.2cqw 1.8cqw; transition: border-color 0.3s; }
+.cl .ans { display: flex; gap: 1.4cqw; margin-top: 1.5cqw; }
+.cl .ans span { flex: 1; text-align: center; padding: 1.3cqw 0; border-radius: 1.8cqw; background: var(--raised); font: 600 2.9cqw var(--sans); transition: background 0.2s, color 0.2s; }
+.cl .ans span.pick { background: var(--signal); color: var(--ground); }
+.cl.done .ccard { border-color: transparent; }
+.cl.done .ans { display: none; }
+.cl.mine .pad { display: flex; justify-content: flex-end; }
+.cl.mine p { margin: 0; padding: 1.1cqw 2.2cqw; border-radius: 2.4cqw 2.4cqw 0.7cqw 2.4cqw; background: var(--ink); color: var(--ground); font-size: 3.1cqw; }
+.cl.mine.old p { background: var(--raised); color: var(--soft); }
+.cpbar { display: flex; align-items: center; gap: 1.8cqw; height: 6.6cqw; flex: none; }
+.cpmic { width: 6.2cqw; height: 6.2cqw; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--field); color: var(--ink); transition: background 0.2s, color 0.2s; }
+.cpmic svg { width: 3.2cqw; height: 3.2cqw; }
+.cpmic.live { background: var(--ink); color: var(--ground); animation: cpmic 1.1s ease-in-out infinite; }
+@keyframes cpmic { 50% { box-shadow: 0 0 0 1.4cqw rgba(244, 244, 240, 0.14); } }
+.cpheard { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 500 3cqw var(--sans); color: var(--soft); }
+
+/* how little it takes: two bars on one scale */
+.mem { display: flex; flex-direction: column; gap: 24px; }
+.mem .lab { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; font-size: 16px; line-height: 1.35; color: var(--soft); }
+.mem .lab b { font: 600 22px var(--sans); color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mem .track { height: 12px; margin-top: 9px; }
+.mem .mbar { width: 0; min-width: 4px; height: 100%; border-radius: 0 4px 4px 0; background: var(--dim); transition: width 1s cubic-bezier(0.2, 0.7, 0.2, 1); }
+.mem .us .mbar { background: var(--signal); }
+.mem.go .mbar { width: var(--w); }
+
+/* who can read it: what is on his phone, beside all that the relay ever sees of it */
+.sec { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.pane { min-width: 0; height: 268px; overflow: hidden; display: flex; flex-direction: column; padding: 20px 20px 0; border-radius: 22px; border: 1px solid #1B1D1E; background: #0D0E0F; }
+.pane h3 { margin: 0 0 18px; font-size: 13px; font-weight: 600; color: var(--quiet); }
+.pane.yours small { font-size: 12px; font-weight: 600; color: var(--quiet); }
+.pane.yours p { margin: 4px 0 0; font-size: 18px; line-height: 1.28; font-weight: 600; letter-spacing: -0.015em; }
+.pane.yours .said { align-self: flex-end; margin-top: 16px; padding: 7px 13px; border-radius: 14px 14px 5px 14px; background: var(--ink); color: var(--ground); font-size: 15px; font-weight: 600; opacity: 0; transform: translateY(4px); transition: opacity 0.25s, transform 0.25s; }
+.pane.yours .said.on { opacity: 1; transform: none; }
+.pane.yours .asked { transition: opacity 0.25s; }
+.pane.ours { background: var(--term); font-family: var(--mono); }
+.pane.ours h3 { font-family: var(--sans); }
+.pane.ours .req { font-size: 12px; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pane.ours .size { margin-top: 3px; font-size: 12px; color: var(--dim); }
+.pane.ours .hex { margin-top: 14px; font-size: 12.5px; line-height: 1.75; color: var(--signal); opacity: 0.8; word-spacing: 0.25em; overflow-wrap: anywhere; }
+
+/* what a working team is doing right now: a small bubble out of its chip, typed fast, one team at a time,
+   lying over the top of the feed */
+.doing { position: absolute; z-index: 3; padding: 4px 8px 5px; border-radius: 9px; background: #1E2122; border: 1px solid #2E3133; font: 500 9.5px/1.25 var(--sans); color: var(--soft); white-space: nowrap; pointer-events: none; opacity: 0; transform: translateY(-3px); transition: opacity 0.18s, transform 0.18s; }
+.doing.on { opacity: 1; transform: none; }
+.doing::before { content: ""; position: absolute; top: -4.5px; left: var(--tail, 14px); width: 7px; height: 7px; background: #1E2122; border-left: 1px solid #2E3133; border-top: 1px solid #2E3133; transform: rotate(45deg); }
+.doing::after { content: ""; display: inline-block; width: 1px; height: 9px; margin-left: 1.5px; vertical-align: -1px; background: var(--signal); animation: doingcaret 0.7s steps(1) infinite; }
+@keyframes doingcaret { 50% { opacity: 0; } }
+.picking .doing, .phone:has(.look.open) .doing, .phone:has(.quick.open) .doing { opacity: 0; }
+
+/* who can read it: what is on his phone, beside all that the relay ever sees of it */
+.sec { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.pane { min-width: 0; height: 268px; overflow: hidden; display: flex; flex-direction: column; padding: 20px 20px 0; border-radius: 22px; border: 1px solid #1B1D1E; background: #0D0E0F; }
+.pane h3 { margin: 0 0 18px; font-size: 13px; font-weight: 600; color: var(--quiet); }
+.pane.yours small { font-size: 12px; font-weight: 600; color: var(--quiet); }
+.pane.yours p { margin: 4px 0 0; font-size: 18px; line-height: 1.28; font-weight: 600; letter-spacing: -0.015em; }
+.pane.yours .said { align-self: flex-end; margin-top: 16px; padding: 7px 13px; border-radius: 14px 14px 5px 14px; background: var(--ink); color: var(--ground); font-size: 15px; font-weight: 600; opacity: 0; transform: translateY(4px); transition: opacity 0.25s, transform 0.25s; }
+.pane.yours .said.on { opacity: 1; transform: none; }
+.pane.yours .asked { transition: opacity 0.25s; }
+.pane.ours { background: var(--term); font-family: var(--mono); }
+.pane.ours h3 { font-family: var(--sans); }
+.pane.ours .req { font-size: 12px; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pane.ours .size { margin-top: 3px; font-size: 12px; color: var(--dim); }
+.pane.ours .hex { margin-top: 14px; font-size: 12.5px; line-height: 1.75; color: var(--signal); opacity: 0.8; word-spacing: 0.25em; overflow-wrap: anywhere; }
+
+/* as in the app: a menu button, each team's own colour under its name, and a two-letter badge on that colour
+   beside whoever is speaking */
+.menu { width: 30px; height: 30px; flex: none; border-radius: 50%; background: var(--raised); display: grid; place-items: center; }
+.top .left { display: flex; align-items: center; gap: 8px; }
+.chip b { font-weight: inherit; padding-bottom: 1.5px; box-shadow: inset 0 -1.5px var(--team, transparent); }
+.bd { display: inline-grid; place-items: center; width: 15px; height: 15px; margin-right: 5px; border-radius: 4.5px; background: var(--team, var(--dim)); color: var(--ground); font: 700 7.5px var(--sans); font-style: normal; letter-spacing: 0; vertical-align: -3px; }
+.cl .bd { width: 3.4cqw; height: 3.4cqw; margin-right: 0; border-radius: 1cqw; font-size: 1.7cqw; }
+
+/* narrow: one column. The words, then the demo, then the three points. */
+@media (max-width: 900px) {
+  .hero { display: flex; flex-direction: column; align-items: stretch; gap: 40px; margin-top: 30px; }
+  .pitch { display: contents; }
+  .lead { order: 1; }
+  .stage { order: 2; gap: 8px 14px; }
+  .points { order: 3; margin-top: 4px; }
+  .term header { font-size: 8px; }
+  .term header em { display: none; }
+  .lines { font-size: 6.5px; line-height: 1.45; padding: 3px 7px 5px; }
+  .slot { font-size: 9px; }
+  .more, .more.perf { display: flex; flex-direction: column; align-items: stretch; gap: 26px; margin-top: 84px; }
+  .more .morewords { order: 1; }
+  .more .car, .more .mem { order: 2; }
+  .more .sec { order: 2; grid-template-columns: minmax(0, 1fr); }
+  .pane { height: auto; padding-bottom: 20px; }
+  .pane.yours { min-height: 190px; }
+  .pane.ours .hex { max-height: 7em; overflow: hidden; }
+  .car { aspect-ratio: 4 / 3.3; border-radius: 22px; }
+  .cp { left: 3%; top: 36%; width: 94%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cursor::after, .mic.live::before, .mic.live::after, .tap.go, .eq i, .dot, .term.hit, .me p { animation: none; }
+  .it, .quick, .look { transition: none; }
+  .cpmic.live { animation: none; }
+  .cl, .mem .mbar { transition: none; }
+  .pane.yours .said { opacity: 1; transform: none; transition: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="page">
+  <div class="brand">
+    <svg width="30" height="30" viewBox="0 0 512 512" aria-hidden="true"><g transform="translate(256 350) scale(0.88)"><g fill="none" stroke="#3DDC97" stroke-width="40" stroke-linecap="round"><path d="M-93.3 -93.3 A132 132 0 0 1 93.3 -93.3"/><path d="M-151.3 -151.3 A214 214 0 0 1 151.3 -151.3"/><path d="M-209.3 -209.3 A296 296 0 0 1 209.3 -209.3"/></g><g transform="scale(0.82)" fill="#F4F4F0" stroke="#F4F4F0" stroke-width="10" stroke-linejoin="round"><path d="M0 -92 C10 -92 14 -70 14 -50 L14 70 C14 82 8 90 0 92 C-8 90 -14 82 -14 70 L-14 -50 C-14 -70 -10 -92 0 -92 Z"/><path d="M0 -40 L96 20 L96 36 L0 8 L-96 36 L-96 20 Z"/><path d="M0 54 L40 84 L40 94 L0 82 L-40 94 L-40 84 Z"/></g></g></svg>
+    airband
+  </div>
+
+  <div class="hero">
+  <div class="pitch">
+  <div class="lead">
+    <div class="words">
+      <h1>Squad comms for your Claudes.</h1>
+      <p class="sub">Voice channels to manage all your agent teams.</p>
+    </div>
+    <form class="join" id="join" novalidate>
+      <label class="hide" for="email">Your email</label>
+      <input id="email" name="email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com">
+      <!-- not for people: a form-filling robot fills this in, and is ignored for it -->
+      <input class="hide" id="company" name="company" type="text" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <button type="submit" id="joinbtn">Join the waitlist</button>
+      <p id="joinmsg" role="status" aria-live="polite"></p>
+    </form>
+  </div>
+  <ul class="points">
+    <li><b>The slowest part of your agents is you.</b><span>It asked at 4pm. Answer at 4:01, not the next morning.</span></li>
+    <li><b>It dumped a wall of text on you.</b><span>airband shows you the question buried in it.</span></li>
+    <li><b>Say it to the room.</b><span>Answer out loud. It reaches the right agent.</span></li>
+    <li><b>Keep the Claude Code you already run.</b><span>airband sits on top of it.</span></li>
+  </ul>
+  </div>
+  <div class="stage" id="stage" role="img" aria-label="Five terminals, each with a Claude working on a project, around a phone, and one empty place. He starts a new Claude in the empty place by saying what he wants. When one of them needs a decision, its long message arrives on the phone as one sentence with the answers as buttons. A tap or a spoken reply goes back to the terminal that asked, and it carries on.">
+    <svg class="wires" id="wires" aria-hidden="true"></svg>
+    <div class="phonewrap" id="pw">
+    <div class="phone" id="phone">
+      <div class="top">
+        <div class="left"><div class="menu"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#F4F4F0" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></div><div class="brand"><svg width="22" height="22" viewBox="0 0 512 512" aria-hidden="true"><g transform="translate(256 350) scale(0.88)"><g fill="none" stroke="#3DDC97" stroke-width="44" stroke-linecap="round"><path d="M-93.3 -93.3 A132 132 0 0 1 93.3 -93.3"/><path d="M-151.3 -151.3 A214 214 0 0 1 151.3 -151.3"/><path d="M-209.3 -209.3 A296 296 0 0 1 209.3 -209.3"/></g><g transform="scale(0.82)" fill="#F4F4F0"><path d="M0 -92 C10 -92 14 -70 14 -50 L14 70 C14 82 8 90 0 92 C-8 90 -14 82 -14 70 L-14 -50 C-14 -70 -10 -92 0 -92 Z"/><path d="M0 -40 L96 20 L96 36 L0 8 L-96 36 L-96 20 Z"/><path d="M0 54 L40 84 L40 94 L0 82 L-40 94 L-40 84 Z"/></g></g></svg>airband</div></div>
+        <div class="tools">
+          <div class="poke" id="poke">Poke</div>
+          <div class="air on" title="Read aloud is on"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="13" width="4.5" height="7" rx="1.8" fill="currentColor"/><rect x="16.5" y="13" width="4.5" height="7" rx="1.8" fill="currentColor"/><path d="M19 20a3 3 0 0 1-3 2.5h-3"/></svg></div>
+        </div>
+      </div>
+      <div class="chips" id="chips"></div>
+      <div class="feed" id="feed"></div>
+      <div class="heard" id="heard"></div>
+      <div class="bar">
+        <div class="round" id="quickbtn" title="Quick messages"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M4 6a2.5 2.5 0 0 1 2.5-2.5h11A2.5 2.5 0 0 1 20 6v8a2.5 2.5 0 0 1-2.5 2.5H11.5L7 20.5v-4h-.5A2.5 2.5 0 0 1 4 14z"/><path d="M13.2 5.6L9.6 10.4h2.5l-1 4 3.7-4.9h-2.6z" fill="currentColor" stroke="none"/></svg></div>
+        <div class="mic" id="mic"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg></div>
+        <div class="round"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#F4F4F0" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2.5"/><path d="M7 10h.01M11 10h.01M15 10h.01M8 14h8"/></svg></div>
+      </div>
+      <div class="look" id="look" aria-hidden="true"></div>
+      <div class="quick" id="quick" aria-hidden="true"></div>
+      <div class="tap" id="tap"></div>
+    </div>
+    </div>
+  </div>
+  </div>
+
+  <section class="more">
+    <div class="car" id="car" role="img" aria-label="A car's dashboard seen from the driver's seat, the road moving ahead. On the car's wide screen airband reads out what each agent reports and asks, one at a time. He answers out loud without touching anything, and the conversation scrolls up as it goes.">
+      <svg class="dash" viewBox="0 0 800 500" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+        <defs>
+          <radialGradient id="glow" cx="380" cy="84" r="330" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#7C96A0" stop-opacity="0.22"/><stop offset="0.45" stop-color="#4A5A62" stop-opacity="0.07"/><stop offset="1" stop-color="#0B0B0C" stop-opacity="0"/></radialGradient>
+          <linearGradient id="tarmac" x1="0" y1="82" x2="0" y2="186" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#121516"/><stop offset="1" stop-color="#191C1E"/></linearGradient>
+          <linearGradient id="dashtop" x1="0" y1="160" x2="0" y2="500" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#141718"/><stop offset="0.25" stop-color="#0E1011"/><stop offset="1" stop-color="#0A0B0C"/></linearGradient>
+          <linearGradient id="far" x1="0" y1="82" x2="0" y2="150" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#fff" stop-opacity="0.25"/><stop offset="1" stop-color="#fff" stop-opacity="1"/></linearGradient>
+          <mask id="fade"><rect x="0" y="60" width="800" height="140" fill="url(#far)"/></mask>
+          <path id="lane" d="M378 83 C389 104 401 140 406 190"/>
+          <path id="verge" d="M392 83 C470 100 610 132 800 180"/>
+          <path id="nearside" d="M366 83 C300 104 190 136 20 190"/>
+        </defs>
+        <!-- through the windscreen: sky, two lines of hills, and a road that bends away to the left -->
+        <rect width="800" height="200" fill="url(#glow)"/>
+        <path d="M0 80 C90 58 170 70 250 76 S400 60 480 72 S660 54 800 74 V92 H0 Z" fill="#0F1214"/>
+        <path d="M0 86 C120 74 210 84 320 82 S520 76 610 84 S730 78 800 86 V96 H0 Z" fill="#0C0E0F"/>
+        <path d="M0 96 V86 C120 80 250 84 372 83 H386 C520 84 680 82 800 88 V200 H0 Z" fill="#0D0F10"/>
+        <path d="M372 83 C330 104 250 140 96 196 H716 C560 140 440 104 386 83 Z" fill="url(#tarmac)"/>
+        <g fill="none" stroke="#3A3F43" stroke-width="1.6" stroke-linecap="round" mask="url(#fade)">
+          <path d="M372 83 C330 104 250 140 96 196"/>
+          <path d="M386 83 C440 104 560 140 716 196"/>
+        </g>
+        <!-- the road comes towards him: lane marks, posts on the near side, and now and then a sign -->
+        <g fill="#596066">
+          <g><rect x="-8" y="-1.6" width="16" height="3.2" rx="1.6"><animateTransform attributeName="transform" type="scale" values="0.12;1.5" dur="1.5s" begin="0s" repeatCount="indefinite" calcMode="spline" keyTimes="0;1" keySplines="0.6 0 1 0.5"/></rect><animateMotion dur="1.5s" begin="0s" repeatCount="indefinite" rotate="auto" calcMode="spline" keyTimes="0;1" keySplines="0.6 0 1 0.5"><mpath href="#lane"/></animateMotion></g>
+          <g><rect x="-8" y="-1.6" width="16" height="3.2" rx="1.6"><animateTransform attributeName="transform" type="scale" values="0.12;1.5" dur="1.5s" begin="-0.5s" repeatCount="indefinite" calcMode="spline" keyTimes="0;1" keySplines="0.6 0 1 0.5"/></rect><animateMotion dur="1.5s" begin="-0.5s" repeatCount="indefinite" rotate="auto" calcMode="spline" keyTimes="0;1" keySplines="0.6 0 1 0.5"><mpath href="#lane"/></animateMotion></g>
+          <g><rect x="-8" y="-1.6" width="16" height="3.2" rx="1.6"><animateTransform attributeName="transform" type="scale" values="0.12;1.5" dur="1.5s" begin="-1s" repeatCount="indefinite" calcMode="spline" keyTimes="0;1" keySplines="0.6 0 1 0.5"/></rect><animateMotion dur="1.5s" begin="-1s" repeatCount="indefinite" rotate="auto" calcMode="spline" keyTimes="0;1" keySplines="0.6 0 1 0.5"><mpath href="#lane"/></animateMotion></g>
+        </g>
+        <g stroke="#454B50" stroke-width="2" stroke-linecap="round">
+          <g><path d="M0 0 V-9"><animateTransform attributeName="transform" type="scale" values="0.15;1.9" dur="2.4s" begin="0s" repeatCount="indefinite" calcMode="spline" keyTimes="0;1" keySplines="0.6 0 1 0.5"/></path><animateMotion dur="2.4s" begin="0s" repeatCount="indefinite" calcMode="spline" keyTimes="0;1" keySplines="0.6 0 1 0.5"><mpath href="#nearside"/></animateMotion></g>
+          <g><path d="M0 0 V-9"><animateTransform attributeName="transform" type="scale" values="0.15;1.9" dur="2.4s" begin="-0.8s" repeatCount="indefinite" calcMode="spline" keyTimes="0;1" keySplines="0.6 0 1 0.5"/></path><animateMotion dur="2.4s" begin="-0.8s" repeatCount="indefinite" calcMode="spline" keyTimes="0;1" keySplines="0.6 0 1 0.5"><mpath href="#nearside"/></animateMotion></g>
+          <g><path d="M0 0 V-9"><animateTransform attributeName="transform" type="scale" values="0.15;1.9" dur="2.4s" begin="-1.6s" repeatCount="indefinite" calcMode="spline" keyTimes="0;1" keySplines="0.6 0 1 0.5"/></path><animateMotion dur="2.4s" begin="-1.6s" repeatCount="indefinite" calcMode="spline" keyTimes="0;1" keySplines="0.6 0 1 0.5"><mpath href="#nearside"/></animateMotion></g>
+        </g>
+        <g>
+          <g fill="none" stroke="#4C5358" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M0 0 V-30"/><rect x="-11" y="-48" width="22" height="18" rx="3" fill="#15181A"/><path d="M-5 -39 H4 M1 -43 L5 -39 L1 -35"/>
+            <animateTransform attributeName="transform" type="scale" values="0.1;2.2" dur="7s" begin="1s" repeatCount="indefinite" calcMode="spline" keyTimes="0;1" keySplines="0.7 0 1 0.4"/>
+          </g>
+          <animateMotion dur="7s" begin="1s" repeatCount="indefinite" calcMode="spline" keyTimes="0;1" keySplines="0.7 0 1 0.4"><mpath href="#verge"/></animateMotion>
+        </g>
+        <!-- the car around it: pillars, the mirror, the dash and what is on it -->
+        <path d="M0 0 H46 L74 190 H0 Z M800 0 H754 L726 190 H800 Z" fill="#090A0B"/>
+        <path d="M46 0 L74 190 M754 0 L726 190" fill="none" stroke="#24282A" stroke-width="1.5"/>
+        <rect width="800" height="9" fill="#090A0B"/>
+        <path d="M400 9 V16" stroke="#24282A" stroke-width="5"/>
+        <rect x="342" y="15" width="116" height="31" rx="10" fill="#0C0E0F" stroke="#2A2E30" stroke-width="1.5"/>
+        <path d="M352 24 H410" stroke="#1B1E20" stroke-width="2" stroke-linecap="round"/>
+        <path d="M0 186 C200 168 600 168 800 186 V500 H0 Z" fill="url(#dashtop)"/>
+        <g fill="none" stroke-linecap="round">
+          <path d="M0 186 C200 168 600 168 800 186" stroke="#33383B" stroke-width="1.5"/>
+          <path d="M0 204 C200 188 600 188 800 204" stroke="#1B1E20" stroke-width="1.5"/>
+          <rect x="14" y="262" width="56" height="74" rx="12" stroke="#272B2D" stroke-width="1.5"/>
+          <path d="M24 281 H60 M24 299 H60 M24 317 H60" stroke="#202325" stroke-width="3"/>
+          <rect x="730" y="262" width="56" height="74" rx="12" stroke="#272B2D" stroke-width="1.5"/>
+          <path d="M740 281 H776 M740 299 H776 M740 317 H776" stroke="#202325" stroke-width="3"/>
+          <path d="M0 410 C50 400 84 430 100 500 M800 410 C750 400 716 430 700 500" stroke="#1F2224" stroke-width="1.5"/>
+          <circle cx="330" cy="482" r="8" stroke="#2A2E30" stroke-width="1.5"/>
+          <circle cx="470" cy="482" r="8" stroke="#2A2E30" stroke-width="1.5"/>
+          <path d="M366 482 H434" stroke="#24282A" stroke-width="5"/>
+        </g>
+      </svg>
+      <div class="cp">
+        <div class="cpdock">
+          <time>9:41</time>
+          <div class="sig"><i style="height:35%"></i><i style="height:55%"></i><i style="height:78%"></i><i style="height:100%"></i></div>
+          <div class="app us"><svg viewBox="0 0 512 512"><g transform="translate(256 350) scale(0.88)"><g fill="none" stroke="#3DDC97" stroke-width="44" stroke-linecap="round"><path d="M-93.3 -93.3 A132 132 0 0 1 93.3 -93.3"/><path d="M-151.3 -151.3 A214 214 0 0 1 151.3 -151.3"/><path d="M-209.3 -209.3 A296 296 0 0 1 209.3 -209.3"/></g><g transform="scale(0.82)" fill="#F4F4F0"><path d="M0 -92 C10 -92 14 -70 14 -50 L14 70 C14 82 8 90 0 92 C-8 90 -14 82 -14 70 L-14 -50 C-14 -70 -10 -92 0 -92 Z"/><path d="M0 -40 L96 20 L96 36 L0 8 L-96 36 L-96 20 Z"/><path d="M0 54 L40 84 L40 94 L0 82 L-40 94 L-40 84 Z"/></g></g></svg></div>
+          <div class="app"></div>
+          <div class="app"></div>
+          <div class="home"><i></i><i></i><i></i><i></i></div>
+        </div>
+        <div class="cpmain">
+          <div class="cphead"><svg viewBox="0 0 512 512"><g transform="translate(256 350) scale(0.88)"><g fill="none" stroke="#3DDC97" stroke-width="44" stroke-linecap="round"><path d="M-93.3 -93.3 A132 132 0 0 1 93.3 -93.3"/><path d="M-151.3 -151.3 A214 214 0 0 1 151.3 -151.3"/><path d="M-209.3 -209.3 A296 296 0 0 1 209.3 -209.3"/></g><g transform="scale(0.82)" fill="#F4F4F0"><path d="M0 -92 C10 -92 14 -70 14 -50 L14 70 C14 82 8 90 0 92 C-8 90 -14 82 -14 70 L-14 -50 C-14 -70 -10 -92 0 -92 Z"/><path d="M0 -40 L96 20 L96 36 L0 8 L-96 36 L-96 20 Z"/><path d="M0 54 L40 84 L40 94 L0 82 L-40 94 L-40 84 Z"/></g></g></svg>airband</div>
+          <div class="cpfeed" id="cpfeed"></div>
+          <div class="cpbar">
+            <div class="cpmic" id="cpmic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div>
+            <div class="cpheard" id="cpheard"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="morewords">
+      <h2>Run your agents from the car.</h2>
+      <p class="sub2">They ask out loud. You answer out loud.</p>
+    </div>
+  </section>
+
+  <section class="more perf">
+    <div class="morewords">
+      <h2>It runs in 6 MB.</h2>
+      <p class="sub2">One small Rust program on your computer. Nothing else has to stay open.</p>
+    </div>
+    <div class="mem" id="mem" role="img" aria-label="Memory in use, two bars on one scale. airband: 6 megabytes. The Claude desktop app: 744 megabytes.">
+      <div class="us"><div class="lab"><span>airband</span><b>6 MB</b></div><div class="track"><div class="mbar" style="--w:0.8%"></div></div></div>
+      <div><div class="lab"><span>Claude desktop app</span><b>744 MB</b></div><div class="track"><div class="mbar" style="--w:100%"></div></div></div>
+    </div>
+  </section>
+
+  <section class="more">
+    <div class="sec" id="sec" role="img" aria-label="Two panels side by side. On your phone: an agent's question and your answer, in plain words. On our server: the same messages as they pass through, a web address, a size in bytes, and unreadable sealed data.">
+      <div class="pane yours">
+        <h3>On your phone</h3>
+        <div class="asked"><small id="secwho">orders refunds</small><p id="secask">Refunds for 14 customers are ready. Send them?</p></div>
+        <div class="said" id="secsaid">Send them</div>
+      </div>
+      <div class="pane ours">
+        <h3>On our server</h3>
+        <div class="req">POST /v1/channels/8f2c41d0&hellip;/call</div>
+        <div class="size" id="secsize">412 bytes</div>
+        <div class="hex" id="sechex"></div>
+      </div>
+    </div>
+    <div class="morewords">
+      <h2>End&#8209;to&#8209;end encrypted.</h2>
+      <p class="sub2">Our server sees nothing. Or skip it and pair your phone straight to your computer.</p>
+    </div>
+  </section>
+
+  <p class="foot">airband is not affiliated with Anthropic. Claude is a trademark of Anthropic.</p>
+</div>
+
+<script>
+// The waiting list. The address goes to airband's own server and nowhere else.
+(function () {
+  const form = document.getElementById("join"), input = document.getElementById("email"), button = document.getElementById("joinbtn"), msg = document.getElementById("joinmsg");
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = input.value.trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      msg.textContent = "That does not look like an email address.";
+      input.focus();
+      return;
+    }
+    button.disabled = true;
+    msg.textContent = "";
+    try {
+      const res = await fetch("https://relay.airband.dev/v1/waitlist", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, company: document.getElementById("company").value }) });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(out.message || "");
+      form.classList.add("done");
+      msg.textContent = "You're on the list. We'll email you when it's ready.";
+    } catch (err) {
+      button.disabled = false;
+      msg.textContent = err.message || "Could not sign you up just now. Try again in a minute.";
+    }
+  });
+})();
+</script>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const stage = $("stage"), phone = $("phone"), wires = $("wires");
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  // while the tab is in the background, the story holds where it is
+  const beat = async (ms) => { await wait(ms); while (document.hidden) await wait(400); };
+
+  // One company: a marketplace that sells parts. A room for each side of the business, a few Claudes in each, every
+  // one named for the job it is on, and one empty place for the next idea. `work` is what scrolls past while one is busy.
+  const agents = [
+    { id: "orders", area: "a", name: "orders refunds", room: "orders", cwd: "~/code/orders", work: [
+      "● Read(orders/payments/webhook.ts)", "● Update(orders/payments/webhook.ts)", "  ⎿ 9 additions, 4 removals", "● Bash(npm test -- payments)",
+      "  ⎿ 63 passed", "● Bash(./scripts/duplicate-charges --since yesterday)", "  ⎿ 14 customers, $1,246.00", "● Read(orders/payments/refund.ts)", "● Bash(npm run deploy)", "  ⎿ Live in 41s" ] },
+    { id: "page", area: "b", name: "catalog part page", room: "catalog", cwd: "~/code/catalog", work: [
+      "● Update(web/parts/PartPage.tsx)", "  ⎿ 38 additions, 9 removals", "● Write(web/parts/PartPageB.tsx)", "● Bash(npm run build)", "  ⎿ Compiled in 8.2s", "● Bash(npx playwright screenshot /parts/brake-pad-7741)",
+      "● Read(part-page-a.png)", "● Read(part-page-b.png)", "● Bash(npm test -- parts)", "  ⎿ 31 passed" ] },
+    { id: "import", area: "c", name: "catalog import", room: "catalog", cwd: "~/code/catalog", subs: 3, work: [
+      "● Agent(map the Northway columns)", "● Agent(map the Delco columns)", "● Agent(find duplicate part numbers)", "  ⎿ 3 subagents running", "● Read(suppliers/northway.csv)", "● Update(catalog/import/map_columns.py)", "● Bash(python -m catalog.import --dry-run)", "  ⎿ 1,240 parts, 18 duplicates skipped", "● Bash(pytest catalog/tests -q)",
+      "  ⎿ 74 passed", "● Update(catalog/import/dedupe.py)", "  ⎿ 16 additions, 2 removals", "● Bash(python -m catalog.import)", "  ⎿ 1,240 parts imported" ] },
+    { id: "payouts", area: "d", name: "payouts schedule", room: "payouts", cwd: "~/code/payouts", work: [
+      "● Read(payouts/schedule.py)", "● Write(payouts/emails/weekly_summary.py)", "● Write(payouts/emails/weekly_summary.html)", "● Bash(./scripts/payout-volume --last 7d)",
+      "  ⎿ 312 sellers, $46,600 paid", "● Bash(pytest payouts/emails -q)", "  ⎿ 19 passed", "● Bash(./scripts/preview-email weekly_summary --seller 88)", "  ⎿ Rendered, totals match" ] },
+    { id: "rates", area: "e", name: "logistics rates", room: "logistics", cwd: "~/code/logistics", work: [
+      "● Read(logistics/carriers/rates.json)", "● Bash(./scripts/fetch-carrier-rates)", "  ⎿ 3 carriers updated", "● Update(logistics/quote.py)", "● Bash(pytest logistics -q)",
+      "  ⎿ 96 passed", "● Bash(./bench quote_ground)", "  ⎿ avg $8.12 (was $8.64)", "● Update(logistics/carriers/fallback.py)" ] },
+    // not running yet: he starts this one by saying his idea
+    { id: "restock", area: "f", name: "logistics two", room: "logistics", cwd: "~/code/logistics", empty: true, work: [
+      "● Read(inventory/stock_levels.py)", "● Search(\"sales_velocity\")", "  ⎿ 5 matches in 2 files", "● Write(logistics/alerts/low_stock.py)", "● Write(logistics/alerts/test_low_stock.py)",
+      "● Bash(pytest logistics/alerts -q)", "  ⎿ 11 passed", "● Bash(./scripts/simulate-low-stock --part 7741)", "  ⎿ alert sent to #warehouse" ] },
+  ];
+  const by = Object.fromEntries(agents.map((a) => [a.id, a]));
+
+  // What each one writes when it stops, and the one sentence that reaches the phone.
+  // The decisions are the kinds an owner really gets asked: approve what goes to customers, set a price or a
+  // policy, choose how a new thing should behave, pick the one he likes.
+  const asks = {
+    orders: { wall: "The duplicate charge bug is fixed and deployed: the retry in the payment webhook no longer creates a second charge. Last night it hit 14 customers, $1,246 in total. I have refunded nobody yet. This is the email I would send with each refund: \"Hi {name}, last night a bug on our side charged you twice for your order. We have refunded the second charge in full and it should show in 3-5 days. Sorry for the trouble. Reply here if anything looks wrong.\" Send it and issue the refunds?",
+      say: "Refunds and an apology email for 14 double-charged customers are ready. Send?", options: ["Send", "Show me first"], rec: 0 },
+    payouts: { wall: "The weekly payout summary email for sellers is built: what they earned, the fees, and the date the money lands. I checked it against last week's numbers for all 312 sellers and it matches. The only thing left is when it goes out. Mondays line up with the start of their week. Fridays go out right after the payout run, so the numbers are final and the money is already moving. I can schedule either one. Mondays or Fridays?",
+      say: "The payout summary email for sellers is ready. Send it Mondays or Fridays?", options: ["Mondays", "Fridays"], rec: -1 },
+    restock: { wall: "The low-stock alert is working: when a part crosses the line it posts to the warehouse channel with the part, what is left and the supplier. I tested it on brake pad 7741. The open question is where the line is. A fixed count is simple: warn at 10 units left. But a part that sells 30 a day and one that sells 1 a week should not get the same warning, so the other way is days of stock: warn when what is left covers less than 7 days at the rate it is selling. I would use days of stock. Which one?",
+      say: "Low-stock alert works. Warn at 10 units left, or at 7 days of stock?", options: ["10 units", "7 days"], rec: 1 },
+    page: { wall: "Both layouts for the part page are built; screenshots attached. A keeps the photo on the left with fitment and price beside it, as it is today. B puts fitment first, above the photo, because the support log says a third of returns are parts that did not fit. Both pass the tests and load in under a second on a phone. I can ship either today. Which one?",
+      say: "Two part page layouts are built. Ship A or B?", options: ["A", "B"], rec: -1, shot: true },
+  };
+
+  // ---- build the terminals ----
+  for (const a of agents) {
+    const el = document.createElement("div");
+    el.className = "term";
+    el.style.gridArea = a.area;
+    el.innerHTML = '<header><i></i><i></i><i></i><b>' + a.name + '</b><span>' + a.cwd + '</span><em>working</em></header><div class="lines"></div><div class="slot">+ your next idea</div>';
+    stage.insertBefore(el, $("pw"));
+    a.el = el; a.lines = el.querySelector(".lines"); a.status = el.querySelector("em"); a.at = Math.floor(Math.random() * a.work.length);
+    a.state = a.empty ? "empty" : "working";
+    el.classList.toggle("empty", !!a.empty);
+    a.status.textContent = a.state + (a.subs ? " +" + a.subs : "");
+    if (!a.empty) for (let i = 0; i < 7; i++) line(a, a.work[a.at++ % a.work.length]);
+  }
+  function line(a, text, cls) {
+    const d = document.createElement("div");
+    if (cls) d.className = cls;
+    d.textContent = text;
+    a.lines.querySelectorAll(".cursor").forEach((c) => c.classList.remove("cursor"));
+    a.lines.appendChild(d);
+    while (a.lines.children.length > 26) a.lines.firstChild.remove();
+    return d;
+  }
+  function setState(a, state) {
+    a.state = state;
+    a.el.classList.toggle("waiting", state === "waiting");
+    a.el.classList.toggle("empty", state === "empty");
+    a.el.classList.toggle("stalled", state === "stalled");
+    a.status.textContent = state === "waiting" ? "waiting" : state === "stalled" ? "stopped" : state + (a.subs && state === "working" ? " +" + a.subs : "");
+    counts();
+  }
+
+  // ---- the phone: a feed ----
+  // each team's colour, and the two letters that stand for each agent, as the app gives them
+  const TEAM = { logistics: "#3987e5", catalog: "#d95926", orders: "#9085e9", payouts: "#d55181" };
+  const badge = (name) => { const [team, next] = name.split(" "); return '<i class="bd" style="--team:' + (TEAM[team] || "") + '">' + team[0].toUpperCase() + (next === "two" ? "2" : (next || "")[0].toUpperCase()) + "</i>"; };
+  const chips = $("chips"), feed = $("feed");
+  function counts() {
+    // a team for each project with a Claude running in it
+    const rooms = [...new Set(agents.filter((a) => a.state !== "empty").map((a) => a.room))].sort();
+    if (chips.dataset.rooms !== rooms.join()) {
+      chips.dataset.rooms = rooms.join();
+      chips.innerHTML = rooms.map((r) => '<div class="chip" data-room="' + r + '" style="--team:' + (TEAM[r] || "") + '"><i class="dot"></i><b>' + r + "</b></div>").join("");
+    }
+    // each team: amber if one of its Claudes is waiting on him, green and pulsing if they are all working
+    chips.querySelectorAll(".chip[data-room]").forEach((c) => {
+      const team = agents.filter((a) => a.room === c.dataset.room);
+      // amber, someone is waiting on him; gray and still, someone has stopped; green and pulsing, all working
+      const ask = team.some((a) => a.card), stopped = team.some((a) => a.state === "stalled");
+      c.classList.toggle("ask", ask);
+      c.classList.toggle("busy", !ask && !stopped && team.some((a) => a.state === "working"));
+    });
+    $("poke").classList.toggle("ready", agents.some((a) => a.state === "stalled"));
+  }
+  const EQ = '<span class="eq"><i></i><i></i><i></i><i></i></span>';
+  const words = (t) => t.split(" ").map((w) => "<b>" + w + "</b>").join(" ");
+  // put something at the bottom of the feed; what is above moves up to make room
+  function post(cls, html, quiet) {
+    const el = document.createElement("div");
+    el.className = "it " + cls + (quiet ? "" : " in");
+    el.innerHTML = html;
+    feed.appendChild(el);
+    while (feed.children.length > 12) feed.firstChild.remove();
+    if (!quiet) requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove("in")));
+    return el;
+  }
+  // Pictures an agent sent: two screenshots of part page B on a phone, the top of the page (fitment first, then
+  // the photo) and further down.
+  const SHOT = (inner) => '<svg viewBox="0 0 66 118" width="66" height="118" aria-hidden="true"><rect width="66" height="118" rx="9" fill="#EFEFEA"/><rect x="6" y="7" width="54" height="5" rx="2.5" fill="#0B0B0C"/>' + inner + "</svg>";
+  const SHOTS = [
+    SHOT('<rect x="6" y="18" width="54" height="15" rx="4" fill="#DDF5EA"/><rect x="10" y="22" width="30" height="3" rx="1.5" fill="#12925B"/><rect x="10" y="27" width="20" height="2.5" rx="1.2" fill="#12925B"/><rect x="6" y="38" width="54" height="40" rx="5" fill="#C4C6C2"/><circle cx="33" cy="58" r="11" fill="none" stroke="#8E8E93" stroke-width="4"/><circle cx="33" cy="58" r="3" fill="#8E8E93"/><rect x="6" y="84" width="34" height="5" rx="2.5" fill="#0B0B0C"/><rect x="6" y="92" width="20" height="5" rx="2.5" fill="#0B0B0C"/><rect x="6" y="102" width="54" height="10" rx="5" fill="#3DDC97"/>'),
+    SHOT('<rect x="6" y="18" width="26" height="4" rx="2" fill="#0B0B0C"/><rect x="6" y="27" width="54" height="3" rx="1.5" fill="#8E8E93"/><rect x="6" y="34" width="46" height="3" rx="1.5" fill="#8E8E93"/><rect x="6" y="41" width="50" height="3" rx="1.5" fill="#8E8E93"/><rect x="6" y="52" width="54" height="1" fill="#C4C6C2"/><rect x="6" y="59" width="22" height="4" rx="2" fill="#0B0B0C"/><rect x="6" y="68" width="54" height="18" rx="4" fill="#E2E3DF"/><rect x="10" y="72" width="30" height="3" rx="1.5" fill="#8E8E93"/><rect x="10" y="78" width="40" height="3" rx="1.5" fill="#8E8E93"/><rect x="6" y="91" width="54" height="18" rx="4" fill="#E2E3DF"/><rect x="10" y="95" width="36" height="3" rx="1.5" fill="#8E8E93"/><rect x="10" y="101" width="26" height="3" rx="1.5" fill="#8E8E93"/>'),
+  ];
+  const PIC = '<div class="pics">' + SHOTS.join("") + "</div>";
+  // a link an agent wrote, as a button: an artifact, a pull request, a preview
+  const LINK = (label) => '<div class="link">' + label + '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M9 7h8v8"/></svg></div>';
+  const row = (a, text, step, quiet, pic, link) => post("r" + (step ? " step" : ""), "<small>" + badge(a.name) + a.name + EQ + "</small><p>" + words(text) + "</p>" + (pic ? PIC : "") + (link ? LINK(link) : ""), quiet);
+  const mine = (text, to) => post("me", (to ? "<small>to " + to + "</small>" : "") + "<p>" + text + "</p>");
+  function card(a) {
+    const q = asks[a.id];
+    a.card = post("q", "<small>" + badge(a.name) + a.name + EQ + "</small>" + (q.shot ? '<div class="shots"><div class="shot"></div><div class="shot b"></div></div>' : "") + "<p>" + words(q.say) + '</p><div class="answers">' +
+      q.options.map((o, i) => '<div class="a' + (i === q.rec ? " rec" : "") + '">' + o + "</div>").join("") + '<div class="a yolo">YO<br>LO</div></div>');
+    counts();
+    return a.card;
+  }
+  // who is talking right now, shown by the talk button: this is comms, so everything that arrives is heard
+  function speaker(a, kind) {
+    $("heard").innerHTML = a ? '<div class="speaker ' + kind + '">' + EQ + a.name + "</div>" : "";
+  }
+  // Said aloud, the way it is on a radio: who is calling first, then what they have to say. The name lights
+  // up while it is spoken, then each word in turn.
+  async function say(a, el, kind) {
+    speaker(a, kind);
+    el.classList.add("speaking");
+    await wait(620);
+    for (const w of el.querySelectorAll("p b")) { w.classList.add("said"); await wait(100 + w.textContent.length * 9); }
+    await wait(240);
+    el.classList.remove("speaking");
+    speaker(null);
+  }
+
+  // ---- the wires: one from each terminal to the phone, drawn from where things really are ----
+  const NS = "http://www.w3.org/2000/svg";
+  for (const a of agents) {
+    a.path = document.createElementNS(NS, "path");
+    a.dotEl = document.createElementNS(NS, "circle");
+    a.dotEl.setAttribute("r", "5");
+    wires.append(a.path, a.dotEl);
+    // an answer travels with a tail
+    a.trail = [a.dotEl];
+    for (let i = 1; i < 7; i++) {
+      const c = document.createElementNS(NS, "circle");
+      c.setAttribute("r", String(5 - i * 0.6));
+      wires.append(c);
+      a.trail.push(c);
+    }
+  }
+  // The phone is drawn at one size and scaled to the room it has. The terminals beside it share its height.
+  let scale = 1;
+  function fit() {
+    const pw = $("pw"), room = pw.clientWidth;
+    scale = Math.min(1, room / 306);
+    phone.style.transform = scale < 1 ? "scale(" + scale + ")" : "";
+    phone.style.marginLeft = (room - 306 * scale) / 2 + "px";
+    pw.style.height = 664 * scale + "px";
+    agents.forEach((a) => { a.el.style.height = (664 * scale - 5 * 8) / 6 + "px"; });
+  }
+  function layout() {
+    fit();
+    const s = stage.getBoundingClientRect(), p = phone.getBoundingClientRect();
+    agents.forEach((a) => {
+      const t = a.el.getBoundingClientRect();
+      let x1, y1, x2, y2, d;
+      if (t.right <= p.left + 2 || t.left >= p.right - 2) {
+        const left = t.right <= p.left + 2;
+        x1 = (left ? t.right : t.left) - s.left; y1 = t.top + t.height / 2 - s.top;
+        // it arrives at the phone's side roughly level with where it left, pulled toward the middle
+        x2 = (left ? p.left : p.right) - s.left; y2 = p.top - s.top + p.height * (0.28 + 0.44 * (t.top + t.height / 2 - p.top) / p.height);
+        const mid = (x1 + x2) / 2;
+        d = "M" + x1 + "," + y1 + " C" + mid + "," + y1 + " " + mid + "," + y2 + " " + x2 + "," + y2;
+      } else {
+        const above = t.bottom <= p.top + 2, leftHalf = t.left + t.width / 2 < p.left + p.width / 2;
+        x1 = t.left + t.width / 2 - s.left; y1 = (above ? t.bottom : t.top) - s.top;
+        x2 = p.left - s.left + p.width * (leftHalf ? 0.3 : 0.7); y2 = (above ? p.top : p.bottom) - s.top;
+        const mid = (y1 + y2) / 2;
+        d = "M" + x1 + "," + y1 + " C" + x1 + "," + mid + " " + x2 + "," + mid + " " + x2 + "," + y2;
+      }
+      a.path.setAttribute("d", d);
+    });
+  }
+  layout();
+  window.addEventListener("resize", layout);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(layout);
+
+  // something travels along a wire: toward the phone, or back to the terminal
+  function fly(a, toPhone, color, comet) {
+    return new Promise((resolve) => {
+      const len = a.path.getTotalLength(), t0 = performance.now(), ms = comet ? 560 : 620;
+      const dots = comet ? a.trail : [a.dotEl];
+      a.path.classList.add("live");
+      dots.forEach((d) => d.setAttribute("fill", color));
+      (function step(now) {
+        const k = Math.min(1, (now - t0) / ms), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+        dots.forEach((d, i) => {
+          const at = Math.max(0, e - i * 0.05), pt = a.path.getPointAtLength(len * (toPhone ? at : 1 - at));
+          d.setAttribute("cx", pt.x); d.setAttribute("cy", pt.y);
+          d.style.opacity = i ? 0.6 * (1 - i / dots.length) : 1;
+        });
+        if (k < 1) return requestAnimationFrame(step);
+        dots.forEach((d) => { d.style.opacity = 0; });
+        a.path.classList.remove("live");
+        resolve();
+      })(t0);
+    });
+  }
+
+  // ---- what happens ----
+  async function ask(a) {
+    const q = asks[a.id];
+    setState(a, "waiting");
+    const block = line(a, "", "wall cursor");
+    for (let i = 0; i <= q.wall.length; i += 9) { block.textContent = q.wall.slice(0, i); await wait(16); }
+    block.textContent = q.wall;
+    await fly(a, true, "#F5C451");
+    await say(a, card(a), "question");
+  }
+  // his answer goes back: it shows in the feed as what he said, flies down the wire, and the terminal types it in
+  async function reply(a, shown, to) {
+    const el = a.card;
+    a.card = null;
+    el.classList.remove("picked");
+    el.classList.add("answered");
+    counts();
+    mine(shown, to);
+    await wait(380);
+    await fly(a, false, "#F4F4F0", true);
+    a.el.classList.remove("hit"); void a.el.offsetWidth; a.el.classList.add("hit");
+    a.el.classList.remove("waiting");
+    const typed = line(a, "› ", "you cursor");
+    for (let i = 1; i <= shown.length; i += 2) { typed.textContent = "› " + shown.slice(0, i); await wait(16); }
+    typed.textContent = "› " + shown;
+    await wait(220);
+    setState(a, "working");
+  }
+  // a finger lands on a button
+  function touch(btn) {
+    const b = btn.getBoundingClientRect(), p = phone.getBoundingClientRect(), dot = $("tap");
+    dot.style.left = (b.left + b.width / 2 - p.left) / scale + "px"; dot.style.top = (b.top + b.height / 2 - p.top) / scale + "px";
+    dot.classList.remove("go"); void dot.offsetWidth; dot.classList.add("go");
+  }
+  // It said what it would do next and then just stopped. He hears it, and the Poke button at the top lights up:
+  // one tap sets going again whoever has stopped.
+  async function stall(a, text) {
+    setState(a, "stalled");
+    line(a, text, "ok cursor");
+    await fly(a, true, "#8E8E93");
+    await say(a, row(a, text, true), "report");
+  }
+  async function poke(a) {
+    const btn = $("poke");
+    touch(btn);
+    btn.classList.add("chosen");
+    await wait(420);
+    btn.classList.remove("chosen");
+    mine("Keep going", a.name);
+    await wait(380);
+    await fly(a, false, "#F4F4F0", true);
+    a.el.classList.remove("hit"); void a.el.offsetWidth; a.el.classList.add("hit");
+    line(a, "› Keep going", "you");
+    setState(a, "working");
+  }
+  async function tap(a, which) {
+    const all = [...a.card.querySelectorAll(".a")], btn = which === "yolo" ? a.card.querySelector(".yolo") : all[which];
+    touch(btn);
+    btn.classList.add("down");
+    await wait(140);
+    // the one he chose lights up and the others fall away
+    btn.classList.remove("down");
+    btn.classList.add("chosen");
+    all.forEach((x) => { if (x !== btn) x.classList.add("passed"); });
+    await wait(420);
+    await reply(a, which === "yolo" ? "Do whatever you think is best." : asks[a.id].options[which], a.name);
+  }
+  // he holds the button and talks; the words appear as he says them
+  async function listen(text) {
+    const heard = $("heard"), mic = $("mic");
+    mic.classList.add("live");
+    heard.innerHTML = "<q></q>";
+    const q = heard.querySelector("q"), parts = text.split(" ");
+    await wait(450);
+    for (let i = 1; i <= parts.length; i++) { q.textContent = parts.slice(0, i).join(" "); await wait(150); }
+    await wait(380);
+    mic.classList.remove("live");
+    heard.innerHTML = "";
+  }
+  async function speak(a, text) {
+    await listen(text);
+    // nobody was named: the tower works out who it was for
+    a.card.classList.add("picked");
+    await wait(350);
+    await reply(a, text, a.name);
+  }
+  // he says an idea and a new Claude starts on it, in the team it belongs to
+  async function launch(a, text, task) {
+    await listen(text);
+    mine(text);
+    await wait(500);
+    await fly(a, false, "#F4F4F0", true);
+    a.lines.innerHTML = "";
+    a.at = 0;
+    setState(a, "working");
+    a.el.classList.remove("hit"); void a.el.offsetWidth; a.el.classList.add("hit");
+    line(a, "› " + task, "you");
+    post("sys", a.name + " started");
+    await wait(900);
+  }
+  // Quick messages: six things everyone says all the time, and one of his own. The label is two words; what the
+  // agent gets is the whole instruction.
+  const QUICK = [
+    ["Screenshot", "Send me a picture of the result."],
+    ["Test it", "Run the tests and fix what fails."],
+    ["Double-check", "Verify it actually works before saying it's done."],
+    ["Secure?", "Review what you changed for security problems and fix them."],
+    ["Ship it", "Commit, push and deploy."],
+    ["Status?", "What's done and what's left, in two sentences."],
+    // his own: anything he finds himself saying again and again
+    ["Make no mistakes", "Make no mistakes."],
+  ];
+  const grid = $("quick");
+  grid.innerHTML = QUICK.map(([label], i) => '<div class="qm' + (i > 5 ? " wide" : "") + '">' + label + "</div>").join("");
+  // he taps the button, the grid opens, he taps one; it goes to the agent he last dealt with
+  async function quick(a, which) {
+    const btn = $("quickbtn"), cell = grid.children[which];
+    touch(btn);
+    btn.classList.add("on");
+    await wait(260);
+    grid.classList.add("open");
+    phone.classList.add("picking");
+    await wait(760);
+    cell.classList.add("on");
+    touch(cell);
+    await wait(520);
+    grid.classList.remove("open");
+    phone.classList.remove("picking");
+    btn.classList.remove("on");
+    await wait(260);
+    cell.classList.remove("on");
+    mine(QUICK[which][0], a.name);
+    await wait(380);
+    await fly(a, false, "#F4F4F0", true);
+    a.el.classList.remove("hit"); void a.el.offsetWidth; a.el.classList.add("hit");
+    line(a, "› " + QUICK[which][1], "you");
+  }
+  // He opens a picture an agent sent and, while it is up, says what he thinks. The talk button never leaves the
+  // bottom of the screen, and what he says goes to the agent that sent the picture.
+  async function look(a, from, text) {
+    const thumb = from.querySelector(".pics svg");
+    if (!thumb || !from.isConnected) return;
+    const big = $("look");
+    touch(thumb);
+    await wait(260);
+    big.innerHTML = SHOTS[0];
+    big.classList.add("open");
+    await wait(1100);
+    await listen(text);
+    big.classList.remove("open");
+    await wait(240);
+    mine(text, a.name);
+    await wait(380);
+    await fly(a, false, "#F4F4F0", true);
+    a.el.classList.remove("hit"); void a.el.offsetWidth; a.el.classList.add("hit");
+    line(a, "› " + text, "you");
+  }
+  // an agent reports: something finished, or now and then a step along the way. It is shown and read out.
+  async function report(a, text, step, pic, link) {
+    line(a, (step ? "● " : "● Done. ") + text, "ok");
+    await fly(a, true, "#8E8E93");
+    await say(a, row(a, text, step, false, pic, link), "report");
+  }
+
+  // every Claude that is working keeps working, each at its own pace
+  agents.forEach((a, i) => {
+    if (still) return;
+    (async function work() {
+      for (;;) {
+        await beat(520 + i * 130 + Math.random() * 520);
+        if (a.state === "working") line(a, a.work[a.at++ % a.work.length]);
+      }
+    })();
+  });
+  counts();
+  // the feed is never empty: this is what came in before he looked
+  row(by.rates, "Rates pulled from all three carriers.", true, true);
+  const firstShots = row(by.page, "Part page B is built. Two screenshots.", false, true, true);
+  row(by.orders, "Found the double charge: the webhook retried.", false, true);
+
+  if (still) {
+    road.setCurrentTime(3.4);
+    // no motion: show the middle of the story, at rest
+    for (const id of ["orders", "payouts"]) { const a = by[id]; setState(a, "waiting"); line(a, asks[id].wall, "wall"); card(a).classList.remove("in"); }
+    return;
+  }
+
+  (async function story() {
+    for (;;) {
+      // first he opens a screenshot that is waiting for him and says what he thinks of it
+      await beat(1400);
+      await look(by.page, firstShots, "make the add to cart button bigger");
+      // then a new idea: he says it, and a Claude starts on it
+      await beat(1300);
+      await launch(by.restock, "new idea: when a part's about to sell out, tell the warehouse so they can reorder", "when a part's about to sell out, tell the warehouse so they can reorder");
+      await beat(800);
+      await quick(by.restock, 6);
+      await beat(900);
+      await report(by.import, "Northway columns mapped. Two suppliers to go.", true);
+      await beat(900);
+      await ask(by.orders);
+      await beat(1300);
+      await ask(by.payouts);
+      await beat(1500);
+      await tap(by.orders, 0);
+      await beat(1300);
+      await speak(by.payouts, "Fridays, right after payouts go out");
+      await beat(900);
+      await report(by.import, "1,240 parts imported from the new supplier.");
+      await beat(1000);
+      // the new one comes back with its first real question
+      await ask(by.restock);
+      await beat(1200);
+      await report(by.orders, "14 refunds sent. Emails are out.");
+      await beat(1100);
+      await tap(by.restock, 1);
+      await beat(900);
+      await stall(by.rates, "Two carriers are updated. I'll do the third one next.");
+      await beat(1300);
+      await poke(by.rates);
+      await beat(900);
+      await ask(by.page);
+      await beat(1800);
+      await tap(by.page, "yolo");
+      await beat(1100);
+      // he asks to see it, and the picture comes back in the feed like any other report
+      await quick(by.page, 0);
+      await beat(500);
+      line(by.page, "● Bash(npx playwright screenshot /parts/brake-pad-7741 --device phone)");
+      await beat(1300);
+      await report(by.page, "Part page B again, on a small phone.", false, true);
+      await beat(1200);
+      await report(by.payouts, "The seller email goes out Fridays. Here is what they will get.", false, false, "artifact");
+      await beat(1200);
+      await report(by.rates, "Carrier rates updated. Ground shipping is 6% cheaper.");
+      await beat(3200);
+      // and round again: the feed carries on, and the place for the next idea opens up
+      by.restock.lines.innerHTML = "";
+      setState(by.restock, "empty");
+    }
+  })();
+})();
+</script>
+<script>
+// Further down the page: the car's screen, and the memory bars. Both only move while they are on screen.
+(function () {
+  const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const mem = document.getElementById("mem"), car = document.getElementById("car");
+  if (!("IntersectionObserver" in window)) { mem.classList.add("go"); return; }
+  new IntersectionObserver((seen, o) => { if (seen[0].isIntersecting) { mem.classList.add("go"); o.disconnect(); } }, { threshold: 0.4 }).observe(mem);
+
+  // the same conversation twice: as he reads it, and as it looks on its way through the relay
+  (function () {
+    const sec = document.getElementById("sec"), who = document.getElementById("secwho"), askEl = document.getElementById("secask"), said = document.getElementById("secsaid"), size = document.getElementById("secsize"), hex = document.getElementById("sechex");
+    const talk = [
+      ["orders refunds", "Refunds for 14 customers are ready. Send them?", "Send them"],
+      ["payouts schedule", "Payout email: Mondays or Fridays?", "Fridays, right after payouts go out"],
+      ["catalog part page", "Part page B is built. Ship it?", "Ship it"],
+    ];
+    const sealed = () => Array.from({ length: 84 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, "0")).join("").replace(/(.{4})/g, "$1 ");
+    hex.textContent = sealed();
+    if (still) return;
+    let on = false, round = 0;
+    const wait = (ms, mine) => new Promise((go, stop) => setTimeout(() => (on && mine === round ? go() : stop()), ms));
+    // a message passes: the bytes churn and settle, and nothing about them says what it was
+    const pass = async (text, mine) => {
+      size.textContent = 236 + text.length * 4 + " bytes";
+      for (let i = 0; i < 8; i++) { hex.textContent = sealed(); await wait(55, mine); }
+    };
+    const run = async (mine) => {
+      try {
+        for (let i = 0; ; i = (i + 1) % talk.length) {
+          const [name, question, answer] = talk[i];
+          said.classList.remove("on");
+          askEl.parentNode.style.opacity = 0;
+          await wait(260, mine);
+          who.textContent = name; askEl.textContent = question; said.textContent = answer;
+          askEl.parentNode.style.opacity = 1;
+          await pass(question, mine);
+          await wait(1700, mine);
+          said.classList.add("on");
+          await pass(answer, mine);
+          await wait(2400, mine);
+        }
+      } catch (stopped) {}
+    };
+    new IntersectionObserver((seen) => { on = seen[0].isIntersecting; if (on) { round += 1; run(round); } }, { threshold: 0.3 }).observe(sec);
+  })();
+  const feed = document.getElementById("cpfeed"), mic = document.getElementById("cpmic"), heard = document.getElementById("cpheard"), road = car.querySelector("svg.dash");
+  road.pauseAnimations();
+  const EQ = '<span class="eq"><i></i><i></i><i></i><i></i></span>';
+  const TEAM = { logistics: "#3987e5", catalog: "#d95926", orders: "#9085e9", payouts: "#d55181" };
+  const badge = (name) => { const [team, next] = name.split(" "); return '<i class="bd" style="--team:' + (TEAM[team] || "") + '">' + team[0].toUpperCase() + (next || "")[0].toUpperCase() + "</i>"; };
+  const words = (t, on) => t.split(" ").map((w) => "<b" + (on ? ' class="on"' : "") + ">" + w + "</b>").join(" ");
+  let turn = 0, showing = false;
+  // every pause ends the conversation if the car has scrolled away or a newer one has started
+  const wait = (ms, mine) => new Promise((go, stop) => setTimeout(() => (showing && mine === turn ? go() : stop()), ms));
+  const line = (kind, html) => {
+    feed.querySelectorAll(".cl").forEach((old) => old.classList.add("old"));
+    const el = document.createElement("div");
+    el.className = "cl " + kind;
+    el.innerHTML = '<div><div class="pad">' + html + "</div></div>";
+    feed.appendChild(el);
+    while (feed.children.length > 5) feed.firstChild.remove();
+    requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add("in")));
+    return el;
+  };
+  // it is said, not posted: bars move by the name and each word lights as it is spoken
+  const speak = async (el, mine) => {
+    await wait(480, mine);
+    el.classList.add("speaking");
+    for (const w of el.querySelectorAll("p b")) { w.classList.add("on"); await wait(140 + w.textContent.length * 20, mine); }
+    el.classList.remove("speaking");
+  };
+  const report = (who, text, mine) => speak(line("say", "<small>" + badge(who) + who + EQ + "</small><p>" + words(text) + "</p>"), mine);
+  const ask = async (who, text, answers, pick, reply, mine) => {
+    const el = line("ask", '<div class="ccard"><small>' + badge(who) + who + EQ + "</small><p>" + words(text) + '</p><div class="ans">' + answers.map((a) => "<span>" + a + "</span>").join("") + "</div></div>");
+    await speak(el, mine);
+    await wait(550, mine);
+    mic.classList.add("live");
+    for (const w of reply.split(" ")) { await wait(170 + w.length * 24, mine); heard.textContent += (heard.textContent ? " " : "") + w; }
+    await wait(420, mine);
+    mic.classList.remove("live");
+    el.querySelectorAll(".ans span")[pick].classList.add("pick");
+    await wait(520, mine);
+    heard.textContent = "";
+    el.classList.add("done");
+    line("mine", "<p>" + reply + "</p>");
+  };
+  const drive = async (mine) => {
+    try {
+      for (;;) {
+        await report("catalog import", "Imported 1,240 parts. All tests pass.", mine);
+        await wait(1300, mine);
+        await ask("orders refunds", "Refunds for 14 customers are ready. Send them?", ["Send", "Show me first"], 0, "Send them", mine);
+        await wait(1500, mine);
+        await report("logistics rates", "All three carriers are updated.", mine);
+        await wait(1300, mine);
+        await ask("payouts schedule", "Payout email: Mondays or Fridays?", ["Mondays", "Fridays"], 1, "Fridays, right after payouts go out", mine);
+        await wait(1900, mine);
+      }
+    } catch (stopped) {}
+  };
+  if (still) {
+    line("say", "<small>" + badge("catalog import") + "catalog import</small><p>" + words("Imported 1,240 parts. All tests pass.", true) + "</p>").classList.add("in");
+    line("ask", '<div class="ccard"><small>' + badge("orders refunds") + 'orders refunds</small><p>' + words("Refunds for 14 customers are ready. Send them?", true) + '</p><div class="ans"><span>Send</span><span>Show me first</span></div></div>').classList.add("in");
+    return;
+  }
+  new IntersectionObserver((seen) => {
+    showing = seen[0].isIntersecting;
+    car.classList.toggle("live", showing);
+    showing ? road.unpauseAnimations() : road.pauseAnimations();
+    if (!showing) return;
+    turn += 1;
+    feed.innerHTML = "";
+    heard.textContent = "";
+    mic.classList.remove("live");
+    drive(turn);
+  }, { threshold: 0.3 }).observe(car);
+})();
+</script>
+<script>
+// What each working team is doing, as a small bubble out of its chip.
+(function () {
+  const phone = document.getElementById("phone"), chips = document.getElementById("chips");
+  if (!phone || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const doing = document.createElement("div");
+  doing.className = "doing";
+  phone.appendChild(doing);
+  // in the app these are each agent's own words for its latest step
+  const steps = {
+    orders: ["Running the payments tests", "Checking yesterday's duplicate charges", "Deploying the fix"],
+    catalog: ["Building the part page", "Taking two screenshots", "Mapping the Northway columns", "Importing 1,240 parts"],
+    payouts: ["Writing the weekly summary email", "Checking the totals against last week"],
+    logistics: ["Updating the carrier rates", "Running the rates tests"],
+  };
+  const next = {};
+  let turn = 0;
+  const wait = (ms) => new Promise((go) => setTimeout(go, ms));
+  (async function () {
+    for (;;) {
+      const busy = [...chips.querySelectorAll(".chip.busy")].filter((c) => steps[c.dataset.room]);
+      // never over a picture he has opened, or the quick messages
+      if (!busy.length || document.hidden || phone.querySelector(".look.open, .quick.open")) { await wait(600); continue; }
+      const chip = busy[turn++ % busy.length], room = chip.dataset.room;
+      const text = steps[room][(next[room] = ((next[room] === undefined ? -1 : next[room]) + 1) % steps[room].length)];
+      // where it sits: just under the chips, its tail under that team's chip, never past the phone's edge
+      doing.textContent = text;
+      const middle = chip.offsetLeft + chip.offsetWidth / 2, left = Math.max(12, Math.min(middle - 18, phone.clientWidth - doing.offsetWidth - 12));
+      doing.style.top = chips.offsetTop + chips.offsetHeight + 5 + "px";
+      doing.style.left = left + "px";
+      doing.style.setProperty("--tail", middle - left - 4 + "px");
+      doing.textContent = "";
+      doing.classList.add("on");
+      for (const letter of text) { doing.textContent += letter; await wait(14 + Math.random() * 22); }
+      await wait(1500);
+      doing.classList.remove("on");
+      await wait(900);
+    }
+  })();
+})();
+</script>
+</body>
+</html>

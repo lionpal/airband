@@ -1,0 +1,18 @@
+[package]
+name = "airband-radio"
+description = "The radio: the whole phone-side conversation loop. A host app only speaks text and listens for speech."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+airband-core = { path = "../airband-core" }
+serde.workspace = true
+serde_json.workspace = true
+ureq.workspace = true
+uniffi.workspace = true
+getrandom = "0.3"

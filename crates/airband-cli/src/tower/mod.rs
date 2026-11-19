@@ -1,0 +1,226 @@
+//! `airband run`: the tower.
+//!
+//! Agents → him: adapters post `airband.agent/1` events. When an agent finishes a turn, the tower cuts what it
+//! wrote down to one or two spoken sentences, puts the agent's callsign in front, and hands it to the radio,
+//! one transmission at a time, blocking questions first. Nothing is summarised while no radio is connected.
+//! Him → agents: the radio posts what he said as text. A leading callsign picks the agent; otherwise it goes
+//! to whoever spoke last. The tower delivers it the way that agent said it can be reached.
+//!
+//! Radios reach it through a relay (relay_link.rs), sealed end to end, or directly: it listens on 127.0.0.1
+//! and this machine's Tailscale address only, and every direct request needs the token.
+//!
+//! Where things are:
+//! - this file: starting the tower up, and the pieces every module shares
+//! - `state`: what the tower remembers (agents, the chat log, each radio's call) and the rules about it
+//! - `intake`: agents' events coming in
+//! - `judge`: what is worth his attention, and in how few words (asks the model)
+//! - `route`: who a reply is for, and the controls the tower answers itself
+//! - `deliver`: the ways of getting his words to an agent
+//! - `launch`: starting a new agent in a known project
+//! - `pump`: call mode's one-at-a-time queue
+//! - `http`: the routes
+//! - `permit`: permission an agent's harness asks for, put to him and answered from the phone
+//! - `pictures`: small copies of the pictures agents look at or make for him
+//! - `ears`: what listens to him, and the pass the phone needs for it
+//! - `speech`: the tower's voice: a sentence to audio, started early and handed over in parts
+//! - `store`: the database: the chat log, the raw event record, receipts, delivery attempts
+//! - `relay_link`: the outbound connection to the relay, one per paired radio
+mod accounts;
+mod deliver;
+mod ears;
+mod http;
+mod intake;
+mod judge;
+mod launch;
+mod permit;
+mod pictures;
+mod pump;
+mod relay_link;
+mod route;
+mod speech;
+mod state;
+mod store;
+
+use deliver::*;
+use intake::*;
+use judge::*;
+use launch::*;
+use pump::*;
+use route::*;
+use state::*;
+use store::*;
+
+use crate::config::{self, Config, Summarizer};
+use axum::extract::{Path, Query, Request, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::process::Stdio;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::io::AsyncWriteExt;
+use tokio::sync::Notify;
+use airband_core::agent::{self, Agent, AgentEvent, Deliver, Event};
+use airband_core::radio::{Feed, Heard, Kind, Message, More, Reply, RosterEntry, Transmission, Utterance, in_scope};
+use airband_core::routing::{Callsign, Control, parse_utterance};
+use airband_core::speech::{opening, reads_as_written, spoken};
+
+/// The header a radio names itself in, so each has its own place in a call. A radio that comes through the
+/// relay is named by its pairing; one that sends nothing is "radio".
+pub(crate) const RADIO_HEADER: &str = "x-airband-radio";
+
+/// How long `GET next` is held open.
+const HOLD: Duration = Duration::from_secs(25);
+/// A radio that has not asked for this long is gone.
+const RADIO_GONE: Duration = Duration::from_secs(40);
+/// A radio that took a transmission and never said "ready" is assumed free again after this.
+const READY_TIMEOUT: Duration = Duration::from_secs(120);
+
+pub struct App {
+    pub cfg: Config,
+    store: Store,
+    speech: speech::Speech,
+    /// Microsoft's short-lived pass for the phone's ears, and when it was made.
+    ears_pass: Mutex<Option<(String, Instant)>>,
+    inner: Mutex<Inner>,
+    kick: Notify,
+    accounts: accounts::Kept,
+}
+
+/// What each working agent is doing, asked of its harness's adapter every couple of seconds, and only while a
+/// radio has read the feed lately: with nobody looking this costs nothing. An adapter that cannot say leaves
+/// whatever the agent reported itself (an `activity` event).
+async fn activity_loop(app: Arc<App>) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let working: Vec<agent::Agent> = {
+            let inner = app.inner.lock().unwrap();
+            if !inner.last_reader.is_some_and(|t| t.elapsed() < Duration::from_secs(40)) {
+                continue;
+            }
+            inner.sessions.iter().filter(|s| !s.waiting).map(|s| s.agent.clone()).collect()
+        };
+        if working.is_empty() {
+            continue;
+        }
+        let found = tokio::task::spawn_blocking(move || working.into_iter().filter_map(|a| crate::adapters::activity(&a).map(|doing| (a.id, doing))).collect::<Vec<_>>()).await.unwrap_or_default();
+        let mut inner = app.inner.lock().unwrap();
+        for (id, doing) in found {
+            if let Some(s) = inner.session(&id).filter(|s| !s.waiting) {
+                s.doing = Some(doing);
+            }
+        }
+    }
+}
+
+fn log(msg: impl AsRef<str>) {
+    let s = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    println!("{:02}:{:02}:{:02}Z {}", s / 3600 % 24, s / 60 % 60, s % 60, msg.as_ref());
+}
+fn now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
+#[cfg(unix)]
+fn alive(pid: u32) -> bool {
+    // signal 0 only asks; "not permitted" still means it exists
+    unsafe { libc::kill(pid as i32, 0) == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM) }
+}
+#[cfg(not(unix))]
+fn alive(_pid: u32) -> bool {
+    true // not checked on this platform yet: an agent leaves when it signs off or a delivery fails
+}
+
+impl App {
+    /// Write what has changed: new and updated messages, and who is on the radio.
+    fn save(&self, inner: &Inner) {
+        let touched: HashSet<String> = inner.unsaved.borrow_mut().drain().collect();
+        let entries: Vec<Entry> = inner.log.iter().filter(|e| touched.contains(&e.id)).cloned().collect();
+        self.store.put_messages(&entries);
+        self.store.save_state(&Saved { sessions: inner.sessions.clone(), pending: inner.pending.clone(), projects: inner.projects.clone(), colours: inner.colours.clone() });
+    }
+}
+
+pub fn triage(cfg: Config) -> Result<(), String> {
+    let mut full = String::new();
+    std::io::Read::read_to_string(&mut std::io::stdin(), &mut full).map_err(|e| e.to_string())?;
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
+    let item = Item { id: String::new(), agent_id: String::new(), notice: false, full: full.trim().to_string(), kind: None, say: None, detail: None, created: 0, asked: None };
+    let j = rt.block_on(prepare(&cfg, &item));
+    println!("{}\t{}\t{}", serde_json::to_value(j.kind).unwrap().as_str().unwrap_or(""), j.say, j.options.iter().enumerate().map(|(i, o)| if j.recommended == Some(i as u32) { format!("[{o}]") } else { o.clone() }).collect::<Vec<_>>().join(" | "));
+    Ok(())
+}
+
+pub fn run(cfg: Config) -> Result<(), String> {
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().map_err(|e| e.to_string())?;
+    rt.block_on(async move {
+        let store = Store::open(&config::dir().join("airband.db"))?;
+        let (saved, entries) = store.load(LOG_KEEP);
+        let (seq, rev) = store.last_counts();
+        let mut inner = Inner { sessions: saved.sessions, pending: saved.pending, projects: saved.projects, colours: saved.colours, seq, rev, log: entries, ..Inner::default() };
+        inner.reap();
+        // a team from before teams had colours gets one now, not at its agents' next word
+        inner.colour_teams();
+        inner.adopt_old_lines();
+        pictures::prune();
+        let live: HashSet<String> = inner.sessions.iter().map(|s| s.agent.id.clone()).collect();
+        inner.pending.retain(|p| live.contains(&p.agent_id));
+        let port = cfg.port;
+        let app = Arc::new(App { cfg, store, speech: speech::Speech::default(), ears_pass: Mutex::new(None), inner: Mutex::new(inner), kick: Notify::new(), accounts: accounts::Kept::default() });
+        let router = http::router(app.clone());
+
+        tokio::spawn(pump_loop(app.clone()));
+        tokio::spawn(accounts::keep_alive(app.clone()));
+        tokio::spawn(activity_loop(app.clone()));
+        relay_link::start(app.clone(), router.clone(), tokio::runtime::Handle::current());
+        {
+            let app = app.clone();
+            tokio::spawn(async move {
+                let mut ticks = 0u32;
+                loop {
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    ticks += 1;
+                    // old copies of pictures go once an hour, not only when the tower starts: it runs for weeks
+                    if ticks % 120 == 0 {
+                        tokio::task::spawn_blocking(pictures::prune);
+                    }
+                    let mut inner = app.inner.lock().unwrap();
+                    if inner.reap() {
+                        app.save(&inner);
+                    }
+                }
+            });
+        }
+
+        let local = tokio::net::TcpListener::bind(("127.0.0.1", port)).await.map_err(|e| format!("cannot listen on 127.0.0.1:{port}: {e} (is a tower already running?)"))?;
+        log(format!("listening on 127.0.0.1:{port}"));
+        {
+            let router = router.clone();
+            tokio::spawn(async move { axum::serve(local, router).await });
+        }
+        // Tailscale may come up after the tower does, or change address
+        let mut bound = HashSet::new();
+        loop {
+            for addr in config::tailscale_addrs() {
+                if bound.contains(&addr) {
+                    continue;
+                }
+                match tokio::net::TcpListener::bind((addr, port)).await {
+                    Ok(l) => {
+                        log(format!("listening on {addr}:{port}"));
+                        bound.insert(addr);
+                        let router = router.clone();
+                        tokio::spawn(async move { axum::serve(l, router).await });
+                    }
+                    Err(e) => log(format!("cannot listen on {addr}:{port}: {e}")),
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        }
+    })
+}

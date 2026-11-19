@@ -1,0 +1,27 @@
+{
+  "account": "123456789012",
+  "region": "us-east-1",
+  "zoneName": "example.com",
+  "zoneId": "\u2026",
+  "domain": "relay.example.com",
+  "vpcId": "\u2026",
+  "publicSubnets": [
+    "\u2026",
+    "\u2026"
+  ],
+  "zones": [
+    "\u2026",
+    "\u2026"
+  ],
+  "albArn": "\u2026",
+  "albDns": "\u2026",
+  "albZone": "\u2026",
+  "albSg": "\u2026",
+  "listenerArn": "\u2026",
+  "dbHost": "\u2026",
+  "dbName": "airband",
+  "auroraSgId": "\u2026",
+  "dbSecretArn": "\u2026",
+  "rulePriority": 50,
+  "albIngressNote": "load balancer to the airband relay task"
+}

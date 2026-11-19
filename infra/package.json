@@ -1,0 +1,8 @@
+{
+  "name": "airband-infra",
+  "private": true,
+  "type": "module",
+  "scripts": { "synth": "cdk synth", "diff": "cdk diff", "deploy": "cdk deploy --require-approval never" },
+  "devDependencies": { "aws-cdk": "^2.1010.0" },
+  "dependencies": { "aws-cdk-lib": "^2.170.0", "constructs": "^10.4.2" }
+}

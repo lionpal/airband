@@ -1,0 +1,17 @@
+[package]
+name = "airband-core"
+description = "Every rule the tower, the relay and the radio share: the protocols' types, callsigns, what an utterance means, what can be said aloud, and the relay's encryption"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+regex = "1"
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+getrandom = "0.3"
+base64 = "0.22"

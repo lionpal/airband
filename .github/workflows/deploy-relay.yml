@@ -1,0 +1,45 @@
+name: Deploy relay.airband.dev
+# Every push to main that could change the relay deploys it. Only those: the relay is built from its own crate
+# and the core, so a change to the docs, the phone app, the tower or the design files cannot change what runs at
+# relay.airband.dev, and deploying for one would spend build minutes to ship the same image. The list below is
+# what the image and its infrastructure are made from; add to it if the Dockerfile starts copying anything else.
+# It can still be run by hand (Actions tab, "Run workflow").
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/airband-relay/**'
+      - 'crates/airband-core/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'infra/**'
+      - '.github/workflows/deploy-relay.yml'
+  workflow_dispatch:
+concurrency: { group: deploy-relay, cancel-in-progress: false }
+permissions: { id-token: write, contents: read }
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test the core and the relay here, so a broken build fails before anything is deployed
+        run: cargo test -p airband-core -p airband-relay
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: aws-actions/configure-aws-credentials@v4
+        with: { role-to-assume: '${{ vars.AWS_DEPLOY_ROLE_ARN }}', aws-region: ap-northeast-1 }
+      - name: Deploy
+        working-directory: infra
+        env: { AIRBAND_INFRA: '${{ secrets.AIRBAND_INFRA }}' }
+        run: npm ci --no-audit --no-fund && npx cdk deploy AirbandRelay --require-approval never
+      - name: Check the live relay answers
+        run: |
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' https://relay.airband.dev/healthz || true)
+            echo "attempt $i: $code"; [ "$code" = "200" ] && exit 0; sleep 15
+          done
+          exit 1

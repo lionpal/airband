@@ -1,0 +1,35 @@
+name: Deploy airband.dev
+# The homepage: one static page (site/index.html) behind a CDN. It deploys by itself, on a change to the page or
+# to the infrastructure, and never touches the relay: a copy change must not drop anyone's phone.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'infra/**'
+      - '.github/workflows/deploy-site.yml'
+  workflow_dispatch:
+concurrency: { group: deploy-site, cancel-in-progress: false }
+permissions: { id-token: write, contents: read }
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: aws-actions/configure-aws-credentials@v4
+        with: { role-to-assume: '${{ vars.AWS_DEPLOY_ROLE_ARN }}', aws-region: us-east-1 }
+      - name: Deploy
+        working-directory: infra
+        env: { AIRBAND_INFRA: '${{ secrets.AIRBAND_INFRA }}' }
+        run: npm ci --no-audit --no-fund && npx cdk deploy AirbandSite --require-approval never
+      - name: Check the live page is the one in this commit
+        run: |
+          want=$(grep -o '<title>[^<]*</title>' site/index.html)
+          for i in $(seq 1 20); do
+            got=$(curl -s https://airband.dev/ | grep -o '<title>[^<]*</title>' || true)
+            echo "attempt $i: $got"; [ "$got" = "$want" ] && exit 0; sleep 15
+          done
+          exit 1

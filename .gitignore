@@ -1,0 +1,12 @@
+target/
+apps/apple/Generated/
+apps/apple/*.xcodeproj/
+apps/apple/build/
+.DS_Store
+apps/apple/Info.plist
+infra/node_modules/
+infra/cdk.out/
+relay-data/
+apps/apple/.env.testflight
+apps/apple/build-sim/
+__pycache__/
