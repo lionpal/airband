@@ -448,7 +448,9 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
     let (mut sent, mut failed) = (Vec::new(), Vec::new());
     for t in &targets {
         let outcome = match &t.agent.deliver {
-            Some(how) => deliver(how, &t.agent.id, &content).await,
+            // one the tower runs itself gets his words as his own turn, with nothing in front
+            Some(Deliver::Held) => deliver(app, &Deliver::Held, &t.agent.id, &format!("{}{files}", parsed.rest)).await,
+            Some(how) => deliver(app, how, &t.agent.id, &content).await,
             None => Err("its harness gave no way to reach it".into()),
         };
         app.store.delivery(&message_id, uid, &t.callsign.text(), &outcome);

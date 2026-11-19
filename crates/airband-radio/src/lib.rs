@@ -141,7 +141,7 @@ fn chat_feed(feed: Feed) -> ChatFeed {
     ChatFeed {
         seq: feed.seq,
         messages: feed.messages.into_iter().map(chat).collect(),
-        agents: feed.roster.into_iter().map(|r| ChatAgent { id: r.id, callsign: r.callsign, group: r.group, harness: r.harness, waiting: r.waiting, reachable: r.reachable, state: r.state, subagents: r.subagents, doing: r.doing, model: r.model, effort: r.effort }).collect(),
+        agents: feed.roster.into_iter().map(|r| ChatAgent { id: r.id, callsign: r.callsign, group: r.group, harness: r.harness, waiting: r.waiting, reachable: r.reachable, state: r.state, subagents: r.subagents, doing: r.doing, held: r.held, model: r.model, effort: r.effort }).collect(),
         quick: feed.quick.into_iter().map(|q| QuickMessage { label: q.label, text: q.text }).collect(),
         projects: feed.projects,
         colours: feed.colours.into_iter().collect(),
@@ -252,6 +252,8 @@ pub struct ChatAgent {
     pub subagents: u32,
     /// What it is doing right now, in a few words, while it works and its harness can say.
     pub doing: Option<String>,
+    /// The tower runs it itself, so his words reach it as his own.
+    pub held: bool,
     /// The model it runs on ("Opus 4.7") and how hard it is set to think ("high"), when its harness can say.
     pub model: Option<String>,
     pub effort: Option<String>,
@@ -558,6 +560,18 @@ impl Radio {
             (200, Some(why), _, _) => Err(RadioError::Told { reason: why.into() }),
             (200, None, Some(callsign), Some(team)) => Ok(vec![callsign.to_string(), team.to_string()]),
             (404, _, _, _) => Err(RadioError::Told { reason: "Update airband on this computer to move its agents.".into() }),
+            _ => Err(RadioError::Refused),
+        }
+    }
+
+    /// Have the tower take over an agent he started in a terminal: that session ends there and carries on in a
+    /// process the tower holds. Blocks: call it off the main thread.
+    pub fn take_over(&self, agent: String) -> Result<(), RadioError> {
+        let (status, v) = self.link.request("POST", "/takeover", Some(serde_json::json!({ "agent": agent })))?;
+        match (status, v["error"].as_str()) {
+            (200, Some(why)) => Err(RadioError::Told { reason: why.into() }),
+            (200, None) => Ok(()),
+            (404, _) => Err(RadioError::Told { reason: "Update airband on this computer first.".into() }),
             _ => Err(RadioError::Refused),
         }
     }

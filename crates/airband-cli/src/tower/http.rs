@@ -75,6 +75,19 @@ async fn team(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::M
     })
 }
 
+/// He asked the tower to take over an agent he started in a terminal.
+async fn takeover(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::TakeOver>) -> Json<Value> {
+    Json(match held::take_over(&app, &to.agent).await {
+        Ok(()) => json!({}),
+        Err(why) => json!({ "error": why }),
+    })
+}
+
+/// End an agent the tower runs itself (`airband end <id>`).
+async fn held_end(State(app): State<Arc<App>>, Path(id): Path<String>) -> StatusCode {
+    if held::end(&app, &id) { StatusCode::NO_CONTENT } else { StatusCode::NOT_FOUND }
+}
+
 /// A harness asks whether its agent may do something. The answer is fetched separately, so nothing is held open
 /// across a tower restart.
 async fn permission_ask(State(app): State<Arc<App>>, Json(ask): Json<airband_core::agent::PermissionAsk>) -> Json<airband_core::agent::PermissionState> {
@@ -380,6 +393,7 @@ async fn status(State(app): State<Arc<App>>) -> Json<Value> {
 pub(super) fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/v1/agent/events", post(events))
+        .route("/v1/agent/held/{id}", axum::routing::delete(held_end))
         .route("/v1/agent/permission", post(permission_ask))
         .route("/v1/agent/permission/{id}", get(permission_state).delete(permission_withdraw))
         .route("/v1/radio/next", get(next))
@@ -395,6 +409,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/radio/accounts", get(accounts_list))
         .route("/v1/radio/accounts/use", post(accounts_use))
         .route("/v1/radio/team", post(team))
+        .route("/v1/radio/takeover", post(takeover))
         .route("/v1/status", get(status))
         .layer(middleware::from_fn_with_state(app.clone(), auth))
         .with_state(app)

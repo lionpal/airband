@@ -195,6 +195,14 @@ pub struct MoveAgent {
     pub team: String,
 }
 
+/// `POST takeover`: have the tower take over an agent he started in a terminal of his own. That terminal's
+/// session is ended and the same conversation carried on in a process the tower holds, so his words reach it
+/// as his own. The answer is `{}` or `{error}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TakeOver {
+    pub agent: String,
+}
+
 /// The quick messages every tower offers. A tower adds his own after these (`quick` in its configuration).
 pub fn quick_defaults() -> Vec<Quick> {
     [
@@ -384,6 +392,10 @@ pub struct RosterEntry {
     /// What it is doing right now, in a few words, while it is working and that is known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub doing: Option<String>,
+    /// The tower runs this agent itself and holds its input, so what he says reaches it as his own words. One
+    /// he started in a terminal of his own is reached as a message from outside, which it treats with more care.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub held: bool,
     /// The model it runs on, as a person would say it ("Opus 4.7"), when its harness can tell.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,

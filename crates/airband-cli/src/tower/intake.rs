@@ -28,6 +28,7 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
             log(format!("{} signed off", s.callsign.text()));
         }
         inner.remove(&id);
+        held::forget(&mut inner, &id);
         app.save(&inner);
         return Ok(());
     }

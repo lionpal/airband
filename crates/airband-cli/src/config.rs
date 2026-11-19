@@ -124,11 +124,29 @@ pub struct Launcher {
     /// The arguments that choose an effort, with `{effort}` filled in.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub with_effort: Vec<String>,
+    /// When set, the tower does not hand the agent off: it keeps the process and its input, and writes his
+    /// words there as his own turns. `argv` then starts a program that reads one message a line on standard
+    /// input for as long as it runs; `{task}` is not used, the task is the first message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<Held>,
+}
+
+/// How a held agent is started and spoken to. Each list is arguments, with `{id}` the session's id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Held {
+    /// Arguments that start a new session under an id the tower chose.
+    pub fresh: Vec<String>,
+    /// Arguments that carry on the session with that id.
+    pub resume: Vec<String>,
+    /// One line of input for one message of his, with `{text}` where his words go as a JSON string.
+    pub line: String,
 }
 
 fn default_launcher() -> String {
-    "claude-code".into()
+    "claude-held".into()
 }
+/// The launcher every tower used before it could hold an agent itself.
+const LAUNCHER_HANDED_OFF: &str = "claude-code";
 /// Claude Code in a detached tmux session: an ordinary interactive session he can attach to at his desk
 /// (`tmux attach -t <session>`), which reports in through the same hooks as any other.
 fn default_launchers() -> BTreeMap<String, Launcher> {
@@ -139,8 +157,16 @@ fn default_launchers() -> BTreeMap<String, Launcher> {
         efforts: list(&["low", "medium", "high", "xhigh", "max"]),
         with_model: list(&["--model", "{model}"]),
         with_effort: list(&["--effort", "{effort}"]),
+        held: None,
     };
-    BTreeMap::from([(default_launcher(), claude)])
+    // Claude Code run by the tower itself, the way its Agent SDK runs it: one process that takes his messages a
+    // line at a time. What he says is his own turn there, and it reports through the same hooks as any other.
+    let held = Launcher {
+        argv: list(&["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "{options}"]),
+        held: Some(Held { fresh: list(&["--session-id", "{id}"]), resume: list(&["--resume", "{id}"]), line: r#"{"type":"user","message":{"role":"user","content":{text}}}"#.into() }),
+        ..claude.clone()
+    };
+    BTreeMap::from([(LAUNCHER_HANDED_OFF.to_string(), claude), (default_launcher(), held)])
 }
 /// The launcher every tower had before a model could be asked for. One still set to exactly this is brought up
 /// to date; one he has changed is his and is left alone.
@@ -262,6 +288,15 @@ pub fn load() -> Config {
     }
     if cfg.launchers.get(&default_launcher()).is_some_and(|l| l.models.is_empty() && l.argv.iter().map(String::as_str).eq(LAUNCHER_BEFORE_MODELS.iter().copied())) {
         cfg.launchers.extend(default_launchers());
+    }
+    // a tower set up before it could hold agents itself gets that launcher, and uses it if it was on the old default
+    if !cfg.launchers.contains_key(&default_launcher()) {
+        if let Some(held) = default_launchers().remove(&default_launcher()) {
+            cfg.launchers.insert(default_launcher(), held);
+        }
+        if cfg.launcher == LAUNCHER_HANDED_OFF {
+            cfg.launcher = default_launcher();
+        }
     }
     let text = format!("{}\n", serde_json::to_string_pretty(&cfg).unwrap());
     if existing.as_deref() != Some(text.as_str()) {

@@ -2,9 +2,10 @@
 //! airband-core). A new way to reach an agent is a new variant there and a new arm here.
 use super::*;
 
-pub(super) async fn deliver(how: &Deliver, agent_id: &str, content: &str) -> Result<(), String> {
+pub(super) async fn deliver(app: &Arc<App>, how: &Deliver, agent_id: &str, content: &str) -> Result<(), String> {
     let run = async {
         match how {
+            Deliver::Held => held::tell(app, agent_id, content).await,
             Deliver::ClaudeCodeInbox { socket, token } => {
                 let mut lines = String::new();
                 if let Some(t) = token {

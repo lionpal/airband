@@ -28,6 +28,7 @@
 mod accounts;
 mod attachments;
 mod deliver;
+mod held;
 mod ears;
 mod http;
 mod intake;
@@ -212,7 +213,7 @@ impl App {
         let touched: HashSet<String> = inner.unsaved.borrow_mut().drain().collect();
         let entries: Vec<Entry> = inner.log.iter().filter(|e| touched.contains(&e.id)).cloned().collect();
         self.store.put_messages(&entries);
-        self.store.save_state(&Saved { sessions: inner.sessions.clone(), pending: inner.pending.clone(), projects: inner.projects.clone(), colours: inner.colours.clone() });
+        self.store.save_state(&Saved { sessions: inner.sessions.clone(), pending: inner.pending.clone(), projects: inner.projects.clone(), colours: inner.colours.clone(), held: inner.held.clone() });
     }
 }
 
@@ -232,7 +233,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         let store = Store::open(&config::dir().join("airband.db"))?;
         let (saved, entries) = store.load(LOG_KEEP);
         let (seq, rev) = store.last_counts();
-        let mut inner = Inner { sessions: saved.sessions, pending: saved.pending, projects: saved.projects, colours: saved.colours, seq, rev, log: entries, ..Inner::default() };
+        let mut inner = Inner { sessions: saved.sessions, pending: saved.pending, projects: saved.projects, colours: saved.colours, held: saved.held, seq, rev, log: entries, ..Inner::default() };
         inner.reap();
         // a team from before teams had colours gets one now, not at its agents' next word
         inner.colour_teams();
@@ -249,6 +250,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         tokio::spawn(accounts::keep_alive(app.clone()));
         tokio::spawn(activity_loop(app.clone()));
         tokio::spawn(lent_pass_loop(app.clone()));
+        held::carry_on(&app).await;
         relay_link::start(app.clone(), router.clone(), tokio::runtime::Handle::current());
         {
             let app = app.clone();

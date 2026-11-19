@@ -58,6 +58,9 @@ pub enum Deliver {
     },
     /// Run a command with the message on its standard input. `AIRBAND_AGENT_ID` is set in its environment.
     Command { argv: Vec<String> },
+    /// The tower started this agent and holds its input: his words are written there as his own turn, with
+    /// nothing around them. Nothing else can reach it this way.
+    Held,
     /// Type the message into a tmux pane and press Enter: works for any harness that runs in a terminal.
     Tmux { target: String },
     /// A kind this tower does not know yet.

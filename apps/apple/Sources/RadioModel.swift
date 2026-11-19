@@ -153,6 +153,21 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         desk.send(text: words.isEmpty && !tray.isEmpty ? "Look at what I attached." : text, re: target?.id, room: room, agent: only)
     }
 
+    /// Have its computer take over an agent he started in a terminal, so his words reach it as his own.
+    func takeOver(_ agent: DeskMember) {
+        fetch.async {
+            let result = Result { try self.desk.takeOver(agent: agent.id) }
+            DispatchQueue.main.async {
+                switch result {
+                case .success: break
+                case .failure(RadioError.Told(let reason)): self.problem = reason
+                case .failure(RadioError.Offline): self.problem = "Cannot reach that computer."
+                case .failure: self.problem = "It was not taken over."
+                }
+            }
+        }
+    }
+
     /// Send the words of one of his messages again, to another agent.
     func resend(_ m: ChatMessage, to agent: DeskMember) {
         if m.long { loadFull(m) }

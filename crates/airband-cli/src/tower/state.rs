@@ -178,6 +178,8 @@ pub(super) struct Inner {
     pub(super) projects: BTreeMap<String, String>,
     /// Each team's colour: its place in a radio's list of team colours. Given when the team is first seen.
     pub(super) colours: BTreeMap<String, u8>,
+    /// The agents the tower runs itself.
+    pub(super) held: Vec<held::Kept>,
     /// Each radio that has been heard from, by the id it gives.
     pub(super) calls: HashMap<String, Call>,
     /// When each open message was last put in front of him on a call, and how many times: for reminders.
@@ -210,6 +212,8 @@ pub(crate) struct Saved {
     pub(super) projects: BTreeMap<String, String>,
     #[serde(default)]
     pub(super) colours: BTreeMap<String, u8>,
+    #[serde(default)]
+    pub(super) held: Vec<held::Kept>,
 }
 
 impl Inner {
@@ -260,7 +264,7 @@ impl Inner {
         }
     }
     pub(super) fn reap(&mut self) -> bool {
-        let dead: Vec<(String, String)> = self.sessions.iter().filter(|s| s.agent.pid.is_some_and(|p| !alive(p))).map(|s| (s.agent.id.clone(), s.callsign.text())).collect();
+        let dead: Vec<(String, String)> = self.sessions.iter().filter(|s| s.agent.deliver != Some(Deliver::Held) && s.agent.pid.is_some_and(|p| !alive(p))).map(|s| (s.agent.id.clone(), s.callsign.text())).collect();
         for (id, callsign) in &dead {
             log(format!("{callsign} is gone"));
             self.remove(id);
@@ -530,7 +534,7 @@ impl Inner {
     }
     pub(super) fn roster_entries(&self) -> Vec<RosterEntry> {
         let open = self.open_ids();
-        self.sessions.iter().map(|s| RosterEntry { id: s.agent.id.clone(), callsign: s.callsign.text(), group: s.callsign.project.clone(), harness: s.agent.harness.clone(), waiting: s.waiting, state: self.state_of(s, &open).into(), subagents: s.subagents, reachable: s.agent.deliver.is_some(), doing: s.doing.clone().filter(|_| !s.waiting), model: s.model.clone(), effort: s.effort.clone() }).collect()
+        self.sessions.iter().map(|s| RosterEntry { id: s.agent.id.clone(), callsign: s.callsign.text(), group: s.callsign.project.clone(), harness: s.agent.harness.clone(), waiting: s.waiting, state: self.state_of(s, &open).into(), subagents: s.subagents, reachable: s.agent.deliver.is_some(), doing: s.doing.clone().filter(|_| !s.waiting), held: s.agent.deliver == Some(Deliver::Held), model: s.model.clone(), effort: s.effort.clone() }).collect()
     }
     /// Where a new agent can be started: what the configuration lists, then wherever agents have been seen.
     pub(super) fn launchable(&self, cfg: &Config) -> BTreeMap<String, String> {

@@ -71,6 +71,9 @@ pub struct DeskMember {
     pub engine: String,
     /// The computer it is on, when he is paired with more than one; empty otherwise.
     pub station: String,
+    /// The tower runs it itself, so his words reach it as his own. One that is not was started in a terminal
+    /// and is only left messages from outside; the tower can take it over.
+    pub held: bool,
 }
 
 /// Everything a chat screen shows, for the team or the agent he is looking at (or all of them).
@@ -467,7 +470,7 @@ impl Desk {
         let rank = |s: &str| ["idle", "working", "stalled", "asking"].iter().position(|x| *x == s).unwrap_or(0);
         let mut rooms: Vec<DeskRoom> = Vec::new();
         for a in &agents {
-            let member = DeskMember { id: a.id.clone(), callsign: a.callsign.clone(), state: a.state.clone(), subagents: a.subagents, doing: a.doing.clone(), badge: airband_core::routing::badge(&a.group, &a.callsign), engine: [a.model.as_deref(), a.effort.as_deref()].into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} "), station: if state.stations.len() > 1 { state.stations.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(|s| s.name.clone()).unwrap_or_default() } else { String::new() } };
+            let member = DeskMember { id: a.id.clone(), callsign: a.callsign.clone(), state: a.state.clone(), subagents: a.subagents, doing: a.doing.clone(), held: a.held, badge: airband_core::routing::badge(&a.group, &a.callsign), engine: [a.model.as_deref(), a.effort.as_deref()].into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} "), station: if state.stations.len() > 1 { state.stations.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(|s| s.name.clone()).unwrap_or_default() } else { String::new() } };
             // what the team is doing is said in the name of whoever is doing it, without the team's own name
             let doing = a.doing.as_ref().map(|d| match a.callsign.strip_prefix(&a.group).map(str::trim).filter(|rest| !rest.is_empty()) {
                 Some(who) => format!("{who}: {d}"),
@@ -729,8 +732,11 @@ impl Desk {
     /// reached, or whose airband is too old, comes back with a note and no accounts. Blocks: call it off the
     /// main thread.
     pub fn accounts(&self, fresh: bool) -> Vec<StationAccounts> {
-        let radios: Vec<(String, Arc<Radio>)> = self.shared.state.lock().unwrap().stations.iter().map(|s| (s.name.clone(), s.radio.clone())).collect();
-        radios
+        // a computer is always headed by a name: its own, or its place in the list until it has said its own
+        let radios: Vec<(String, Arc<Radio>)> = self.shared.state.lock().unwrap().stations.iter().enumerate().map(|(i, s)| (if s.name.is_empty() { format!("computer {}", i + 1) } else { s.name.clone() }, s.radio.clone())).collect();
+        // one after another, not all at once: two computers on the same account asking Anthropic in the same
+        // moment is how one of them gets refused
+        let mut all: Vec<StationAccounts> = radios
             .into_iter()
             .map(|(name, radio)| {
                 radio.accounts(name.clone(), fresh).unwrap_or_else(|e| StationAccounts {
@@ -744,7 +750,17 @@ impl Desk {
                     checked_at: 0,
                 })
             })
-            .collect()
+            .collect();
+        // the same account on two computers has one allowance: where one computer could not be told it, what
+        // the other was told is shown
+        let known: Vec<(String, String, Vec<AccountLimit>)> = all.iter().flat_map(|s| s.accounts.iter()).filter(|a| !a.limits.is_empty()).map(|a| (a.harness.clone(), a.label.clone(), a.limits.clone())).collect();
+        for a in all.iter_mut().flat_map(|s| s.accounts.iter_mut()).filter(|a| a.limits.is_empty()) {
+            if let Some((_, _, limits)) = known.iter().find(|(harness, label, _)| *harness == a.harness && *label == a.label) {
+                a.limits = limits.clone();
+                a.problem = None;
+            }
+        }
+        all
     }
 
     /// Move one computer's sessions to another of its accounts. `station`, `harness` and `id` are as
@@ -768,6 +784,12 @@ impl Desk {
         }
         self.shared.host.changed();
         Ok(())
+    }
+
+    /// Have its computer take over an agent he started in a terminal. Blocks: call it off the main thread.
+    pub fn take_over(&self, agent: String) -> Result<(), RadioError> {
+        let radio = self.shared.state.lock().unwrap().stations.iter().find(|s| s.agents.iter().any(|a| a.id == agent)).map(|s| s.radio.clone()).ok_or(RadioError::Refused)?;
+        radio.take_over(agent)
     }
 
     /// Stop for good.
@@ -992,7 +1014,7 @@ mod tests {
             tried: true,
             answered_at: None,
             fails: 0,
-            agents: agents.iter().map(|(c, g)| ChatAgent { id: c.to_string(), callsign: c.to_string(), group: g.to_string(), harness: "h".into(), waiting: false, reachable: true, state: "working".into(), subagents: 0, doing: None, model: None, effort: None }).collect(),
+            agents: agents.iter().map(|(c, g)| ChatAgent { id: c.to_string(), callsign: c.to_string(), group: g.to_string(), harness: "h".into(), waiting: false, reachable: true, state: "working".into(), subagents: 0, doing: None, held: false, model: None, effort: None }).collect(),
             open: messages.iter().filter(|m| m.needs_you).map(|m| m.id.clone()).collect(),
             sending: Vec::new(),
             quick: Vec::new(),

@@ -1094,11 +1094,14 @@ struct AgentsMenu: View {
     @State private var over: String?
     /// The agent a new team is being named for.
     @State private var founding: DeskMember?
+    /// The agent he is about to have its computer take over.
+    @State private var taking: DeskMember?
     @State private var newTeam = ""
 
     /// The small line under an agent's name: what it runs on, and the computer it is on when there are several.
     private func under(_ agent: DeskMember) -> String {
-        [agent.engine, agent.station].filter { !$0.isEmpty }.joined(separator: " \u{b7} ")
+        // one he started in a terminal says so: it only gets messages from outside until it is taken over
+        [agent.engine, agent.station, agent.held ? "" : "in a terminal"].filter { !$0.isEmpty }.joined(separator: " \u{b7} ")
     }
 
     /// An agent dropped on a team, or on one of its agents, joins that team.
@@ -1142,6 +1145,9 @@ struct AgentsMenu: View {
                                 Button("Move to \(other.name)") { model.moveAgent(agent, to: other.name) }
                             }
                             Button { newTeam = ""; founding = agent } label: { Label("New team", systemImage: "plus") }
+                            if !agent.held {
+                                Button { taking = agent } label: { Label("Take over from the terminal", systemImage: "arrow.down.to.line") }
+                            }
                         }
                     }
                 }
@@ -1156,6 +1162,12 @@ struct AgentsMenu: View {
         .background(Palette.ground.ignoresSafeArea())
         .foregroundStyle(Palette.ink)
         .preferredColorScheme(.dark)
+        .alert("Take over \(taking?.callsign ?? "")?", isPresented: Binding(get: { taking != nil }, set: { if !$0 { taking = nil } })) {
+            Button("Take over") { if let agent = taking { model.takeOver(agent) }; taking = nil }
+            Button("Cancel", role: .cancel) { taking = nil }
+        } message: {
+            Text("Its terminal session ends, and the same conversation carries on run by airband. What you say then reaches it as your own words.")
+        }
         .alert("New team", isPresented: Binding(get: { founding != nil }, set: { if !$0 { founding = nil } })) {
             TextField("Name", text: $newTeam).textInputAutocapitalization(.never).autocorrectionDisabled()
             Button("Move") { if let agent = founding { model.moveAgent(agent, to: newTeam) }; founding = nil }

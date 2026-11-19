@@ -37,6 +37,21 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
         (None, Some(e)) => format!(" at {e} effort"),
         (None, None) => String::new(),
     };
+    if launcher.held.is_some() {
+        return match held::start(app, &app.cfg.launcher, &cwd, options, task).await {
+            Ok(_) => {
+                log(format!("started {}{with} in {project}, held by the tower: {task}", app.cfg.launcher));
+                let mut inner = app.inner.lock().unwrap();
+                inner.record(Entry { id: config::random_hex(8), from: "you".into(), group: project.into(), to: vec![format!("a new agent in {project}")], short: Some(task.into()), full: task.into(), ..Entry::default() });
+                app.save(&inner);
+                say(format!("Launching in {project}{with}."))
+            }
+            Err(e) => {
+                log(format!("launch in {project} failed: {e}"));
+                say(format!("Could not launch in {project}: {}", spoken(&e).chars().take(120).collect::<String>()))
+            }
+        };
+    }
     let stamp = now() / 1000 % 100_000;
     let session = format!("airband-{}-{stamp}", project.replace(' ', "-"));
     let fill = |a: &String| a.replace("{cwd}", &cwd).replace("{task}", task).replace("{project}", project).replace("{session}", &session);

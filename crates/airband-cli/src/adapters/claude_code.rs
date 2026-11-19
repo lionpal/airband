@@ -83,9 +83,12 @@ fn agent_of(hook: &Value) -> Option<Agent> {
         harness: "claude-code".into(),
         cwd: text("cwd"),
         name: env("AIRBAND_NAME"),
-        title: session_name(hook),
+        // one the tower holds keeps the name it has: a session carried on in a new process comes with a name of
+        // the harness's own making, which is not one he gave it
+        title: if env("AIRBAND_HELD").is_some() { None } else { session_name(hook) },
         pid: env("CLAUDE_PID").and_then(|p| p.parse().ok()),
-        deliver: env("CLAUDE_CODE_MESSAGING_SOCKET").map(|s| Deliver::ClaudeCodeInbox { socket: s.trim_start_matches("uds:").to_string(), token: env("CLAUDE_CODE_MESSAGING_TOKEN") }),
+        // one the tower started and holds is reached through the input it holds, and no other way
+        deliver: if env("AIRBAND_HELD").is_some() { Some(Deliver::Held) } else { env("CLAUDE_CODE_MESSAGING_SOCKET").map(|s| Deliver::ClaudeCodeInbox { socket: s.trim_start_matches("uds:").to_string(), token: env("CLAUDE_CODE_MESSAGING_TOKEN") }) },
         // where its transcript is, so the tower can ask what it is doing without a hook on every step
         meta: text("transcript_path").map(|t| serde_json::Map::from_iter([("transcript".to_string(), Value::String(t))])).unwrap_or_default(),
     })
@@ -284,7 +287,7 @@ pub fn permission(hook: &Value) -> Option<PermissionAsk> {
         return None;
     }
     // scripts calling `claude -p` have nobody waiting on them
-    if env("CLAUDE_CODE_ENTRYPOINT").as_deref() == Some("sdk-cli") && env("AIRBAND_INCLUDE_HEADLESS").is_none() {
+    if env("CLAUDE_CODE_ENTRYPOINT").as_deref() == Some("sdk-cli") && env("AIRBAND_INCLUDE_HEADLESS").is_none() && env("AIRBAND_HELD").is_none() {
         return None;
     }
     let tool = hook["tool_name"].as_str().unwrap_or("a tool");
@@ -339,7 +342,7 @@ fn pictures_in(input: &Value, cwd: Option<&str>, out: &mut Vec<String>) {
 /// tools that look at or hand over a picture.
 pub fn events(hook: &Value) -> Vec<AgentEvent> {
     // scripts calling `claude -p` have nobody waiting on them
-    if env("CLAUDE_CODE_ENTRYPOINT").as_deref() == Some("sdk-cli") && env("AIRBAND_INCLUDE_HEADLESS").is_none() {
+    if env("CLAUDE_CODE_ENTRYPOINT").as_deref() == Some("sdk-cli") && env("AIRBAND_INCLUDE_HEADLESS").is_none() && env("AIRBAND_HELD").is_none() {
         return Vec::new();
     }
     let text = |k: &str| hook[k].as_str().map(str::trim).filter(|t| !t.is_empty()).map(String::from);
