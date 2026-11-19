@@ -58,7 +58,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         if what.is_empty() {
             return Err("say what it wants to do: permission \"run the production migration\"".into());
         }
-        let ask = airband_core::agent::PermissionAsk { schema: SCHEMA.into(), agent, what, detail: String::new() };
+        let ask = airband_core::agent::PermissionAsk { schema: SCHEMA.into(), agent, what, detail: String::new(), question: None };
         match super::ask_him(&ask) {
             Some((true, _)) => return Ok(()),
             Some((false, reason)) => {

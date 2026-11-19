@@ -82,6 +82,20 @@ pub struct PermissionAsk {
     /// Everything about the request, for when he wants to see all of it: the tool and its whole input.
     #[serde(default)]
     pub detail: String,
+    /// Set when the agent is not asking leave to do something but asking him something, through a tool of its
+    /// harness that would otherwise put the question on its own screen. It is put to him as a question, with
+    /// these answers to tap if it offered any, and whatever he answers goes back as its reply: there is nothing
+    /// to allow or deny.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question: Option<Asked>,
+}
+
+/// A question an agent put through its harness's own asking tool.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Asked {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub choices: Vec<String>,
 }
 
 /// Where a permission request stands.

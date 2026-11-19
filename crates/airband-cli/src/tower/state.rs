@@ -221,6 +221,8 @@ pub(super) struct Permit {
     /// His answer, once he has given it: allowed or not, and his reason if he refused with one.
     pub(super) decided: Option<(bool, String)>,
     pub(super) asked: Instant,
+    /// It is a question of the agent's, not a request for leave: whatever he says is the answer.
+    pub(super) question: bool,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -499,7 +501,8 @@ impl Inner {
             seen: e.seen,
             queued: e.queued,
             cancelled: e.cancelled,
-            permission: e.permit.is_some(),
+            // a question put through the same door is an ordinary question to him: any answer will do
+            permission: e.permit.as_ref().is_some_and(|id| self.permits.get(id).is_none_or(|p| !p.question)),
             pictures: e.pictures.clone(),
             links: if e.from == "you" { Vec::new() } else { airband_core::speech::links(&e.full) },
             agent: e.agent.clone(),

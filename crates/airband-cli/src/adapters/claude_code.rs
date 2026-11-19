@@ -309,12 +309,28 @@ pub fn permission(hook: &Value) -> Option<PermissionAsk> {
     }
     .unwrap_or_else(|| format!("use {tool}"));
     let whole = serde_json::to_string_pretty(input).unwrap_or_default();
-    Some(PermissionAsk { schema: SCHEMA.into(), agent: agent_of(hook)?, what, detail: format!("{tool}\n{}", whole.chars().take(6000).collect::<String>()) })
+    // Its tool for asking him something is not a thing to allow: it is a question, put to him as one. One
+    // question comes with the answers it offered; several are put together, for him to answer in his own words.
+    let question = (tool == "AskUserQuestion").then(|| {
+        let asked: Vec<&Value> = input["questions"].as_array().into_iter().flatten().collect();
+        let text = asked.iter().filter_map(|q| q["question"].as_str()).map(str::trim).collect::<Vec<_>>().join("\n\n");
+        let choices = match asked.as_slice() {
+            [one] => one["options"].as_array().into_iter().flatten().filter_map(|o| o["label"].as_str()).map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect(),
+            _ => Vec::new(),
+        };
+        airband_core::agent::Asked { text, choices }
+    })
+    .filter(|q| !q.text.is_empty());
+    Some(PermissionAsk { schema: SCHEMA.into(), agent: agent_of(hook)?, what, detail: format!("{tool}\n{}", whole.chars().take(6000).collect::<String>()), question })
 }
 
 /// His answer, as Claude Code wants it printed. A refusal carries his reason, which Claude is shown.
-pub fn permission_answer(allow: bool, reason: &str) -> String {
-    let decision = if allow {
+pub fn permission_answer(ask: &PermissionAsk, allow: bool, reason: &str) -> String {
+    // A question he answered: the asking tool is not run (its own screen would only ask again); his answer goes
+    // back in its place, which is how the session reads it.
+    let decision = if ask.question.is_some() {
+        json!({ "behavior": "deny", "message": format!("He answered this from his phone, through Airband. His answer: {reason}\nTake that as his answer to the question and carry on. Do not ask it again.") })
+    } else if allow {
         json!({ "behavior": "allow" })
     } else {
         json!({ "behavior": "deny", "message": if reason.is_empty() { "He said no from his phone.".to_string() } else { format!("He said no from his phone: {reason}") } })
@@ -498,9 +514,16 @@ mod tests {
         // any other notification is not a request
         assert!(permission(&json!({ "session_id": "s1", "hook_event_name": "Stop" })).is_none());
         // the answers, as Claude Code reads them
-        let yes: Value = serde_json::from_str(&permission_answer(true, "")).unwrap();
+        let plain = permission(&json!({ "session_id": "s1", "cwd": "/x/shop", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": { "command": "ls" } })).unwrap();
+        // its asking tool is a question to him, with the answers it offered, and his answer goes back in the tool's place
+        let asked = permission(&json!({ "session_id": "s1", "cwd": "/x/shop", "hook_event_name": "PermissionRequest", "tool_name": "AskUserQuestion", "tool_input": { "questions": [{ "question": "Free space on which disk?", "options": [{ "label": "The NAS" }, { "label": "The internal disk" }] }] } })).unwrap();
+        assert_eq!(asked.question, Some(airband_core::agent::Asked { text: "Free space on which disk?".into(), choices: vec!["The NAS".into(), "The internal disk".into()] }));
+        let answered: Value = serde_json::from_str(&permission_answer(&asked, false, "The NAS")).unwrap();
+        assert_eq!(answered["hookSpecificOutput"]["decision"]["behavior"], "deny");
+        assert!(answered["hookSpecificOutput"]["decision"]["message"].as_str().unwrap().contains("His answer: The NAS"));
+        let yes: Value = serde_json::from_str(&permission_answer(&plain, true, "")).unwrap();
         assert_eq!(yes["hookSpecificOutput"]["decision"], json!({ "behavior": "allow" }));
-        let no: Value = serde_json::from_str(&permission_answer(false, "use staging")).unwrap();
+        let no: Value = serde_json::from_str(&permission_answer(&plain, false, "use staging")).unwrap();
         assert_eq!(no["hookSpecificOutput"]["decision"]["behavior"], "deny");
         assert!(no["hookSpecificOutput"]["decision"]["message"].as_str().unwrap().ends_with("use staging"));
     }

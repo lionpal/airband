@@ -128,7 +128,7 @@ fn azure(grant: &EarsGrant, host: &dyn RadioHost, manual: bool) -> Result<Option
         }
         if (end.speaking || manual) && upload.is_none() {
             let (tx, rx) = sync_channel::<Vec<u8>>(256);
-            let url = format!("https://{}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language={}&format=simple", grant.region, grant.language);
+            let url = format!("https://{}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language={}&format=simple&profanity=raw", grant.region, grant.language);
             let auth = format!("Bearer {}", grant.token);
             let worker = thread::spawn(move || -> Result<Option<String>, ()> {
                 let mut body = Feed(rx, wav_header());

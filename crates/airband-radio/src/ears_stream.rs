@@ -58,7 +58,7 @@ fn parse(message: &str) -> Option<(String, Value)> {
 /// Open the connection and say what is coming: the microphone's format, and the names worth listening for.
 fn connect(grant: &EarsGrant, request: &str) -> Result<Socket, ()> {
     let host = format!("{}.stt.speech.microsoft.com", grant.region);
-    let url = format!("wss://{host}/speech/recognition/conversation/cognitiveservices/v1?language={}&format=simple", grant.language);
+    let url = format!("wss://{host}/speech/recognition/conversation/cognitiveservices/v1?language={}&format=simple&profanity=raw", grant.language);
     let mut req = url.into_client_request().map_err(|_| ())?;
     req.headers_mut().insert("Authorization", format!("Bearer {}", grant.token).parse().map_err(|_| ())?);
     req.headers_mut().insert("X-ConnectionId", random_hex(16).parse().map_err(|_| ())?);

@@ -31,7 +31,7 @@ struct Adapter {
     /// For a harness that can let something else answer its permission prompts: turn its notification into the
     /// request to put to him (or nothing, when the notification is not one), and turn his answer into what the
     /// harness wants printed on standard output.
-    permission: Option<(fn(&Value) -> Option<PermissionAsk>, fn(bool, &str) -> String)>,
+    permission: Option<(fn(&Value) -> Option<PermissionAsk>, fn(&PermissionAsk, bool, &str) -> String)>,
     /// For a harness whose sessions can be moved between logins while they run.
     accounts: Option<AccountBook>,
     /// A look at one of its agents, when the harness keeps this somewhere the tower can read cheaply. Asked
@@ -217,7 +217,7 @@ pub fn hook(harness: &str) -> Result<(), String> {
     if let Some((ask, answer)) = adapter.permission {
         if let Some(request) = serde_json::from_str(&input).ok().and_then(|notification| ask(&notification)) {
             if let Some((allow, reason)) = ask_him(&request) {
-                println!("{}", answer(allow, &reason));
+                println!("{}", answer(&request, allow, &reason));
             }
             // no answer in time, or nobody there: print nothing, and the harness asks in its own way
             return Ok(());

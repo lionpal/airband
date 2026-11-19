@@ -9,7 +9,11 @@ on:
     branches: [main]
     paths:
       - 'crates/airband-relay/**'
-      - 'crates/airband-core/**'
+      # of the core, the relay uses only its own protocol and what that is built with: a change to how radios
+      # and agents talk does not touch it, and must not cost every phone a minute off the air
+      - 'crates/airband-core/src/relay.rs'
+      - 'crates/airband-core/src/lib.rs'
+      - 'crates/airband-core/Cargo.toml'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'Dockerfile'

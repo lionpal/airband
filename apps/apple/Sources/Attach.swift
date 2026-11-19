@@ -250,6 +250,26 @@ extension RadioModel {
 }
 
 /// The lightning button's panel, now behind a +: his photos first, then the things he says all the time.
+/// A round button that opens the photo picker and nothing else: for adding to what he is saying while the
+/// microphone is open.
+struct AttachButton: View {
+    @EnvironmentObject var model: RadioModel
+    @State private var picked: [PhotosPickerItem] = []
+
+    var body: some View {
+        PhotosPicker(selection: $picked, maxSelectionCount: 6, matching: .any(of: [.images, .videos])) {
+            Image(systemName: "photo.on.rectangle.angled").font(.system(size: 19, weight: .semibold)).foregroundStyle(Palette.ink)
+                .frame(width: 56, height: 56).frosted(Circle())
+        }
+        .buttonStyle(.plain).accessibilityLabel("Attach a photo or a video")
+        .onChange(of: picked) { _, items in
+            guard !items.isEmpty else { return }
+            model.attach(items)
+            picked = []
+        }
+    }
+}
+
 struct PlusButtonLabel: View {
     let open: Bool
     var body: some View {

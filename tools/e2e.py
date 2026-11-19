@@ -457,6 +457,12 @@ Send it as written, or do you want changes?""")
     t = threading.Thread(target=ask_permission, args=("deploy", "orders", "run `./migrate --env production`", out)); t.start()
     card = pending_card("orders deploy")
     check("his own words refuse it and are passed on as the reason", card and say("run it on staging first", re=card["id"]) == "Refused." and (t.join(30) or out == [(1, "run it on staging first")]), out)
+    # a harness's own tool for asking him something comes through the same door, and is put to him as the question it is
+    asked = http("POST", "/v1/agent/permission", {"schema": "airband.agent/1", "agent": {"id": "deploy", "harness": "claude-code", "cwd": os.path.join(projects, "orders"), "title": "orders deploy"},
+                 "what": "use AskUserQuestion", "detail": "AskUserQuestion\n{…}", "question": {"text": "Which disk should I clear to make room?", "choices": ["The NAS", "The internal disk"]}}, token=OWN)[1]
+    card = next((m for _ in range(40) for m in [message(feed(), "orders deploy", "Which disk")] if m and m["open"] or time.sleep(0.25)), None)
+    check("a question an agent asks through its harness is shown as that question, with its own answers", card and card["text"] == "Which disk should I clear to make room?" and card["options"] == ["The NAS", "The internal disk"] and not card.get("permission"), card)
+    check("and his answer goes back to it as the answer", say("The NAS", re=card["id"]) == "Sent to it." and http("GET", f"/v1/agent/permission/{asked['id']}?wait=5", token=OWN)[1].get("message") == "The NAS")
     out = []
     t = threading.Thread(target=ask_permission, args=("deploy", "orders", "run `rm -rf build`", out)); t.start()
     card = pending_card("orders deploy")

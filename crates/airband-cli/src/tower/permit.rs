@@ -33,13 +33,27 @@ pub(super) fn ask(app: &App, ask: PermissionAsk) -> PermissionState {
     inner.drop_pending(&agent_id, None);
     let (id, entry_id) = (config::random_hex(8), config::random_hex(8));
     let what = ask.what.trim();
-    let line = format!("Wants to {what}. Allow?");
-    log(format!("{}: asks permission to {what}", session.callsign.text()));
-    let detail = if ask.detail.trim().is_empty() { line.clone() } else { ask.detail.clone() };
-    inner.record(Entry { short: Some(line.clone()), options: vec!["Allow".into(), "Deny".into()], permit: Some(id.clone()), ..Entry::said(entry_id.clone(), &session, Some(Kind::NeedsYou), detail.clone()) });
+    // a question of the agent's is put as the question it is, with its own answers; anything else as "may I"
+    let (line, options, detail) = match &ask.question {
+        Some(q) => {
+            log(format!("{}: asks him a question", session.callsign.text()));
+            let choices: Vec<String> = q.choices.iter().filter(|c| c.chars().count() <= 28).take(4).cloned().collect();
+            let all = if q.choices.is_empty() { q.text.clone() } else { format!("{}\n\n{}", q.text, q.choices.iter().map(|c| format!("- {c}")).collect::<Vec<_>>().join("\n")) };
+            // a long question is shown by its opening; all of it is one tap away, as for any message
+            let line = if q.text.chars().count() > 220 { format!("{}…", q.text.chars().take(219).collect::<String>().trim_end()) } else { q.text.clone() };
+            (line, if choices.len() == q.choices.len() { choices } else { Vec::new() }, all)
+        }
+        None => {
+            log(format!("{}: asks permission to {what}", session.callsign.text()));
+            let line = format!("Wants to {what}. Allow?");
+            let detail = if ask.detail.trim().is_empty() { line.clone() } else { ask.detail.clone() };
+            (line, vec!["Allow".into(), "Deny".into()], detail)
+        }
+    };
+    inner.record(Entry { short: Some(line.clone()), options, permit: Some(id.clone()), ..Entry::said(entry_id.clone(), &session, Some(Kind::NeedsYou), detail.clone()) });
     // on a call it is read out like any other question
     inner.pending.push(Item { id: entry_id.clone(), agent_id: agent_id.clone(), notice: false, full: detail, kind: Some(Kind::NeedsYou), say: Some(line), detail: None, created: now(), asked: None });
-    inner.permits.insert(id.clone(), Permit { agent_id, entry: entry_id, decided: None, asked: Instant::now() });
+    inner.permits.insert(id.clone(), Permit { agent_id, entry: entry_id, decided: None, asked: Instant::now(), question: ask.question.is_some() });
     app.save(&inner);
     app.kick.notify_one();
     PermissionState { id, state: "pending".into(), message: String::new(), wait_seconds: app.cfg.permission_wait }
@@ -110,7 +124,7 @@ pub(super) fn answer(app: &App, text: &str, re: Option<&str>) -> Option<Reply> {
             if re.is_some() || verdict(text).is_none() {
                 return None;
             }
-            let mut open = inner.permits.iter().filter(|(_, p)| waiting(p));
+            let mut open = inner.permits.iter().filter(|(_, p)| waiting(p) && !p.question);
             let (first, more) = (open.next().map(|(id, _)| id.clone()), open.next().is_some());
             match (first, more) {
                 (Some(id), false) => id,
@@ -118,11 +132,13 @@ pub(super) fn answer(app: &App, text: &str, re: Option<&str>) -> Option<Reply> {
             }
         }
     };
+    let question = inner.permits[&id].question;
     // handing the decision back is not an answer to "may I": he has to say which
-    if text.trim().trim_end_matches('.').eq_ignore_ascii_case("do whatever you think is best") {
+    if !question && text.trim().trim_end_matches('.').eq_ignore_ascii_case("do whatever you think is best") {
         return say("That one needs a yes or a no from you.");
     }
-    let (allow, reason) = match verdict(text) {
+    // to a question of the agent's, whatever he says is the answer
+    let (allow, reason) = match verdict(text).filter(|_| !question) {
         Some(allow) => (allow, String::new()),
         None => (false, text.trim().to_string()),
     };
@@ -143,7 +159,7 @@ pub(super) fn answer(app: &App, text: &str, re: Option<&str>) -> Option<Reply> {
     inner.record(Entry::his(config::random_hex(8), &[session.clone()], shown));
     inner.touch(&entry);
     app.save(&inner);
-    say(if allow { "Allowed." } else { "Refused." })
+    say(if question { "Sent to it." } else if allow { "Allowed." } else { "Refused." })
 }
 
 #[cfg(test)]

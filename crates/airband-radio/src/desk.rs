@@ -86,6 +86,9 @@ pub struct DeskView {
     /// None has answered yet and at least one is still being tried for the first time: show that it is
     /// loading, not that the computer cannot be reached.
     pub connecting: bool,
+    /// The computers that cannot be reached right now, by name, when he is paired with more than one: so he is
+    /// told which. Empty with one computer (then `online` says it all).
+    pub away: Vec<String>,
     /// The feed: reports, questions and what he said, oldest first, without the chatter not worth his attention.
     /// A message with `open` is a question still waiting on him; one with `stalled` is from an agent that stopped.
     pub feed: Vec<ChatMessage>,
@@ -543,6 +546,7 @@ impl Desk {
             paired: !state.stations.is_empty(),
             online: state.stations.iter().any(|s| s.online),
             connecting: !state.stations.iter().any(|s| s.online) && state.stations.iter().any(|s| !s.tried),
+            away: if state.stations.len() > 1 { state.stations.iter().enumerate().filter(|(_, s)| s.tried && !s.online).map(|(i, s)| if s.name.is_empty() { format!("computer {}", i + 1) } else { s.name.clone() }).collect() } else { Vec::new() },
             can_poke: agents.iter().any(|a| a.state == "stalled" && room.as_ref().is_none_or(|r| a.group == *r)),
             feed,
             rooms,

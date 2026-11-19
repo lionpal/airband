@@ -143,11 +143,11 @@ struct FeedView: View {
                                     Text("Connecting").font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.soft)
                                 }
                                 .padding(.horizontal, 12).padding(.vertical, 5).frosted(Capsule())
-                            } else if !model.online {
-                                // a tap tries again at once
+                            } else if !model.online || !model.view.away.isEmpty {
+                                // a tap tries again at once. With several computers it says which
                                 Button { model.reconnect() } label: {
                                     HStack(spacing: 6) {
-                                        Text("Can\u{2019}t reach your computer").foregroundStyle(Palette.ask)
+                                        Text(model.view.away.isEmpty ? "Can\u{2019}t reach your computer" : "Can\u{2019}t reach " + model.view.away.joined(separator: ", ")).foregroundStyle(Palette.ask)
                                         Image(systemName: "arrow.clockwise").font(.system(size: 11, weight: .bold)).foregroundStyle(Palette.soft)
                                     }
                                     .font(.system(size: 13, weight: .medium)).padding(.horizontal, 12).frame(minHeight: 30).frosted(Capsule())
@@ -410,7 +410,7 @@ struct FeedView: View {
                 Text("No messages yet").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.quiet)
             } else {
                 Image(systemName: "wifi.slash").font(.system(size: 26, weight: .medium)).foregroundStyle(Palette.dim).padding(.bottom, 4)
-                Text("Can\u{2019}t reach your computer").font(.system(size: 19, weight: .semibold))
+                Text(model.view.away.isEmpty ? "Can\u{2019}t reach your computer" : "Can\u{2019}t reach " + model.view.away.joined(separator: ", ")).font(.system(size: 19, weight: .semibold))
                 (Text("Check it\u{2019}s awake and online.\nThen run ") + Text("airband status").font(.system(size: 15, weight: .medium, design: .monospaced)).foregroundColor(Palette.ink) + Text(" on it."))
                     .font(.system(size: 16)).foregroundStyle(Palette.quiet).multilineTextAlignment(.center).lineSpacing(3)
                 Button { model.reconnect() } label: {
@@ -636,11 +636,16 @@ struct FeedView: View {
                     }
                     .buttonStyle(.plain).accessibilityLabel(listeningNow ? "Send what you said" : "Talk")
                     Spacer()
-                    Button { showQuick = false; typingOpen = true; typing = true } label: {
-                        Image(systemName: "keyboard").font(.system(size: 20, weight: .semibold))
-                            .frame(width: 56, height: 56).frosted(Circle())
+                    if listeningNow {
+                        // while he talks, this adds a photo or a video to what he is saying
+                        AttachButton()
+                    } else {
+                        Button { showQuick = false; typingOpen = true; typing = true } label: {
+                            Image(systemName: "keyboard").font(.system(size: 20, weight: .semibold))
+                                .frame(width: 56, height: 56).frosted(Circle())
+                        }
+                        .buttonStyle(.plain).accessibilityLabel("Type")
                     }
-                    .buttonStyle(.plain).accessibilityLabel("Type")
                 }
                 .padding(.horizontal, 18)
             }
@@ -843,9 +848,13 @@ struct Mine: View {
                 }
                 .buttonStyle(.plain).accessibilityLabel("Waiting its turn. Take it back.")
             }
-            // what he attached sits over his words, its left edge on theirs
+            // One upright picture (a screenshot) stands to the left of his words, so it costs no height of its
+            // own. Anything else he attached sits over his words, its left edge on theirs.
+            let beside = m.pictures.count == 1 && m.pictures[0].height > m.pictures[0].width
+            HStack(alignment: .top, spacing: 8) {
+            if beside { PictureStrip(m: m, height: 104, still: true) }
             VStack(alignment: .leading, spacing: 6) {
-            if !m.pictures.isEmpty { PictureStrip(m: m, height: 120, still: true) }
+            if !m.pictures.isEmpty, !beside { PictureStrip(m: m, height: 120, still: true) }
             VStack(alignment: .trailing, spacing: 4) {
                 Text(whole ? (model.full[m.id] ?? m.text) : m.text).font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.ground)
                     .lineLimit(whole ? nil : 15)
@@ -871,6 +880,7 @@ struct Mine: View {
                 // what the chat carries of a very long one is its opening: the rest is fetched when he opens it
                 if !whole && m.long { model.loadFull(m) }
                 withAnimation(.snappy(duration: 0.2)) { whole.toggle() }
+            }
             }
             }
             // has it got there, and has the agent read it: one tick when it is delivered, two and the time once
