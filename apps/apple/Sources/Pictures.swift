@@ -89,19 +89,23 @@ struct PictureStrip: View {
     }
 }
 
-/// Full screen: swipe between a message's pictures, pinch or double-tap to zoom, drag to move around, tap to close.
+/// Full screen: swipe between a message's pictures, pinch or double-tap to zoom, drag to move around; a tap, or a
+/// swipe up or down, closes it.
 struct PictureViewer: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var model: RadioModel
     let m: ChatMessage
     @State var start: String
+    /// How far he has dragged the picture away, up or down. The chat comes through behind as it goes.
+    @State private var pull: CGFloat = 0
     private var listening: Bool { if case .listening = model.status { return true }; return false }
+    private var away: Double { min(abs(pull) / 260, 1) }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            Color.black.ignoresSafeArea()
+            Color.black.opacity(1 - 0.75 * away).ignoresSafeArea()
             TabView(selection: $start) {
-                ForEach(m.pictures, id: \.id) { p in Zoomable(m: m, p: p, close: { dismiss() }).tag(p.id) }
+                ForEach(m.pictures, id: \.id) { p in Zoomable(m: m, p: p, pull: $pull, close: { dismiss() }).tag(p.id) }
             }
             .tabViewStyle(.page(indexDisplayMode: m.pictures.count > 1 ? .automatic : .never))
             .ignoresSafeArea()
@@ -110,7 +114,7 @@ struct PictureViewer: View {
                     .frame(width: 38, height: 38).background(.white.opacity(0.18), in: Circle())
                     .frame(width: 52, height: 52)
             }
-            .buttonStyle(.plain).padding(.trailing, 10).padding(.top, 4).accessibilityLabel("Close")
+            .buttonStyle(.plain).padding(.trailing, 10).padding(.top, 4).accessibilityLabel("Close").opacity(1 - away)
         }
         // the talk button is here too: he looks at the picture and says what he thinks, and it goes to the agent
         // that sent it
@@ -123,8 +127,9 @@ struct PictureViewer: View {
                 }
                 .buttonStyle(.plain).accessibilityLabel(listening ? "Listening" : "Talk to \(m.from) about this picture")
             }
-            .padding(.bottom, 26)
+            .padding(.bottom, 26).opacity(1 - away)
         }
+        .presentationBackground(.clear)
         .preferredColorScheme(.dark)
     }
 }
@@ -132,7 +137,10 @@ struct PictureViewer: View {
 private struct Zoomable: View {
     let m: ChatMessage
     let p: ChatPicture
+    @Binding var pull: CGFloat
     let close: () -> Void
+    /// Which way this drag started: up or down takes the picture away, sideways is left to the page swipe.
+    @State private var upDown: Bool?
     @State private var scale: CGFloat = 1
     @State private var settled: CGFloat = 1
     @State private var offset: CGSize = .zero
@@ -141,13 +149,27 @@ private struct Zoomable: View {
     var body: some View {
         PictureImage(m: m, p: p, side: 1600, fill: false)
             .scaleEffect(scale).offset(offset)
+            .offset(y: pull).scaleEffect(1 - min(abs(pull) / 1600, 0.12))
             .frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
             .gesture(MagnifyGesture().onChanged { g in scale = min(max(settled * g.magnification, 1), 6) }.onEnded { _ in
                 settled = scale
                 if scale == 1 { withAnimation(.snappy) { offset = .zero }; rested = .zero }
             })
-            // moving the picture is only for when it is zoomed; otherwise a drag belongs to the page swipe
-            .simultaneousGesture(scale > 1 ? DragGesture().onChanged { g in offset = CGSize(width: rested.width + g.translation.width, height: rested.height + g.translation.height) }.onEnded { _ in rested = offset } : nil)
+            // zoomed in, a drag moves the picture. Not zoomed, a drag up or down takes it away and closes the
+            // viewer; a sideways one belongs to the page swipe and is left alone
+            .simultaneousGesture(DragGesture(minimumDistance: 12).onChanged { g in
+                if scale > 1 {
+                    offset = CGSize(width: rested.width + g.translation.width, height: rested.height + g.translation.height)
+                } else {
+                    if upDown == nil { upDown = abs(g.translation.height) > abs(g.translation.width) }
+                    if upDown == true { pull = g.translation.height }
+                }
+            }.onEnded { g in
+                if scale > 1 { rested = offset; return }
+                let going = upDown == true && (abs(pull) > 110 || abs(g.predictedEndTranslation.height) > 500)
+                upDown = nil
+                if going { close() } else { withAnimation(.snappy) { pull = 0 } }
+            })
             .onTapGesture(count: 2) {
                 withAnimation(.snappy) {
                     scale = scale > 1 ? 1 : 2.5

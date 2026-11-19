@@ -250,7 +250,7 @@ struct PlusButtonLabel: View {
     var body: some View {
         Image(systemName: "plus").font(.system(size: 24, weight: .semibold))
             .foregroundStyle(open ? Palette.ground : Palette.ink).rotationEffect(.degrees(open ? 45 : 0))
-            .frame(width: 56, height: 56).background(open ? Palette.ink : Palette.field, in: Circle())
+            .frame(width: 56, height: 56).background { if open { Circle().fill(Palette.ink) } }.frosted(Circle(), shown: !open)
     }
 }
 

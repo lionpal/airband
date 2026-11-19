@@ -48,6 +48,20 @@ enum Palette {
     static func team(_ place: UInt8) -> Color { teams[Int(place) % teams.count] }
 }
 
+/// The back of something that sits over the chat: the chat shows through it, blurred and darkened enough that
+/// what is on top still reads. `strength` is how much of the dark is laid over the blur; words need more than a button.
+struct Frost<S: Shape>: ViewModifier {
+    let shape: S
+    let strength: Double
+    let shown: Bool
+    func body(content: Content) -> some View {
+        content.background { if shown { shape.fill(.ultraThinMaterial).overlay(shape.fill(Palette.field.opacity(strength))).environment(\.colorScheme, .dark) } }
+    }
+}
+extension View {
+    func frosted<S: Shape>(_ shape: S, strength: Double = 0.5, shown: Bool = true) -> some View { modifier(Frost(shape: shape, strength: strength, shown: shown)) }
+}
+
 /// Who an agent is, at a glance: two characters on its team's colour.
 struct Badge: View {
     let text: String
@@ -111,12 +125,25 @@ struct FeedView: View {
                 if model.view.rooms.count > 1 || model.only != nil { teams.zIndex(1) }
                 if model.view.feed.isEmpty {
                     blank
+                    bar
                 } else {
-                    feed
-                    // the chat he already has stays readable with the computer out of reach; this says why it is still
-                    if !model.online { Text("Can\u{2019}t reach your computer").font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.ask).padding(.top, 6) }
+                    // the chat runs on under the buttons: they sit over it, frosted, and it fades towards the bottom edge
+                    feed.safeAreaInset(edge: .bottom, spacing: 0) {
+                        VStack(spacing: 0) {
+                            // the chat he already has stays readable with the computer out of reach; this says why it is still
+                            if !model.online {
+                                Text("Can\u{2019}t reach your computer").font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.ask)
+                                    .padding(.horizontal, 12).padding(.vertical, 5).frosted(Capsule())
+                            }
+                            bar
+                        }
+                        .frame(maxWidth: .infinity)
+                        .background(alignment: .bottom) {
+                            LinearGradient(stops: [.init(color: Palette.ground.opacity(0), location: 0), .init(color: Palette.ground.opacity(0.5), location: 0.4), .init(color: Palette.ground.opacity(0.82), location: 1)], startPoint: .top, endPoint: .bottom)
+                                .ignoresSafeArea(edges: .bottom).allowsHitTesting(false)
+                        }
+                    }
                 }
-                bar
             }
         }
         .background(Palette.ground.ignoresSafeArea())
@@ -174,7 +201,7 @@ struct FeedView: View {
                 .accessibilityAddTraits(model.calling ? .isSelected : [])
             }
         }
-        .padding(.horizontal, 20).padding(.top, 10).padding(.bottom, 14)
+        .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 14)
     }
 
     /// The teams bar: one cell per project, each showing what its agents are doing. Tap one to see only that team
@@ -230,7 +257,7 @@ struct FeedView: View {
                     .zIndex(ticker.room == room.name ? 1 : 0)
                 }
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 8)
         }
         .scrollClipDisabled()
         .animation(.easeOut(duration: 0.18), value: ticker.room)
@@ -301,12 +328,20 @@ struct FeedView: View {
                     }
                     Color.clear.frame(height: 1).id("end")
                 }
-                .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 10)
+                .padding(.horizontal, 8).padding(.top, 6).padding(.bottom, 10)
             }
             .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: model.view.feed.last?.id) { _, _ in withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("end", anchor: .bottom) } }
             .onChange(of: model.view.sending.count) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
+            #if DEBUG
+            // development only: `-airband.devBehind 1` scrolls back a little, for a screenshot of the chat under the buttons
+            .task {
+                guard UserDefaults.standard.bool(forKey: "airband.devBehind") else { return }
+                try? await Task.sleep(for: .seconds(4))
+                if let m = model.view.feed.dropLast(5).last { proxy.scrollTo(m.id, anchor: .center) }
+            }
+            #endif
         }
     }
 
@@ -337,8 +372,8 @@ struct FeedView: View {
     private var bar: some View {
         VStack(spacing: 10) {
             if let problem = model.problem {
-                Button { model.problem = nil } label: { Text(problem).font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading) }
-                    .buttonStyle(.plain).padding(.horizontal, 22)
+                Button { model.problem = nil } label: { Text(problem).font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.vertical, 7).frosted(RoundedRectangle(cornerRadius: 12)) }
+                    .buttonStyle(.plain).padding(.horizontal, 8)
             }
             if !model.tray.isEmpty { Tray() }
             if showQuick { quickGrid }
@@ -347,7 +382,7 @@ struct FeedView: View {
                     TextField("", text: $draft, prompt: Text(placeholder).foregroundColor(Palette.quiet), axis: .vertical)
                         .lineLimit(1...4).focused($typing).font(.system(size: 17))
                         .padding(.horizontal, 20).frame(minHeight: 54)
-                        .background(Palette.field, in: RoundedRectangle(cornerRadius: 27))
+                        .frosted(RoundedRectangle(cornerRadius: 27), strength: 0.8)
                     let empty = draft.trimmingCharacters(in: .whitespaces).isEmpty
                     Button {
                         if empty {
@@ -364,16 +399,18 @@ struct FeedView: View {
                     }
                     .buttonStyle(.plain).accessibilityLabel(empty ? "Back to talking" : "Send")
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 8)
             } else {
                 if model.hearing.isEmpty {
-                    Text(statusLine ?? " ").font(.system(size: 14, weight: .medium)).foregroundStyle(Palette.quiet)
-                        .frame(height: 18).accessibilityHidden(statusLine == nil)
+                    Text(statusLine ?? " ").font(.system(size: 14, weight: .medium)).foregroundStyle(statusLine == nil ? Palette.quiet : Palette.soft)
+                        .frame(height: 18).padding(.horizontal, 12).padding(.vertical, 4)
+                        .frosted(Capsule(), shown: statusLine != nil).accessibilityHidden(statusLine == nil)
                 } else {
                     // his own words, as he says them: the end of a long sentence stays in view
                     Text("\u{201C}\(model.hearing)\u{201D}").font(.system(size: 17, weight: .medium)).foregroundStyle(Palette.ink)
                         .lineLimit(2).truncationMode(.head).multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity, minHeight: 18).padding(.horizontal, 24)
+                        .frame(minHeight: 18).padding(.horizontal, 14).padding(.vertical, 4)
+                        .frosted(RoundedRectangle(cornerRadius: 16), strength: 0.8).padding(.horizontal, 8).frame(maxWidth: .infinity)
                         .animation(.easeOut(duration: 0.12), value: model.hearing).accessibilityHidden(true)
                 }
                 HStack {
@@ -393,11 +430,11 @@ struct FeedView: View {
                     Spacer()
                     Button { showQuick = false; typingOpen = true; typing = true } label: {
                         Image(systemName: "keyboard").font(.system(size: 20, weight: .semibold))
-                            .frame(width: 56, height: 56).background(Palette.field, in: Circle())
+                            .frame(width: 56, height: 56).frosted(Circle())
                     }
                     .buttonStyle(.plain).accessibilityLabel("Type")
                 }
-                .padding(.horizontal, 30)
+                .padding(.horizontal, 18)
             }
         }
         .padding(.top, 6).padding(.bottom, 6)
@@ -429,7 +466,7 @@ struct FeedView: View {
         }
         .padding(10)
         .background(Palette.card, in: RoundedRectangle(cornerRadius: 26))
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 8)
         .transition(.scale(scale: 0.92, anchor: .bottomLeading).combined(with: .opacity))
     }
 }
