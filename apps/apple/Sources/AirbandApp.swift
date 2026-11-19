@@ -820,7 +820,7 @@ struct Mine: View {
     let m: ChatMessage
     /// A long one shows its first lines; a tap opens it whole, and another closes it.
     @State private var whole = false
-    private var long: Bool { m.long || m.text.count > 520 || m.text.filter { $0 == "\n" }.count > 14 }
+    private var long: Bool { m.long || m.text.count > 140 || m.text.filter { $0 == "\n" }.count > 4 }
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 3) {
@@ -857,7 +857,7 @@ struct Mine: View {
             if !m.pictures.isEmpty, !beside { PictureStrip(m: m, height: 120, still: true) }
             VStack(alignment: .trailing, spacing: 4) {
                 Text(whole ? (model.full[m.id] ?? m.text) : m.text).font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.ground)
-                    .lineLimit(whole ? nil : 15)
+                    .lineLimit(whole ? nil : 5)
                 if long {
                     Image(systemName: whole ? "chevron.up" : "chevron.down").font(.system(size: 11, weight: .bold)).foregroundStyle(Palette.ground.opacity(0.45))
                 }
