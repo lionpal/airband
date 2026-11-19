@@ -34,6 +34,17 @@ impl Callsign {
         let rest: Vec<String> = words[lead..].iter().take(4).map(|w| number_word(w)).collect();
         (!rest.is_empty()).then(|| Callsign { project, number: rest.join(" ") })
     }
+    /// This callsign in another team. A name he gave it goes with it ("warehouse removals" → "shop removals"); a
+    /// number was only its place in the team it leaves, so it takes the next free one in the new team. Nothing
+    /// when the team's name says nothing.
+    pub fn moved_to(&self, team: &str, live: &[Callsign]) -> Option<Callsign> {
+        let project = norm(team);
+        if project.is_empty() {
+            return None;
+        }
+        let named = Callsign { project: project.clone(), number: self.number.clone() };
+        Some(if own_name(&self.number) && !live.contains(&named) { named } else { Callsign::next_for(&project, live) })
+    }
     /// The next free callsign for a session in this folder: the folder's name plus the lowest unused number.
     pub fn next_for(cwd: &str, live: &[Callsign]) -> Callsign {
         let base = cwd.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next().unwrap_or("");

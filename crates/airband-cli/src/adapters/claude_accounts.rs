@@ -301,7 +301,7 @@ fn saved_token(email: &str) -> Res<String> {
 // ── allowances ──
 
 /// `2026-11-25T01:00:00.487315+00:00` as milliseconds since 1970.
-fn iso_ms(s: &str) -> Option<u64> {
+pub(super) fn iso_ms(s: &str) -> Option<u64> {
     let (date, rest) = s.split_once('T')?;
     let mut d = date.split('-').map(|x| x.parse::<i64>().ok());
     let (y, m, day) = (d.next()??, d.next()??, d.next()??);

@@ -168,6 +168,16 @@ pub struct UseAccount {
     pub id: String,
 }
 
+/// `POST team`: put an agent in another team, one that exists or a new one. The agent keeps a name he gave it
+/// and takes the next free number otherwise; the answer is `{callsign, team}`, what it is called now and the team
+/// it is in, or `{error}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MoveAgent {
+    /// The agent's id, as the roster gives it.
+    pub agent: String,
+    pub team: String,
+}
+
 /// The quick messages every tower offers. A tower adds his own after these (`quick` in its configuration).
 pub fn quick_defaults() -> Vec<Quick> {
     [
@@ -340,6 +350,12 @@ pub struct RosterEntry {
     /// What it is doing right now, in a few words, while it is working and that is known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub doing: Option<String>,
+    /// The model it runs on, as a person would say it ("Opus 4.7"), when its harness can tell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// How hard it is set to think ("high"), when its harness has such a setting and can tell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

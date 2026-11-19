@@ -34,9 +34,38 @@ struct Adapter {
     permission: Option<(fn(&Value) -> Option<PermissionAsk>, fn(bool, &str) -> String)>,
     /// For a harness whose sessions can be moved between logins while they run.
     accounts: Option<AccountBook>,
-    /// What one of its agents is doing right now, in a few words, when the harness keeps that somewhere the
-    /// tower can read cheaply. Asked every couple of seconds while a radio is looking, so it must be quick.
-    activity: Option<fn(&airband_core::agent::Agent) -> Option<String>>,
+    /// A look at one of its agents, when the harness keeps this somewhere the tower can read cheaply. Asked
+    /// every couple of seconds while a radio is looking, so it must be quick.
+    glance: Option<fn(&airband_core::agent::Agent) -> Glance>,
+    /// The files and commands of an agent's latest steps, newest first, as the harness wrote them. For working
+    /// out which project it is working on; asked now and then, not on every look.
+    touched: Option<fn(&airband_core::agent::Agent) -> Vec<String>>,
+    /// What he has said to an agent at its own keyboard since `from`, a place in the harness's record that an
+    /// earlier call returned (0 the first time). Returns his words, oldest first, and the place to ask from next
+    /// time. Only what he typed himself: nothing the tower passed on, nothing another agent sent.
+    told: Option<fn(&airband_core::agent::Agent, u64) -> (Vec<Told>, u64)>,
+}
+
+/// Something he said to an agent directly, at its keyboard.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Told {
+    /// The harness's own id for it: the same words are never taken twice.
+    pub id: String,
+    /// When he said it, in milliseconds since 1970.
+    pub at: u64,
+    /// His words, as he typed them.
+    pub text: String,
+}
+
+/// What a look at an agent can tell. Anything the harness cannot say is left out.
+#[derive(Default, Debug, PartialEq, Eq)]
+pub struct Glance {
+    /// What it is doing right now, in a few words.
+    pub doing: Option<String>,
+    /// The model it runs on, as a person would say it: "Opus 4.7".
+    pub model: Option<String>,
+    /// How hard it is set to think: "high".
+    pub effort: Option<String>,
 }
 
 /// How one harness's accounts are listed, switched and kept. Every function answers in words for him.
@@ -60,7 +89,9 @@ const ADAPTERS: &[Adapter] = &[Adapter {
     uninstall: Some(claude_code::uninstall),
     permission: Some((claude_code::permission, claude_code::permission_answer)),
     accounts: Some(AccountBook { list: claude_accounts::list, switch: claude_accounts::switch, save: claude_accounts::save, add: claude_accounts::add, forget: claude_accounts::forget }),
-    activity: Some(claude_code::activity),
+    glance: Some(claude_code::glance),
+    touched: Some(claude_code::touched),
+    told: Some(claude_code::told),
 }];
 
 /// `airband install`: set up every harness that can be. One line to say for each.
@@ -71,9 +102,19 @@ pub fn uninstall() -> Result<(), String> {
     ADAPTERS.iter().filter_map(|a| a.uninstall).try_for_each(|uninstall| uninstall())
 }
 
-/// What this agent is doing right now, if its harness's adapter can tell.
-pub fn activity(agent: &airband_core::agent::Agent) -> Option<String> {
-    ADAPTERS.iter().find(|a| a.name == agent.harness).and_then(|a| a.activity).and_then(|ask| ask(agent))
+/// What this agent is doing right now and what it runs on, as far as its harness's adapter can tell.
+pub fn glance(agent: &airband_core::agent::Agent) -> Glance {
+    ADAPTERS.iter().find(|a| a.name == agent.harness).and_then(|a| a.glance).map(|look| look(agent)).unwrap_or_default()
+}
+
+/// The files and commands of this agent's latest steps, if its harness's adapter can tell.
+pub fn touched(agent: &airband_core::agent::Agent) -> Vec<String> {
+    ADAPTERS.iter().find(|a| a.name == agent.harness).and_then(|a| a.touched).map(|ask| ask(agent)).unwrap_or_default()
+}
+
+/// What he has typed to this agent at its keyboard since `from`, if its harness's adapter can tell.
+pub fn told(agent: &airband_core::agent::Agent, from: u64) -> (Vec<Told>, u64) {
+    ADAPTERS.iter().find(|a| a.name == agent.harness).and_then(|a| a.told).map(|ask| ask(agent, from)).unwrap_or((Vec::new(), from))
 }
 
 /// Every account of every harness that has them.

@@ -67,6 +67,10 @@ pub struct DeskMember {
     pub doing: Option<String>,
     /// Two characters to stand for it: "S3", "CP".
     pub badge: String,
+    /// What it runs on, for a small line beside its name: "Opus 4.7 · high". Empty when not known.
+    pub engine: String,
+    /// The computer it is on, when he is paired with more than one; empty otherwise.
+    pub station: String,
 }
 
 /// Everything a chat screen shows, for the team or the agent he is looking at (or all of them).
@@ -168,7 +172,16 @@ impl State {
             })
             .collect();
         all.sort_by_key(|m| m.at);
+        // one computer paired by two links (one through the relay, one straight to it) is still one computer:
+        // each of its messages is shown once
+        let mut seen = HashSet::new();
+        all.retain(|m| seen.insert(m.id.clone()));
         all
+    }
+    /// Every agent on every computer, each once.
+    fn everyone(&self) -> Vec<&ChatAgent> {
+        let mut seen = HashSet::new();
+        self.stations.iter().flat_map(|s| s.agents.iter()).filter(|a| seen.insert(a.id.clone())).collect()
     }
     fn is_open(&self, id: &str) -> bool {
         !self.answered.contains(id) && self.stations.iter().any(|s| s.open.contains(id))
@@ -342,7 +355,7 @@ impl Desk {
     /// What to show. `room` narrows the feed to one team, `agent` to one callsign; with neither, everything.
     pub fn view(&self, room: Option<String>, agent: Option<String>) -> DeskView {
         let state = self.shared.state.lock().unwrap();
-        let agents: Vec<&ChatAgent> = state.stations.iter().flat_map(|s| s.agents.iter()).collect();
+        let agents: Vec<&ChatAgent> = state.everyone();
         // his own messages belong to the room or agent they went to
         let here = |m: &ChatMessage| {
             let about = |name: &String| agent.as_ref().is_none_or(|a| name == a) && room.as_ref().is_none_or(|r| agents.iter().any(|x| x.callsign == *name && x.group == *r));
@@ -355,7 +368,7 @@ impl Desk {
         let rank = |s: &str| ["idle", "working", "stalled", "asking"].iter().position(|x| *x == s).unwrap_or(0);
         let mut rooms: Vec<DeskRoom> = Vec::new();
         for a in &agents {
-            let member = DeskMember { id: a.id.clone(), callsign: a.callsign.clone(), state: a.state.clone(), subagents: a.subagents, doing: a.doing.clone(), badge: airband_core::routing::badge(&a.group, &a.callsign) };
+            let member = DeskMember { id: a.id.clone(), callsign: a.callsign.clone(), state: a.state.clone(), subagents: a.subagents, doing: a.doing.clone(), badge: airband_core::routing::badge(&a.group, &a.callsign), engine: [a.model.as_deref(), a.effort.as_deref()].into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} "), station: if state.stations.len() > 1 { state.stations.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(|s| s.name.clone()).unwrap_or_default() } else { String::new() } };
             // what the team is doing is said in the name of whoever is doing it, without the team's own name
             let doing = a.doing.as_ref().map(|d| match a.callsign.strip_prefix(&a.group).map(str::trim).filter(|rest| !rest.is_empty()) {
                 Some(who) => format!("{who}: {d}"),
@@ -575,6 +588,22 @@ impl Desk {
         radio.use_account(station, harness, id)
     }
 
+    /// Put an agent in another team: one of the teams on screen, or a new one of that name. `agent` is its id.
+    /// The list shows it there at once. Blocks: call it off the main thread.
+    pub fn move_agent(&self, agent: String, team: String) -> Result<(), RadioError> {
+        let radio = self.shared.state.lock().unwrap().stations.iter().find(|s| s.agents.iter().any(|a| a.id == agent)).map(|s| s.radio.clone()).ok_or(RadioError::Refused)?;
+        let now = radio.move_agent(agent.clone(), team)?;
+        {
+            // shown as the tower now has it, without waiting for the next look at the feed
+            let mut state = self.shared.state.lock().unwrap();
+            for a in state.stations.iter_mut().flat_map(|s| s.agents.iter_mut()).filter(|a| a.id == agent) {
+                (a.callsign, a.group) = (now[0].clone(), now[1].clone());
+            }
+        }
+        self.shared.host.changed();
+        Ok(())
+    }
+
     /// Stop for good.
     pub fn stop(&self) {
         let mut state = self.shared.state.lock().unwrap();
@@ -732,7 +761,7 @@ mod tests {
             radio,
             name: name.into(),
             online: true,
-            agents: agents.iter().map(|(c, g)| ChatAgent { id: c.to_string(), callsign: c.to_string(), group: g.to_string(), harness: "h".into(), waiting: false, reachable: true, state: "working".into(), subagents: 0, doing: None }).collect(),
+            agents: agents.iter().map(|(c, g)| ChatAgent { id: c.to_string(), callsign: c.to_string(), group: g.to_string(), harness: "h".into(), waiting: false, reachable: true, state: "working".into(), subagents: 0, doing: None, model: None, effort: None }).collect(),
             open: messages.iter().filter(|m| m.needs_you).map(|m| m.id.clone()).collect(),
             sending: Vec::new(),
             quick: Vec::new(),

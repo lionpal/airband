@@ -144,6 +144,14 @@ pub enum Event {
         #[serde(default)]
         text: String,
     },
+    /// The model it is running on and how hard it is set to think, as a person would say them ("Opus 4.7",
+    /// "high"). Shown beside its name. Sent when known and again when either changes.
+    Model {
+        #[serde(default)]
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effort: Option<String>,
+    },
     /// It is gone.
     Signoff,
     #[serde(other)]

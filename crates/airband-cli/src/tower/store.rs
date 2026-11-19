@@ -106,6 +106,9 @@ impl Store {
             if let Some(rows) = Self::warn("reading messages", rows) {
                 entries = rows.flatten().collect();
                 entries.reverse();
+                // in the order they were said: something he typed at a keyboard is added after the fact, with the
+                // time he typed it
+                entries.sort_by_key(|e: &Entry| (e.at, e.seq));
             }
         }
         (saved, entries)

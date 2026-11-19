@@ -24,6 +24,27 @@ pub(super) struct Session {
     /// What it is doing right now, while it works: its harness's words for its latest step. Never kept.
     #[serde(skip)]
     pub(super) doing: Option<String>,
+    /// The model it runs on and how hard it is set to think, as last told. Kept, so one that has been waiting
+    /// since before the tower restarted still shows them.
+    #[serde(default)]
+    pub(super) model: Option<String>,
+    #[serde(default)]
+    pub(super) effort: Option<String>,
+    /// Who put it in a team other than its folder's, if anyone did. One he placed stays where he put it.
+    #[serde(default)]
+    pub(super) moved: Option<Mover>,
+    /// How many times it has reported. The tower looks at where it belongs on some of them.
+    #[serde(default)]
+    pub(super) reports: u32,
+    /// How far into its harness's record the tower has read what he typed to it at its own keyboard.
+    #[serde(default)]
+    pub(super) told_upto: u64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub(super) enum Mover {
+    Him,
+    Tower,
 }
 
 /// Something an agent said that he has not heard yet.
@@ -256,7 +277,13 @@ impl Inner {
     pub(super) fn check_in(&mut self, agent: &Agent) -> Callsign {
         let named = agent.name.clone().or(agent.cwd.clone()).unwrap_or_else(|| agent.harness.clone());
         // the name he gave the session, when it is new to the tower or has changed
-        let wanted = agent.title.as_deref().filter(|t| self.find(&agent.id).is_none_or(|s| s.agent.title.as_deref() != Some(*t))).and_then(|t| Callsign::titled(&named, t));
+        let wanted = agent.title.as_deref().filter(|t| self.find(&agent.id).is_none_or(|s| s.agent.title.as_deref() != Some(*t))).and_then(|t| Callsign::titled(&named, t)).map(|mut want| {
+            // one that was moved to another team is renamed there, not back in its folder's
+            if let Some(s) = self.find(&agent.id).filter(|s| s.moved.is_some()) {
+                want.project = s.callsign.project.clone();
+            }
+            want
+        });
         if let Some(want) = &wanted {
             self.make_room(&agent.id, want, &named);
         }
@@ -268,7 +295,7 @@ impl Inner {
             if let Some(cwd) = agent.cwd.clone().filter(|_| agent.name.is_none()) {
                 self.projects.insert(callsign.project.clone(), cwd);
             }
-            self.sessions.push(Session { agent: agent.clone(), callsign, waiting: false, last: None, pictures: Vec::new(), subagents: 0, doing: None });
+            self.sessions.push(Session { agent: agent.clone(), callsign, waiting: false, last: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0 });
         } else if let Some(want) = wanted.filter(|c| free(self, c)) {
             self.rename(&agent.id, want);
         }
@@ -302,6 +329,25 @@ impl Inner {
         self.rename(&holder.agent.id, Callsign::next_for(named, &taken));
     }
 
+    /// Put a session in another team, one that exists or a new one. Returns what it was called and what it is
+    /// called now, or nothing when it is already there or the team's name says nothing.
+    pub(super) fn move_to(&mut self, id: &str, team: &str, by: Mover) -> Option<(Callsign, Callsign)> {
+        let was = self.find(id)?.callsign.clone();
+        let others: Vec<Callsign> = self.sessions.iter().filter(|s| s.agent.id != id).map(|s| s.callsign.clone()).collect();
+        let to = was.moved_to(team, &others)?;
+        if to.project == was.project {
+            // already there: if it was he who said so, it now stays
+            if by == Mover::Him {
+                self.session(id)?.moved = Some(Mover::Him);
+            }
+            return None;
+        }
+        self.rename(id, to.clone());
+        self.session(id)?.moved = Some(by);
+        self.colour_teams();
+        Some((was, to))
+    }
+
     /// Call a session something else. Its messages are found by its id, so nothing has to be carried over;
     /// they are marked changed so every radio shows the new name.
     fn rename(&mut self, id: &str, to: Callsign) {
@@ -317,15 +363,41 @@ impl Inner {
         }
     }
 
+    /// What he said to an agent at its own keyboard, as its harness kept it: added to the chat as his words to
+    /// it, each once, at the time he said it. `upto` is how far the harness's record has now been read.
+    pub(super) fn told(&mut self, agent_id: &str, told: Vec<crate::adapters::Told>, upto: u64) {
+        let Some(to) = self.find(agent_id).cloned() else { return };
+        // nothing from before the chat he has; with no chat yet, the last day
+        let oldest = self.log.first().map(|e| e.at).unwrap_or_else(|| now().saturating_sub(24 * 3600 * 1000));
+        for t in told.into_iter().filter(|t| t.at >= oldest) {
+            // the harness's own id for it, so the same words are never added twice
+            let id: String = t.id.chars().filter(|c| c.is_ascii_alphanumeric()).take(40).collect();
+            if id.is_empty() || self.log.iter().any(|e| e.id == id) {
+                continue;
+            }
+            // his words as he typed them. Something very long (a pasted log) is shown by its opening and kept whole
+            let short: String = if t.text.chars().count() > 600 { format!("{}…", t.text.chars().take(600).collect::<String>().trim_end()) } else { t.text.clone() };
+            self.record_at(Entry { short: Some(short), ..Entry::his(id, std::slice::from_ref(&to), t.text) }, t.at);
+        }
+        if let Some(s) = self.session(agent_id) {
+            s.told_upto = upto;
+        }
+    }
+
     /// Add a line to the log.
-    pub(super) fn record(&mut self, mut e: Entry) {
+    pub(super) fn record(&mut self, e: Entry) {
+        self.record_at(e, now());
+    }
+    /// Add a line that was said at a time already past: it takes its place among the others by that time.
+    pub(super) fn record_at(&mut self, mut e: Entry, at: u64) {
         self.seq += 1;
         self.rev += 1;
         e.seq = self.seq;
         e.rev = self.rev;
-        e.at = now();
+        e.at = at.min(now());
         self.unsaved.borrow_mut().insert(e.id.clone());
-        self.log.push(e);
+        let place = self.log.partition_point(|have| have.at <= e.at);
+        self.log.insert(place, e);
         if self.log.len() > LOG_KEEP {
             let extra = self.log.len() - LOG_KEEP;
             self.log.drain(..extra);
@@ -454,7 +526,7 @@ impl Inner {
     }
     pub(super) fn roster_entries(&self) -> Vec<RosterEntry> {
         let open = self.open_ids();
-        self.sessions.iter().map(|s| RosterEntry { id: s.agent.id.clone(), callsign: s.callsign.text(), group: s.callsign.project.clone(), harness: s.agent.harness.clone(), waiting: s.waiting, state: self.state_of(s, &open).into(), subagents: s.subagents, reachable: s.agent.deliver.is_some(), doing: s.doing.clone().filter(|_| !s.waiting) }).collect()
+        self.sessions.iter().map(|s| RosterEntry { id: s.agent.id.clone(), callsign: s.callsign.text(), group: s.callsign.project.clone(), harness: s.agent.harness.clone(), waiting: s.waiting, state: self.state_of(s, &open).into(), subagents: s.subagents, reachable: s.agent.deliver.is_some(), doing: s.doing.clone().filter(|_| !s.waiting), model: s.model.clone(), effort: s.effort.clone() }).collect()
     }
     /// Where a new agent can be started: what the configuration lists, then wherever agents have been seen.
     pub(super) fn launchable(&self, cfg: &Config) -> BTreeMap<String, String> {

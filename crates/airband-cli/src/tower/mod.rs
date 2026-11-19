@@ -34,6 +34,7 @@ mod intake;
 mod judge;
 mod launch;
 mod permit;
+mod place;
 mod pictures;
 mod pump;
 mod relay_link;
@@ -93,28 +94,48 @@ pub struct App {
     accounts: accounts::Kept,
 }
 
-/// What each working agent is doing, asked of its harness's adapter every couple of seconds, and only while a
-/// radio has read the feed lately: with nobody looking this costs nothing. An adapter that cannot say leaves
-/// whatever the agent reported itself (an `activity` event).
+/// What each working agent is doing and what it runs on, asked of its harness's adapter every couple of seconds,
+/// and only while a radio has read the feed lately: with nobody looking this costs nothing. An adapter that
+/// cannot say leaves whatever the agent reported itself (an `activity` or a `model` event).
 async fn activity_loop(app: Arc<App>) {
     loop {
         tokio::time::sleep(Duration::from_secs(2)).await;
-        let working: Vec<agent::Agent> = {
+        // the ones at work, and any whose model is not known yet (one that has been waiting since the tower started)
+        let (looked_at, everyone): (Vec<agent::Agent>, Vec<(agent::Agent, u64)>) = {
             let inner = app.inner.lock().unwrap();
             if !inner.last_reader.is_some_and(|t| t.elapsed() < Duration::from_secs(40)) {
                 continue;
             }
-            inner.sessions.iter().filter(|s| !s.waiting).map(|s| s.agent.clone()).collect()
+            (inner.sessions.iter().filter(|s| !s.waiting || s.model.is_none()).map(|s| s.agent.clone()).collect(), inner.sessions.iter().map(|s| (s.agent.clone(), s.told_upto)).collect())
         };
-        if working.is_empty() {
+        if everyone.is_empty() {
             continue;
         }
-        let found = tokio::task::spawn_blocking(move || working.into_iter().filter_map(|a| crate::adapters::activity(&a).map(|doing| (a.id, doing))).collect::<Vec<_>>()).await.unwrap_or_default();
+        let (found, typed) = tokio::task::spawn_blocking(move || {
+            // what he has typed to each at its own keyboard since the last look: he sees it in the chat as he goes
+            let typed: Vec<_> = everyone.into_iter().map(|(a, upto)| (crate::adapters::told(&a, upto), a.id, upto)).filter(|((told, now), _, was)| !told.is_empty() || now != was).collect();
+            (looked_at.into_iter().map(|a| (crate::adapters::glance(&a), a.id)).collect::<Vec<_>>(), typed)
+        })
+        .await
+        .unwrap_or_default();
         let mut inner = app.inner.lock().unwrap();
-        for (id, doing) in found {
-            if let Some(s) = inner.session(&id).filter(|s| !s.waiting) {
+        let mut learned = !typed.is_empty();
+        for ((told, upto), id, _) in typed {
+            inner.told(&id, told, upto);
+        }
+        for (seen, id) in found {
+            let Some(s) = inner.session(&id) else { continue };
+            if let Some(doing) = seen.doing.filter(|_| !s.waiting) {
                 s.doing = Some(doing);
             }
+            // what it runs on changes rarely (he switched model or effort part way): kept when it does
+            if seen.model.is_some() && (s.model != seen.model || s.effort != seen.effort) {
+                (s.model, s.effort) = (seen.model, seen.effort);
+                learned = true;
+            }
+        }
+        if learned {
+            app.save(&inner);
         }
     }
 }

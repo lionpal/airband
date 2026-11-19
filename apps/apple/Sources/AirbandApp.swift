@@ -932,6 +932,18 @@ struct AgentsMenu: View {
     @EnvironmentObject var model: RadioModel
     @Environment(\.dismiss) private var dismiss
     let openSetup: () -> Void
+    /// The team an agent is being held over, while he drags one.
+    @State private var over: String?
+    /// The agent a new team is being named for.
+    @State private var founding: DeskMember?
+    @State private var newTeam = ""
+
+    /// An agent dropped on a team, or on one of its agents, joins that team.
+    private func drop(_ ids: [String], on team: String) -> Bool {
+        guard let agent = model.view.rooms.flatMap(\.members).first(where: { $0.id == ids.first }) else { return false }
+        model.moveAgent(agent, to: team)
+        return true
+    }
 
     var body: some View {
         ScrollView {
@@ -945,11 +957,28 @@ struct AgentsMenu: View {
                         model.only = nil
                         model.room = room.name
                     }
+                    .overlay { if over == room.name { RoundedRectangle(cornerRadius: 14).strokeBorder(Palette.team(room.colour), lineWidth: 2) } }
+                    .dropDestination(for: String.self) { ids, _ in drop(ids, on: room.name) } isTargeted: { over = $0 ? room.name : (over == room.name ? nil : over) }
                     .padding(.top, 4)
                     ForEach(room.members, id: \.id) { agent in
-                        row(dot: agent.state, title: agent.callsign, detail: agent.doing, strong: false, on: model.only == agent.callsign, inset: 22, colour: room.colour, badge: agent.badge) {
+                        row(dot: agent.state, title: agent.callsign, detail: agent.doing, strong: false, on: model.only == agent.callsign, inset: 22, colour: room.colour, badge: agent.badge, engine: [agent.engine, agent.station].filter { !$0.isEmpty }.joined(separator: " \u{b7} ")) {
                             model.room = nil
                             model.only = agent.callsign
+                        }
+                        // hold and drag it onto another team; or hold, and pick the team from the list
+                        .draggable(agent.id) {
+                            HStack(spacing: 8) {
+                                Badge(text: agent.badge, colour: room.colour)
+                                Text(agent.callsign).font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.ink)
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 8).background(Palette.raised, in: RoundedRectangle(cornerRadius: 12))
+                        }
+                        .dropDestination(for: String.self) { ids, _ in drop(ids, on: room.name) } isTargeted: { over = $0 ? room.name : (over == room.name ? nil : over) }
+                        .contextMenu {
+                            ForEach(model.view.rooms.filter { $0.name != room.name }, id: \.name) { other in
+                                Button("Move to \(other.name)") { model.moveAgent(agent, to: other.name) }
+                            }
+                            Button { newTeam = ""; founding = agent } label: { Label("New team", systemImage: "plus") }
                         }
                     }
                 }
@@ -964,9 +993,16 @@ struct AgentsMenu: View {
         .background(Palette.ground.ignoresSafeArea())
         .foregroundStyle(Palette.ink)
         .preferredColorScheme(.dark)
+        .alert("New team", isPresented: Binding(get: { founding != nil }, set: { if !$0 { founding = nil } })) {
+            TextField("Name", text: $newTeam).textInputAutocapitalization(.never).autocorrectionDisabled()
+            Button("Move") { if let agent = founding { model.moveAgent(agent, to: newTeam) }; founding = nil }
+            Button("Cancel", role: .cancel) { founding = nil }
+        } message: {
+            Text(founding.map { "\($0.callsign) moves to it." } ?? "")
+        }
     }
 
-    private func row(dot: String?, title: String, detail: String?, strong: Bool, on: Bool, inset: CGFloat, colour: UInt8? = nil, badge: String? = nil, pick: @escaping () -> Void) -> some View {
+    private func row(dot: String?, title: String, detail: String?, strong: Bool, on: Bool, inset: CGFloat, colour: UInt8? = nil, badge: String? = nil, engine: String = "", pick: @escaping () -> Void) -> some View {
         Button {
             pick()
             model.replyingTo = nil
@@ -976,8 +1012,13 @@ struct AgentsMenu: View {
                 if let dot { StateDot(state: dot).id(dot) }
                 // an agent's badge on its team's colour; a team's own row carries the colour as a small mark
                 if let colour, let badge { Badge(text: badge, colour: colour) } else if let colour { RoundedRectangle(cornerRadius: 3).fill(Palette.team(colour)).frame(width: 10, height: 10) }
-                // one line a row: the name, then what it is doing in what room is left
-                Text(title).font(.system(size: 17, weight: strong ? .semibold : .regular)).lineLimit(1).layoutPriority(1)
+                // the name, with the model and thinking level it runs on small underneath, and the computer it is on
+                // when there are several; then what it is doing in what room is left
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(title).font(.system(size: 17, weight: strong ? .semibold : .regular)).lineLimit(1)
+                    if !engine.isEmpty { Text(engine).font(.system(size: 12, weight: .medium)).foregroundStyle(Palette.quiet).lineLimit(1) }
+                }
+                .layoutPriority(1)
                 Spacer(minLength: 8)
                 if let detail { Text(detail).font(.system(size: 13)).foregroundStyle(Palette.quiet).lineLimit(1).truncationMode(.tail) }
                 if on { Image(systemName: "checkmark").font(.system(size: 14, weight: .bold)).foregroundStyle(Palette.signal) }
@@ -988,7 +1029,7 @@ struct AgentsMenu: View {
             .contentShape(RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(title + (dot.map { ", " + ($0 == "asking" ? "waiting on you" : $0 == "stalled" ? "stopped" : $0) } ?? ""))
+        .accessibilityLabel(title + (engine.isEmpty ? "" : ", " + engine.replacingOccurrences(of: " \u{b7} ", with: ", ")) + (dot.map { ", " + ($0 == "asking" ? "waiting on you" : $0 == "stalled" ? "stopped" : $0) } ?? ""))
         .accessibilityAddTraits(on ? .isSelected : [])
     }
 }

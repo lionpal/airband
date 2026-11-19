@@ -31,9 +31,16 @@ async fn events(State(app): State<Arc<App>>, body: String) -> Response {
         Ok(ev) => ev,
         Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": format!("not an airband.agent/1 event: {e}") }))).into_response(),
     };
+    // on some of an agent's reports the tower looks at whether it is in the right team
+    let reported = matches!(ev.event, Event::Said { .. }).then(|| ev.agent.id.clone());
     // an event with a picture is slow to take in (the picture is shrunk); the other requests must not wait behind it
     match tokio::task::block_in_place(|| on_event(&app, ev)) {
-        Ok(()) => Json(json!({})).into_response(),
+        Ok(()) => {
+            if let Some(id) = reported.filter(|id| app.inner.lock().unwrap().find(id).is_some_and(|s| place::due(s.reports))) {
+                tokio::spawn(place::look(app.clone(), id));
+            }
+            Json(json!({})).into_response()
+        }
         Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response(),
     }
 }
@@ -56,6 +63,14 @@ async fn accounts_list(State(app): State<Arc<App>>, Query(q): Query<HashMap<Stri
 async fn accounts_use(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::UseAccount>) -> Json<Value> {
     Json(match accounts::switch(&app, to).await {
         Ok(now) => serde_json::to_value(now).unwrap_or_default(),
+        Err(why) => json!({ "error": why }),
+    })
+}
+
+/// He moved an agent to another team.
+async fn team(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::MoveAgent>) -> Json<Value> {
+    Json(match place::by_him(&app, &to.agent, &to.team) {
+        Ok((callsign, team)) => json!({ "callsign": callsign, "team": team }),
         Err(why) => json!({ "error": why }),
     })
 }
@@ -370,6 +385,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/radio/attachment", post(attachment))
         .route("/v1/radio/accounts", get(accounts_list))
         .route("/v1/radio/accounts/use", post(accounts_use))
+        .route("/v1/radio/team", post(team))
         .route("/v1/status", get(status))
         .layer(middleware::from_fn_with_state(app.clone(), auth))
         .with_state(app)

@@ -226,6 +226,26 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
     }
 
+    /// Put an agent in another team: one that is there, or a new one of that name. If he was looking at that
+    /// agent alone, he still is, under its new name.
+    func moveAgent(_ agent: DeskMember, to team: String) {
+        let team = team.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !team.isEmpty else { return }
+        let watched = only == agent.callsign
+        fetch.async {
+            let result = Result { try self.desk.moveAgent(agent: agent.id, team: team) }
+            DispatchQueue.main.async {
+                switch result {
+                case .success:
+                    if watched { self.only = self.view.rooms.flatMap(\.members).first { $0.id == agent.id }?.callsign }
+                case .failure(RadioError.Told(let reason)): self.problem = reason
+                case .failure(RadioError.Offline): self.problem = "Cannot reach that computer."
+                case .failure: self.problem = "It did not move."
+                }
+            }
+        }
+    }
+
     /// Fetch a picture, once. The core keeps the file, so after the first time this is immediate and works offline.
     func loadPicture(_ m: ChatMessage, _ p: ChatPicture) {
         guard pictureFiles[p.id] == nil, !fetching.contains(p.id) else { return }

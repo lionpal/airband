@@ -91,17 +91,161 @@ fn agent_of(hook: &Value) -> Option<Agent> {
     })
 }
 
-/// What a session is doing right now: its own words for its latest step, from the end of its transcript.
-/// A command or a subagent comes with a description Claude wrote for it ("Run the payments tests"); for the
-/// rest, a few plain words. Reads at most the last 96 KB of the file, so it is quick however long the session.
-pub fn activity(agent: &Agent) -> Option<String> {
+/// A look at a session, from the end of its transcript: what it is doing right now, in its own words for its
+/// latest step, and the model and effort its latest answer was made with. A command or a subagent comes with a
+/// description Claude wrote for it ("Run the payments tests"); for the rest, a few plain words. Reads at most
+/// the last 96 KB of the file, so it is quick however long the session.
+pub fn glance(agent: &Agent) -> super::Glance {
+    let Some(tail) = tail_of(agent, 96 * 1024) else { return super::Glance::default() };
+    let (model, effort) = engine_in(&tail).unzip();
+    super::Glance { doing: step_in(&tail), model, effort: effort.flatten() }
+}
+
+/// The end of a session's transcript: at most this many bytes of it.
+fn tail_of(agent: &Agent, most: u64) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
     let mut file = std::fs::File::open(agent.meta.get("transcript")?.as_str()?).ok()?;
     let size = file.metadata().ok()?.len();
-    file.seek(SeekFrom::Start(size.saturating_sub(96 * 1024))).ok()?;
+    file.seek(SeekFrom::Start(size.saturating_sub(most))).ok()?;
     let mut tail = Vec::new();
     file.read_to_end(&mut tail).ok()?;
-    step_in(&String::from_utf8_lossy(&tail))
+    Some(String::from_utf8_lossy(&tail).into_owned())
+}
+
+/// What he has typed into a session since the byte `from` of its transcript, and the byte to read from next
+/// time. The first time, at most the last 24 MB are gone through: a line with a pasted picture in it runs to
+/// hundreds of kilobytes. The file is read a line at a time and only his own lines are kept, so this costs the
+/// memory of one line however much there is to go through. Whole lines only: one still being written is left
+/// for the next call.
+pub fn told(agent: &Agent, from: u64) -> (Vec<super::Told>, u64) {
+    use std::io::{BufRead, Seek, SeekFrom};
+    let read = || {
+        let mut file = std::fs::File::open(agent.meta.get("transcript")?.as_str()?).ok()?;
+        let size = file.metadata().ok()?.len();
+        // the transcript was replaced by a shorter one: start over; what was already taken is known by its id
+        let from = if from > size { 0 } else { from };
+        let fresh = from == 0 && size > 24 * 1024 * 1024;
+        let mut at = if fresh { size - 24 * 1024 * 1024 } else { from };
+        if at >= size {
+            return Some((Vec::new(), size));
+        }
+        file.seek(SeekFrom::Start(at)).ok()?;
+        let mut lines = std::io::BufReader::with_capacity(64 * 1024, file);
+        let (mut told, mut line) = (Vec::new(), Vec::new());
+        // started in the middle of the file: what is left of the line it landed in is not a line
+        let mut skip = fresh;
+        loop {
+            line.clear();
+            let n = lines.read_until(b'\n', &mut line).ok()?;
+            if n == 0 || line.last() != Some(&b'\n') {
+                break;
+            }
+            at += n as u64;
+            if !std::mem::take(&mut skip) && line.windows(7).any(|w| w == b"\"human\"") {
+                told.extend(told_in(&String::from_utf8_lossy(&line)));
+            }
+        }
+        Some((told, at))
+    };
+    read().unwrap_or((Vec::new(), from))
+}
+
+/// His own prompts in a piece of a transcript, oldest first: one that started a turn, and one he sent while the
+/// session was working. Claude Code marks who each prompt came from; only "human" is him at the keyboard.
+fn told_in(piece: &str) -> Vec<super::Told> {
+    let words = |content: &Value| -> Option<String> {
+        let text = match content {
+            Value::String(s) => s.clone(),
+            Value::Array(parts) => parts.iter().filter(|p| p["type"] == "text").filter_map(|p| p["text"].as_str()).collect::<Vec<_>>().join("\n"),
+            _ => return None,
+        };
+        let text = text.trim().to_string();
+        // a command of the harness's and its output are not something he said to the agent
+        (!text.is_empty() && !text.starts_with('<') && !text.starts_with('/')).then_some(text)
+    };
+    piece
+        .lines()
+        .filter(|l| l.contains("\"human\""))
+        .filter_map(|line| {
+            let entry: Value = serde_json::from_str(line).ok()?;
+            if entry["isSidechain"] == true || entry["isMeta"] == true {
+                return None;
+            }
+            let (from, id, text) = match entry["type"].as_str()? {
+                "user" => (&entry, entry["uuid"].as_str()?, words(&entry["message"]["content"])?),
+                "attachment" if entry["attachment"]["type"] == "queued_command" => (&entry["attachment"], entry["attachment"]["source_uuid"].as_str().or(entry["uuid"].as_str())?, words(&entry["attachment"]["prompt"])?),
+                _ => return None,
+            };
+            if from["origin"]["kind"] != "human" && entry["origin"]["kind"] != "human" {
+                return None;
+            }
+            let at = from["timestamp"].as_str().or(entry["timestamp"].as_str()).and_then(super::claude_accounts::iso_ms)?;
+            Some(super::Told { id: id.to_string(), at, text })
+        })
+        .collect()
+}
+
+/// The files a session has lately read or changed and the commands it has run, newest first, as written.
+pub fn touched(agent: &Agent) -> Vec<String> {
+    tail_of(agent, 256 * 1024).map(|tail| touched_in(&tail)).unwrap_or_default()
+}
+
+fn touched_in(tail: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for line in tail.lines().rev().filter(|l| l.contains("\"tool_use\"")) {
+        let Ok(entry) = serde_json::from_str::<Value>(line) else { continue };
+        if entry["isSidechain"] == true {
+            continue;
+        }
+        for c in entry["message"]["content"].as_array().into_iter().flatten().rev().filter(|c| c["type"] == "tool_use") {
+            let input = &c["input"];
+            let what = ["file_path", "notebook_path", "path", "command"].iter().find_map(|k| input[*k].as_str()).map(|t| t.lines().next().unwrap_or("").trim().chars().take(160).collect::<String>());
+            if let Some(what) = what.filter(|w| !w.is_empty() && !found.contains(w)) {
+                found.push(what);
+            }
+            if found.len() >= 14 {
+                return found;
+            }
+        }
+    }
+    found
+}
+
+/// The model and effort of the latest answer in a piece of a transcript. A subagent's lines are passed over: it
+/// may run on another model.
+fn engine_in(tail: &str) -> Option<(String, Option<String>)> {
+    tail.lines().rev().filter(|l| l.contains("\"model\"") && l.contains("\"assistant\"")).find_map(|line| {
+        let entry: Value = serde_json::from_str(line).ok()?;
+        if entry["type"] != "assistant" || entry["isSidechain"] == true {
+            return None;
+        }
+        let model = model_name(entry["message"]["model"].as_str()?)?;
+        Some((model, entry["effort"].as_str().map(str::trim).filter(|e| !e.is_empty()).map(str::to_string)))
+    })
+}
+
+/// A model's id as a person would say it: "claude-opus-4-7" is "Opus 4.7", "claude-haiku-4-5-20251001" is
+/// "Haiku 4.5". Nothing for a line the harness wrote itself and not a model.
+fn model_name(id: &str) -> Option<String> {
+    let id = id.split('[').next().unwrap_or(id).trim();
+    let (mut words, mut numbers): (Vec<String>, Vec<&str>) = (Vec::new(), Vec::new());
+    for part in id.split('-').filter(|p| !p.is_empty() && *p != "claude") {
+        if part.chars().all(|c| c.is_ascii_digit()) {
+            // a long run of digits is the date a model was made, not part of its name
+            if part.len() <= 2 {
+                numbers.push(part);
+            }
+        } else if part.chars().all(|c| c.is_ascii_alphanumeric()) {
+            let mut c = part.chars();
+            words.push(c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default());
+        } else {
+            return None;
+        }
+    }
+    if words.is_empty() {
+        return None;
+    }
+    Some(if numbers.is_empty() { words.join(" ") } else { format!("{} {}", words.join(" "), numbers.join(".")) })
 }
 
 /// The latest step named in a piece of a transcript, newest line first.
@@ -381,6 +525,56 @@ mod tests {
         let mut only = json!({ "model": "x", "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "\"C:\\Users\\c\\.airband\\bin\\airband.exe\" hook claude-code" }] }] } });
         strip_hooks(&mut only);
         assert_eq!(only, json!({ "model": "x" }));
+    }
+
+    #[test]
+    fn what_he_typed_is_read_from_the_transcript_and_nothing_else_is() {
+        let transcript = [
+            r#"{"type":"user","uuid":"a1","timestamp":"2026-11-19T17:37:34.021Z","origin":{"kind":"human"},"message":{"role":"user","content":"ok so how do i get a qr code"}}"#,
+            // passed on by the tower, sent by another agent, the harness's own notice, a command: none is him typing
+            r#"{"type":"user","uuid":"a2","timestamp":"2026-11-19T17:38:00.000Z","origin":{"kind":"peer","from":"uds:/tmp/x.sock"},"message":{"role":"user","content":"Message from Charles, sent through Airband: a human said this"}}"#,
+            r#"{"type":"user","uuid":"a3","timestamp":"2026-11-19T17:38:01.000Z","origin":{"kind":"task-notification"},"message":{"role":"user","content":"done"}}"#,
+            r#"{"type":"user","uuid":"a4","timestamp":"2026-11-19T17:38:02.000Z","origin":{"kind":"human"},"message":{"role":"user","content":"<command-name>/model</command-name>"}}"#,
+            r#"{"type":"user","uuid":"a5","timestamp":"2026-11-19T17:38:03.000Z","message":{"role":"user","content":[{"type":"tool_result","content":"a \"human\" wrote this file"}]}}"#,
+            // sent while it was working, with a picture
+            r#"{"type":"attachment","uuid":"a6","attachment":{"type":"queued_command","prompt":[{"type":"image","source":{"data":"…"}},{"type":"text","text":"Swiping on the pop-up should get rid of it."}],"source_uuid":"q6","origin":{"kind":"human"},"timestamp":"2026-11-19T17:40:46.000Z"}}"#,
+        ]
+        .join("\n");
+        let told = told_in(&transcript);
+        assert_eq!(told.iter().map(|t| (t.id.as_str(), t.text.as_str())).collect::<Vec<_>>(), vec![("a1", "ok so how do i get a qr code"), ("q6", "Swiping on the pop-up should get rid of it.")]);
+        assert_eq!(told[0].at, 1795109854021);
+    }
+
+    #[test]
+    fn what_a_session_touched_is_its_files_and_commands_newest_first() {
+        let transcript = [
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/work/shop/cart.ts"}}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"cd /work/warehouse && cargo test\nsecond line","description":"Run the tests"}}]}}"#,
+            r#"{"type":"assistant","isSidechain":true,"message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/elsewhere/x"}}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/work/warehouse/src/stock.rs"}}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/work/warehouse/src/stock.rs"}}]}}"#,
+        ]
+        .join("\n");
+        assert_eq!(touched_in(&transcript), vec!["/work/warehouse/src/stock.rs", "cd /work/warehouse && cargo test", "/work/shop/cart.ts"]);
+    }
+
+    #[test]
+    fn the_model_and_effort_are_those_of_the_latest_answer() {
+        let transcript = [
+            r#"{"type":"assistant","isSidechain":false,"effort":"medium","message":{"model":"claude-opus-4-7","content":[]}}"#,
+            r#"{"type":"user","message":{"content":"switch to fable"}}"#,
+            r#"{"type":"assistant","isSidechain":false,"effort":"high","message":{"model":"claude-fable-5-2","content":[]}}"#,
+            // a subagent on another model, and a line the harness wrote itself: neither is what the session runs on
+            r#"{"type":"assistant","isSidechain":true,"effort":"low","message":{"model":"claude-haiku-4-5-20251001","content":[]}}"#,
+            r#"{"type":"assistant","isSidechain":false,"message":{"model":"<synthetic>","content":[]}}"#,
+        ]
+        .join("\n");
+        assert_eq!(engine_in(&transcript), Some(("Fable 5.2".to_string(), Some("high".to_string()))));
+        assert_eq!(engine_in(r#"{"type":"user","message":{"content":"hello"}}"#), None);
+        assert_eq!(model_name("claude-haiku-4-5-20251001").as_deref(), Some("Haiku 4.5"));
+        assert_eq!(model_name("claude-opus-4-7[1m]").as_deref(), Some("Opus 4.7"));
+        assert_eq!(model_name("claude-3-5-sonnet-20241022").as_deref(), Some("Sonnet 3.5"));
+        assert_eq!(model_name("gpt-5").as_deref(), Some("Gpt 5"));
     }
 
     #[test]

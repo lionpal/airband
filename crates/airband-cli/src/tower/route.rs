@@ -88,13 +88,15 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
             // more than one agent could be meant. His words decide, read against what each has been saying:
             // "ship the login fix" goes to whoever is working on the login fix, whoever spoke last.
             let now = now();
+            // each with the two letters the app shows for it: he may say those and not the name
+            let letters = |s: &Session| airband_core::routing::badge(&s.callsign.project, &s.callsign.text());
             let line = |s: &Session, e: &Entry, since: bool| {
-                format!("- {} ({} ago{}{}): {}", s.callsign.text(), ago(now.saturating_sub(e.at)), if since { "" } else { ", before he last spoke" }, if e.kind == Some(Kind::NeedsYou) { ", waiting on him" } else { "" }, e.short.clone().unwrap_or_else(|| opening(&e.full)))
+                format!("- {} (letters {}; {} ago{}{}): {}", s.callsign.text(), letters(s), ago(now.saturating_sub(e.at)), if since { "" } else { ", before he last spoke" }, if e.kind == Some(Kind::NeedsYou) { ", waiting on him" } else { "" }, e.short.clone().unwrap_or_else(|| opening(&e.full)))
             };
             let mut lines: Vec<String> = several.iter().take(6).map(|(s, e)| line(s, e, true)).collect();
-            lines.extend(quiet.iter().take(8usize.saturating_sub(lines.len())).map(|(s, e)| match e {
+            lines.extend(quiet.iter().take(12usize.saturating_sub(lines.len())).map(|(s, e)| match e {
                 Some(e) => line(s, e, false),
-                None => format!("- {} (has said nothing yet)", s.callsign.text()),
+                None => format!("- {} (letters {}; has said nothing yet)", s.callsign.text(), letters(s)),
             }));
             let last = match &focus {
                 Some((_, Some((at, to, said)))) => format!("The last thing he said, {} ago, was to {}: \"{said}\"\n", ago(now.saturating_sub(*at)), list(to)),
@@ -137,15 +139,17 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                 }
             };
             let prompt = format!(
-                "{name} runs several coding agents. Each is listed with the last thing it said, the ones that have spoken since he last did first, newest first:\n{lines}\n{last}\n\
-                 He now says, naming nobody: \"{rest}\"\n\n\
-                 Who is it for? If his words are plainly about one agent's work or answer one agent's question, it is that agent, \
+                "{name} runs several coding agents. Each is listed by its callsign, with the last thing it said, the ones that have spoken since he last did first, newest first:\n{lines}\n{last}\n\
+                 He now says: \"{rest}\"\n\n\
+                 Who is it for? Each agent's letters are the label his phone shows for it. If he names one by its \
+                 letters (\"to SR\", \"tell M3\", \"S R, go ahead\"; speech may write them apart, or as words that sound \
+                 like them) it is for that agent and you can be sure of it. If his words are plainly about one agent's work or answer one agent's question, it is that agent, \
                  and you can be sure of it however recently another one spoke: \"refund them all\" is for whoever is working on refunds. \
                  Otherwise a reply right after an agent speaks is to that agent, and with nobody having spoken since he last did \
                  it carries on with the agent he last spoke with: words that only make sense as more of what he was just saying \
                  (\"and make it blue\", \"also the footer\") are for the same agent, and you can be sure of that too. \
                  Name more than one only if his words plainly address several.{starting}\n\
-                 Reply with one line of JSON and nothing else: {{\"to\":[\"<callsign>\"],\"sure\":true or false{shape}}}\n\
+                 Reply with one line of JSON and nothing else: {{\"to\":[\"<callsign in full, not its letters>\"],\"sure\":true or false{shape}}}\n\
                  \"sure\": false if a careful assistant would check with him before passing this on.",
                 name = app.cfg.name,
                 lines = if lines.is_empty() { "(none are running)".to_string() } else { lines.join("\n") },
@@ -200,7 +204,12 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                 return Routed::Ask(Vec::new());
             }
             let judged = Some(judged);
-            let picked: Vec<Session> = judged.as_ref().map(|o| everyone.iter().filter(|s| o.to.iter().any(|c| c.eq_ignore_ascii_case(&s.callsign.text()))).map(|s| (*s).clone()).collect()).unwrap_or_default();
+            // the model names an agent by its callsign; its letters are taken too when they are one agent's alone
+            let answers = |c: &str, s: &Session| {
+                let c = c.trim();
+                c.eq_ignore_ascii_case(&s.callsign.text()) || (c.eq_ignore_ascii_case(&letters(s)) && everyone.iter().filter(|o| letters(o).eq_ignore_ascii_case(c)).count() == 1)
+            };
+            let picked: Vec<Session> = judged.as_ref().map(|o| everyone.iter().filter(|s| o.to.iter().any(|c| answers(c, s))).map(|s| (*s).clone()).collect()).unwrap_or_default();
             if judged.is_some_and(|o| o.sure) && !picked.is_empty() {
                 Routed::Sure(picked)
             } else {

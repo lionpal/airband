@@ -12,8 +12,17 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
         Event::Said { text, .. } => pictures::named_in(text, ev.agent.cwd.as_deref()).iter().take(pictures::PER_MESSAGE).filter_map(|p| pictures::keep(p)).collect(),
         _ => Vec::new(),
     };
+    // what he typed to it at its own keyboard, read before anything is locked. It goes in ahead of this event,
+    // so his words come before the answer to them
+    let typed = {
+        let known = app.inner.lock().unwrap().find(&ev.agent.id).map(|s| (s.agent.clone(), s.told_upto));
+        known.filter(|_| matches!(ev.event, Event::Working | Event::Said { .. })).map(|(agent, upto)| crate::adapters::told(&agent, upto))
+    };
     let mut inner = app.inner.lock().unwrap();
     let id = ev.agent.id.clone();
+    if let Some((told, upto)) = typed {
+        inner.told(&id, told, upto);
+    }
     if ev.event == Event::Signoff {
         if let Some(s) = inner.find(&id) {
             log(format!("{} signed off", s.callsign.text()));
@@ -39,10 +48,18 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
             // nothing to keep and nobody to wake: a radio that is looking sees it within a moment
             return Ok(());
         }
+        Event::Model { name, effort } => {
+            let short = |t: String| -> Option<String> { Some(t.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(32).collect::<String>()).filter(|t| !t.is_empty()) };
+            let s = inner.session(&id).unwrap();
+            (s.model, s.effort) = (short(name), effort.and_then(short));
+            app.save(&inner);
+            return Ok(());
+        }
         Event::Said { text, kind } => {
             let s = inner.session(&id).unwrap();
             s.waiting = true;
             s.doing = None;
+            s.reports += 1;
             // its turn is over: whatever subagents it had are done with
             s.subagents = 0;
             let with = pictures::for_message(std::mem::take(&mut s.pictures), kept);

@@ -38,6 +38,7 @@ skipped. Adding a field or a variant is not a new version. `/2` is for a change 
 | `picture` | It looked at a picture or made one for him: `path` is a file on the tower's machine (PNG, JPEG, GIF or WebP). `shown: true` means it meant him to see it. The tower keeps a small copy and attaches it to the next `said`. A picture file named in the text of a `said` is attached the same way, with no event. |
 | `subagent` | It started a subagent (`done: false`) or one finished (`done: true`); `what` says what the subagent is for. Only counted, for showing how much is going on under one agent. |
 | `activity` | What it is doing right now, in a few words (`text`). Shown small while it works, never kept, never read aloud. For a harness the tower cannot ask; `airband report … doing "<text>"` sends one. |
+| `model` | The model it runs on and how hard it is set to think (`name`, `effort`), as a person would say them: "Opus 4.7", "high". Shown beside its name. `airband report … model "<name>" [effort]` sends it; an adapter can read it instead. |
 | `signoff` | It is gone. |
 
 | `deliver.kind` | How the tower gets his reply to the agent |
@@ -132,6 +133,10 @@ feed in the last 40 seconds. The feed carries `roster_rev`, a number that change
 radio that passes it back as `roster=` has its waiting `GET feed` answered when the roster changes, not only
 when a message does.
 
+A roster entry may also carry `model` and `effort`: what the agent runs on, when its harness can say.
+
+A message from `you` is something he said: through a radio, or typed to an agent at its own keyboard, which the tower adds when the harness keeps a record it can read. Those are added after the fact with the time he typed them, so a radio orders messages by `at`.
+
 The feed's `colours` gives each team a number from 0: its place in the client's own list of team colours. A team
 is given the first number no other team has, once, and keeps it.
 
@@ -145,6 +150,7 @@ Accounts, for a harness whose sessions can be moved between logins while they ru
 |---|---|---|
 | `GET accounts?fresh=1` | → `{ schema, accounts, note, checked_at }` | Every account of every such harness on this computer. Kept for five minutes; `fresh` checks again (at most every 20 s). |
 | `POST accounts/use` | `{ harness, id }` → the same, or `{ error }` | Move that harness's sessions to that account. `error` is words for him. |
+| `POST team` | `{ agent, team }` → `{ callsign, team }`, or `{ error }` | Put an agent in another team: one that exists, or a new one of that name. A name he gave the agent goes with it; a number is replaced by the next free one there. It stays where he put it. |
 
 An account is `{ id, harness, label, live, limits, problem }`. `id` means something only to the adapter that listed
 it; `label` is what to show (for Claude Code, the email); `live` marks the one in use. Each of `limits` is

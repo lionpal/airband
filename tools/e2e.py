@@ -210,6 +210,115 @@ try:
     check("a radio waiting on the feed hears of it at once, with no message changed", time.time() - started < 6 and roster(later)["catalog import"].get("doing") == "Running the import tests" and not later["messages"], (time.time() - started, later.get("messages")))
     # a Claude Code session is asked through its transcript, with no hook on each step
     transcript = os.path.join(work, "session.jsonl")
+    stamp = lambda: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+    with open(transcript, "w") as f:
+        f.write(json.dumps({"type": "user", "uuid": "11111111-aaaa-4bbb-8ccc-000000000001", "timestamp": stamp(), "origin": {"kind": "human"}, "message": {"role": "user", "content": "run the payments tests, and tell me which ones are slow"}}) + "\n")
+        f.write(json.dumps({"type": "user", "uuid": "11111111-aaaa-4bbb-8ccc-000000000002", "timestamp": stamp(), "origin": {"kind": "peer", "from": "uds:/tmp/x.sock"}, "message": {"role": "user", "content": "Message from Charles, sent through Airband: passed on by the tower"}}) + "\n")
+        f.write(json.dumps({"type": "assistant", "effort": "medium", "message": {"model": "claude-opus-4-7", "content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "/x/orders/webhook.ts"}}]}}) + "\n")
+        f.write(json.dumps({"type": "assistant", "effort": "high", "message": {"model": "claude-opus-4-7", "content": [{"type": "tool_use", "name": "Bash", "input": {"command": "npm test -- payments", "description": "Run the payments tests"}}]}}) + "\n")
+    def session(ident, project, event, title=None, record=None):
+        agent = {"id": ident, "harness": "claude-code", "cwd": os.path.join(projects, project), "meta": {"transcript": record or transcript}}
+        if title: agent["title"] = title
+        return http("POST", "/v1/agent/events", {"schema": "airband.agent/1", "agent": agent, "event": event}, token=OWN)
+    session("tr", "orders", {"type": "working"}, "orders webhook")
+    for _ in range(12):
+        asked = roster(feed()).get("orders webhook", {})
+        if asked.get("doing") and asked.get("model"): break
+        time.sleep(0.5)
+    check("a Claude Code session's latest step is read from the end of its transcript", asked.get("doing") == "Run the payments tests", asked)
+    check("and the model and thinking level it runs on", asked.get("model") == "Opus 4.7" and asked.get("effort") == "high", asked)
+
+    print("What he types at an agent's own keyboard")
+    his = lambda has: [m for m in feed()["messages"] if m["from"] == "you" and has in m["text"]]
+    typed = his("payments tests")
+    check("it is in the chat, in his words, as said to that agent", len(typed) == 1 and typed[0]["text"] == "run the payments tests, and tell me which ones are slow" and typed[0]["to"] == ["orders webhook"], typed)
+    check("what the tower itself passed on is not taken for something he typed", not [m for m in feed()["messages"] if "passed on by the tower" in m["text"]])
+    with open(transcript, "a") as f:
+        f.write(json.dumps({"type": "attachment", "uuid": "11111111-aaaa-4bbb-8ccc-000000000003", "attachment": {"type": "queued_command", "prompt": [{"type": "text", "text": "also check the refund webhook"}], "source_uuid": "11111111-aaaa-4bbb-8ccc-0000000000q3", "origin": {"kind": "human"}, "timestamp": stamp()}}) + "\n")
+    session("tr", "orders", {"type": "working"}, "orders webhook")
+    session("tr", "orders", {"type": "working"}, "orders webhook")
+    time.sleep(2.5)
+    check("something he sends while it is working is added too, and nothing is added twice", len(his("refund webhook")) == 1 and len(his("payments tests")) == 1, (his("refund webhook"), his("payments tests")))
+
+    print("Teams")
+    moved = http("POST", "/v1/radio/team", {"agent": "tr", "team": "Payouts"})[1]
+    check("he can move an agent to another team, and a name he gave it goes with it", moved == {"callsign": "payouts webhook", "team": "payouts"} and roster(feed())["payouts webhook"]["group"] == "payouts", moved)
+    check("what he said to it is now shown as said to it under its new name", his("payments tests")[0]["to"] == ["payouts webhook"], his("payments tests"))
+    moved = http("POST", "/v1/radio/team", {"agent": "tr", "team": "returns"})[1]
+    f = feed()
+    check("a team that was not there is made by moving an agent into it, with a colour of its own", moved.get("callsign") == "returns webhook" and "returns" in f["colours"], (moved, f["colours"]))
+    session("tr", "orders", {"type": "working"}, "orders hooks")
+    check("renamed afterwards, it stays in the team he put it in", "returns hooks" in roster(feed()), list(roster(feed())))
+    session("nb", "orders", {"type": "working"})
+    was = [c for c, a in roster(feed()).items() if a["id"] == "nb"]
+    moved = http("POST", "/v1/radio/team", {"agent": "nb", "team": "catalog"})[1]
+    check("one known only by a number takes the next free number in its new team", was == ["orders one"] and moved.get("callsign") == "catalog one", (was, moved))
+    check("a team with no name, or an agent that has gone, is refused in words", "error" in http("POST", "/v1/radio/team", {"agent": "nb", "team": "  "})[1] and "error" in http("POST", "/v1/radio/team", {"agent": "nobody", "team": "catalog"})[1])
+    session("nb", "orders", {"type": "signoff"})
+    session("tr", "orders", {"type": "signoff"})
+    # opened in the catalog folder, but every step it takes is in the logistics project
+    stock, there = os.path.join(work, "stock.jsonl"), os.path.join(projects, "logistics")
+    with open(stock, "w") as f:
+        for tool, given in [("Read", {"file_path": f"{there}/src/rates.ts"}), ("Edit", {"file_path": f"{there}/src/rates.ts"}), ("Edit", {"file_path": f"{there}/src/zones.ts"}),
+                            ("Bash", {"command": f"cd {there} && npm test -- rates", "description": "Run the rate tests"}), ("Edit", {"file_path": f"{there}/test/rates.test.ts"})]:
+            f.write(json.dumps({"type": "assistant", "effort": "high", "message": {"model": "claude-opus-4-7", "content": [{"type": "tool_use", "name": tool, "input": given}]}}) + "\n")
+    session("st", "catalog", {"type": "working"}, record=stock)
+    session("st", "catalog", {"type": "said", "text": "The carrier rate table now reads the new zone prices, and the rate tests pass."}, record=stock)
+    placed = {}
+    for _ in range(60):
+        placed = next((a for a in roster(feed()).values() if a["id"] == "st"), {})
+        if placed.get("group") == "logistics": break
+        time.sleep(1)
+    check("an agent opened in one project and working in another is moved to that team by the tower (model)", placed.get("group") == "logistics", placed)
+    check("and the chat says what it is called now", [m for m in feed()["messages"] if "is now logistics" in m["text"]], [m["text"] for m in feed()["messages"]][-4:])
+    http("POST", "/v1/radio/team", {"agent": "st", "team": "catalog"})
+    for _ in range(2):
+        session("st", "catalog", {"type": "working"}, record=stock)
+        session("st", "catalog", {"type": "said", "text": "The zone prices for the two new carriers are in as well."}, record=stock)
+    time.sleep(12)
+    check("one he has placed himself stays where he put it", next((a for a in roster(feed()).values() if a["id"] == "st"), {}).get("group") == "catalog")
+    session("st", "catalog", {"type": "signoff"})
+    report("import", "catalog", "catalog import", "said", "Imported 1,240 parts from the new supplier. All tests pass.")
+    report("rates", "logistics", "logistics rates", "said", "Two carriers are updated. I'll do the third one next.")
+    report("refunds", "orders", "orders refunds", "said", "The duplicate charge bug is fixed. Refunds and an apology email for 14 double-charged customers are ready, and I would send them now. Send them, or show you first?")
+    report("payouts", "payouts", "payouts schedule", "said", "The weekly payout summary email for sellers is built and checked. Preview: https://claude.ai/artifact/abc123 Should it go out on Mondays or Fridays?")
+    report("import", "catalog", "catalog import", "working")
+    for _ in range(3):
+        http("POST", "/v1/agent/events", {"schema": "airband.agent/1", "agent": {"id": "import", "harness": "claude-code"}, "event": {"type": "subagent", "what": "map columns"}}, token=OWN)
+    f = feed()
+    who = roster(f)
+    check("sessions are called what he named them", set(who) == {"catalog part page", "catalog import", "logistics rates", "orders refunds", "payouts schedule"}, sorted(who))
+    check("two agents share the catalog team", who["catalog part page"]["group"] == who["catalog import"]["group"] == "catalog")
+    q = message(f, "orders refunds")
+    check("a question is found, with its answers as buttons (model)", q and q.get("kind") == "needs-you" and len(q.get("options", [])) >= 2 and q["open"], q)
+    check("the answer the agent itself recommended is marked (model)", q and q.get("recommended") == 0, q and q.get("recommended"))
+    check("a long message is cut to one line (model)", q and len(q["text"]) < 130 and q["long"], q and q["text"])
+    s = message(f, "logistics rates")
+    check("an agent that stopped part way is seen as stalled (model)", s and s.get("kind") == "stalled" and who["logistics rates"]["state"] == "stalled", s and s.get("kind"))
+    check("states: working, asking, idle", (who["catalog import"]["state"], who["orders refunds"]["state"], who["catalog part page"]["state"]) == ("working", "asking", "idle"),
+          [(k, v["state"]) for k, v in who.items()])
+    check("subagents are counted", who["catalog import"]["subagents"] == 3)
+    p = message(f, "catalog part page")
+    pic = p and p.get("pictures")
+    check("a picture the agent sent comes with its message", bool(pic), p)
+    if pic:
+        code, part = http("GET", f"/v1/radio/picture/{pic[0]['id']}?from=0")
+        import base64
+        check("the picture can be fetched, as a JPEG", code == 200 and base64.b64decode(part["data"])[:2] == b"\xff\xd8")
+    a = message(f, "payouts schedule")
+    check("a link the agent wrote is kept beside the short text", a and a.get("links") == ["https://claude.ai/artifact/abc123"], a and a.get("links"))
+    check("the tower offers the quick messages, his own last", [x["label"] for x in f["quick"]][-1] == "Make no mistakes" and len(f["quick"]) == 7)
+
+    print("What a working agent is doing")
+    report("import", "catalog", "catalog import", "doing", "Mapping the Northway columns")
+    seen = feed()
+    check("a harness can say what its agent is doing, and the roster carries it", roster(seen)["catalog import"].get("doing") == "Mapping the Northway columns" and "doing" not in roster(seen)["catalog part page"], roster(seen)["catalog import"])
+    started = time.time()
+    threading.Timer(1.0, lambda: report("import", "catalog", "catalog import", "doing", "Running the import tests")).start()
+    later = http("GET", f"/v1/radio/feed?since={seen['rev']}&roster={seen['roster_rev']}&wait=20")[1]
+    check("a radio waiting on the feed hears of it at once, with no message changed", time.time() - started < 6 and roster(later)["catalog import"].get("doing") == "Running the import tests" and not later["messages"], (time.time() - started, later.get("messages")))
+    # a Claude Code session is asked through its transcript, with no hook on each step
+    transcript = os.path.join(work, "session.jsonl")
     with open(transcript, "w") as f:
         f.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "/x/orders/webhook.ts"}}]}}) + "\n")
         f.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "npm test -- payments", "description": "Run the payments tests"}}]}}) + "\n")
@@ -230,6 +339,7 @@ try:
     check("words about one agent's work reach it, past its teammate (model)", say("make the photo on the part page bigger") == "Sent to catalog part page.", received("page")[-200:])
     check("a follow-up with nobody named goes to the same agent (model)", say("and keep the price next to it") == "Sent to catalog part page.")
     check("words about another team's work reach that team (model)", say("send the payout email on Fridays") == "Sent to payouts schedule.")
+    check("an agent named by the two letters his phone shows for it gets it (model)", say("C I, run the import again with the new supplier file") == "Sent to catalog import.")
     check("a tag for a team reaches every agent in it", say("@catalog commit what you have") in ("Sent to catalog part page and catalog import.", "Sent to catalog import and catalog part page."))
     check("a quick message sends the whole instruction and shows its label", say("Send me a picture of the result.", label="Screenshot", re=p["id"]) == "Sent to catalog part page."
           and "picture of the result" in received("page") and message(feed(), "you", "Screenshot") is not None)
