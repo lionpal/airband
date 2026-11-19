@@ -137,8 +137,10 @@ class AirbandSite extends Stack {
       // North America and Europe only: the cheapest class, and where the people who will read this are
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
     });
-    // five minutes: a new version of the page is what people see soon after a deploy, without a cache to chase
-    new s3deploy.BucketDeployment(this, 'Publish', { sources: [s3deploy.Source.asset(join(HERE, '..', 'site'))], destinationBucket: bucket, distribution: cdn, distributionPaths: ['/*'], cacheControl: [s3deploy.CacheControl.fromString('public, max-age=300')] });
+    // five minutes: a new version of the page is what people see soon after a deploy, without a cache to chase.
+    // Publishing removes whatever in the bucket is not in site/, except releases/: the built `airband` binaries
+    // that Homebrew downloads (https://airband.dev/releases/<version>/…) are put there by the Release workflow.
+    new s3deploy.BucketDeployment(this, 'Publish', { sources: [s3deploy.Source.asset(join(HERE, '..', 'site'))], destinationBucket: bucket, distribution: cdn, distributionPaths: ['/*'], cacheControl: [s3deploy.CacheControl.fromString('public, max-age=300')], exclude: ['releases/*'] });
     for (const [label, recordName] of [['Apex', undefined], ['Www', 'www']]) {
       const target = route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(cdn));
       new route53.ARecord(this, `${label}A`, { zone, recordName, target });

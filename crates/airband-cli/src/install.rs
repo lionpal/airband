@@ -3,7 +3,7 @@ use crate::config::{self, Config};
 use serde_json::{Value, json};
 use airband_core::pairing::Pairing;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "macos")]
 const LABEL: &str = "dev.airband.tower";
@@ -16,17 +16,43 @@ fn plist_path() -> PathBuf {
     config::home().join("Library/LaunchAgents").join(format!("{LABEL}.plist"))
 }
 
+/// The lasting path to this binary when Homebrew installed it, given where the binary really is. Homebrew keeps
+/// each version in its own folder (`<prefix>/Cellar/airband/0.1.1/bin/airband`) and points
+/// `<prefix>/opt/airband` at the current one, so that path still works after `brew upgrade`.
+fn homebrew_exe(real: &Path) -> Option<PathBuf> {
+    let parts: Vec<_> = real.components().collect();
+    let cellar = parts.iter().position(|c| c.as_os_str() == "Cellar")?;
+    // Cellar / formula / version / bin / airband
+    if parts.len() != cellar + 5 || parts[cellar + 3].as_os_str() != "bin" {
+        return None;
+    }
+    let prefix: PathBuf = parts[..cellar].iter().collect();
+    Some(prefix.join("opt").join(parts[cellar + 1]).join("bin").join(parts[cellar + 4]))
+}
+
 pub fn install() -> Result<(), String> {
     config::load();
-    // a copy of this binary that a rebuild cannot pull out from under running sessions
-    let exe = installed_exe();
-    fs::create_dir_all(exe.parent().unwrap()).map_err(|e| e.to_string())?;
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
-    if me != exe {
-        let tmp = exe.with_extension("new");
-        fs::copy(&me, &tmp).map_err(|e| format!("cannot copy the binary to {}: {e}", exe.display()))?;
-        fs::rename(&tmp, &exe).map_err(|e| e.to_string())?;
-    }
+    let real = fs::canonicalize(&me).unwrap_or_else(|_| me.clone());
+    // Homebrew's copy is used where it is, so `brew upgrade` changes what the hooks and the tower run
+    let brewed = homebrew_exe(&real).filter(|lasting| fs::canonicalize(lasting).is_ok_and(|to| to == real));
+    let exe = match brewed {
+        Some(lasting) => {
+            println!("Using Homebrew's copy at {}. After `brew upgrade airband`, run `airband install` again to restart the tower.", lasting.display());
+            lasting
+        }
+        None => {
+            // a copy of this binary that a rebuild cannot pull out from under running sessions
+            let exe = installed_exe();
+            fs::create_dir_all(exe.parent().unwrap()).map_err(|e| e.to_string())?;
+            if me != exe {
+                let tmp = exe.with_extension("new");
+                fs::copy(&me, &tmp).map_err(|e| format!("cannot copy the binary to {}: {e}", exe.display()))?;
+                fs::rename(&tmp, &exe).map_err(|e| e.to_string())?;
+            }
+            exe
+        }
+    };
     // each harness that needs something set up on this machine to report to the tower gets it
     for line in crate::adapters::install(&exe)? {
         println!("{line}");
@@ -348,5 +374,23 @@ pub fn status(cfg: &Config) {
     }
     for p in j["pending"].as_array().cloned().unwrap_or_default() {
         println!("  waiting to be heard: {} ({})", p["callsign"].as_str().unwrap_or("?"), p["kind"].as_str().unwrap_or("not yet read"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_homebrew_binary_is_used_from_the_path_that_outlives_an_upgrade() {
+        assert_eq!(homebrew_exe(Path::new("/opt/homebrew/Cellar/airband/0.1.1/bin/airband")), Some(PathBuf::from("/opt/homebrew/opt/airband/bin/airband")));
+        assert_eq!(homebrew_exe(Path::new("/usr/local/Cellar/airband/0.1.1/bin/airband")), Some(PathBuf::from("/usr/local/opt/airband/bin/airband")));
+        assert_eq!(homebrew_exe(Path::new("/home/linuxbrew/.linuxbrew/Cellar/airband/0.2.0/bin/airband")), Some(PathBuf::from("/home/linuxbrew/.linuxbrew/opt/airband/bin/airband")));
+    }
+    #[test]
+    fn a_binary_anywhere_else_is_not_homebrews() {
+        assert_eq!(homebrew_exe(Path::new("/Users/c/airband/target/release/airband")), None);
+        assert_eq!(homebrew_exe(Path::new("/Users/c/.airband/bin/airband")), None);
+        assert_eq!(homebrew_exe(Path::new("/Users/c/Cellar/airband")), None);
     }
 }

@@ -18,6 +18,7 @@
 //!                              start a new agent in a project the tower knows (`airband status` lists them)
 //!   airband hook <harness>       adapter run by a harness's own hooks (claude-code)
 //!   airband report ...           put any other agent on the radio from a script (see `airband report` with no arguments)
+//!   airband --version            which version this is
 mod adapters;
 mod config;
 mod install;
@@ -27,6 +28,7 @@ mod tower;
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
+        Some("--version" | "-V" | "version") => Ok(println!("airband {}", env!("CARGO_PKG_VERSION"))),
         Some("hook") => adapters::hook(args.get(1).map(String::as_str).unwrap_or("claude-code")),
         Some("report") => adapters::report::run(&args[1..]),
         None | Some("run") => tower::run(config::load()),

@@ -395,8 +395,13 @@ fn write_settings(v: &Value) -> Result<(), String> {
     fs::write(&tmp, format!("{}\n", serde_json::to_string_pretty(v).unwrap())).map_err(|e| e.to_string())?;
     fs::rename(&tmp, &path).map_err(|e| e.to_string())
 }
+/// A hook of ours: the `airband` binary, wherever it is installed (~/.airband/bin, or Homebrew's folder), run as
+/// `hook claude-code`.
 fn is_ours(hook: &Value) -> bool {
-    hook["command"].as_str().is_some_and(|c| c.contains(".airband") && c.trim_end().ends_with(" hook claude-code"))
+    hook["command"].as_str().and_then(|c| c.trim_end().strip_suffix(" hook claude-code")).is_some_and(|program| {
+        let name = program.trim().trim_matches('"').rsplit(['/', '\\']).next().unwrap_or("");
+        name == "airband" || name == "airband.exe"
+    })
 }
 /// Take our hooks out, leaving everyone else's exactly as they were.
 fn strip_hooks(settings: &mut Value) {
@@ -525,6 +530,13 @@ mod tests {
         let mut only = json!({ "model": "x", "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "\"C:\\Users\\c\\.airband\\bin\\airband.exe\" hook claude-code" }] }] } });
         strip_hooks(&mut only);
         assert_eq!(only, json!({ "model": "x" }));
+        // Homebrew's copy is ours too; a different program that happens to take the same arguments is not
+        let mut brewed = json!({ "hooks": { "Stop": [
+            { "hooks": [{ "type": "command", "command": "\"/opt/homebrew/opt/airband/bin/airband\" hook claude-code" }] },
+            { "hooks": [{ "type": "command", "command": "\"/usr/local/bin/other-airband\" hook claude-code" }] }
+        ] } });
+        strip_hooks(&mut brewed);
+        assert_eq!(brewed, json!({ "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "\"/usr/local/bin/other-airband\" hook claude-code" }] }] } }));
     }
 
     #[test]

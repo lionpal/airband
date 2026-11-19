@@ -10,3 +10,4 @@ relay-data/
 apps/apple/.env.testflight
 apps/apple/build-sim/
 __pycache__/
+/dist

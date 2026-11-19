@@ -42,15 +42,27 @@ you can skip the relay and pair your phone straight to your computer over your o
 
 The tower is one Rust program and uses about 6 MB of memory.
 
-## Set it up
+## Install
 
-You need Rust and Claude Code.
+You need Claude Code. With [Homebrew](https://brew.sh), on macOS or Linux:
+
+```sh
+brew install airband-dev/airband/airband
+airband install     # hooks Claude Code up and starts the tower at login (macOS)
+airband pair        # shows a QR code: point your phone's camera at it
+```
+
+`airband install` is what starts the tower. There is no `brew services` entry, so the tower cannot be started
+twice. After `brew upgrade airband`, run `airband install` again to restart the tower on the new version. Before
+`brew uninstall airband`, run `airband uninstall`.
+
+Or build it yourself. You need Rust.
 
 ```sh
 git clone https://github.com/airband-dev/airband.git && cd airband
 cargo build --release -p airband-cli
-target/release/airband install     # hooks Claude Code up and starts the tower at login (macOS)
-airband pair                       # shows a QR code: point your phone's camera at it
+target/release/airband install     # copies the binary to ~/.airband/bin, then the same as above
+airband pair
 ```
 
 Then start Claude Code the way you always do. Each session shows up in the app under its project.
