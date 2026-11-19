@@ -22,7 +22,7 @@ not importance, not who a message is for, not when to retry.
 | Part | Where | Owns | Must not |
 |---|---|---|---|
 | Protocols and rules | `crates/airband-core` | The three protocols' types; callsigns; who a tag or spoken name means; what can be said aloud; pairing links; the relay's sealing | Do any I/O. Everything here is tested directly. |
-| The tower | `crates/airband-cli/src/tower/` | What is remembered and the rules about it (`state`), events in (`intake`), importance and wording (`judge`), recipients and controls (`route`), reaching agents (`deliver`), starting new ones (`launch`), call mode's queue (`pump`), copies of pictures (`pictures`), the voice (`speech`), the listening pass (`ears`), the database (`store`), routes (`http`), the relay connection (`relay_link`) | Have a rule that depends on which harness an agent runs in or which client is asking. (It does know each *way of reaching* an agent, one of which is Claude Code's inbox: a delivery kind, in `deliver`.) |
+| The tower | `crates/airband-cli/src/tower/` | What is remembered and the rules about it (`state`), events in (`intake`), importance and wording (`judge`), recipients and controls (`route`), reaching agents (`deliver`), starting new ones (`launch`), call mode's queue (`pump`), copies of pictures (`pictures`), the voice (`speech`), the listening pass (`ears`), the database (`store`), routes (`http`), the relay connection (`relay_link`), waking his phone (`push`) | Have a rule that depends on which harness an agent runs in or which client is asking. (It does know each *way of reaching* an agent, one of which is Claude Code's inbox: a delivery kind, in `deliver`.) |
 | Adapters | `crates/airband-cli/src/adapters/` | Turning one harness's notifications into `airband.agent/1` events, and setting that harness up to send them (`airband install` asks each adapter) | Hold a harness up, or decide anything |
 | The radio | `crates/airband-radio` | The whole client side. `desk`: every paired computer as one, what is waiting and done, where his messages go, who has the floor on a call. Under it, per computer: reaching the tower (`link`), the call loop (`call`), sending over bad connections (`outbox`), what is kept on the device (`store`), sound in and out (`voice`, `ears`) | Draw, make sound or capture it |
 | Hosts | `apps/apple`, `crates/airband-cli/src/terminal.rs` | Drawing the view the desk gives, playing and capturing audio, the device's own voice and recognition, keeping pairing links safe | Decide order, routing, retries, or what counts as waiting or done |
@@ -52,6 +52,7 @@ not importance, not who a message is for, not when to retry.
 | **Something else to say to the tower** ("mute shop", "summarise today") | A `Control` in `routing.rs` and its arm in `tower/route.rs` | Two files |
 | **Another client** (Android, Windows, a watch, a car) | A host: implement `DeskHost` (ten calls: six for sound, `changed`, `status`, `note`, `watching`) over the generated bindings, draw `Desk.view()`, and keep the links. The Swift one is `apps/apple/Sources/RadioModel.swift`, about 190 lines. `terminal.rs` (about 260 lines) is a single-computer host on `RadioHost`. | A new folder under `apps/` |
 | **Another transport** to the tower (a push wake-up, a local socket) | A variant of `Route` in `airband-radio/src/link.rs` | One file |
+| **Another push service** (Android's, a desktop's) | A struct beside `Apns` in `airband-relay/src/push.rs` and an arm in `Push::send`. The tower, the protocols and the sealing do not change: an address is a provider's name and a token, as the client gave them. The client opens the notification with `open_notice` and reports its address with `Desk.set_push`. | One file, and the client |
 | **Something else a client can ask** | A route in `tower/http.rs`, its types in `airband-core/src/radio.rs`, a method on `Radio` | Three files |
 | **Another place to keep relay data** | A variant of `Store` in `airband-relay/src/store.rs` | One file |
 
@@ -135,6 +136,16 @@ shows the same thing.
 - **Permission.** A harness's permission prompt arrives as a question with Allow and Deny (`tower/permit.rs`).
   The tower never answers one itself, no answer is never a yes, and the card shows the command word for word.
   If no radio is there the harness is told at once and shows its own prompt as before.
+
+## Notifications
+
+What deserves a notification is the tower's decision (`tower/push.rs`): a question, a report, a permission card,
+when the phone is neither on a call nor showing the chat. The tower seals what the notification says with the
+pairing's key and the relay hands it to the push service, so neither can read it. On the iPhone a notification
+extension (`apps/apple/Notify`) opens it with the radio core before iOS shows it, and puts the agent's name, its
+badge and the answers on it. An answer tapped or typed there is sent by the app in the background
+(`Desk.answer_now`); if it cannot be sent in the seconds iOS allows, it is kept and sent later, and a second
+notification says so. The pairing links are in a Keychain group the app and the extension share.
 
 ## Accounts
 

@@ -12,7 +12,7 @@ use airband_core::agent::{PermissionAsk, PermissionState};
 const NOBODY_AFTER: Duration = Duration::from_secs(90);
 
 /// A harness asks. The question goes into the feed, and the id comes back for fetching the answer.
-pub(super) fn ask(app: &App, ask: PermissionAsk) -> PermissionState {
+pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
     let nobody = PermissionState { state: "nobody".into(), ..PermissionState::default() };
     if ask.schema != agent::SCHEMA || app.cfg.permission_wait == 0 {
         return nobody;
@@ -53,7 +53,9 @@ pub(super) fn ask(app: &App, ask: PermissionAsk) -> PermissionState {
     inner.record(Entry { short: Some(line.clone()), options, permit: Some(id.clone()), ..Entry::said(entry_id.clone(), &session, Some(Kind::NeedsYou), detail.clone()) });
     // on a call it is read out like any other question
     inner.pending.push(Item { id: entry_id.clone(), agent_id: agent_id.clone(), notice: false, full: detail, kind: Some(Kind::NeedsYou), say: Some(line), detail: None, created: now(), asked: None });
-    inner.permits.insert(id.clone(), Permit { agent_id, entry: entry_id, decided: None, asked: Instant::now(), question: ask.question.is_some() });
+    inner.permits.insert(id.clone(), Permit { agent_id, entry: entry_id.clone(), decided: None, asked: Instant::now(), question: ask.question.is_some() });
+    // he had the chat open a moment ago and may have put the phone down since: it is woken if so
+    push::consider(app, &mut inner, &entry_id);
     app.save(&inner);
     app.kick.notify_one();
     PermissionState { id, state: "pending".into(), message: String::new(), wait_seconds: app.cfg.permission_wait }

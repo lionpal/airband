@@ -25,6 +25,7 @@
 //! - `speech`: the tower's voice: a sentence to audio, started early and handed over in parts
 //! - `store`: the database: the chat log, the raw event record, receipts, delivery attempts
 //! - `relay_link`: the outbound connection to the relay, one per paired radio
+//! - `push`: waking his phone with a sealed notification when a message deserves it and he is not looking
 mod accounts;
 mod attachments;
 mod deliver;
@@ -38,6 +39,7 @@ mod permit;
 mod place;
 mod pictures;
 mod pump;
+mod push;
 mod relay_link;
 mod route;
 mod speech;
@@ -96,6 +98,8 @@ pub struct App {
     inner: Mutex<Inner>,
     kick: Notify,
     accounts: accounts::Kept,
+    /// Where each paired phone can be woken with a notification.
+    push: push::Wake,
 }
 
 impl App {
@@ -243,7 +247,8 @@ pub fn run(cfg: Config) -> Result<(), String> {
         let live: HashSet<String> = inner.sessions.iter().map(|s| s.agent.id.clone()).collect();
         inner.pending.retain(|p| live.contains(&p.agent_id));
         let port = cfg.port;
-        let app = Arc::new(App { cfg, store, speech: speech::Speech::default(), ears_pass: Mutex::new(None), lent_pass: Mutex::new(None), inner: Mutex::new(inner), kick: Notify::new(), accounts: accounts::Kept::default() });
+        let push = push::Wake::load(&store);
+        let app = Arc::new(App { push, cfg, store, speech: speech::Speech::default(), ears_pass: Mutex::new(None), lent_pass: Mutex::new(None), inner: Mutex::new(inner), kick: Notify::new(), accounts: accounts::Kept::default() });
         let router = http::router(app.clone());
 
         tokio::spawn(pump_loop(app.clone()));

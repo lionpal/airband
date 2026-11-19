@@ -7,6 +7,7 @@ import SwiftUI
 
 @main
 struct AirbandApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = RadioModel.shared
 
     var body: some Scene {
@@ -41,10 +42,7 @@ enum Palette {
     /// A colour for each team, in the order the tower hands them out: blue, orange, violet, magenta, and last the
     /// two nearest the colours that already mean working and waiting. Checked as a set for telling apart,
     /// including by people who do not see red and green apart; a badge's letters say who it is in any case.
-    static let teams: [Color] = [
-        Color(red: 0.224, green: 0.529, blue: 0.898), Color(red: 0.851, green: 0.349, blue: 0.149), Color(red: 0.565, green: 0.522, blue: 0.914),
-        Color(red: 0.835, green: 0.318, blue: 0.506), Color(red: 0.788, green: 0.522, blue: 0.0), Color(red: 0.098, green: 0.620, blue: 0.439),
-    ]
+    static let teams: [Color] = TeamColours.rgb.map { Color(red: $0.0, green: $0.1, blue: $0.2) }
     static func team(_ place: UInt8) -> Color { teams[Int(place) % teams.count] }
 }
 
@@ -1154,6 +1152,7 @@ struct ContextView: View {
 
 struct SetupView: View {
     @EnvironmentObject var model: RadioModel
+    @ObservedObject private var push = Push.shared
     @Environment(\.dismiss) private var dismiss
     // development only: `-airband.devAccounts 1` opens the accounts page, for a screenshot
     @State private var showAccounts = UserDefaults.standard.bool(forKey: "airband.devAccounts")
@@ -1165,6 +1164,9 @@ struct SetupView: View {
                 if model.paired {
                     Section {
                         NavigationLink("Accounts", isActive: $showAccounts) { AccountsView().environmentObject(model) }
+                        if push.denied {
+                            Button("Turn on notifications") { UIApplication.shared.open(URL(string: UIApplication.openNotificationSettingsURLString)!) }
+                        }
                     }
                 }
                 Section(footer: Text("Run ") + Text("airband pair").font(.system(.footnote, design: .monospaced)) + Text(" on each computer, then scan the code it shows or paste its link. Each one adds that computer. Treat a link like a password.")) {

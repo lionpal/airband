@@ -33,9 +33,20 @@ async fn events(State(app): State<Arc<App>>, body: String) -> Response {
     };
     // on some of an agent's reports the tower looks at whether it is in the right team
     let reported = matches!(ev.event, Event::Said { .. }).then(|| ev.agent.id.clone());
+    let spoke = matches!(ev.event, Event::Said { .. } | Event::Notice { .. }).then(|| ev.agent.id.clone());
     // an event with a picture is slow to take in (the picture is shrunk); the other requests must not wait behind it
     match tokio::task::block_in_place(|| on_event(&app, ev)) {
         Ok(()) => {
+            // With a phone that can be woken and nobody reading the chat, what it said is read now: whether it
+            // deserves a notification is not known until then. With a radio reading, that radio's own request
+            // has it read.
+            if let Some(id) = spoke.filter(|_| app.push.any()) {
+                let unread: Vec<Entry> = {
+                    let inner = app.inner.lock().unwrap();
+                    inner.log.iter().rev().take(8).filter(|e| inner.readers == 0 && e.short.is_none() && e.agent.as_deref() == Some(id.as_str())).take(1).cloned().collect()
+                };
+                judge_later(&app, unread);
+            }
             if let Some(id) = &reported {
                 // one the tower runs has stopped: what he said to it meanwhile goes to it now
                 if app.inner.lock().unwrap().find(id).is_some_and(|s| !s.queue.is_empty()) {
@@ -123,6 +134,12 @@ async fn held_end(State(app): State<Arc<App>>, Path(id): Path<String>) -> Status
 
 /// A harness asks whether its agent may do something. The answer is fetched separately, so nothing is held open
 /// across a tower restart.
+/// A radio says where it can be woken when it is not listening (its address at a push service), or takes that back.
+async fn push_target(State(app): State<Arc<App>>, headers: HeaderMap, Json(target): Json<airband_core::radio::PushTarget>) -> Json<Value> {
+    push::register(&app, &radio_of(&headers), target);
+    Json(json!({}))
+}
+
 async fn permission_ask(State(app): State<Arc<App>>, Json(ask): Json<airband_core::agent::PermissionAsk>) -> Json<airband_core::agent::PermissionState> {
     Json(permit::ask(&app, ask))
 }
@@ -259,6 +276,7 @@ fn judge_later(app: &Arc<App>, entries: Vec<Entry>) {
                 let j = judge_entry(&app, e.clone()).await;
                 let mut inner = app.inner.lock().unwrap();
                 inner.fill(&e.id, j.kind, &j.say, &j.options, j.recommended, j.read.as_deref(), j.background);
+                push::consider(&app, &mut inner, &e.id);
                 app.save(&inner);
             });
         }
@@ -272,6 +290,15 @@ async fn judge_entry(app: &Arc<App>, e: Entry) -> Judged {
     prepare(&app.cfg, &Item { id: e.id, agent_id: e.agent.unwrap_or_default(), notice, full: e.full, kind: e.kind, say: None, detail: None, created: e.at, asked }).await
 }
 
+/// One request for the whole chat, for as long as it is open.
+struct Reading(Arc<App>);
+impl Drop for Reading {
+    fn drop(&mut self) {
+        let mut inner = self.0.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.readers = inner.readers.saturating_sub(1);
+    }
+}
+
 /// Chat mode: the log, each message cut to a line or two.
 ///
 /// `since=<rev>` is how a radio follows it: everything new or changed after that change count, oldest change
@@ -279,9 +306,24 @@ async fn judge_entry(app: &Arc<App>, e: Entry) -> Judged {
 /// renamed, so a radio always ends up with the current form of every line. `since=0` is a radio starting from
 /// nothing: it gets the newest lines.
 /// `after=<seq>` is the older form, still answered: lines added after that position, never changes to earlier ones.
-async fn feed(State(app): State<Arc<App>>, Query(q): Query<HashMap<String, String>>) -> Json<Feed> {
+async fn feed(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>) -> Json<Feed> {
     let scope = q.get("scope").cloned().unwrap_or_else(|| "all".into());
     let since: Option<u64> = q.get("since").and_then(|v| v.parse().ok());
+    // A radio that is showing the chat has everything up to the change count it asks from: nothing up to there
+    // needs a notification on that radio. One that says it is `away` (the app is not in front of him) is
+    // following the chat without showing it, and is told nothing by that.
+    if let Some(since) = since.filter(|_| !q.contains_key("away")) {
+        let mut inner = app.inner.lock().unwrap();
+        // never past what exists: a count from another tower's chat says nothing about this one's
+        let has = since.min(inner.rev);
+        let call = inner.call(&radio_of(&headers));
+        call.has = call.has.max(has);
+    }
+    // while a request for the whole chat is open, what agents say is read by it
+    let _reading = (scope == "all").then(|| {
+        app.inner.lock().unwrap().readers += 1;
+        Reading(app.clone())
+    });
     let after: u64 = q.get("after").and_then(|v| v.parse().ok()).unwrap_or(0);
     let limit: usize = q.get("limit").and_then(|v| v.parse().ok()).unwrap_or(if since.is_some() { 200 } else { 50 }).clamp(1, 200);
     let until = Instant::now() + Duration::from_secs(q.get("wait").and_then(|v| v.parse().ok()).unwrap_or(0).min(25));
@@ -337,6 +379,7 @@ async fn feed(State(app): State<Arc<App>>, Query(q): Query<HashMap<String, Strin
             let mut inner = app.inner.lock().unwrap();
             for (id, j) in done {
                 inner.fill(&id, j.kind, &j.say, &j.options, j.recommended, j.read.as_deref(), j.background);
+                push::consider(&app, &mut inner, &id);
             }
             app.save(&inner);
         }
@@ -451,6 +494,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/radio/stop", post(stop_agent))
         .route("/v1/radio/unsend", post(unsend))
         .route("/v1/radio/end", post(end_agent))
+        .route("/v1/radio/push", post(push_target))
         .route("/v1/status", get(status))
         .layer(middleware::from_fn_with_state(app.clone(), auth))
         .with_state(app)

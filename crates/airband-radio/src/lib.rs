@@ -368,6 +368,9 @@ pub struct Radio {
     roster: std::sync::atomic::AtomicU64,
     /// Goes up each time a reading aloud is started or stopped: one that finds it changed leaves off.
     reading: std::sync::atomic::AtomicU64,
+    /// The chat is not in front of him (the app is behind another, or the screen is off): the tower is told, so
+    /// that following the chat meanwhile does not count as him having seen it.
+    away: AtomicBool,
 }
 
 #[uniffi::export]
@@ -400,7 +403,7 @@ impl Radio {
             let (link, store, host, stop, wake) = (link.clone(), store.clone(), host.clone(), stop.clone(), wake.clone());
             thread::spawn(move || deliver_outbox(link, store, host, stop, wake));
         }
-        Ok(Arc::new(Radio { jobs: Mutex::new(tx), stop, calling, link, store, host, wake, roster: std::sync::atomic::AtomicU64::new(0), reading: std::sync::atomic::AtomicU64::new(0) }))
+        Ok(Arc::new(Radio { jobs: Mutex::new(tx), stop, calling, link, store, host, wake, roster: std::sync::atomic::AtomicU64::new(0), reading: std::sync::atomic::AtomicU64::new(0), away: AtomicBool::new(false) }))
     }
 
     /// Chat, for a bad connection: take what he typed and keep trying until the tower has it. Returns at
@@ -488,7 +491,8 @@ impl Radio {
         };
         // `since` is what a current tower answers; `after` is there for one from before change counts
         let roster = self.roster.load(Ordering::SeqCst);
-        let (status, v) = self.link.request("GET", &format!("/feed?scope=all&since={since}&after={after}&roster={roster}&wait={}", wait_seconds.min(25)), None)?;
+        let away = if self.away.load(Ordering::SeqCst) { "&away=1" } else { "" };
+        let (status, v) = self.link.request("GET", &format!("/feed?scope=all&since={since}&after={after}&roster={roster}&wait={}{away}", wait_seconds.min(25)), None)?;
         let feed: Feed = (status == 200).then(|| serde_json::from_value(v).ok()).flatten().ok_or(RadioError::Refused)?;
         self.roster.store(feed.roster_rev, Ordering::SeqCst);
         self.link.set_direct(feed.direct.clone());
@@ -662,6 +666,44 @@ impl Drop for Radio {
 }
 
 impl Radio {
+    /// Whether the chat is in front of him, as the host last said.
+    pub(crate) fn set_away(&self, away: bool) {
+        self.away.store(away, Ordering::SeqCst);
+    }
+
+    /// Tell the tower where this radio can be woken with a notification (its address at a push service), or
+    /// with an empty token that it no longer can.
+    pub(crate) fn push_target(&self, provider: &str, token: &str) -> Result<(), RadioError> {
+        self.ask("/push", serde_json::to_value(airband_core::radio::PushTarget { provider: provider.into(), token: token.into() }).unwrap())
+    }
+
+    /// Send an answer now and wait for the tower to have it: for an answer given where there are only seconds
+    /// to send it in (a notification's button, with the app behind the lock screen). If it cannot be sent in
+    /// that time it is left in the outbox under the same id, to go when it can, and the caller is told.
+    pub(crate) fn answer_now(&self, text: String, re: String) -> Result<(), RadioError> {
+        let id = random_hex(12);
+        let mut failed = LinkError::Offline;
+        for attempt in 0..3 {
+            if attempt > 0 {
+                thread::sleep(Duration::from_secs(2));
+            }
+            match self.link.utterance_once(&id, &text, Some(re.clone()), None, None, Vec::new(), "") {
+                // left with the relay for a computer that is away: it will get there, and he should know it has not yet
+                Ok(reply) if reply.say == AWAY => return Err(RadioError::Told { reason: AWAY.into() }),
+                Ok(_) => return Ok(()),
+                Err(LinkError::Refused) => return Err(RadioError::Refused),
+                Err(e) => failed = e,
+            }
+        }
+        let waiting = self.store.change(|s| {
+            s.outbox.push(Outgoing { id, text, re: Some(re), at: now_ms(), scope: None, label: None, attachments: Vec::new(), others: String::new() });
+            s.outbox.clone()
+        });
+        self.wake.ring();
+        self.host.outbox(waiting, None);
+        Err(failed.into())
+    }
+
     /// Send a file to the tower in parts, under `id`. `sent` is told how far it has got after each part and
     /// returns false to give up. Blocks until it is all there, the tower refuses it, or it is given up on.
     pub(crate) fn upload(&self, id: &str, path: &str, name: &str, mut sent: impl FnMut(u64, u64) -> bool) -> Result<(), RadioError> {

@@ -126,6 +126,18 @@ impl Store {
         Self::warn("saving state", db.execute("insert into state (key, value) values ('tower', ?1) on conflict (key) do update set value = excluded.value", params![serde_json::to_string(saved).unwrap()]));
     }
 
+    /// Where each paired radio can be woken with a notification, by the radio's name. Kept apart from the rest
+    /// of the state: it changes rarely, and it is not something a status page should ever show.
+    pub(super) fn push_targets(&self) -> BTreeMap<String, Vec<airband_core::radio::PushTarget>> {
+        let db = self.db.lock().unwrap();
+        let text = db.query_row("select value from state where key = 'push'", [], |r| r.get::<_, String>(0)).optional().ok().flatten();
+        text.and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    }
+    pub(super) fn save_push_targets(&self, targets: &BTreeMap<String, Vec<airband_core::radio::PushTarget>>) {
+        let db = self.db.lock().unwrap();
+        Self::warn("saving where phones can be woken", db.execute("insert into state (key, value) values ('push', ?1) on conflict (key) do update set value = excluded.value", params![serde_json::to_string(targets).unwrap()]));
+    }
+
     /// Write new messages, and messages whose short or fuller version has just been made.
     pub(super) fn put_messages(&self, entries: &[Entry]) {
         if entries.is_empty() {

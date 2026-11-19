@@ -119,11 +119,26 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     func forgetAll() { connect([]) }
 
+    /// Where this phone can be woken, as Apple gave it: every paired computer is told.
+    func pushAddress(_ token: String) { desk.setPush(provider: "apns", token: token) }
+
+    /// An answer given on a notification. Blocks until the computer has it, or says why it does not.
+    func answerNow(station: String, message: String, text: String) throws { try desk.answerNow(station: station, messageId: message, text: text) }
+
+    /// He tapped a notification: show that agent.
+    func show(room: String, agent: String) {
+        replyingTo = nil
+        self.room = room.isEmpty ? nil : room
+        only = agent.isEmpty ? nil : agent
+    }
+
     private func connect(_ wanted: [String]) {
         links = desk.setLinks(links: wanted)
         if links.count < wanted.count { problem = "One pairing link is not valid and was skipped." }
         Keychain.write("airband.links", String(data: (try? JSONEncoder().encode(links)) ?? Data("[]".utf8), encoding: .utf8) ?? "[]")
         refresh()
+        // paired: this is when notifications are worth asking for, and when a new computer needs the phone's address
+        if !links.isEmpty { DispatchQueue.main.async { Push.shared.setUp() } }
     }
 
     private func refresh() {
@@ -478,22 +493,5 @@ struct Caption {
     func reached(_ t: Double) -> Int {
         guard let i = marks.lastIndex(where: { $0.time <= t }) else { return 0 }
         return i + 1 < marks.count ? marks[i + 1].at : text.count
-    }
-}
-
-enum Keychain {
-    static func write(_ key: String, _ value: String) {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key]
-        SecItemDelete(query as CFDictionary)
-        var add = query
-        add[kSecValueData as String] = Data(value.utf8)
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock // readable with the screen locked, while driving
-        SecItemAdd(add as CFDictionary, nil)
-    }
-    static func read(_ key: String) -> String? {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key, kSecReturnData as String: true]
-        var out: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
     }
 }

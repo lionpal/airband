@@ -183,6 +183,10 @@ struct State {
     generation: u64,
     calling: bool,
     uploads: Vec<Upload>,
+    /// Where this device can be woken with a notification (a push service's name and the device's address
+    /// there), and the links of the computers that have been told.
+    push: Option<(String, String)>,
+    push_told: HashSet<String>,
 }
 
 struct Upload {
@@ -639,6 +643,46 @@ impl Desk {
         self.shared.host.changed();
     }
 
+    /// An answer given from a notification: send it now, as the answer to that message, and wait until the
+    /// computer has it. `station` is the computer the notification came from ([`OpenedNotice::station`]).
+    /// Blocks for some seconds at most. If it could not be sent in that time it is kept and sent when it can
+    /// be, and the error says why, in words for him when there are any.
+    pub fn answer_now(&self, station: String, message_id: String, text: String) -> Result<(), RadioError> {
+        let radio = {
+            let mut state = self.shared.state.lock().unwrap();
+            state.answered.insert(message_id.clone());
+            let named = state.stations.iter().position(|s| station_key(&s.link).as_deref() == Some(station.as_str()));
+            named.or(state.owner(&message_id)).map(|i| state.stations[i].radio.clone())
+        };
+        self.shared.host.changed();
+        radio.ok_or(RadioError::Told { reason: "That computer is no longer paired.".into() })?.answer_now(text, message_id)
+    }
+
+    /// Where this device can be woken with a notification: the push service's name ("apns") and the device's
+    /// address there, as the system gave it. Every paired computer is told, now and whenever one is paired
+    /// later. Call it each time the system gives the address; the same one again does nothing.
+    pub fn set_push(&self, provider: String, token: String) {
+        {
+            let mut state = self.shared.state.lock().unwrap();
+            let push = Some((provider, token));
+            if state.push == push {
+                return;
+            }
+            state.push = push;
+            state.push_told.clear();
+        }
+        let shared = self.shared.clone();
+        thread::spawn(move || {
+            let (generation, radios): (u64, Vec<Arc<Radio>>) = {
+                let state = shared.state.lock().unwrap();
+                (state.generation, state.stations.iter().map(|s| s.radio.clone()).collect())
+            };
+            for (index, radio) in radios.iter().enumerate() {
+                tell_push(&shared, radio, index, generation);
+            }
+        });
+    }
+
     /// Send what he typed. Who it is for, in this order: tags at its start (`@shop2`, `@shop`, `@all`); the
     /// message `re` if he picked one; the `agent` he is looking at; otherwise the tower works it out from his
     /// words, among the agents of the `room` he is in or among all of them. It goes to the computer that has
@@ -1012,10 +1056,96 @@ fn pick_station(state: &State, text: &str, re: Option<&str>, room: Option<&str>,
     0
 }
 
+/// Tell one computer where this device can be woken, if it has not been told. A computer that cannot be reached
+/// is told the next time round; one that answers at all, even to say it does not know how, is not asked again.
+fn tell_push(shared: &Arc<Shared>, radio: &Arc<Radio>, index: usize, generation: u64) {
+    let (link, push) = {
+        let state = shared.state.lock().unwrap();
+        let Some(station) = state.stations.get(index).filter(|_| state.generation == generation) else { return };
+        let Some(push) = state.push.clone().filter(|_| !state.push_told.contains(&station.link)) else { return };
+        (station.link.clone(), push)
+    };
+    if !matches!(radio.push_target(&push.0, &push.1), Err(RadioError::Offline)) {
+        let mut state = shared.state.lock().unwrap();
+        // unless the address changed while this one was on its way
+        if state.push.as_ref() == Some(&push) {
+            state.push_told.insert(link);
+        }
+    }
+}
+
+/// What a notification says once this device has opened it: everything a host needs to show it and to send an
+/// answer to it, with the app running or not.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct OpenedNotice {
+    /// The computer it came from, for [`Desk::answer_now`].
+    pub station: String,
+    /// The message it is about.
+    pub message: String,
+    /// Who sent it, as the app shows the name.
+    pub title: String,
+    /// The computer's name, when he has more than one.
+    pub subtitle: String,
+    pub body: String,
+    /// The agent's two characters, and its team's place in the host's list of team colours.
+    pub badge: String,
+    pub colour: u8,
+    /// The agent's team and its name: where the app opens when he taps the notification.
+    pub room: String,
+    pub agent: String,
+    /// It is a question to him (not a report).
+    pub question: bool,
+    /// Answers to offer as buttons.
+    pub options: Vec<String>,
+    /// It asks permission: the buttons are Allow and Deny, and words of his own refuse it.
+    pub permission: bool,
+}
+
+/// What names a computer to this device, from its pairing link: nothing secret, the same every time.
+fn station_key(link: &str) -> Option<String> {
+    match Pairing::parse(link).ok()? {
+        Pairing::Relay { secret, .. } => Keys::derive(&secret).ok().map(|k| k.channel),
+        Pairing::Direct { .. } => None,
+    }
+}
+
+/// Open a sealed notification with whichever pairing sealed it. `links` are the pairing links the host keeps;
+/// `sealed` is the notification as the push service delivered it. Nothing when none of them opens it. This
+/// needs no desk: a host calls it from wherever its system hands it a notification.
+#[uniffi::export]
+pub fn open_notice(links: Vec<String>, sealed: String) -> Option<OpenedNotice> {
+    use airband_core::routing::{badge, shown};
+    let sealed = airband_core::audio::base64_decode(&sealed)?;
+    let several = links.len() > 1;
+    links.iter().find_map(|link| {
+        let Pairing::Relay { secret, .. } = Pairing::parse(link).ok()? else { return None };
+        let keys = Keys::derive(&secret).ok()?;
+        let n: airband_core::radio::Notice = serde_json::from_slice(&keys.open(Direction::Push, &sealed).ok()?).ok()?;
+        Some(OpenedNotice {
+            station: keys.channel,
+            message: n.id,
+            title: shown(&n.from),
+            subtitle: if several { n.station } else { String::new() },
+            body: n.text,
+            badge: badge(&n.group, &n.from),
+            colour: n.colour,
+            room: n.group,
+            agent: shown(&n.from),
+            question: n.kind == Some(Kind::NeedsYou),
+            options: if n.permission { Vec::new() } else { n.options },
+            permission: n.permission,
+        })
+    })
+}
+
 /// Keeps one computer's part of the chat current. One request is always open with its tower.
 fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64) {
     let mut first = true;
     loop {
+        // a computer that has not been told where this device can be woken is told as soon as it is reached
+        tell_push(&shared, &radio, index, generation);
+        // the tower is told whether the chat is in front of him: only then does having it count as seeing it
+        radio.set_away(!shared.host.watching());
         // the first answer must come at once: it is what says the tower is there and who is on it
         let got = radio.follow(if first { 0 } else { 25 });
         let mut seen: Vec<String> = Vec::new();
@@ -1138,6 +1268,31 @@ mod tests {
             ],
             ..State::default()
         }
+    }
+
+    #[test]
+    fn a_notification_is_opened_by_the_pairing_that_sealed_it_and_no_other() {
+        use airband_core::radio::Notice;
+        let link = |secret: &str| Pairing::Relay { relay: "https://relay.example".into(), secret: secret.into() }.link();
+        let (mini, laptop, stranger) = (airband_core::relay::new_secret(), airband_core::relay::new_secret(), airband_core::relay::new_secret());
+        let keys = Keys::derive(&laptop).unwrap();
+        let seal = |n: &Notice| airband_core::audio::base64_encode(&keys.seal(Direction::Push, &serde_json::to_vec(n).unwrap()));
+        let question = Notice { id: "m1".into(), from: "shop three".into(), group: "shop".into(), colour: 2, station: "laptop".into(), text: "Rewrite or leave?".into(), kind: Some(Kind::NeedsYou), options: vec!["Rewrite".into(), "Leave".into()], permission: false };
+        let got = open_notice(vec![link(&mini), link(&laptop)], seal(&question)).unwrap();
+        assert_eq!((got.title.as_str(), got.subtitle.as_str(), got.body.as_str(), got.badge.as_str(), got.colour), ("shop 3", "laptop", "Rewrite or leave?", "S3", 2));
+        assert_eq!((got.station.as_str(), got.message.as_str(), got.room.as_str(), got.agent.as_str(), got.question), (keys.channel.as_str(), "m1", "shop", "shop 3", true));
+        assert_eq!(got.options, ["Rewrite", "Leave"]);
+        // one computer: its name says nothing he does not know
+        assert_eq!(open_notice(vec![link(&laptop)], seal(&question)).unwrap().subtitle, "");
+        // a permission card offers its own two answers, not the tower's list
+        let card = open_notice(vec![link(&laptop)], seal(&Notice { permission: true, options: vec!["Allow".into(), "Deny".into()], ..question.clone() })).unwrap();
+        assert!(card.permission && card.options.is_empty());
+        // not by another pairing, not as an ordinary answer from the tower, not when it is not base64 at all
+        assert!(open_notice(vec![link(&mini), link(&stranger)], seal(&question)).is_none());
+        let answer = airband_core::audio::base64_encode(&keys.seal(Direction::ToRadio, &serde_json::to_vec(&question).unwrap()));
+        assert!(open_notice(vec![link(&laptop)], answer).is_none());
+        assert!(open_notice(vec![link(&laptop)], "not sealed".into()).is_none());
+        assert_eq!(station_key(&link(&laptop)), Some(keys.channel.clone()));
     }
 
     #[test]

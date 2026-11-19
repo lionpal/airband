@@ -104,7 +104,7 @@ Chat mode reads the same messages as a feed, and sends through the same `utteran
 
 | Call | Answer | Meaning |
 |---|---|---|
-| `GET feed?scope=…&since=<rev>&wait=<s>` | `{ schema, rev, messages, roster, seq, open, projects, station }` | Every line new or changed after change count `since`, oldest change first, each cut to a line or two; pass `rev` back next time. `since=0` gets the newest lines. `scope`: `all`, `group:<name>`, `agent:<callsign>`. Held open up to 25 s. `after=<seq>` is the older form (new lines only) and is still answered. |
+| `GET feed?scope=…&since=<rev>&wait=<s>` | `{ schema, rev, messages, roster, seq, open, projects, station }` | Every line new or changed after change count `since`, oldest change first, each cut to a line or two; pass `rev` back next time. `since=0` gets the newest lines. `scope`: `all`, `group:<name>`, `agent:<callsign>`. Held open up to 25 s. `after=<seq>` is the older form (new lines only) and is still answered. `away=1`: this radio is following the chat without showing it (see Notifications). |
 | `GET speech/<id>?from=<block>` | `{ rate, data, samples, next, done }` | The next part of a clip of the tower's voice, as far as it has been made: IMA ADPCM blocks, base64. A `Transmission` or a reply names its clip in `speech`. |
 | `GET ears` | `{ kind, token, region, language, phrases }` | What the phone should listen with: `device`, or a service and a ten-minute pass for it. |
 
@@ -157,6 +157,7 @@ Accounts, for a harness whose sessions can be moved between logins while they ru
 | `POST stop` | `{ agent }` → `{}`, or `{ error }` | Stop what an agent the tower runs is doing, now. What he said to it meanwhile it then reads as one turn. |
 | `POST unsend` | `{ message }` → `{}`, or `{ error }` | Take back something he said that is still `queued`. |
 | `POST end` | `{ agent }` → `{}`, or `{ error }` | End an agent the tower runs itself: its input is closed, and it finishes and signs off. |
+| `POST push` | `{ provider, token }` → `{}` | Where this radio can be woken when it is not listening: its address at a push service (`apns` is Apple's). Kept with the pairing it came through. An empty `token` takes it away. |
 
 An account is `{ id, harness, label, live, limits, problem }`. `id` means something only to the adapter that listed
 it; `label` is what to show (for Claude Code, the email); `live` marks the one in use. Each of `limits` is
@@ -233,6 +234,30 @@ before, and serves only `/v1/radio/` to it. The phone refuses an answer that is 
 Versions: `airband.relay/1` is part of how the keys are derived, so a later version cannot read or be read by this
 one. Each sealed request names the radio protocol it is in, and a tower that does not speak it answers 400.
 `DELETE /v1/channels/<channel>` with the tower's pull token closes a channel; `airband unpair` sends it.
+
+**Notifications.** A radio that has given the tower an address (`POST push`) is woken when something deserves it:
+a message judged `needs-you` or `report`, a permission card, a question a harness puts to him. Never `fyi` or
+`stalled`, never his own words, once per message, and not on a radio that is on a call or has the chat in front
+of him. The tower knows the last by the feed: a radio showing the chat asks for what follows a message within a
+moment of getting it; one that follows the chat without showing it adds `away=1` to `GET feed`, and that request
+tells the tower nothing about what he has seen. With a phone that can be woken and no radio reading, the tower
+reads each message as it arrives, since only then does it know its kind.
+
+The notification is `{ id, from, group, colour, station, text, kind, options, permission }` (`Notice` in
+`radio.rs`): everything the phone needs to show it and to answer it with the app not running. The tower seals it
+with a third key from the pairing secret (direction `push`, so it cannot be passed off as an answer, nor an
+answer as a notification) and asks the relay to pass it on:
+
+| Call | Body → answer | Meaning |
+|---|---|---|
+| `POST /v1/channels/<channel>/push` | `{ provider, to, sealed, question }` → `{ sent, gone, reason }` | From the channel's tower (its pull token). `to` is the phone's address, `sealed` the notification in base64 (2400 bytes at most before base64), `question` whether it is one. 200 sent; 410 the address is no longer good and the tower forgets it; 429 more than 60 from this channel in ten minutes; 503 this relay has no such push service; 502 the service refused or could not be reached. |
+
+The relay holds the push service's key and adds the same visible words to every notification ("airband", "New
+message" or "A question for you"), which is what shows if the phone cannot open it. Neither the relay nor the
+push service sees a name or a word of the message; they do learn that a notification was sent, when, to which
+phone, and whether it was a question. The phone opens it with `open_notice` in the radio core, which tries each
+pairing link it holds. An answer given on the notification is an ordinary `POST utterance` with `re` set to the
+notification's `id`. Push services are in `crates/airband-relay/src/push.rs`; another one is a struct beside `Apns`.
 
 **When the tower is away.** A relay that has not heard from a tower for 45 seconds answers a call with 503. What
 he said is then left with the relay: `POST /v1/channels/<channel>/queue`, the same sealed request, with the

@@ -9,6 +9,26 @@ settings:
     DEVELOPMENT_TEAM: 6LYK439Z4F
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "51"
+    SWIFT_INCLUDE_PATHS: $(PROJECT_DIR)/Generated
+    HEADER_SEARCH_PATHS: $(PROJECT_DIR)/Generated
+    # The Rust core is linked INTO the app and into its notification extension, as a static library named by its
+    # whole path. Asked for by name (-lairband_radio) the linker prefers the dynamic library beside it, which
+    # stays on the build machine: the app then starts in the simulator and nowhere else.
+    AIRBAND_CORE[sdk=iphoneos*]: $(PROJECT_DIR)/../../target/aarch64-apple-ios/release/libairband_radio.a
+    AIRBAND_CORE[sdk=iphonesimulator*]: $(PROJECT_DIR)/../../target/aarch64-apple-ios-sim/release/libairband_radio.a
+    OTHER_LDFLAGS: $(AIRBAND_CORE)
+    # The Keychain group the app and the extension share: the pairing links are kept there.
+    AIRBAND_KEYCHAIN_GROUP: $(AppIdentifierPrefix)dev.airband.shared
+    # Communication Notifications (the agent's badge where a contact's picture goes) is a capability Apple's API
+    # cannot turn on for an app. scripts/testflight.sh sets these two when the signing profile has it. Without
+    # it a notification carries the agent's name and no picture.
+    AIRBAND_COMMUNICATION: "NO"
+    AIRBAND_COMMUNICATION_SUFFIX: ""
+  configs:
+    Debug:
+      AIRBAND_APS: development
+    Release:
+      AIRBAND_APS: production
 targets:
   Airband:
     type: application
@@ -16,21 +36,18 @@ targets:
     scheme: {}
     sources:
       - Sources
+      - Shared
       - Resources
       - path: Generated/airband_radio.swift
+    dependencies:
+      - target: Notify
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.airband.app
         PRODUCT_NAME: Airband
-        SWIFT_INCLUDE_PATHS: $(PROJECT_DIR)/Generated
-        HEADER_SEARCH_PATHS: $(PROJECT_DIR)/Generated
-        LIBRARY_SEARCH_PATHS: $(PROJECT_DIR)/../../target/aarch64-apple-ios/release
-        # The Rust core is linked INTO the app, as a static library named by its whole path. Asked for by name
-        # (-lairband_radio) the linker prefers the dynamic library beside it, which stays on the build machine:
-        # the app then starts in the simulator and nowhere else.
-        AIRBAND_CORE[sdk=iphoneos*]: $(PROJECT_DIR)/../../target/aarch64-apple-ios/release/libairband_radio.a
-        AIRBAND_CORE[sdk=iphonesimulator*]: $(PROJECT_DIR)/../../target/aarch64-apple-ios-sim/release/libairband_radio.a
-        OTHER_LDFLAGS: $(AIRBAND_CORE)
+        CODE_SIGN_ENTITLEMENTS: Airband$(AIRBAND_COMMUNICATION_SUFFIX).entitlements
+        # set by scripts/testflight.sh; empty for a build signed automatically
+        PROVISIONING_PROFILE_SPECIFIER: $(AIRBAND_APP_PROFILE)
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: NO
@@ -47,7 +64,7 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
-        UIBackgroundModes: [audio]
+        UIBackgroundModes: [audio, remote-notification]
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSMicrophoneUsageDescription: Airband listens for your reply after an agent speaks, and when you press Talk.
         NSLocalNetworkUsageDescription: Airband talks straight to your computer when your phone is on the same network.
@@ -57,3 +74,33 @@ targets:
         CFBundleURLTypes:
           - CFBundleURLName: dev.airband.pair
             CFBundleURLSchemes: [airband]
+        AirbandKeychainGroup: $(AIRBAND_KEYCHAIN_GROUP)
+        # a notification shown as a message from the agent, with its badge as the sender's picture
+        NSUserActivityTypes: [INSendMessageIntent]
+  # Opens a sealed notification before iOS shows it, with the same Rust core as the app.
+  Notify:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Notify
+        excludes: ["Info.plist", "*.entitlements"]
+      - Shared
+      - path: Generated/airband_radio.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.airband.app.notify
+        CODE_SIGN_ENTITLEMENTS: Notify/Notify.entitlements
+        PROVISIONING_PROFILE_SPECIFIER: $(AIRBAND_NOTIFY_PROFILE)
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: Notify/Info.plist
+      properties:
+        CFBundleDisplayName: airband
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        AirbandKeychainGroup: $(AIRBAND_KEYCHAIN_GROUP)
+        AirbandCommunication: $(AIRBAND_COMMUNICATION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService

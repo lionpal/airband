@@ -48,4 +48,14 @@ by hand; the two Linux binaries printed their version in a container).
 
 Not checked: the phone app on a phone. The iPhone app has never run on a phone, so
 nothing about its audio, CarPlay or background behaviour is known. The tower has not been run on Windows or Linux
-(it builds and its tests pass there). Android: no Kotlin app. No push notifications: the phone sees new messages while the app is open or call mode is on.
+(it builds and its tests pass there). Android: no Kotlin app.
+
+Notifications: the relay's own code was run against Apple's push service with a made-up address and got
+`BadDeviceToken` back (the key, the signed pass and HTTP/2 work). `tools/e2e-push.py` (19 checks, no model)
+runs a real tower against a stand-in relay and opens each notification with Python's own ChaCha20-Poly1305. In
+the simulator, with a tower and a relay on this Mac and Apple's sandbox push service in between: a question
+arrived with the agent's name and its own answers as buttons, tapping one answered it on the tower, a permission
+card was denied from its notification, and with the Communication Notifications entitlement the badge showed as
+the sender's picture. Not seen: any of it on a phone, the production push service delivering to one, the move of
+the pairing links to the shared Keychain group on a phone that was already paired, a typed reply, Allow behind
+Face ID, and the "not sent" notification.

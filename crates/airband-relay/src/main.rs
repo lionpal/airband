@@ -13,6 +13,7 @@
 //!   POST /v1/channels/{c}/reply/{id}  tower: the sealed answer to request id
 //!   POST /v1/channels/{c}/call        radio: a sealed request; the response is the sealed answer
 //!   POST /v1/channels/{c}/queue       radio: a sealed message to keep for a tower that is away (x-airband-id names it)
+//!   POST /v1/channels/{c}/push        tower: a sealed notification for a push service to wake the phone with (push.rs)
 //!   POST /v1/waitlist                 the homepage's sign-up: {"email": "…"} (airband.dev only, by CORS)
 //!   GET  /healthz
 use axum::body::Bytes;
@@ -25,7 +26,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{Notify, oneshot};
-use airband_core::relay::{HELD, HELD_FOR_MS, HELD_MOST, MAX_MESSAGE, random_hex, token_hash};
+use airband_core::relay::{HELD, HELD_FOR_MS, HELD_MOST, MAX_MESSAGE, PUSH_MOST, PushAnswer, PushRequest, random_hex, token_hash};
 
 /// How long a tower's pull is held open.
 const HOLD: Duration = Duration::from_secs(25);
@@ -48,14 +49,25 @@ struct Channel {
     holding: Option<(String, Instant)>,
     /// The hash of the token the paired radio proves itself with, as the tower last gave it (with each pull).
     radio_hash: Option<String>,
+    /// How many notifications it has sent lately, and since when.
+    pushed: Option<(Instant, u32)>,
+}
+
+impl Channel {
+    fn new(pull_hash: String) -> Channel {
+        Channel { pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, holding: None, radio_hash: None, pushed: None }
+    }
 }
 
 /// A kept message the tower was handed and never answered for is handed over again after this long.
 const HAND_AGAIN: Duration = Duration::from_secs(60);
 
+mod push;
 mod store;
 
 struct Relay {
+    /// The push services this relay can wake phones through.
+    push: push::Push,
     channels: Mutex<HashMap<String, Channel>>,
     store: store::Store,
     admission: Option<String>,
@@ -171,7 +183,7 @@ async fn open(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, head
     if let Some(answer) = known(&channels) {
         return answer;
     }
-    channels.insert(channel, Channel { pull_hash: hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, holding: None, radio_hash: None });
+    channels.insert(channel, Channel::new(hash));
     StatusCode::CREATED.into_response()
 }
 
@@ -444,9 +456,43 @@ async fn call(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, head
     }
 }
 
-#[tokio::main]
-async fn main() {
-    let port: u16 = std::env::var("PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(7474);
+/// A tower asks for its phone to be woken: a sealed notification, handed to the push service the phone's
+/// address belongs to. Only the channel's own tower may ask, each channel only so often, and nothing of what
+/// is passed on can be read here. Neither the address nor the notification is logged or kept.
+async fn wake_phone(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, headers: HeaderMap, body: Bytes) -> Response {
+    let answer = |code: StatusCode, sent: bool, gone: bool, reason: &str| (code, axum::Json(PushAnswer { sent, gone, reason: reason.into() })).into_response();
+    {
+        let mut channels = relay.channels.lock().unwrap();
+        let ch = match relay.as_tower(&mut channels, &channel, &headers) {
+            Ok(ch) => ch,
+            Err(r) => return r,
+        };
+        if !push::allow(&mut ch.pushed, Instant::now()) {
+            return answer(StatusCode::TOO_MANY_REQUESTS, false, false, "too many notifications from this channel; try again later");
+        }
+    }
+    let Ok(ask) = serde_json::from_slice::<PushRequest>(&body) else { return answer(StatusCode::BAD_REQUEST, false, false, "not a push request") };
+    // an address is a short run of letters and digits; a sealed notification is base64 of a size one push can carry
+    let plain = |t: &str, extra: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_alphanumeric() || extra.as_bytes().contains(&b));
+    if !plain(&ask.to, "-_:") || ask.to.len() > 256 || !plain(&ask.sealed, "+/=") || ask.sealed.len() > PUSH_MOST * 4 / 3 + 4 {
+        return answer(StatusCode::BAD_REQUEST, false, false, "the address or the sealed notification is not the right shape");
+    }
+    match relay.push.send(&ask.provider, &ask.to, &ask.sealed, ask.question).await {
+        None => answer(StatusCode::SERVICE_UNAVAILABLE, false, false, "this relay has no such push service"),
+        Some(push::Outcome::Sent) => answer(StatusCode::OK, true, false, ""),
+        Some(push::Outcome::Gone(why)) => answer(StatusCode::GONE, false, true, &why),
+        Some(push::Outcome::Refused(why)) => {
+            eprintln!("airband-relay: the push service refused a notification: {why}");
+            answer(StatusCode::BAD_GATEWAY, false, false, &why)
+        }
+        Some(push::Outcome::Failed(why)) => {
+            eprintln!("airband-relay: a notification could not be sent: {why}");
+            answer(StatusCode::BAD_GATEWAY, false, false, &why)
+        }
+    }
+}
+
+async fn relay_from_env() -> Arc<Relay> {
     let store = store::Store::from_env().unwrap_or_else(|e| {
         eprintln!("airband-relay: {e}");
         std::process::exit(2);
@@ -469,32 +515,116 @@ async fn main() {
     if let Err(e) = store.held_purge(HELD_FOR_MS / 86_400_000).await {
         eprintln!("airband-relay: could not clear old kept messages: {e}");
     }
-    let channels = saved.into_iter().map(|(c, pull_hash)| (c, Channel { pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, holding: None, radio_hash: None })).collect::<HashMap<_, _>>();
+    let channels = saved.into_iter().map(|(c, pull_hash)| (c, Channel::new(pull_hash))).collect::<HashMap<_, _>>();
     let admission = std::env::var("AIRBAND_RELAY_ADMISSION").ok().filter(|a| !a.is_empty());
-    println!("airband-relay on port {port}: {} channels known; opening a channel {}", channels.len(), if admission.is_some() { "needs the admission key" } else { "is open to anyone" });
+    println!("airband-relay: {} channels known; opening a channel {}", channels.len(), if admission.is_some() { "needs the admission key" } else { "is open to anyone" });
     let speech = std::env::var("AZURE_SPEECH_KEY").ok().filter(|k| !k.is_empty()).zip(std::env::var("AZURE_SPEECH_REGION").ok().filter(|r| !r.is_empty()));
     println!("airband-relay: {}", if speech.is_some() { "lends its speech service to towers that have none" } else { "has no speech service to lend" });
-    let relay = Arc::new(Relay { channels: Mutex::new(channels), store, admission, speech, speech_pass: Mutex::new(None), signups: Mutex::new(Signups::default()), writing: tokio::sync::Semaphore::new(2) });
-    let app = Router::new()
+    let push = push::Push::from_env();
+    println!("airband-relay: {}", push.describe());
+    let relay = Arc::new(Relay { push, channels: Mutex::new(channels), store, admission, speech, speech_pass: Mutex::new(None), signups: Mutex::new(Signups::default()), writing: tokio::sync::Semaphore::new(2) });
+    relay
+}
+
+fn routes(relay: Arc<Relay>) -> Router {
+    Router::new()
         .route("/v1/channels/{channel}", put(open).delete(close))
         .route("/v1/channels/{channel}/pull", get(pull))
         .route("/v1/channels/{channel}/reply/{id}", post(reply))
         .route("/v1/channels/{channel}/call", post(call))
         .route("/v1/channels/{channel}/queue", post(hold))
         .route("/v1/channels/{channel}/ears", get(ears_pass))
+        .route("/v1/channels/{channel}/push", post(wake_phone))
         .route("/v1/speech/pass", post(speech_pass))
         .route("/v1/waitlist", post(waitlist).options(waitlist_preflight))
         .route("/healthz", get(|| async { "ok" }))
         .layer(DefaultBodyLimit::max(MAX_MESSAGE))
-        .with_state(relay);
+        .with_state(relay)
+}
+
+#[tokio::main]
+async fn main() {
+    let port: u16 = std::env::var("PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(7474);
+    let app = routes(relay_from_env().await);
     let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".into());
     let listener = tokio::net::TcpListener::bind((host.as_str(), port)).await.expect("cannot listen");
+    println!("airband-relay on port {port}");
     axum::serve(listener, app).with_graceful_shutdown(async { let _ = tokio::signal::ctrl_c().await; }).await.expect("the relay stopped");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The push route, with a stand-in for Apple's server on this machine: the tower's token is asked for, the
+    /// sealed notification reaches the service untouched under a pass signed by the key, and what the service
+    /// says about an address comes back as the tower needs it.
+    #[tokio::test]
+    async fn a_tower_wakes_its_phone_through_the_push_service() {
+        use airband_core::relay::Keys;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let (key, public) = push::tests::test_key();
+        let seen = Arc::new(AtomicU32::new(0));
+        // the stand-in: checks what a push service checks, and answers by the address
+        let apple = {
+            let seen = seen.clone();
+            Router::new().route(
+                "/3/device/{to}",
+                post(move |Path(to): Path<String>, headers: HeaderMap, body: Bytes| {
+                    let (public, seen) = (public.clone(), seen.clone());
+                    async move {
+                        let head = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+                        let pass = head("authorization");
+                        let sent: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+                        let good = push::tests::pass_is_good(pass.strip_prefix("bearer ").unwrap_or(""), &public, "KEY123", "TEAM456") && head("apns-topic") == "dev.example.app" && head("apns-push-type") == "alert" && sent["aps"]["mutable-content"] == 1 && sent["sealed"] == "c2VhbGVk" && sent["aps"]["alert"]["body"] == "A question for you";
+                        if !good {
+                            return (StatusCode::FORBIDDEN, axum::Json(serde_json::json!({ "reason": "InvalidProviderToken" })));
+                        }
+                        seen.fetch_add(1, Ordering::SeqCst);
+                        match to.as_str() {
+                            "aa11" => (StatusCode::OK, axum::Json(serde_json::json!({}))),
+                            "bb22" => (StatusCode::GONE, axum::Json(serde_json::json!({ "reason": "Unregistered" }))),
+                            _ => (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({ "reason": "BadDeviceToken" }))),
+                        }
+                    }
+                }),
+            )
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let at = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, apple).await });
+
+        let keys = Keys::derive(&airband_core::relay::new_secret()).unwrap();
+        let apns = push::Apns::new(&key, "KEY123", "TEAM456", "dev.example.app", &format!("http://{at}")).unwrap();
+        let folder = std::env::temp_dir().join(format!("airband-relay-test-{}", random_hex(6)));
+        let relay = Arc::new(Relay { push: push::Push::with_apns(apns), channels: Mutex::new(HashMap::from([(keys.channel.clone(), Channel::new(token_hash(&keys.pull_token)))])), store: store::Store::Folder(folder), admission: None, speech: None, speech_pass: Mutex::new(None), signups: Mutex::new(Signups::default()), writing: tokio::sync::Semaphore::new(2) });
+        let ask = |token: &str, provider: &str, to: &str| {
+            let (relay, channel) = (relay.clone(), keys.channel.clone());
+            let mut headers = HeaderMap::new();
+            headers.insert("authorization", format!("Bearer {token}").parse().unwrap());
+            let body = serde_json::to_vec(&PushRequest { provider: provider.into(), to: to.into(), sealed: "c2VhbGVk".into(), question: true }).unwrap();
+            async move {
+                let res = wake_phone(State(relay), Path(channel), headers, Bytes::from(body)).await;
+                let status = res.status().as_u16();
+                let answer: PushAnswer = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), 1 << 16).await.unwrap()).unwrap_or_default();
+                (status, answer.sent, answer.gone, answer.reason)
+            }
+        };
+        // not the channel's tower: nothing is sent
+        assert_eq!(ask("someone-else", "apns", "aa11").await.0, 403);
+        assert_eq!(seen.load(Ordering::SeqCst), 0);
+        assert_eq!(ask(&keys.pull_token, "apns", "aa11").await, (200, true, false, String::new()));
+        assert_eq!(ask(&keys.pull_token, "apns", "bb22").await, (410, false, true, "Unregistered".into()));
+        assert_eq!(ask(&keys.pull_token, "apns", "cc33").await, (410, false, true, "BadDeviceToken".into()));
+        assert_eq!(seen.load(Ordering::SeqCst), 3);
+        // a service this relay does not have, and an address that is not one
+        assert_eq!(ask(&keys.pull_token, "carrier-pigeon", "aa11").await.0, 503);
+        assert_eq!(ask(&keys.pull_token, "apns", "aa11/../x").await.0, 400);
+        // and only so many from one channel
+        relay.channels.lock().unwrap().get_mut(&keys.channel).unwrap().pushed = Some((Instant::now(), push::PUSHES));
+        assert_eq!(ask(&keys.pull_token, "apns", "aa11").await.0, 429);
+        assert_eq!(seen.load(Ordering::SeqCst), 3);
+    }
 
     #[test]
     fn what_passes_for_an_email_address() {

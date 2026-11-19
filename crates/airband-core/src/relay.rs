@@ -40,6 +40,19 @@ pub const HELD_MOST: usize = 200;
 pub enum Direction {
     ToTower,
     ToRadio,
+    /// A notification for the phone, which the relay hands to a push service still sealed. It has a key of
+    /// its own, so it cannot be passed off as an answer, nor an answer as a notification.
+    Push,
+}
+
+impl Direction {
+    fn label(self) -> &'static str {
+        match self {
+            Direction::ToTower => "to tower",
+            Direction::ToRadio => "to radio",
+            Direction::Push => "push",
+        }
+    }
 }
 
 /// Everything derived from one pairing secret.
@@ -54,6 +67,7 @@ pub struct Keys {
     pub radio_token: String,
     to_tower: [u8; 32],
     to_radio: [u8; 32],
+    push: [u8; 32],
 }
 
 pub fn hex(bytes: &[u8]) -> String {
@@ -88,15 +102,20 @@ impl Keys {
             hk.expand(label.as_bytes(), &mut out).expect("32 bytes is a valid length");
             out
         };
-        Ok(Keys { channel: hex(&take("channel")[..16]), pull_token: hex(&take("pull")), radio_token: hex(&take("radio")), to_tower: take("to tower"), to_radio: take("to radio") })
+        Ok(Keys { channel: hex(&take("channel")[..16]), pull_token: hex(&take("pull")), radio_token: hex(&take("radio")), to_tower: take(Direction::ToTower.label()), to_radio: take(Direction::ToRadio.label()), push: take(Direction::Push.label()) })
     }
 
     fn cipher(&self, dir: Direction) -> ChaCha20Poly1305 {
-        ChaCha20Poly1305::new((if dir == Direction::ToTower { &self.to_tower } else { &self.to_radio }).into())
+        let key = match dir {
+            Direction::ToTower => &self.to_tower,
+            Direction::ToRadio => &self.to_radio,
+            Direction::Push => &self.push,
+        };
+        ChaCha20Poly1305::new(key.into())
     }
     /// Bound into every message, so one cannot be replayed on another channel or turned around.
     fn bound(&self, dir: Direction) -> Vec<u8> {
-        format!("{SCHEMA} {} {}", self.channel, if dir == Direction::ToTower { "to tower" } else { "to radio" }).into_bytes()
+        format!("{SCHEMA} {} {}", self.channel, dir.label()).into_bytes()
     }
 
     /// nonce (12 bytes) followed by the ciphertext.
@@ -145,6 +164,37 @@ pub struct Answer {
     pub body: serde_json::Value,
 }
 
+/// `POST /v1/channels/<channel>/push`, from the channel's tower: have a push service wake the phone. The relay
+/// passes `sealed` on as it is and can read none of it; the phone opens it with the pairing's key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PushRequest {
+    /// Which push service the address belongs to ("apns").
+    pub provider: String,
+    /// The phone's address at that service, as the phone gave it to the tower.
+    pub to: String,
+    /// A notification sealed for [`Direction::Push`], base64.
+    pub sealed: String,
+    /// It is a question to him. All the relay and the push service learn about what is inside.
+    #[serde(default)]
+    pub question: bool,
+}
+
+/// The relay's answer to a [`PushRequest`]. The HTTP status says the same in a number: 200 sent, 410 the address
+/// is no longer good, 429 too many, 503 this relay has no such push service, 502 the service refused or failed.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PushAnswer {
+    pub sent: bool,
+    /// The phone no longer takes notifications at that address: the tower forgets it.
+    #[serde(default)]
+    pub gone: bool,
+    /// Why not, in the push service's own word for it or the relay's.
+    #[serde(default)]
+    pub reason: String,
+}
+
+/// The largest sealed notification, in bytes before base64: what fits in one push with room for the rest.
+pub const PUSH_MOST: usize = 2400;
+
 /// True when a call's time is close enough to now to be accepted.
 pub fn fresh(call_ms: u64, now_ms: u64) -> bool {
     call_ms.abs_diff(now_ms) <= FRESH_MS
@@ -164,6 +214,11 @@ mod tests {
         assert_eq!(tower.open(Direction::ToTower, &sealed).unwrap(), b"leave them");
         // not as an answer, not by another pairing, not after a bit is flipped
         assert!(tower.open(Direction::ToRadio, &sealed).is_err());
+        assert!(tower.open(Direction::Push, &sealed).is_err());
+        // a notification opens as a notification and as nothing else
+        let note = tower.seal(Direction::Push, b"shop 3 asks");
+        assert_eq!(radio.open(Direction::Push, &note).unwrap(), b"shop 3 asks");
+        assert!(radio.open(Direction::ToRadio, &note).is_err() && radio.open(Direction::ToTower, &note).is_err());
         assert!(Keys::derive(&new_secret()).unwrap().open(Direction::ToTower, &sealed).is_err());
         let mut bent = sealed.clone();
         *bent.last_mut().unwrap() ^= 1;

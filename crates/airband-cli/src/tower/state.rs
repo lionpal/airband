@@ -167,6 +167,9 @@ pub(super) struct Call {
     pub(super) asked: Option<(String, Instant)>,
     /// An idea for a new agent whose project the tower could not work out, held while it asks him which.
     pub(super) unplaced_idea: Option<(Idea, Instant)>,
+    /// How far this radio has the chat on screen: the highest change count it has asked for what follows of,
+    /// while it was showing the chat. A line changed after this is one he may not have seen.
+    pub(super) has: u64,
 }
 
 impl Call {
@@ -211,6 +214,10 @@ pub(super) struct Inner {
     pub(super) permits: HashMap<String, Permit>,
     /// When a radio last asked for the feed: whether anyone is there to be asked something.
     pub(super) last_reader: Option<Instant>,
+    /// Ids of the lines a notification has been decided for, so each is decided once.
+    pub(super) pushed: HashSet<String>,
+    /// How many requests for the whole chat are open right now: while there is one, it reads what agents say.
+    pub(super) readers: u32,
 }
 
 /// One request for permission.

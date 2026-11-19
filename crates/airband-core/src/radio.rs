@@ -333,6 +333,50 @@ pub struct PicturePart {
     pub done: bool,
 }
 
+/// `POST push`: where this radio can be woken when it is not listening: its address at a push service. The tower
+/// keeps it with the pairing it came through and uses it only for what deserves a notification. An empty
+/// `token` takes the address away.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PushTarget {
+    /// The push service ("apns" for Apple's).
+    pub provider: String,
+    pub token: String,
+}
+
+/// A notification, as the tower seals it for the phone (`airband.relay/1`, direction "push"). Neither the relay
+/// nor the push service can read it; the phone opens it and shows it. Everything the phone needs to show it and
+/// to answer it is here, because the app may not be running.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Notice {
+    /// The message's id: what an answer is sent as the answer to (`re`).
+    pub id: String,
+    /// The agent's callsign as the tower has it, and its team.
+    pub from: String,
+    #[serde(default)]
+    pub group: String,
+    /// The team's colour: its place in the client's list of team colours.
+    #[serde(default)]
+    pub colour: u8,
+    /// What this computer is called.
+    #[serde(default)]
+    pub station: String,
+    /// The short version of the message.
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<Kind>,
+    /// Answers he can give with one tap.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
+    /// It is a request for permission: the only answers are Allow, Deny, or his own words, which refuse it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub permission: bool,
+}
+
+/// What deserves a notification: a message that needs him, or a report. Never chatter, a stall, or his own words.
+pub fn deserves_notice(kind: Option<Kind>) -> bool {
+    matches!(kind, Some(Kind::NeedsYou | Kind::Report))
+}
+
 /// How many bytes of a picture go in one part.
 pub const PICTURE_PART: usize = 120 * 1024;
 
