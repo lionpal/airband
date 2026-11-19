@@ -30,6 +30,8 @@ pub trait DeskHost: Send + Sync {
     fn status(&self, status: RadioStatus, saying: String);
     /// Something he must be told: a message could not be placed, or expired unsent.
     fn note(&self, text: String);
+    /// What he has said so far, while he is still speaking, revised as more is heard. Empty when he has stopped.
+    fn hearing(&self, text: String);
     /// Is the chat on screen in front of him right now? What arrives while it is counts as read, so a call
     /// started later does not read it out.
     fn watching(&self) -> bool;
@@ -259,6 +261,9 @@ impl RadioHost for StationHost {
         if self.shared.floor.release(self.index, ends) {
             self.shared.host.status(status, String::new());
         }
+    }
+    fn hearing(&self, text: String) {
+        self.shared.host.hearing(text);
     }
     fn outbox(&self, waiting: Vec<Outgoing>, note: Option<String>) {
         {
@@ -712,6 +717,7 @@ mod tests {
         }
         fn record_stop(&self) {}
         fn outbox(&self, _: Vec<Outgoing>, _: Option<String>) {}
+        fn hearing(&self, _: String) {}
     }
 
     fn msg(id: &str, seq: u64, from: &str, group: &str, needs: bool) -> ChatMessage {

@@ -29,6 +29,7 @@ use airband_core::relay::{Answer, Call, Direction, Keys, random_hex};
 mod call;
 mod desk;
 mod ears;
+mod ears_stream;
 mod link;
 pub mod net;
 mod outbox;
@@ -82,6 +83,9 @@ pub trait RadioHost: Send + Sync {
     /// His typed messages that have not reached the tower yet, oldest first, each time that changes. `note`
     /// is something he must be told about one of them (it could not be placed, or it expired unsent).
     fn outbox(&self, waiting: Vec<Outgoing>, note: Option<String>);
+    /// What he has said so far, while he is still speaking: the whole of it each time, revised as the service
+    /// hears more. For showing; what is sent is what the listening returns.
+    fn hearing(&self, text: String);
 }
 
 /// A message he typed that is on its way.

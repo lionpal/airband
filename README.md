@@ -65,6 +65,7 @@ airband status                 # who is on, and what is waiting on you
 airband feed                   # the feed, in a terminal
 airband send "ship it"         # say something to your agents
 airband accounts               # your Claude accounts and how much of each is used
+airband model gemini           # read and route with Gemini and your own key, in place of Claude Code
 airband quick add "Make no mistakes"   # add a one-tap message
 ```
 

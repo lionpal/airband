@@ -124,6 +124,51 @@ fn key(args: &[String]) -> Result<String, String> {
     option(args, "--key").or_else(|| option(args, "--key-env").and_then(|v| std::env::var(v).ok())).filter(|k| !k.is_empty()).ok_or_else(|| "give the service's key: --key <key>, or --key-env <VARIABLE>".to_string())
 }
 
+/// `airband model [claude | gemini … | openai … | none]`: what reads each agent's message and decides what is
+/// worth showing, and who his words are for.
+pub fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
+    use config::{Summarizer, Voice};
+    cfg.summarizer = match args.first().map(String::as_str) {
+        None => {
+            println!("{}", match &cfg.summarizer {
+                Summarizer::Command { argv } => format!("Model: a command, {}.", argv.iter().take(4).cloned().collect::<Vec<_>>().join(" ")),
+                Summarizer::Gemini { model, .. } => format!("Model: Gemini, {model}, with your own key."),
+                Summarizer::Openai { url, model, .. } => format!("Model: {model} at {url}."),
+                Summarizer::None => "Model: none. Messages are cut to their first two sentences, and your words go to whoever you name.".to_string(),
+            });
+            println!("Change it:  airband model claude  |  airband model gemini [--key-env GEMINI_API_KEY] [--model …]  |  airband model openai --key-env OPENAI_API_KEY --model … [--url https://…/v1]  |  airband model none");
+            return Ok(());
+        }
+        // Claude Code itself, as a command: nothing to give it
+        Some("claude") => Summarizer::default(),
+        Some("gemini") => {
+            // the key the voice already uses will do, if he gave one for that and none here
+            let key = key(args).ok().or(match &cfg.voice {
+                Voice::Gemini { key, .. } => Some(key.clone()),
+                _ => None,
+            });
+            let mut m: Summarizer = serde_json::from_value(json!({ "kind": "gemini", "key": key.ok_or("give Gemini's key: --key-env GEMINI_API_KEY")? })).map_err(|e| e.to_string())?;
+            if let (Summarizer::Gemini { model, .. }, Some(named)) = (&mut m, option(args, "--model")) {
+                *model = named;
+            }
+            m
+        }
+        Some("openai") => {
+            let model = option(args, "--model").ok_or("say which model: --model <its name>")?;
+            let mut m: Summarizer = serde_json::from_value(json!({ "kind": "openai", "key": key(args).unwrap_or_default(), "model": model })).map_err(|e| e.to_string())?;
+            if let (Summarizer::Openai { url, .. }, Some(given)) = (&mut m, option(args, "--url")) {
+                *url = given;
+            }
+            m
+        }
+        Some("none") => Summarizer::None,
+        Some(other) => return Err(format!("no model called \"{other}\": claude, gemini, openai or none")),
+    };
+    config::save(&cfg)?;
+    println!("Saved. A running tower uses it from its next start: airband install");
+    Ok(())
+}
+
 /// `airband voice [device | gemini … | azure …]`: what speaks to him on a call. Separate from `ears`.
 pub fn voice(mut cfg: Config, args: &[String]) -> Result<(), String> {
     use config::Voice;

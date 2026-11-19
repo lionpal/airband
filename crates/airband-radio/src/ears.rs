@@ -43,8 +43,18 @@ impl Ears {
         let grant = if resting { EarsGrant::default() } else { self.grant(link) };
         match grant.kind.as_str() {
             "azure" if host.record_start(RATE) => {
-                let heard = azure(&grant, host);
+                // as he speaks, with the words coming back while he talks. If that connection cannot be made, the
+                // same microphone is listened to again the plain way (one upload, the words at the end).
+                let heard = crate::ears_stream::azure(&grant, host, RATE, wav_header());
                 host.record_stop();
+                let heard = match heard {
+                    Err(()) if host.record_start(RATE) => {
+                        let plain = azure(&grant, host);
+                        host.record_stop();
+                        plain
+                    }
+                    other => other,
+                };
                 match heard {
                     Ok(text) => text,
                     Err(_) => {
@@ -144,7 +154,7 @@ fn azure(grant: &EarsGrant, host: &dyn RadioHost) -> Result<Option<String>, ()> 
 }
 
 /// A WAV header for a recording whose length is not known yet.
-fn wav_header() -> Vec<u8> {
+pub(crate) fn wav_header() -> Vec<u8> {
     let mut h = Vec::with_capacity(44);
     h.extend_from_slice(b"RIFF");
     h.extend_from_slice(&0u32.to_le_bytes());

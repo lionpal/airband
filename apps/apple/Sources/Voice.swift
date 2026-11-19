@@ -242,6 +242,8 @@ final class Voice: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
 
     // MARK: Apple's own voice
 
+    /// Told what he has said so far, as the phone's own recognition hears it.
+    var onPartial: ((String) -> Void)?
     private let synth = AVSpeechSynthesizer()
     private var spoken: DispatchSemaphore?
 
@@ -315,6 +317,7 @@ final class Voice: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
                 if heard != text {
                     text = heard
                     lastChange = Date()
+                    self.onPartial?(heard)
                 }
                 if result.isFinal { finished = true }
             }

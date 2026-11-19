@@ -106,6 +106,10 @@ Chat mode reads the same messages as a feed, and sends through the same `utteran
 | `GET feed?scope=…&since=<rev>&wait=<s>` | `{ schema, rev, messages, roster, seq, open, projects, station }` | Every line new or changed after change count `since`, oldest change first, each cut to a line or two; pass `rev` back next time. `since=0` gets the newest lines. `scope`: `all`, `group:<name>`, `agent:<callsign>`. Held open up to 25 s. `after=<seq>` is the older form (new lines only) and is still answered. |
 | `GET speech/<id>?from=<block>` | `{ rate, data, samples, next, done }` | The next part of a clip of the tower's voice, as far as it has been made: IMA ADPCM blocks, base64. A `Transmission` or a reply names its clip in `speech`. |
 | `GET ears` | `{ kind, token, region, language, phrases }` | What the phone should listen with: `device`, or a service and a ten-minute pass for it. |
+
+With a service, the radio streams the microphone to it as he speaks and tells its host what he has said so far
+(`hearing`), so his words appear while he is still talking. If that connection cannot be made it falls back to
+one upload with the words at the end, and then to the device's own recognition.
 | `GET message/<id>?form=detail\|full` | `{ text }` | The fuller spoken version, or exactly what the agent wrote. |
 | `GET picture/<id>?from=<byte>` | `{ data, next, done }` | One part (120 KB at most, base64) of a picture's kept copy. Ask again from `next` until `done`. |
 
@@ -224,14 +228,19 @@ Not provided: forward secrecy. Recorded relay traffic plus a later-stolen pairin
 The pairing link (`crates/airband-core/src/pairing.rs`) is the only thing a host stores:
 `airband://pair?relay=…&secret=…` or, with no relay, `airband://pair?url=…&token=…`.
 
-## The summarising model
+## The model that reads everything
 
-`~/.airband/config.json`, `summarizer`:
+One model does the judging (what is worth showing, cut to a line), the routing (who his words are for, or that
+he wants a new agent) and nothing else. `airband model` chooses it; it is `summarizer` in `~/.airband/config.json`:
 
 ```json
 { "kind": "command", "argv": ["claude", "-p", "--model", "haiku", "…"] }
+{ "kind": "gemini", "key": "…", "model": "gemini-flash-latest" }
+{ "kind": "openai", "url": "https://api.openai.com/v1", "key": "…", "model": "…" }
+{ "kind": "none" }
 ```
 
-Any command that reads a prompt on standard input and writes the answer to standard output, so any model
-through any CLI. `{ "kind": "none" }` reads the first two sentences as written. Short plain messages are read
-as written without a model either way.
+`command` is any program that reads a prompt on standard input and writes the answer to standard output. `gemini`
+is Google's API with a key of his own. `openai` is any service that speaks OpenAI's chat API, a model on his own
+computer included. `none` reads the first two sentences as written and routes only by tags and names. Short
+plain messages are read as written without a model either way.

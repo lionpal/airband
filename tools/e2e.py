@@ -7,6 +7,7 @@ each result. Nothing here touches the real tower or its files.
 
     cargo build --release && tools/e2e.py            about two minutes, some dozens of small model calls
     tools/e2e.py --claude                            also asks a real `claude -p` session for permission
+    tools/e2e.py --gemini                            the same, with Gemini as the model that reads everything
 
 Checks that depend on a model's judgement (what kind a message is, who an untagged reply is for) can fail now
 and then for that reason alone; they are marked (model).
@@ -22,10 +23,17 @@ home, projects, got = os.path.join(work, "home"), os.path.join(work, "code"), os
 for d in (os.path.join(home, ".airband"), got, *(os.path.join(projects, p) for p in ("catalog", "logistics", "orders", "payouts"))):
     os.makedirs(d)
 OWN, RADIO = "e2e-own-token", "e2e-radio-token"
+# the model that reads everything: Claude Code as a command, or with --gemini the Gemini key this computer's own
+# tower already has for its voice
+MODEL = {"kind": "command", "argv": ["env", f"HOME={REAL_HOME}", "claude", "-p", "--model", "haiku", "--no-session-persistence", "--strict-mcp-config",
+                                     "--system-prompt", "You rewrite messages. Reply with the JSON asked for and nothing else.", "--tools", ""]}
+if "--gemini" in sys.argv:
+    MODEL = {"kind": "gemini", "key": json.load(open(os.path.join(REAL_HOME, ".airband", "config.json")))["voice"]["key"]}
+    if os.environ.get("GEMINI_MODEL"):
+        MODEL["model"] = os.environ["GEMINI_MODEL"]
 json.dump({
     "port": PORT, "token": OWN, "radio_token": RADIO, "name": "Charles", "station": "e2e", "permission_wait": 25,
-    "summarizer": {"kind": "command", "argv": ["env", f"HOME={REAL_HOME}", "claude", "-p", "--model", "haiku", "--no-session-persistence", "--strict-mcp-config",
-                                               "--system-prompt", "You rewrite messages. Reply with the JSON asked for and nothing else.", "--tools", ""]},
+    "summarizer": MODEL,
     "launchers": {"test": {"argv": ["sh", "-c", 'printf "%s\\n" "$@" > "{cwd}/launched.txt"', "sh", "{options}", "{task}"], "models": {"fable": "fable-id", "opus": "opus-id"},
                            "efforts": ["low", "medium", "high"], "with_model": ["--model", "{model}"], "with_effort": ["--effort", "{effort}"]}}, "launcher": "test",
     "quick": [{"label": "Make no mistakes", "text": "Make no mistakes."}],

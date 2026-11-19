@@ -38,6 +38,7 @@ fn main() {
         Some("quick") => install::quick(config::load(), &args[1..]),
         Some("accounts") => adapters::accounts_command(&config::load(), &args[1..]),
         Some("relay") => install::relay(config::load(), &args[1..]),
+        Some("model") => install::model(config::load(), &args[1..]),
         Some("voice") => install::voice(config::load(), &args[1..]),
         Some("ears") => install::ears(config::load(), &args[1..]),
         Some("radio") => terminal::run(&config::load(), &args[1..]),
@@ -45,7 +46,7 @@ fn main() {
         Some("triage") => tower::triage(config::load()),
         Some("feed") => terminal::feed(&config::load(), &args[1..]),
         Some("send") => terminal::send(&config::load(), &args[1..]),
-        Some(other) => Err(format!("unknown command \"{other}\": run, install, uninstall, status, relay, voice, ears, pair, unpair, quick, accounts, radio, feed, send, launch, hook, report")),
+        Some(other) => Err(format!("unknown command \"{other}\": run, install, uninstall, status, relay, model, voice, ears, pair, unpair, quick, accounts, radio, feed, send, launch, hook, report")),
     };
     if let Err(e) = result {
         eprintln!("airband: {e}");

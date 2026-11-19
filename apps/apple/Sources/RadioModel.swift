@@ -25,6 +25,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     @Published var calling = false
     @Published var status: RadioStatus = .idle
     @Published var said = "" // what the device's own voice is saying on a call
+    @Published var hearing = "" // what he has said so far, while he is still speaking
     @Published var reading: String? // the message being read aloud from its full text, by id
     @Published var tray: [TrayItem] = [] // photos and videos he has attached and not yet sent
     @Published var accounts: [StationAccounts] = [] // each computer's accounts, as last read
@@ -47,6 +48,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     init() {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("radio")
+        voice.onPartial = { [weak self] text in DispatchQueue.main.async { self?.hearing = text } }
         desk = Desk.open(dataDir: dir.path, host: self)
         var links = (try? JSONDecoder().decode([String].self, from: Data((Keychain.read("airband.links") ?? "[]").utf8))) ?? []
         if let old = Keychain.read("airband.link"), !old.isEmpty, !links.contains(old) { links.append(old) } // from the first builds
@@ -278,8 +280,11 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         DispatchQueue.main.async {
             self.status = status
             if !saying.isEmpty { self.said = saying }
+            // his words stay up while they are being sent, and go when the microphone has closed and they have gone
+            if case .listening = status {} else if case .sending = status {} else { self.hearing = "" }
         }
     }
+    func hearing(text: String) { DispatchQueue.main.async { self.hearing = text } }
     func note(text: String) { DispatchQueue.main.async { self.problem = text } }
     func watching() -> Bool {
         frontLock.lock()

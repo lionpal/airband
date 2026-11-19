@@ -147,8 +147,30 @@ pub enum Summarizer {
     /// Run a command: the prompt goes in on standard input, the answer is read from standard output.
     /// `AIRBAND_INTERNAL=1` is set so the command's own hooks do not report back to the tower.
     Command { argv: Vec<String> },
+    /// Google's Gemini, with an API key of his own.
+    Gemini {
+        key: String,
+        #[serde(default = "gemini_judge")]
+        model: String,
+    },
+    /// Any service that speaks OpenAI's chat API (OpenAI itself, OpenRouter, Groq, a model on his own computer):
+    /// `url` is its base address, up to and including `/v1`.
+    Openai {
+        #[serde(default = "openai_url")]
+        url: String,
+        #[serde(default)]
+        key: String,
+        model: String,
+    },
     /// No model: read out the first two sentences as written.
     None,
+}
+fn gemini_judge() -> String {
+    // the lite one is cheaper and misread two of the end-to-end checks; this one passes them all
+    "gemini-flash-latest".into()
+}
+fn openai_url() -> String {
+    "https://api.openai.com/v1".into()
 }
 
 /// Claude Haiku with a one-line system prompt and no tools. Measured on 2026-11-18: about 650 tokens a message.

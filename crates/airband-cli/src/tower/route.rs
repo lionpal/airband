@@ -117,9 +117,11 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                     };
                     let offered = |what: &str, names: Vec<String>| if names.is_empty() { format!("\"{what}\" is null. ") } else { format!("\"{what}\" is one of {} when he named one, else null. ", names.join(", ")) };
                     format!(
-                        "\n\nOr he is not talking to any of them: he wants a NEW agent started. He says so outright (start, launch \
-                         or spin up an agent; a new idea), or he asks for work to be done by a model he names (\"with fable, \
-                         look into…\", \"have opus investigate…\", \"get sonnet on high to review…\"). Work he simply asks \
+                        "\n\nOr he is not talking to any of them: he wants a NEW agent started. Decide this first. He says so \
+                         outright (\"new idea: …\", \"start an agent to…\", \"launch…\", \"spin up…\": words like these always \
+                         mean a new agent, whatever the work is and whoever is already working on something like it), or he \
+                         asks for work to be done by a model he names (\"with fable, look into…\", \"with opus high, \
+                         investigate…\", \"have opus investigate…\", \"get sonnet on high to review…\"). Work he simply asks \
                          for, with no such sign, is for an agent already running. A remark about a model (\"with opus it was \
                          too slow\") is not a request for one. When he wants a new agent, \"to\" is empty and \"new\" says \
                          what to start: \"project\" is the one he named, else the one the work would be done in{room}, going by \

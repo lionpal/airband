@@ -118,6 +118,7 @@ impl RadioHost for Terminal {
     }
     fn record_stop(&self) {}
     fn outbox(&self, _: Vec<Outgoing>, _: Option<String>) {}
+    fn hearing(&self, _text: String) {}
     fn status(&self, status: RadioStatus) {
         if matches!(status, RadioStatus::Speaking { .. }) {
             *self.asked.lock().unwrap() = std::time::Instant::now();
@@ -198,6 +199,7 @@ impl RadioHost for Silent {
             self.0.store(true, Ordering::SeqCst);
         }
     }
+    fn hearing(&self, _text: String) {}
 }
 
 fn link_from(cfg: &Config, args: &[String]) -> String {

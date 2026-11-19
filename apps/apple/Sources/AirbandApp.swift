@@ -366,8 +366,16 @@ struct FeedView: View {
                 }
                 .padding(.horizontal, 14)
             } else {
-                Text(statusLine ?? " ").font(.system(size: 14, weight: .medium)).foregroundStyle(Palette.quiet)
-                    .frame(height: 18).accessibilityHidden(statusLine == nil)
+                if model.hearing.isEmpty {
+                    Text(statusLine ?? " ").font(.system(size: 14, weight: .medium)).foregroundStyle(Palette.quiet)
+                        .frame(height: 18).accessibilityHidden(statusLine == nil)
+                } else {
+                    // his own words, as he says them: the end of a long sentence stays in view
+                    Text("\u{201C}\(model.hearing)\u{201D}").font(.system(size: 17, weight: .medium)).foregroundStyle(Palette.ink)
+                        .lineLimit(2).truncationMode(.head).multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, minHeight: 18).padding(.horizontal, 24)
+                        .animation(.easeOut(duration: 0.12), value: model.hearing).accessibilityHidden(true)
+                }
                 HStack {
                     // +: attach a photo or a video, or send one of the things he says all the time
                     Button { withAnimation(.snappy(duration: 0.2)) { showQuick.toggle() } } label: { PlusButtonLabel(open: showQuick) }

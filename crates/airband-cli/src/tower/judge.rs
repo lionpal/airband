@@ -2,8 +2,35 @@
 //! Also the fuller version, for "say more". The model is whatever command the configuration names.
 use super::*;
 
+/// One question to a model behind an API key, off the async threads. `read` finds the answer in what came back.
+async fn ask_api(url: String, header: (&'static str, String), body: Value, read: fn(&Value) -> Option<String>) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let mut res = airband_radio::net::agent(Duration::from_secs(60)).post(&url).header(header.0, &header.1).send_json(&body).map_err(|e| format!("the model could not be reached: {e}"))?;
+        let status = res.status().as_u16();
+        let v: Value = res.body_mut().read_json().map_err(|e| e.to_string())?;
+        if status != 200 {
+            return Err(format!("the model refused ({status}): {}", v["error"]["message"].as_str().unwrap_or("no reason given").chars().take(160).collect::<String>()));
+        }
+        read(&v).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).ok_or_else(|| "the model answered with nothing".to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 pub(super) async fn ask_model(cfg: &Config, prompt: String) -> Result<String, String> {
-    let Summarizer::Command { argv } = &cfg.summarizer else { return Err("no summarizer is configured".into()) };
+    let argv = match &cfg.summarizer {
+        Summarizer::Command { argv } => argv,
+        Summarizer::Gemini { key, model } => {
+            let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");
+            let body = json!({ "contents": [{ "parts": [{ "text": prompt }] }], "generationConfig": { "temperature": 0 } });
+            return ask_api(url, ("x-goog-api-key", key.clone()), body, |v| Some(v["candidates"][0]["content"]["parts"].as_array()?.iter().filter_map(|p| p["text"].as_str()).collect::<String>())).await;
+        }
+        Summarizer::Openai { url, key, model } => {
+            let body = json!({ "model": model, "messages": [{ "role": "user", "content": prompt }], "temperature": 0 });
+            return ask_api(format!("{}/chat/completions", url.trim_end_matches('/')), ("authorization", format!("Bearer {key}")), body, |v| v["choices"][0]["message"]["content"].as_str().map(String::from)).await;
+        }
+        Summarizer::None => return Err("no summarizer is configured".into()),
+    };
     let (program, args) = argv.split_first().ok_or("the summarizer command is empty")?;
     // on Windows a command like `claude` is a .cmd shim, which only the shell can start
     let mut cmd = if cfg!(windows) {
@@ -81,11 +108,12 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
          14 words at most. If the agent is asking him something, the sentence is the question itself, as \
          briefly as it can be put (\"Two questions are too easy. Rewrite or leave?\"); how it got there is \
          one tap away and does not belong here.\n\
-         The one exception is findings he asked for. If the last thing he told this agent was to investigate, \
-         research, review, compare, audit or explain something, and this message is the answer, a headline would \
-         throw the answer away: then write an executive summary instead, three to five short sentences and 90 \
-         words at most, the conclusion first, then the findings that matter with their numbers, then what he \
-         has to decide if anything. It is read aloud to him, so it is sentences, never a list.\n\
+         The one exception is findings he asked for, so check for it before writing anything: look at the last \
+         thing he told this agent, given below. If that was to investigate, research, review, compare, audit or \
+         explain something, and this message is the answer, a headline would throw the answer away. Then \"say\" \
+         is an executive summary instead: three to five short sentences, between 40 and 90 words, the conclusion \
+         first, then the findings that matter with their numbers as digits, then what he has to decide if \
+         anything. It is read aloud to him, so it is sentences, never a list.\n\
          - Keep only: the result; anything left undone or gone wrong; the one thing he must decide.\n\
          - If the agent needs an answer from him, end with that question, with the options if it gave any.\n\
          - No file paths, code, identifiers, lists or markdown. Say \"the checker script\", not its filename.\n\
