@@ -663,28 +663,28 @@ impl Radio {
     /// Send a file to the tower in parts, under `id`. `sent` is told how far it has got after each part and
     /// returns false to give up. Blocks until it is all there, the tower refuses it, or it is given up on.
     pub(crate) fn upload(&self, id: &str, path: &str, name: &str, mut sent: impl FnMut(u64, u64) -> bool) -> Result<(), RadioError> {
-        use std::io::Read;
-        let mut file = std::fs::File::open(path).map_err(|_| RadioError::Refused)?;
-        let total = file.metadata().map_err(|_| RadioError::Refused)?.len();
+        use std::io::{Read, Seek, SeekFrom};
         // 90 KB of file is 120 KB of text, which fits one sealed message through a relay
-        let mut buf = vec![0u8; 90_000];
-        let mut from = 0u64;
-        loop {
-            let mut n = 0;
-            while n < buf.len() {
-                match file.read(&mut buf[n..]) {
-                    Ok(0) => break,
-                    Ok(k) => n += k,
-                    Err(_) => return Err(RadioError::Refused),
-                }
-            }
-            let done = from + n as u64 >= total;
-            let part = airband_core::radio::AttachmentPart { id: id.into(), name: name.into(), from, data: airband_core::audio::base64_encode(&buf[..n]), done };
-            // a part lost on a bad connection is sent again, to the same place, a few times before giving up
+        const PART: u64 = 90_000;
+        // Every part is a round trip to his computer and back, so they go several at once: a video is hundreds
+        // of them. The first goes alone, to learn whether the tower takes parts in any order; an older one
+        // does not, and gets them one after another.
+        const AT_ONCE: usize = 6;
+        let total = std::fs::metadata(path).map_err(|_| RadioError::Refused)?.len();
+        let part_at = |from: u64, with_total: bool| -> Result<airband_core::radio::AttachmentPart, RadioError> {
+            let mut file = std::fs::File::open(path).map_err(|_| RadioError::Refused)?;
+            file.seek(SeekFrom::Start(from)).map_err(|_| RadioError::Refused)?;
+            let mut buf = Vec::with_capacity(PART as usize);
+            file.take(PART).read_to_end(&mut buf).map_err(|_| RadioError::Refused)?;
+            let done = from + buf.len() as u64 >= total;
+            Ok(airband_core::radio::AttachmentPart { id: id.into(), name: name.into(), from, data: airband_core::audio::base64_encode(&buf), done, total: with_total.then_some(total) })
+        };
+        // a part lost on a bad connection is sent again, to the same place, a few times before giving up
+        let send = |part: &airband_core::radio::AttachmentPart| -> Result<(u64, bool), RadioError> {
             let mut tries = 0;
-            let next = loop {
-                match self.link.attachment_part(&part) {
-                    Ok(next) => break next,
+            loop {
+                match self.link.attachment_part(part) {
+                    Ok(answer) => return Ok(answer),
                     Err(LinkError::Refused) => return Err(RadioError::Refused),
                     Err(_) if tries < 6 => {
                         tries += 1;
@@ -693,14 +693,63 @@ impl Radio {
                     // a file cannot be left with the relay: it needs his computer there to take it
                     Err(_) => return Err(RadioError::Offline),
                 }
-            };
-            from = next;
-            if !sent(from, total) {
-                return Err(RadioError::Refused);
             }
-            if done {
-                return Ok(());
+        };
+        let (_, any) = send(&part_at(0, true)?)?;
+        let mut arrived = PART.min(total);
+        if !sent(arrived, total) {
+            return Err(RadioError::Refused);
+        }
+        if arrived >= total {
+            return Ok(());
+        }
+        if !any {
+            // one after another, each from where the tower says it has got to
+            let mut from = arrived;
+            loop {
+                let part = part_at(from, false)?;
+                let done = part.done;
+                from = send(&part)?.0;
+                if !sent(from, total) {
+                    return Err(RadioError::Refused);
+                }
+                if done {
+                    return Ok(());
+                }
             }
+        }
+        let starts: Vec<u64> = (1..total.div_ceil(PART)).map(|k| k * PART).collect();
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let failed: Mutex<Option<RadioError>> = Mutex::new(None);
+        let (tx, rx) = channel::<u64>();
+        thread::scope(|scope| {
+            for _ in 0..AT_ONCE.min(starts.len()) {
+                let tx = tx.clone();
+                let (next, failed, starts, part_at, send) = (&next, &failed, &starts, &part_at, &send);
+                scope.spawn(move || {
+                    while failed.lock().unwrap().is_none() {
+                        let Some(from) = starts.get(next.fetch_add(1, Ordering::SeqCst)).copied() else { break };
+                        match part_at(from, true).and_then(|part| send(&part).map(|_| part.data.len() as u64 * 3 / 4)) {
+                            Ok(bytes) => {
+                                let _ = tx.send(bytes);
+                            }
+                            Err(e) => *failed.lock().unwrap() = Some(e),
+                        }
+                    }
+                });
+            }
+            drop(tx);
+            // progress, as each part lands; he can take the file off while it goes
+            for bytes in rx {
+                arrived = (arrived + bytes).min(total);
+                if !sent(arrived, total) {
+                    *failed.lock().unwrap() = Some(RadioError::Refused);
+                }
+            }
+        });
+        match failed.into_inner().unwrap() {
+            Some(e) => Err(e),
+            None => Ok(()),
         }
     }
 }

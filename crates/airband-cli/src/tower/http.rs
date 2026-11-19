@@ -55,7 +55,8 @@ async fn events(State(app): State<Arc<App>>, body: String) -> Response {
 /// One part of a file he is attaching. Answers with where the next part starts.
 async fn attachment(Json(part): Json<airband_core::radio::AttachmentPart>) -> Response {
     match tokio::task::spawn_blocking(move || attachments::take(part)).await {
-        Ok(Ok(next)) => Json(json!({ "next": next })).into_response(),
+        // `any`: this tower takes a file's parts in any order when it is told how long the file is
+        Ok(Ok(next)) => Json(json!({ "next": next, "any": true })).into_response(),
         Ok(Err(why)) => Json(json!({ "error": why })).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }

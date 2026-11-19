@@ -114,6 +114,17 @@ impl Link {
         if res.status().as_u16() == 202 { Ok(()) } else { Err(LinkError::Offline) }
     }
 
+    /// A pass for the listening service straight from the relay, for when his computer cannot be reached to
+    /// ask. Only through a relay that lends one.
+    pub(crate) fn relay_ears(&self) -> Option<airband_core::radio::EarsGrant> {
+        let Route::Relay { relay, keys } = &self.route else { return None };
+        let mut res = self.agent.get(format!("{relay}/v1/channels/{}/ears", keys.channel)).call().ok()?;
+        if res.status().as_u16() != 200 {
+            return None;
+        }
+        res.body_mut().read_json().ok()
+    }
+
     fn post_ordered<T: serde::Serialize>(&self, path: &str, body: &T) -> Result<Value, LinkError> {
         match self.request_as("POST", path, Some(serde_json::to_value(body).unwrap()), true)? {
             (200, v) => Ok(v),
@@ -147,9 +158,10 @@ impl Link {
     }
 
     /// One part of a file he is attaching. Returns where the next part starts.
-    pub(crate) fn attachment_part(&self, part: &airband_core::radio::AttachmentPart) -> Result<u64, LinkError> {
+    /// Returns how far the tower has the file whole from its start, and whether it takes parts in any order.
+    pub(crate) fn attachment_part(&self, part: &airband_core::radio::AttachmentPart) -> Result<(u64, bool), LinkError> {
         let v = self.post("/attachment", part)?;
-        v["next"].as_u64().ok_or(LinkError::Refused)
+        Ok((v["next"].as_u64().ok_or(LinkError::Refused)?, v["any"].as_bool().unwrap_or(false)))
     }
 
     pub(crate) fn utterance_once(&self, id: &str, text: &str, re: Option<String>, scope: Option<String>, label: Option<String>, attachments: Vec<String>, others: &str) -> Result<Reply, LinkError> {

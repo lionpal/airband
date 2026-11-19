@@ -374,6 +374,12 @@ try:
     mine = message(feed(), "you", "make the header look like this")
     check("and his message in the chat shows the photo, without the file path", mine and mine.get("pictures") and "attachments" not in mine["text"], mine)
     check("a part that skips ahead is refused", "error" in (http("POST", "/v1/radio/attachment", {"id": os.urandom(8).hex(), "name": "x.png", "from": 500, "data": "", "done": False})[1] or {}))
+    # told how long the file is, the tower takes its parts in any order: here the last first
+    raw, ident = os.urandom(200_000), os.urandom(8).hex()
+    pieces = [(at, raw[at:at + 90_000]) for at in range(0, len(raw), 90_000)]
+    answers = [http("POST", "/v1/radio/attachment", {"id": ident, "name": "blob.bin", "from": at, "data": b64.b64encode(piece).decode(), "done": at + len(piece) >= len(raw), "total": len(raw)})[1] for at, piece in reversed(pieces)]
+    kept = os.path.join(home, ".airband", "attachments", ident, "blob.bin")
+    check("a file's parts can arrive in any order and are put together whole", answers[0].get("any") and answers[-1].get("next") == len(raw) and open(kept, "rb").read() == raw, [a.get("next") for a in answers])
     if shutil.which("ffmpeg"):
         clip = os.path.join(work, "clip.mp4")
         subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=duration=3:size=320x240:rate=10", "-pix_fmt", "yuv420p", clip], check=True)

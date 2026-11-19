@@ -64,7 +64,7 @@ enum Prepare {
         if let frame = try? frames.copyCGImage(at: first, actualTime: nil) { picture = thumb(UIImage(cgImage: frame)) }
         // smaller first: a minute at 720p is around a tenth of what the camera recorded
         let whole = "video-\(number).\(source.pathExtension.isEmpty ? "mov" : source.pathExtension)"
-        guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset1280x720) else { return (source, whole, picture) }
+        guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset960x540) else { return (source, whole, picture) }
         export.outputURL = file
         export.outputFileType = .mp4
         export.shouldOptimizeForNetworkUse = true

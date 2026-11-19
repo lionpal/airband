@@ -444,7 +444,10 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
     // His words as he said them, with one line in front that says who they are from and how to answer.
     let many = if targets.len() > 1 { format!(" Sent to {} agents.", targets.len()) } else { String::new() };
     let content = format!("From {name}, on his phone through Airband. Answer in a sentence or two, outcome first.{many}\n\n{rest}{files}", name = app.cfg.name, rest = parsed.rest);
-    let message_id = config::random_hex(8);
+    // The line in the chat takes the id the radio gave what he said, when it gave one and it is not in use: the
+    // radio can then tell that the message it is still showing as on its way has arrived, and swap one for the
+    // other without a gap.
+    let message_id = uid.map(str::to_string).filter(|id| !id.is_empty() && id.len() <= 40 && id.bytes().all(|b| b.is_ascii_alphanumeric()) && !app.inner.lock().unwrap().log.iter().any(|e| e.id == *id)).unwrap_or_else(|| config::random_hex(8));
     let (mut sent, mut failed) = (Vec::new(), Vec::new());
     let mut queued: Vec<String> = Vec::new();
     for t in &targets {

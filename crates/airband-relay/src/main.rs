@@ -78,10 +78,28 @@ fn bearer(headers: &HeaderMap) -> &str {
 /// the admission key is given one, and a relay open to anyone lends nothing. One pass is made every eight
 /// minutes at most, however many towers ask.
 async fn speech_pass(State(relay): State<Arc<Relay>>, headers: HeaderMap) -> Response {
-    let (Some((key, region)), Some(want)) = (relay.speech.clone(), relay.admission.as_ref()) else { return say(StatusCode::NOT_FOUND, "this relay has no speech service to lend") };
+    let Some(want) = relay.admission.as_ref().filter(|_| relay.speech.is_some()) else { return say(StatusCode::NOT_FOUND, "this relay has no speech service to lend") };
     if !same(headers.get("x-airband-admission").and_then(|v| v.to_str().ok()).unwrap_or(""), want) {
         return say(StatusCode::UNAUTHORIZED, "a speech pass needs the admission key");
     }
+    lend(&relay).await
+}
+
+/// The same pass, for a radio of a channel this relay knows: so he can still speak to his agents when his
+/// computer cannot be reached to ask. What he says is then kept here, sealed, until it is back. Knowing a
+/// channel's name is what a paired radio has; the pass is the one every tower shares, so asking costs nothing.
+async fn ears_pass(State(relay): State<Arc<Relay>>, Path(channel): Path<String>) -> Response {
+    if relay.speech.is_none() || relay.admission.is_none() {
+        return say(StatusCode::NOT_FOUND, "this relay has no speech service to lend");
+    }
+    if !relay.channels.lock().unwrap().contains_key(&channel) {
+        return say(StatusCode::NOT_FOUND, "no such channel");
+    }
+    lend(&relay).await
+}
+
+async fn lend(relay: &Arc<Relay>) -> Response {
+    let Some((key, region)) = relay.speech.clone() else { return say(StatusCode::NOT_FOUND, "this relay has no speech service to lend") };
     let fresh = relay.speech_pass.lock().unwrap().clone().filter(|(_, when)| when.elapsed() < Duration::from_secs(480));
     let token = match fresh {
         Some((token, _)) => token,
@@ -103,7 +121,7 @@ async fn speech_pass(State(relay): State<Arc<Relay>>, headers: HeaderMap) -> Res
             token
         }
     };
-    axum::Json(serde_json::json!({ "kind": "azure", "region": region, "token": token })).into_response()
+    axum::Json(serde_json::json!({ "kind": "azure", "region": region, "token": token, "language": "en-US" })).into_response()
 }
 
 fn valid_channel(c: &str) -> bool {
@@ -454,6 +472,7 @@ async fn main() {
         .route("/v1/channels/{channel}/reply/{id}", post(reply))
         .route("/v1/channels/{channel}/call", post(call))
         .route("/v1/channels/{channel}/queue", post(hold))
+        .route("/v1/channels/{channel}/ears", get(ears_pass))
         .route("/v1/speech/pass", post(speech_pass))
         .route("/v1/waitlist", post(waitlist).options(waitlist_preflight))
         .route("/healthz", get(|| async { "ok" }))

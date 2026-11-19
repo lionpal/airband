@@ -43,6 +43,9 @@ fn what(path: &Path) -> What {
     }
 }
 
+/// One file's record of what has come is read and written by one part at a time.
+static GOT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// One part of a file. Answers with how many bytes the tower now has, which is where the next part starts; a
 /// part sent again (its answer was lost) lands in the same place.
 pub(super) fn take(part: AttachmentPart) -> Result<u64, String> {
@@ -54,19 +57,52 @@ pub(super) fn take(part: AttachmentPart) -> Result<u64, String> {
     let path = dir.join(safe(&part.name));
     let bytes = airband_core::audio::base64_decode(&part.data).ok_or("that part could not be read")?;
     let mut file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&path).map_err(|e| e.to_string())?;
-    let have = file.metadata().map_err(|e| e.to_string())?.len();
-    if part.from > have {
-        return Err(format!("a part is missing: the tower has {have} bytes and this one starts at {}", part.from));
-    }
-    if part.from + bytes.len() as u64 > MOST {
+    if part.from + bytes.len() as u64 > MOST || part.total.is_some_and(|t| t > MOST) {
         let _ = std::fs::remove_dir_all(&dir);
         return Err("that file is too large".into());
     }
-    file.set_len(part.from).map_err(|e| e.to_string())?;
-    file.seek(SeekFrom::Start(part.from)).map_err(|e| e.to_string())?;
-    file.write_all(&bytes).map_err(|e| e.to_string())?;
-    let next = part.from + bytes.len() as u64;
-    if part.done {
+    let (next, whole) = match part.total {
+        // The radio said how long the file is: its parts come in any order, several at once. Each is written
+        // where it belongs, and what has come is kept beside the file until all of it has.
+        Some(total) => {
+            if part.from + bytes.len() as u64 > total {
+                return Err("a part runs past the end of the file".into());
+            }
+            file.seek(SeekFrom::Start(part.from)).map_err(|e| e.to_string())?;
+            file.write_all(&bytes).map_err(|e| e.to_string())?;
+            let _guard = GOT.lock().unwrap();
+            let note = dir.join(".got");
+            let mut got: Vec<(u64, u64)> = std::fs::read_to_string(&note).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+            got.push((part.from, part.from + bytes.len() as u64));
+            got.sort();
+            // how far it is whole from the start
+            let mut have = 0u64;
+            for (from, to) in &got {
+                if *from > have {
+                    break;
+                }
+                have = have.max(*to);
+            }
+            if have >= total {
+                let _ = std::fs::remove_file(&note);
+            } else {
+                std::fs::write(&note, serde_json::to_string(&got).unwrap_or_default()).map_err(|e| e.to_string())?;
+            }
+            (have, have >= total)
+        }
+        None => {
+            let have = file.metadata().map_err(|e| e.to_string())?.len();
+            if part.from > have {
+                return Err(format!("a part is missing: the tower has {have} bytes and this one starts at {}", part.from));
+            }
+            file.set_len(part.from).map_err(|e| e.to_string())?;
+            file.seek(SeekFrom::Start(part.from)).map_err(|e| e.to_string())?;
+            file.write_all(&bytes).map_err(|e| e.to_string())?;
+            (part.from + bytes.len() as u64, part.done)
+        }
+    };
+    if whole && !dir.join(".ready").exists() && !dir.join(".whole").exists() {
+        let _ = std::fs::write(dir.join(".whole"), "");
         log(format!("he attached {} ({} KB)", path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), next / 1024));
         if what(&path) == What::Video {
             frames(&path);

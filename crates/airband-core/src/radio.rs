@@ -69,7 +69,8 @@ pub struct Heard {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Utterance {
     pub text: String,
-    /// Random, the same on every retry of this utterance: the tower delivers each id once.
+    /// Random, the same on every retry of this utterance: the tower delivers each id once. The message it
+    /// becomes in the chat carries the same id, so a radio can match what it sent to what came back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     /// The message this answers, when the radio knows: the transmission just spoken, or the chat line he
@@ -121,6 +122,11 @@ pub struct AttachmentPart {
     /// This is the last part.
     #[serde(default)]
     pub done: bool,
+    /// How long the whole file is, when the radio says. With it the parts may arrive in any order and several at
+    /// once, and the file is whole when every byte of it has come; without it they must come in order and the
+    /// one marked `done` ends it. A tower that takes parts in any order says so in its answer (`any: true`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
 }
 
 /// A quick message: something he says all the time, sent with one tap. The label is what the button says; the

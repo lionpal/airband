@@ -27,10 +27,13 @@ impl Ears {
                 return g;
             }
         }
+        // His computer says what to listen with. When it cannot be reached, the relay lends the same service, so
+        // he can still say what he has to say: it is kept for the computer until it is back.
         let g: EarsGrant = match link.request("GET", "/ears", None) {
             Ok((200, v)) => serde_json::from_value(v).unwrap_or_default(),
-            _ => EarsGrant::default(),
+            _ => link.relay_ears().unwrap_or_default(),
         };
+        let g = if g.kind == "device" { link.relay_ears().unwrap_or(g) } else { g };
         // only a pass that can be used is kept: with none, the tower is asked again next time
         if g.kind != "device" {
             *self.grant.lock().unwrap() = Some((g.clone(), Instant::now()));

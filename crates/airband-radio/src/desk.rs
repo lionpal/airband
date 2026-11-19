@@ -151,9 +151,12 @@ struct Station {
     /// When it last answered, and how many times in a row it has not since.
     answered_at: Option<std::time::Instant>,
     fails: u32,
+    failing_since: Option<std::time::Instant>,
     agents: Vec<ChatAgent>,
     open: HashSet<String>,
     sending: Vec<Outgoing>,
+    /// Sent, and not yet seen in the chat that comes back from the tower: shown as on their way until they are.
+    landing: Vec<(Outgoing, std::time::Instant)>,
     quick: Vec<QuickMessage>,
     /// Each team's colour, as this computer gave it.
     colours: std::collections::HashMap<String, u8>,
@@ -329,6 +332,10 @@ impl RadioHost for StationHost {
             if state.generation != self.generation {
                 return;
             }
+            // it was not delivered here: it is not on its way to this computer's chat
+            if let Some(s) = state.stations.get_mut(self.index) {
+                s.landing.retain(|(o, _)| o.id != message.id);
+            }
             // the tower read his words as for an agent another computer has: they go there, addressed to it
             let there = elsewhere.as_ref().and_then(|c| state.stations.iter().enumerate().find(|(i, s)| *i != self.index && s.agents.iter().any(|a| a.callsign == *c)).map(|(_, s)| s.radio.clone()));
             match (there, elsewhere) {
@@ -391,6 +398,15 @@ impl RadioHost for StationHost {
                 return;
             }
             if let Some(s) = state.stations.get_mut(self.index) {
+                // What has left the list was sent. It stays on screen as on its way until the chat has it (the
+                // tower gives the message the same id), so it never vanishes for a moment in between. Not when
+                // there is something to tell him about it: then it did not go.
+                if note.is_none() {
+                    let gone: Vec<Outgoing> = s.sending.iter().filter(|was| !waiting.iter().any(|w| w.id == was.id)).cloned().collect();
+                    let now = std::time::Instant::now();
+                    s.landing.retain(|(_, at)| at.elapsed() < Duration::from_secs(15));
+                    s.landing.extend(gone.into_iter().map(|o| (o, now)));
+                }
                 s.sending = waiting;
             }
         }
@@ -454,11 +470,13 @@ impl Desk {
                 name: was.map(|s| s.name.clone()).unwrap_or_default(),
                 online: was.is_some_and(|s| s.online),
                 tried: false,
-                answered_at: None,
+                answered_at: was.and_then(|s| s.answered_at),
                 fails: 0,
+                failing_since: None,
                 agents: was.map(|s| s.agents.clone()).unwrap_or_default(),
                 open: was.map(|s| s.open.clone()).unwrap_or_default(),
                 sending: Vec::new(),
+                landing: Vec::new(),
                 quick: was.map(|s| s.quick.clone()).unwrap_or_default(),
                 colours: was.map(|s| s.colours.clone()).unwrap_or_default(),
                 link,
@@ -551,7 +569,12 @@ impl Desk {
             feed,
             rooms,
             quick,
-            sending: state.stations.iter().flat_map(|s| s.sending.clone()).collect(),
+            // on their way: not yet sent, then sent and not yet back in the chat (for a quarter of a minute at most)
+            sending: state
+                .stations
+                .iter()
+                .flat_map(|s| s.sending.iter().cloned().chain(s.landing.iter().filter(|(o, at)| at.elapsed() < Duration::from_secs(15) && !s.messages.iter().any(|m| m.id == o.id)).map(|(o, _)| o.clone())))
+                .collect(),
             stations: state.stations.iter().map(|s| s.name.clone()).collect(),
             uploads: state.uploads.iter().map(|u| u.shown.clone()).collect(),
             asking: state.asking.as_ref().map(|asking| {
@@ -1009,6 +1032,7 @@ fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64)
                     first = false;
                     station.tried = true;
                     station.fails = 0;
+                    station.failing_since = None;
                     station.answered_at = Some(std::time::Instant::now());
                     station.online = true;
                     station.name = feed.station.clone();
@@ -1027,7 +1051,10 @@ fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64)
                 // failure says so
                 Err(_) => {
                     station.fails += 1;
-                    if station.fails >= 2 {
+                    // a computer being restarted is back in a few seconds: it is only said to be out of reach
+                    // when it has been for a while (or has never once answered)
+                    let long = station.failing_since.get_or_insert_with(std::time::Instant::now).elapsed() > Duration::from_secs(10);
+                    if station.fails >= 2 && (long || station.answered_at.is_none()) {
                         station.tried = true;
                         station.online = false;
                     }
@@ -1093,9 +1120,11 @@ mod tests {
             tried: true,
             answered_at: None,
             fails: 0,
+            failing_since: None,
             agents: agents.iter().map(|(c, g)| ChatAgent { id: c.to_string(), callsign: c.to_string(), group: g.to_string(), harness: "h".into(), waiting: false, reachable: true, state: "working".into(), subagents: 0, doing: None, held: false, model: None, effort: None }).collect(),
             open: messages.iter().filter(|m| m.needs_you).map(|m| m.id.clone()).collect(),
             sending: Vec::new(),
+            landing: Vec::new(),
             quick: Vec::new(),
             colours: Default::default(),
             messages,
