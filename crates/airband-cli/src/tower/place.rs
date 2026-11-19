@@ -93,10 +93,10 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
         return;
     }
     let Some((was, now)) = inner.move_to(&agent_id, &out.team, Mover::Tower) else { return };
-    // said in the chat, quietly: the name he knew it by has changed
+    // said in the chat and not aloud: the name he knew it by has changed
     if let Some(s) = inner.find(&agent_id).cloned() {
         let line = format!("{} is now {}: it is working on {}.", was.spoken(), now.text(), now.project);
-        inner.record(Entry { short: Some(line.clone()), ..Entry::said(config::random_hex(8), &s, Some(Kind::Fyi), line) });
+        inner.record(Entry { short: Some(line.clone()), ..Entry::said(config::random_hex(8), &s, Some(Kind::Report), line) });
     }
     app.save(&inner);
     app.kick.notify_one();

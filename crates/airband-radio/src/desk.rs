@@ -80,6 +80,9 @@ pub struct DeskView {
     pub paired: bool,
     /// At least one of them can be reached.
     pub online: bool,
+    /// None has answered yet and at least one is still being tried for the first time: show that it is
+    /// loading, not that the computer cannot be reached.
+    pub connecting: bool,
     /// The feed: reports, questions and what he said, oldest first, without the chatter not worth his attention.
     /// A message with `open` is a question still waiting on him; one with `stalled` is from an agent that stopped.
     pub feed: Vec<ChatMessage>,
@@ -117,6 +120,8 @@ struct Station {
     radio: Arc<Radio>,
     name: String,
     online: bool,
+    /// It has been asked at least once and has answered or failed.
+    tried: bool,
     agents: Vec<ChatAgent>,
     open: HashSet<String>,
     sending: Vec<Outgoing>,
@@ -164,7 +169,12 @@ impl State {
                     let his = m.from == "you";
                     ChatMessage {
                         station: if several { s.name.clone() } else { String::new() },
-                        badge: if his { String::new() } else { airband_core::routing::badge(&m.group, &m.from) },
+                        // on his own message, the badge of the agent it went to, when it went to one
+                        badge: match (his, m.to.as_slice()) {
+                            (false, _) => airband_core::routing::badge(&m.group, &m.from),
+                            (true, [one]) if !m.group.is_empty() => airband_core::routing::badge(&m.group, one),
+                            _ => String::new(),
+                        },
                         colour: s.colours.get(&m.group).copied().unwrap_or(0),
                         ..m.clone()
                     }
@@ -339,7 +349,7 @@ impl Desk {
             let host = Arc::new(StationHost { shared: self.shared.clone(), index: made.len(), generation });
             let Ok(radio) = Radio::start(link.clone(), dir, host) else { continue };
             radio.set_call_mode(calling);
-            made.push(Station { link, messages: radio.history(), radio, name: String::new(), online: false, agents: Vec::new(), open: HashSet::new(), sending: Vec::new(), quick: Vec::new(), colours: Default::default() });
+            made.push(Station { link, messages: radio.history(), radio, name: String::new(), online: false, tried: false, agents: Vec::new(), open: HashSet::new(), sending: Vec::new(), quick: Vec::new(), colours: Default::default() });
         }
         let taken: Vec<String> = made.iter().map(|s| s.link.clone()).collect();
         let radios: Vec<Arc<Radio>> = made.iter().map(|s| s.radio.clone()).collect();
@@ -399,6 +409,7 @@ impl Desk {
         DeskView {
             paired: !state.stations.is_empty(),
             online: state.stations.iter().any(|s| s.online),
+            connecting: !state.stations.iter().any(|s| s.online) && state.stations.iter().any(|s| !s.tried),
             can_poke: agents.iter().any(|a| a.state == "stalled" && room.as_ref().is_none_or(|r| a.group == *r)),
             feed,
             rooms,
@@ -692,6 +703,7 @@ fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64)
             let calling = state.calling;
             let open: HashSet<String> = state.stations.iter().flat_map(|s| s.open.iter().cloned()).collect();
             let Some(station) = state.stations.get_mut(index) else { return };
+            station.tried = true;
             match &got {
                 Ok(feed) => {
                     first = false;
@@ -761,6 +773,7 @@ mod tests {
             radio,
             name: name.into(),
             online: true,
+            tried: true,
             agents: agents.iter().map(|(c, g)| ChatAgent { id: c.to_string(), callsign: c.to_string(), group: g.to_string(), harness: "h".into(), waiting: false, reachable: true, state: "working".into(), subagents: 0, doing: None, model: None, effort: None }).collect(),
             open: messages.iter().filter(|m| m.needs_you).map(|m| m.id.clone()).collect(),
             sending: Vec::new(),

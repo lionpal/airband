@@ -439,7 +439,11 @@ impl Inner {
             id: e.id.clone(),
             at: e.at,
             from: sender.map(|s| s.callsign.text()).unwrap_or_else(|| e.from.clone()),
-            group: sender.map(|s| s.callsign.project.clone()).unwrap_or_else(|| e.group.clone()),
+            // the team it belongs to now: its sender's, or for something he said, the team of who it went to
+            group: sender.map(|s| s.callsign.project.clone()).unwrap_or_else(|| {
+                let teams: HashSet<&String> = e.to_agents.iter().filter_map(|id| self.find(id)).map(|s| &s.callsign.project).collect();
+                if teams.len() == 1 && e.to_agents.iter().all(|id| self.find(id).is_some()) { teams.into_iter().next().unwrap().clone() } else { e.group.clone() }
+            }),
             to,
             kind: e.kind,
             long: spoken(&e.full) != text,

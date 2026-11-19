@@ -12,7 +12,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     static let shared = RadioModel()
 
     /// What the screen shows, as the desk last gave it, for the room or agent he is looking at.
-    @Published var view = DeskView(paired: false, online: false, feed: [], rooms: [], canPoke: false, quick: [], sending: [], stations: [], uploads: [])
+    @Published var view = DeskView(paired: false, online: false, connecting: false, feed: [], rooms: [], canPoke: false, quick: [], sending: [], stations: [], uploads: [])
     /// A project: show just its agents, and keep what he says among them.
     @Published var room: String? { didSet { refresh() } }
     /// A callsign: show just that agent.
@@ -45,6 +45,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     var paired: Bool { view.paired }
     var online: Bool { view.online }
+    var connecting: Bool { view.connecting }
 
     init() {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("radio")

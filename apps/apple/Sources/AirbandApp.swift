@@ -131,7 +131,13 @@ struct FeedView: View {
                     feed.safeAreaInset(edge: .bottom, spacing: 0) {
                         VStack(spacing: 0) {
                             // the chat he already has stays readable with the computer out of reach; this says why it is still
-                            if !model.online {
+                            if model.connecting {
+                                HStack(spacing: 7) {
+                                    ProgressView().controlSize(.small).tint(Palette.quiet)
+                                    Text("Connecting").font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.soft)
+                                }
+                                .padding(.horizontal, 12).padding(.vertical, 5).frosted(Capsule())
+                            } else if !model.online {
                                 Text("Can\u{2019}t reach your computer").font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.ask)
                                     .padding(.horizontal, 12).padding(.vertical, 5).frosted(Capsule())
                             }
@@ -287,7 +293,10 @@ struct FeedView: View {
     private var blank: some View {
         VStack(spacing: 10) {
             Spacer()
-            if model.online {
+            if model.connecting {
+                ProgressView().controlSize(.large).tint(Palette.quiet).padding(.bottom, 4)
+                Text("Connecting").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.quiet)
+            } else if model.online {
                 Text("No messages yet").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.quiet)
             } else {
                 Image(systemName: "wifi.slash").font(.system(size: 26, weight: .medium)).foregroundStyle(Palette.dim).padding(.bottom, 4)
@@ -593,7 +602,12 @@ struct Mine: View {
     var body: some View {
         VStack(alignment: .trailing, spacing: 3) {
             if !m.to.isEmpty {
-                Text("to " + m.to.joined(separator: ", ")).font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.quiet).lineLimit(1)
+                // who it went to, with that agent's badge when it went to one
+                HStack(spacing: 5) {
+                    Text("to").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.quiet)
+                    if !m.badge.isEmpty { Badge(text: m.badge, colour: m.colour, size: 16) }
+                    Text(m.to.joined(separator: ", ")).font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.quiet).lineLimit(1)
+                }
             }
             if !m.pictures.isEmpty { PictureStrip(m: m, height: 120) }
             Text(m.text).font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.ground)
