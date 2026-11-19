@@ -771,21 +771,35 @@ struct Answers: View {
         .buttonStyle(.plain).accessibilityLabel("Do whatever you think is best")
     }
 
+    /// Answer in his own words: the microphone, aimed at this question. With no choices to tap it is the main
+    /// button and says so; beside choices it is a small one.
+    private func respond(wide: Bool) -> some View {
+        Button { Task { await model.talk(about: m) } } label: {
+            HStack(spacing: 8) {
+                Image(systemName: model.listening ? "arrow.up" : "mic.fill").font(.system(size: 17, weight: .semibold))
+                if wide { Text(model.listening ? "Send" : "Respond").font(.system(size: 17, weight: .semibold)) }
+            }
+            .foregroundStyle(wide ? Palette.ground : Palette.ink)
+            .frame(maxWidth: wide ? .infinity : nil, minHeight: 52).frame(width: wide ? nil : 52)
+            .background(wide ? Palette.ink : Palette.raised, in: RoundedRectangle(cornerRadius: 16))
+        }
+        .buttonStyle(.plain).accessibilityLabel(model.listening ? "Send what you said" : "Answer by voice")
+    }
+
     var body: some View {
         if stacked {
             VStack(spacing: 10) {
                 ForEach(m.options.indices.dropLast(), id: \.self) { i in choice(i) }
                 HStack(spacing: 10) {
                     choice(m.options.count - 1)
-                    if !m.permission { yolo }
+                    if !m.permission { respond(wide: false); yolo }
                 }
             }
         } else {
             HStack(spacing: 10) {
                 ForEach(m.options.indices, id: \.self) { i in choice(i) }
-                if m.options.isEmpty { Spacer(minLength: 0) }
                 // permission to do something on his computer is a yes or a no: it is never handed back to the agent
-                if !m.permission { yolo }
+                if !m.permission { respond(wide: m.options.isEmpty); yolo }
             }
         }
     }

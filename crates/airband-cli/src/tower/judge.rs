@@ -92,7 +92,10 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
          First, how much it deserves his attention:\n\
          - \"needs-you\": the agent is stopped and will not go on by itself: it is waiting for his answer or for \
          something only he can do, or it was halted (a usage limit, an error, a missing login). Also when \
-         something broke, was lost or went wrong that he has to know now.\n\
+         something broke, was lost or went wrong that he has to know now. It is a question to him or a stop, \
+         never a report that happens to mention something he will have to do somewhere else in his own time (pay a \
+         bill, create an account, try the new build): the agent that has answered him and gone on, or finished, \
+         is not waiting, and that is a \"report\" however much is left for him to do.\n\
          - \"report\": it finished a piece of work, or found or decided something he would want to know: a result, \
          a choice he might disagree with, something it left undone.\n\
          - \"stalled\": it has stopped part way. It says what it will do next (\"Next I will…\", \"I'll now…\"), \
