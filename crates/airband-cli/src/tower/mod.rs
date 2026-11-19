@@ -213,7 +213,7 @@ impl App {
         let touched: HashSet<String> = inner.unsaved.borrow_mut().drain().collect();
         let entries: Vec<Entry> = inner.log.iter().filter(|e| touched.contains(&e.id)).cloned().collect();
         self.store.put_messages(&entries);
-        self.store.save_state(&Saved { sessions: inner.sessions.clone(), pending: inner.pending.clone(), projects: inner.projects.clone(), colours: inner.colours.clone(), held: inner.held.clone() });
+        self.store.save_state(&Saved { sessions: inner.sessions.clone(), pending: inner.pending.clone(), projects: inner.projects.clone(), colours: inner.colours.clone(), held: inner.held.clone(), placed: inner.placed.clone() });
     }
 }
 
@@ -233,7 +233,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         let store = Store::open(&config::dir().join("airband.db"))?;
         let (saved, entries) = store.load(LOG_KEEP);
         let (seq, rev) = store.last_counts();
-        let mut inner = Inner { sessions: saved.sessions, pending: saved.pending, projects: saved.projects, colours: saved.colours, held: saved.held, seq, rev, log: entries, ..Inner::default() };
+        let mut inner = Inner { sessions: saved.sessions, pending: saved.pending, projects: saved.projects, colours: saved.colours, held: saved.held, placed: saved.placed, seq, rev, log: entries, ..Inner::default() };
         inner.reap();
         // a team from before teams had colours gets one now, not at its agents' next word
         inner.colour_teams();

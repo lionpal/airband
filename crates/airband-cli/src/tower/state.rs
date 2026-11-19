@@ -193,6 +193,9 @@ pub(super) struct Inner {
     pub(super) colours: BTreeMap<String, u8>,
     /// The agents the tower runs itself.
     pub(super) held: Vec<held::Kept>,
+    /// Where each agent that was moved to another team was put, by its id. A session that goes away and comes
+    /// back (the computer restarted, he resumed it) is put back there, not in its folder's team again.
+    pub(super) placed: BTreeMap<String, (String, Mover)>,
     /// Each radio that has been heard from, by the id it gives.
     pub(super) calls: HashMap<String, Call>,
     /// When each open message was last put in front of him on a call, and how many times: for reminders.
@@ -227,6 +230,8 @@ pub(crate) struct Saved {
     pub(super) colours: BTreeMap<String, u8>,
     #[serde(default)]
     pub(super) held: Vec<held::Kept>,
+    #[serde(default)]
+    pub(super) placed: BTreeMap<String, (String, Mover)>,
 }
 
 impl Inner {
@@ -313,6 +318,10 @@ impl Inner {
                 self.projects.insert(callsign.project.clone(), cwd);
             }
             self.sessions.push(Session { agent: agent.clone(), callsign, waiting: false, last: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new() });
+            // one that was moved to another team before it went away goes back there
+            if let Some((team, by)) = self.placed.get(&agent.id).cloned() {
+                self.move_to(&agent.id, &team, by);
+            }
         } else if let Some(want) = wanted.filter(|c| free(self, c)) {
             self.rename(&agent.id, want);
         }
@@ -361,6 +370,12 @@ impl Inner {
         }
         self.rename(id, to.clone());
         self.session(id)?.moved = Some(by);
+        self.placed.insert(id.to_string(), (to.project.clone(), by));
+        // only the latest few hundred are remembered
+        while self.placed.len() > 400 {
+            let Some(first) = self.placed.keys().next().cloned() else { break };
+            self.placed.remove(&first);
+        }
         self.colour_teams();
         Some((was, to))
     }
