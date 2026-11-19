@@ -370,13 +370,13 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     func words(text: String, starts: [UInt32], atMs: [UInt32]) {
         DispatchQueue.main.async {
             let more = zip(starts, atMs).map { (Int($0), Double($1) / 1000) }
-            if text.isEmpty {
-                self.caption?.marks.append(contentsOf: more)
-            } else {
-                // the sound starts a moment after this: the first of it is handed to the speaker next
-                self.caption = Caption(text: text, marks: more, began: Date().addingTimeInterval(0.12))
-            }
+            if text.isEmpty { self.caption?.marks.append(contentsOf: more) } else { self.caption = Caption(text: text, marks: more) }
         }
+    }
+    /// How far the voice has got in what it is saying, in characters, by the clock of the sound itself.
+    func captionReached() -> Int {
+        guard let caption, let position = voice.clipPosition() else { return 0 }
+        return caption.reached(position)
     }
     func note(text: String) { DispatchQueue.main.async { self.problem = text } }
     func watching() -> Bool {
@@ -390,11 +390,9 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 struct Caption {
     let text: String
     var marks: [(at: Int, time: Double)]
-    let began: Date
 
-    /// How far into `text` the voice has got at `now`, in characters: the end of the word being said.
-    func reached(_ now: Date) -> Int {
-        let t = now.timeIntervalSince(began)
+    /// How far into `text` the voice has got `t` seconds into the clip, in characters: the end of the word being said.
+    func reached(_ t: Double) -> Int {
         guard let i = marks.lastIndex(where: { $0.time <= t }) else { return 0 }
         return i + 1 < marks.count ? marks[i + 1].at : text.count
     }

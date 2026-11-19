@@ -108,6 +108,8 @@ final class Voice: NSObject, @unchecked Sendable {
             player.play()
             playing = true
             queuedUntil = Date()
+            stretches.removeAll()
+            clipQueued = 0
         }
         let samples = pcm.count / 2
         if samples > 0, let format = playFormat, let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples)) {
@@ -124,6 +126,10 @@ final class Voice: NSObject, @unchecked Sendable {
                 pace.rate = 1.12
                 queuedUntil = now
             }
+            // where this piece sits in the clip, when it will sound, and how fast: the clip's own clock is read
+            // from these, so words shown with the voice follow the sound through a stutter or a change of pace
+            stretches.append((wall: queuedUntil, clip: clipQueued, rate: Double(pace.rate)))
+            clipQueued += Double(samples) / Double(rate)
             queuedUntil = queuedUntil.addingTimeInterval(Double(samples) / Double(rate) / Double(pace.rate))
             player.scheduleBuffer(buffer, completionHandler: nil)
         }
@@ -135,6 +141,26 @@ final class Voice: NSObject, @unchecked Sendable {
         if wait > 0 { Thread.sleep(forTimeInterval: min(wait + 0.12, 60)) }
         stopPlayback()
         set(.idle)
+    }
+
+    /// Each piece of the clip handed to the speaker: when it starts to sound, where in the clip that is (seconds),
+    /// and the pace it is played at.
+    private var stretches: [(wall: Date, clip: Double, rate: Double)] = []
+    private var clipQueued: Double = 0
+
+    /// How far into the clip the sound coming out of the speaker is, in seconds: from what was actually queued
+    /// and when, less the time the sound takes to leave the device. Nothing when no clip is playing.
+    func clipPosition(at now: Date = Date()) -> Double? {
+        playLock.lock()
+        defer { playLock.unlock() }
+        guard playing else { return nil }
+        let heard = now.addingTimeInterval(-(session.outputLatency + session.ioBufferDuration))
+        guard let i = stretches.lastIndex(where: { $0.wall <= heard }) else { return 0 }
+        let s = stretches[i]
+        let position = s.clip + heard.timeIntervalSince(s.wall) * s.rate
+        // never past what has been queued: if the next piece is late, the clock waits with the sound
+        let limit = i + 1 < stretches.count ? stretches[i + 1].clip : clipQueued
+        return min(position, limit)
     }
 
     private func stopPlayback() {

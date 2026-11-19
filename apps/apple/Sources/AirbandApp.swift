@@ -422,8 +422,8 @@ struct FeedView: View {
             } else {
                 if let caption = model.caption, model.hearing.isEmpty, !model.micOpen {
                     // what the voice is saying, the words lighting up as it says them
-                    TimelineView(.periodic(from: .now, by: 0.08)) { now in
-                        let said = min(caption.reached(now.date), caption.text.count)
+                    TimelineView(.periodic(from: .now, by: 0.06)) { _ in
+                        let said = min(model.captionReached(), caption.text.count)
                         // a long message is followed along: the words just said, and the ones coming
                         let from = max(0, said - 70)
                         let shown = String(caption.text.dropFirst(from).prefix(140))
