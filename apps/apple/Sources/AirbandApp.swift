@@ -334,6 +334,14 @@ struct FeedView: View {
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: model.view.feed.last?.id) { _, _ in withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("end", anchor: .bottom) } }
             .onChange(of: model.view.sending.count) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
+            // a long chat of messages of very different heights can open on empty space past its end, because the
+            // list only guesses the heights of what it has not drawn: go to the end once it is laid out
+            .task {
+                for wait in [60, 300] {
+                    try? await Task.sleep(for: .milliseconds(wait))
+                    proxy.scrollTo("end", anchor: .bottom)
+                }
+            }
             #if DEBUG
             // development only: `-airband.devBehind 1` scrolls back a little, for a screenshot of the chat under the buttons
             .task {
@@ -938,6 +946,11 @@ struct AgentsMenu: View {
     @State private var founding: DeskMember?
     @State private var newTeam = ""
 
+    /// The small line under an agent's name: what it runs on, and the computer it is on when there are several.
+    private func under(_ agent: DeskMember) -> String {
+        [agent.engine, agent.station].filter { !$0.isEmpty }.joined(separator: " \u{b7} ")
+    }
+
     /// An agent dropped on a team, or on one of its agents, joins that team.
     private func drop(_ ids: [String], on team: String) -> Bool {
         guard let agent = model.view.rooms.flatMap(\.members).first(where: { $0.id == ids.first }) else { return false }
@@ -961,7 +974,7 @@ struct AgentsMenu: View {
                     .dropDestination(for: String.self) { ids, _ in drop(ids, on: room.name) } isTargeted: { over = $0 ? room.name : (over == room.name ? nil : over) }
                     .padding(.top, 4)
                     ForEach(room.members, id: \.id) { agent in
-                        row(dot: agent.state, title: agent.callsign, detail: agent.doing, strong: false, on: model.only == agent.callsign, inset: 22, colour: room.colour, badge: agent.badge, engine: [agent.engine, agent.station].filter { !$0.isEmpty }.joined(separator: " \u{b7} ")) {
+                        row(dot: agent.state, title: agent.callsign, detail: agent.doing, strong: false, on: model.only == agent.callsign, inset: 22, colour: room.colour, badge: agent.badge, engine: under(agent)) {
                             model.room = nil
                             model.only = agent.callsign
                         }
