@@ -139,10 +139,29 @@ impl Serve {
 
     async fn answer(self, request_id: String, sealed: Vec<u8>) {
         let Some(call) = self.keys.open(Direction::ToTower, &sealed).ok().and_then(|p| serde_json::from_slice::<Call>(&p).ok()) else {
-            return log(format!("dropped a request on \"{}\"'s channel that its key does not open", self.name));
+            log(format!("dropped a request on \"{}\"'s channel that its key does not open", self.name));
+            // one the relay was keeping has to be taken off its hands all the same, or it would be handed over
+            // for ever and hold up everything kept behind it
+            if request_id.starts_with(airband_core::relay::HELD) {
+                let (url, auth, agent) = (format!("{}/v1/channels/{}/reply/{request_id}", self.relay, self.keys.channel), format!("Bearer {}", self.keys.pull_token), self.replies.clone());
+                let _ = tokio::task::spawn_blocking(move || agent.post(url).header("authorization", auth).send_empty().map(|_| ())).await;
+            }
+            return;
         };
         let now = now_ms();
-        let (status, body) = if !fresh(call.t, now) {
+        // A message the relay kept while this tower was away is old on purpose, and may be handed over twice.
+        // Only something he said is taken that way, and only with an id: the tower takes each id once, for good,
+        // so neither its age nor a second copy can make it happen again.
+        let kept = request_id.starts_with(airband_core::relay::HELD);
+        let (status, body) = if kept {
+            let said = call.method == "POST" && call.path == "/v1/radio/utterance" && call.body["id"].as_str().is_some_and(|id| !id.is_empty());
+            if said && now.saturating_sub(call.t) <= airband_core::relay::HELD_FOR_MS {
+                log(format!("\"{}\" said this while the tower was away", self.name));
+                self.dispatch(&call).await
+            } else {
+                (400, serde_json::json!({ "error": "only something he said, sent in the last week, is taken late" }))
+            }
+        } else if !fresh(call.t, now) {
             // answered, not dropped, so a phone with a wrong clock is told why nothing works
             (408, serde_json::json!({ "error": "this request's time is more than two minutes from the tower's clock" }))
         } else {

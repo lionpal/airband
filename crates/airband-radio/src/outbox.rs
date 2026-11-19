@@ -30,7 +30,8 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, store: Arc<Store>, host: Arc<dyn R
                 done((!reply.say.is_empty() && !reply.say.starts_with("Sent to")).then_some(reply.say));
             }
             Err(LinkError::Refused) => done(Some(format!("The tower refused: “{}”", next.text))),
-            Err(LinkError::Offline) => {
+            // no network, or the relay could not keep it either: it stays here and is tried again
+            Err(LinkError::Offline | LinkError::Away | LinkError::Behind) => {
                 thread::sleep(Duration::from_secs(wait));
                 wait = (wait * 2).min(20);
             }

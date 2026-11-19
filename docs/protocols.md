@@ -222,6 +222,17 @@ Versions: `airband.relay/1` is part of how the keys are derived, so a later vers
 one. Each sealed request names the radio protocol it is in, and a tower that does not speak it answers 400.
 `DELETE /v1/channels/<channel>` with the tower's pull token closes a channel; `airband unpair` sends it.
 
+**When the tower is away.** A relay that has not heard from a tower for 45 seconds answers a call with 503. What
+he said is then left with the relay: `POST /v1/channels/<channel>/queue`, the same sealed request, with the
+utterance's own id in `x-airband-id`. The relay keeps at most 200 per channel for a week, still unable to read
+them, and one left twice under the same id is kept once. When the tower pulls again it is handed them oldest
+first, one at a time, each under a request id that starts with `held-`; its reply takes that one off the relay
+and brings the next. The tower takes a kept request only if it is an utterance with an id, and it takes each
+utterance id once for good, so neither age nor a second handing-over repeats anything. While some are still
+kept, the relay turns back a new utterance (409 to a call that carries `x-airband-ordered`) and the radio leaves
+that one with the relay too, so everything arrives in the order he said it. Files he attaches are not kept this
+way: they wait on the phone for the computer.
+
 Not provided: forward secrecy. Recorded relay traffic plus a later-stolen pairing secret can be read;
 `airband unpair` and pairing again makes a new secret. Details and tests: `crates/airband-core/src/relay.rs`.
 

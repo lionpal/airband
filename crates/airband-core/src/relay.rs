@@ -28,6 +28,14 @@ pub const FRESH_MS: u64 = 120_000;
 /// The largest sealed message a relay passes.
 pub const MAX_MESSAGE: usize = 256 * 1024;
 
+/// A request the relay kept while the tower was away is handed over under an id that starts with this, so the
+/// tower knows it is old on purpose.
+pub const HELD: &str = "held-";
+/// How long the relay keeps one, and so how old one may be when the tower takes it.
+pub const HELD_FOR_MS: u64 = 7 * 24 * 3600 * 1000;
+/// How many a channel may have waiting.
+pub const HELD_MOST: usize = 200;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
     ToTower,

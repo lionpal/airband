@@ -150,7 +150,7 @@ impl std::fmt::Display for RadioError {
 impl From<LinkError> for RadioError {
     fn from(e: LinkError) -> Self {
         match e {
-            LinkError::Offline => RadioError::Offline,
+            LinkError::Offline | LinkError::Away | LinkError::Behind => RadioError::Offline,
             LinkError::Refused => RadioError::Refused,
         }
     }
@@ -573,11 +573,12 @@ impl Radio {
                 match self.link.attachment_part(&part) {
                     Ok(next) => break next,
                     Err(LinkError::Refused) => return Err(RadioError::Refused),
-                    Err(LinkError::Offline) if tries < 6 => {
+                    Err(_) if tries < 6 => {
                         tries += 1;
                         thread::sleep(Duration::from_secs(tries.min(4)));
                     }
-                    Err(LinkError::Offline) => return Err(RadioError::Offline),
+                    // a file cannot be left with the relay: it needs his computer there to take it
+                    Err(_) => return Err(RadioError::Offline),
                 }
             };
             from = next;

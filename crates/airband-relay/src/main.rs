@@ -12,6 +12,7 @@
 //!   GET  /v1/channels/{c}/pull        tower: the next sealed request, held up to 25 s (204 when none)
 //!   POST /v1/channels/{c}/reply/{id}  tower: the sealed answer to request id
 //!   POST /v1/channels/{c}/call        radio: a sealed request; the response is the sealed answer
+//!   POST /v1/channels/{c}/queue       radio: a sealed message to keep for a tower that is away (x-airband-id names it)
 //!   POST /v1/waitlist                 the homepage's sign-up: {"email": "…"} (airband.dev only, by CORS)
 //!   GET  /healthz
 use axum::body::Bytes;
@@ -24,7 +25,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{Notify, oneshot};
-use airband_core::relay::{MAX_MESSAGE, random_hex, token_hash};
+use airband_core::relay::{HELD, HELD_FOR_MS, HELD_MOST, MAX_MESSAGE, random_hex, token_hash};
 
 /// How long a tower's pull is held open.
 const HOLD: Duration = Duration::from_secs(25);
@@ -41,7 +42,14 @@ struct Channel {
     waiting: HashMap<String, oneshot::Sender<Bytes>>,
     last_pull: Option<Instant>,
     wake: Arc<Notify>,
+    /// There may be messages kept for this tower from while it was away. Assumed after a restart, until looked.
+    has_held: bool,
+    /// The kept message the tower has been handed and has not yet said it took, and when.
+    holding: Option<(String, Instant)>,
 }
+
+/// A kept message the tower was handed and never answered for is handed over again after this long.
+const HAND_AGAIN: Duration = Duration::from_secs(60);
 
 mod store;
 
@@ -102,7 +110,7 @@ async fn open(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, head
     if let Some(answer) = known(&channels) {
         return answer;
     }
-    channels.insert(channel, Channel { pull_hash: hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()) });
+    channels.insert(channel, Channel { pull_hash: hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, holding: None });
     StatusCode::CREATED.into_response()
 }
 
@@ -122,8 +130,27 @@ async fn pull(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, head
                     return ([("x-airband-request", id)], sealed).into_response();
                 }
             }
-            ch.wake.clone()
+            // then what was kept while it was away: one at a time, the oldest first, the next only once this one is taken
+            let due = ch.has_held && ch.holding.as_ref().is_none_or(|(_, at)| at.elapsed() > HAND_AGAIN);
+            (ch.wake.clone(), due)
         };
+        let (wake, due) = wake;
+        if due {
+            match relay.store.held_next(&channel).await {
+                Ok(Some((id, sealed))) => {
+                    if let Some(ch) = relay.channels.lock().unwrap().get_mut(&channel) {
+                        ch.holding = Some((id.clone(), Instant::now()));
+                    }
+                    return ([("x-airband-request", format!("{HELD}{id}"))], sealed).into_response();
+                }
+                Ok(None) => {
+                    if let Some(ch) = relay.channels.lock().unwrap().get_mut(&channel) {
+                        ch.has_held = false;
+                    }
+                }
+                Err(e) => eprintln!("airband-relay: cannot read what is kept for a channel: {e}"),
+            }
+        }
         let left = until.saturating_duration_since(Instant::now());
         if left.is_zero() {
             return StatusCode::NO_CONTENT.into_response();
@@ -262,6 +289,24 @@ async fn close(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, hea
 }
 
 async fn reply(State(relay): State<Arc<Relay>>, Path((channel, id)): Path<(String, String)>, headers: HeaderMap, sealed: Bytes) -> Response {
+    // the tower took a message that was kept for it: there is no radio waiting on the answer, only the next one to send
+    if let Some(kept) = id.strip_prefix(HELD) {
+        {
+            let mut channels = relay.channels.lock().unwrap();
+            let ch = match relay.as_tower(&mut channels, &channel, &headers) {
+                Ok(ch) => ch,
+                Err(r) => return r,
+            };
+            if ch.holding.as_ref().is_some_and(|(held, _)| held == kept) {
+                ch.holding = None;
+            }
+            ch.wake.notify_one();
+        }
+        return match relay.store.held_done(&channel, kept).await {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(e) => say(StatusCode::SERVICE_UNAVAILABLE, &e),
+        };
+    }
     let mut channels = relay.channels.lock().unwrap();
     let ch = match relay.as_tower(&mut channels, &channel, &headers) {
         Ok(ch) => ch,
@@ -276,13 +321,44 @@ async fn reply(State(relay): State<Arc<Relay>>, Path((channel, id)): Path<(Strin
     }
 }
 
-async fn call(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, sealed: Bytes) -> Response {
+/// Keep a sealed message for a tower that is away. The radio names it (`x-airband-id`), so sending it twice keeps
+/// it once; the tower is handed what is kept in the order it came, as soon as it is back.
+async fn hold(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, headers: HeaderMap, sealed: Bytes) -> Response {
+    let id = headers.get("x-airband-id").and_then(|v| v.to_str().ok()).unwrap_or("");
+    if !(8..=40).contains(&id.len()) || !id.bytes().all(|b| b.is_ascii_hexdigit()) || sealed.is_empty() {
+        return say(StatusCode::BAD_REQUEST, "a kept message needs an id and a body");
+    }
+    if !relay.channels.lock().unwrap().contains_key(&channel) {
+        return say(StatusCode::NOT_FOUND, "no such channel");
+    }
+    match relay.store.hold(&channel, id, &sealed, HELD_MOST).await {
+        Ok(true) => {
+            if let Some(ch) = relay.channels.lock().unwrap().get_mut(&channel) {
+                ch.has_held = true;
+                ch.wake.notify_one();
+            }
+            StatusCode::ACCEPTED.into_response()
+        }
+        Ok(false) => say(StatusCode::INSUFFICIENT_STORAGE, "too many messages are already waiting for that tower"),
+        Err(e) => {
+            eprintln!("airband-relay: cannot keep a message: {e}");
+            say(StatusCode::SERVICE_UNAVAILABLE, "the relay could not keep it")
+        }
+    }
+}
+
+async fn call(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, headers: HeaderMap, sealed: Bytes) -> Response {
     let id = random_hex(12);
     let answer = {
         let mut channels = relay.channels.lock().unwrap();
         let Some(ch) = channels.get_mut(&channel) else { return say(StatusCode::NOT_FOUND, "no such channel") };
         if ch.last_pull.is_none_or(|t| t.elapsed() > AIRBAND_GONE) {
             return say(StatusCode::SERVICE_UNAVAILABLE, "the tower is not connected to the relay");
+        }
+        // what he says must arrive in the order he said it: while older words are still being handed over, new
+        // ones are turned back to join the end of that line
+        if ch.has_held && headers.contains_key("x-airband-ordered") {
+            return say(StatusCode::CONFLICT, "earlier messages are still on their way to the tower");
         }
         if ch.waiting.len() >= MAX_IN_FLIGHT {
             return say(StatusCode::TOO_MANY_REQUESTS, "too many requests in flight on this channel");
@@ -326,7 +402,10 @@ async fn main() {
         std::process::exit(2);
     });
     println!("airband-relay: channels are kept in {}", store.describe());
-    let channels = saved.into_iter().map(|(c, pull_hash)| (c, Channel { pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()) })).collect::<HashMap<_, _>>();
+    if let Err(e) = store.held_purge(HELD_FOR_MS / 86_400_000).await {
+        eprintln!("airband-relay: could not clear old kept messages: {e}");
+    }
+    let channels = saved.into_iter().map(|(c, pull_hash)| (c, Channel { pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, holding: None })).collect::<HashMap<_, _>>();
     let admission = std::env::var("AIRBAND_RELAY_ADMISSION").ok().filter(|a| !a.is_empty());
     println!("airband-relay on port {port}: {} channels known; opening a channel {}", channels.len(), if admission.is_some() { "needs the admission key" } else { "is open to anyone" });
     let relay = Arc::new(Relay { channels: Mutex::new(channels), store, admission, signups: Mutex::new(Signups::default()), writing: tokio::sync::Semaphore::new(2) });
@@ -335,6 +414,7 @@ async fn main() {
         .route("/v1/channels/{channel}/pull", get(pull))
         .route("/v1/channels/{channel}/reply/{id}", post(reply))
         .route("/v1/channels/{channel}/call", post(call))
+        .route("/v1/channels/{channel}/queue", post(hold))
         .route("/v1/waitlist", post(waitlist).options(waitlist_preflight))
         .route("/healthz", get(|| async { "ok" }))
         .layer(DefaultBodyLimit::max(MAX_MESSAGE))

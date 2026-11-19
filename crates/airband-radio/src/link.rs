@@ -12,11 +12,19 @@ pub(crate) enum Route {
 }
 
 pub(crate) enum LinkError {
-    /// Nothing came back: no network, no relay, or the tower is not connected to the relay.
+    /// Nothing came back: no network, no relay, or the tower did not answer in time.
     Offline,
+    /// The relay is there and the tower is not: his computer is asleep, off or disconnected. What he says can be
+    /// left with the relay for it.
+    Away,
+    /// The tower is back and still being handed what was left for it: what he says now joins the end of that.
+    Behind,
     /// The tower answered and said no.
     Refused,
 }
+
+/// What he is told when what he said was left with the relay for a computer that is away.
+pub(crate) const AWAY: &str = "Your computer is away. It gets this when it is back.";
 
 pub(crate) struct Link {
     route: Route,
@@ -43,6 +51,12 @@ impl Link {
 
     /// One `airband.radio/1` request. `path` is what follows `/v1/radio`.
     pub(crate) fn request(&self, method: &str, path: &str, body: Option<Value>) -> Result<(u16, Value), LinkError> {
+        self.request_as(method, path, body, false)
+    }
+
+    /// `ordered`: this is something he said, which must reach the tower after anything of his the relay is still
+    /// holding for it. The relay turns it back (`Behind`) while there is, and it is left with the relay too.
+    fn request_as(&self, method: &str, path: &str, body: Option<Value>, ordered: bool) -> Result<(u16, Value), LinkError> {
         let path = format!("/v1/radio{path}");
         match &self.route {
             Route::Direct { url, auth, radio } => {
@@ -58,15 +72,17 @@ impl Link {
             Route::Relay { relay, keys } => {
                 let call = Call { t: now_ms(), id: random_hex(12), method: method.into(), path, body: body.unwrap_or(Value::Null), schema: airband_core::radio::SCHEMA.into() };
                 let sealed = keys.seal(Direction::ToTower, &serde_json::to_vec(&call).unwrap());
-                let mut res = self
-                    .agent
-                    .post(format!("{relay}/v1/channels/{}/call", keys.channel))
-                    .header("content-type", "application/octet-stream")
-                    .send(&sealed[..])
-                    .map_err(|_| LinkError::Offline)?;
+                let mut req = self.agent.post(format!("{relay}/v1/channels/{}/call", keys.channel)).header("content-type", "application/octet-stream");
+                if ordered {
+                    req = req.header("x-airband-ordered", "1");
+                }
+                let mut res = req.send(&sealed[..]).map_err(|_| LinkError::Offline)?;
                 // anything but 200 is the relay speaking (tower offline, timed out, unknown channel), not the tower
-                if res.status().as_u16() != 200 {
-                    return Err(LinkError::Offline);
+                match res.status().as_u16() {
+                    200 => {}
+                    503 => return Err(LinkError::Away),
+                    409 => return Err(LinkError::Behind),
+                    _ => return Err(LinkError::Offline),
                 }
                 let bytes = res.body_mut().read_to_vec().map_err(|_| LinkError::Offline)?;
                 let answer: Answer = keys.open(Direction::ToRadio, &bytes).ok().and_then(|p| serde_json::from_slice(&p).ok()).ok_or(LinkError::Offline)?;
@@ -87,6 +103,24 @@ impl Link {
             _ => Err(LinkError::Refused),
         }
     }
+    /// Leave something he said with the relay, for a tower that is away: sealed like any request, under the
+    /// utterance's own id so leaving it twice keeps it once. The tower takes it, in order, when it is back.
+    /// Only through a relay; a tower reached directly is simply tried again.
+    pub(crate) fn hold(&self, u: &Utterance) -> Result<(), LinkError> {
+        let (Route::Relay { relay, keys }, Some(id)) = (&self.route, u.id.as_deref()) else { return Err(LinkError::Offline) };
+        let call = Call { t: now_ms(), id: random_hex(12), method: "POST".into(), path: "/v1/radio/utterance".into(), body: serde_json::to_value(u).unwrap(), schema: airband_core::radio::SCHEMA.into() };
+        let sealed = keys.seal(Direction::ToTower, &serde_json::to_vec(&call).unwrap());
+        let res = self.agent.post(format!("{relay}/v1/channels/{}/queue", keys.channel)).header("content-type", "application/octet-stream").header("x-airband-id", id).send(&sealed[..]).map_err(|_| LinkError::Offline)?;
+        if res.status().as_u16() == 202 { Ok(()) } else { Err(LinkError::Offline) }
+    }
+
+    fn post_ordered<T: serde::Serialize>(&self, path: &str, body: &T) -> Result<Value, LinkError> {
+        match self.request_as("POST", path, Some(serde_json::to_value(body).unwrap()), true)? {
+            (200, v) => Ok(v),
+            _ => Err(LinkError::Refused),
+        }
+    }
+
     pub(crate) fn post<T: serde::Serialize>(&self, path: &str, body: &T) -> Result<Value, LinkError> {
         match self.request("POST", path, Some(serde_json::to_value(body).unwrap()))? {
             (200, v) => Ok(v),
@@ -120,7 +154,16 @@ impl Link {
 
     pub(crate) fn utterance_once(&self, id: &str, text: &str, re: Option<String>, scope: Option<String>, label: Option<String>, attachments: Vec<String>) -> Result<Reply, LinkError> {
         let u = Utterance { text: text.to_string(), id: Some(id.to_string()), re, scope, label, attachments };
-        serde_json::from_value(self.post("/utterance", &u)?).map_err(|_| LinkError::Refused)
+        match self.post_ordered("/utterance", &u) {
+            Ok(v) => serde_json::from_value(v).map_err(|_| LinkError::Refused),
+            // his computer is away, or still catching up: the relay keeps it for it. If that fails too, the
+            // caller is told which it was and tries again later.
+            Err(away @ (LinkError::Away | LinkError::Behind)) => match self.hold(&u) {
+                Ok(()) => Ok(Reply { say: if matches!(away, LinkError::Away) { AWAY.into() } else { String::new() }, listen: false, speech: None }),
+                Err(_) => Err(away),
+            },
+            Err(e) => Err(e),
+        }
     }
 
     pub(crate) fn utterance(&self, text: &str, re: Option<String>, scope: Option<String>) -> Result<Reply, LinkError> {
@@ -132,9 +175,14 @@ impl Link {
             if attempt > 0 {
                 thread::sleep(Duration::from_secs(2));
             }
-            match self.post("/utterance", &u) {
+            match self.post_ordered("/utterance", &u) {
                 Ok(v) => return serde_json::from_value(v).map_err(|_| LinkError::Refused),
                 Err(LinkError::Refused) => return Err(LinkError::Refused),
+                // his computer is away: no use trying again in two seconds. The relay keeps it for it.
+                Err(away @ (LinkError::Away | LinkError::Behind)) => match self.hold(&u) {
+                    Ok(()) => return Ok(Reply { say: if matches!(away, LinkError::Away) { AWAY.into() } else { String::new() }, listen: false, speech: None }),
+                    Err(e) => last = e,
+                },
                 Err(e) => last = e,
             }
         }
