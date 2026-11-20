@@ -16,6 +16,8 @@ struct ChoiceCard<Extra: View>: View {
     let subtitle: String
     let chosen: Bool
     var open = false
+    /// It costs nothing to use: a small tag says so.
+    var free = false
     let tap: () -> Void
     @ViewBuilder var extra: () -> Extra
 
@@ -30,6 +32,10 @@ struct ChoiceCard<Extra: View>: View {
                         if !subtitle.isEmpty { Text(subtitle).font(.system(size: 14)).foregroundStyle(Palette.soft) }
                     }
                     Spacer(minLength: 0)
+                    if free {
+                        Text("Free").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.ink)
+                            .padding(.horizontal, 8).frame(minHeight: 22).background(Palette.raised, in: Capsule())
+                    }
                 }
                 .contentShape(Rectangle())
             }
@@ -44,7 +50,7 @@ struct ChoiceCard<Extra: View>: View {
 
 extension ChoiceCard where Extra == EmptyView {
     init(title: String, subtitle: String, chosen: Bool, tap: @escaping () -> Void) {
-        self.init(title: title, subtitle: subtitle, chosen: chosen, open: false, tap: tap) { EmptyView() }
+        self.init(title: title, subtitle: subtitle, chosen: chosen, open: false, free: false, tap: tap) { EmptyView() }
     }
 }
 
@@ -66,6 +72,9 @@ struct ServiceEntry: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if !service.voices.isEmpty {
+                VoiceGrid(choices: service.voices, chosen: told["voice"] ?? "") { told["voice"] = $0.name }
+            }
             if service.key {
                 if kept {
                     Text("Uses the key you already gave").font(.system(size: 14)).foregroundStyle(Palette.soft)
@@ -75,9 +84,10 @@ struct ServiceEntry: View {
                     if !service.keysAt.isEmpty { Text("Keys are made at \(service.keysAt)").font(.system(size: 12)).foregroundStyle(Palette.quiet) }
                 }
             }
-            if !service.asks.isEmpty {
+            let asks = service.asks.filter { service.voices.isEmpty || $0.field != "voice" }
+            if !asks.isEmpty {
                 if more {
-                    ForEach(service.asks, id: \.field) { ask in
+                    ForEach(asks, id: \.field) { ask in
                         TextField(ask.usual.isEmpty ? ask.question : "\(ask.question): \(ask.usual)", text: Binding(get: { told[ask.field] ?? "" }, set: { told[ask.field] = $0 }))
                             .textInputAutocapitalization(.never).autocorrectionDisabled().font(.system(size: 15))
                             .padding(.horizontal, 12).frame(minHeight: 40).background(Palette.field, in: RoundedRectangle(cornerRadius: 10))
@@ -100,6 +110,18 @@ struct ServiceEntry: View {
             }
             .buttonStyle(.plain).disabled(!ready)
             if let wrong { Text(wrong).font(.system(size: 13)).foregroundStyle(.red) }
+        }
+    }
+}
+
+/// Opens the services that are not among the few shown first.
+struct MoreServices: View {
+    @Binding var shown: Bool
+    var body: some View {
+        if !shown {
+            Button("More services") { withAnimation(.snappy(duration: 0.2)) { shown = true } }
+                .font(.system(size: 15, weight: .semibold)).foregroundStyle(Palette.ink).buttonStyle(.plain)
+                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading).padding(.horizontal, 2)
         }
     }
 }
@@ -130,14 +152,16 @@ struct ReadsPicker: View {
     /// The one in use: what his computer says it reads with, or what he picked before a computer was paired.
     private var current: String? {
         if let waiting = model.pendingReads { return waiting }
-        return services.first { $0.name == model.view.reads }?.kind
+        // with no computer heard from yet, the one a new computer starts with
+        return services.first { $0.name == model.view.reads }?.kind ?? (model.view.reads.isEmpty ? services.first { !$0.key && !$0.free }?.kind : nil)
     }
+    @State private var more = false
 
     var body: some View {
         VStack(spacing: 10) {
-            ForEach(services, id: \.kind) { s in
+            ForEach(services.filter { more || !$0.more || current == $0.kind }, id: \.kind) { s in
                 let needs = s.key || !s.asks.isEmpty
-                ChoiceCard(title: s.name, subtitle: s.key ? (model.phoneKeys[s.kind] != nil && current == s.kind ? "Using your \(s.keyName)" : "Enter your \(s.keyName)") : s.about, chosen: current == s.kind, open: open == s.kind) {
+                ChoiceCard(title: s.name, subtitle: s.line(using: model.phoneKeys[s.kind] != nil && current == s.kind), chosen: current == s.kind, open: open == s.kind, free: s.free) {
                     if current == s.kind { return }
                     if needs { open = open == s.kind ? nil : s.kind } else if mode == .settings { asking = s } else { apply(s, key: nil, settings: [:]) { _ in } }
                 } extra: {
@@ -148,6 +172,7 @@ struct ReadsPicker: View {
                     }
                 }
             }
+            MoreServices(shown: $more)
             if let wrong { Text(wrong).font(.system(size: 13)).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading) }
         }
         .confirmationDialog(asking.map { "Have \($0.name) write your summaries?" } ?? "", isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } }), titleVisibility: .visible) {
@@ -177,6 +202,7 @@ struct EarsPicker: View {
     @State private var asking: LocalModel?
     @State private var fetching: String?
     @State private var preparing = false
+    @State private var more = false
     @State private var progress = 0.0
     @State private var wrong: String?
     private let tick = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
@@ -184,7 +210,7 @@ struct EarsPicker: View {
     var body: some View {
         VStack(spacing: 10) {
             ForEach(local, id: \.kind) { m in
-                ChoiceCard(title: m.name, subtitle: m.fetched ? "Runs on this phone" : "Runs on this phone. \(m.megabytes) MB download", chosen: model.localEars == m.kind && model.ownEars.isEmpty, open: fetching == m.kind) {
+                ChoiceCard(title: m.name, subtitle: m.fetched ? "Runs on this phone" : "Runs on this phone. \(m.megabytes) MB download", chosen: model.localEars == m.kind && model.ownEars.isEmpty, open: fetching == m.kind, free: true) {
                     guard model.localEars != m.kind || !model.ownEars.isEmpty else { return }
                     if mode == .settings { asking = m } else { model.forgetOwnEars(); model.useLocalEars(m.kind) }
                 } extra: {
@@ -196,8 +222,8 @@ struct EarsPicker: View {
                     if !m.credit.isEmpty && model.localEars == m.kind { Text(m.credit).font(.system(size: 11)).foregroundStyle(Palette.quiet) }
                 }
             }
-            ForEach(services, id: \.kind) { s in
-                ChoiceCard(title: s.name, subtitle: s.key ? (model.ownEars == s.kind ? "Using your \(s.keyName)" : "Enter your \(s.keyName)") : s.about, chosen: model.ownEars == s.kind, open: open == s.kind) {
+            ForEach(services.filter { more || !$0.more || model.ownEars == $0.kind }, id: \.kind) { s in
+                ChoiceCard(title: s.name, subtitle: s.line(using: model.ownEars == s.kind), chosen: model.ownEars == s.kind, open: open == s.kind) {
                     if model.ownEars != s.kind { open = open == s.kind ? nil : s.kind }
                 } extra: {
                     if open == s.kind && model.ownEars != s.kind {
@@ -210,10 +236,13 @@ struct EarsPicker: View {
                     }
                 }
             }
-            ChoiceCard(title: "Your computer\u{2019}s choice", subtitle: "Whatever your computer is set up to listen with", chosen: model.localEars.isEmpty && model.ownEars.isEmpty) {
-                model.forgetOwnEars()
-                model.useLocalEars("")
+            if more || (model.localEars.isEmpty && model.ownEars.isEmpty) {
+                ChoiceCard(title: "Your computer\u{2019}s choice", subtitle: "Whatever your computer is set up to listen with", chosen: model.localEars.isEmpty && model.ownEars.isEmpty) {
+                    model.forgetOwnEars()
+                    model.useLocalEars("")
+                }
             }
+            MoreServices(shown: $more)
             if let wrong { Text(wrong).font(.system(size: 13)).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading) }
         }
         .onAppear { local = localListeners(dir: model.voiceDir) }
@@ -254,12 +283,13 @@ struct VoicePicker: View {
     @State private var fetching: String?
     @State private var progress = 0.0
     @State private var wrong: String?
+    @State private var more = false
     private let tick = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(spacing: 10) {
             ForEach(local, id: \.kind) { m in
-                ChoiceCard(title: m.name, subtitle: m.fetched ? "Runs on this phone" : "Runs on this phone. \(m.megabytes) MB download", chosen: model.localVoice == m.kind && model.serviceVoice.isEmpty, open: fetching == m.kind) {
+                ChoiceCard(title: m.name, subtitle: m.fetched ? "Runs on this phone" : "Runs on this phone. \(m.megabytes) MB download", chosen: model.localVoice == m.kind && model.serviceVoice.isEmpty, open: fetching == m.kind, free: true) {
                     guard model.localVoice != m.kind || !model.serviceVoice.isEmpty else { return }
                     if mode == .settings { asking = m } else { model.stopService(); model.useVoice(m.kind) }
                 } extra: {
@@ -270,8 +300,8 @@ struct VoicePicker: View {
                     }
                 }
             }
-            ForEach(services, id: \.kind) { s in
-                ChoiceCard(title: s.name, subtitle: s.key ? (model.serviceVoice == s.kind ? "Using your \(s.keyName)" : "Enter your \(s.keyName)") : s.about, chosen: model.serviceVoice == s.kind, open: open == s.kind) {
+            ForEach(services.filter { more || !$0.more || model.serviceVoice == $0.kind }, id: \.kind) { s in
+                ChoiceCard(title: s.name, subtitle: s.line(using: model.serviceVoice == s.kind), chosen: model.serviceVoice == s.kind, open: open == s.kind) {
                     if model.serviceVoice != s.kind { open = open == s.kind ? nil : s.kind }
                 } extra: {
                     if open == s.kind && model.serviceVoice != s.kind {
@@ -282,14 +312,22 @@ struct VoicePicker: View {
                             }
                         }
                     } else if model.serviceVoice == s.kind {
+                        if !s.voices.isEmpty {
+                            VoiceGrid(choices: s.voices, chosen: model.serviceSettings["voice"] ?? "") { choice in
+                                model.useService(s.kind, key: nil, settings: model.serviceSettings.merging(["voice": choice.name]) { _, new in new }) { wrong = $0 }
+                            }
+                        }
                         Button("Hear it") { model.sampleVoice { wrong = $0 } }.font(.system(size: 15, weight: .semibold)).foregroundStyle(Palette.ink).buttonStyle(.plain)
                     }
                 }
             }
-            ChoiceCard(title: "Your computer\u{2019}s choice", subtitle: "Whatever your computer is set up to speak with", chosen: model.localVoice.isEmpty && model.serviceVoice.isEmpty) {
-                model.stopService()
-                model.useVoice("")
+            if more || (model.localVoice.isEmpty && model.serviceVoice.isEmpty) {
+                ChoiceCard(title: "Your computer\u{2019}s choice", subtitle: "Whatever your computer is set up to speak with", chosen: model.localVoice.isEmpty && model.serviceVoice.isEmpty) {
+                    model.stopService()
+                    model.useVoice("")
+                }
             }
+            MoreServices(shown: $more)
             if let wrong { Text(wrong).font(.system(size: 13)).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading) }
         }
         .onAppear { local = localVoices(dir: model.voiceDir) }
@@ -314,36 +352,59 @@ struct VoicePicker: View {
     }
 }
 
-/// The voices a voice model on the phone can speak in: a tile each, with a clip to hear first. The clips come
-/// from where the model is kept, so they play before anything is downloaded.
+/// A few voices to choose from: a tile each, with a clip to hear first where there is one. The clips are
+/// fetched from where each is published, so they play before anything is downloaded or any key is given.
+struct VoiceGrid: View {
+    @EnvironmentObject var model: RadioModel
+    let choices: [VoiceChoice]
+    /// The `name` of the one chosen; nothing chosen yet shows the first.
+    let chosen: String
+    let pick: (VoiceChoice) -> Void
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+            ForEach(choices, id: \.name) { choice in
+                let on = chosen == choice.name || (chosen.isEmpty && choice.name == choices.first?.name)
+                HStack(spacing: 9) {
+                    if !choice.preview.isEmpty {
+                        Button { model.preview(choice) } label: {
+                            Image(systemName: model.previewing == choice.name ? "stop.circle.fill" : "play.circle.fill").font(.system(size: 28))
+                                .foregroundStyle(on ? Palette.ground : Palette.ink)
+                        }
+                        .buttonStyle(.plain).accessibilityLabel(model.previewing == choice.name ? "Stop \(choice.label)" : "Hear \(choice.label)")
+                    }
+                    Button { pick(choice) } label: {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(choice.label).font(.system(size: 15, weight: .semibold))
+                            if !choice.about.isEmpty { Text(choice.about).font(.system(size: 12)).lineLimit(1).minimumScaleFactor(0.8) }
+                        }
+                        .foregroundStyle(on ? Palette.ground : Palette.ink).frame(maxWidth: .infinity, minHeight: 30, alignment: .leading).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).accessibilityAddTraits(on ? .isSelected : [])
+                }
+                .padding(.horizontal, 10).padding(.vertical, 9)
+                .background(on ? Palette.ink : Palette.raised, in: RoundedRectangle(cornerRadius: 12))
+            }
+        }
+    }
+}
+
+/// The voices a voice model on the phone can speak in.
 struct VoiceTiles: View {
     @EnvironmentObject var model: RadioModel
     let kind: String
 
     var body: some View {
-        let choices = localVoiceChoices(kind: kind)
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
-            ForEach(choices, id: \.name) { choice in
-                let chosen = model.voiceName == choice.name || (model.voiceName.isEmpty && choice.name == choices.first?.name)
-                HStack(spacing: 9) {
-                    Button { model.preview(choice) } label: {
-                        Image(systemName: model.previewing == choice.name ? "stop.circle.fill" : "play.circle.fill").font(.system(size: 28))
-                            .foregroundStyle(chosen ? Palette.ground : Palette.ink)
-                    }
-                    .buttonStyle(.plain).accessibilityLabel(model.previewing == choice.name ? "Stop \(choice.name)" : "Hear \(choice.name)")
-                    Button { model.chooseVoice(choice.name) } label: {
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(choice.name).font(.system(size: 15, weight: .semibold))
-                            Text(choice.about).font(.system(size: 12)).lineLimit(1).minimumScaleFactor(0.8)
-                        }
-                        .foregroundStyle(chosen ? Palette.ground : Palette.ink).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain).accessibilityAddTraits(chosen ? .isSelected : [])
-                }
-                .padding(.horizontal, 10).padding(.vertical, 9)
-                .background(chosen ? Palette.ink : Palette.raised, in: RoundedRectangle(cornerRadius: 12))
-            }
-        }
+        VoiceGrid(choices: localVoiceChoices(kind: kind), chosen: model.voiceName) { model.chooseVoice($0.name) }
+    }
+}
+
+extension Service {
+    /// The line under its name on a card: what it needs from him, and what it costs.
+    func line(using: Bool) -> String {
+        guard key else { return about }
+        let needs = using ? "Using your \(keyName)" : "Enter your \(keyName)"
+        return price.isEmpty ? needs : "\(needs). \(price)."
     }
 }
 

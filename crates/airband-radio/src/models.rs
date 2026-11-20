@@ -34,7 +34,7 @@ pub(crate) const MODELS: &[Model] = &[
     #[cfg(feature = "phonon")]
     Model {
         kind: "phonon",
-        name: "Phonon",
+        name: "Gradium Phonon",
         job: Job::Voice,
         base: "https://airband.dev/models/phonon-31m-en/1",
         files: &[
@@ -52,7 +52,7 @@ pub(crate) const MODELS: &[Model] = &[
     // Fermion Research's Phonon-2.5 English, compiled for the Neural Engine. The host runs it (`transcribe`).
     Model {
         kind: "phonon-2.5-en",
-        name: "Phonon 2.5",
+        name: "Fermion Phonon 2.5",
         job: Job::Ears,
         base: "https://airband.dev/models/phonon-2.5-en/1",
         files: &[
@@ -113,6 +113,8 @@ pub fn local_voices(dir: String) -> Vec<LocalModel> {
 pub struct VoiceChoice {
     /// What to pass back as the voice.
     pub name: String,
+    /// What to call it where he chooses.
+    pub label: String,
     /// A few words on how it sounds.
     pub about: String,
     /// A short clip of it, to hear before choosing: an address the host can fetch and play, whether or not
@@ -123,7 +125,7 @@ pub struct VoiceChoice {
 /// The voices a voice model offers, the usual one first. Empty for a model that is not a voice.
 #[uniffi::export]
 pub fn local_voice_choices(kind: String) -> Vec<VoiceChoice> {
-    model(&kind).map(|m| m.voices.iter().map(|(name, about)| VoiceChoice { name: name.to_string(), about: about.to_string(), preview: format!("{}/previews/{name}.m4a", m.base) }).collect()).unwrap_or_default()
+    model(&kind).map(|m| m.voices.iter().map(|(name, about)| VoiceChoice { name: name.to_string(), label: name.to_string(), about: about.to_string(), preview: format!("{}/previews/{name}.m4a", m.base) }).collect()).unwrap_or_default()
 }
 
 /// And the listening models it can run.

@@ -8,7 +8,8 @@ import SwiftUI
 struct OnboardingView: View {
     @EnvironmentObject var model: RadioModel
     @Environment(\.dismiss) private var dismiss
-    @State private var step = 0
+    // development only: `-airband.devStep 2` opens on that step, for a screenshot
+    @State private var step = UserDefaults.standard.integer(forKey: "airband.devStep")
     @State private var scanning = false
     @State private var finishing = false
     @State private var working: String?
@@ -32,16 +33,16 @@ struct OnboardingView: View {
                     switch step {
                     case 0:
                         headline(Headline.reads)
-                        label("Read by")
+                        label("Model that writes the summaries")
                         ReadsPicker(mode: .onboarding)
                     case 1:
                         headline(Headline.ears)
-                        label("Heard by")
+                        label("Model that writes down what you say")
                         EarsPicker(mode: .onboarding)
                     case 2:
                         headline(Headline.voice)
                         Text("Hear each agent\u{2019}s news read out, even with the screen off.").font(.system(size: 16)).foregroundStyle(Palette.soft)
-                        label("Spoken by")
+                        label("Model that speaks")
                         VoicePicker(mode: .onboarding)
                     default:
                         computer
@@ -109,7 +110,7 @@ struct OnboardingView: View {
                         UIPasteboard.general.string = Self.command
                         copied = true
                     } label: { tile(copied ? "Copied" : "Copy") }
-                    ShareLink(item: Self.command) { tile("Send to my Mac") }
+                    ShareLink(item: Self.command) { tile("AirDrop or share") }
                 }
                 .buttonStyle(.plain)
             }

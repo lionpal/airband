@@ -76,6 +76,15 @@ pub struct Service {
     pub kind: String,
     /// What to show him: the maker and the model.
     pub name: String,
+    /// Not one of the few shown first: offered behind "More services".
+    pub more: bool,
+    /// It costs him nothing to use: say so.
+    pub free: bool,
+    /// What it costs him, in a few words. Empty when free or not known.
+    pub price: String,
+    /// For a voice service: a few voices to choose from, the usual one first. The `name` of the one chosen
+    /// is the setting `voice`; `label` is what to call it.
+    pub voices: Vec<crate::models::VoiceChoice>,
     /// One line under that, for one that takes no key: where it runs and what it costs him. Else empty.
     pub about: String,
     /// It takes a key.
@@ -96,10 +105,15 @@ pub struct ServiceAsk {
 }
 
 fn services(job: airband_core::providers::Job) -> Vec<Service> {
-    airband_core::providers::offering(job)
-        .filter_map(|p| p.offers.iter().find(|o| o.job == job).map(|o| (p, o)))
+    airband_core::providers::in_order(job)
+        .into_iter()
+        .filter(|(p, _)| p.in_app)
         .map(|(p, o)| Service {
             kind: p.id.into(),
+            more: !o.preferred,
+            free: o.local(),
+            price: o.price.into(),
+            voices: o.voices.iter().map(|v| crate::models::VoiceChoice { name: v.id.into(), label: v.name.into(), about: v.about.into(), preview: v.sample.into() }).collect(),
             name: o.label.into(),
             about: o.about.into(),
             key: p.key,

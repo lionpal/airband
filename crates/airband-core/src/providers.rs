@@ -71,7 +71,27 @@ pub struct Offer {
     pub label: &'static str,
     /// One line under that, for something that needs no key: where it runs and what it costs him.
     pub about: &'static str,
+    /// One of the few shown before the rest where he chooses. The others sit behind "More services".
+    pub preferred: bool,
+    /// What it costs him, in a few words, as its maker published it on 2026-11-20 and worked out for this
+    /// use (a summary is about 650 tokens in and 80 out; speech is about 900 characters a minute). Empty
+    /// when it costs nothing, or when the maker's price could not be confirmed.
+    pub price: &'static str,
+    /// For a voice: a few of its voices to choose from, the usual one first. The one chosen is the setting
+    /// `voice`. Empty when there is only the setting.
+    pub voices: &'static [Voice],
     pub asks: &'static [Ask],
+}
+
+/// One of the voices a voice service speaks in.
+pub struct Voice {
+    /// What the service calls it: the value of the setting `voice`.
+    pub id: &'static str,
+    pub name: &'static str,
+    /// How it sounds, in the maker's own words, and its accent. Empty when the maker says nothing.
+    pub about: &'static str,
+    /// A clip of it that its maker publishes, to hear before choosing. Empty when there is none.
+    pub sample: &'static str,
 }
 
 pub struct Provider {
@@ -86,29 +106,79 @@ pub struct Provider {
     pub offers: &'static [Offer],
     /// Offered when he chooses. Not so for what the tower sets for itself.
     pub offered: bool,
+    /// Offered in the app too. Not so for a server of his own at an address he gives: that is set up at the
+    /// computer, with `airband setup`.
+    pub in_app: bool,
 }
 
 const fn ask(field: &'static str, question: &'static str, usual: &'static str) -> Ask {
     Ask { field, question, usual }
 }
 const fn offer(job: Job, by: By, label: &'static str, about: &'static str, asks: &'static [Ask]) -> Offer {
-    Offer { job, by, label, about, asks }
+    Offer { job, by, label, about, preferred: false, price: "", voices: &[], asks }
+}
+const fn voice(id: &'static str, name: &'static str, about: &'static str, sample: &'static str) -> Voice {
+    Voice { id, name, about, sample }
+}
+impl Offer {
+    const fn price(mut self, price: &'static str) -> Offer {
+        self.price = price;
+        self
+    }
+    const fn voices(mut self, voices: &'static [Voice]) -> Offer {
+        self.voices = voices;
+        self
+    }
+    const fn preferred(mut self) -> Offer {
+        self.preferred = true;
+        self
+    }
+    /// It runs on his own computer: nothing leaves it, and it costs him nothing.
+    pub fn local(&self) -> bool {
+        matches!(self.by, By::OnThisComputer(_))
+    }
 }
 
 /// Claude Haiku with a one-line system prompt and no tools. Measured on 2026-11-18: about 650 tokens a message.
 /// The same call with Claude Code's own system prompt and tool list was about 17,400.
 pub const CLAUDE: &[&str] = &["claude", "-p", "--model", "haiku", "--no-session-persistence", "--strict-mcp-config", "--system-prompt", "You are a dispatcher. Output only what is asked for.", "--tools", ""];
 
+const GEMINI_VOICES: &[Voice] = &[
+    voice("Leda", "Leda", "Youthful, American", "https://docs.cloud.google.com/static/text-to-speech/docs/audio/chirp3-hd-leda.wav"),
+    voice("Kore", "Kore", "Firm, American", "https://docs.cloud.google.com/static/text-to-speech/docs/audio/chirp3-hd-kore.wav"),
+    voice("Zephyr", "Zephyr", "Bright, American", "https://docs.cloud.google.com/static/text-to-speech/docs/audio/chirp3-hd-zephyr.wav"),
+    voice("Sulafat", "Sulafat", "Warm, American", "https://docs.cloud.google.com/static/text-to-speech/docs/audio/chirp3-hd-sulafat.wav"),
+];
+// OpenAI says nothing of how each sounds
+const OPENAI_VOICES: &[Voice] = &[
+    voice("coral", "Coral", "", "https://cdn.openai.com/API/docs/audio/coral.wav"),
+    voice("nova", "Nova", "", "https://cdn.openai.com/API/docs/audio/nova.wav"),
+    voice("shimmer", "Shimmer", "", "https://cdn.openai.com/API/docs/audio/shimmer.wav"),
+];
+const ELEVENLABS_VOICES: &[Voice] = &[
+    voice("cgSgspJ2msm6clMCkdW9", "Jessica", "Playful, American", "https://storage.googleapis.com/eleven-public-prod/premade/voices/cgSgspJ2msm6clMCkdW9/56a97bf8-b69b-448f-846c-c3a11683d45a.mp3"),
+    voice("FGY2WhTYpPnrIDTdsKH5", "Laura", "Quirky, American", ""),
+    voice("Xb7hH8MSUJpSbSDYk0k2", "Alice", "Clear, British", "https://storage.googleapis.com/eleven-public-prod/premade/voices/Xb7hH8MSUJpSbSDYk0k2/d10f7534-11f6-41fe-a012-2de1e482d336.mp3"),
+    voice("pFZP5JQG7iQjIQuC4Bku", "Lily", "Velvety, British", "https://storage.googleapis.com/eleven-public-prod/premade/voices/pFZP5JQG7iQjIQuC4Bku/89b68b35-b3dd-4348-a84a-a3c13a3c2b30.mp3"),
+];
+// Microsoft publishes no clips
+const AZURE_VOICES: &[Voice] = &[
+    voice(AZURE_VOICE, "Ava", "Expressive, American", ""),
+    voice("en-US-EmmaMultilingualNeural", "Emma", "Cheerful, American", ""),
+    voice("en-GB-SoniaNeural", "Sonia", "Friendly, British", ""),
+    voice("en-GB-LibbyNeural", "Libby", "Positive, British", ""),
+];
+
 pub const PROVIDERS: &[Provider] = &[
-    Provider { id: "claude", name: "Claude on this computer, with your Claude login", key: false, key_name: "", keys_at: "", offered: true, offers: &[offer(Job::Summary, By::Command(CLAUDE), "Claude Haiku 5.5", "Uses the Claude login on your computer", &[])] },
+    Provider { id: "claude", name: "Claude on this computer, with your Claude login", key: false, key_name: "", keys_at: "", offered: true, in_app: true, offers: &[offer(Job::Summary, By::Command(CLAUDE), "Anthropic Claude Haiku 5.5", "Uses the Claude login on your computer", &[]).preferred()] },
     Provider {
         id: "anthropic",
         name: "Anthropic, with an API key",
         key: true,
         key_name: "Anthropic API key",
         keys_at: "console.anthropic.com/settings/keys",
-        offered: true,
-        offers: &[offer(Job::Summary, By::Chat { cold: false, shaped: false }, "Anthropic Claude Haiku 5.5", "", &[ask("url", "Address", "https://api.anthropic.com/v1"), ask("model", "Model", "claude-haiku-5-5")])],
+        offered: true, in_app: true,
+        offers: &[offer(Job::Summary, By::Chat { cold: false, shaped: false }, "Anthropic Claude Haiku 5.5, with an API key", "", &[ask("url", "Address", "https://api.anthropic.com/v1"), ask("model", "Model", "claude-haiku-5-5")]).price("About $0.11 per 1,000 messages")],
     },
     Provider {
         id: "gemini",
@@ -116,12 +186,12 @@ pub const PROVIDERS: &[Provider] = &[
         key: true,
         key_name: "Gemini API key",
         keys_at: "aistudio.google.com/apikey",
-        offered: true,
+        offered: true, in_app: true,
         offers: &[
-            offer(Job::Summary, By::Chat { cold: true, shaped: true }, "Google Gemini 3.5 Flash-Lite", "", &[ask("url", "Address", "https://generativelanguage.googleapis.com/v1beta/openai"), ask("model", "Model", "gemini-3.5-flash-lite")]),
-            offer(Job::Voice, By::GeminiVoice, "Google Gemini 3.8 Flash TTS", "", &[ask("model", "Model", "gemini-3.8-flash-lite-tts"), ask("voice", "Voice", "Leda")]),
+            offer(Job::Summary, By::Chat { cold: true, shaped: true }, "Google Gemini 3.5 Flash-Lite", "", &[ask("url", "Address", "https://generativelanguage.googleapis.com/v1beta/openai"), ask("model", "Model", "gemini-3.5-flash-lite")]).price("About $0.40 per 1,000 messages").preferred(),
+            offer(Job::Voice, By::GeminiVoice, "Google Gemini 3.8 Flash-Lite TTS", "", &[ask("model", "Model", "gemini-3.8-flash-lite-tts"), ask("voice", "Voice", "Leda")]).price("About $0.54 per hour of speech").voices(GEMINI_VOICES).preferred(),
             // its Live API, with the model that only transcribes: the words come back as he speaks
-            offer(Job::Ears, By::Listener("gemini"), "Google Gemini 3.5 Transcribe", "", &[ask("model", "Model", "gemini-3.5-transcribe-live"), ask("language", "Language", "en-US")]),
+            offer(Job::Ears, By::Listener("gemini"), "Google Gemini 3.5 Transcribe", "", &[ask("model", "Model", "gemini-3.5-transcribe-live"), ask("language", "Language", "en-US")]).price("About $0.54 per hour of speech").preferred(),
         ],
     },
     Provider {
@@ -130,12 +200,12 @@ pub const PROVIDERS: &[Provider] = &[
         key: true,
         key_name: "OpenAI API key",
         keys_at: "platform.openai.com/api-keys",
-        offered: true,
+        offered: true, in_app: true,
         offers: &[
             // a model that reasons takes no temperature
-            offer(Job::Summary, By::Chat { cold: false, shaped: true }, "OpenAI GPT-6 Luna", "", &[ask("url", "Address", "https://api.openai.com/v1"), ask("model", "Model", "gpt-6-luna")]),
-            offer(Job::Voice, By::Speech, "OpenAI GPT-4o mini TTS", "", &[ask("url", "Address", "https://api.openai.com/v1"), ask("model", "Model", "gpt-4o-mini-tts"), ask("voice", "Voice", "coral"), ask("rate", "Samples a second", "24000")]),
-            offer(Job::Ears, By::Transcribe, "OpenAI GPT Transcribe", "", &[ask("url", "Address", "https://api.openai.com/v1"), ask("model", "Model", "gpt-transcribe")]),
+            offer(Job::Summary, By::Chat { cold: false, shaped: true }, "OpenAI GPT-6 Luna", "", &[ask("url", "Address", "https://api.openai.com/v1"), ask("model", "Model", "gpt-6-luna")]).price("About $0.11 per 1,000 messages").preferred(),
+            offer(Job::Voice, By::Speech, "OpenAI GPT-4o mini TTS", "", &[ask("url", "Address", "https://api.openai.com/v1"), ask("model", "Model", "gpt-4o-mini-tts"), ask("voice", "Voice", "coral"), ask("rate", "Samples a second", "24000")]).voices(OPENAI_VOICES),
+            offer(Job::Ears, By::Transcribe, "OpenAI GPT Transcribe", "", &[ask("url", "Address", "https://api.openai.com/v1"), ask("model", "Model", "gpt-transcribe")]).price("About $0.27 per hour of speech").preferred(),
         ],
     },
     // A model the tower fetches and runs itself, on this computer: nothing a message says leaves it. Measured
@@ -146,8 +216,8 @@ pub const PROVIDERS: &[Provider] = &[
         key: false,
         key_name: "",
         keys_at: "",
-        offered: true,
-        offers: &[offer(Job::Summary, By::OnThisComputer("unsloth/Qwen3.5-4B-GGUF:Q4_K_M"), "Alibaba Qwen 3.5 4B", "Runs on your computer. 2.7 GB download, about 4 GB of memory", &[])],
+        offered: true, in_app: true,
+        offers: &[offer(Job::Summary, By::OnThisComputer("unsloth/Qwen3.5-4B-GGUF:Q4_K_M"), "Alibaba Qwen 3.5 4B", "Runs on your computer. 2.7 GB download, about 4 GB of memory", &[]).preferred()],
     },
     Provider {
         id: "openrouter",
@@ -155,8 +225,8 @@ pub const PROVIDERS: &[Provider] = &[
         key: true,
         key_name: "OpenRouter API key",
         keys_at: "openrouter.ai/keys",
-        offered: true,
-        offers: &[offer(Job::Summary, By::Chat { cold: true, shaped: false }, "OpenRouter", "", &[ask("url", "Address", "https://openrouter.ai/api/v1"), ask("model", "Model", "google/gemini-3.5-flash-lite")])],
+        offered: true, in_app: true,
+        offers: &[offer(Job::Summary, By::Chat { cold: true, shaped: false }, "OpenRouter", "", &[ask("url", "Address", "https://openrouter.ai/api/v1"), ask("model", "Model", "google/gemini-3.5-flash-lite")]).price("About $0.40 per 1,000 messages")],
     },
     Provider {
         id: "groq",
@@ -164,10 +234,10 @@ pub const PROVIDERS: &[Provider] = &[
         key: true,
         key_name: "Groq API key",
         keys_at: "console.groq.com/keys",
-        offered: true,
+        offered: true, in_app: true,
         offers: &[
-            offer(Job::Summary, By::Chat { cold: true, shaped: false }, "Groq GPT-OSS 120B", "", &[ask("url", "Address", "https://api.groq.com/openai/v1"), ask("model", "Model", "openai/gpt-oss-120b")]),
-            offer(Job::Ears, By::Transcribe, "Groq Whisper Large v3 Turbo", "", &[ask("url", "Address", "https://api.groq.com/openai/v1"), ask("model", "Model", "whisper-large-v3-turbo")]),
+            offer(Job::Summary, By::Chat { cold: true, shaped: false }, "Groq GPT-OSS 120B", "", &[ask("url", "Address", "https://api.groq.com/openai/v1"), ask("model", "Model", "openai/gpt-oss-120b")]).price("About $0.15 per 1,000 messages"),
+            offer(Job::Ears, By::Transcribe, "Groq Whisper Large v3 Turbo", "", &[ask("url", "Address", "https://api.groq.com/openai/v1"), ask("model", "Model", "whisper-large-v3-turbo")]).price("About $0.04 per hour of speech"),
         ],
     },
     Provider {
@@ -176,7 +246,7 @@ pub const PROVIDERS: &[Provider] = &[
         key: false,
         key_name: "",
         keys_at: "",
-        offered: true,
+        offered: true, in_app: false,
         offers: &[
             offer(Job::Summary, By::Chat { cold: true, shaped: true }, "Your own model server", "Ollama, LM Studio or llama.cpp, at an address you give", &[ask("url", "Address", "http://localhost:11434/v1"), ask("model", "Model", "")]),
             offer(Job::Voice, By::Speech, "Your own voice server", "At an address you give", &[ask("url", "Address", "http://localhost:8880/v1"), ask("model", "Model", "kokoro"), ask("voice", "Voice", "af_heart"), ask("rate", "Samples a second", "24000")]),
@@ -189,9 +259,9 @@ pub const PROVIDERS: &[Provider] = &[
         key: true,
         key_name: "ElevenLabs API key",
         keys_at: "elevenlabs.io/app/settings/api-keys",
-        offered: true,
+        offered: true, in_app: true,
         // the voice is Jessica: young, bright and warm
-        offers: &[offer(Job::Voice, By::ElevenlabsVoice, "ElevenLabs Flash 2.5", "", &[ask("voice", "Voice id", "cgSgspJ2msm6clMCkdW9"), ask("model", "Model", "eleven_flash_v2_5")])],
+        offers: &[offer(Job::Voice, By::ElevenlabsVoice, "ElevenLabs Flash 2.5", "", &[ask("voice", "Voice id", "cgSgspJ2msm6clMCkdW9"), ask("model", "Model", "eleven_flash_v2_5")]).price("About $2.16 per hour of speech").voices(ELEVENLABS_VOICES).preferred()],
     },
     Provider {
         id: "azure",
@@ -199,16 +269,16 @@ pub const PROVIDERS: &[Provider] = &[
         key: true,
         key_name: "Azure key",
         keys_at: "portal.azure.com, a Speech resource, Keys and Endpoint",
-        offered: true,
+        offered: true, in_app: true,
         offers: &[
-            offer(Job::Voice, By::AzureVoice { pass: false }, "Microsoft Azure Speech", "", &[ask("region", "Region", "eastus"), ask("voice", "Voice", AZURE_VOICE)]),
-            offer(Job::Ears, By::Listener("azure"), "Microsoft Azure Speech", "", &[ask("region", "Region", "eastus"), ask("language", "Language", "en-US")]),
+            offer(Job::Voice, By::AzureVoice { pass: false }, "Microsoft Azure Speech", "", &[ask("region", "Region", "eastus"), ask("voice", "Voice", AZURE_VOICE)]).price("About $0.81 per hour of speech").voices(AZURE_VOICES).preferred(),
+            offer(Job::Ears, By::Listener("azure"), "Microsoft Azure Speech", "", &[ask("region", "Region", "eastus"), ask("language", "Language", "en-US")]).price("About $1 per hour, 5 hours a month free").preferred(),
         ],
     },
     // a program of his own that reads: `argv` says what to run
-    Provider { id: "command", name: "A command of your own", key: false, key_name: "", keys_at: "", offered: false, offers: &[offer(Job::Summary, By::Command(&[]), "A command of your own", "", &[])] },
+    Provider { id: "command", name: "A command of your own", key: false, key_name: "", keys_at: "", offered: false, in_app: false, offers: &[offer(Job::Summary, By::Command(&[]), "A command of your own", "", &[])] },
     // what the tower uses when nothing is set here and the relay lends its pass: never written in the settings
-    Provider { id: LENT, name: "The relay's speech service", key: false, key_name: "", keys_at: "", offered: false, offers: &[offer(Job::Voice, By::AzureVoice { pass: true }, "The relay's speech service", "", &[ask("region", "Region", ""), ask("voice", "Voice", AZURE_VOICE)])] },
+    Provider { id: LENT, name: "The relay's speech service", key: false, key_name: "", keys_at: "", offered: false, in_app: false, offers: &[offer(Job::Voice, By::AzureVoice { pass: true }, "The relay's speech service", "", &[ask("region", "Region", ""), ask("voice", "Voice", AZURE_VOICE)])] },
 ];
 
 const AZURE_VOICE: &str = "en-US-AvaMultilingualNeural";
@@ -232,6 +302,15 @@ pub fn provider(id: &str) -> Option<&'static Provider> {
 }
 
 /// The providers he can choose for a job.
+/// The offers for a job in the order to show them where he chooses: what runs on his own computer first,
+/// then what needs no key (neither costs him anything more), then the preferred, then the rest. Within each,
+/// by name.
+pub fn in_order(job: Job) -> Vec<(&'static Provider, &'static Offer)> {
+    let mut all: Vec<(&Provider, &Offer)> = offering(job).filter_map(|p| p.offers.iter().find(|o| o.job == job).map(|o| (p, o))).collect();
+    all.sort_by_key(|(p, o)| (!o.local(), p.key, !o.preferred, o.label));
+    all
+}
+
 pub fn offering(job: Job) -> impl Iterator<Item = &'static Provider> {
     PROVIDERS.iter().filter(move |p| p.offered && p.offers.iter().any(|o| o.job == job))
 }
