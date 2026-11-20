@@ -71,6 +71,18 @@ impl Link {
         }
     }
 
+    /// Is the tower being reached straight, on its own network, and not through the relay?
+    pub(crate) fn is_direct(&self) -> bool {
+        matches!(self.route, Route::Direct { .. }) || self.direct.lock().unwrap().good.is_some()
+    }
+
+    /// The tower has given addresses that have not been tried yet (or not lately): the next request finds out
+    /// whether it is there.
+    pub(crate) fn untried(&self) -> bool {
+        let d = self.direct.lock().unwrap();
+        d.good.is_none() && !d.addrs.is_empty() && d.rest_until.is_none_or(|t| std::time::Instant::now() >= t)
+    }
+
     /// Make a request straight to the tower, sealed exactly as it would be for the relay. Nothing when the tower
     /// is not at any of its addresses (he is away from its network), which is remembered for a while so the
     /// relay is not kept waiting behind a dead address each time.

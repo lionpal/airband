@@ -86,6 +86,9 @@ pub struct DeskView {
     /// None has answered yet and at least one is still being tried for the first time: show that it is
     /// loading, not that the computer cannot be reached.
     pub connecting: bool,
+    /// Every computer that can be reached is being reached straight, on its own network: he is at home with
+    /// them, and nothing is going by the relay.
+    pub near: bool,
     /// The computers that cannot be reached right now, by name, when he is paired with more than one: so he is
     /// told which. Empty with one computer (then `online` says it all).
     pub away: Vec<String>,
@@ -568,6 +571,7 @@ impl Desk {
             paired: !state.stations.is_empty(),
             online: state.stations.iter().any(|s| s.online),
             connecting: !state.stations.iter().any(|s| s.online) && state.stations.iter().any(|s| !s.tried),
+            near: state.stations.iter().any(|s| s.online) && state.stations.iter().filter(|s| s.online).all(|s| s.radio.near()),
             away: if state.stations.len() > 1 { state.stations.iter().enumerate().filter(|(_, s)| s.tried && !s.online).map(|(i, s)| if s.name.is_empty() { format!("computer {}", i + 1) } else { s.name.clone() }).collect() } else { Vec::new() },
             can_poke: agents.iter().any(|a| a.state == "stalled" && room.as_ref().is_none_or(|r| a.group == *r)),
             feed,

@@ -431,6 +431,11 @@ impl Radio {
         }
     }
 
+    /// Is this computer being reached straight, on its own network, and not through the relay?
+    pub(crate) fn near(&self) -> bool {
+        self.link.is_direct()
+    }
+
     /// Read a whole message aloud in the tower's voice. Blocks until it has been heard or [`Radio::hush`] is
     /// called. False when the tower has no voice to read it with.
     pub(crate) fn read_aloud(&self, id: &str) -> bool {

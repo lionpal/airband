@@ -105,6 +105,36 @@ struct StateDot: View {
     }
 }
 
+/// The mark with a house where the plane is: the same three waves, drawn to the measure of the logo.
+struct HomeMark: View {
+    var body: some View {
+        Canvas { ctx, size in
+            let k = size.width / 512
+            // the logo's waves: arcs about one centre, a quarter turn wide, opening upwards
+            let centre = CGPoint(x: 256 * k, y: 350 * k)
+            for radius in [132.0, 214.0, 296.0] {
+                var arc = Path()
+                arc.addArc(center: centre, radius: radius * 0.88 * k, startAngle: .degrees(-135), endAngle: .degrees(-45), clockwise: false)
+                ctx.stroke(arc, with: .color(Palette.signal), style: StrokeStyle(lineWidth: 40 * 0.88 * k, lineCap: .round))
+            }
+            // the house: a roof and a body, where the plane sits
+            var house = Path()
+            let (cx, top, w, h) = (256 * k, 262 * k, 150 * k, 150 * k)
+            house.move(to: CGPoint(x: cx, y: top))
+            house.addLine(to: CGPoint(x: cx + w / 2 + 14 * k, y: top + h * 0.46))
+            house.addLine(to: CGPoint(x: cx + w / 2 - 12 * k, y: top + h * 0.46))
+            house.addLine(to: CGPoint(x: cx + w / 2 - 12 * k, y: top + h))
+            house.addLine(to: CGPoint(x: cx - w / 2 + 12 * k, y: top + h))
+            house.addLine(to: CGPoint(x: cx - w / 2 + 12 * k, y: top + h * 0.46))
+            house.addLine(to: CGPoint(x: cx - w / 2 - 14 * k, y: top + h * 0.46))
+            house.closeSubpath()
+            ctx.fill(house, with: .color(Palette.ink))
+            ctx.stroke(house, with: .color(Palette.ink), style: StrokeStyle(lineWidth: 10 * k, lineJoin: .round))
+        }
+        .background(Color(red: 0.043, green: 0.043, blue: 0.047))
+    }
+}
+
 struct FeedView: View {
     @EnvironmentObject var model: RadioModel
     @State private var draft = ""
@@ -201,7 +231,14 @@ struct FeedView: View {
             }
             Button { showSetup = true } label: {
                 HStack(spacing: 10) {
-                    Image("Mark").resizable().frame(width: 30, height: 30).clipShape(RoundedRectangle(cornerRadius: 7))
+                    // at home, talking straight to the computer: the plane under the waves gives way to a house
+                    ZStack {
+                        Image("Mark").resizable().opacity(model.view.near ? 0 : 1)
+                        if model.view.near { HomeMark() }
+                    }
+                    .frame(width: 30, height: 30).clipShape(RoundedRectangle(cornerRadius: 7))
+                    .animation(.easeInOut(duration: 0.25), value: model.view.near)
+                    .accessibilityLabel(model.view.near ? "On your home network" : "")
                     Text("airband").font(.system(size: 26, weight: .bold)).tracking(-0.6).lineLimit(1).fixedSize()
                 }
             }
