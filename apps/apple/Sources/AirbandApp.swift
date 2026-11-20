@@ -754,7 +754,7 @@ struct FeedView: View {
     private var quickGrid: some View {
         let all = model.view.quick
         return VStack(spacing: 8) {
-            RecentStrip { withAnimation(.snappy(duration: 0.2)) { showQuick = false } }
+            RecentStrip()
             AttachTile { withAnimation(.snappy(duration: 0.2)) { showQuick = false } }
             // two to a row; an odd one out, usually one of his own, takes the whole row
             ForEach(Array(stride(from: 0, to: all.count, by: 2)), id: \.self) { i in

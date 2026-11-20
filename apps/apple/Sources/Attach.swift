@@ -183,31 +183,39 @@ private struct TrayThumb: View {
     }
 }
 
-/// His newest photos and videos, across the top of the + panel: one tap attaches one, without opening the
-/// whole library. Shown once he has let the app see his photos; asked the first time the panel opens.
+/// His four newest photos and videos, across the top of the + panel. A tap attaches one and marks it; a tap
+/// on a marked one takes it off again. The panel stays open, so he can take several. The whole library is the
+/// button under this. Shown once he has let the app see his photos; asked the first time the panel opens.
 struct RecentStrip: View {
     @EnvironmentObject var model: RadioModel
     @State private var recent: [PHAsset] = []
-    let done: () -> Void
+    /// Which of them are in the tray, and as which item there.
+    @State private var taken: [String: UUID] = [:]
 
     var body: some View {
         Group {
             if !recent.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(recent, id: \.localIdentifier) { asset in
-                            Button {
-                                model.attach(asset)
-                                done()
-                            } label: {
-                                RecentThumb(asset: asset)
+                HStack(spacing: 8) {
+                    ForEach(recent, id: \.localIdentifier) { asset in
+                        let item = taken[asset.localIdentifier].flatMap { id in model.tray.first { $0.id == id } }
+                        Button {
+                            if let item {
+                                model.detach(item)
+                                taken[asset.localIdentifier] = nil
+                            } else {
+                                taken[asset.localIdentifier] = model.attach(asset)
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(asset.mediaType == .video ? "Attach this recent video" : "Attach this recent photo")
+                        } label: {
+                            RecentThumb(asset: asset, chosen: item != nil)
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(asset.mediaType == .video ? "Recent video" : "Recent photo")
+                        .accessibilityValue(item != nil ? "Attached" : "")
+                        .accessibilityHint(item != nil ? "Takes it off again" : "Attaches it")
                     }
+                    // fewer than four: the ones there keep their size
+                    ForEach(0..<max(0, 4 - recent.count), id: \.self) { _ in Color.clear.aspectRatio(1, contentMode: .fit) }
                 }
-                .scrollClipDisabled()
             }
         }
         .task {
@@ -215,11 +223,10 @@ struct RecentStrip: View {
             guard status == .authorized || status == .limited else { return }
             let newest = PHFetchOptions()
             newest.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-            newest.fetchLimit = 12
+            newest.predicate = NSPredicate(format: "mediaType == %d OR mediaType == %d", PHAssetMediaType.image.rawValue, PHAssetMediaType.video.rawValue)
+            newest.fetchLimit = 4
             var found: [PHAsset] = []
-            PHAsset.fetchAssets(with: newest).enumerateObjects { asset, _, _ in
-                if asset.mediaType == .image || asset.mediaType == .video { found.append(asset) }
-            }
+            PHAsset.fetchAssets(with: newest).enumerateObjects { asset, _, _ in found.append(asset) }
             recent = found
         }
     }
@@ -227,18 +234,27 @@ struct RecentStrip: View {
 
 private struct RecentThumb: View {
     let asset: PHAsset
+    let chosen: Bool
     @State private var image: UIImage?
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            Palette.raised
-            if let image { Image(uiImage: image).resizable().scaledToFill() }
-            if asset.mediaType == .video {
-                Image(systemName: "video.fill").font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
-                    .padding(5).background(.black.opacity(0.45), in: Capsule()).padding(5)
+        // a square a quarter of the row wide, whatever the picture's own shape
+        Color.clear.aspectRatio(1, contentMode: .fit)
+            .overlay { if let image { Image(uiImage: image).resizable().scaledToFill() } else { Palette.raised } }
+            .overlay(alignment: .bottomLeading) {
+                if asset.mediaType == .video {
+                    Image(systemName: "video.fill").font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
+                        .padding(5).background(.black.opacity(0.45), in: Capsule()).padding(5)
+                }
             }
-        }
-        .frame(width: 88, height: 88).clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(alignment: .topTrailing) {
+                if chosen {
+                    Image(systemName: "checkmark.circle.fill").font(.system(size: 22, weight: .bold))
+                        .symbolRenderingMode(.palette).foregroundStyle(Palette.ground, Palette.ink).padding(5)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay { if chosen { RoundedRectangle(cornerRadius: 14).strokeBorder(Palette.ink, lineWidth: 2.5) } }
         .task {
             let wanted = PHImageRequestOptions()
             wanted.isNetworkAccessAllowed = true
@@ -297,8 +313,9 @@ extension RadioModel {
     /// Everything attached has reached his computer.
     var trayReady: Bool { !tray.isEmpty && tray.allSatisfy { item in view.uploads.first { $0.id == item.attachment }?.state == "ready" } }
 
-    /// He tapped one of his newest photos or videos: it goes the way a picked one does.
-    func attach(_ asset: PHAsset) {
+    /// He tapped one of his newest photos or videos: it goes the way a picked one does. Returns which item in
+    /// the tray it became.
+    @discardableResult func attach(_ asset: PHAsset) -> UUID {
         let video = asset.mediaType == .video
         let number = tray.count + 1
         let item = TrayItem(video: video, number: number)
@@ -307,13 +324,16 @@ extension RadioModel {
             let wanted = PHVideoRequestOptions()
             wanted.isNetworkAccessAllowed = true
             PHImageManager.default().requestAVAsset(forVideo: asset, options: wanted) { movie, _, _ in
-                guard let url = (movie as? AVURLAsset)?.url else {
+                // A copy of the app's own, as a picked video is: the tray trims its source and deletes it when the
+                // item is taken off, and neither may ever touch the one in his library.
+                let copy = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mov")
+                guard let url = (movie as? AVURLAsset)?.url, (try? FileManager.default.copyItem(at: url, to: copy)) != nil else {
                     DispatchQueue.main.async { self.prepared(item.id, nil, source: nil) }
                     return
                 }
                 Task {
-                    let made = await Prepare.video(url, number: number)
-                    await MainActor.run { self.prepared(item.id, made, source: url) }
+                    let made = await Prepare.video(copy, number: number)
+                    await MainActor.run { self.prepared(item.id, made, source: copy) }
                 }
             }
         } else {
@@ -325,6 +345,7 @@ extension RadioModel {
                 DispatchQueue.main.async { self.prepared(item.id, photo.map { ($0.0, $0.1, $0.2) }, source: nil) }
             }
         }
+        return item.id
     }
 
     /// He picked these from his photos: each appears in the tray at once, is made ready on the phone, then sent.
