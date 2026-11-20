@@ -159,7 +159,7 @@ struct FeedView: View {
         HStack(spacing: 0) {
             if wide {
                 AgentsMenu(openSetup: { showSetup = true }).environmentObject(model)
-                    .frame(width: 340).background(Palette.card.ignoresSafeArea())
+                    .frame(width: 280).background(Palette.card.ignoresSafeArea())
                 Rectangle().fill(Palette.raised).frame(width: 1).ignoresSafeArea()
             }
             column
