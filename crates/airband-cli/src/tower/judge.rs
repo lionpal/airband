@@ -119,6 +119,10 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
          is an executive summary instead: three to five short sentences, between 40 and 90 words, the conclusion \
          first, then the findings that matter with their numbers as digits, then what he has to decide if \
          anything. It is read aloud to him, so it is sentences, never a list.\n\
+         The same longer form is for a message that leaves him several things to decide or do: he cannot act on \
+         a count. Never say that there are some number of things (\"four decisions needed\", \"three issues found\") \
+         without saying what each one is, in a few words each: \"Before going public: delete the old logs, pick a \
+         commit email, decide on the account code.\" If naming them takes more than one sentence, take the room.\n\
          - Keep only: the result; anything left undone or gone wrong; the one thing he must decide.\n\
          - If the agent needs an answer from him, end with that question, with the options if it gave any.\n\
          - No file paths, code, identifiers, lists or markdown. Say \"the checker script\", not its filename.\n\
