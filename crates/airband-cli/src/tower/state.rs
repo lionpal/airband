@@ -95,6 +95,9 @@ pub(super) struct Entry {
     /// What it holds that he should be able to read whole, by name, if the judge found something.
     #[serde(default)]
     pub(super) read: Option<String>,
+    /// The agent said it takes this answer only from him in its own session (the judge read that in it).
+    #[serde(default)]
+    pub(super) own_session: bool,
     /// His words, waiting for the agent to stop what it is doing; and whether he took them back first.
     /// The agent that said this had stopped only to wait for work of its own still running. While this is the
     /// last thing it said, it counts as at work.
@@ -570,7 +573,7 @@ impl Inner {
         }
     }
     /// The short version of a message is ready: for the call queue and for the chat alike.
-    pub(super) fn fill(&mut self, id: &str, kind: Kind, say: &str, options: &[String], recommended: Option<u32>, read: Option<&str>, background: bool) {
+    pub(super) fn fill(&mut self, id: &str, kind: Kind, say: &str, options: &[String], recommended: Option<u32>, read: Option<&str>, background: bool, own_session: bool) {
         self.judging.remove(id);
         if let Some(p) = self.pending.iter_mut().find(|p| p.id == id) {
             p.kind = Some(kind);
@@ -583,6 +586,7 @@ impl Inner {
             e.recommended = recommended;
             e.read = read.map(String::from);
             e.background = background;
+            e.own_session = own_session;
             self.touch(id);
         }
     }
@@ -609,6 +613,7 @@ impl Inner {
             options: e.options.clone(),
             recommended: e.recommended,
             read: e.read.clone(),
+            own_session: e.own_session,
             seen: e.seen,
             queued: e.queued,
             cancelled: e.cancelled,

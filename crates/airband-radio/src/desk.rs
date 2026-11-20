@@ -5,7 +5,7 @@
 //! the [`DeskView`], make and capture sound, and keep the pairing links somewhere safe.
 use super::*;
 use airband_core::routing::{Callsign, parse_utterance};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Condvar;
 
 /// What a host provides to a desk. Sound calls arrive on a radio's own thread, one computer at a time, and may
@@ -58,6 +58,8 @@ pub struct DeskRoom {
     pub members: Vec<DeskMember>,
     /// Its place in the host's list of team colours.
     pub colour: u8,
+    /// How many things its agents have said that he has not had in front of him.
+    pub unread: u32,
 }
 
 /// One agent, as a row in a list of them.
@@ -78,6 +80,8 @@ pub struct DeskMember {
     /// The tower runs it itself, so his words reach it as his own. One that is not was started in a terminal
     /// and is only left messages from outside; the tower can take it over.
     pub held: bool,
+    /// How many things it has said that he has not had in front of him.
+    pub unread: u32,
 }
 
 /// Everything a chat screen shows, for the team or the agent he is looking at (or all of them).
@@ -101,6 +105,9 @@ pub struct DeskView {
     pub feed: Vec<ChatMessage>,
     /// One per project with an agent on the radio, by name. Not narrowed by what he is looking at.
     pub rooms: Vec<DeskRoom>,
+    /// How many things agents have said that he has not had in front of him, over all of them. While the chat
+    /// is on screen none of these are in what he is looking at.
+    pub unread: u32,
     /// Someone here has stopped without finishing: a poke would do something.
     pub can_poke: bool,
     /// The quick messages to offer.
@@ -202,6 +209,32 @@ struct State {
     /// there), and the links of the computers that have been told.
     push: Option<(String, String)>,
     push_told: HashSet<String>,
+    read: ReadMarks,
+}
+
+/// What he has read: for each agent, by callsign, the time of the last thing it said that was on screen in
+/// front of him. Kept on the device in one small file, so it holds across launches. Something said after that
+/// time is unread, wherever he is looking now.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct ReadMarks {
+    /// When this device began keeping count: what an agent said before then is not counted against him.
+    since: u64,
+    upto: HashMap<String, u64>,
+}
+
+impl ReadMarks {
+    fn load(dir: &str) -> Self {
+        let kept = if dir.is_empty() { None } else { std::fs::read(std::path::Path::new(dir).join("read.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()) };
+        kept.unwrap_or_else(|| ReadMarks { since: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0), upto: HashMap::new() })
+    }
+    fn keep(&self, dir: &str) {
+        if !dir.is_empty() {
+            let _ = std::fs::write(std::path::Path::new(dir).join("read.json"), serde_json::to_vec(self).unwrap_or_default());
+        }
+    }
+    fn unread(&self, m: &ChatMessage) -> bool {
+        m.from != "you" && !m.fyi && m.at > self.upto.get(&m.from).copied().unwrap_or(self.since)
+    }
 }
 
 struct Upload {
@@ -467,7 +500,8 @@ impl Desk {
     /// kept in a folder under it. Nothing is connected until [`Desk::set_links`].
     #[uniffi::constructor]
     pub fn open(data_dir: String, host: Arc<dyn DeskHost>) -> Arc<Self> {
-        Arc::new(Desk { shared: Arc::new(Shared { state: Mutex::new(State::default()), floor: Floor::default(), host }), data_dir })
+        let state = State { read: ReadMarks::load(&data_dir), ..State::default() };
+        Arc::new(Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host }), data_dir })
     }
 
     /// The computers he is paired with, as the links `airband pair` printed, one each. Replaces whatever set
@@ -549,21 +583,44 @@ impl Desk {
 
     /// What to show. `room` narrows the feed to one team, `agent` to one callsign; with neither, everything.
     pub fn view(&self, room: Option<String>, agent: Option<String>) -> DeskView {
-        let state = self.shared.state.lock().unwrap();
+        let mut state = self.shared.state.lock().unwrap();
+        let all = state.merged();
+        // What this view shows, while the chat is in front of him, is read. What agents he is not looking at
+        // have said stays unread, and is counted for each of them and each team below.
+        if self.shared.host.watching() {
+            let mut moved = false;
+            for m in all.iter().filter(|m| room.as_ref().is_none_or(|r| m.group == *r) && agent.as_ref().is_none_or(|a| m.from == *a)) {
+                if state.read.unread(m) {
+                    state.read.upto.insert(m.from.clone(), m.at);
+                    moved = true;
+                }
+            }
+            if moved {
+                state.read.keep(&self.data_dir);
+            }
+        }
+        let state = state;
+        let mut unread_from: HashMap<&str, u32> = HashMap::new();
+        let mut unread_in: HashMap<&str, u32> = HashMap::new();
+        for m in all.iter().filter(|m| state.read.unread(m)) {
+            *unread_from.entry(m.from.as_str()).or_default() += 1;
+            *unread_in.entry(m.group.as_str()).or_default() += 1;
+        }
+        let unread: u32 = unread_from.values().sum();
         let agents: Vec<&ChatAgent> = state.everyone();
         // his own messages belong to the room or agent they went to
         let here = |m: &ChatMessage| {
             let about = |name: &String| agent.as_ref().is_none_or(|a| name == a) && room.as_ref().is_none_or(|r| agents.iter().any(|x| x.callsign == *name && x.group == *r));
             if m.from == "you" { (room.is_none() && agent.is_none()) || m.to.iter().any(about) } else { room.as_ref().is_none_or(|r| m.group == *r) && agent.as_ref().is_none_or(|a| m.from == *a) }
         };
-        let mut feed: Vec<ChatMessage> = state.merged().into_iter().filter(|m| !m.fyi && here(m)).map(|m| ChatMessage { open: state.is_open(&m.id), ..m }).collect();
+        let mut feed: Vec<ChatMessage> = all.iter().cloned().filter(|m| !m.fyi && here(m)).map(|m| ChatMessage { open: state.is_open(&m.id), ..m }).collect();
         let extra = feed.len().saturating_sub(FEED_SHOWN);
         feed.drain(..extra);
         // each team, in the state of whichever of its agents most needs him
         let rank = |s: &str| ["idle", "working", "stalled", "asking"].iter().position(|x| *x == s).unwrap_or(0);
         let mut rooms: Vec<DeskRoom> = Vec::new();
         for a in &agents {
-            let member = DeskMember { id: a.id.clone(), callsign: a.callsign.clone(), state: a.state.clone(), subagents: a.subagents, doing: a.doing.clone(), held: a.held, badge: airband_core::routing::badge(&a.group, &a.callsign), engine: [a.model.as_deref(), a.effort.as_deref()].into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} "), station: if state.stations.len() > 1 { state.stations.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(|s| s.name.clone()).unwrap_or_default() } else { String::new() } };
+            let member = DeskMember { id: a.id.clone(), callsign: a.callsign.clone(), state: a.state.clone(), subagents: a.subagents, doing: a.doing.clone(), held: a.held, unread: unread_from.get(a.callsign.as_str()).copied().unwrap_or(0), badge: airband_core::routing::badge(&a.group, &a.callsign), engine: [a.model.as_deref(), a.effort.as_deref()].into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} "), station: if state.stations.len() > 1 { state.stations.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(|s| s.name.clone()).unwrap_or_default() } else { String::new() } };
             // what the team is doing is said in the name of whoever is doing it, without the team's own name
             let doing = a.doing.as_ref().map(|d| match a.callsign.strip_prefix(&a.group).map(str::trim).filter(|rest| !rest.is_empty()) {
                 Some(who) => format!("{who}: {d}"),
@@ -579,7 +636,7 @@ impl Desk {
                     r.doing = r.doing.take().or(doing);
                     r.members.push(member);
                 }
-                None => rooms.push(DeskRoom { name: a.group.clone(), state: if a.state.is_empty() { "working".into() } else { a.state.clone() }, agents: 1, subagents: a.subagents, doing, members: vec![member], colour: state.stations.iter().find_map(|s| s.colours.get(&a.group).copied()).unwrap_or(0) }),
+                None => rooms.push(DeskRoom { name: a.group.clone(), state: if a.state.is_empty() { "working".into() } else { a.state.clone() }, agents: 1, subagents: a.subagents, doing, members: vec![member], unread: unread_in.get(a.group.as_str()).copied().unwrap_or(0), colour: state.stations.iter().find_map(|s| s.colours.get(&a.group).copied()).unwrap_or(0) }),
             }
         }
         rooms.sort_by(|a, b| a.name.cmp(&b.name));
@@ -600,6 +657,7 @@ impl Desk {
             can_poke: agents.iter().any(|a| a.state == "stalled" && room.as_ref().is_none_or(|r| a.group == *r)),
             feed,
             rooms,
+            unread,
             quick,
             // on their way: not yet sent, then sent and not yet back in the chat (for a quarter of a minute at most)
             sending: state
@@ -1386,7 +1444,7 @@ mod tests {
     }
 
     fn msg(id: &str, seq: u64, from: &str, group: &str, needs: bool) -> ChatMessage {
-        ChatMessage { seq, id: id.into(), at: seq, from: from.into(), group: group.into(), to: Vec::new(), needs_you: needs, fyi: false, stalled: false, text: id.into(), long: false, queued: false, seen: 0, options: Vec::new(), recommended: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: Some(from.into()), station: String::new(), open: needs, badge: String::new(), colour: 0, read: None }
+        ChatMessage { seq, id: id.into(), at: seq, from: from.into(), group: group.into(), to: Vec::new(), needs_you: needs, fyi: false, stalled: false, text: id.into(), long: false, queued: false, seen: 0, options: Vec::new(), recommended: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: Some(from.into()), station: String::new(), open: needs, badge: String::new(), colour: 0, read: None, own_session: false }
     }
     fn station(name: &str, port: u16, agents: &[(&str, &str)], messages: Vec<ChatMessage>) -> Station {
         let link = format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A{port}&token=t");
@@ -1420,6 +1478,59 @@ mod tests {
             ],
             ..State::default()
         }
+    }
+
+    struct Watching(std::sync::atomic::AtomicBool);
+    impl DeskHost for Watching {
+        fn play(&self, _: u32, _: Vec<u8>, _: bool) {}
+        fn record_start(&self, _: u32) -> bool {
+            false
+        }
+        fn record_read(&self) -> Vec<u8> {
+            Vec::new()
+        }
+        fn record_stop(&self) {}
+        fn changed(&self) {}
+        fn status(&self, _: RadioStatus, _: String) {}
+        fn note(&self, _: String) {}
+        fn hearing(&self, _: String) {}
+        fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
+        fn watching(&self) -> bool {
+            self.0.load(std::sync::atomic::Ordering::SeqCst)
+        }
+        fn transcribe(&self, _: String, _: Vec<u8>) -> Option<String> {
+            None
+        }
+    }
+
+    #[test]
+    fn what_he_is_not_looking_at_stays_unread_and_is_counted() {
+        let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
+        let dir = std::env::temp_dir().join(format!("airband-read-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(two()), floor: Floor::default(), host: host.clone() }), data_dir: dir.display().to_string() };
+        let counts = |v: &DeskView| (v.unread, v.rooms.iter().map(|r| (r.name.clone(), r.unread)).collect::<Vec<_>>());
+        // looking at one team: what it said is read, and the other two teams' one thing each is not
+        let v = desk.view(Some("shop".into()), None);
+        assert_eq!(counts(&v), (2, vec![("backoffice".into(), 1), ("ff".into(), 1), ("shop".into(), 0)]));
+        assert_eq!(v.rooms[0].members[0].unread, 1);
+        // something new from the team in front of him is read as it comes; from another, it is one more
+        {
+            let mut state = desk.shared.state.lock().unwrap();
+            state.stations[0].messages.push(msg("r2", 5, "shop two", "shop", false));
+            state.stations[1].messages.push(msg("r3", 6, "ff one", "ff", false));
+        }
+        assert_eq!(counts(&desk.view(Some("shop".into()), None)).0, 3);
+        // with the chat not on screen nothing is read: one agent of a team opened behind a sheet clears nothing
+        host.0.store(false, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(desk.view(Some("ff".into()), Some("ff one".into())).unread, 3);
+        host.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(counts(&desk.view(Some("ff".into()), Some("ff one".into()))), (1, vec![("backoffice".into(), 1), ("ff".into(), 0), ("shop".into(), 0)]));
+        // what was read is kept on the device: a desk opened again on the same folder starts from there
+        assert_eq!(ReadMarks::load(&dir.display().to_string()).upto.get("ff one"), Some(&6));
+        // everything at once
+        assert_eq!(desk.view(None, None).unread, 0);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -479,6 +479,11 @@ pub struct Message {
     /// to read under that name. Nothing when a line is enough.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read: Option<String>,
+    /// The agent says it will take this answer only from him in its own session, not from a message passed on
+    /// to it. For an agent the tower does not run, an answer from a radio is such a message: a client says so,
+    /// and offers to take the agent over, after which his words reach it as his own.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub own_session: bool,
     /// Something he said that is waiting its turn: the agent is in the middle of something, and the tower
     /// holds this until it stops. He can still take it back (`POST unsend`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -617,7 +622,7 @@ mod tests {
     use super::*;
 
     fn m(from: &str, group: &str, to: &[&str]) -> Message {
-        Message { seq: 1, id: "x".into(), at: 0, from: from.into(), group: group.into(), to: to.iter().map(|s| s.to_string()).collect(), kind: None, text: String::new(), long: false, options: Vec::new(), recommended: None, read: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: None, rev: 0, open: false, queued: false, seen: None, cancelled: false }
+        Message { seq: 1, id: "x".into(), at: 0, from: from.into(), group: group.into(), to: to.iter().map(|s| s.to_string()).collect(), kind: None, text: String::new(), long: false, options: Vec::new(), recommended: None, read: None, own_session: false, permission: false, pictures: Vec::new(), links: Vec::new(), agent: None, rev: 0, open: false, queued: false, seen: None, cancelled: false }
     }
     #[test]
     fn a_feed_from_a_newer_tower_still_reads() {

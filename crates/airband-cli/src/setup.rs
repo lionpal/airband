@@ -91,7 +91,8 @@ fn choose(cfg: &mut Config, job: Job, title: &str, about: &str, none: &str) {
     let offered: Vec<&Provider> = providers::offering(job).collect();
     loop {
         for (i, p) in offered.iter().enumerate() {
-            println!("  {}. {}", i + 1, p.name);
+            let o = p.offers.iter().find(|o| o.job == job);
+            println!("  {}. {}{}", i + 1, o.map(|o| o.label).unwrap_or(p.name), o.filter(|o| !o.about.is_empty()).map(|o| format!(". {}.", o.about)).unwrap_or_default());
         }
         println!("  {}. {none}", offered.len() + 1);
         let pick = line("  Which? (return keeps what you have) ");

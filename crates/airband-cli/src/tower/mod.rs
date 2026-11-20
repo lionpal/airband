@@ -35,6 +35,7 @@ mod http;
 mod intake;
 mod judge;
 mod launch;
+mod local;
 mod permit;
 mod place;
 mod pictures;
@@ -301,8 +302,17 @@ pub fn triage(cfg: Config) -> Result<(), String> {
 /// Does the model that reads for the tower answer? For `airband setup`.
 pub fn try_model(cfg: &Config) -> Result<String, String> {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
+    // a model on this computer is fetched the first time: wait through that, and say so
+    local::listen_after(cfg.port);
+    local::wait_for_it(true);
+    if matches!(cfg.summarizer.offer(providers::Job::Summary).map(|(_, o)| o.by), Some(providers::By::OnThisComputer(_))) {
+        println!("  Fetching the model and starting it. The first time this is a few gigabytes and takes a while.");
+    }
     println!("  Asking it something…");
-    rt.block_on(judge::ask_model(cfg, "Reply with the one word: ready".into())).map(|_| "It answers.".into())
+    let answered = rt.block_on(judge::ask_model(cfg, "Reply with the one word: ready".into())).map(|_| "It answers.".into());
+    // a model this command started on this computer is stopped again: the tower starts its own
+    local::stop();
+    answered
 }
 
 /// Does the voice speak? For `airband setup`.
@@ -363,6 +373,19 @@ pub fn run(cfg: Config) -> Result<(), String> {
         }
     } else if crate::vault::settle() {
         log("the keys are now in the keychain");
+    }
+    // a model on this computer is started now, so it is ready when the first message comes; until it is, a
+    // message is given as written
+    local::listen_after(cfg.port);
+    if let Some(providers::By::OnThisComputer(model)) = cfg.summarizer.offer(providers::Job::Summary).map(|(_, o)| o.by) {
+        std::thread::spawn(move || {
+            local::wait_for_it(true);
+            match local::ensure(model) {
+                Ok(_) => log("local model: ready"),
+                Err(why) => log(format!("local model: {why}")),
+            }
+            local::wait_for_it(false);
+        });
     }
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().map_err(|e| e.to_string())?;
     rt.block_on(async move {

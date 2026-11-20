@@ -21,15 +21,16 @@ pub(crate) struct Model {
     /// Each file: its path under the model's folder, its size, and its SHA-256. A file that does not match is
     /// not kept.
     files: &'static [(&'static str, u64, &'static str)],
-    /// For a voice: the voice it speaks in, by the name its file has under `voices/`.
-    #[cfg_attr(not(feature = "phonon"), allow(dead_code))]
-    pub voice: &'static str,
+    /// For a voice model: the voices he can choose between, the usual one first. Each is a name (its file is
+    /// `voices/<name>.safetensors`, and a short clip of it for hearing before anything is fetched is at
+    /// `previews/<name>.m4a` beside the model) and a few words on how it sounds.
+    pub voices: &'static [(&'static str, &'static str)],
     /// Who made it and under what licence, for the screen that offers it. Its licence asks to be credited.
     pub credit: &'static str,
 }
 
 pub(crate) const MODELS: &[Model] = &[
-    // Gradium's Phonon, 31 million parameters, English, in eight-bit weights, with the voice Zoey.
+    // Gradium's Phonon, 31 million parameters, English, in eight-bit weights, with four of its voices.
     #[cfg(feature = "phonon")]
     Model {
         kind: "phonon",
@@ -40,9 +41,12 @@ pub(crate) const MODELS: &[Model] = &[
             ("config.json", 4_634, "b5d0f88353638370d94035b7d73d7d6577c0554d78f8d7ecfd40490aae39ae85"),
             ("tokenizer.json", 277_967, "691a00068fa7b989f2f3e5ae5daa2d1a5bb319f2d5360deafcfb19a8bb6e7936"),
             ("voices/Zoey.safetensors", 256_136, "97c7f8c253413574406ab80dd23f49c3ebb2517163b00a9bf86b9c4cf43e7e23"),
+            ("voices/Harper.safetensors", 256_136, "6b3da6e2d796a20c51af892c482bd6509fb88267a221aff83c870843dee2a123"),
+            ("voices/Freya.safetensors", 256_136, "eb3cd47418349e618408c16bea7153988b3ad04b41a6033039dd474a9a4dcd23"),
+            ("voices/Pippa.safetensors", 256_136, "d41a8f01d6e33450f1ce062d332914da10beee99e585dab531750706f187c48a"),
             ("model.q8.gguf", 64_512_352, "a7d9aad2cd6dc66473f24a08bc6d2939030ef4d751ef82349361fbef3272dbae"),
         ],
-        voice: "Zoey",
+        voices: &[("Zoey", "Playful, American"), ("Harper", "Confident, American"), ("Freya", "Bubbly, British"), ("Pippa", "Upbeat, British")],
         credit: "Phonon by Gradium, Apache 2.0.",
     },
     // Fermion Research's Phonon-2.5 English, compiled for the Neural Engine. The host runs it (`transcribe`).
@@ -61,7 +65,7 @@ pub(crate) const MODELS: &[Model] = &[
             ("Phonon-2.5-English.mlmodelc/model.mil", 2_713_692, "fc6b8c27b168f326f1c006bce0e84a7da11787955edd2b09a4af6304d473ff93"),
             ("Phonon-2.5-English.mlmodelc/weights/weight.bin", 329_432_768, "597947905f317ee9bfed5efb84b60880217584046d5cb193a910c9959fe6e1bb"),
         ],
-        voice: "",
+        voices: &[],
         credit: "Phonon-2.5 English by Fermion Research, from NVIDIA's Parakeet TDT 0.6B v3. CC BY 4.0.",
     },
 ];
@@ -102,6 +106,24 @@ fn listed(dir: &str, job: Job) -> Vec<LocalModel> {
 #[uniffi::export]
 pub fn local_voices(dir: String) -> Vec<LocalModel> {
     listed(&dir, Job::Voice)
+}
+
+/// One of the voices a voice model can speak in.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct VoiceChoice {
+    /// What to pass back as the voice.
+    pub name: String,
+    /// A few words on how it sounds.
+    pub about: String,
+    /// A short clip of it, to hear before choosing: an address the host can fetch and play, whether or not
+    /// the model is on the device yet.
+    pub preview: String,
+}
+
+/// The voices a voice model offers, the usual one first. Empty for a model that is not a voice.
+#[uniffi::export]
+pub fn local_voice_choices(kind: String) -> Vec<VoiceChoice> {
+    model(&kind).map(|m| m.voices.iter().map(|(name, about)| VoiceChoice { name: name.to_string(), about: about.to_string(), preview: format!("{}/previews/{name}.m4a", m.base) }).collect()).unwrap_or_default()
 }
 
 /// And the listening models it can run.

@@ -40,6 +40,18 @@ fn main() {
         Some("hold") => hold::run(&args[1..]),
         None | Some("run") => tower::run(config::load()),
         Some("install") => install::install(),
+        // what a new computer runs: start the tower, keep it running, and show the code a phone scans. What
+        // reads, speaks and listens is chosen on the phone.
+        Some("start") => install::install().and_then(|()| {
+            let cfg = config::load();
+            if cfg.pairings.is_empty() {
+                println!("\nOpen airband on your phone and scan this.");
+                install::pair(cfg, "phone")
+            } else {
+                println!("\nA phone is already paired. To pair another:  airband pair <a name for it>");
+                Ok(())
+            }
+        }),
         Some("uninstall") => install::uninstall(),
         Some("status") => Ok(install::status(&config::load())),
         Some("pair") => install::pair(config::load(), args.get(1).map(String::as_str).unwrap_or("phone")),
@@ -59,7 +71,7 @@ fn main() {
         Some("progress") => tower::progress(config::load()),
         Some("feed") => terminal::feed(&config::load(), &args[1..]),
         Some("send") => terminal::send(&config::load(), &args[1..]),
-        Some(other) => Err(format!("unknown command \"{other}\": setup, install, uninstall, status, keys, relay, lan, model, voice, ears, pair, unpair, quick, accounts, radio, feed, send, launch, hook, report, run")),
+        Some(other) => Err(format!("unknown command \"{other}\": start, setup, install, uninstall, status, keys, relay, lan, model, voice, ears, pair, unpair, quick, accounts, radio, feed, send, launch, hook, report, run")),
     };
     if let Err(e) = result {
         eprintln!("airband: {e}");

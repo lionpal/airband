@@ -80,6 +80,19 @@ struct Badge: View {
     }
 }
 
+/// How many things have been said somewhere he is not looking: a small count. Nothing when there are none.
+struct Unread: View {
+    let count: UInt32
+
+    var body: some View {
+        if count > 0 {
+            Text(count > 99 ? "99+" : "\(count)").font(.system(size: 11, weight: .bold, design: .rounded)).monospacedDigit()
+                .foregroundStyle(Palette.ground).padding(.horizontal, 5).frame(minWidth: 18, minHeight: 18)
+                .background(Palette.ink, in: Capsule()).accessibilityHidden(true)
+        }
+    }
+}
+
 /// What a team or an agent is doing, as a dot: green and pulsing while working, amber when waiting on him, gray
 /// and still when it has stopped without finishing, an empty ring when it has finished and has nothing on.
 struct StateDot: View {
@@ -145,6 +158,8 @@ struct FeedView: View {
     @EnvironmentObject var model: RadioModel
     @State private var draft = ""
     @State private var showSetup = false
+    /// The first run: shown once, until he has been through it.
+    @State private var onboarding = !UserDefaults.standard.bool(forKey: "airband.onboarded")
     @State private var showAgents = false
     @State private var showScan = false
     @StateObject private var ticker = Ticker()
@@ -175,6 +190,7 @@ struct FeedView: View {
         .background(Palette.ground.ignoresSafeArea())
         .foregroundStyle(Palette.ink)
         .sheet(isPresented: $showSetup) { SetupView().environmentObject(model) }
+        .fullScreenCover(isPresented: $onboarding) { OnboardingView().environmentObject(model) }
         .fullScreenCover(isPresented: $showScan) { ScanSheet().environmentObject(model) }
         .sheet(isPresented: $showAgents) { AgentsMenu(openSetup: { showAgents = false; showSetup = true }).environmentObject(model).presentationDetents([.medium, .large]) }
         .task { await ticker.run { model.view.rooms } }
@@ -313,15 +329,18 @@ struct FeedView: View {
         if let only = model.only { return model.view.rooms.first { $0.members.contains { $0.callsign == only } } }
         return nil
     }
+    /// How many unread things are outside the team he is in: shown on the way back to all of them.
+    private var elsewhere: UInt32 { model.view.unread - min(model.view.unread, team?.unread ?? 0) }
     /// What is selected, as the id of its chip: for scrolling the row to it.
     private var chosen: String { model.only.map { "agent:" + $0 } ?? model.room.map { "team:" + $0 } ?? "all" }
 
-    private func chip(_ label: String, on: Bool, dot: String? = nil, working: Bool = false, colour: UInt8? = nil, badge: (String, UInt8)? = nil) -> some View {
+    private func chip(_ label: String, on: Bool, dot: String? = nil, working: Bool = false, colour: UInt8? = nil, badge: (String, UInt8)? = nil, unread: UInt32 = 0) -> some View {
         HStack(spacing: 7) {
             if let dot { StateDot(state: dot, working: working).id(dot + (working ? "+" : "")) }
             if let badge { Badge(text: badge.0, colour: badge.1, size: 20) }
             Text(label).font(.system(size: 14, weight: on ? .semibold : .medium)).lineLimit(1)
                 .padding(.bottom, 2).overlay(alignment: .bottom) { if let colour { Capsule().fill(Palette.team(colour)).frame(height: 2) } }
+            if !on { Unread(count: unread) }
         }
         .padding(.horizontal, 14).frame(minHeight: 40)
         .background(on ? Palette.ink : Palette.field, in: Capsule()).foregroundStyle(on ? Palette.ground : Palette.ink)
@@ -335,7 +354,9 @@ struct FeedView: View {
             Button { model.only = nil; model.room = nil; model.replyingTo = nil } label: {
                 Image(systemName: "chevron.left").font(.system(size: 14, weight: .bold)).frame(width: 40, height: 40).background(Palette.field, in: Circle())
             }
-            .buttonStyle(.plain).accessibilityLabel("All teams")
+            // what the other teams have said since he last looked at them
+            .overlay(alignment: .topTrailing) { Unread(count: elsewhere).offset(x: 5, y: -4) }
+            .buttonStyle(.plain).accessibilityLabel(elsewhere > 0 ? "All teams, \(elsewhere) unread" : "All teams")
             .padding(.leading, 8).background(Palette.ground).zIndex(2)
         }
         ScrollView(.horizontal, showsIndicators: false) {
@@ -343,15 +364,15 @@ struct FeedView: View {
                 if let team {
                     // inside a team: the team itself, then its agents
                     Button { model.room = team.name; model.only = nil; model.replyingTo = nil } label: {
-                        chip(team.name, on: model.only == nil, dot: team.state, working: team.members.contains { $0.state == "working" }, colour: team.colour)
+                        chip(team.name, on: model.only == nil, dot: team.state, working: team.members.contains { $0.state == "working" }, colour: team.colour, unread: team.unread)
                     }
-                    .buttonStyle(.plain).id("team:" + team.name)
+                    .buttonStyle(.plain).id("team:" + team.name).accessibilityLabel(team.unread > 0 && model.only != nil ? "\(team.name), \(team.unread) unread" : team.name)
                     ForEach(team.members, id: \.id) { agent in
                         let short = agent.callsign.hasPrefix(team.name + " ") ? String(agent.callsign.dropFirst(team.name.count + 1)) : agent.callsign
                         Button { model.room = team.name; model.only = model.only == agent.callsign ? nil : agent.callsign; model.replyingTo = nil } label: {
-                            chip(short, on: model.only == agent.callsign, dot: agent.state, badge: (agent.badge, team.colour))
+                            chip(short, on: model.only == agent.callsign, dot: agent.state, badge: (agent.badge, team.colour), unread: agent.unread)
                         }
-                        .buttonStyle(.plain).id("agent:" + agent.callsign).accessibilityLabel(agent.callsign)
+                        .buttonStyle(.plain).id("agent:" + agent.callsign).accessibilityLabel(agent.unread > 0 ? "\(agent.callsign), \(agent.unread) unread" : agent.callsign)
                     }
                 } else {
                     Button { model.only = nil; model.room = nil } label: { chip("all", on: true) }
@@ -1153,8 +1174,37 @@ struct Answers: View {
         }
     }
 
+    /// The agent that asked, when it has said it takes this answer only in its own session and the computer
+    /// does not run it: an answer from here would reach it as a passed-on message, and it would ask again.
+    private var apart: DeskMember? {
+        guard m.ownSession else { return nil }
+        return model.view.rooms.flatMap(\.members).first { $0.callsign == m.from && !$0.held }
+    }
+    @State private var taking = false
+
+    /// In place of the answers: why one from here will not do, and the way to make it do.
+    private func takeOver(_ agent: DeskMember) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("It wants this answer in its own session. It was started in a terminal, so what you send from here reaches it as a passed-on message.")
+                .font(.system(size: 14)).foregroundStyle(Palette.soft).fixedSize(horizontal: false, vertical: true)
+            Button { taking = true } label: {
+                Text("Take over, then answer").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.ground)
+                    .frame(maxWidth: .infinity, minHeight: 52).background(Palette.ink, in: RoundedRectangle(cornerRadius: 16))
+            }
+            .buttonStyle(.plain)
+        }
+        .alert("Take over \(agent.callsign)?", isPresented: $taking) {
+            Button("Take over") { model.takeOver(agent) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Its terminal session ends, and the same conversation carries on run by airband. What you say then reaches it as your own words.")
+        }
+    }
+
     var body: some View {
-        if stacked {
+        if let agent = apart {
+            takeOver(agent)
+        } else if stacked {
             VStack(spacing: 10) {
                 ForEach(m.options.indices.dropLast(), id: \.self) { i in choice(i) }
                 HStack(spacing: 10) {
@@ -1379,7 +1429,29 @@ struct VoiceView: View {
     var body: some View {
         Form {
             ForEach(offered, id: \.kind) { v in
-                Section(footer: Text("Optional. This voice is made on your phone. It needs no key and works without your computer. The download is \(v.megabytes) MB.")) {
+                Section(footer: Text("Optional. This voice is made on your phone. It needs no key and works without your computer. The download is \(v.megabytes) MB. \(v.credit)")) {
+                    // which voice: each can be heard before anything is downloaded
+                    ForEach(localVoiceChoices(kind: v.kind), id: \.name) { choice in
+                        let chosen = model.voiceName == choice.name || (model.voiceName.isEmpty && choice.name == localVoiceChoices(kind: v.kind).first?.name)
+                        HStack(spacing: 12) {
+                            Button { model.preview(choice) } label: {
+                                Image(systemName: model.previewing == choice.name ? "stop.circle.fill" : "play.circle.fill").font(.system(size: 28)).foregroundStyle(Palette.ink)
+                            }
+                            .buttonStyle(.plain).accessibilityLabel(model.previewing == choice.name ? "Stop \(choice.name)" : "Hear \(choice.name)")
+                            Button { model.chooseVoice(choice.name) } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(choice.name).foregroundStyle(Palette.ink)
+                                        Text(choice.about).font(.footnote).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    if chosen { Image(systemName: "checkmark").font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink) }
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain).accessibilityAddTraits(chosen ? .isSelected : [])
+                        }
+                    }
                     if v.fetched {
                         Toggle("Use \(v.name)", isOn: Binding(get: { model.localVoice == v.kind }, set: { model.useVoice($0 ? v.kind : "") }))
                         if model.localVoice == v.kind {
@@ -1451,11 +1523,14 @@ struct SetupView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    NavigationLink { ChoicePage(title: "Summaries", headline: Headline.reads) { ReadsPicker(mode: .settings) }.environmentObject(model) } label: { row("Summaries", model.pendingReads != nil ? "Waiting for your computer" : model.view.reads) }
+                    NavigationLink { ChoicePage(title: "Listening", headline: Headline.ears) { EarsPicker(mode: .settings) }.environmentObject(model) } label: { row("Listening", listensWith) }
+                    NavigationLink { ChoicePage(title: "Voice", headline: Headline.voice) { VoicePicker(mode: .settings) }.environmentObject(model) } label: { row("Voice", speaksWith) }
+                }
                 if model.paired {
                     Section {
                         NavigationLink("Accounts", isActive: $showAccounts) { AccountsView().environmentObject(model) }
-                        NavigationLink("Listening") { SpeechKeyView().environmentObject(model) }
-                        NavigationLink("Voice") { VoiceView().environmentObject(model) }
                         if push.denied {
                             Button("Turn on notifications") { UIApplication.shared.open(URL(string: UIApplication.openNotificationSettingsURLString)!) }
                         }
@@ -1477,9 +1552,26 @@ struct SetupView: View {
                 }
             }
             .fullScreenCover(isPresented: $scanning) { ScanSheet().environmentObject(model) }
-            .navigationTitle("Pairing").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("Settings").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
+    }
+}
+
+extension SetupView {
+    /// One row of the settings list: what it is, and what is chosen for it now.
+    func row(_ title: String, _ now: String) -> some View {
+        HStack { Text(title); Spacer(); Text(now).foregroundStyle(.secondary).lineLimit(1) }
+    }
+    var listensWith: String {
+        if !model.ownEars.isEmpty { return listeningServices().first { $0.kind == model.ownEars }?.name ?? "" }
+        if !model.localEars.isEmpty { return localListeners(dir: model.voiceDir).first { $0.kind == model.localEars }?.name ?? "" }
+        return "Your computer\u{2019}s choice"
+    }
+    var speaksWith: String {
+        if !model.serviceVoice.isEmpty { return voiceServices().first { $0.kind == model.serviceVoice }?.name ?? "" }
+        if !model.localVoice.isEmpty { return localVoices(dir: model.voiceDir).first { $0.kind == model.localVoice }?.name ?? "" }
+        return "Your computer\u{2019}s choice"
     }
 }
 
@@ -1770,13 +1862,22 @@ struct AgentsMenu: View {
                         }
                     }
                 }
-                Button(action: openSetup) {
-                    Text("Accounts and pairing").font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.quiet)
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).padding(.horizontal, 14)
-                }
-                .buttonStyle(.plain).padding(.top, 6)
             }
             .padding(.horizontal, 12).padding(.top, 18).padding(.bottom, 10)
+        }
+        // Settings stays at the bottom, whatever the list above it is scrolled to
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            Button(action: openSetup) {
+                HStack(spacing: 10) {
+                    Image(systemName: "gearshape").font(.system(size: 17, weight: .medium))
+                    Text("Settings").font(.system(size: 17, weight: .medium))
+                    Spacer()
+                }
+                .foregroundStyle(Palette.ink).padding(.horizontal, 26).frame(minHeight: 52)
+                .background(Palette.ground)
+                .overlay(alignment: .top) { Rectangle().fill(Palette.raised).frame(height: 1) }
+            }
+            .buttonStyle(.plain)
         }
         .background(Palette.ground.ignoresSafeArea())
         .foregroundStyle(Palette.ink)

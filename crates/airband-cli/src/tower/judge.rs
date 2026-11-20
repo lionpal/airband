@@ -55,16 +55,24 @@ pub(super) async fn set_reader(wanted: airband_core::radio::SetReads) -> Result<
     // only the settings its row asks for
     let set = wanted.set.into_iter().filter(|(field, value)| !value.trim().is_empty() && offer.asks.iter().any(|a| a.field == field)).map(|(f, v)| (f, Value::String(v.trim().to_string()))).collect();
     let using = Use { kind: p.id.into(), key: key.clone(), set };
-    ask(&using, "Reply with the one word: ready".into(), None).await.map_err(|why| format!("{} did not answer: {}", p.name, why.chars().take(160).collect::<String>()))?;
+    // a model on this computer is fetched the first time it is chosen: wait through that
+    super::local::wait_for_it(true);
+    let tried = ask(&using, "Reply with the one word: ready".into(), None).await;
+    super::local::wait_for_it(false);
+    tried.map_err(|why| format!("{} did not answer: {}", p.name, why.chars().take(160).collect::<String>()))?;
     if p.key && !cfg.keys.values().any(|k| k.secret == key) {
         let name = (1..).map(|n| if n == 1 { p.id.to_string() } else { format!("{}-{n}", p.id) }).find(|n| !cfg.keys.contains_key(n)).unwrap();
         cfg.keys.insert(name, config::StoredKey { provider: p.id.into(), secret: key });
     }
     cfg.summarizer = using.clone();
     config::save(&cfg)?;
+    // a model this tower was running for the last choice is stopped, unless it is the new one too
+    if !matches!(offer.by, crate::providers::By::OnThisComputer(_)) {
+        super::local::stop();
+    }
     *READER.lock().unwrap() = Some(using);
-    log(format!("a radio chose what reads: {}", p.name));
-    Ok(p.name.to_string())
+    log(format!("a radio chose what reads: {}", offer.label));
+    Ok(offer.label.to_string())
 }
 
 /// Ask the model that reads for the tower. If it does not answer, the second one is asked, when there is one.
@@ -106,6 +114,15 @@ async fn ask(model: &Summarizer, prompt: String, shape: Option<Value>) -> Result
             }
             let url = format!("{}/chat/completions", model.get(Job::Summary, "url").trim_end_matches('/'));
             return ask_api(url, model.key.clone(), body).await;
+        }
+        // a model this tower runs itself: the same chat interface, at its own address, always held to shape
+        By::OnThisComputer(name) => {
+            let url = tokio::task::spawn_blocking(move || super::local::ensure(name)).await.map_err(|e| e.to_string())??;
+            let mut body = json!({ "model": name, "messages": [{ "role": "user", "content": prompt }], "temperature": 0, "max_tokens": 400 });
+            if let Some(shape) = shape {
+                body["response_format"] = json!({ "type": "json_schema", "json_schema": { "name": "answer", "strict": true, "schema": shape } });
+            }
+            return ask_api(format!("{url}/chat/completions"), String::new(), body).await;
         }
         By::Command(usual) => match model.set.get("argv").and_then(|a| a.as_array()) {
             Some(own) => own.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
@@ -161,13 +178,16 @@ pub(super) struct Judged {
     pub read: Option<String>,
     /// It stopped only to wait for work of its own that is still running: it is still at work.
     pub background: bool,
+    /// The agent says it will take this answer only from him in its own session, and not from a message that
+    /// reaches it another way: an answer sent from a radio to an agent the tower does not run would not count.
+    pub own_session: bool,
 }
 
 /// The tower's main job: decide how much of his attention a message deserves, what to tell him of it, and, when
 /// it is a question he can answer by picking, what the picks are.
 pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
     if item.notice {
-        return Judged { kind: Kind::NeedsYou, say: spoken(&item.full), options: Vec::new(), recommended: None, read: None, background: false };
+        return Judged { kind: Kind::NeedsYou, say: spoken(&item.full), options: Vec::new(), recommended: None, read: None, background: false, own_session: false };
     }
     let prompt = format!(
         "{name} runs several coding agents at once and is away from his desk. You are his dispatcher: you decide \
@@ -242,8 +262,12 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
          a page), name that thing in two or three words (\"the refund email\", \"the migration plan\"). He is \
          then offered the whole message to read under that name. A line or two that says everything needs \
          nothing to read: null.\n\n\
+         And \"own_session\": true only when the agent says it will not take the answer as a message passed on \
+         to it (relayed by another session, or sent through Airband) and that he must give it himself in the \
+         agent\'s own session or terminal. Then give no choices, and say in \"say\" what it is waiting to be \
+         told, without telling him to reply \"here\". Otherwise false.\n\n\
          Reply with one line of JSON and nothing else: \
-         {{\"kind\":\"needs-you\" or \"report\" or \"stalled\" or \"fyi\",\"say\":\"...\",\"options\":[],\"recommended\":null,\"read\":null,\"background\":false}}\n\
+         {{\"kind\":\"needs-you\" or \"report\" or \"stalled\" or \"fyi\",\"say\":\"...\",\"options\":[],\"recommended\":null,\"read\":null,\"background\":false,\"own_session\":false}}\n\
          \"background\": true when it has stopped only to wait for work of its own that is still running and will \
          bring it back by itself (a build, a test run, a background agent or task it started): it is still at work.\n\n\
          {asked}<message>\n{msg}\n</message>",
@@ -263,6 +287,8 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
         read: Option<String>,
         #[serde(default)]
         background: bool,
+        #[serde(default)]
+        own_session: bool,
     }
     // The shape of the answer, for a service that can be held to one. The words come before the verdict: a
     // small model that has just written what the message says judges it better than one that judges first.
@@ -274,9 +300,10 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
             "options": { "type": "array", "items": { "type": "string" }, "maxItems": 3 },
             "recommended": { "type": ["integer", "null"] },
             "read": { "type": ["string", "null"] },
-            "background": { "type": "boolean" }
+            "background": { "type": "boolean" },
+            "own_session": { "type": "boolean" }
         },
-        "required": ["say", "kind", "options", "recommended", "read", "background"],
+        "required": ["say", "kind", "options", "recommended", "read", "background", "own_session"],
         "additionalProperties": false
     });
     let parsed = ask_shaped(cfg, prompt, Some(shape)).await.and_then(|out| {
@@ -295,11 +322,12 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
             let say = if reads_as_written(&item.full, 110) { spoken(&item.full) } else { spoken(&o.say) };
             // a harness that knows its agent is blocked outranks the judge
             let kind = item.kind.unwrap_or(judged);
-            let options = if kind == Kind::NeedsYou { o.options.iter().map(|c| c.trim().to_string()).filter(|c| !c.is_empty() && c.chars().count() <= 24).take(3).collect() } else { Vec::new() };
+            let own_session = o.own_session && kind == Kind::NeedsYou;
+            let options = if kind == Kind::NeedsYou && !own_session { o.options.iter().map(|c| c.trim().to_string()).filter(|c| !c.is_empty() && c.chars().count() <= 24).take(3).collect() } else { Vec::new() };
             let recommended = o.recommended.filter(|i| (*i as usize) < options.len());
             // only for a message with more in it than its line: a name of a few words, and nothing for chatter
             let read = o.read.map(|r| r.trim().to_string()).filter(|r| !r.is_empty() && r.chars().count() <= 32 && kind != Kind::Fyi && spoken(&item.full) != say);
-            Judged { kind, say, options, recommended, read, background: o.background && kind != Kind::NeedsYou }
+            Judged { kind, say, options, recommended, read, background: o.background && kind != Kind::NeedsYou, own_session }
         }
         other => {
             // No model answered. Nothing is guessed from the words: he gets the message as the agent wrote it,
@@ -307,7 +335,7 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
             if let Err(e) = other {
                 log(format!("no summary, giving him the message as written: {e}"));
             }
-            Judged { kind: item.kind.unwrap_or(Kind::Report), say: spoken(&item.full), options: Vec::new(), recommended: None, read: None, background: false }
+            Judged { kind: item.kind.unwrap_or(Kind::Report), say: spoken(&item.full), options: Vec::new(), recommended: None, read: None, background: false, own_session: false }
         }
     }
 }

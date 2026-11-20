@@ -49,13 +49,16 @@ The tower is one Rust program and uses about 6 MB of memory.
 You need Claude Code. With [Homebrew](https://brew.sh), on macOS or Linux:
 
 ```sh
-brew install lionpal/airband/airband
-airband setup
+brew install lionpal/airband/airband && airband start
 ```
 
-`airband setup` asks what makes summaries, what speaks and what listens, and tries each choice with a real
-call. Then it hooks up Claude Code, starts the tower at login (macOS) and shows a QR code for your phone's
-camera. Run it again to change a choice.
+`airband start` hooks up Claude Code, starts the tower at login (macOS) and shows a QR code for your phone's
+camera. What writes the summaries, what speaks and what listens are chosen in the app, on first run and later
+under Settings.
+
+To choose them at the computer, run `airband setup`. It asks about each and tries every choice with a real
+call. One of the choices for summaries is Alibaba Qwen 3.5 4B, which the tower downloads (2.7 GB) and runs on
+the computer itself, so no message leaves it. Run `airband setup` again to change a choice.
 
 Then start Claude Code the way you always do. Each session shows up in the app under its project.
 

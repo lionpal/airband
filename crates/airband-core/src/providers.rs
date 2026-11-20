@@ -36,6 +36,9 @@ pub enum By {
     /// `shaped`: the service can be held to a JSON schema (`response_format`), so what comes back always
     /// parses; a call that knows the shape it wants says so. Small models need this most.
     Chat { cold: bool, shaped: bool },
+    /// A model the tower fetches and runs itself on this computer, with llama.cpp's server, and speaks to by
+    /// the same chat interface held to shape. Named as that server takes it: a Hugging Face repo and a quant.
+    OnThisComputer(&'static str),
     /// A program on this computer: the prompt on standard input, the answer on standard output. The arguments
     /// here are the usual ones; `argv` in the settings replaces them.
     Command(&'static [&'static str]),
@@ -64,6 +67,10 @@ pub struct Ask {
 pub struct Offer {
     pub job: Job,
     pub by: By,
+    /// What this is called where he chooses it: the maker and the model ("Google Gemini 3.5 Flash-Lite").
+    pub label: &'static str,
+    /// One line under that, for something that needs no key: where it runs and what it costs him.
+    pub about: &'static str,
     pub asks: &'static [Ask],
 }
 
@@ -72,6 +79,8 @@ pub struct Provider {
     pub id: &'static str,
     pub name: &'static str,
     pub key: bool,
+    /// What its key is called, for asking for it ("Gemini API key").
+    pub key_name: &'static str,
     /// Where its keys are made.
     pub keys_at: &'static str,
     pub offers: &'static [Offer],
@@ -82,102 +91,124 @@ pub struct Provider {
 const fn ask(field: &'static str, question: &'static str, usual: &'static str) -> Ask {
     Ask { field, question, usual }
 }
+const fn offer(job: Job, by: By, label: &'static str, about: &'static str, asks: &'static [Ask]) -> Offer {
+    Offer { job, by, label, about, asks }
+}
 
 /// Claude Haiku with a one-line system prompt and no tools. Measured on 2026-11-18: about 650 tokens a message.
 /// The same call with Claude Code's own system prompt and tool list was about 17,400.
 pub const CLAUDE: &[&str] = &["claude", "-p", "--model", "haiku", "--no-session-persistence", "--strict-mcp-config", "--system-prompt", "You are a dispatcher. Output only what is asked for.", "--tools", ""];
 
 pub const PROVIDERS: &[Provider] = &[
-    Provider { id: "claude", name: "Claude on this computer, with your Claude login", key: false, keys_at: "", offered: true, offers: &[Offer { job: Job::Summary, by: By::Command(CLAUDE), asks: &[] }] },
+    Provider { id: "claude", name: "Claude on this computer, with your Claude login", key: false, key_name: "", keys_at: "", offered: true, offers: &[offer(Job::Summary, By::Command(CLAUDE), "Claude Haiku 5.5", "Uses the Claude login on your computer", &[])] },
     Provider {
         id: "anthropic",
         name: "Anthropic, with an API key",
         key: true,
+        key_name: "Anthropic API key",
         keys_at: "console.anthropic.com/settings/keys",
         offered: true,
-        offers: &[Offer { job: Job::Summary, by: By::Chat { cold: false, shaped: false }, asks: &[ask("url", "Address", "https://api.anthropic.com/v1"), ask("model", "Model", "claude-haiku-5-5")] }],
+        offers: &[offer(Job::Summary, By::Chat { cold: false, shaped: false }, "Anthropic Claude Haiku 5.5", "", &[ask("url", "Address", "https://api.anthropic.com/v1"), ask("model", "Model", "claude-haiku-5-5")])],
     },
     Provider {
         id: "gemini",
         name: "Google Gemini",
         key: true,
+        key_name: "Gemini API key",
         keys_at: "aistudio.google.com/apikey",
         offered: true,
         offers: &[
-            Offer { job: Job::Summary, by: By::Chat { cold: true, shaped: true }, asks: &[ask("url", "Address", "https://generativelanguage.googleapis.com/v1beta/openai"), ask("model", "Model", "gemini-3.5-flash-lite")] },
-            Offer { job: Job::Voice, by: By::GeminiVoice, asks: &[ask("model", "Model", "gemini-3.8-flash-lite-tts"), ask("voice", "Voice", "Leda")] },
+            offer(Job::Summary, By::Chat { cold: true, shaped: true }, "Google Gemini 3.5 Flash-Lite", "", &[ask("url", "Address", "https://generativelanguage.googleapis.com/v1beta/openai"), ask("model", "Model", "gemini-3.5-flash-lite")]),
+            offer(Job::Voice, By::GeminiVoice, "Google Gemini 3.8 Flash TTS", "", &[ask("model", "Model", "gemini-3.8-flash-lite-tts"), ask("voice", "Voice", "Leda")]),
             // its Live API, with the model that only transcribes: the words come back as he speaks
-            Offer { job: Job::Ears, by: By::Listener("gemini"), asks: &[ask("model", "Model", "gemini-3.5-transcribe-live"), ask("language", "Language", "en-US")] },
+            offer(Job::Ears, By::Listener("gemini"), "Google Gemini 3.5 Transcribe", "", &[ask("model", "Model", "gemini-3.5-transcribe-live"), ask("language", "Language", "en-US")]),
         ],
     },
     Provider {
         id: "openai",
         name: "OpenAI",
         key: true,
+        key_name: "OpenAI API key",
         keys_at: "platform.openai.com/api-keys",
         offered: true,
         offers: &[
             // a model that reasons takes no temperature
-            Offer { job: Job::Summary, by: By::Chat { cold: false, shaped: true }, asks: &[ask("url", "Address", "https://api.openai.com/v1"), ask("model", "Model", "gpt-6-luna")] },
-            Offer { job: Job::Voice, by: By::Speech, asks: &[ask("url", "Address", "https://api.openai.com/v1"), ask("model", "Model", "gpt-4o-mini-tts"), ask("voice", "Voice", "coral"), ask("rate", "Samples a second", "24000")] },
-            Offer { job: Job::Ears, by: By::Transcribe, asks: &[ask("url", "Address", "https://api.openai.com/v1"), ask("model", "Model", "gpt-transcribe")] },
+            offer(Job::Summary, By::Chat { cold: false, shaped: true }, "OpenAI GPT-6 Luna", "", &[ask("url", "Address", "https://api.openai.com/v1"), ask("model", "Model", "gpt-6-luna")]),
+            offer(Job::Voice, By::Speech, "OpenAI GPT-4o mini TTS", "", &[ask("url", "Address", "https://api.openai.com/v1"), ask("model", "Model", "gpt-4o-mini-tts"), ask("voice", "Voice", "coral"), ask("rate", "Samples a second", "24000")]),
+            offer(Job::Ears, By::Transcribe, "OpenAI GPT Transcribe", "", &[ask("url", "Address", "https://api.openai.com/v1"), ask("model", "Model", "gpt-transcribe")]),
         ],
+    },
+    // A model the tower fetches and runs itself, on this computer: nothing a message says leaves it. Measured
+    // against Haiku on the summary job in docs/experiments/2026-11-20-local-summary-models.md.
+    Provider {
+        id: "qwen",
+        name: "Alibaba Qwen 3.5 4B, on this computer",
+        key: false,
+        key_name: "",
+        keys_at: "",
+        offered: true,
+        offers: &[offer(Job::Summary, By::OnThisComputer("unsloth/Qwen3.5-4B-GGUF:Q4_K_M"), "Alibaba Qwen 3.5 4B", "Runs on your computer. 2.7 GB download, about 4 GB of memory", &[])],
     },
     Provider {
         id: "openrouter",
         name: "OpenRouter",
         key: true,
+        key_name: "OpenRouter API key",
         keys_at: "openrouter.ai/keys",
         offered: true,
-        offers: &[Offer { job: Job::Summary, by: By::Chat { cold: true, shaped: false }, asks: &[ask("url", "Address", "https://openrouter.ai/api/v1"), ask("model", "Model", "google/gemini-3.5-flash-lite")] }],
+        offers: &[offer(Job::Summary, By::Chat { cold: true, shaped: false }, "OpenRouter", "", &[ask("url", "Address", "https://openrouter.ai/api/v1"), ask("model", "Model", "google/gemini-3.5-flash-lite")])],
     },
     Provider {
         id: "groq",
         name: "Groq",
         key: true,
+        key_name: "Groq API key",
         keys_at: "console.groq.com/keys",
         offered: true,
         offers: &[
-            Offer { job: Job::Summary, by: By::Chat { cold: true, shaped: false }, asks: &[ask("url", "Address", "https://api.groq.com/openai/v1"), ask("model", "Model", "openai/gpt-oss-120b")] },
-            Offer { job: Job::Ears, by: By::Transcribe, asks: &[ask("url", "Address", "https://api.groq.com/openai/v1"), ask("model", "Model", "whisper-large-v3-turbo")] },
+            offer(Job::Summary, By::Chat { cold: true, shaped: false }, "Groq GPT-OSS 120B", "", &[ask("url", "Address", "https://api.groq.com/openai/v1"), ask("model", "Model", "openai/gpt-oss-120b")]),
+            offer(Job::Ears, By::Transcribe, "Groq Whisper Large v3 Turbo", "", &[ask("url", "Address", "https://api.groq.com/openai/v1"), ask("model", "Model", "whisper-large-v3-turbo")]),
         ],
     },
     Provider {
         id: "local",
         name: "A model server on this computer or your network (Ollama, LM Studio, llama.cpp, a voice server)",
         key: false,
+        key_name: "",
         keys_at: "",
         offered: true,
         offers: &[
-            Offer { job: Job::Summary, by: By::Chat { cold: true, shaped: true }, asks: &[ask("url", "Address", "http://localhost:11434/v1"), ask("model", "Model", "")] },
-            Offer { job: Job::Voice, by: By::Speech, asks: &[ask("url", "Address", "http://localhost:8880/v1"), ask("model", "Model", "kokoro"), ask("voice", "Voice", "af_heart"), ask("rate", "Samples a second", "24000")] },
-            Offer { job: Job::Ears, by: By::Transcribe, asks: &[ask("url", "Address", "http://localhost:8000/v1"), ask("model", "Model", "whisper-1")] },
+            offer(Job::Summary, By::Chat { cold: true, shaped: true }, "Your own model server", "Ollama, LM Studio or llama.cpp, at an address you give", &[ask("url", "Address", "http://localhost:11434/v1"), ask("model", "Model", "")]),
+            offer(Job::Voice, By::Speech, "Your own voice server", "At an address you give", &[ask("url", "Address", "http://localhost:8880/v1"), ask("model", "Model", "kokoro"), ask("voice", "Voice", "af_heart"), ask("rate", "Samples a second", "24000")]),
+            offer(Job::Ears, By::Transcribe, "Your own speech server", "At an address you give", &[ask("url", "Address", "http://localhost:8000/v1"), ask("model", "Model", "whisper-1")]),
         ],
     },
     Provider {
         id: "elevenlabs",
         name: "ElevenLabs",
         key: true,
+        key_name: "ElevenLabs API key",
         keys_at: "elevenlabs.io/app/settings/api-keys",
         offered: true,
         // the voice is Jessica: young, bright and warm
-        offers: &[Offer { job: Job::Voice, by: By::ElevenlabsVoice, asks: &[ask("voice", "Voice id", "cgSgspJ2msm6clMCkdW9"), ask("model", "Model", "eleven_flash_v2_5")] }],
+        offers: &[offer(Job::Voice, By::ElevenlabsVoice, "ElevenLabs Flash 2.5", "", &[ask("voice", "Voice id", "cgSgspJ2msm6clMCkdW9"), ask("model", "Model", "eleven_flash_v2_5")])],
     },
     Provider {
         id: "azure",
         name: "Microsoft Azure Speech",
         key: true,
+        key_name: "Azure key",
         keys_at: "portal.azure.com, a Speech resource, Keys and Endpoint",
         offered: true,
         offers: &[
-            Offer { job: Job::Voice, by: By::AzureVoice { pass: false }, asks: &[ask("region", "Region", "eastus"), ask("voice", "Voice", AZURE_VOICE)] },
-            Offer { job: Job::Ears, by: By::Listener("azure"), asks: &[ask("region", "Region", "eastus"), ask("language", "Language", "en-US")] },
+            offer(Job::Voice, By::AzureVoice { pass: false }, "Microsoft Azure Speech", "", &[ask("region", "Region", "eastus"), ask("voice", "Voice", AZURE_VOICE)]),
+            offer(Job::Ears, By::Listener("azure"), "Microsoft Azure Speech", "", &[ask("region", "Region", "eastus"), ask("language", "Language", "en-US")]),
         ],
     },
     // a program of his own that reads: `argv` says what to run
-    Provider { id: "command", name: "A command of your own", key: false, keys_at: "", offered: false, offers: &[Offer { job: Job::Summary, by: By::Command(&[]), asks: &[] }] },
+    Provider { id: "command", name: "A command of your own", key: false, key_name: "", keys_at: "", offered: false, offers: &[offer(Job::Summary, By::Command(&[]), "A command of your own", "", &[])] },
     // what the tower uses when nothing is set here and the relay lends its pass: never written in the settings
-    Provider { id: LENT, name: "The relay's speech service", key: false, keys_at: "", offered: false, offers: &[Offer { job: Job::Voice, by: By::AzureVoice { pass: true }, asks: &[ask("region", "Region", ""), ask("voice", "Voice", AZURE_VOICE)] }] },
+    Provider { id: LENT, name: "The relay's speech service", key: false, key_name: "", keys_at: "", offered: false, offers: &[offer(Job::Voice, By::AzureVoice { pass: true }, "The relay's speech service", "", &[ask("region", "Region", ""), ask("voice", "Voice", AZURE_VOICE)])] },
 ];
 
 const AZURE_VOICE: &str = "en-US-AvaMultilingualNeural";
@@ -272,7 +303,7 @@ mod tests {
                 assert_eq!(p.offers.iter().filter(|x| x.job == o.job).count(), 1, "{} does one job two ways", p.id);
                 // each kind of job is done through an interface for that job
                 let fits = match o.by {
-                    By::Chat { .. } | By::Command(_) => o.job == Job::Summary,
+                    By::Chat { .. } | By::Command(_) | By::OnThisComputer(_) => o.job == Job::Summary,
                     By::Speech | By::GeminiVoice | By::AzureVoice { .. } | By::ElevenlabsVoice => o.job == Job::Voice,
                     By::Listener(_) | By::Transcribe => o.job == Job::Ears,
                 };

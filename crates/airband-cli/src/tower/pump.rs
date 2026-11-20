@@ -33,7 +33,7 @@ pub(super) async fn pump(app: &Arc<App>) {
 
     let mut inner = app.inner.lock().unwrap();
     for (id, j) in done {
-        inner.fill(&id, j.kind, &j.say, &j.options, j.recommended, j.read.as_deref(), j.background);
+        inner.fill(&id, j.kind, &j.say, &j.options, j.recommended, j.read.as_deref(), j.background, j.own_session);
         // a radio on a call hears it; another that is neither on a call nor showing the chat is woken
         push::consider(app, &mut inner, &id);
     }

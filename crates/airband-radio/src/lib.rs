@@ -43,7 +43,7 @@ pub mod voices;
 use call::*;
 pub use desk::*;
 pub use ears::try_listening;
-pub use models::{LocalModel, fetch_local_model, local_listeners, local_model_progress, local_voices, remove_local_model};
+pub use models::{LocalModel, VoiceChoice, fetch_local_model, local_listeners, local_model_progress, local_voice_choices, local_voices, remove_local_model};
 pub use mouth::{Service, ServiceAsk, VoiceSample, check_service_voice, listening_services, own_voice_sample, reading_services, set_local_voice, set_service_voice, voice_services};
 use link::*;
 use outbox::*;
@@ -146,7 +146,7 @@ pub struct Outgoing {
 
 fn chat(m: airband_core::radio::Message) -> ChatMessage {
     use airband_core::routing::shown;
-    ChatMessage { seq: m.seq, id: m.id, at: m.at, from: shown(&m.from), group: m.group, to: m.to.iter().map(|t| shown(t)).collect(), needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), text: m.text, long: m.long, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links, agent: m.agent, station: String::new(), open: m.open, badge: String::new(), colour: 0, read: m.read }
+    ChatMessage { seq: m.seq, id: m.id, at: m.at, from: shown(&m.from), group: m.group, to: m.to.iter().map(|t| shown(t)).collect(), needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), text: m.text, long: m.long, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links, agent: m.agent, station: String::new(), open: m.open, badge: String::new(), colour: 0, read: m.read, own_session: m.own_session }
 }
 
 fn chat_feed(feed: Feed) -> ChatFeed {
@@ -253,6 +253,9 @@ pub struct ChatMessage {
     /// It holds something to read whole, called this ("the refund email"): offer the full message under that
     /// name. [`Desk::full`] fetches it.
     pub read: Option<String>,
+    /// The agent takes this answer only from him in its own session. If the tower does not run that agent,
+    /// an answer from here will not count: say so, and offer to take it over.
+    pub own_session: bool,
 }
 
 /// A picture an agent looked at or made for him. The size is known before the picture is fetched, so a host

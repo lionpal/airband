@@ -14,7 +14,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     static let shared = RadioModel()
 
     /// What the screen shows, as the desk last gave it, for the room or agent he is looking at.
-    @Published var view = DeskView(paired: false, online: false, connecting: false, near: false, away: [], feed: [], rooms: [], canPoke: false, quick: [], sending: [], stations: [], keyed: [], uploads: [], asking: nil)
+    @Published var view = DeskView(paired: false, online: false, connecting: false, near: false, away: [], feed: [], rooms: [], unread: 0, canPoke: false, quick: [], sending: [], stations: [], keyed: [], reads: "", uploads: [], asking: nil)
     /// A project: show just its agents, and keep what he says among them.
     @Published var room: String? { didSet { refresh() } }
     /// A callsign: show just that agent.
@@ -72,7 +72,15 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("radio")
         voiceDir = dir.path
         desk = Desk.open(dataDir: dir.path, host: self)
-        setLocalVoice(dir: dir.path, kind: UserDefaults.standard.string(forKey: "airband.voice") ?? "")
+        // A new install starts with the models that run on this phone chosen for listening and for the voice:
+        // they need nothing from him, and are fetched when he finishes the first run. Someone who was already
+        // using the app keeps what he had.
+        let defaults = UserDefaults.standard
+        if !defaults.bool(forKey: "airband.onboarded") && Keychain.read("airband.links") == nil && Keychain.read("airband.link") == nil {
+            if defaults.string(forKey: "airband.voice") == nil, let first = localVoices(dir: dir.path).first { defaults.set(first.kind, forKey: "airband.voice") }
+            if defaults.string(forKey: "airband.ears.local") == nil, let first = localListeners(dir: dir.path).first { defaults.set(first.kind, forKey: "airband.ears.local") }
+        }
+        setLocalVoice(dir: dir.path, kind: UserDefaults.standard.string(forKey: "airband.voice") ?? "", voice: UserDefaults.standard.string(forKey: "airband.voice.name") ?? "")
         setLocalEars(dir: dir.path, kind: UserDefaults.standard.string(forKey: "airband.ears.local") ?? "")
         if !serviceVoice.isEmpty { setServiceVoice(kind: serviceVoice, key: phoneKeys[serviceVoice] ?? "", settings: serviceSettings) }
         if !ownEars.isEmpty { setOwnEars(kind: ownEars, key: phoneKeys[ownEars] ?? "", settings: ownEarsSettings) }
@@ -160,6 +168,80 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         // a room that has gone (its last agent left) is not somewhere he can stay
         if let room, view.online, !view.rooms.contains(where: { $0.name == room }) { self.room = nil }
         if full.count > 60 { full.removeAll() } // opened long ago: fetched again if he looks again
+        sendPendingReads()
+    }
+
+    /// What he chose to write his summaries before any computer was paired: its kind. Sent when one is.
+    @Published var pendingReads: String? = UserDefaults.standard.string(forKey: "airband.reads.pending")
+    private var sendingReads = false
+
+    /// Choose what reads the agents' messages. The work is done on his computer, so the choice goes there,
+    /// with its key sealed; the computer tries it and keeps the key encrypted. With no computer paired yet the
+    /// choice waits (its key in this phone's Keychain) and is sent when one is. Calls back with what is wrong.
+    func chooseReads(_ kind: String, key: String?, settings: [String: String], done: @escaping (String?) -> Void) {
+        if let key, !key.isEmpty { keepPhoneKey(kind, key) }
+        guard view.online else {
+            UserDefaults.standard.set(kind, forKey: "airband.reads.pending")
+            UserDefaults.standard.set(String(data: (try? JSONEncoder().encode(settings)) ?? Data("{}".utf8), encoding: .utf8), forKey: "airband.reads.pending.settings")
+            pendingReads = kind
+            return done(nil)
+        }
+        let key = key ?? phoneKeys[kind] ?? ""
+        fetch.async {
+            var wrong: String?
+            do { try self.desk.setReads(kind: kind, key: key, settings: settings) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "Your computer did not take that. Try again when it can be reached." }
+            DispatchQueue.main.async {
+                if wrong == nil {
+                    UserDefaults.standard.removeObject(forKey: "airband.reads.pending")
+                    self.pendingReads = nil
+                    self.refresh()
+                }
+                done(wrong)
+            }
+        }
+    }
+
+    /// A computer can be reached and a choice was waiting for one: send it now, once.
+    private func sendPendingReads() {
+        guard let kind = pendingReads, view.online, !sendingReads else { return }
+        sendingReads = true
+        let settings = (try? JSONDecoder().decode([String: String].self, from: Data((UserDefaults.standard.string(forKey: "airband.reads.pending.settings") ?? "{}").utf8))) ?? [:]
+        chooseReads(kind, key: nil, settings: settings) { problem in
+            self.sendingReads = false
+            // one it would not take is let go, and said: he can pick again in Settings
+            if let problem {
+                UserDefaults.standard.removeObject(forKey: "airband.reads.pending")
+                self.pendingReads = nil
+                self.problem = problem
+            }
+        }
+    }
+
+    /// Fetch the models he chose that run on this phone and are not here yet, one after another, and put each
+    /// to use. `step` is told what is happening and how far along it is (nil when that cannot be said).
+    func fetchChosen(step: @escaping (String?, Double?) -> Void, done: @escaping (String?) -> Void) {
+        let voice = localVoices(dir: voiceDir).first { $0.kind == localVoice && !$0.fetched && serviceVoice.isEmpty }
+        let ears = localListeners(dir: voiceDir).first { $0.kind == localEars && ownEars.isEmpty }
+        let listen = {
+            guard let ears else { return done(nil) }
+            let ready = {
+                step("Getting \(ears.name) ready for this phone. About a minute, once.", nil)
+                self.prepareLocalEars(ears.kind) { problem in
+                    if problem == nil { self.useLocalEars(ears.kind) }
+                    done(problem)
+                }
+            }
+            if ears.fetched { return ready() }
+            step("Downloading \(ears.name)", 0)
+            self.downloadVoice(ears.kind) { problem in if let problem { done(problem) } else { ready() } }
+        }
+        guard let voice else { return listen() }
+        step("Downloading \(voice.name)", 0)
+        downloadVoice(voice.kind) { problem in
+            if let problem { return done(problem) }
+            self.useVoice(voice.kind)
+            listen()
+        }
     }
 
     /// One tap on an answer button: send it as the answer to that message.
@@ -270,11 +352,51 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         setServiceVoice(kind: "", key: "", settings: [:])
     }
 
+    /// Which of the phone's own voices speaks, by name. Empty is the usual one.
+    @Published var voiceName = UserDefaults.standard.string(forKey: "airband.voice.name") ?? ""
+
+    /// Speak in this one of the model's voices from now on. Takes effect at once when the model is in use.
+    func chooseVoice(_ name: String) {
+        UserDefaults.standard.set(name, forKey: "airband.voice.name")
+        voiceName = name
+        if !localVoice.isEmpty { setLocalVoice(dir: voiceDir, kind: localVoice, voice: name) }
+    }
+
+    /// The clip being played to let him hear a voice before choosing it, and which voice it is.
+    @Published var previewing: String?
+    private var previewPlayer: AVAudioPlayer?
+
+    /// Play a short clip of a voice. It is fetched from where the model is kept, so it works before the model
+    /// is on the phone. A second tap on the same one stops it.
+    func preview(_ choice: VoiceChoice) {
+        if previewing == choice.name {
+            previewPlayer?.stop()
+            previewing = nil
+            return
+        }
+        previewing = choice.name
+        guard let url = URL(string: choice.preview) else { return }
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            DispatchQueue.main.async {
+                guard self.previewing == choice.name, let data, let player = try? AVAudioPlayer(data: data) else {
+                    if self.previewing == choice.name { self.previewing = nil }
+                    return
+                }
+                try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+                try? AVAudioSession.sharedInstance().setActive(true)
+                self.previewPlayer = player
+                player.play()
+                // the row stops showing it as playing when the clip is over
+                DispatchQueue.main.asyncAfter(deadline: .now() + player.duration + 0.2) { if self.previewing == choice.name { self.previewing = nil } }
+            }
+        }.resume()
+    }
+
     /// Speak with a voice made on this phone from now on; empty goes back to the computer's.
     func useVoice(_ kind: String) {
         UserDefaults.standard.set(kind, forKey: "airband.voice")
         localVoice = kind
-        setLocalVoice(dir: voiceDir, kind: kind)
+        setLocalVoice(dir: voiceDir, kind: kind, voice: voiceName)
         if !kind.isEmpty { stopService() }
     }
 

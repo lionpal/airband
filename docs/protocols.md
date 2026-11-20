@@ -163,8 +163,8 @@ A `Feed` is `{ schema, rev, messages, roster, roster_rev, seq, open, projects, q
   its local network addresses when `airband lan` is on, and its Tailscale addresses (see The sealed route).
 - `listens`: this tower has a key of its own for a listening service. Never the key.
 
-A message is `{ seq, id, at, from, group, to, kind, text, long, options, recommended, read, queued, seen,
-cancelled, permission, pictures, links, agent, rev, open }`.
+A message is `{ seq, id, at, from, group, to, kind, text, long, options, recommended, read, own_session, queued,
+seen, cancelled, permission, pictures, links, agent, rev, open }`.
 
 - `agent` is the id of the agent that said it, the same as `id` in the roster; `from` is only what it is called
   now. A message from `you` is something he said: through a radio, or typed to an agent at its own keyboard
@@ -180,6 +180,10 @@ cancelled, permission, pictures, links, agent, rev, open }`.
   `recommended` is the position of the one the agent itself recommended, never a default.
 - `read`: two or three words for something in the message he should be able to read whole ("the refund
   email"). A client offers the full message under that name.
+- `own_session`: the agent said it takes this answer only from him in its own session, and not from a message
+  passed on to it. The reading model decides this from the message. For an agent the tower does not run, what
+  a radio sends is such a message, so a client says so and offers to take the agent over; after that his words
+  reach it as his own. No `options` come with it.
 - `queued`: he said it to an agent the tower runs, which is busy; it waits until the agent stops. `seen` is
   when the agent took it in. `cancelled`: he took it back.
 - `links`: up to four web links the agent wrote, which the short text leaves out.

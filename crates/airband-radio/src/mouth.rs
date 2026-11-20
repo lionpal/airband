@@ -13,14 +13,22 @@ use super::*;
 use crate::models::{fetched, model};
 use std::collections::HashMap;
 
-/// The voice in use, if any: the app's folder and the kind.
+/// The voice model in use, if any: the app's folder and the kind.
 static CHOSEN: Mutex<Option<(String, String)>> = Mutex::new(None);
+/// Which of that model's voices speaks.
+static VOICE: Mutex<String> = Mutex::new(String::new());
 
-/// Speak with this voice from now on; an empty `kind` goes back to the tower's. The host remembers the choice
-/// and calls this at launch. The model is loaded in the background and stays loaded.
+/// Speak with this voice model from now on, in the voice named (one of `local_voice_choices`; anything else
+/// is its usual one); an empty `kind` goes back to the tower's. The host remembers the choice and calls this
+/// at launch. The model is loaded in the background and stays loaded; changing only the voice loads nothing.
 #[uniffi::export]
-pub fn set_local_voice(dir: String, kind: String) {
-    let chosen = model(&kind).filter(|m| m.job == airband_core::providers::Job::Voice && fetched(&dir, m)).map(|_| (dir, kind));
+pub fn set_local_voice(dir: String, kind: String, voice: String) {
+    let found = model(&kind).filter(|m| m.job == airband_core::providers::Job::Voice && fetched(&dir, m));
+    if let Some(m) = found {
+        let named = m.voices.iter().map(|(name, _)| *name).find(|name| *name == voice).or(m.voices.first().map(|(name, _)| *name)).unwrap_or_default();
+        *VOICE.lock().unwrap_or_else(|e| e.into_inner()) = named.to_string();
+    }
+    let chosen = found.map(|_| (dir, kind));
     let on = chosen.is_some();
     *CHOSEN.lock().unwrap_or_else(|e| e.into_inner()) = chosen;
     if on {
@@ -66,10 +74,14 @@ pub(crate) fn ready() -> bool {
 pub struct Service {
     /// What to pass back as `kind`. It also names the key: one key serves everything its provider does.
     pub kind: String,
-    /// What to show him.
+    /// What to show him: the maker and the model.
     pub name: String,
+    /// One line under that, for one that takes no key: where it runs and what it costs him. Else empty.
+    pub about: String,
     /// It takes a key.
     pub key: bool,
+    /// What its key is called, for asking for it ("Gemini API key").
+    pub key_name: String,
     /// Where its keys are made.
     pub keys_at: String,
     /// What else it can be told. Anything left out is the usual.
@@ -85,12 +97,15 @@ pub struct ServiceAsk {
 
 fn services(job: airband_core::providers::Job) -> Vec<Service> {
     airband_core::providers::offering(job)
-        .map(|p| Service {
+        .filter_map(|p| p.offers.iter().find(|o| o.job == job).map(|o| (p, o)))
+        .map(|(p, o)| Service {
             kind: p.id.into(),
-            name: p.name.into(),
+            name: o.label.into(),
+            about: o.about.into(),
             key: p.key,
+            key_name: p.key_name.into(),
             keys_at: p.keys_at.into(),
-            asks: p.offers.iter().filter(|o| o.job == job).flat_map(|o| o.asks).map(|a| ServiceAsk { field: a.field.into(), question: a.question.into(), usual: a.usual.into() }).collect(),
+            asks: o.asks.iter().map(|a| ServiceAsk { field: a.field.into(), question: a.question.into(), usual: a.usual.into() }).collect(),
         })
         .collect()
 }
@@ -223,32 +238,33 @@ mod engine {
     use ptts::preprocess::Lang;
     use ptts::synth::{DeviceKind, Quant, SpeechOptions, Synth};
 
-    /// The model once loaded: whose folder and kind it was loaded for, and the voice's name in it.
-    static LOADED: Mutex<Option<((String, String), &'static str, Synth)>> = Mutex::new(None);
+    /// The model once loaded, with every voice it was fetched with: whose folder and kind it was loaded for.
+    static LOADED: Mutex<Option<((String, String), Synth)>> = Mutex::new(None);
 
     pub(super) fn drop_loaded() {
         *LOADED.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     /// Do something with the chosen voice's model, loading it first if it is not the one loaded.
-    pub(super) fn with<T>(f: impl FnOnce(&mut (&'static str, &mut Synth)) -> T) -> Result<T, String> {
+    pub(super) fn with<T>(f: impl FnOnce(&mut (String, &mut Synth)) -> T) -> Result<T, String> {
         let chosen = CHOSEN.lock().unwrap_or_else(|e| e.into_inner()).clone().ok_or("No voice is chosen on this device.")?;
         let m = model(&chosen.1).ok_or("This app has no such voice.")?;
+        let voice = VOICE.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let mut loaded = LOADED.lock().unwrap_or_else(|e| e.into_inner());
-        if loaded.as_ref().is_none_or(|(of, _, _)| *of != chosen) {
+        if loaded.as_ref().is_none_or(|(of, _)| *of != chosen) {
             let said = |e: &dyn std::fmt::Display| format!("The voice could not be loaded: {e}");
             let checkpoint = Checkpoint::resolve(crate::models::folder(&chosen.0, m), ResolveOptions { quant: Quant::Q80, weights: None }).map_err(|e| said(&e))?;
             let mut synth = checkpoint.builder(Lang::En).device(DeviceKind::Cpu).build().map_err(|e| said(&e))?;
             checkpoint.register_voices(&mut synth);
-            *loaded = Some((chosen, m.voice, synth));
+            *loaded = Some((chosen, synth));
         }
-        let (_, voice, synth) = loaded.as_mut().unwrap();
-        Ok(f(&mut (*voice, synth)))
+        let (_, synth) = loaded.as_mut().unwrap();
+        Ok(f(&mut (voice, synth)))
     }
 
     pub(super) fn speak(text: &str, sink: &mut dyn FnMut(&[u8]), stop: &dyn Fn() -> bool) -> Result<(), String> {
         with(|(voice, synth)| {
-            let stream = synth.stream_with(text, &SpeechOptions::default().voice(voice.to_string())).map_err(|e| e.to_string())?;
+            let stream = synth.stream_with(text, &SpeechOptions::default().voice(voice.clone())).map_err(|e| e.to_string())?;
             for chunk in stream {
                 if stop() {
                     break;
@@ -281,7 +297,7 @@ mod tests {
     #[test]
     fn choosing_a_voice_that_is_not_here_chooses_nothing() {
         let dir = std::env::temp_dir().join(format!("airband-mouth-{}", random_hex(4)));
-        set_local_voice(dir.display().to_string(), "phonon".into());
+        set_local_voice(dir.display().to_string(), "phonon".into(), "Zoey".into());
         assert!(CHOSEN.lock().unwrap().is_none());
     }
 
@@ -294,12 +310,20 @@ mod tests {
         fetch_local_model(dir.clone(), "phonon".into()).unwrap();
         assert_eq!(local_model_progress(), 100);
         assert!(local_voices(dir.clone())[0].fetched);
-        set_local_voice(dir.clone(), "phonon".into());
-        assert!(ready());
-        let began = std::time::Instant::now();
-        let pcm = own_voice_sample().unwrap().pcm;
-        let seconds = pcm.len() as f32 / 2.0 / RATE as f32;
-        println!("{seconds:.1} s of sound in {:.1} s, loading included", began.elapsed().as_secs_f32());
-        assert!(seconds > 2.0);
+        // every voice it offers speaks, and changing voice does not load the model again
+        let mut took = Vec::new();
+        for choice in crate::models::local_voice_choices("phonon".into()) {
+            set_local_voice(dir.clone(), "phonon".into(), choice.name.clone());
+            assert!(ready());
+            let began = std::time::Instant::now();
+            let pcm = own_voice_sample().unwrap().pcm;
+            let seconds = pcm.len() as f32 / 2.0 / RATE as f32;
+            println!("{}: {seconds:.1} s of sound in {:.2} s", choice.name, began.elapsed().as_secs_f32());
+            assert!(seconds > 2.0);
+            took.push(pcm.len());
+        }
+        // different voices make different sound
+        took.dedup();
+        assert!(took.len() > 1);
     }
 }

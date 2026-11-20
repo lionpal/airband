@@ -1,0 +1,146 @@
+//! A model the tower runs itself, on this computer, for a provider whose row says so (`By::OnThisComputer`).
+//! Nothing a message says leaves the machine.
+//!
+//! The model is run by llama.cpp's server, a separate program the tower fetches once (a pinned build, checked
+//! against its hash) and starts beside itself. The server fetches the model the first time it is asked for
+//! it. The tower then speaks to it over the loopback address by the same chat interface as any other service,
+//! held to the shape of the answer it wants, so everything else in the tower is unchanged.
+//!
+//! One server, for one model, for as long as that model is what reads. It holds the model in memory the whole
+//! time: about as much as the model's download.
+use super::*;
+use std::path::PathBuf;
+use std::process::{Child, Command};
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
+
+/// The build of llama.cpp's server that is fetched, and for each system it is published for: the archive's
+/// name and its SHA-256. A system not listed cannot run a model this way yet.
+const BUILD: &str = "b12589";
+const ARCHIVES: &[(&str, &str, &str, &str)] = &[("macos", "aarch64", "llama-b12589-bin-macos-arm64.tar.gz", "711006321bbac464624da19f2333b49e8e0d5e6aa75c867b5323d88818abff2f")];
+
+/// Where the server listens: the port after the tower's own, on the loopback address only.
+static PORT: AtomicU16 = AtomicU16::new(7374);
+/// Set by a command a person is watching (`airband setup`, `airband model test`): wait through the first
+/// download. The tower itself never waits on it: a message that arrives meanwhile is given as written.
+static PATIENT: AtomicBool = AtomicBool::new(false);
+/// The server this run started, and the model it has.
+static RUNNING: Mutex<Option<(String, Child)>> = Mutex::new(None);
+
+pub(crate) fn listen_after(tower_port: u16) {
+    PORT.store(tower_port.saturating_add(1), Ordering::SeqCst);
+}
+pub(crate) fn wait_for_it(patient: bool) {
+    PATIENT.store(patient, Ordering::SeqCst);
+}
+
+fn dir() -> PathBuf {
+    config::dir().join("local")
+}
+fn program() -> PathBuf {
+    dir().join(format!("llama-{BUILD}")).join("llama-server")
+}
+fn address() -> String {
+    format!("http://127.0.0.1:{}", PORT.load(Ordering::SeqCst))
+}
+
+/// Fetch the server program, if it is not here yet. Blocks while it downloads (about 17 MB).
+fn fetch() -> Result<PathBuf, String> {
+    let program = program();
+    if program.is_file() {
+        return Ok(program);
+    }
+    let (_, _, archive, sha) = ARCHIVES.iter().find(|(os, arch, _, _)| *os == std::env::consts::OS && *arch == std::env::consts::ARCH).ok_or("A model cannot be run on this kind of computer yet. Choose another way to read.")?;
+    std::fs::create_dir_all(dir()).map_err(|e| e.to_string())?;
+    let url = format!("https://github.com/ggml-org/llama.cpp/releases/download/{BUILD}/{archive}");
+    log(format!("local model: fetching the program that runs it ({archive})"));
+    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_connect(Some(Duration::from_secs(15))).timeout_recv_response(Some(Duration::from_secs(30))).build().into();
+    let mut res = agent.get(&url).call().map_err(|e| format!("the program that runs the model could not be fetched: {e}"))?;
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut res.body_mut().as_reader(), &mut bytes).map_err(|e| format!("the download stopped part way: {e}"))?;
+    let got: String = <sha2::Sha256 as sha2::Digest>::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect();
+    if got != *sha {
+        return Err("what came down was not the program that runs the model; nothing was kept".into());
+    }
+    let packed = dir().join(archive);
+    std::fs::write(&packed, &bytes).map_err(|e| e.to_string())?;
+    let unpacked = Command::new("tar").arg("-xzf").arg(&packed).arg("-C").arg(dir()).status().map_err(|e| format!("could not unpack it: {e}"))?;
+    let _ = std::fs::remove_file(&packed);
+    if !unpacked.success() || !program.is_file() {
+        return Err("the program that runs the model could not be unpacked".into());
+    }
+    Ok(program)
+}
+
+fn healthy() -> bool {
+    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(2))).http_status_as_error(false).build().into();
+    agent.get(format!("{}/health", address())).call().is_ok_and(|r| r.status().as_u16() == 200)
+}
+
+/// A server left by a tower that was stopped: only the one this tower recorded starting, and only if that
+/// process is still this program.
+fn end_the_last_one() {
+    let note = dir().join("server.pid");
+    if let Some(pid) = std::fs::read_to_string(&note).ok().and_then(|p| p.trim().parse::<u32>().ok()) {
+        let is_ours = Command::new("ps").args(["-p", &pid.to_string(), "-o", "command="]).output().is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains(&program().display().to_string()));
+        if is_ours {
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+            std::thread::sleep(Duration::from_millis(600));
+        }
+    }
+    let _ = std::fs::remove_file(note);
+}
+
+/// Stop the server, when something else reads from now on.
+pub(crate) fn stop() {
+    if let Some((_, mut child)) = RUNNING.lock().unwrap().take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let _ = std::fs::remove_file(dir().join("server.pid"));
+}
+
+/// The address to speak to `model` at, starting its server if it is not running. The first time, the
+/// program and then the model are fetched, which takes minutes: a patient caller waits through that, and any
+/// other is told it is not ready yet. Blocks.
+pub(crate) fn ensure(model: &str) -> Result<String, String> {
+    {
+        let mut running = RUNNING.lock().unwrap();
+        let alive = running.as_mut().is_some_and(|(has, child)| has == model && child.try_wait().is_ok_and(|ended| ended.is_none()));
+        if !alive {
+            if let Some((_, mut old)) = running.take() {
+                let _ = old.kill();
+                let _ = old.wait();
+            }
+            end_the_last_one();
+            let program = fetch()?;
+            log(format!("local model: starting {model} (the model is fetched the first time)"));
+            let out = std::fs::File::create(dir().join("server.log")).map_err(|e| e.to_string())?;
+            let child = Command::new(&program)
+                .args(["-hf", model, "--no-mmproj", "--reasoning", "off", "--chat-template-kwargs", "{\"enable_thinking\":false}", "--jinja", "-c", "24576", "-np", "3", "--host", "127.0.0.1", "--port", &PORT.load(Ordering::SeqCst).to_string()])
+                .env("LLAMA_CACHE", dir().join("models"))
+                .stdin(Stdio::null())
+                .stdout(out.try_clone().map_err(|e| e.to_string())?)
+                .stderr(out)
+                .spawn()
+                .map_err(|e| format!("the program that runs the model did not start: {e}"))?;
+            let _ = std::fs::write(dir().join("server.pid"), child.id().to_string());
+            *running = Some((model.to_string(), child));
+        }
+    }
+    let until = Instant::now() + if PATIENT.load(Ordering::SeqCst) { Duration::from_secs(45 * 60) } else { Duration::from_secs(2) };
+    loop {
+        if healthy() {
+            return Ok(format!("{}/v1", address()));
+        }
+        if RUNNING.lock().unwrap().as_mut().is_some_and(|(_, child)| child.try_wait().is_ok_and(|ended| ended.is_some())) {
+            return Err(format!("the program that runs the model stopped. Its log is {}", dir().join("server.log").display()));
+        }
+        if Instant::now() >= until {
+            return Err("the model on this computer is still getting ready".into());
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
