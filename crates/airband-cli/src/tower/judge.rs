@@ -105,7 +105,10 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
          asks him nothing. Remember that it wrote this as it stopped, so nothing it says it is about to do is \
          being done. It needs a nudge to go on, not an answer. The exception is an agent waiting for something \
          that will bring it back by itself (a build, a test run, a background task): that is \"fyi\".\n\
-         - \"fyi\": he would not miss it. Progress chatter, an acknowledgement (\"OK, starting\"), a plan it is \
+         - \"fyi\": he would not miss it. A message whose whole content is that there is nothing to tell \
+         (\"nothing new\", \"no change since last check\", \"still waiting\") is always this, never \"stalled\" \
+         or \"report\": an agent that checks on a timer and found nothing has not stopped short of anything. \
+         Also: progress chatter, an acknowledgement (\"OK, starting\"), a plan it is \
          about to carry out anyway, a restatement of what he just told it, an interim note while work goes on.\n\
          When unsure between two, pick the lower one, unless the agent is waiting on him or has stopped with \
          work it said it would still do: a message that ends by saying what comes next (\"next up is the \

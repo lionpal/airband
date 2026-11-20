@@ -43,10 +43,9 @@ What each agent is doing: pushed by a script and read from a made-up Claude Code
 Not yet seen with a real Claude Code session's own transcript.
 
 Homebrew: the formula was installed on a second Mac (Apple silicon, no airband on it) with
-`brew install airband-dev/airband/airband`, from a copy of the tap on that Mac's disk; the binary came from
-`https://airband.dev/releases/` and `airband --version` answered from Homebrew's folder. Not done: the public tap
-repository `airband-dev/homebrew-airband` does not exist yet (the tap is kept in `lionpal/homebrew-airband`,
-private), so the command does not work for anyone else yet. Not run: `airband install` from Homebrew's copy (its
+`brew install lionpal/airband/airband`, from a copy of the tap on that Mac's disk; the binary came from
+`https://airband.dev/releases/` and `airband --version` answered from Homebrew's folder. The tap is public at `lionpal/homebrew-airband`, and the
+command was run again from it on that Mac. Not run: `airband install` from Homebrew's copy (its
 choice of Homebrew's path has a unit test only), `brew test` (that Mac's developer tools were too old for
 Homebrew to run any test), the Intel Mac binary, and the Release workflow itself (0.1.1 was built and published
 by hand; the two Linux binaries printed their version in a container).

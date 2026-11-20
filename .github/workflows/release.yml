@@ -6,7 +6,7 @@ name: Release
 #   https://airband.dev/releases/latest.json                                    ({"version": "<version>"})
 # This repository is private, so its own release assets cannot be downloaded without signing in. The files go in
 # the homepage's bucket under releases/, which the site's deploy leaves alone (see `exclude` in infra/cdk.mjs).
-# The Homebrew tap (github.com/airband-dev/homebrew-airband) reads latest.json and the checksums and updates its
+# The Homebrew tap (github.com/lionpal/homebrew-airband) reads latest.json and the checksums and updates its
 # formula by itself.
 #
 # To release: change the version in Cargo.toml, push to main, then run this by hand from main (Actions tab,
