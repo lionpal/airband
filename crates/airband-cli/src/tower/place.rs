@@ -83,7 +83,7 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
     if std::env::var("AIRBAND_TRACE").is_ok() {
         log(format!("placing asked:\n{prompt}\nand was told: {answer:?}"));
     }
-    let Some(out) = answer.ok().and_then(|out| serde_json::from_str::<Out>(out.get(out.find('{')?..=out.rfind('}')?)?).ok()) else { return };
+    let Some(out) = answer.ok().and_then(|out| serde_json::from_str::<Out>(judge::json_in(&out)?).ok()) else { return };
     if !out.sure {
         return;
     }

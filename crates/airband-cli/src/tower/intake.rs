@@ -19,12 +19,16 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
     // so his words come before the answer to them
     let typed = {
         let known = app.inner.lock().unwrap().find(&ev.agent.id).map(|s| (s.agent.clone(), s.told_upto));
-        known.filter(|_| matches!(ev.event, Event::Working | Event::Said { .. })).map(|(agent, upto)| crate::adapters::told(&agent, upto))
+        known.filter(|_| matches!(ev.event, Event::Working | Event::Said { .. })).map(|(agent, upto)| crate::adapters::told(&agent, upto)).map(|(told, upto)| {
+            // pictures he pasted in with them, kept before anything is locked
+            let with: Vec<Vec<airband_core::radio::Picture>> = told.iter().map(|t| if t.his { t.images.iter().filter_map(|bytes| pictures::keep_bytes(bytes)).collect() } else { Vec::new() }).collect();
+            (told, with, upto)
+        })
     };
     let mut inner = app.inner.lock().unwrap();
     let id = ev.agent.id.clone();
-    if let Some((told, upto)) = typed {
-        inner.told(&id, told, upto);
+    if let Some((told, with, upto)) = typed {
+        inner.told(&id, told, with, upto);
     }
     if ev.event == Event::Signoff {
         if let Some(s) = inner.find(&id) {

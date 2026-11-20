@@ -17,6 +17,13 @@ async fn ask_api(url: String, header: (&'static str, String), body: Value, read:
     .map_err(|e| e.to_string())?
 }
 
+/// The JSON object in what a model wrote, which may have words or a code fence around it. None when there is
+/// no object there (a closing brace before any opening one is not one).
+pub(super) fn json_in(out: &str) -> Option<&str> {
+    let (a, b) = (out.find('{')?, out.rfind('}')?);
+    out.get(a..=b)
+}
+
 /// Ask the model that reads for the tower. If it does not answer, the second one is asked, when there is one.
 pub(super) async fn ask_model(cfg: &Config, prompt: String) -> Result<String, String> {
     match ask(&cfg.summarizer, prompt.clone()).await {
@@ -189,8 +196,7 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
         background: bool,
     }
     let parsed = ask_model(cfg, prompt).await.and_then(|out| {
-        let (a, b) = (out.find('{').ok_or("no JSON in the answer")?, out.rfind('}').ok_or("no JSON in the answer")?);
-        serde_json::from_str::<Out>(&out[a..=b]).map_err(|e| e.to_string())
+        serde_json::from_str::<Out>(json_in(&out).ok_or("no JSON in the answer")?).map_err(|e| e.to_string())
     });
     match parsed {
         Ok(o) if !o.say.trim().is_empty() => {

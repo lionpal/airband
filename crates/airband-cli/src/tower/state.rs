@@ -451,7 +451,8 @@ impl Inner {
 
     /// What he said to an agent at its own keyboard, as its harness kept it: added to the chat as his words to
     /// it, each once, at the time he said it. `upto` is how far the harness's record has now been read.
-    pub(super) fn told(&mut self, agent_id: &str, told: Vec<crate::adapters::Told>, upto: u64) {
+    /// `pictures` are the ones that came with each thing told, already kept, in the same order.
+    pub(super) fn told(&mut self, agent_id: &str, told: Vec<crate::adapters::Told>, pictures: Vec<Vec<airband_core::radio::Picture>>, upto: u64) {
         let Some(to) = self.find(agent_id).cloned() else { return };
         // nothing from before the chat he has; with no chat yet, the last day
         let oldest = self.log.first().map(|e| e.at).unwrap_or_else(|| now().saturating_sub(24 * 3600 * 1000));
@@ -464,7 +465,7 @@ impl Inner {
                 self.touch(&id);
             }
         }
-        for t in told.into_iter().filter(|t| t.his && t.at >= oldest) {
+        for (t, pictures) in told.into_iter().zip(pictures.into_iter().chain(std::iter::repeat_with(Vec::new))).filter(|(t, _)| t.his && t.at >= oldest) {
             // the harness's own id for it, so the same words are never added twice
             let id: String = t.id.chars().filter(|c| c.is_ascii_alphanumeric()).take(40).collect();
             if id.is_empty() || self.log.iter().any(|e| e.id == id) {
@@ -472,7 +473,6 @@ impl Inner {
             }
             // his words as he typed them. Something very long (a pasted log) is shown by its opening and kept whole
             let short: String = if t.text.chars().count() > 1500 { format!("{}…", t.text.chars().take(1500).collect::<String>().trim_end()) } else { t.text.clone() };
-            let pictures: Vec<_> = t.images.iter().filter_map(|bytes| pictures::keep_bytes(bytes)).collect();
             self.record_at(Entry { short: Some(short), pictures, ..Entry::his(id, std::slice::from_ref(&to), t.text) }, t.at);
         }
         if let Some(s) = self.session(agent_id) {

@@ -197,7 +197,7 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
             if std::env::var_os("AIRBAND_TRACE").is_some() {
                 log(format!("routing asked:\n{prompt}\nand was told: {answer:?}"));
             }
-            let judged = answer.ok().and_then(|out| serde_json::from_str::<Out>(&out[out.find('{')?..=out.rfind('}')?]).ok());
+            let judged = answer.ok().and_then(|out| serde_json::from_str::<Out>(judge::json_in(&out)?).ok());
             let Some(mut judged) = judged else {
                 // No model answered. Nothing is read into his words: with one agent it is for that one, and
                 // with several he is asked.
@@ -297,7 +297,7 @@ async fn place_idea(app: &Arc<App>, idea: &str, projects: &[String]) -> Result<S
         project: String,
     }
     let raw = ask_model(&app.cfg, prompt).await;
-    let judged = raw.as_ref().ok().and_then(|out| serde_json::from_str::<Out>(&out[out.find('{')?..=out.rfind('}')?]).ok());
+    let judged = raw.as_ref().ok().and_then(|out| serde_json::from_str::<Out>(judge::json_in(out)?).ok());
     match judged.and_then(|o| projects.iter().find(|p| p.eq_ignore_ascii_case(o.project.trim())).cloned()) {
         Some(project) => Ok(project),
         None => Err(say(format!("Which project is that for? {}.", projects.join(", ")), true)),

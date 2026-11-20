@@ -167,14 +167,23 @@ async fn activity_loop(app: Arc<App>) {
         let (found, typed) = tokio::task::spawn_blocking(move || {
             // what he has typed to each at its own keyboard since the last look: he sees it in the chat as he goes
             let typed: Vec<_> = everyone.into_iter().map(|(a, upto)| (crate::adapters::told(&a, upto), a.id, upto)).filter(|((told, now), _, was)| !told.is_empty() || now != was).collect();
+            // pictures he pasted in with them are shrunk and kept here, off the async threads and before the
+            // tower's state is locked
+            let typed: Vec<_> = typed
+                .into_iter()
+                .map(|((told, now), id, was)| {
+                    let pictures: Vec<Vec<airband_core::radio::Picture>> = told.iter().map(|t| if t.his { t.images.iter().filter_map(|bytes| pictures::keep_bytes(bytes)).collect() } else { Vec::new() }).collect();
+                    ((told, now), pictures, id, was)
+                })
+                .collect();
             (looked_at.into_iter().map(|a| (crate::adapters::glance(&a), a.id)).collect::<Vec<_>>(), typed)
         })
         .await
         .unwrap_or_default();
         let mut inner = app.inner.lock().unwrap();
         let mut learned = !typed.is_empty();
-        for ((told, upto), id, _) in typed {
-            inner.told(&id, told, upto);
+        for ((told, upto), pictures, id, _) in typed {
+            inner.told(&id, told, pictures, upto);
         }
         for (seen, id) in found {
             let Some(s) = inner.session(&id) else { continue };

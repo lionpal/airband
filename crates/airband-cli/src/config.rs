@@ -536,7 +536,9 @@ pub fn station(cfg: &Config) -> String {
     if let Some(s) = cfg.station.clone().filter(|s| !s.trim().is_empty()) {
         return s;
     }
-    let host = std::process::Command::new("hostname").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    // asked of the system once: this is called for every answer to a radio
+    static HOST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let host = HOST.get_or_init(|| std::process::Command::new("hostname").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default());
     let short = host.split('.').next().unwrap_or("").to_lowercase();
     // "someones-mac-mini" says more than it needs to: keep what kind of machine it is
     let short = short.rsplit("s-").next().unwrap_or(&short).to_string();
