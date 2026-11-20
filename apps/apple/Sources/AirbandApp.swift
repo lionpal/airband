@@ -119,17 +119,17 @@ struct HomeMark: View {
             }
             // the house: a roof and a body, where the plane sits
             var house = Path()
-            let (cx, top, w, h) = (256 * k, 262 * k, 150 * k, 150 * k)
+            let (cx, top, w, h) = (256 * k, 300 * k, 104 * k, 104 * k)
             house.move(to: CGPoint(x: cx, y: top))
-            house.addLine(to: CGPoint(x: cx + w / 2 + 14 * k, y: top + h * 0.46))
-            house.addLine(to: CGPoint(x: cx + w / 2 - 12 * k, y: top + h * 0.46))
-            house.addLine(to: CGPoint(x: cx + w / 2 - 12 * k, y: top + h))
-            house.addLine(to: CGPoint(x: cx - w / 2 + 12 * k, y: top + h))
-            house.addLine(to: CGPoint(x: cx - w / 2 + 12 * k, y: top + h * 0.46))
-            house.addLine(to: CGPoint(x: cx - w / 2 - 14 * k, y: top + h * 0.46))
+            house.addLine(to: CGPoint(x: cx + w / 2 + 10 * k, y: top + h * 0.46))
+            house.addLine(to: CGPoint(x: cx + w / 2 - 9 * k, y: top + h * 0.46))
+            house.addLine(to: CGPoint(x: cx + w / 2 - 9 * k, y: top + h))
+            house.addLine(to: CGPoint(x: cx - w / 2 + 9 * k, y: top + h))
+            house.addLine(to: CGPoint(x: cx - w / 2 + 9 * k, y: top + h * 0.46))
+            house.addLine(to: CGPoint(x: cx - w / 2 - 10 * k, y: top + h * 0.46))
             house.closeSubpath()
             ctx.fill(house, with: .color(Palette.ink))
-            ctx.stroke(house, with: .color(Palette.ink), style: StrokeStyle(lineWidth: 10 * k, lineJoin: .round))
+            ctx.stroke(house, with: .color(Palette.ink), style: StrokeStyle(lineWidth: 8 * k, lineJoin: .round))
         }
         .background(Color(red: 0.043, green: 0.043, blue: 0.047))
     }

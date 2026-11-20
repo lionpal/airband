@@ -497,7 +497,10 @@ impl Radio {
         // `since` is what a current tower answers; `after` is there for one from before change counts
         let roster = self.roster.load(Ordering::SeqCst);
         let away = if self.away.load(Ordering::SeqCst) { "&away=1" } else { "" };
-        let (status, v) = self.link.request("GET", &format!("/feed?scope=all&since={since}&after={after}&roster={roster}&wait={}{away}", wait_seconds.min(25)), None)?;
+        // with an address of the tower's still to try, this request does not wait for news: it only finds out
+        // whether the tower is there, so the straight path is in use (and shown) within a moment
+        let wait = if self.link.untried() { 0 } else { wait_seconds.min(25) };
+        let (status, v) = self.link.request("GET", &format!("/feed?scope=all&since={since}&after={after}&roster={roster}&wait={wait}{away}"), None)?;
         let feed: Feed = (status == 200).then(|| serde_json::from_value(v).ok()).flatten().ok_or(RadioError::Refused)?;
         self.roster.store(feed.roster_rev, Ordering::SeqCst);
         self.link.set_direct(feed.direct.clone());
