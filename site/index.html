@@ -232,7 +232,7 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
 .car { position: relative; aspect-ratio: 800 / 500; border-radius: 28px; overflow: hidden; border: 1px solid #1B1D1E; background: radial-gradient(120% 80% at 50% 0%, #171A1C 0%, #0E0F10 55%, var(--ground) 100%); }
 .car .dash { position: absolute; inset: 0; width: 100%; height: 100%; }
 .car:not(.live) .eq i, .car:not(.live) .cpmic.live { animation-play-state: paused; }
-.cp { position: absolute; left: 11%; top: 29%; width: 78%; aspect-ratio: 1.9; container-type: inline-size; display: flex; overflow: hidden; border-radius: 2.6% / 4.9%; background: #050506; border: 1px solid #2A2C2D; box-shadow: 0 0 0 5px #101112, 0 18px 50px rgba(0, 0, 0, 0.6); }
+.cp { position: absolute; left: 11%; top: 29%; width: 78%; bottom: 5.5%; container-type: inline-size; display: flex; overflow: hidden; border-radius: 2.6% / 4.9%; background: #050506; border: 1px solid #2A2C2D; box-shadow: 0 0 0 5px #101112, 0 18px 50px rgba(0, 0, 0, 0.6); }
 .cpdock { width: 10.5cqw; flex: none; padding: 2.2cqw 0; display: flex; flex-direction: column; align-items: center; gap: 2.2cqw; background: #0C0D0E; border-right: 1px solid #1A1B1C; }
 .cpdock time { font: 600 2.5cqw var(--sans); }
 .cpdock .sig { display: flex; align-items: flex-end; gap: 0.5cqw; height: 2cqw; }
@@ -242,7 +242,7 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
 .cpdock .app svg { width: 4.5cqw; height: 4.5cqw; }
 .cpdock .home { margin-top: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 0.7cqw; }
 .cpdock .home i { width: 1.9cqw; height: 1.9cqw; border-radius: 0.5cqw; background: var(--dim); }
-.cpmain { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 2.4cqw 3.2cqw 2cqw; }
+.cpmain { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 2.4cqw 3.2cqw 2cqw; }
 .cphead { display: flex; align-items: center; gap: 1.3cqw; font: 700 2.9cqw var(--sans); letter-spacing: -0.02em; }
 .cphead svg { width: 3.7cqw; height: 3.7cqw; }
 .cpfeed { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 26%); mask-image: linear-gradient(to bottom, transparent 0, #000 26%); }
@@ -266,12 +266,12 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
 .cl.mine .pad { display: flex; justify-content: flex-end; }
 .cl.mine p { margin: 0; padding: 1.1cqw 2.2cqw; border-radius: 2.4cqw 2.4cqw 0.7cqw 2.4cqw; background: var(--ink); color: var(--ground); font-size: 3.1cqw; }
 .cl.mine.old p { background: var(--raised); color: var(--soft); }
-.cpbar { display: flex; align-items: center; gap: 1.8cqw; height: 6.6cqw; flex: none; }
-.cpmic { width: 6.2cqw; height: 6.2cqw; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--field); color: var(--ink); transition: background 0.2s, color 0.2s; }
-.cpmic svg { width: 3.2cqw; height: 3.2cqw; }
-.cpmic.live { background: var(--ink); color: var(--ground); animation: cpmic 1.1s ease-in-out infinite; }
+.cpbar { display: flex; flex-direction: row-reverse; align-items: center; gap: 2.2cqw; height: 9.4cqw; flex: none; }
+.cpmic { width: 9cqw; height: 9cqw; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--ink); color: var(--ground); transition: background 0.2s, color 0.2s; }
+.cpmic svg { width: 4.4cqw; height: 4.4cqw; }
+.cpmic.live { background: var(--signal); color: var(--ground); animation: cpmic 1.1s ease-in-out infinite; }
 @keyframes cpmic { 50% { box-shadow: 0 0 0 1.4cqw rgba(244, 244, 240, 0.14); } }
-.cpheard { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 500 3cqw var(--sans); color: var(--soft); }
+.cpheard { flex: 1; text-align: right; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 500 3cqw var(--sans); color: var(--soft); }
 
 /* how little it takes: two bars on one scale */
 .mem { display: flex; flex-direction: column; gap: 24px; }
@@ -333,7 +333,7 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
   .pane.yours { min-height: 190px; }
   .pane.ours .hex { max-height: 7em; overflow: hidden; }
   .car { aspect-ratio: 4 / 3.3; border-radius: 22px; }
-  .cp { left: 3%; top: 36%; width: 94%; }
+  .cp { left: 3%; top: 36%; width: 94%; bottom: 4%; }
 }
 @media (prefers-reduced-motion: reduce) {
   .cursor::after, .mic.live::before, .mic.live::after, .tap.go, .eq i, .dot, .term.hit, .me p { animation: none; }
