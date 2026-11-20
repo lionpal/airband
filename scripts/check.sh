@@ -1,0 +1,20 @@
+#!/bin/sh
+# The checks, run on this computer: what CI ran on every push, without spending build minutes on it.
+#
+#   scripts/check.sh           the unit tests of every crate (under a minute once built)
+#   scripts/check.sh --full    those, then the three end-to-end suites: the relay and its queue (12 checks), agents
+#                              the tower runs itself (18), and the whole tower with real model calls (108, a few
+#                              minutes, and it needs `claude` signed in)
+#
+# `git push` runs the first form by itself (.githooks/pre-push, turned on once with
+# `git config core.hooksPath .githooks`). CI on GitHub still runs once a day on Linux, Windows and macOS, and
+# whenever asked for, as the check that the code builds somewhere other than here.
+set -e
+cd "$(dirname "$0")/.."
+export PATH="$HOME/.cargo/bin:$PATH"
+cargo test -q -p airband-core -p airband-relay -p airband-radio -p airband-cli
+[ "$1" = "--full" ] || exit 0
+cargo build -q --release -p airband-cli -p airband-relay
+python3 tools/e2e-relay.py
+python3 tools/e2e-held.py
+python3 tools/e2e.py --claude
