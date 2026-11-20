@@ -263,14 +263,6 @@ struct FeedView: View {
                     } label: { stopLabel }
                     .accessibilityLabel("Stop an agent")
                 }
-                // the headset: whether what arrives is also read aloud. Lit while it is.
-                Button { Task { await model.setCalling(!model.calling) } } label: {
-                    Image(systemName: "headphones").font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(model.calling ? Palette.ground : Palette.quiet)
-                        .frame(width: 40, height: 40).background(model.calling ? Palette.ink : Palette.raised, in: Circle())
-                }
-                .buttonStyle(.plain).accessibilityLabel(model.calling ? "Stop reading aloud" : "Read aloud")
-                .accessibilityAddTraits(model.calling ? .isSelected : [])
             }
         }
         .padding(.leading, 8).padding(.trailing, 12).padding(.top, 10).padding(.bottom, 8)
@@ -641,7 +633,9 @@ struct FeedView: View {
                         if listeningNow { model.cancelTalk() } else { withAnimation(.snappy(duration: 0.2)) { showQuick.toggle() } }
                     } label: { PlusButtonLabel(open: showQuick || listeningNow) }
                         .buttonStyle(.plain).accessibilityLabel(listeningNow ? "Cancel" : "Attach, or quick messages").accessibilityAddTraits(showQuick ? .isSelected : [])
-                    Spacer()
+                        // as wide as what is on the other side, so the microphone stays in the middle
+                        .frame(width: 112, alignment: .leading)
+                    Spacer(minLength: 0)
                     Button { showQuick = false; Task { await model.talk() } } label: {
                         ZStack {
                             Circle().fill(Palette.signal.opacity(listeningNow ? 0.25 : 0)).frame(width: 112, height: 112)
@@ -652,19 +646,32 @@ struct FeedView: View {
                         .frame(width: 112, height: 112)
                     }
                     .buttonStyle(.plain).accessibilityLabel(listeningNow ? "Send what you said" : "Talk")
-                    Spacer()
+                    Spacer(minLength: 0)
+                    HStack(spacing: 8) {
                     if listeningNow {
                         // while he talks, this adds a photo or a video to what he is saying
                         AttachButton()
                     } else {
+                        // join the channel: what arrives is read aloud, hands free. Lit while it is. Beside the
+                        // microphone, since talking and listening are what this is for.
+                        Button { Task { await model.setCalling(!model.calling) } } label: {
+                            Image(systemName: "speaker.wave.2.fill").font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(model.calling ? Palette.ground : Palette.ink)
+                                .frame(width: 48, height: 48)
+                                .background { if model.calling { Circle().fill(Palette.signal) } else { Circle().fill(.clear).frosted(Circle()) } }
+                        }
+                        .buttonStyle(.plain).accessibilityLabel(model.calling ? "Stop reading aloud" : "Read aloud")
+                        .accessibilityAddTraits(model.calling ? .isSelected : [])
                         Button { showQuick = false; typingOpen = true; typing = true } label: {
                             Image(systemName: "keyboard").font(.system(size: 20, weight: .semibold))
                                 .frame(width: 56, height: 56).frosted(Circle())
                         }
                         .buttonStyle(.plain).accessibilityLabel("Type")
                     }
+                    }
+                    .frame(width: 112, alignment: .trailing)
                 }
-                .padding(.horizontal, 18)
+                .padding(.horizontal, 14)
             }
         }
         .padding(.top, 6).padding(.bottom, 6)
