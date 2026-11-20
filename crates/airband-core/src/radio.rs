@@ -3,6 +3,7 @@
 //! The radio asks; the tower answers. All under `/v1/radio/`. Sent straight to the tower with
 //! `Authorization: Bearer <token>`, or sealed and passed through a relay (`airband.relay/1`):
 //! - `GET next`: held open up to 25 seconds. 200 with a [`Transmission`], or 204 when nothing is waiting.
+//!   With `?voice=own` the radio makes the speech itself and the transmission carries words only.
 //! - `POST heard` [`Heard`]: that transmission was spoken to the end.
 //! - `POST utterance` [`Utterance`] → [`Reply`]: what he said.
 //! - `POST ready`: the radio is free for the next transmission.

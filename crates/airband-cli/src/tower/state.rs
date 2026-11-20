@@ -199,6 +199,8 @@ pub(super) struct Call {
     /// When he last joined (turned listening on), in milliseconds since 1970. A call starts from there: he is
     /// not read what was asked before it.
     pub(super) began: u64,
+    /// This radio makes the speech itself, from the words: the tower makes none for it.
+    pub(super) speaks: bool,
 }
 
 impl Call {
@@ -282,6 +284,10 @@ impl Inner {
     /// Is any radio there?
     pub(super) fn connected(&self) -> bool {
         self.calls.values().any(Call::connected)
+    }
+    /// Does anyone on a call need the tower's voice? Not when every radio there makes its own.
+    pub(super) fn wants_voice(&self) -> bool {
+        self.calls.values().any(|c| c.connected() && !c.speaks)
     }
     pub(super) fn call(&mut self, radio: &str) -> &mut Call {
         let call = self.calls.entry(radio.to_string()).or_default();

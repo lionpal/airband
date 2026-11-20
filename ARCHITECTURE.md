@@ -92,6 +92,7 @@ Outbound and inbound are set separately (`airband setup`, or `airband voice …`
 | | Interface | Where | Providers |
 |---|---|---|---|
 | Outbound: text to audio | `Synth` (text in, PCM out a piece at a time) | `tower/speech.rs` | Gemini, Microsoft, ElevenLabs |
+| Outbound, made on the phone | a row of `MODELS` | `airband-radio/src/mouth.rs` | Phonon (open weights, no key) |
 | Inbound: audio to text | a row of `LISTENERS` | `airband-radio/src/ears.rs` | Microsoft |
 
 The tower makes speech the moment a sentence exists and hands it over in parts (`GET speech/<id>`), compressed
@@ -104,6 +105,11 @@ worth using: nothing is spoken and he types, unless the relay lends its speech p
 put a key of his own in the phone. It lives in the phone's Keychain, is given to the core at launch
 (`set_own_ears`) and goes only to its service; the app asks `own_listeners` which services it may offer.
 
+The phone can also make the voice itself (`mouth.rs`). The program for it is in the app and its model is not:
+he asks for it under Voice in the app's settings and 64 MB is fetched once into the app's folder. While it is
+chosen the model stays loaded, the radio asks for `next?voice=own`, and the tower sends words and makes no
+speech. The app asks `local_voices` what it may offer.
+
 A call starts from when he joins: what was said before is in the chat and is not read out. The microphone never
 opens by itself: a question is read to him and then waits in the chat (`airband-radio/src/call.rs`).
 
@@ -111,6 +117,8 @@ What adding a provider touches:
 
 - A voice: an `impl Synth` in `tower/speech.rs`, a variant of `config::Voice`, a row in `PROVIDERS`, and its
   `airband voice …` words in `install.rs`. No app release.
+- A voice made on the phone: a row of `MODELS` (what to fetch and where it goes) and the code that runs it in
+  `mouth.rs`. An app release.
 - A listening service: a row of `LISTENERS` with the code that talks to it, an arm in `tower/ears.rs` that makes
   its pass, a variant of `config::Ears`, a row in `PROVIDERS`, and its `airband ears …` words. An app release,
   because the phone talks to the service itself.

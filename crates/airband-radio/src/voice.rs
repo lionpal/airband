@@ -1,7 +1,8 @@
 //! Outbound: getting the tower's speech to the host's speaker. The tower makes the audio and hands it over in
 //! parts while it is still being made; each part is decoded here and given to the host as plain PCM, so playback
 //! starts on the first part. A host whose own voice is worth using (a terminal) reads the text itself when there
-//! is no audio; a phone says nothing then, and he reads it.
+//! is no audio; a phone says nothing then, and he reads it. A device with a voice of its own chosen ([`crate::mouth`])
+//! makes the sound itself from the words and asks the tower for none.
 use super::*;
 use airband_core::audio::{BLOCK_BYTES, BLOCK_SAMPLES, base64_decode, decode_block};
 use airband_core::radio::SpeechPart;
@@ -19,6 +20,10 @@ pub(crate) fn say(link: &Link, host: &dyn RadioHost, text: &str, speech: Option<
 /// The same, leaving off as soon as `stop` says so.
 pub(crate) fn say_until(link: &Link, host: &dyn RadioHost, text: &str, speech: Option<&str>, stop: &dyn Fn() -> bool) {
     if text.trim().is_empty() || stop() {
+        return;
+    }
+    // a voice of the device's own, when he has chosen one, says everything
+    if crate::mouth::ready() && crate::mouth::say(host, text, stop) {
         return;
     }
     if speech.is_some_and(|id| play(link, host, id, stop)) {

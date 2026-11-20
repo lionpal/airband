@@ -1290,6 +1290,60 @@ struct SpeechKeyView: View {
     }
 }
 
+/// A voice made on this phone: optional, and fetched only when he asks. Which voices there are, and how big
+/// each is, is the core's to say.
+struct VoiceView: View {
+    @EnvironmentObject var model: RadioModel
+    @State private var offered: [LocalVoice] = []
+    @State private var fetching: String?
+    @State private var progress = 0.0
+    @State private var sampling = false
+    @State private var wrong: String?
+    private let tick = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        Form {
+            ForEach(offered, id: \.kind) { v in
+                Section(footer: Text("Optional. This voice is made on your phone. It needs no key and works without your computer. The download is \(v.megabytes) MB.")) {
+                    if v.fetched {
+                        Toggle("Use \(v.name)", isOn: Binding(get: { model.localVoice == v.kind }, set: { model.useVoice($0 ? v.kind : "") }))
+                        if model.localVoice == v.kind {
+                            Button {
+                                (sampling, wrong) = (true, nil)
+                                model.sampleVoice { problem in (sampling, wrong) = (false, problem) }
+                            } label: {
+                                HStack { Text("Hear it"); if sampling { Spacer(); ProgressView() } }
+                            }
+                            .disabled(sampling)
+                        }
+                        Button("Remove download", role: .destructive) {
+                            model.removeVoice(v.kind)
+                            offered = localVoices(dir: model.voiceDir)
+                        }
+                    } else if fetching == v.kind {
+                        ProgressView(value: progress) { Text("Downloading \(v.name)") }
+                    } else {
+                        Button("Download \(v.name) (\(v.megabytes) MB)") {
+                            (fetching, progress, wrong) = (v.kind, 0, nil)
+                            model.downloadVoice(v.kind) { problem in
+                                (fetching, wrong) = (nil, problem)
+                                offered = localVoices(dir: model.voiceDir)
+                                // he asked for it to use it
+                                if problem == nil { model.useVoice(v.kind) }
+                            }
+                        }
+                        .disabled(fetching != nil)
+                    }
+                    if let wrong { Text(wrong).foregroundStyle(.red) }
+                }
+            }
+        }
+        .navigationTitle("Voice").navigationBarTitleDisplayMode(.inline)
+        .onAppear { offered = localVoices(dir: model.voiceDir) }
+        .onReceive(tick) { _ in if fetching != nil { progress = Double(localVoiceProgress()) / 100 } }
+    }
+}
+
 struct SetupView: View {
     @EnvironmentObject var model: RadioModel
     @ObservedObject private var push = Push.shared
@@ -1305,6 +1359,9 @@ struct SetupView: View {
                     Section {
                         NavigationLink("Accounts", isActive: $showAccounts) { AccountsView().environmentObject(model) }
                         NavigationLink("Speech key") { SpeechKeyView().environmentObject(model) }
+                        if !localVoices(dir: model.voiceDir).isEmpty {
+                            NavigationLink("Voice") { VoiceView().environmentObject(model) }
+                        }
                         if push.denied {
                             Button("Turn on notifications") { UIApplication.shared.open(URL(string: UIApplication.openNotificationSettingsURLString)!) }
                         }

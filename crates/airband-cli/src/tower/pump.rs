@@ -40,7 +40,7 @@ pub(super) async fn pump(app: &Arc<App>) {
     // not worth his ears: it stays in the chat log, dimmed, and leaves the call queue
     inner.pending.retain(|p| p.kind != Some(Kind::Fyi) || p.say.is_none());
     // start the voice on everything that will be spoken, now, so each clip exists before its turn comes
-    for p in inner.pending.iter().filter(|p| p.say.is_some()) {
+    for p in inner.pending.iter().filter(|p| p.say.is_some() && inner.wants_voice()) {
         if let Some(callsign) = inner.find(&p.agent_id).map(|s| s.callsign.spoken()) {
             app.speech.start(&app.voice(), &format!("{callsign}. {}", p.say.as_deref().unwrap_or_default()));
         }
@@ -59,7 +59,8 @@ pub(super) async fn pump(app: &Arc<App>) {
     log(format!("→ {radio}: {} ({kind:?}): {say}", callsign.text()));
     let spoken_line = format!("{}. {say}", callsign.spoken());
     let waiting = inner.pending.len() as u32 - 1;
-    transmit(app, &mut inner, &radio, Transmission { id: next.id, callsign: callsign.text(), kind, speech: app.speech.start(&app.voice(), &spoken_line), say: spoken_line, waiting });
+    let speech = app.speech.start(&app.voice_to(inner.call(&radio).speaks), &spoken_line);
+    transmit(app, &mut inner, &radio, Transmission { id: next.id, callsign: callsign.text(), kind, speech, say: spoken_line, waiting });
     app.save(&inner);
 }
 
@@ -113,7 +114,8 @@ fn remind(app: &Arc<App>, inner: &mut Inner, radio: &str) {
     let from = inner.sender(&e).map(|s| s.callsign.text()).unwrap_or_else(|| e.from.clone());
     log(format!("→ {radio}: {from} ({}): {say}", if first { "waiting" } else { "reminder" }));
     let spoken_line = if first { format!("{} is waiting. {say}", cap(&from)) } else { format!("Still waiting: {from}. {say}") };
-    transmit(app, inner, radio, Transmission { id: e.id.clone(), callsign: from, kind: Kind::NeedsYou, speech: app.speech.start(&app.voice(), &spoken_line), say: spoken_line, waiting: 0 });
+    let speech = app.speech.start(&app.voice_to(inner.call(radio).speaks), &spoken_line);
+    transmit(app, inner, radio, Transmission { id: e.id.clone(), callsign: from, kind: Kind::NeedsYou, speech, say: spoken_line, waiting: 0 });
 }
 
 fn cap(t: &str) -> String {

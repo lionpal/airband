@@ -69,7 +69,9 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     init() {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("radio")
+        voiceDir = dir.path
         desk = Desk.open(dataDir: dir.path, host: self)
+        setLocalVoice(dir: dir.path, kind: UserDefaults.standard.string(forKey: "airband.voice") ?? "")
         if let own = ownEars { setOwnEars(kind: own.kind, region: own.region, key: own.key) }
         var links = (try? JSONDecoder().decode([String].self, from: Data((Keychain.read("airband.links") ?? "[]").utf8))) ?? []
         if let old = Keychain.read("airband.link"), !old.isEmpty, !links.contains(old) { links.append(old) } // from the first builds
@@ -210,6 +212,49 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
                 case .failure: self.problem = "It did not end."
                 }
             }
+        }
+    }
+
+    /// Where a voice made on this phone keeps its model.
+    let voiceDir: String
+    /// The voice made on this phone that he has chosen, or empty for the computer's.
+    @Published var localVoice = UserDefaults.standard.string(forKey: "airband.voice") ?? ""
+
+    /// Speak with a voice made on this phone from now on; empty goes back to the computer's.
+    func useVoice(_ kind: String) {
+        UserDefaults.standard.set(kind, forKey: "airband.voice")
+        localVoice = kind
+        setLocalVoice(dir: voiceDir, kind: kind)
+    }
+
+    /// Fetch a voice's model. Calls back with what went wrong, or nil. The model can be fetched again, so it
+    /// is left out of the phone's backups.
+    func downloadVoice(_ kind: String, done: @escaping (String?) -> Void) {
+        fetch.async {
+            var wrong: String?
+            do { try fetchLocalVoice(dir: self.voiceDir, kind: kind) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "The download did not finish." }
+            var folder = URL(fileURLWithPath: self.voiceDir).appendingPathComponent("voices")
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try? folder.setResourceValues(values)
+            DispatchQueue.main.async { done(wrong) }
+        }
+    }
+
+    func removeVoice(_ kind: String) {
+        if localVoice == kind { useVoice("") }
+        removeLocalVoice(dir: voiceDir, kind: kind)
+    }
+
+    /// Say a sentence in the chosen voice, so he hears what he picked.
+    func sampleVoice(done: @escaping (String?) -> Void) {
+        fetch.async {
+            var wrong: String?
+            do {
+                let pcm = try localVoiceSample(text: "Shop two is waiting. The build passed, and it wants to know whether to push.")
+                self.voice.play(rate: 24000, pcm: pcm, last: true)
+            } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "The voice did not speak." }
+            DispatchQueue.main.async { done(wrong) }
         }
     }
 

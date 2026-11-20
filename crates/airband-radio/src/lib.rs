@@ -31,6 +31,7 @@ mod desk;
 mod ears;
 mod ears_stream;
 mod link;
+mod mouth;
 pub mod net;
 mod outbox;
 mod store;
@@ -38,6 +39,7 @@ mod voice;
 
 use call::*;
 pub use desk::*;
+pub use mouth::{LocalVoice, fetch_local_voice, local_voice_progress, local_voice_sample, local_voices, remove_local_voice, set_local_voice};
 use link::*;
 use outbox::*;
 use store::*;
@@ -452,6 +454,14 @@ impl Radio {
     /// called. False when the tower has no voice to read it with.
     pub(crate) fn read_aloud(&self, id: &str) -> bool {
         let mine = self.reading.fetch_add(1, Ordering::SeqCst) + 1;
+        // with a voice of the device's own, the tower is asked for the words and they are said here
+        if mouth::ready() {
+            if let Ok((200, v)) = self.link.request("GET", &format!("/message/{id}?form=spoken"), None) {
+                if v["text"].as_str().is_some_and(|text| mouth::say(&*self.host, text, &|| self.reading.load(Ordering::SeqCst) != mine)) {
+                    return true;
+                }
+            }
+        }
         let speech = match self.link.request("GET", &format!("/message/{id}?form=speech"), None) {
             Ok((200, v)) => v["speech"].as_str().map(String::from),
             _ => None,

@@ -172,10 +172,12 @@ async fn permission_withdraw(State(app): State<Arc<App>>, Path(id): Path<String>
     Json(json!({}))
 }
 
-async fn next(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
+async fn next(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>) -> Response {
     let radio = radio_of(&headers);
     {
         let mut inner = app.inner.lock().unwrap();
+        // a radio with a voice of its own says so each time it asks, and is sent words only
+        inner.call(&radio).speaks = q.get("voice").map(String::as_str) == Some("own");
         if !inner.call(&radio).connected() {
             log(format!("{radio} connected"));
             inner.call(&radio).began = super::now();
@@ -263,8 +265,13 @@ async fn utterance(State(app): State<Arc<App>>, headers: HeaderMap, Json(u): Jso
     }
     let mut reply = on_utterance(&app, &radio, u.id.as_deref(), text, u.re.as_deref(), u.scope.as_deref(), u.label.as_deref(), &u.attachments, &u.others).await;
     // on a call the tower's answer is spoken too: start its voice now, and the radio fetches it as it is made
-    if !reply.say.is_empty() && app.inner.lock().unwrap().call(&radio).connected() {
-        reply.speech = app.speech.start(&app.voice(), &reply.say);
+    let on_call = {
+        let mut inner = app.inner.lock().unwrap();
+        let call = inner.call(&radio);
+        call.connected().then_some(call.speaks)
+    };
+    if let (false, Some(speaks)) = (reply.say.is_empty(), on_call) {
+        reply.speech = app.speech.start(&app.voice_to(speaks), &reply.say);
     }
     if let Some(id) = &u.id {
         app.store.finish_receipt(id, &reply);
@@ -427,8 +434,16 @@ async fn feed(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
 async fn message(State(app): State<Arc<App>>, Path(id): Path<String>, Query(q): Query<HashMap<String, String>>) -> Response {
     // the whole message, read aloud in the tower's voice: the id of its speech. A very long one is read as far
     // as a few minutes go
-    if q.get("form").map(String::as_str) == Some("speech") {
+    // `spoken` is the same words with no sound, for a radio that reads them in a voice of its own
+    let form = q.get("form").map(String::as_str);
+    if matches!(form, Some("speech" | "spoken")) {
         let text: Option<String> = app.inner.lock().unwrap().log.iter().find(|e| e.id == id).map(|e| spoken(&e.full).chars().take(3000).collect());
+        if form == Some("spoken") {
+            return match text {
+                Some(text) => Json(json!({ "text": text })).into_response(),
+                None => StatusCode::NOT_FOUND.into_response(),
+            };
+        }
         return match text.and_then(|text| app.speech.start(&app.voice(), &text)) {
             Some(speech) => Json(json!({ "speech": speech })).into_response(),
             None => StatusCode::NOT_FOUND.into_response(),

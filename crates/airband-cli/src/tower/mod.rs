@@ -109,6 +109,10 @@ impl App {
     }
     /// What speaks: the voice he set, or with none set, Microsoft's through the relay's pass when there is one.
     /// The phone's own voice is never the fallback: with nothing here, nothing is spoken.
+    /// The voice for one radio: none for a radio that makes its own speech.
+    fn voice_to(&self, speaks: bool) -> config::Voice {
+        if speaks { config::Voice::Device } else { self.voice() }
+    }
     fn voice(&self) -> config::Voice {
         match (&self.cfg.voice, self.lent()) {
             (config::Voice::Device, Some((region, token))) => config::Voice::AzurePass { region, token },

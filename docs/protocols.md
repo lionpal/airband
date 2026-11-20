@@ -105,7 +105,7 @@ Call mode, one spoken transmission at a time:
 
 | Call | Body → answer | Meaning |
 |---|---|---|
-| `GET next` | → `Transmission`, or 204 | Held open up to 25 s. A radio that has not asked for 40 s is gone. Only what arrives after a radio joins is read out. |
+| `GET next` | → `Transmission`, or 204 | Held open up to 25 s. A radio that has not asked for 40 s is gone. Only what arrives after a radio joins is read out. With `?voice=own` the radio has a voice of its own: the tower makes no speech for it and sends words only. |
 | `POST heard` | `{ id }` | That transmission was spoken to the end. Only now is it off the queue. |
 | `POST utterance` | `Utterance` → `Reply` | What he said. Chat mode sends through it too. |
 | `POST ready` | | Free for the next transmission. |
@@ -132,7 +132,7 @@ Chat mode and the rest:
 | Call | Body → answer | Meaning |
 |---|---|---|
 | `GET feed?scope=…&since=<rev>&wait=<s>` | → `Feed` | Every line new or changed after change count `since`, oldest change first; pass `rev` back next time. `since=0` gets the newest lines. `scope`: `all`, `group:<name>`, `agent:<callsign>`. Held open up to 25 s. `roster=<roster_rev>`: also answer when the roster changes. `away=1`: this radio is following the chat without showing it. `after=<seq>` is the older form (new lines only) and is still answered. |
-| `GET message/<id>?form=detail\|full\|speech` | `{ text }`, or `{ speech }` | The fuller spoken version, exactly what the agent wrote, or the id of a clip of the whole message read aloud. |
+| `GET message/<id>?form=detail\|full\|speech\|spoken` | `{ text }`, or `{ speech }` | The fuller spoken version, exactly what the agent wrote, the id of a clip of the whole message read aloud, or (`spoken`) the words of that clip for a radio that reads them in a voice of its own. |
 | `GET speech/<id>?from=<block>` | `{ rate, data, samples, next, done, text, marks }` | The next part of a clip of the tower's voice: IMA ADPCM blocks, base64. `text` comes with the first part; `marks` are pairs of (where a word starts in `text`, milliseconds into the clip) when the voice gives timings. 404 when the tower has no voice. |
 | `GET ears` | `{ kind, region, token, language, phrases }` | What the phone should listen with: `device`, or a service and a short-lived pass for it. `phrases` are names he is likely to say. |
 | `GET picture/<id>?from=<byte>` | `{ data, next, done }` | One part (120 KB at most, base64) of a picture's kept copy. |
