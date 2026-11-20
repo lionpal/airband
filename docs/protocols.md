@@ -1,12 +1,16 @@
 # Protocols
 
 Three versioned protocols: `airband.agent/1` (agents → tower), `airband.radio/1` (phone ↔ tower) and
-`airband.relay/1` (how the second one crosses the internet sealed). The first two are plain JSON over HTTP with
-`Authorization: Bearer <token>` (the token in `~/.airband/config.json`) when sent straight to the tower. The types are in `crates/airband-core`
+`airband.relay/1` (how the second one travels sealed). The first two are plain JSON over HTTP with
+`Authorization: Bearer <token>` when sent to the tower's own port. The types are in `crates/airband-core`
 and are the source of truth; this page explains them.
 
-Compatibility rule for both: unknown fields are ignored, and unknown `type` / `kind` values are accepted and
-skipped. Adding a field or a variant is not a new version. `/2` is for a change an old peer would misread.
+Compatibility: unknown fields are ignored, and unknown `type` / `kind` values are accepted and skipped. Adding
+a field or a variant is not a new version. `/2` is for a change an old peer would misread.
+
+Two tokens open the tower's port, which listens on 127.0.0.1 and the computer's Tailscale addresses. Its own
+(`token` in `~/.airband/config.json`) opens everything. A radio's (`radio_token`), which is what a direct
+pairing link carries, opens `/v1/radio/` only.
 
 ## `airband.agent/1`: agents → tower
 
@@ -18,7 +22,7 @@ skipped. Adding a field or a variant is not a new version. `/2` is for a change 
   "agent": {
     "id": "8f2c…",              // stable for the agent's session, unique on this machine
     "harness": "claude-code",   // free text; the tower has no rules per harness
-    "meta": { "model": "…" },   // anything else worth keeping about the agent; the tower stores and shows it
+    "meta": { "branch": "…" },  // anything else worth keeping about the agent; the tower stores and shows it
     "cwd": "/Users/c/shop",     // its last part names the callsign ("shop two")…
     "name": "shop",             // …unless a spoken name is given
     "title": "shop 2",          // the name he gave this session in the harness, if he did: it becomes the callsign
@@ -34,11 +38,11 @@ skipped. Adding a field or a variant is not a new version. `/2` is for a change 
 | `checkin` | The agent exists. Every other event also checks it in. |
 | `working` | It was given something to do; what it last said is stale and is dropped unheard. |
 | `said` | It finished a turn; `text` is what it wrote. Optional `kind`: `question` (blocked until answered) or `report`; left out, the tower works it out. |
-| `notice` | It needs him at the keyboard (a permission prompt, a login). |
-| `picture` | It looked at a picture or made one for him: `path` is a file on the tower's machine (PNG, JPEG, GIF or WebP). `shown: true` means it meant him to see it. The tower keeps a small copy and attaches it to the next `said`. A picture file named in the text of a `said` is attached the same way, with no event. |
-| `subagent` | It started a subagent (`done: false`) or one finished (`done: true`); `what` says what the subagent is for. Only counted, for showing how much is going on under one agent. |
-| `activity` | What it is doing right now, in a few words (`text`). Shown small while it works, never kept, never read aloud. For a harness the tower cannot ask; `airband report … doing "<text>"` sends one. |
-| `model` | The model it runs on and how hard it is set to think (`name`, `effort`), as a person would say them: "Opus 4.7", "high". Shown beside its name. `airband report … model "<name>" [effort]` sends it; an adapter can read it instead. |
+| `notice` | It needs him at the keyboard (a login, a prompt the radio cannot answer). |
+| `picture` | A picture file on the tower's machine (`path`: PNG, JPEG, GIF or WebP). The tower copies it only with `shown: true`, which means the agent sent it to him, and attaches the copy to the next `said`. A picture file named in the text of a `said` is attached too, when it is in the agent's `cwd` or a temporary folder. |
+| `subagent` | It started a subagent (`done: false`) or one finished (`done: true`); `what` says what it is for. Only counted. |
+| `activity` | What it is doing right now, in a few words (`text`). Shown small while it works, never kept, never read aloud. |
+| `model` | The model it runs on and how hard it is set to think (`name`, `effort`), as a person would say them: "Opus 4.7", "high". |
 | `signoff` | It is gone. |
 
 | `deliver.kind` | How the tower gets his reply to the agent |
@@ -46,16 +50,19 @@ skipped. Adding a field or a variant is not a new version. `/2` is for a change 
 | `claude-code-inbox` | Claude Code's per-session inbox socket. |
 | `command` | Runs `argv` with the message on standard input and `AIRBAND_AGENT_ID` in the environment. |
 | `tmux` | Types the message into pane `target` and presses Enter. Works for anything in a terminal. |
+| `held` | The tower runs this agent and holds its input: his words are written there as his own turn. |
 | none | The agent can be heard but not answered. |
+
+`DELETE /v1/agent/held/<id>` ends an agent the tower runs.
 
 ### Asking permission
 
 A harness that stops to ask before its agent does something (run a command, write outside the project) can put
-the question to him on the radio. It is a separate call because the harness is waiting on the answer.
+the question to him on the radio.
 
 | Call | Body → answer | Meaning |
 |---|---|---|
-| `POST /v1/agent/permission` | `{ schema, agent, what, detail }` → `PermissionState` | `what` finishes the words "wants to …" and is shown to him exactly as given: "run \`npm run deploy\`". `detail` is the whole request, for the more-info page. |
+| `POST /v1/agent/permission` | `{ schema, agent, what, detail, question }` → `PermissionState` | `what` finishes the words "wants to …" and is shown to him exactly as given: "run \`npm run deploy\`". `detail` is the whole request, for the more-info page. `question`, `{ text, choices }`, is set when the agent is asking him something through its harness's own asking tool: it is shown as that question with its choices, and whatever he answers is the reply. |
 | `GET /v1/agent/permission/<id>?wait=<s>` | → `PermissionState` | Held open up to `wait` seconds (25 at most) or until he answers. |
 | `DELETE /v1/agent/permission/<id>` | | The harness has stopped waiting. The card closes. |
 
@@ -65,253 +72,276 @@ the question to him on the radio. It is a separate call because the harness is w
 |---|---|
 | `pending` | Ask again, for `wait_seconds` in all, then withdraw the request and ask in its own way. |
 | `allow` | Go ahead. |
-| `deny` | Refuse. `message` is his own words if he gave a reason; pass them to the agent. |
+| `deny` | Refuse. `message` is his own words if he gave any; pass them to the agent. |
 | `nobody` | Ask in its own way now: no radio has read the feed in the last 90 seconds, or `permission_wait` is 0. |
 | `gone` | The same: the tower no longer knows the request. |
 
-The rules are the tower's and hold for every harness. It never decides: only he can turn `pending` into `allow`.
-Waiting never becomes a yes. A tapped Allow or Deny answers the card it is on. A spoken "yes" or "no" answers a
-request only when exactly one is waiting. Any other words said in answer to a card refuse it and are passed on as
-the reason, and handing the choice back to the agent ("do whatever you think") is turned away. The message for a
-request carries `permission: true`, and a client offers its two answers and nothing else.
+The rules are the tower's and hold for every harness. Only he can turn `pending` into `allow`, and waiting
+never becomes a yes. Only an utterance whose `re` is the request answers it; a "yes" said to anyone else
+answers nothing. The Allow and Deny buttons send the texts `Allow` and `Deny`
+(`airband_core::radio::ALLOW`, `DENY`), which the tower takes without reading. Any other words are read by a
+model: a plain yes to exactly what was asked allows it; a no, a condition or another instruction refuses it and
+goes back as `message`; words that settle nothing, or no answer from the model, leave it `pending` and he is
+told it needs a yes or a no. The message for a request carries `permission: true`, and a client offers its two
+answers only.
 
 ### Putting another harness on the radio
 
-- **No code:** call `airband report` from whatever the harness offers (a notify command, a wrapper script):
-  `airband report --id "$SESSION" --harness codex --tmux "$TMUX_PANE" said "$LAST_MESSAGE"`.
-  For a permission prompt: `airband report --id "$SESSION" --harness codex permission "run \`$COMMAND\`"` waits
-  for him and exits 0 for yes, 1 for no (his reason on standard output), 2 for no answer.
-- **An adapter:** a function in `crates/airband-cli/src/adapters/` that maps the harness's notification JSON to an
-  `AgentEvent`, selected as `airband hook <harness>`. `claude_code` there is the model: about forty lines.
-- **A new way to deliver:** a variant of `Deliver` in `airband-core/src/agent.rs` and its arm in `tower/deliver.rs`.
+- No code: `airband report --id "$SESSION" --harness codex --tmux "$TMUX_PANE" said "$LAST_MESSAGE"`, from
+  whatever the harness can run. `… permission "run \`$COMMAND\`"` waits for him and exits 0 for yes, 1 for no
+  (his reason on standard output), 2 for no answer.
+- An adapter: a module in `crates/airband-cli/src/adapters/`, selected as `airband hook <harness>`.
+
+A hook that runs with `AIRBAND_HELD_ID` set belongs to an agent the tower runs: `airband hook` reports it under
+that id with `deliver.kind` `held`.
 
 ## `airband.radio/1`: radio ↔ tower
 
-The radio always asks; the tower never calls the phone. All under `/v1/radio/`.
+The radio always asks; the tower never calls the phone. All under `/v1/radio/`. A radio names itself in the
+`x-airband-radio` header so the tower can keep its place in a call apart from another radio's; for a sealed
+request the tower uses the pairing's name.
+
+Call mode, one spoken transmission at a time:
 
 | Call | Body → answer | Meaning |
 |---|---|---|
-| `GET next` | → `Transmission`, or 204 | Held open up to 25 s. Polling is also how the tower knows a radio is there: 40 s without one and it stops summarising. |
-| `POST heard` | `{ "id" }` | That transmission was spoken to the end. Only now is it off the queue. |
-| `POST utterance` | `{ "text", "id", "re", "scope" }` → `{ "say", "listen" }` | What he said. `re`: the message he is answering, when he picked one. `scope`: the room he was in (`group:<name>`). `say` is spoken back; `listen` reopens the microphone. |
+| `GET next` | → `Transmission`, or 204 | Held open up to 25 s. A radio that has not asked for 40 s is gone. Only what arrives after a radio joins is read out. |
+| `POST heard` | `{ id }` | That transmission was spoken to the end. Only now is it off the queue. |
+| `POST utterance` | `Utterance` → `Reply` | What he said. Chat mode sends through it too. |
 | `POST ready` | | Free for the next transmission. |
 
 ```json
-{ "id": "9a41…", "callsign": "shop two", "kind": "question", "say": "Shop two. The checker passes…", "waiting": 2 }
+{ "id": "9a41…", "callsign": "shop two", "kind": "needs-you", "say": "Shop two. The checker passes…", "waiting": 2, "speech": "…" }
 ```
-
-Chat mode reads the same messages as a feed, and sends through the same `utterance` call:
-
-| Call | Answer | Meaning |
-|---|---|---|
-| `GET feed?scope=…&since=<rev>&wait=<s>` | `{ schema, rev, messages, roster, seq, open, projects, station }` | Every line new or changed after change count `since`, oldest change first, each cut to a line or two; pass `rev` back next time. `since=0` gets the newest lines. `scope`: `all`, `group:<name>`, `agent:<callsign>`. Held open up to 25 s. `after=<seq>` is the older form (new lines only) and is still answered. `away=1`: this radio is following the chat without showing it (see Notifications). |
-| `GET speech/<id>?from=<block>` | `{ rate, data, samples, next, done }` | The next part of a clip of the tower's voice, as far as it has been made: IMA ADPCM blocks, base64. A `Transmission` or a reply names its clip in `speech`. |
-| `GET ears` | `{ kind, token, region, language, phrases }` | What the phone should listen with: `device`, or a service and a ten-minute pass for it. |
-
-With a service, the radio streams the microphone to it as he speaks and tells its host what he has said so far
-(`hearing`), so his words appear while he is still talking. If that connection cannot be made it falls back to
-one upload with the words at the end, and then to the device's own recognition.
-| `GET message/<id>?form=detail\|full` | `{ text }` | The fuller spoken version, or exactly what the agent wrote. |
-| `GET picture/<id>?from=<byte>` | `{ data, next, done }` | One part (120 KB at most, base64) of a picture's kept copy. Ask again from `next` until `done`. |
-
-A message: `{ seq, id, at, from, group, to, kind, text, long, options, recommended, read, permission, pictures, links, agent, rev, open }`.
-`agent` is the id of the agent that said it, the same as `id` in the roster and stable while that agent runs;
-`from` is only what it is called now. `kind` is `needs-you`, `report` or `fyi`; a client that meets a kind it does
-not know shows it as a report. `options` are up to three answers he can tap, `recommended` the position of the one
-the agent itself recommended (never a default), and `open` means it needs him and nothing has answered it.
-The feed's `open` lists every such message's id, `projects` the names a new agent can be launched in
-(`/launch <project> <task>` as an utterance), and `station` what this computer is called.
-
-`kind` can also be `stalled`: the agent said what it would do next and stopped, with the work unfinished and
-nothing asked. `/poke` as an utterance (or the spoken word "poke") sends "Keep going." to every agent in that
-state, within `scope` if one is given. Each roster entry has a `state` (`working`, `asking`, `stalled`, `idle`)
-and a count of `subagents`.
-
-A roster entry may carry `doing`: what a working agent is doing right now, in its harness's own words for its
-latest step. The tower asks each working agent's adapter every two seconds, and only while a radio has read the
-feed in the last 40 seconds. The feed carries `roster_rev`, a number that changes whenever the roster does; a
-radio that passes it back as `roster=` has its waiting `GET feed` answered when the roster changes, not only
-when a message does.
-
-A roster entry may also carry `model` and `effort`: what the agent runs on, when its harness can say.
-
-A roster entry with `held` is an agent the tower runs itself: his words reach it as his own turn, it can be stopped, and what he says while it works is `queued` on his message until it stops (or he takes it back, and the message comes again as `cancelled`).
-
-A message from `you` is something he said: through a radio, or typed to an agent at its own keyboard, which the tower adds when the harness keeps a record it can read. Those are added after the fact with the time he typed them, so a radio orders messages by `at`.
-
-The feed's `colours` gives each team a number from 0: its place in the client's own list of team colours. A team
-is given the first number no other team has, once, and keeps it.
-
-The feed's `quick` lists the quick messages to offer: six standard ones, then his own (`airband quick add`).
-Each is `{ label, text }`. Sending one is an utterance whose `text` is the whole instruction and whose `label`
-is the button's words; the chat shows the label.
-
-Accounts, for a harness whose sessions can be moved between logins while they run:
-
-| Call | Body → answer | Meaning |
-|---|---|---|
-| `GET accounts?fresh=1` | → `{ schema, accounts, note, checked_at }` | Every account of every such harness on this computer. Kept for five minutes; `fresh` checks again (at most every 20 s). |
-| `POST accounts/use` | `{ harness, id }` → the same, or `{ error }` | Move that harness's sessions to that account. `error` is words for him. |
-| `POST team` | `{ agent, team }` → `{ callsign, team }`, or `{ error }` | Put an agent in another team: one that exists, or a new one of that name. A name he gave the agent goes with it; a number is replaced by the next free one there. It stays where he put it. |
-| `POST takeover` | `{ agent }` → `{}`, or `{ error }` | Have the tower take over an agent he started in a terminal: that session ends there and carries on in a process the tower holds. Refused while it is in the middle of something. |
-| `POST stop` | `{ agent }` → `{}`, or `{ error }` | Stop what an agent the tower runs is doing, now. What he said to it meanwhile it then reads as one turn. |
-| `POST unsend` | `{ message }` → `{}`, or `{ error }` | Take back something he said that is still `queued`. |
-| `POST end` | `{ agent }` → `{}`, or `{ error }` | End an agent the tower runs itself: its input is closed, and it finishes and signs off. |
-| `POST push` | `{ provider, token }` → `{}` | Where this radio can be woken when it is not listening: its address at a push service (`apns` is Apple's). Kept with the pairing it came through. An empty `token` takes it away. |
-
-An account is `{ id, harness, label, live, limits, problem }`. `id` means something only to the adapter that listed
-it; `label` is what to show (for Claude Code, the email); `live` marks the one in use. Each of `limits` is
-`{ name, used, resets_at }`: `name` is the window ("week", "5 hours"), `used` runs from 0 to 1, `resets_at` is
-milliseconds since 1970. `problem`, when present, says why the account could not be checked and is shown in place
-of the limits. Nothing that could sign in as an account is ever sent. Signing in to a new account happens at
-the computer (`airband accounts add`), never from a radio.
-
-A new agent can be asked for in any words, on a model and at an effort if he names them: "with fable high, find
-out why checkout is slow", "can you get opus to look into the slow import". The same model call that works out
-who a reply is for decides this: whether he wants a new agent at all, which project the work belongs in, and
-which of the launcher's `models` and `efforts` he named. Only a project the tower knows and names the launcher
-lists are taken from its answer. Typed commands (`/launch shop with opus: …`) are read by rule, and the same
-rules stand in for set phrases when no model answers. The reply says what was started: "Launching in shop with
-fable, high."
-
-A short text is one sentence, with one exception: when the last thing he told an agent was to investigate,
-review, compare or explain something and the message is the answer, `text` is an executive summary of up to
-about 90 words, conclusion first. It is spoken on a call like any other.
-
-Two tokens open the tower's port. Its own opens everything. A radio's, which is what a direct pairing link
-carries, opens `/v1/radio/` only. A radio names itself in the `x-airband-radio` header so the tower can keep its
-place in a call apart from another radio's; through the relay the tower uses the pairing's name.
-
-A message may carry `read`: the judge's two or three words for something in it that he should be able to read
-whole ("the refund email"), when he asked to be shown it or cannot decide without it. A client offers the full
-message under that name. It is the model's call each time, never a rule about particular words.
-
-A message carries `links`: up to four web links the agent wrote (an artifact, a pull request), which the short
-text leaves out.
-
-A message carries `pictures`: up to four of `{ id, width, height, bytes }`, the ones the agent meant him to see
-first, then ones it named, then the last it looked at. A copy is a JPEG, 1600 pixels at most on its long side,
-usually 50 to 300 KB. Nothing is sent until a client asks for it, and it comes in parts because one sealed
-message through a relay is limited to 256 KB.
-
-Who a message is for is in its text: leading tags when typed (`@shop2`, `@shop` for the group, `@all`), a
-leading callsign when spoken ("shop two, …", "all shop, …", "everyone, …"). No tag: the message in `re` if
-there is one. Otherwise the tower reads his words against the last thing each agent said and picks the one they
-are about, among the agents in `scope` or among all of them; when it cannot tell, it asks "Who is that for?".
-
-A callsign is the project's folder name plus a number in order of arrival ("shop one"), unless he named the
-session himself: then it is the project plus that name ("shop 2" → shop two, "removals" → warehouse removals).
-For Claude Code the name is the one given to `/rename` or to `/remote-control <name>`. A session that already
-holds a number someone's name asks for moves to the next free one, and its messages move with it.
 
 One transmission is out at a time; questions go before reports; each agent has at most one message waiting
 (its latest). A transmission that was taken but never `heard` is offered again.
 
-### Adding a host (Android, Windows, a watch)
+An `Utterance` is `{ text, id, re, scope, label, attachments, others }`. `id` is random and the same on every
+retry: the tower takes each id once. `re` is the message he is answering, when he picked one. `scope` is the
+room he was in (`group:<name>`). `label` is the button's words when it is a quick message. `attachments` are
+ids of files sent with `POST attachment`. `others` are the agents on his screen that another of his computers
+has, each `{ callsign, group, said, ago }`.
 
-A host of the chat implements `DeskHost` from `airband-radio` and draws what `Desk.view()` returns. Ten calls:
-`speak` and `listen` (the device's own voice and recognition), `play`, `record_start`, `record_read`,
-`record_stop` (raw audio), `changed` (ask for the view again), `status` (for a call screen), `note` (something
-he must be told) and `watching` (is the chat in front of him). The desk holds every paired computer as one and
-decides what is waiting, what is done, where a message goes and who has the floor on a call. Swift and Kotlin get
-the interface generated (`crates/uniffi-bindgen`). A host for one computer and no chat can use `Radio` and
-`RadioHost` (eight calls) directly, as `airband radio` does in `crates/airband-cli/src/terminal.rs` (about 260
-lines). Hosts decide nothing about order, routing, retries, or what is open.
+A `Reply` is `{ say, listen, speech, ask, elsewhere }`. `say` is spoken back and `listen` asks for the
+microphone again. `ask` lists the agents his words could be for, likeliest first, when the tower could not
+tell. `elsewhere` is the callsign of one of `others`: the radio sends his words to that computer.
 
-## `airband.relay/1`: crossing the internet
+Chat mode and the rest:
 
-The tower is behind a home router and cannot be called, so both ends call out to a relay:
+| Call | Body → answer | Meaning |
+|---|---|---|
+| `GET feed?scope=…&since=<rev>&wait=<s>` | → `Feed` | Every line new or changed after change count `since`, oldest change first; pass `rev` back next time. `since=0` gets the newest lines. `scope`: `all`, `group:<name>`, `agent:<callsign>`. Held open up to 25 s. `roster=<roster_rev>`: also answer when the roster changes. `away=1`: this radio is following the chat without showing it. `after=<seq>` is the older form (new lines only) and is still answered. |
+| `GET message/<id>?form=detail\|full\|speech` | `{ text }`, or `{ speech }` | The fuller spoken version, exactly what the agent wrote, or the id of a clip of the whole message read aloud. |
+| `GET speech/<id>?from=<block>` | `{ rate, data, samples, next, done, text, marks }` | The next part of a clip of the tower's voice: IMA ADPCM blocks, base64. `text` comes with the first part; `marks` are pairs of (where a word starts in `text`, milliseconds into the clip) when the voice gives timings. 404 when the tower has no voice. |
+| `GET ears` | `{ kind, region, token, language, phrases }` | What the phone should listen with: `device`, or a service and a short-lived pass for it. `phrases` are names he is likely to say. |
+| `GET picture/<id>?from=<byte>` | `{ data, next, done }` | One part (120 KB at most, base64) of a picture's kept copy. |
+| `POST attachment` | `{ id, name, from, data, done, total }` → `{ next, any }`, or `{ error }` | One part of a file he is attaching, 120 KB at most. With `total` the parts may come in any order. |
+| `POST dismiss` | `{ message }` → `{}`, or `{ error }` | He does not mean to answer this question. It stops being open. The agent is told nothing. |
+| `POST unsend` | `{ message }` → `{}`, or `{ error }` | Take back something he said that is still `queued`. |
+| `POST taken` | `{ callsigns }` → `{}` | The names agents go by on his other computers, as his radio shows them ("shop 1"). The tower moves any of its own agents with one of those numbered names to the next free number. A radio tells only the later of two computers. |
+| `POST team` | `{ agent, team }` → `{ callsign, team }`, or `{ error }` | Put an agent in another team, one that exists or a new one. A name he gave the agent goes with it; a number is replaced by the next free one there. |
+| `POST takeover` | `{ agent }` → `{}`, or `{ error }` | Have the tower take over an agent he started in a terminal: that session ends there and carries on under a held launcher of the agent's own harness. Refused while it is in the middle of something. |
+| `POST stop` | `{ agent }` → `{}`, or `{ error }` | Stop what an agent the tower runs is doing. What he said to it meanwhile it then reads as one turn. |
+| `POST end` | `{ agent }` → `{}`, or `{ error }` | End an agent the tower runs: its input is closed, and it finishes and signs off. |
+| `GET accounts?fresh=1` | → `{ schema, accounts, note, checked_at }` | Every account of every harness whose sessions can be moved between logins. Kept for five minutes; `fresh` checks again. |
+| `POST accounts/use` | `{ harness, id }` → the same, or `{ error }` | Move that harness's sessions to that account. |
+| `POST push` | `{ provider, token }` → `{}` | Where this radio can be woken: its address at a push service (`apns` is Apple's). An empty `token` takes it away. |
+
+### The feed
+
+A `Feed` is `{ schema, rev, messages, roster, roster_rev, seq, open, projects, quick, colours, station, direct, listens }`.
+
+- `open`: the id of every message that needs him and is unanswered, whether or not it is in `messages`.
+- `projects`: the names a new agent can be launched in.
+- `quick`: the quick messages to offer, each `{ label, text }`: six standard ones, then his own
+  (`airband quick add`). Sending one is an utterance with that `text` and `label`; the chat shows the label.
+- `colours`: for each team, its place in the client's own list of team colours. Given once and kept.
+- `station`: what this computer is called.
+- `direct`: addresses where a paired radio may reach this tower without the relay, `http://<address>:<port>`:
+  its local network addresses when `airband lan` is on, and its Tailscale addresses (see The sealed route).
+- `listens`: this tower has a key of its own for a listening service. Never the key.
+
+A message is `{ seq, id, at, from, group, to, kind, text, long, options, recommended, read, queued, seen,
+cancelled, permission, pictures, links, agent, rev, open }`.
+
+- `agent` is the id of the agent that said it, the same as `id` in the roster; `from` is only what it is called
+  now. A message from `you` is something he said: through a radio, or typed to an agent at its own keyboard
+  (with any pictures he pasted), which the tower adds with the time he typed it. So a radio orders messages by
+  `at`.
+- `kind` is `needs-you`, `report`, `fyi` or `stalled`; a client shows a kind it does not know as a report.
+  `stalled` means the agent said what it would do next and stopped, with nothing asked.
+- `text` is one sentence, or up to about 90 words when the message answers something he asked to have
+  investigated or leaves him several things to do. The news comes first and a question last, and what was
+  shipped keeps its number. A note on the way from an agent long at work is an `fyi` message. Keys and tokens
+  are masked. `long`: `message/<id>` has more.
+- `options` are answers he can tap, up to three from the judge or four from a harness's own question.
+  `recommended` is the position of the one the agent itself recommended, never a default.
+- `read`: two or three words for something in the message he should be able to read whole ("the refund
+  email"). A client offers the full message under that name.
+- `queued`: he said it to an agent the tower runs, which is busy; it waits until the agent stops. `seen` is
+  when the agent took it in. `cancelled`: he took it back.
+- `links`: up to four web links the agent wrote, which the short text leaves out.
+- `pictures`: up to four of `{ id, width, height, bytes }`. A copy is a JPEG, 1600 pixels at most on its long
+  side. Nothing is sent until a client asks for it.
+- `open`: it needs him and nothing has answered it. A question stays open until he says something to the agent
+  that asked, he dismisses it, the agent asks a newer one or speaks past it three times, or six hours pass. A
+  permission request is open while its harness waits.
+
+A roster entry is `{ id, callsign, group, harness, waiting, state, subagents, reachable, doing, held, model,
+effort }`. `state` is `working`, `asking`, `stalled` or `idle`. `doing` is what a working agent is doing right
+now, asked of its adapter every two seconds while a radio is reading the feed. `held` marks an agent the tower
+runs.
+
+### What he says
+
+Nothing is decided by matching his words.
+
+- A leading tag or callsign names who it is for: typed tags (`@shop2`, `@shop` for the group, `@all`), or a
+  spoken callsign ("shop two, …", "all shop, …", "everyone, …").
+- With `re`, it goes to the agent that said that message.
+- Otherwise a model reads his words against the last thing each agent said, among the agents in `scope` or all
+  of them, and against the projects, tools, models and efforts a new agent could be started with. It picks an
+  agent, or says he wants a new one: "with fable high, find out why checkout is slow". Only a project the tower
+  knows and names a launcher lists are taken from its answer. When it is not sure, the tower asks "Who is that
+  for?" and gives the candidates in `ask`.
+- When no model answers: with one agent running it is for that one, with several he is asked.
+
+Tower commands come only from a radio's buttons, as a word behind a slash and nothing after it: `/poke`,
+`/more`, `/repeat`, `/status`, `/skip`, `/hold`, `/resume` (`COMMANDS` in `routing.rs`). `/poke` sends "Keep
+going." to every stalled agent, within `scope` if one is given. `/launch <project> [with <model> [<effort>]:]
+<task>` starts a new agent. The same words said or typed without the slash are a message for an agent.
+
+A callsign is the project's folder name plus a number in order of arrival ("shop one"), unless he named the
+session himself: then it is the project plus that name ("shop 2" → shop two, "removals" → warehouse removals).
+For Claude Code the name is the one given to `/rename` or to `/remote-control <name>`. A session that holds a
+number someone's name asks for moves to the next free one.
+
+An account is `{ id, harness, label, live, limits, problem }`. `label` is what to show (for Claude Code, the
+email); `live` marks the one in use. Each of `limits` is `{ name, used, resets_at }`: the window ("week",
+"5 hours"), from 0 to 1, and milliseconds since 1970. `problem` says why the account could not be checked.
+Nothing that could sign in as an account is ever sent.
+
+### Listening
+
+`kind` in the answer to `GET ears` names a row of `LISTENERS` in `crates/airband-radio/src/ears.rs`. The radio
+streams the microphone to that service as he speaks, and falls back to one upload if the connection cannot be
+made. With a key of his own in the phone, the radio gets its pass from the service itself and asks neither the
+tower nor the relay.
+
+## `airband.relay/1`: sealed requests
+
+The tower is behind a home router and cannot be called from outside, so both ends call out to a relay:
 
     phone  ──POST call──▶  relay  ◀──GET pull───  tower      the phone's request, sealed
     phone  ◀──response───  relay  ◀──POST reply──  tower      the tower's answer, sealed
 
-Pairing gives the phone and the tower one 32-byte secret; the relay never has it. From it both derive the
-channel's name, the token that lets only the tower pull from the channel, the token that lets only the radio
-send to it (the relay stores the hash of each), and
-one ChaCha20-Poly1305 key per direction (RFC 8439, a random 96-bit nonce on each message). Inside each sealed request is a `airband.radio/1` call with the time
-and a random id: the tower refuses one that is more than two minutes off its clock or that it has answered
-before, and serves only `/v1/radio/` to it. The phone refuses an answer that is not to its own request.
+Pairing gives the phone and the tower one 32-byte secret; the relay never has it. From it both derive, with
+HKDF-SHA256, the channel's name, the pull token that lets only the tower pull from the channel, the radio token
+that lets only the radio send to it (`Keys::radio_token`), and one ChaCha20-Poly1305 key per direction (RFC
+8439, a random 96-bit nonce on each message). The relay stores the hash of each token.
 
-Versions: `airband.relay/1` is part of how the keys are derived, so a later version cannot read or be read by this
-one. Each sealed request names the radio protocol it is in, and a tower that does not speak it answers 400.
-`DELETE /v1/channels/<channel>` with the tower's pull token closes a channel; `airband unpair` sends it.
+Inside each sealed request is `{ t, id, method, path, body, schema }`: an `airband.radio/1` call with the time
+and a random id. The tower answers 408 to one more than two minutes off its clock, drops one it has answered
+before, answers 400 to a `schema` it does not speak, and serves only `/v1/radio/`. The answer is
+`{ id, status, body }`, and the phone refuses one that is not to its own request.
 
-**Whose channel it is.** Every request on a channel carries a token, `Authorization: Bearer <token>`, and the
-relay compares its SHA-256 with the hash it holds, in constant time.
+`airband.relay/1` is part of how the keys are derived, so a later version cannot read or be read by this one.
+
+### The sealed route
+
+`POST /v1/sealed/<channel>` on the tower takes the same sealed request and answers with the sealed answer:
+404 for a channel it does not serve, 400 for a request the pairing's key does not open or that it has answered
+before. The tower serves it on every address it listens on. On its local network addresses (private IPv4
+ranges, when `airband lan` is on) it serves nothing else.
+
+A radio paired through a relay tries the addresses in the feed's `direct` first and uses the relay when none
+answers. Something he said goes by the relay first, so it keeps its place behind anything the relay holds, and
+straight only when the relay cannot be reached.
+
+### The relay's routes
+
+Every request on a channel carries a token, `Authorization: Bearer <token>`, and the relay compares its SHA-256
+with the hash it holds, in constant time.
 
 | Who | Routes | Token |
 |---|---|---|
-| The tower | `PUT /v1/channels/<channel>` (open), `GET …/pull`, `POST …/reply/<id>`, `POST …/push`, `DELETE` (close) | The pull token. Opening a channel the relay does not know also takes the relay's admission key (`x-airband-admission`), if it has one. 403 with another channel's token. |
-| The radio | `POST …/call`, `POST …/queue`, `GET …/ears` | The radio token. 401 without it, with a wrong one, or on a channel that does not exist: the same answer for all three, so it says nothing about which channels exist. |
+| The tower | `PUT /v1/channels/<channel>` (open), `GET …/pull` (held 25 s), `POST …/reply/<id>`, `POST …/push`, `DELETE` (close; `airband unpair` sends it) | The pull token. Opening a channel the relay does not know also takes the relay's admission key (`x-airband-admission`), if it has one. 403 with another channel's token. |
+| The radio | `POST …/call`, `POST …/queue`, `GET …/ears` | The radio token. 401 without it, with a wrong one, or on a channel that does not exist: the same answer for all three. |
+| A tower with the admission key | `POST /v1/speech/pass` | `x-airband-admission`. |
 
 The tower gives the relay the radio token's hash in `x-airband-radio-hash` when it opens the channel and with
-every pull, and the relay keeps it with the channel. The relay never sees either token until its owner shows it.
+every pull.
 
-Phones from before radios sent their token on `call` and `queue` send none there. So a channel starts unproven:
-`call` and `queue` are taken without a token (never with a wrong one). The first `call` or `queue` that carries
-the right token proves the channel, the relay records that for good, and from then on both are refused without
-it. `ears` has always needed the token and proves nothing, because those older phones do send it there. Once
-every phone in use sends the token, the unproven state can be removed.
+For phones from before radios sent their token, a channel starts unproven: `call` and `queue` are taken without
+a token (never with a wrong one). The first that carries the right token proves the channel for good, and from
+then on both are refused without it. `ears` always needs the token.
+
+`GET …/ears` and `POST /v1/speech/pass` answer `{ kind, region, token, language }`: a ten-minute pass to the
+relay's own speech service, for a radio whose computer cannot be reached and for a tower with no speech service
+of its own. 404 from a relay with no speech service or no admission key.
 
 Limits, each answered with 429. Per channel in a minute: 3000 calls, 60 messages left in `queue`, 30 passes from
 `ears`; from one internet address, twice that across all channels. At most 16 calls wait for an answer on a
-channel at once. Requests from an address are counted before anything else; a channel's count takes only requests
-that passed the token check, so a stranger cannot use up a radio's share. No message is larger than 256 KB.
+channel at once. No message is larger than 256 KB.
 
-**Notifications.** A radio that has given the tower an address (`POST push`) is woken when something deserves it:
-a message judged `needs-you` or `report`, a permission card, a question a harness puts to him. Never `fyi` or
-`stalled`, never his own words, once per message, and not on a radio that is on a call or has the chat in front
-of him. The tower knows the last by the feed: a radio showing the chat asks for what follows a message within a
-moment of getting it; one that follows the chat without showing it adds `away=1` to `GET feed`, and that request
-tells the tower nothing about what he has seen. With a phone that can be woken and no radio reading, the tower
-reads each message as it arrives, since only then does it know its kind.
+### Notifications
+
+A radio that has given the tower an address (`POST push`) is woken for a message judged `needs-you` or
+`report`, a permission card, or a question a harness puts to him. Once per message, and not on a radio that is
+on a call or showing the chat: such a radio asks for what follows a message within a moment of getting it, and
+one that follows without showing it adds `away=1`.
 
 The notification is `{ id, from, group, colour, station, text, kind, options, permission }` (`Notice` in
-`radio.rs`): everything the phone needs to show it and to answer it with the app not running. The tower seals it
-with a third key from the pairing secret (direction `push`, so it cannot be passed off as an answer, nor an
-answer as a notification) and asks the relay to pass it on:
+`radio.rs`). The tower seals it with a third key from the pairing secret (direction `push`) and asks the relay
+to pass it on:
 
 | Call | Body → answer | Meaning |
 |---|---|---|
-| `POST /v1/channels/<channel>/push` | `{ provider, to, sealed, question }` → `{ sent, gone, reason }` | From the channel's tower (its pull token). `to` is the phone's address, `sealed` the notification in base64 (2400 bytes at most before base64), `question` whether it is one. 200 sent; 410 the address is no longer good and the tower forgets it; 429 more than 60 from this channel in ten minutes, or 240 from one internet address; 503 this relay has no such push service; 502 the service refused or could not be reached. |
+| `POST /v1/channels/<channel>/push` | `{ provider, to, sealed, question }` → `{ sent, gone, reason }` | `to` is the phone's address, `sealed` the notification in base64 (2400 bytes at most before base64), `question` whether it is one. 200 sent; 410 the address is no longer good and the tower forgets it; 429 more than 60 from this channel in ten minutes, or 240 from one internet address; 503 this relay has no such push service; 502 the service refused or could not be reached. |
 
 The relay holds the push service's key and adds the same visible words to every notification ("airband", "New
-message" or "A question for you"), which is what shows if the phone cannot open it. Neither the relay nor the
-push service sees a name or a word of the message; they do learn that a notification was sent, when, to which
-phone, and whether it was a question. The phone opens it with `open_notice` in the radio core, which tries each
-pairing link it holds. An answer given on the notification is an ordinary `POST utterance` with `re` set to the
-notification's `id`. Push services are in `crates/airband-relay/src/push.rs`; another one is a struct beside `Apns`.
+message" or "A question for you"), which is what shows if the phone cannot open it. The relay and the push
+service learn only that a notification was sent, when, to which phone, and whether it was a question. The phone
+opens it with `open_notice` in the radio core. An answer given on the notification is an ordinary
+`POST utterance` with `re` set to the notification's `id`.
 
-**When the tower is away.** A relay that has not heard from a tower for 45 seconds answers a call with 503. What
-he said is then left with the relay: `POST /v1/channels/<channel>/queue`, the same sealed request, with the
-radio token and the utterance's own id in `x-airband-id`. The relay keeps at most 200 per channel for a week, still unable to read
-them, and one left twice under the same id is kept once. When the tower pulls again it is handed them oldest
-first, one at a time, each under a request id that starts with `held-`; its reply takes that one off the relay
-and brings the next. The tower takes a kept request only if it is an utterance with an id, and it takes each
-utterance id once for good, so neither age nor a second handing-over repeats anything. While some are still
-kept, the relay turns back a new utterance (409 to a call that carries `x-airband-ordered`) and the radio leaves
-that one with the relay too, so everything arrives in the order he said it. Files he attaches are not kept this
-way: they wait on the phone for the computer.
+### When the tower is away
 
-Not provided: forward secrecy. Recorded relay traffic plus a later-stolen pairing secret can be read;
-`airband unpair` and pairing again makes a new secret. Details and tests: `crates/airband-core/src/relay.rs`.
+A relay that has not heard from a tower for 45 seconds answers a call with 503. What he said is then left with
+the relay: `POST …/queue`, the same sealed request, with the utterance's own id in `x-airband-id`. The relay
+keeps at most 200 per channel for a week, and one left twice under the same id is kept once. When the tower
+pulls again it is handed them oldest first, one at a time, each under a request id that starts with `held-`;
+its reply takes that one off the relay. The tower takes a kept request only if it is an utterance with an id.
+While some are still kept, the relay turns back a new utterance (409 to a call that carries
+`x-airband-ordered`) and the radio leaves that one with the relay too, so everything arrives in order. Files
+he attaches wait on the phone.
 
-The pairing link (`crates/airband-core/src/pairing.rs`) is the only thing a host stores:
-`airband://pair?relay=…&secret=…` or, with no relay, `airband://pair?url=…&token=…`.
+### What it does not give
+
+Forward secrecy. Recorded traffic plus a later-stolen pairing secret can be read; `airband unpair` and pairing
+again makes a new secret. Details and tests: `crates/airband-core/src/relay.rs`.
+
+The pairing link (`crates/airband-core/src/pairing.rs`) is `airband://pair?relay=…&secret=…` or, with no
+relay, `airband://pair?url=…&token=…`.
 
 ## The model that reads everything
 
-One model does the judging (what is worth showing, cut to a line), the routing (who his words are for, or that
-he wants a new agent) and nothing else. `airband model` chooses it; it is `summarizer` in `~/.airband/config.json`:
+One model does the judging, the routing, the notes on the way, and reading his answer to a permission request.
+It is given no tools. `airband setup` or `airband model` chooses it; it is `summarizer` in
+`~/.airband/config.json`:
 
 ```json
 { "kind": "command", "argv": ["claude", "-p", "--model", "haiku", "…"] }
-{ "kind": "gemini", "key": "…", "model": "gemini-flash-latest" }
-{ "kind": "openai", "url": "https://api.openai.com/v1", "key": "…", "model": "…" }
+{ "kind": "gemini", "key": "key:gemini", "model": "gemini-flash-latest" }
+{ "kind": "openai", "url": "https://api.openai.com/v1", "key": "key:openai", "model": "…" }
 { "kind": "none" }
 ```
 
-`command` is any program that reads a prompt on standard input and writes the answer to standard output. `gemini`
-is Google's API with a key of his own. `openai` is any service that speaks OpenAI's chat API, a model on his own
-computer included. `none` reads the first two sentences as written and routes only by tags and names. Short
-plain messages are read as written without a model either way.
+`command` is any program that reads a prompt on standard input and writes the answer to standard output.
+`openai` is any service that speaks OpenAI's chat API, a model on his own computer included. `key` is written
+as the name of a kept key (`airband keys`). `summarizer_fallback` takes the same shapes and is asked when the
+first does not answer.
+
+When neither answers, or the kind is `none`, nothing is worked out from the words: he gets each message as
+written, marked a report unless its harness said what it is, and his words go to whoever he names.
