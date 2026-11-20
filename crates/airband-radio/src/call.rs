@@ -75,12 +75,9 @@ pub(crate) fn work(jobs: Receiver<Job>, link: Arc<Link>, host: Arc<dyn RadioHost
                 voice::say(&link, &*host, &t.say, t.speech.as_deref());
                 // "heard" is what takes it off the tower's list: if this is lost, he hears it once more, never zero times
                 let _ = link.post("/heard", &Heard { id: t.id.clone() });
-                // a question waits for his answer, so the microphone opens for it: what he says answers this
-                // transmission, whoever else has spoken meanwhile. Anything else is only told to him; he opens
-                // the microphone himself when he has something to say.
-                if t.kind == Kind::NeedsYou {
-                    converse(&link, &*host, &ears, Some(t.id), None);
-                }
+                // A question is read to him and then waits in the chat, where he answers it when he chooses, by
+                // its own buttons or its microphone. The microphone never opens by itself: he may be in the
+                // middle of saying something to someone else.
                 let _ = link.post("/ready", &serde_json::json!({}));
             }
             Job::Talk(re, scope) => converse(&link, &*host, &ears, re, scope),
