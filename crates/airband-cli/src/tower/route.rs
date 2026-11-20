@@ -416,8 +416,9 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
             return say("Nobody has stopped.".into());
         }
         parsed.control = None;
+        // shown as it is sent: there is nothing more behind it to open
         parsed.rest = "Keep going.".into();
-        shown = Some("Keep going".into());
+        shown = None;
     }
     log(format!("← radio: \"{text}\" → {} {:?} \"{}\"", if targets.is_empty() { "nobody".into() } else { list(&targets.iter().map(|s| s.callsign.text()).collect::<Vec<_>>()) }, parsed.control, parsed.rest));
 

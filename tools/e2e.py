@@ -183,7 +183,7 @@ try:
     q = message(f, "orders refunds")
     check("a question is found, with its answers as buttons (model)", q and q.get("kind") == "needs-you" and len(q.get("options", [])) >= 2 and q["open"], q)
     check("the answer the agent itself recommended is marked (model)", q and q.get("recommended") == 0, q and q.get("recommended"))
-    check("a long message that reports and then asks is cut to its news and, last, the question (model)", q and len(q["text"]) < 330 and q["long"] and "fix" in q["text"].lower() and q["text"].rstrip().endswith("?"), q and q["text"])
+    check("a long message that reports and then asks is cut to its news and, last, the question (model)", q and len(q["text"]) < 330 and q["long"] and "fix" in q["text"].lower() and q["text"].rstrip().endswith("?"), q and (len(q["text"]), q["long"], q["text"]))
     s = message(f, "logistics rates")
     check("an agent that stopped part way is seen as stalled (model)", s and s.get("kind") == "stalled" and who["logistics rates"]["state"] == "stalled", s and s.get("kind"))
     check("states: working, asking, idle", (who["catalog import"]["state"], who["orders refunds"]["state"], who["catalog part page"]["state"]) == ("working", "asking", "idle"),
@@ -292,7 +292,7 @@ try:
     q = message(f, "orders refunds")
     check("a question is found, with its answers as buttons (model)", q and q.get("kind") == "needs-you" and len(q.get("options", [])) >= 2 and q["open"], q)
     check("the answer the agent itself recommended is marked (model)", q and q.get("recommended") == 0, q and q.get("recommended"))
-    check("a long message that reports and then asks is cut to its news and, last, the question (model)", q and len(q["text"]) < 330 and q["long"] and "fix" in q["text"].lower() and q["text"].rstrip().endswith("?"), q and q["text"])
+    check("a long message that reports and then asks is cut to its news and, last, the question (model)", q and len(q["text"]) < 330 and q["long"] and "fix" in q["text"].lower() and q["text"].rstrip().endswith("?"), q and (len(q["text"]), q["long"], q["text"]))
     s = message(f, "logistics rates")
     check("an agent that stopped part way is seen as stalled (model)", s and s.get("kind") == "stalled" and who["logistics rates"]["state"] == "stalled", s and s.get("kind"))
     check("states: working, asking, idle", (who["catalog import"]["state"], who["orders refunds"]["state"], who["catalog part page"]["state"]) == ("working", "asking", "idle"),
