@@ -32,6 +32,7 @@ mod ears;
 mod ears_stream;
 pub mod hears;
 mod link;
+mod models;
 mod mouth;
 pub mod net;
 mod outbox;
@@ -42,7 +43,8 @@ pub mod voices;
 use call::*;
 pub use desk::*;
 pub use ears::try_listening;
-pub use mouth::{LocalVoice, Service, ServiceAsk, VoiceSample, check_service_voice, fetch_local_voice, listening_services, local_voice_progress, local_voices, own_voice_sample, remove_local_voice, set_local_voice, set_service_voice, voice_services};
+pub use models::{LocalModel, fetch_local_model, local_listeners, local_model_progress, local_voices, remove_local_model};
+pub use mouth::{Service, ServiceAsk, VoiceSample, check_service_voice, listening_services, own_voice_sample, set_local_voice, set_service_voice, voice_services};
 use link::*;
 use outbox::*;
 use store::*;
@@ -96,6 +98,10 @@ pub trait RadioHost: Send + Sync {
     /// `text`, as more of a long clip's timings arrive. For showing the words as they are spoken; a clip with no
     /// timings is not announced at all.
     fn words(&self, text: String, starts: Vec<u32>, at_ms: Vec<u32>);
+    /// Turn a recording into words with a model the host runs on the device. `folder` is where the model's
+    /// files are; `pcm` is 16-bit little-endian mono at 16 kHz. Nothing when the host cannot: it has no way
+    /// to run such a model, or the model would not load. Blocks while it works.
+    fn transcribe(&self, folder: String, pcm: Vec<u8>) -> Option<String>;
     /// Are this host's own `speak` and `listen` worth using? A terminal's are (it prints, and a typed line is
     /// what he "said"). A phone's are not: its own recognition and voice are too poor to hand him, so with no
     /// listening service there is no listening, and with no audio from the tower nothing is spoken.

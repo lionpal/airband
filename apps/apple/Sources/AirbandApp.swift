@@ -1286,10 +1286,48 @@ struct ServiceForm: View {
 struct SpeechKeyView: View {
     @EnvironmentObject var model: RadioModel
     private let services = listeningServices()
+    @State private var local: [LocalModel] = []
+    @State private var fetching: String?
+    @State private var progress = 0.0
+    @State private var preparing = false
+    @State private var wrong: String?
+    private let tick = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
 
     var body: some View {
         Form {
-            Section(footer: Text("Optional. With your own key the mic works without your computer. The key stays in this phone\u{2019}s Keychain and only goes to the service it is for.")) {
+            ForEach(local, id: \.kind) { m in
+                Section(header: Text("On this phone"), footer: Text("What you say stays on the phone, and the mic works without your computer. The download is \(m.megabytes) MB. \(m.credit)")) {
+                    if m.fetched {
+                        Toggle("Listen with \(m.name)", isOn: Binding(get: { model.localEars == m.kind }, set: { on in
+                            if on { ready(m.kind) } else { model.useLocalEars("") }
+                        }))
+                        .disabled(preparing)
+                        if preparing { HStack { Text("Getting it ready for this phone. About a minute, once."); Spacer(); ProgressView() } }
+                        if model.localEars == m.kind, let last = model.lastHeard {
+                            Text(String(format: "Last heard %.1f s of speech in %.2f s", last.of, last.took)).font(.footnote).foregroundStyle(.secondary)
+                        }
+                        Button("Remove download", role: .destructive) {
+                            model.removeVoice(m.kind)
+                            local = localListeners(dir: model.voiceDir)
+                        }
+                    } else if fetching == m.kind {
+                        ProgressView(value: progress) { Text("Downloading \(m.name)") }
+                    } else {
+                        Button("Download \(m.name) (\(m.megabytes) MB)") {
+                            (fetching, progress, wrong) = (m.kind, 0, nil)
+                            model.downloadVoice(m.kind) { problem in
+                                (fetching, wrong) = (nil, problem)
+                                local = localListeners(dir: model.voiceDir)
+                                // he asked for it to use it
+                                if problem == nil { ready(m.kind) }
+                            }
+                        }
+                        .disabled(fetching != nil)
+                    }
+                    if let wrong { Text(wrong).foregroundStyle(.red) }
+                }
+            }
+            Section(header: Text("With your own key"), footer: Text("Optional. With your own key the mic works without your computer. The key stays in this phone\u{2019}s Keychain and only goes to the service it is for.")) {
                 if let using = services.first(where: { $0.kind == model.ownEars }) {
                     Text("Listening with \(using.name)")
                     Button("Stop using it") { model.forgetOwnEars() }
@@ -1311,6 +1349,17 @@ struct SpeechKeyView: View {
             }
         }
         .navigationTitle("Listening").navigationBarTitleDisplayMode(.inline)
+        .onAppear { local = localListeners(dir: model.voiceDir) }
+        .onReceive(tick) { _ in if fetching != nil { progress = Double(localModelProgress()) / 100 } }
+    }
+
+    /// Load the model, which the first time fits it to this phone's chip, and then listen with it.
+    private func ready(_ kind: String) {
+        (preparing, wrong) = (true, nil)
+        model.prepareLocalEars(kind) { problem in
+            (preparing, wrong) = (false, problem)
+            if problem == nil { model.useLocalEars(kind) }
+        }
     }
 }
 
@@ -1318,7 +1367,7 @@ struct SpeechKeyView: View {
 /// each is, is the core's to say.
 struct VoiceView: View {
     @EnvironmentObject var model: RadioModel
-    @State private var offered: [LocalVoice] = []
+    @State private var offered: [LocalModel] = []
     @State private var fetching: String?
     @State private var progress = 0.0
     @State private var sampling = false
@@ -1387,7 +1436,7 @@ struct VoiceView: View {
         }
         .navigationTitle("Voice").navigationBarTitleDisplayMode(.inline)
         .onAppear { offered = localVoices(dir: model.voiceDir) }
-        .onReceive(tick) { _ in if fetching != nil { progress = Double(localVoiceProgress()) / 100 } }
+        .onReceive(tick) { _ in if fetching != nil { progress = Double(localModelProgress()) / 100 } }
     }
 }
 

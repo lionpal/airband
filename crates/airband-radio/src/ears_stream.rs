@@ -392,6 +392,9 @@ impl RadioHost for Tape {
         false
     }
     fn unplaced(&self, _: Outgoing, _: Option<String>, _: Vec<String>) {}
+    fn transcribe(&self, _: String, _: Vec<u8>) -> Option<String> {
+        None
+    }
     fn hearing(&self, text: String) {
         let at = self.began.elapsed().as_millis();
         if self.print {

@@ -26,6 +26,8 @@ const RATE: u32 = 16000;
 const PASS_LIFE: Duration = Duration::from_secs(300);
 /// What a pass says, on this device only, when the recording goes straight to a service with his own key.
 const BY_OWN_KEY: &str = "own-key";
+/// And when a model on the device does the listening.
+const BY_MODEL: &str = "on-device";
 
 /// A pass for the service, live as he speaks: the pass, the microphone, its rate, the header of a recording,
 /// and whether he opened the microphone himself. Ok(None) is silence.
@@ -57,6 +59,23 @@ fn listener(kind: &str) -> Option<&'static Listener> {
 static OWN: Mutex<Option<Use>> = Mutex::new(None);
 /// The names the tower last said he is likely to say: used with a pass of his own, which comes with none.
 static PHRASES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// A listening model on the device, when he has chosen one: where its files are. It comes before everything
+/// else: nothing he says leaves the device.
+static LOCAL: Mutex<Option<(String, String)>> = Mutex::new(None);
+
+pub(crate) fn set_local(dir: &str, kind: &str) {
+    let chosen = crate::models::model(kind).filter(|m| m.job == Job::Ears && crate::models::fetched(dir, m)).map(|m| (kind.to_string(), crate::models::folder(dir, m).display().to_string()));
+    *LOCAL.lock().unwrap() = chosen;
+}
+
+/// The model of this kind is being taken off the device: if it is the one listening, it is no longer.
+pub(crate) fn stop_using(kind: &str) {
+    let mut local = LOCAL.lock().unwrap();
+    if local.as_ref().is_some_and(|(k, _)| k == kind) {
+        *local = None;
+    }
+}
 
 pub(crate) fn set_own(with: Option<Use>) {
     *OWN.lock().unwrap() = with.filter(|u| u.offer(Job::Ears).is_some());
@@ -135,7 +154,10 @@ impl Ears {
                 return g;
             }
         }
-        // A key of his own comes first: no computer and no relay is asked.
+        // A model on the device comes first of all, then a key of his own: no computer and no relay is asked.
+        if LOCAL.lock().unwrap().is_some() {
+            return EarsGrant { kind: BY_MODEL.into(), token: String::new(), set: Default::default(), phrases: Vec::new() };
+        }
         let own = OWN.lock().unwrap().clone();
         if let Some(own) = own {
             let set = own.settings(Job::Ears);
@@ -202,6 +224,20 @@ impl Ears {
         // Which way: the pass says. By upload, the recording is made here and sent off whole, to the service
         // with his own key or to his computer, which has the key.
         let granted = self.grant(link);
+        if granted.kind == BY_MODEL {
+            let folder = LOCAL.lock().unwrap().clone().map(|(_, folder)| folder);
+            let heard = folder.ok_or(()).and_then(|folder| by_model(host, folder, manual));
+            host.record_stop();
+            return match heard {
+                Ok(text) => said(text),
+                // the model would not run: it is no longer the one listening, and the next try asks elsewhere
+                Err(()) => {
+                    *LOCAL.lock().unwrap() = None;
+                    *self.grant.lock().unwrap() = None;
+                    Listened::Cannot
+                }
+            };
+        }
         if granted.kind == BY_OWN_KEY || granted.kind == BY_TOWER {
             let clip = record(host, manual);
             host.record_stop();
@@ -274,6 +310,11 @@ impl Read for Feed {
 /// The microphone until he stops, as samples: for a service that takes a finished recording. Ok(None) when he
 /// said nothing. A little from before he was judged to be speaking is kept, so the first word is not clipped.
 fn record(host: &dyn RadioHost, manual: bool) -> Result<Option<Vec<i16>>, ()> {
+    record_with(host, manual, &mut |_| {})
+}
+
+/// The same, telling `so_far` what has been kept each time more is, while he is still talking.
+fn record_with(host: &dyn RadioHost, manual: bool, so_far: &mut dyn FnMut(&[i16])) -> Result<Option<Vec<i16>>, ()> {
     let mut end = Endpointer::new(RATE);
     let mut lead: std::collections::VecDeque<Vec<i16>> = std::collections::VecDeque::new();
     let mut kept: Vec<i16> = Vec::new();
@@ -301,6 +342,7 @@ fn record(host: &dyn RadioHost, manual: bool) -> Result<Option<Vec<i16>>, ()> {
         }
         if speaking {
             kept.extend(heard);
+            so_far(&kept);
         } else {
             lead.push_back(heard);
             while lead.len() > 5 {
@@ -314,6 +356,35 @@ fn record(host: &dyn RadioHost, manual: bool) -> Result<Option<Vec<i16>>, ()> {
         }
     }
     Ok((speaking && !kept.is_empty()).then_some(kept))
+}
+
+/// Listen with a model on the device, which the host runs. The model takes a whole recording, so to show his
+/// words while he talks the recording so far is read again about twice a second, on a thread of its own: the
+/// microphone is never kept waiting, and a reading that is still going when the next is due is let finish
+/// and the next one skipped. When he stops, all of it is read once more, and that is what he said.
+fn by_model(host: &dyn RadioHost, folder: String, manual: bool) -> Result<Option<String>, ()> {
+    let bytes = |pcm: &[i16]| pcm.iter().flat_map(|s| s.to_le_bytes()).collect::<Vec<u8>>();
+    let clip = thread::scope(|scope| {
+        let (tx, rx) = sync_channel::<Vec<u8>>(1);
+        let reading = folder.clone();
+        scope.spawn(move || {
+            while let Ok(pcm) = rx.recv() {
+                if let Some(now) = host.transcribe(reading.clone(), pcm) {
+                    host.hearing(now);
+                }
+            }
+        });
+        let mut read_at = 0usize;
+        // dropping `tx` when this returns ends the thread above, once the reading it is on has finished
+        record_with(host, manual, &mut |kept| {
+            if kept.len() >= read_at + RATE as usize / 2 && tx.try_send(bytes(kept)).is_ok() {
+                read_at = kept.len();
+            }
+        })
+    })?;
+    let Some(pcm) = clip else { return Ok(None) };
+    host.status(RadioStatus::Sending);
+    host.transcribe(folder, bytes(&pcm)).map(|text| Some(text.trim().to_string()).filter(|t| !t.is_empty())).ok_or(())
 }
 
 /// Send a recording to the tower, which has the key for the listening service, and take back the words. It goes

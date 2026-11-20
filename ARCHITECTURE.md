@@ -97,7 +97,8 @@ Outbound and inbound are set separately (`airband setup`, or `airband voice …`
 | | Interface | Where | Providers |
 |---|---|---|---|
 | Outbound: text to audio | `Synth` (text in, PCM out a piece at a time) | `tower/speech.rs` | Any service that speaks OpenAI's `/audio/speech` (a row); Gemini, Microsoft and ElevenLabs by their own routes |
-| Outbound, made on the phone | a row of `MODELS` | `airband-radio/src/mouth.rs` | Phonon (open weights, no key) |
+| Outbound, made on the phone | a row of `MODELS` | `airband-radio/src/models.rs`, run by `mouth.rs` | Phonon (Gradium, open weights, no key) |
+| Inbound, on the phone | a row of `MODELS` | `airband-radio/src/models.rs`, run by the host (`transcribe`) | Phonon 2.5 English (Fermion Research, open weights, no key) |
 | Inbound, live as he speaks | a dialect: a row of `LISTENERS` | `airband-radio/src/ears.rs` | Microsoft |
 | Inbound, a finished recording | `transcribe` (a WAV in, words out) | `airband-radio/src/hears.rs` | Any service that speaks OpenAI's `/audio/transcriptions` (a row); Gemini by its own route |
 
@@ -111,10 +112,14 @@ worth using: nothing is spoken and he types, unless the relay lends its speech p
 put a key of his own in the phone. It lives in the phone's Keychain, is given to the core at launch
 (`set_own_ears`) and goes only to its service; the app asks `own_listeners` which services it may offer.
 
-The phone can also make the voice itself (`mouth.rs`). The program for it is in the app and its model is not:
-he asks for it under Voice in the app's settings and 64 MB is fetched once into the app's folder. While it is
-chosen the model stays loaded, the radio asks for `next?voice=own`, and the tower sends words and makes no
-speech. The app asks `local_voices` what it may offer.
+The phone can also do both jobs itself, with a model on the device (`models.rs`). The program for it is in the
+app and the model is not: he chooses it on the Voice or Listening page and only then is it fetched, once, from
+`airband.dev/models/<name>/<version>/`, already in the form the phone runs, each file checked against its
+hash. `scripts/host-model.sh` puts a model there. The voice (Gradium's Phonon, 65 MB) runs in the core and
+stays loaded while it is chosen; the radio asks for `next?voice=own` and the tower sends words and makes no
+speech. The listening model (Fermion Research's Phonon 2.5 English, 345 MB, iOS 18) runs on the Neural Engine
+through the host (`transcribe`): the core records, has the recording so far read again about twice a second
+to show his words as he talks, and has all of it read once more when he stops.
 
 A call starts from when he joins: what was said before is in the chat and is not read out. The microphone never
 opens by itself: a question is read to him and then waits in the chat (`airband-radio/src/call.rs`).
@@ -132,7 +137,7 @@ The interfaces, and what adding a provider touches:
 | Reading | a command: prompt on standard input, answer on standard output | a row with its arguments |
 | Speaking | OpenAI's speech endpoint (`POST {url}/audio/speech`, raw PCM) | a row |
 | Speaking | a route of its own, for what the common one lacks (ElevenLabs' word timings, Microsoft's lendable pass) | an `impl Synth` in `tower/speech.rs`, a `By` for it, a row |
-| Speaking, on the phone | a row of `MODELS` in `airband-radio/src/mouth.rs` | the row and the code that runs the model; an app release |
+| Speaking or listening, on the phone | a row of `MODELS` in `airband-radio/src/models.rs` | the row, the files under `airband.dev/models/`, and the code that runs the model; an app release |
 | Listening, a finished recording | OpenAI's transcription endpoint (`POST {url}/audio/transcriptions`) | a row |
 | Listening, a finished recording | a route of its own (Gemini) | an arm of `transcribe` in `airband-radio/src/hears.rs`, a `By` for it, a row |
 | Listening, live as he speaks | no common interface exists, so each is a dialect the phone speaks: a row of `LISTENERS` in `airband-radio/src/ears.rs` | the dialect's code there, a row naming it; an app release, because the phone talks to the service itself |

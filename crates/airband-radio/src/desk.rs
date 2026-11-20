@@ -35,6 +35,10 @@ pub trait DeskHost: Send + Sync {
     /// Is the chat on screen in front of him right now? What arrives while it is counts as read, so a call
     /// started later does not read it out.
     fn watching(&self) -> bool;
+    /// Turn a recording into words with a listening model the host runs on the device. `folder` is where the
+    /// model's files are; `pcm` is 16-bit little-endian mono at 16 kHz. Nothing when the host cannot. May
+    /// block for as long as it takes.
+    fn transcribe(&self, folder: String, pcm: Vec<u8>) -> Option<String>;
 }
 
 /// One team: a project and the agents working in it.
@@ -401,6 +405,9 @@ impl RadioHost for StationHost {
     }
     fn hearing(&self, text: String) {
         self.shared.host.hearing(text);
+    }
+    fn transcribe(&self, folder: String, pcm: Vec<u8>) -> Option<String> {
+        self.shared.host.transcribe(folder, pcm)
     }
     fn words(&self, text: String, starts: Vec<u32>, at_ms: Vec<u32>) {
         // only the computer whose turn it is to speak says what is being said: another one's words wait with
@@ -1186,6 +1193,14 @@ pub fn set_own_ears(kind: String, key: String, settings: std::collections::HashM
     crate::ears::set_own((!kind.is_empty()).then(|| crate::mouth::service_of(&kind, &key, settings)));
 }
 
+/// Listen with a model on the device from now on: `kind` is one of [`crate::local_listeners`], and `dir` the
+/// app's folder it was fetched into. An empty `kind` stops. The host remembers the choice and calls this at
+/// launch. Nothing is chosen if the model is not here.
+#[uniffi::export]
+pub fn set_local_ears(dir: String, kind: String) {
+    crate::ears::set_local(&dir, &kind);
+}
+
 /// Does the listening service take this key and these settings? One real call. Blocks: call it off the main
 /// thread.
 #[uniffi::export]
@@ -1343,6 +1358,9 @@ mod tests {
         fn record_stop(&self) {}
         fn outbox(&self, _: Vec<Outgoing>, _: Option<String>) {}
         fn hearing(&self, _: String) {}
+        fn transcribe(&self, _: String, _: Vec<u8>) -> Option<String> {
+            None
+        }
     }
 
     fn msg(id: &str, seq: u64, from: &str, group: &str, needs: bool) -> ChatMessage {

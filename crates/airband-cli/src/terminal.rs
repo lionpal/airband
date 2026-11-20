@@ -121,6 +121,9 @@ impl RadioHost for Terminal {
     fn hearing(&self, _text: String) {}
     // a terminal prints what is said and takes a typed line as what he said
     fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
+    fn transcribe(&self, _: String, _: Vec<u8>) -> Option<String> {
+        None
+    }
     fn own_voice(&self) -> bool {
         true
     }
@@ -212,6 +215,9 @@ impl RadioHost for Silent {
     }
     fn hearing(&self, _text: String) {}
     fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
+    fn transcribe(&self, _: String, _: Vec<u8>) -> Option<String> {
+        None
+    }
     fn own_voice(&self) -> bool {
         true
     }

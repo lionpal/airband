@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
 # the oldest iPhone software the app runs on: the C parts of the Rust core are compiled for it too, not for
 # whatever this Mac's SDK is
-export IPHONEOS_DEPLOYMENT_TARGET=17.0
+export IPHONEOS_DEPLOYMENT_TARGET=18.0
 cargo build --release -p airband-radio --target aarch64-apple-ios
 # the generator reads the API out of a host build of the same library
 cargo build -p airband-radio

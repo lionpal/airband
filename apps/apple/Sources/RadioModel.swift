@@ -4,6 +4,7 @@
 // pairing links in the Keychain. Nothing here would have to be written again in the same way for Android or
 // Windows beyond these three things.
 import AVFoundation
+import PhononCoreML
 import Foundation
 import Security
 import SwiftUI
@@ -72,6 +73,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         voiceDir = dir.path
         desk = Desk.open(dataDir: dir.path, host: self)
         setLocalVoice(dir: dir.path, kind: UserDefaults.standard.string(forKey: "airband.voice") ?? "")
+        setLocalEars(dir: dir.path, kind: UserDefaults.standard.string(forKey: "airband.ears.local") ?? "")
         if !serviceVoice.isEmpty { setServiceVoice(kind: serviceVoice, key: phoneKeys[serviceVoice] ?? "", settings: serviceSettings) }
         if !ownEars.isEmpty { setOwnEars(kind: ownEars, key: phoneKeys[ownEars] ?? "", settings: ownEarsSettings) }
         var links = (try? JSONDecoder().decode([String].self, from: Data((Keychain.read("airband.links") ?? "[]").utf8))) ?? []
@@ -281,8 +283,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     func downloadVoice(_ kind: String, done: @escaping (String?) -> Void) {
         fetch.async {
             var wrong: String?
-            do { try fetchLocalVoice(dir: self.voiceDir, kind: kind) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "The download did not finish." }
-            var folder = URL(fileURLWithPath: self.voiceDir).appendingPathComponent("voices")
+            do { try fetchLocalModel(dir: self.voiceDir, kind: kind) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "The download did not finish." }
+            var folder = URL(fileURLWithPath: self.voiceDir).appendingPathComponent("models")
             var values = URLResourceValues()
             values.isExcludedFromBackup = true
             try? folder.setResourceValues(values)
@@ -292,7 +294,9 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     func removeVoice(_ kind: String) {
         if localVoice == kind { useVoice("") }
-        removeLocalVoice(dir: voiceDir, kind: kind)
+        if localEars == kind { useLocalEars("") }
+        heardWith.removeAll()
+        removeLocalModel(dir: voiceDir, kind: kind)
     }
 
     /// Say a sentence in the chosen voice, so he hears what he picked.
@@ -304,6 +308,51 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
                 self.voice.play(rate: sample.rate, pcm: sample.pcm, last: true)
             } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "The voice did not speak." }
             DispatchQueue.main.async { done(wrong) }
+        }
+    }
+
+    /// The listening model on this phone that he has chosen, or empty.
+    @Published var localEars = UserDefaults.standard.string(forKey: "airband.ears.local") ?? ""
+    /// How long the model took over the last thing it heard, and how long that recording was, in seconds.
+    @Published var lastHeard: (took: Double, of: Double)?
+
+    /// Listen with a model on this phone from now on; empty goes back to a service or the computer.
+    func useLocalEars(_ kind: String) {
+        UserDefaults.standard.set(kind, forKey: "airband.ears.local")
+        localEars = kind
+        setLocalEars(dir: voiceDir, kind: kind)
+    }
+
+    /// Get a listening model ready on this phone: the first time, the phone spends about a minute fitting it to
+    /// its own chip. Calls back with what went wrong, or nil.
+    func prepareLocalEars(_ kind: String, done: @escaping (String?) -> Void) {
+        let folder = URL(fileURLWithPath: voiceDir).appendingPathComponent("models").appendingPathComponent(kind).path
+        fetch.async {
+            let heard = self.transcribe(folder: folder, pcm: Data(count: 32000))
+            DispatchQueue.main.async { done(heard == nil ? "The model did not load on this phone." : nil) }
+        }
+    }
+
+    /// The models loaded so far, by the folder each is in. Loading one takes a moment, so it is kept.
+    private var heardWith: [String: Transcriber] = [:]
+    private let hearLock = NSLock()
+
+    /// The core asks for a recording to be turned into words by a model on this phone (16 kHz, 16-bit, mono).
+    func transcribe(folder: String, pcm: Data) -> String? {
+        hearLock.lock()
+        defer { hearLock.unlock() }
+        do {
+            let model = try heardWith[folder] ?? Transcriber(bundle: URL(fileURLWithPath: folder))
+            heardWith[folder] = model
+            let samples: [Float] = pcm.withUnsafeBytes { raw in raw.bindMemory(to: Int16.self).map { Float($0) / 32768 } }
+            let began = Date()
+            let heard = try model.transcribe(samples)
+            let took = Date().timeIntervalSince(began)
+            DispatchQueue.main.async { self.lastHeard = (took, heard.audioSeconds) }
+            return heard.text
+        } catch {
+            NSLog("airband: the listening model failed: \(error.localizedDescription)")
+            return nil
         }
     }
 

@@ -7,150 +7,11 @@
 //!
 //! Either way the radio tells the tower it speaks for itself, and the tower sends it words only.
 //!
-//! The model:
-//!
-//! The program that runs a voice model is part of the app; the model is not. He asks for it on a settings
-//! screen and it is fetched once into the app's own folder. While one is chosen it stays loaded, so a sentence
-//! starts at once. A radio with a voice of its own tells the tower so, and the tower sends it words only.
-//!
-//! Each model is a row in [`MODELS`]: what to show, what to fetch and where it goes. A host offers what
-//! [`local_voices`] lists and names none itself.
+//! A model is fetched and kept by `models.rs`; this runs it. While one is chosen it stays loaded, so a sentence
+//! starts at once.
 use super::*;
+use crate::models::{fetched, folder, model};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicU64;
-
-struct Model {
-    kind: &'static str,
-    name: &'static str,
-    /// Each file: where it is fetched from, where it goes under the model's folder, its size, and its SHA-256.
-    /// A file that does not match is not kept.
-    files: &'static [(&'static str, &'static str, u64, &'static str)],
-    /// The voice it speaks in, by the name its file has under `voices/`.
-    #[cfg_attr(not(feature = "phonon"), allow(dead_code))]
-    voice: &'static str,
-}
-
-/// Gradium's Phonon, 31 million parameters, English, in eight-bit weights. Model and voices are under Apache
-/// 2.0. Pinned to a commit each, so every phone has the same files.
-#[cfg(feature = "phonon")]
-const MODELS: &[Model] = &[Model {
-    kind: "phonon",
-    name: "Phonon",
-    files: &[
-        ("https://huggingface.co/gradium/phonon-31m-en/resolve/8f7a37c94a4c58b04c8287300c53f11d2e208eae/config.json", "config.json", 4_634, "b5d0f88353638370d94035b7d73d7d6577c0554d78f8d7ecfd40490aae39ae85"),
-        ("https://huggingface.co/gradium/phonon-31m-en/resolve/8f7a37c94a4c58b04c8287300c53f11d2e208eae/tokenizer.json", "tokenizer.json", 277_967, "691a00068fa7b989f2f3e5ae5daa2d1a5bb319f2d5360deafcfb19a8bb6e7936"),
-        ("https://huggingface.co/gradium/phonon-voices/resolve/da6c9ec0d47be8df5c87c730a3aa97187f3229c3/voices/NbpkqMVS3CJeq2j8.safetensors", "voices/Zoey.safetensors", 256_136, "97c7f8c253413574406ab80dd23f49c3ebb2517163b00a9bf86b9c4cf43e7e23"),
-        ("https://huggingface.co/gradium/phonon-31m-en/resolve/8f7a37c94a4c58b04c8287300c53f11d2e208eae/model.q8.gguf", "model.q8.gguf", 64_512_352, "a7d9aad2cd6dc66473f24a08bc6d2939030ef4d751ef82349361fbef3272dbae"),
-    ],
-    voice: "Zoey",
-}];
-#[cfg(not(feature = "phonon"))]
-const MODELS: &[Model] = &[];
-
-/// A voice the device can make itself, for a settings screen.
-#[derive(Debug, Clone, uniffi::Record)]
-pub struct LocalVoice {
-    /// What to pass back as `kind`.
-    pub kind: String,
-    /// What to show him.
-    pub name: String,
-    /// How much is fetched, in megabytes.
-    pub megabytes: u32,
-    /// Its model is on this device.
-    pub fetched: bool,
-}
-
-fn model(kind: &str) -> Option<&'static Model> {
-    MODELS.iter().find(|m| m.kind == kind)
-}
-fn folder(dir: &str, m: &Model) -> PathBuf {
-    Path::new(dir).join("voices").join(m.kind)
-}
-fn fetched(dir: &str, m: &Model) -> bool {
-    // whole files only: each was checked against its hash before it took its name
-    m.files.iter().all(|(_, to, size, _)| std::fs::metadata(folder(dir, m).join(to)).is_ok_and(|f| f.is_file() && f.len() == *size))
-}
-
-/// The voices this build can make on the device, and whether each one's model is here. `dir` is a folder of
-/// the app's own, the same every time.
-#[uniffi::export]
-pub fn local_voices(dir: String) -> Vec<LocalVoice> {
-    MODELS.iter().map(|m| LocalVoice { kind: m.kind.into(), name: m.name.into(), megabytes: (m.files.iter().map(|f| f.2).sum::<u64>() as f64 / 1e6).round() as u32, fetched: fetched(&dir, m) }).collect()
-}
-
-/// How far the fetch now running has got: bytes so far, and bytes in all.
-static GOT: AtomicU64 = AtomicU64::new(0);
-static OF: AtomicU64 = AtomicU64::new(0);
-/// One fetch at a time.
-static FETCHING: Mutex<()> = Mutex::new(());
-
-/// How far the fetch now running has got, in hundredths. For a progress bar, asked a few times a second.
-#[uniffi::export]
-pub fn local_voice_progress() -> u32 {
-    let of = OF.load(Ordering::SeqCst);
-    if of == 0 { 0 } else { (GOT.load(Ordering::SeqCst).min(of) * 100 / of) as u32 }
-}
-
-/// Fetch a voice's model. Blocks until it is all here: call it off the main thread. Files already here are
-/// kept, so one that was cut short goes on from the last whole file.
-#[uniffi::export]
-pub fn fetch_local_voice(dir: String, kind: String) -> Result<(), RadioError> {
-    let told = |reason: &str| RadioError::Told { reason: reason.into() };
-    let m = model(&kind).ok_or_else(|| told("This app has no such voice."))?;
-    let _one = FETCHING.lock().unwrap_or_else(|e| e.into_inner());
-    let folder = folder(&dir, m);
-    GOT.store(0, Ordering::SeqCst);
-    OF.store(m.files.iter().map(|f| f.2).sum(), Ordering::SeqCst);
-    // no limit on the whole of it (the model is tens of megabytes on whatever connection he has), only on a stall
-    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_connect(Some(Duration::from_secs(15))).timeout_recv_response(Some(Duration::from_secs(30))).build().into();
-    for (from, to, size, sha) in m.files {
-        let path = folder.join(to);
-        if std::fs::metadata(&path).is_ok_and(|f| f.len() == *size) {
-            GOT.fetch_add(*size, Ordering::SeqCst);
-            continue;
-        }
-        std::fs::create_dir_all(path.parent().unwrap_or(&folder)).map_err(|_| told("Could not make room for the voice on this device."))?;
-        let part = path.with_extension("part");
-        let mut res = agent.get(*from).call().map_err(|_| told("Could not reach the voice's download. Check the connection and try again."))?;
-        if res.status().as_u16() != 200 {
-            return Err(told("The voice's download is not there."));
-        }
-        let mut file = std::fs::File::create(&part).map_err(|_| told("Could not write the voice to this device."))?;
-        let mut body = res.body_mut().as_reader();
-        let mut buf = vec![0u8; 64 * 1024];
-        let mut hash = <sha2::Sha256 as sha2::Digest>::new();
-        loop {
-            let n = std::io::Read::read(&mut body, &mut buf).map_err(|_| told("The download stopped part way. Try again."))?;
-            if n == 0 {
-                break;
-            }
-            std::io::Write::write_all(&mut file, &buf[..n]).map_err(|_| told("This device ran out of room for the voice."))?;
-            sha2::Digest::update(&mut hash, &buf[..n]);
-            GOT.fetch_add(n as u64, Ordering::SeqCst);
-        }
-        drop(file);
-        // a sign-in page, a connection that closed early, a file changed at the source: none of them is the voice
-        let got: String = sha2::Digest::finalize(hash).iter().map(|b| format!("{b:02x}")).collect();
-        if got != *sha {
-            let _ = std::fs::remove_file(&part);
-            return Err(told("What came down was not the voice. Check the connection and try again."));
-        }
-        std::fs::rename(&part, &path).map_err(|_| told("Could not write the voice to this device."))?;
-    }
-    Ok(())
-}
-
-/// Take a voice's model off this device. If it is the one in use, it is no longer.
-#[uniffi::export]
-pub fn remove_local_voice(dir: String, kind: String) {
-    if let Some(m) = model(&kind) {
-        if CHOSEN.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|(_, k)| *k == kind) {
-            set_local_voice(dir.clone(), String::new());
-        }
-        let _ = std::fs::remove_dir_all(folder(&dir, m));
-    }
-}
 
 /// The voice in use, if any: the app's folder and the kind.
 static CHOSEN: Mutex<Option<(String, String)>> = Mutex::new(None);
@@ -159,7 +20,7 @@ static CHOSEN: Mutex<Option<(String, String)>> = Mutex::new(None);
 /// and calls this at launch. The model is loaded in the background and stays loaded.
 #[uniffi::export]
 pub fn set_local_voice(dir: String, kind: String) {
-    let chosen = model(&kind).filter(|m| fetched(&dir, m)).map(|_| (dir, kind));
+    let chosen = model(&kind).filter(|m| m.job == airband_core::providers::Job::Voice && fetched(&dir, m)).map(|_| (dir, kind));
     let on = chosen.is_some();
     *CHOSEN.lock().unwrap_or_else(|e| e.into_inner()) = chosen;
     if on {
@@ -168,6 +29,15 @@ pub fn set_local_voice(dir: String, kind: String) {
         });
     } else {
         // off this thread: the model may be in the middle of a sentence, and this is called from a screen
+        thread::spawn(engine::drop_loaded);
+    }
+}
+
+/// The model of this kind is being taken off the device: if it is the voice in use, it is no longer.
+pub(crate) fn stop_using(kind: &str) {
+    let mut chosen = CHOSEN.lock().unwrap_or_else(|e| e.into_inner());
+    if chosen.as_ref().is_some_and(|(_, k)| k == kind) {
+        *chosen = None;
         thread::spawn(engine::drop_loaded);
     }
 }
@@ -400,17 +270,13 @@ mod engine {
 #[cfg(all(test, feature = "phonon"))]
 mod tests {
     use super::*;
+    use crate::models::{fetch_local_model, local_model_progress, local_voices};
 
     #[test]
-    fn a_voice_is_offered_with_its_size_and_is_not_here_until_fetched() {
+    fn choosing_a_voice_that_is_not_here_chooses_nothing() {
         let dir = std::env::temp_dir().join(format!("airband-mouth-{}", random_hex(4)));
-        let offered = local_voices(dir.display().to_string());
-        assert_eq!(offered.len(), 1);
-        assert_eq!((offered[0].kind.as_str(), offered[0].fetched), ("phonon", false));
-        assert!((60..80).contains(&offered[0].megabytes));
-        // choosing one that is not here chooses nothing
         set_local_voice(dir.display().to_string(), "phonon".into());
-        assert!(!ready());
+        assert!(CHOSEN.lock().unwrap().is_none());
     }
 
     /// The real thing: fetches the model (65 MB) and speaks a sentence. Run by hand with
@@ -419,8 +285,8 @@ mod tests {
     #[ignore]
     fn fetched_it_speaks() {
         let dir = std::env::var("AIRBAND_VOICE_DIR").expect("AIRBAND_VOICE_DIR");
-        fetch_local_voice(dir.clone(), "phonon".into()).unwrap();
-        assert_eq!(local_voice_progress(), 100);
+        fetch_local_model(dir.clone(), "phonon".into()).unwrap();
+        assert_eq!(local_model_progress(), 100);
         assert!(local_voices(dir.clone())[0].fetched);
         set_local_voice(dir.clone(), "phonon".into());
         assert!(ready());
@@ -428,10 +294,6 @@ mod tests {
         let pcm = own_voice_sample().unwrap().pcm;
         let seconds = pcm.len() as f32 / 2.0 / RATE as f32;
         println!("{seconds:.1} s of sound in {:.1} s, loading included", began.elapsed().as_secs_f32());
-        let again = std::time::Instant::now();
-        own_voice_sample().unwrap();
-        println!("a short one, loaded: {:.2} s", again.elapsed().as_secs_f32());
         assert!(seconds > 2.0);
-        std::fs::write(std::path::Path::new(&dir).join("sample.pcm"), pcm).unwrap();
     }
 }
