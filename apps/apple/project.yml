@@ -48,7 +48,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Airband$(AIRBAND_COMMUNICATION_SUFFIX).entitlements
         # set by scripts/testflight.sh; empty for a build signed automatically
         PROVISIONING_PROFILE_SPECIFIER: $(AIRBAND_APP_PROFILE)
-        TARGETED_DEVICE_FAMILY: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: NO
     info:
@@ -66,6 +66,8 @@ targets:
         UILaunchScreen: {}
         UIBackgroundModes: [audio, remote-notification]
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        # an iPad, and a Mac running the iPad app, turn and resize freely
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         NSMicrophoneUsageDescription: Airband listens for your reply after an agent speaks, and when you press Talk.
         NSLocalNetworkUsageDescription: Airband talks straight to your computer when your phone is on the same network.
         NSCameraUsageDescription: airband uses the camera to scan the pairing code your computer shows.
@@ -91,7 +93,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.airband.app.notify
         CODE_SIGN_ENTITLEMENTS: Notify/Notify.entitlements
         PROVISIONING_PROFILE_SPECIFIER: $(AIRBAND_NOTIFY_PROFILE)
-        TARGETED_DEVICE_FAMILY: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: NO
     info:
       path: Notify/Info.plist

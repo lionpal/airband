@@ -151,8 +151,28 @@ struct FeedView: View {
     /// He has just turned reading aloud on: a line says so for a moment.
     @State private var joined = false
     @State private var joinedNote = 0
+    @Environment(\.horizontalSizeClass) private var width
+    /// A wide window (an iPad, a Mac): the teams and agents stay open down the left, and the chat has the rest.
+    private var wide: Bool { width == .regular && model.paired }
 
     var body: some View {
+        HStack(spacing: 0) {
+            if wide {
+                AgentsMenu(openSetup: { showSetup = true }).environmentObject(model)
+                    .frame(width: 340).background(Palette.card.ignoresSafeArea())
+                Rectangle().fill(Palette.raised).frame(width: 1).ignoresSafeArea()
+            }
+            column
+        }
+        .background(Palette.ground.ignoresSafeArea())
+        .foregroundStyle(Palette.ink)
+        .sheet(isPresented: $showSetup) { SetupView().environmentObject(model) }
+        .fullScreenCover(isPresented: $showScan) { ScanSheet().environmentObject(model) }
+        .sheet(isPresented: $showAgents) { AgentsMenu(openSetup: { showAgents = false; showSetup = true }).environmentObject(model).presentationDetents([.medium, .large]) }
+        .task { await ticker.run { model.view.rooms } }
+    }
+
+    private var column: some View {
         VStack(spacing: 0) {
             header
             if !model.paired {
@@ -196,12 +216,6 @@ struct FeedView: View {
                 }
             }
         }
-        .background(Palette.ground.ignoresSafeArea())
-        .foregroundStyle(Palette.ink)
-        .sheet(isPresented: $showSetup) { SetupView().environmentObject(model) }
-        .fullScreenCover(isPresented: $showScan) { ScanSheet().environmentObject(model) }
-        .sheet(isPresented: $showAgents) { AgentsMenu(openSetup: { showAgents = false; showSetup = true }).environmentObject(model).presentationDetents([.medium, .large]) }
-        .task { await ticker.run { model.view.rooms } }
         // a question's keyboard button: open the text box, for that question
         .onChange(of: model.typeNow) { _, now in
             guard now else { return }
@@ -224,7 +238,7 @@ struct FeedView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            if model.paired {
+            if model.paired && !wide {
                 // everyone, each team and each agent in it, to pick one to look at and talk to
                 Button { showAgents = true } label: {
                     Image(systemName: "line.3.horizontal").font(.system(size: 17, weight: .semibold))
