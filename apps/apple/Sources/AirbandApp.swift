@@ -14,7 +14,7 @@ struct AirbandApp: App {
         WindowGroup {
             FeedView()
                 .environmentObject(model)
-                .onOpenURL { model.pair(with: $0.absoluteString) }
+                .onOpenURL { model.open($0) }
                 .tint(Palette.signal)
                 .preferredColorScheme(.dark)
         }

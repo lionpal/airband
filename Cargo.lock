@@ -43,7 +43,7 @@ dependencies = [
 
 [[package]]
 name = "airband-cli"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "airband-core",
  "airband-radio",
@@ -69,7 +69,7 @@ dependencies = [
 
 [[package]]
 name = "airband-core"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "chacha20poly1305",
@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "airband-radio"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "airband-core",
  "getrandom 0.3.4",
@@ -101,7 +101,7 @@ dependencies = [
 
 [[package]]
 name = "airband-relay"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "airband-core",
  "axum",
@@ -3376,7 +3376,7 @@ dependencies = [
 
 [[package]]
 name = "uniffi-bindgen"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "uniffi",
 ]

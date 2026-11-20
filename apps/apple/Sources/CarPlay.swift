@@ -1,4 +1,5 @@
 import CarPlay
+import SwiftUI
 import Combine
 import UIKit
 
@@ -11,6 +12,9 @@ import UIKit
 final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
     private var car: CPInterfaceController?
     private var voiceScreen: CPVoiceControlTemplate?
+    /// The button on the voice screen that names who is speaking.
+    private var speaker: CPBarButton?
+    private var speakerFace: CPBarButton?
     private var watching: Set<AnyCancellable> = []
     private var model: RadioModel { RadioModel.shared }
     /// The conversation was started from the car: it ends when the car goes.
@@ -34,6 +38,21 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         started = false
         model.voice.inCar = false
         (car, voiceScreen) = (nil, nil)
+    }
+
+    /// The Talk tile on the car's dashboard, or a banner, was tapped: go straight into the conversation with
+    /// the microphone open, for the agent the banner was about if there was one.
+    func scene(_ scene: UIScene, openURLContexts contexts: Set<UIOpenURLContext>) {
+        guard let url = contexts.first?.url, url.host == "talk" || url.host == "answer", model.view.paired else { return }
+        Task { @MainActor in
+            if !self.model.calling {
+                await self.model.setCalling(true)
+                guard self.model.calling else { return }
+                self.started = true
+            }
+            self.open()
+            self.model.open(url)
+        }
     }
 
     // MARK: the list
@@ -79,11 +98,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     /// Put up the voice screen for the conversation that is on.
     private func open() {
         guard voiceScreen == nil, let car else { return }
+        // The words of a state cannot change once the screen is made, so they are made for this conversation:
+        // with one agent when he is answering one, with all of them otherwise. Longest first; the car shows
+        // the longest that fits.
+        let with = model.only
         let screen = CPVoiceControlTemplate(voiceControlStates: [
-            state("idle", ["Waiting for your agents", "Waiting"], "ellipsis", talk: "Talk"),
-            state("listening", ["Listening"], "mic.fill", talk: "Send", other: ("Cancel", { [weak self] in self?.model.cancelTalk() })),
+            state("idle", with.map { ["Waiting for \($0)", "Waiting"] } ?? ["Waiting for your agents", "Waiting"], "ellipsis", talk: "Talk"),
+            state("listening", with.map { ["Listening, for \($0)", "Listening"] } ?? ["Listening"], "mic.fill", talk: "Send", other: ("Cancel", { [weak self] in self?.model.cancelTalk() })),
             state("sending", ["Sending"], "arrow.up.circle.fill", talk: nil),
-            state("speaking", ["Speaking"], "speaker.wave.2.fill", talk: "Talk", other: ("Quiet", { [weak self] in self?.model.voice.hush() })),
+            state("speaking", with.map { ["\($0) is speaking", "Speaking"] } ?? ["Speaking"], "speaker.wave.2.fill", picture: with.flatMap { avatar(of: $0, side: 120) }, talk: "Talk", other: ("Quiet", { [weak self] in self?.model.voice.hush() })),
             state("offline", ["Can\u{2019}t reach your computer", "Offline"], "wifi.slash", talk: nil),
         ])
         if #available(iOS 26.4, *) {
@@ -91,6 +114,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 guard let self else { return }
                 Task { @MainActor in await self.model.setCalling(false) }
             }]
+            // A button's words can change while the screen is up, which a state's cannot: this one says who
+            // is speaking, or who he is answering.
+            let who = CPBarButton(title: with ?? "") { _ in }
+            who.isEnabled = false
+            // and its badge beside its name, as on the phone
+            let face = CPBarButton(image: with.flatMap { avatar(of: $0, side: 28) } ?? UIImage()) { _ in }
+            face.isEnabled = false
+            screen.trailingNavigationBarButtons = [face, who]
+            (speaker, speakerFace) = (who, face)
         }
         voiceScreen = screen
         car.presentTemplate(screen, animated: true) { [weak self] shown, _ in
@@ -107,8 +139,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     /// One state of the voice screen: its words, its picture, and its buttons. The talk button is the same
     /// toggle as the big button on the phone: the first press opens the microphone and the second sends.
-    private func state(_ id: String, _ titles: [String], _ symbol: String, talk: String?, other: (String, () -> Void)? = nil) -> CPVoiceControlState {
-        let picture = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 72, weight: .semibold))
+    private func state(_ id: String, _ titles: [String], _ symbol: String, picture: UIImage? = nil, talk: String?, other: (String, () -> Void)? = nil) -> CPVoiceControlState {
+        let picture = picture ?? UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 72, weight: .semibold))
         let made = CPVoiceControlState(identifier: id, titleVariants: titles, image: picture, repeats: false)
         if #available(iOS 26.4, *) {
             var buttons: [CPButton] = []
@@ -130,6 +162,18 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         return made
     }
 
+    /// An agent's badge as a picture: its two letters on its team's colour, as the phone shows it.
+    private func avatar(of callsign: String, side: CGFloat) -> UIImage? {
+        guard let team = model.view.rooms.first(where: { $0.members.contains { $0.callsign == callsign } }), let agent = team.members.first(where: { $0.callsign == callsign }) else { return nil }
+        return UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { _ in
+            UIColor(Palette.team(team.colour)).setFill()
+            UIBezierPath(roundedRect: CGRect(x: 0, y: 0, width: side, height: side), cornerRadius: side * 0.28).fill()
+            let letters = NSAttributedString(string: agent.badge, attributes: [.font: UIFont.systemFont(ofSize: side * 0.44, weight: .bold), .foregroundColor: UIColor(Palette.ground)])
+            let size = letters.size()
+            letters.draw(at: CGPoint(x: (side - size.width) / 2, y: (side - size.height) / 2))
+        }.withRenderingMode(.alwaysOriginal)
+    }
+
     /// Show the state the conversation is in. The screen may drop a change that comes too soon after another,
     /// so what it shows is looked at again a moment later.
     private func show() {
@@ -141,6 +185,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         case .sending: wanted = "sending"
         case .speaking: wanted = "speaking"
         case .idle: wanted = model.micOpen ? "listening" : "idle"
+        }
+        if case .speaking(let callsign) = model.status, callsign != "tower", speaker?.title != callsign {
+            speaker?.title = callsign
+            if let face = avatar(of: callsign, side: 28) { speakerFace?.image = face }
         }
         guard screen.activeStateIdentifier != wanted else { return }
         screen.activateVoiceControlState(withIdentifier: wanted)

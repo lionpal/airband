@@ -28,6 +28,22 @@ for target in "$@"; do
     *) echo "no Homebrew name is known for $target" >&2; exit 1 ;;
   esac
   cargo build --release --locked -p airband-cli --target "$target"
+  # A Mac binary is signed with the Developer ID certificate, when this Mac has one, and sent to Apple's
+  # notary service, when the App Store Connect key is in the environment (ASC_KEY_ID, ASC_ISSUER_ID,
+  # ASC_KEY_PATH, as scripts/testflight.sh uses). A bare binary cannot carry the notary's ticket with it, so
+  # macOS asks Apple about it the first time it runs. Built where there is no certificate (CI), it is left
+  # unsigned, and the release notes say so.
+  case "$target" in
+    *-apple-darwin)
+      scripts/sign-mac.sh "target/$target/release/airband"
+      if [ -n "${ASC_KEY_ID:-}" ] && codesign -dvv "target/$target/release/airband" 2>&1 | grep -q "Authority=Developer ID Application"; then
+        sent=$(mktemp -d)
+        ditto -c -k "target/$target/release/airband" "$sent/airband.zip"
+        xcrun notarytool submit "$sent/airband.zip" --key "$ASC_KEY_PATH" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" --wait | tee "$sent/notary.log"
+        grep -q "status: Accepted" "$sent/notary.log" || { echo "Apple's notary service did not accept the $target binary" >&2; exit 1; }
+        rm -rf "$sent"
+      fi ;;
+  esac
   stage=$(mktemp -d)
   keg="$stage/airband/$version"
   mkdir -p "$keg/bin"
