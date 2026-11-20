@@ -1,43 +1,33 @@
 //! `airband setup`: choose what reads, what speaks and what listens, in the terminal, and pair a phone.
 //! `airband keys`: the keys those use.
 //!
-//! A provider is one row of [`PROVIDERS`]: what it can do, whether it needs a key, and what else it has to be
-//! told. Adding one is a row here and the code that talks to it (a `Synth` for a voice, an arm of the model
-//! call for summaries); nothing in the questions below names a provider.
+//! What can be chosen is `providers::PROVIDERS`; nothing in the questions below names a provider.
 //!
 //! A key is kept once, under a name, with the provider it is for (`Config::keys`). The summaries, the voice
 //! and the listening each use a key by its value, and the settings file writes that as the key's name, so
 //! one key serves as many of them as its provider can do and a provider can have several keys.
 use crate::config::{self, Config, StoredKey};
-use serde_json::{Value, json};
+use crate::providers::{self, Job, Provider, Use};
+use serde_json::json;
 use std::io::{BufRead, IsTerminal, Write};
 
-#[derive(Clone, Copy, PartialEq)]
-enum Job {
-    Summary,
-    Voice,
-    Ears,
+/// Where a job's choice is kept in the settings.
+pub(crate) fn slot(cfg: &mut Config, job: Job) -> &mut Use {
+    match job {
+        Job::Summary => &mut cfg.summarizer,
+        Job::Voice => &mut cfg.voice,
+        Job::Ears => &mut cfg.ears,
+    }
 }
 
-struct Provider {
-    /// Its name in the settings (`"kind"`), and the usual name for its key.
-    id: &'static str,
-    name: &'static str,
-    does: &'static [Job],
-    key: bool,
-    /// What else it has to be told: the setting, the question, and the answer if he gives none.
-    asks: &'static [(&'static str, &'static str, &'static str)],
-    /// Where its keys are made.
-    keys_at: &'static str,
+/// Try a job's choice for real: one call to the service.
+pub(crate) fn works(cfg: &Config, job: Job) -> Result<String, String> {
+    match job {
+        Job::Summary => crate::tower::try_model(cfg),
+        Job::Voice => crate::tower::try_voice(cfg),
+        Job::Ears => crate::tower::try_ears(cfg),
+    }
 }
-
-const PROVIDERS: &[Provider] = &[
-    Provider { id: "claude", name: "Claude on this computer, with your Claude login", does: &[Job::Summary], key: false, asks: &[], keys_at: "" },
-    Provider { id: "gemini", name: "Google Gemini", does: &[Job::Summary, Job::Voice], key: true, asks: &[], keys_at: "aistudio.google.com/apikey" },
-    Provider { id: "openai", name: "OpenAI, or any service that speaks its API", does: &[Job::Summary], key: true, asks: &[("url", "Address", "https://api.openai.com/v1"), ("model", "Model", "gpt-4o-mini")], keys_at: "platform.openai.com/api-keys" },
-    Provider { id: "elevenlabs", name: "ElevenLabs", does: &[Job::Voice], key: true, asks: &[], keys_at: "elevenlabs.io/app/settings/api-keys" },
-    Provider { id: "azure", name: "Microsoft Azure Speech", does: &[Job::Voice, Job::Ears], key: true, asks: &[("region", "Region", "eastus")], keys_at: "portal.azure.com, a Speech resource, Keys and Endpoint" },
-];
 
 fn line(ask: &str) -> String {
     print!("{ask}");
@@ -95,9 +85,9 @@ fn key_for(cfg: &mut Config, p: &Provider) -> Option<String> {
 
 /// One of the three choices: which provider does this job, with what key, and does it answer?
 /// `set` puts the choice in the settings, or says why it cannot; `works` tries it for real.
-fn choose(cfg: &mut Config, job: Job, title: &str, about: &str, none: &str, now: &str, set: fn(&mut Config, Option<Value>) -> Result<(), String>, works: fn(&Config) -> Result<String, String>) {
-    println!("\n{title}\n  {about}\n  Now: {now}");
-    let offered: Vec<&Provider> = PROVIDERS.iter().filter(|p| p.does.contains(&job)).collect();
+fn choose(cfg: &mut Config, job: Job, title: &str, about: &str, none: &str) {
+    println!("\n{title}\n  {about}\n  Now: {}", slot(cfg, job).describe(job));
+    let offered: Vec<&Provider> = providers::offering(job).collect();
     loop {
         for (i, p) in offered.iter().enumerate() {
             println!("  {}. {}", i + 1, p.name);
@@ -113,22 +103,26 @@ fn choose(cfg: &mut Config, job: Job, title: &str, about: &str, none: &str, now:
         };
         let before = serde_json::to_value(&*cfg).unwrap();
         let chosen = match offered.get(n - 1) {
-            None => None,
+            None => Use::default(),
             Some(p) => {
-                let mut v = json!({ "kind": p.id });
+                let mut u = Use::of(p.id);
                 if p.key {
                     let Some(key) = key_for(cfg, p) else { continue };
-                    v["key"] = json!(key);
+                    u.key = key;
                 }
-                for (field, ask, usual) in p.asks {
-                    let said = line(&format!("  {ask} [{usual}]: "));
-                    v[*field] = json!(if said.is_empty() { usual.to_string() } else { said });
+                for a in p.offers.iter().filter(|o| o.job == job).flat_map(|o| o.asks) {
+                    let said = line(&format!("  {} [{}]: ", a.question, a.usual));
+                    // what he leaves as usual is not written down, so it follows the row if the row changes
+                    if !said.is_empty() && said != a.usual {
+                        u.set.insert(a.field.into(), json!(said));
+                    }
                 }
-                Some(v)
+                u
             }
         };
-        let tried = set(cfg, chosen.clone()).and_then(|_| if chosen.is_some() { works(cfg) } else { Ok("Set to none.".into()) });
-        match tried {
+        let none_chosen = chosen.is_none();
+        *slot(cfg, job) = chosen;
+        match if none_chosen { Ok("Set to none.".into()) } else { works(cfg, job) } {
             Ok(said) => {
                 println!("  {said}");
                 return;
@@ -142,30 +136,6 @@ fn choose(cfg: &mut Config, job: Job, title: &str, about: &str, none: &str, now:
     }
 }
 
-fn set_summary(cfg: &mut Config, v: Option<Value>) -> Result<(), String> {
-    cfg.summarizer = match v {
-        // Claude Code as a command: the usual one, with nothing to tell it
-        Some(v) if v["kind"] == "claude" => config::Summarizer::default(),
-        Some(v) => serde_json::from_value(v).map_err(|e| e.to_string())?,
-        None => config::Summarizer::None,
-    };
-    Ok(())
-}
-fn set_voice(cfg: &mut Config, v: Option<Value>) -> Result<(), String> {
-    cfg.voice = serde_json::from_value(v.unwrap_or(json!({ "kind": "device" }))).map_err(|e| e.to_string())?;
-    Ok(())
-}
-fn set_ears(cfg: &mut Config, v: Option<Value>) -> Result<(), String> {
-    cfg.ears = serde_json::from_value(v.unwrap_or(json!({ "kind": "device" }))).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-fn kind_of<T: serde::Serialize>(v: &T) -> String {
-    let v = serde_json::to_value(v).unwrap_or_default();
-    let kind = v["kind"].as_str().unwrap_or("none");
-    PROVIDERS.iter().find(|p| p.id == kind).map(|p| p.name.to_string()).unwrap_or_else(|| if kind == "command" { PROVIDERS[0].name.to_string() } else { "none".into() })
-}
-
 /// `airband setup [--no-start]`. With `--no-start` the choices are saved and nothing is started or paired.
 pub fn setup(mut cfg: Config, start: bool) -> Result<(), String> {
     if !std::io::stdin().is_terminal() {
@@ -175,10 +145,9 @@ pub fn setup(mut cfg: Config, start: bool) -> Result<(), String> {
         return Err(format!("Setup needs the keychain, which cannot be read from here: {why}"));
     }
     println!("Three choices, then your phone. Keys you give stay on this computer{}.\nThey go to the service they are for and nowhere else: never to airband's servers.", if config::locked() { ", in its keychain" } else { "" });
-    let (now_summarizer, now_voice, now_ears) = (kind_of(&cfg.summarizer), kind_of(&cfg.voice), kind_of(&cfg.ears));
-    choose(&mut cfg, Job::Summary, "1 of 3. Summaries", "What reads your agents' messages and tells you the short of them.", "None: you get every message in full", &now_summarizer, set_summary, crate::tower::try_model);
-    choose(&mut cfg, Job::Voice, "2 of 3. Voice", "What reads to you when you turn reading aloud on.", "None: nothing is read aloud", &now_voice, set_voice, crate::tower::try_voice);
-    choose(&mut cfg, Job::Ears, "3 of 3. Listening", "What turns what you say into words. Your phone reaches it with a pass from this computer.", "None: you type", &now_ears, set_ears, crate::tower::try_ears);
+    choose(&mut cfg, Job::Summary, "1 of 3. Summaries", "What reads your agents' messages and tells you the short of them.", "None: you get every message in full");
+    choose(&mut cfg, Job::Voice, "2 of 3. Voice", "What reads to you when you turn reading aloud on.", "None: nothing is read aloud");
+    choose(&mut cfg, Job::Ears, "3 of 3. Listening", "What turns what you say into words. Your phone reaches it with a pass from this computer.", "None: you type");
     config::save(&cfg)?;
     if !start {
         println!("\nSaved.");
@@ -197,15 +166,15 @@ pub fn setup(mut cfg: Config, start: bool) -> Result<(), String> {
 
 /// What each kept key is used for, by name.
 fn used_for(cfg: &Config, secret: &str) -> Vec<&'static str> {
-    let has = |v: Value| v["key"].as_str() == Some(secret);
+    let has = |u: &Use| u.key == secret;
     let mut out = Vec::new();
-    if has(serde_json::to_value(&cfg.summarizer).unwrap_or_default()) || cfg.summarizer_fallback.as_ref().is_some_and(|f| has(serde_json::to_value(f).unwrap_or_default())) {
+    if has(&cfg.summarizer) || cfg.summarizer_fallback.as_ref().is_some_and(has) {
         out.push("summaries");
     }
-    if has(serde_json::to_value(&cfg.voice).unwrap_or_default()) {
+    if has(&cfg.voice) {
         out.push("voice");
     }
-    if has(serde_json::to_value(&cfg.ears).unwrap_or_default()) {
+    if has(&cfg.ears) {
         out.push("listening");
     }
     out
@@ -225,13 +194,13 @@ pub fn keys(args: &[String]) -> Result<(), String> {
             }
             for (name, k) in &cfg.keys {
                 let uses = used_for(&cfg, &k.secret);
-                println!("  {name}  ({})  {}", PROVIDERS.iter().find(|p| p.id == k.provider).map(|p| p.name).unwrap_or(&k.provider), if uses.is_empty() { "not in use".to_string() } else { format!("used for {}", uses.join(", ")) });
+                println!("  {name}  ({})  {}", providers::PROVIDERS.iter().find(|p| p.id == k.provider).map(|p| p.name).unwrap_or(&k.provider), if uses.is_empty() { "not in use".to_string() } else { format!("used for {}", uses.join(", ")) });
             }
             println!("Change them:  airband setup  |  airband keys add <name> <provider>  |  airband keys remove <name>  |  airband keys lock  |  airband keys unlock");
         }
         Some("add") => {
             let (name, provider) = (args.get(1).ok_or("airband keys add <name> <provider>")?, args.get(2).ok_or("airband keys add <name> <provider>")?);
-            let p = PROVIDERS.iter().find(|p| p.id == *provider && p.key).ok_or_else(|| format!("no provider called \"{provider}\" takes a key: {}", PROVIDERS.iter().filter(|p| p.key).map(|p| p.id).collect::<Vec<_>>().join(", ")))?;
+            let p = providers::PROVIDERS.iter().find(|p| p.id == *provider && p.key).ok_or_else(|| format!("no provider called \"{provider}\" takes a key: {}", providers::PROVIDERS.iter().filter(|p| p.key).map(|p| p.id).collect::<Vec<_>>().join(", ")))?;
             if name.starts_with('-') || cfg.keys.contains_key(name) {
                 return Err(format!("\"{name}\" is taken or is not a name."));
             }

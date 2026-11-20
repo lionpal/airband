@@ -1165,6 +1165,12 @@ pub fn check_own_ears(kind: String, region: String, key: String) -> Result<(), R
     crate::ears::pass_for(&kind, &region, &key).map(|_| ()).map_err(|reason| RadioError::Told { reason })
 }
 
+/// A short-lived pass from a listening service, for a key: what a tower hands a phone so the key stays where
+/// it is. `kind` is the dialect, as [`own_listeners`] lists them. Blocks. Err says why not, in words for him.
+pub fn listening_pass(kind: &str, region: &str, key: &str) -> Result<String, String> {
+    crate::ears::pass_for(kind, region, key)
+}
+
 /// What a button answers a request for leave with: `true` for the one that allows. A host's buttons send this
 /// and have no words of their own for it.
 #[uniffi::export]

@@ -16,6 +16,7 @@ serde_json.workspace = true
 ureq.workspace = true
 uniffi.workspace = true
 getrandom = "0.3"
+sha2 = "0.10"
 # speech to text as he speaks: one WebSocket to the listening service, over the TLS already used for everything else
 tungstenite = { version = "0.30", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

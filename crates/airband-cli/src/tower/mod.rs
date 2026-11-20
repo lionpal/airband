@@ -56,6 +56,7 @@ use state::*;
 use store::*;
 
 use crate::config::{self, Config, Summarizer};
+use crate::providers;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
@@ -90,7 +91,7 @@ pub struct App {
     pub cfg: Config,
     store: Store,
     speech: speech::Speech,
-    /// Microsoft's short-lived pass for the phone's ears, and when it was made.
+    /// The listening service's short-lived pass for the phone's ears, and when it was made.
     ears_pass: Mutex<Option<(String, Instant)>>,
     /// The pass the relay lends for speech, for a tower with no voice or no ears of its own: region, token,
     /// and when it was fetched.
@@ -111,12 +112,12 @@ impl App {
     /// The phone's own voice is never the fallback: with nothing here, nothing is spoken.
     /// The voice for one radio: none for a radio that makes its own speech.
     fn voice_to(&self, speaks: bool) -> config::Voice {
-        if speaks { config::Voice::Device } else { self.voice() }
+        if speaks { config::Voice::default() } else { self.voice() }
     }
     fn voice(&self) -> config::Voice {
-        match (&self.cfg.voice, self.lent()) {
-            (config::Voice::Device, Some((region, token))) => config::Voice::AzurePass { region, token },
-            (set, _) => set.clone(),
+        match (self.cfg.voice.is_none(), self.lent()) {
+            (true, Some((region, token))) => config::Voice { kind: providers::LENT.into(), key: token, set: [("region".to_string(), json!(region))].into() },
+            _ => self.cfg.voice.clone(),
         }
     }
 }
@@ -124,7 +125,7 @@ impl App {
 /// A tower with no voice or no listening service of its own borrows the relay's: a pass that lasts ten minutes,
 /// fetched again every seven. A relay that lends none is asked again every ten minutes, in case it starts to.
 async fn lent_pass_loop(app: Arc<App>) {
-    let wanted = matches!(app.cfg.voice, config::Voice::Device) || matches!(app.cfg.ears, config::Ears::Device);
+    let wanted = app.cfg.voice.is_none() || app.cfg.ears.is_none();
     let (Some(relay), true) = (app.cfg.relay.clone(), wanted) else { return };
     let admission = app.cfg.relay_admission.clone().unwrap_or_default();
     loop {
@@ -310,9 +311,10 @@ pub fn try_voice(cfg: &Config) -> Result<String, String> {
 
 /// Does the listening service give a pass? For `airband setup`.
 pub fn try_ears(cfg: &Config) -> Result<String, String> {
-    match &cfg.ears {
-        config::Ears::Azure { key, region, .. } => airband_radio::check_own_ears("azure".into(), region.clone(), key.clone()).map(|_| "It gives a pass.".into()).map_err(|e| e.to_string()),
-        config::Ears::Device => Ok("Set to none.".into()),
+    use providers::{By, Job};
+    match cfg.ears.offer(Job::Ears).map(|(_, o)| o.by) {
+        Some(By::Listener(kind)) => airband_radio::listening_pass(kind, &cfg.ears.get(Job::Ears, "region"), &cfg.ears.key).map(|_| "It gives a pass.".into()),
+        _ => Ok("Set to none.".into()),
     }
 }
 
@@ -346,6 +348,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         let (seq, rev) = store.last_counts();
         let mut inner = Inner { sessions: saved.sessions, pending: saved.pending, projects: saved.projects, colours: saved.colours, held: saved.held, placed: saved.placed, seq, rev, log: entries, ..Inner::default() };
         inner.reap();
+        inner.close_requests_from_before();
         // a team from before teams had colours gets one now, not at its agents' next word
         inner.colour_teams();
         inner.adopt_old_lines();

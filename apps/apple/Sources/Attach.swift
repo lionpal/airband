@@ -1,4 +1,5 @@
 import AVFoundation
+import Photos
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -182,6 +183,74 @@ private struct TrayThumb: View {
     }
 }
 
+/// His newest photos and videos, across the top of the + panel: one tap attaches one, without opening the
+/// whole library. Shown once he has let the app see his photos; asked the first time the panel opens.
+struct RecentStrip: View {
+    @EnvironmentObject var model: RadioModel
+    @State private var recent: [PHAsset] = []
+    let done: () -> Void
+
+    var body: some View {
+        Group {
+            if !recent.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(recent, id: \.localIdentifier) { asset in
+                            Button {
+                                model.attach(asset)
+                                done()
+                            } label: {
+                                RecentThumb(asset: asset)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(asset.mediaType == .video ? "Attach this recent video" : "Attach this recent photo")
+                        }
+                    }
+                }
+                .scrollClipDisabled()
+            }
+        }
+        .task {
+            let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+            guard status == .authorized || status == .limited else { return }
+            let newest = PHFetchOptions()
+            newest.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+            newest.fetchLimit = 12
+            var found: [PHAsset] = []
+            PHAsset.fetchAssets(with: newest).enumerateObjects { asset, _, _ in
+                if asset.mediaType == .image || asset.mediaType == .video { found.append(asset) }
+            }
+            recent = found
+        }
+    }
+}
+
+private struct RecentThumb: View {
+    let asset: PHAsset
+    @State private var image: UIImage?
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            Palette.raised
+            if let image { Image(uiImage: image).resizable().scaledToFill() }
+            if asset.mediaType == .video {
+                Image(systemName: "video.fill").font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
+                    .padding(5).background(.black.opacity(0.45), in: Capsule()).padding(5)
+            }
+        }
+        .frame(width: 88, height: 88).clipShape(RoundedRectangle(cornerRadius: 14))
+        .task {
+            let wanted = PHImageRequestOptions()
+            wanted.isNetworkAccessAllowed = true
+            wanted.deliveryMode = .opportunistic
+            // called with a rough picture first and the sharp one after
+            PHImageManager.default().requestImage(for: asset, targetSize: CGSize(width: 264, height: 264), contentMode: .aspectFill, options: wanted) { got, _ in
+                if let got { DispatchQueue.main.async { image = got } }
+            }
+        }
+    }
+}
+
 /// The tile in the + panel that opens his photos.
 struct AttachTile: View {
     @EnvironmentObject var model: RadioModel
@@ -227,6 +296,36 @@ extension RadioModel {
 
     /// Everything attached has reached his computer.
     var trayReady: Bool { !tray.isEmpty && tray.allSatisfy { item in view.uploads.first { $0.id == item.attachment }?.state == "ready" } }
+
+    /// He tapped one of his newest photos or videos: it goes the way a picked one does.
+    func attach(_ asset: PHAsset) {
+        let video = asset.mediaType == .video
+        let number = tray.count + 1
+        let item = TrayItem(video: video, number: number)
+        tray.append(item)
+        if video {
+            let wanted = PHVideoRequestOptions()
+            wanted.isNetworkAccessAllowed = true
+            PHImageManager.default().requestAVAsset(forVideo: asset, options: wanted) { movie, _, _ in
+                guard let url = (movie as? AVURLAsset)?.url else {
+                    DispatchQueue.main.async { self.prepared(item.id, nil, source: nil) }
+                    return
+                }
+                Task {
+                    let made = await Prepare.video(url, number: number)
+                    await MainActor.run { self.prepared(item.id, made, source: url) }
+                }
+            }
+        } else {
+            let wanted = PHImageRequestOptions()
+            wanted.isNetworkAccessAllowed = true
+            wanted.deliveryMode = .highQualityFormat
+            PHImageManager.default().requestImageDataAndOrientation(for: asset, options: wanted) { data, _, _, _ in
+                let photo = data.flatMap { Prepare.photo($0, number: number) }
+                DispatchQueue.main.async { self.prepared(item.id, photo.map { ($0.0, $0.1, $0.2) }, source: nil) }
+            }
+        }
+    }
 
     /// He picked these from his photos: each appears in the tray at once, is made ready on the phone, then sent.
     func attach(_ picked: [PhotosPickerItem]) {

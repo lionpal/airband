@@ -4,8 +4,9 @@
 //! phone wants it, so by then the clip is simply there. And it is handed over in parts while the voice service is
 //! still producing it, so the phone starts playing on the first part.
 //!
-//! A voice service is anything that implements [`Synth`]: text in, 16-bit PCM out, a piece at a time. Adding one
-//! is one more `impl` and one more arm in [`synth_for`]. Clips are kept compressed (airband_core::audio), a
+//! A voice service is anything that implements [`Synth`]: text in, 16-bit PCM out, a piece at a time. A service
+//! that speaks OpenAI's speech interface is a row of `providers::PROVIDERS` and no code. One with an interface
+//! of its own is an `impl` here, a `By` for it, and its row. Clips are kept compressed (airband_core::audio), a
 //! few dozen at most.
 use super::*;
 use airband_core::audio::{BLOCK_BYTES, BLOCK_SAMPLES, Encoder, base64_decode, base64_encode, samples};
@@ -154,14 +155,56 @@ pub(super) fn try_voice(voice: &Voice) -> Result<f32, String> {
     Ok(bytes as f32 / 2.0 / synth.rate() as f32)
 }
 
-fn synth_for(voice: &Voice) -> Option<Box<dyn Synth>> {
-    match voice {
-        Voice::Device => None,
-        Voice::Gemini { key, model, voice } => Some(Box::new(Gemini { key: key.clone(), model: model.clone(), voice: voice.clone() })),
-        Voice::Azure { key, region, voice } => Some(Box::new(Azure { key: key.clone(), pass: false, region: region.clone(), voice: voice.clone() })),
-        Voice::Elevenlabs { key, voice, model } => Some(Box::new(Elevenlabs { key: key.clone(), voice: voice.clone(), model: model.clone() })),
-        Voice::AzurePass { region, token } => Some(Box::new(Azure { key: token.clone(), pass: true, region: region.clone(), voice: "en-US-AvaMultilingualNeural".into() })),
+/// Any service that speaks OpenAI's speech interface: `POST {url}/audio/speech`, asked for raw 16-bit mono PCM.
+/// The interface does not say the rate in a way every service agrees on, so the row does. It gives no word
+/// timings.
+struct OpenAiSpeech {
+    url: String,
+    key: String,
+    model: String,
+    voice: String,
+    rate: u32,
+}
+
+impl Synth for OpenAiSpeech {
+    fn rate(&self) -> u32 {
+        self.rate
     }
+    fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8]), _mark: &mut dyn FnMut(u32, u32)) -> Result<(), String> {
+        let body = json!({ "model": self.model, "voice": self.voice, "input": text, "response_format": "pcm" });
+        let mut req = airband_radio::net::agent(Duration::from_secs(30)).post(format!("{}/audio/speech", self.url.trim_end_matches('/')));
+        if !self.key.is_empty() {
+            req = req.header("authorization", format!("Bearer {}", self.key));
+        }
+        let res = req.send_json(&body).map_err(|e| e.to_string())?;
+        if res.status().as_u16() != 200 {
+            return Err(format!("the voice service answered {}", res.status()));
+        }
+        let mut body = res.into_body().into_reader();
+        let mut buf = [0u8; 8192];
+        loop {
+            match body.read(&mut buf).map_err(|e| e.to_string())? {
+                0 => return Ok(()),
+                n => sink(&buf[..n]),
+            }
+        }
+    }
+}
+
+/// The voice a setting names, through whichever interface its row says. Nothing when no voice is set, or the
+/// settings name one this build does not have.
+fn synth_for(voice: &Voice) -> Option<Box<dyn Synth>> {
+    use crate::providers::{By, Job};
+    let (_, offer) = voice.offer(Job::Voice)?;
+    let set = |field: &str| voice.get(Job::Voice, field);
+    let key = voice.key.clone();
+    Some(match offer.by {
+        By::Speech => Box::new(OpenAiSpeech { url: set("url"), key, model: set("model"), voice: set("voice"), rate: set("rate").parse().ok().filter(|r| (8000..=48000).contains(r)).unwrap_or(24000) }),
+        By::GeminiVoice => Box::new(Gemini { key, model: set("model"), voice: set("voice") }),
+        By::AzureVoice { pass } => Box::new(Azure { key, pass, region: set("region"), voice: set("voice") }),
+        By::ElevenlabsVoice => Box::new(Elevenlabs { key, voice: set("voice"), model: set("model") }),
+        By::Chat { .. } | By::Command(_) | By::Listener(_) => return None,
+    })
 }
 
 #[derive(Default)]

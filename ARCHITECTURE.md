@@ -91,7 +91,7 @@ Outbound and inbound are set separately (`airband setup`, or `airband voice …`
 
 | | Interface | Where | Providers |
 |---|---|---|---|
-| Outbound: text to audio | `Synth` (text in, PCM out a piece at a time) | `tower/speech.rs` | Gemini, Microsoft, ElevenLabs |
+| Outbound: text to audio | `Synth` (text in, PCM out a piece at a time) | `tower/speech.rs` | Any service that speaks OpenAI's `/audio/speech` (a row); Gemini, Microsoft and ElevenLabs by their own routes |
 | Outbound, made on the phone | a row of `MODELS` | `airband-radio/src/mouth.rs` | Phonon (open weights, no key) |
 | Inbound: audio to text | a row of `LISTENERS` | `airband-radio/src/ears.rs` | Microsoft |
 
@@ -113,15 +113,24 @@ speech. The app asks `local_voices` what it may offer.
 A call starts from when he joins: what was said before is in the chat and is not read out. The microphone never
 opens by itself: a question is read to him and then waits in the chat (`airband-radio/src/call.rs`).
 
-What adding a provider touches:
+Every outside service is one row of `PROVIDERS` (`crates/airband-cli/src/providers.rs`). A row says which jobs
+the service does (reading, speaking, listening), through which interface, and what it has to be told. `airband
+setup`, `airband model`, `airband voice` and `airband ears` are driven by the table, and so are the calls. A
+setting in use is `{"kind": <row id>, "key": …, <what differs from the row>}`.
 
-- A voice: an `impl Synth` in `tower/speech.rs`, a variant of `config::Voice`, a row in `PROVIDERS`, and its
-  `airband voice …` words in `install.rs`. No app release.
-- A voice made on the phone: a row of `MODELS` (what to fetch and where it goes) and the code that runs it in
-  `mouth.rs`. An app release.
-- A listening service: a row of `LISTENERS` with the code that talks to it, an arm in `tower/ears.rs` that makes
-  its pass, a variant of `config::Ears`, a row in `PROVIDERS`, and its `airband ears …` words. An app release,
-  because the phone talks to the service itself.
+The interfaces, and what adding a provider touches:
+
+| Job | Interface | A new provider is |
+|---|---|---|
+| Reading | OpenAI Chat Completions (`POST {url}/chat/completions`), which nearly every model service and local model server accepts | a row |
+| Reading | a command: prompt on standard input, answer on standard output | a row with its arguments |
+| Speaking | OpenAI's speech endpoint (`POST {url}/audio/speech`, raw PCM) | a row |
+| Speaking | a route of its own, for what the common one lacks (ElevenLabs' word timings, Microsoft's lendable pass) | an `impl Synth` in `tower/speech.rs`, a `By` for it, a row |
+| Speaking, on the phone | a row of `MODELS` in `airband-radio/src/mouth.rs` | the row and the code that runs the model; an app release |
+| Listening | no common interface exists for speech as it is spoken, so each is a dialect the phone speaks: a row of `LISTENERS` in `airband-radio/src/ears.rs` | the dialect's code there, a row here naming it; an app release, because the phone talks to the service itself |
+
+The tower gets a listening pass by asking the phone core for it (`airband_radio::listening_pass`), so the
+call that turns a key into a pass is written once.
 
 ## Reaching the tower
 

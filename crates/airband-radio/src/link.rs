@@ -175,7 +175,7 @@ impl Link {
     /// The next transmission, or None when the tower had nothing for 25 seconds.
     pub(crate) fn next(&self) -> Result<Option<Transmission>, LinkError> {
         // a radio that makes its own speech says so, and the tower makes none for it
-        match self.request("GET", if crate::mouth::ready() { "/next?voice=own" } else { "/next" }, None)? {
+        match self.request("GET", &format!("/next{}", crate::mouth::asking()), None)? {
             (200, v) => serde_json::from_value(v).map(Some).map_err(|_| LinkError::Refused),
             (204, _) => Ok(None),
             _ => Err(LinkError::Refused),

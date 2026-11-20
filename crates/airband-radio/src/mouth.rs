@@ -13,8 +13,9 @@ use std::sync::atomic::AtomicU64;
 struct Model {
     kind: &'static str,
     name: &'static str,
-    /// Each file: where it is fetched from, where it goes under the model's folder, and its size.
-    files: &'static [(&'static str, &'static str, u64)],
+    /// Each file: where it is fetched from, where it goes under the model's folder, its size, and its SHA-256.
+    /// A file that does not match is not kept.
+    files: &'static [(&'static str, &'static str, u64, &'static str)],
     /// The voice it speaks in, by the name its file has under `voices/`.
     #[cfg_attr(not(feature = "phonon"), allow(dead_code))]
     voice: &'static str,
@@ -27,10 +28,10 @@ const MODELS: &[Model] = &[Model {
     kind: "phonon",
     name: "Phonon",
     files: &[
-        ("https://huggingface.co/gradium/phonon-31m-en/resolve/8f7a37c94a4c58b04c8287300c53f11d2e208eae/config.json", "config.json", 2_000),
-        ("https://huggingface.co/gradium/phonon-31m-en/resolve/8f7a37c94a4c58b04c8287300c53f11d2e208eae/tokenizer.json", "tokenizer.json", 277_967),
-        ("https://huggingface.co/gradium/phonon-voices/resolve/da6c9ec0d47be8df5c87c730a3aa97187f3229c3/voices/NbpkqMVS3CJeq2j8.safetensors", "voices/Zoey.safetensors", 256_136),
-        ("https://huggingface.co/gradium/phonon-31m-en/resolve/8f7a37c94a4c58b04c8287300c53f11d2e208eae/model.q8.gguf", "model.q8.gguf", 64_512_352),
+        ("https://huggingface.co/gradium/phonon-31m-en/resolve/8f7a37c94a4c58b04c8287300c53f11d2e208eae/config.json", "config.json", 4_634, "b5d0f88353638370d94035b7d73d7d6577c0554d78f8d7ecfd40490aae39ae85"),
+        ("https://huggingface.co/gradium/phonon-31m-en/resolve/8f7a37c94a4c58b04c8287300c53f11d2e208eae/tokenizer.json", "tokenizer.json", 277_967, "691a00068fa7b989f2f3e5ae5daa2d1a5bb319f2d5360deafcfb19a8bb6e7936"),
+        ("https://huggingface.co/gradium/phonon-voices/resolve/da6c9ec0d47be8df5c87c730a3aa97187f3229c3/voices/NbpkqMVS3CJeq2j8.safetensors", "voices/Zoey.safetensors", 256_136, "97c7f8c253413574406ab80dd23f49c3ebb2517163b00a9bf86b9c4cf43e7e23"),
+        ("https://huggingface.co/gradium/phonon-31m-en/resolve/8f7a37c94a4c58b04c8287300c53f11d2e208eae/model.q8.gguf", "model.q8.gguf", 64_512_352, "a7d9aad2cd6dc66473f24a08bc6d2939030ef4d751ef82349361fbef3272dbae"),
     ],
     voice: "Zoey",
 }];
@@ -57,14 +58,15 @@ fn folder(dir: &str, m: &Model) -> PathBuf {
     Path::new(dir).join("voices").join(m.kind)
 }
 fn fetched(dir: &str, m: &Model) -> bool {
-    m.files.iter().all(|(_, to, _)| folder(dir, m).join(to).is_file())
+    // whole files only: each was checked against its hash before it took its name
+    m.files.iter().all(|(_, to, size, _)| std::fs::metadata(folder(dir, m).join(to)).is_ok_and(|f| f.is_file() && f.len() == *size))
 }
 
 /// The voices this build can make on the device, and whether each one's model is here. `dir` is a folder of
 /// the app's own, the same every time.
 #[uniffi::export]
 pub fn local_voices(dir: String) -> Vec<LocalVoice> {
-    MODELS.iter().map(|m| LocalVoice { kind: m.kind.into(), name: m.name.into(), megabytes: (m.files.iter().map(|f| f.2).sum::<u64>() / 1_000_000) as u32, fetched: fetched(&dir, m) }).collect()
+    MODELS.iter().map(|m| LocalVoice { kind: m.kind.into(), name: m.name.into(), megabytes: (m.files.iter().map(|f| f.2).sum::<u64>() as f64 / 1e6).round() as u32, fetched: fetched(&dir, m) }).collect()
 }
 
 /// How far the fetch now running has got: bytes so far, and bytes in all.
@@ -92,9 +94,9 @@ pub fn fetch_local_voice(dir: String, kind: String) -> Result<(), RadioError> {
     OF.store(m.files.iter().map(|f| f.2).sum(), Ordering::SeqCst);
     // no limit on the whole of it (the model is tens of megabytes on whatever connection he has), only on a stall
     let agent: ureq::Agent = ureq::Agent::config_builder().timeout_connect(Some(Duration::from_secs(15))).timeout_recv_response(Some(Duration::from_secs(30))).build().into();
-    for (from, to, size) in m.files {
+    for (from, to, size, sha) in m.files {
         let path = folder.join(to);
-        if path.is_file() {
+        if std::fs::metadata(&path).is_ok_and(|f| f.len() == *size) {
             GOT.fetch_add(*size, Ordering::SeqCst);
             continue;
         }
@@ -107,15 +109,23 @@ pub fn fetch_local_voice(dir: String, kind: String) -> Result<(), RadioError> {
         let mut file = std::fs::File::create(&part).map_err(|_| told("Could not write the voice to this device."))?;
         let mut body = res.body_mut().as_reader();
         let mut buf = vec![0u8; 64 * 1024];
+        let mut hash = <sha2::Sha256 as sha2::Digest>::new();
         loop {
             let n = std::io::Read::read(&mut body, &mut buf).map_err(|_| told("The download stopped part way. Try again."))?;
             if n == 0 {
                 break;
             }
             std::io::Write::write_all(&mut file, &buf[..n]).map_err(|_| told("This device ran out of room for the voice."))?;
+            sha2::Digest::update(&mut hash, &buf[..n]);
             GOT.fetch_add(n as u64, Ordering::SeqCst);
         }
         drop(file);
+        // a sign-in page, a connection that closed early, a file changed at the source: none of them is the voice
+        let got: String = sha2::Digest::finalize(hash).iter().map(|b| format!("{b:02x}")).collect();
+        if got != *sha {
+            let _ = std::fs::remove_file(&part);
+            return Err(told("What came down was not the voice. Check the connection and try again."));
+        }
         std::fs::rename(&part, &path).map_err(|_| told("Could not write the voice to this device."))?;
     }
     Ok(())
@@ -147,8 +157,21 @@ pub fn set_local_voice(dir: String, kind: String) {
             let _ = engine::with(|_| ());
         });
     } else {
-        engine::drop_loaded();
+        // off this thread: the model may be in the middle of a sentence, and this is called from a screen
+        thread::spawn(engine::drop_loaded);
     }
+}
+
+/// The chosen voice could not speak: it is no longer the one in use, so the tower is asked for its own again.
+pub(crate) fn give_up() {
+    *CHOSEN.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    thread::spawn(engine::drop_loaded);
+}
+
+/// What a radio adds when it asks the tower for the next thing to say, or says it is ready for one: whether it
+/// makes the speech itself.
+pub(crate) fn asking() -> &'static str {
+    if ready() { "?voice=own" } else { "" }
 }
 
 /// Is a voice of the device's own chosen and here?

@@ -460,6 +460,8 @@ impl Radio {
                 if v["text"].as_str().is_some_and(|text| mouth::say(&*self.host, text, &|| self.reading.load(Ordering::SeqCst) != mine)) {
                     return true;
                 }
+                // it could not speak: the tower's voice reads this one, and everything after
+                mouth::give_up();
             }
         }
         let speech = match self.link.request("GET", &format!("/message/{id}?form=speech"), None) {

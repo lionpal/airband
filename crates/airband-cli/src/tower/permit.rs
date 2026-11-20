@@ -29,7 +29,10 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
         s.clone()
     };
     // one request at a time from each agent: an earlier one it has moved on from is withdrawn
-    inner.permits.retain(|_, p| p.agent_id != agent_id || p.decided.is_some());
+    let earlier: Vec<String> = inner.permits.iter().filter(|(_, p)| p.agent_id == agent_id && p.decided.is_none()).map(|(id, _)| id.clone()).collect();
+    for id in earlier {
+        inner.close_permit(&id);
+    }
     inner.drop_pending(&agent_id, None);
     let (id, entry_id) = (config::random_hex(8), config::random_hex(8));
     let what = ask.what.trim();
@@ -45,15 +48,15 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
         }
         None => {
             log(format!("{}: asks permission to {what}", session.callsign.text()));
-            let line = format!("Wants to {what}. Allow?");
+            let line = format!("Wants to {what}.{ASKS}");
             let detail = if ask.detail.trim().is_empty() { line.clone() } else { ask.detail.clone() };
             (line, vec![ALLOW.into(), DENY.into()], detail)
         }
     };
-    inner.record(Entry { short: Some(line.clone()), options, permit: Some(id.clone()), ..Entry::said(entry_id.clone(), &session, Some(Kind::NeedsYou), detail.clone()) });
+    inner.record(Entry { short: Some(line.clone()), options, permit: Some(id.clone()), leave: ask.question.is_none(), ..Entry::said(entry_id.clone(), &session, Some(Kind::NeedsYou), detail.clone()) });
     // on a call it is read out like any other question
     inner.pending.push(Item { id: entry_id.clone(), agent_id: agent_id.clone(), notice: false, full: detail, kind: Some(Kind::NeedsYou), say: Some(line), detail: None, created: now(), asked: None });
-    inner.permits.insert(id.clone(), Permit { agent_id, entry: entry_id.clone(), decided: None, asked: Instant::now(), question: ask.question.is_some() });
+    inner.permits.insert(id.clone(), Permit { agent_id, entry: entry_id.clone(), decided: None, asked: Instant::now(), polled: Instant::now(), question: ask.question.is_some() });
     // he had the chat open a moment ago and may have put the phone down since: it is woken if so
     push::consider(app, &mut inner, &entry_id);
     app.save(&inner);
@@ -67,7 +70,8 @@ pub(super) async fn state(app: &Arc<App>, id: &str, wait: u64) -> PermissionStat
     loop {
         {
             let mut inner = app.inner.lock().unwrap();
-            let Some(permit) = inner.permits.get(id) else { return PermissionState { id: id.into(), state: "gone".into(), ..PermissionState::default() } };
+            let Some(permit) = inner.permits.get_mut(id) else { return PermissionState { id: id.into(), state: "gone".into(), ..PermissionState::default() } };
+            permit.polled = Instant::now();
             if let Some((allow, message)) = permit.decided.clone() {
                 // handed over: the harness has its answer
                 inner.permits.remove(id);
@@ -85,31 +89,47 @@ pub(super) async fn state(app: &Arc<App>, id: &str, wait: u64) -> PermissionStat
 /// can answer from here.
 pub(super) fn withdraw(app: &App, id: &str) {
     let mut inner = app.inner.lock().unwrap();
-    let Some(permit) = inner.permits.remove(id) else { return };
-    if let Some(e) = inner.log.iter_mut().find(|e| e.id == permit.entry) {
-        e.permit = None;
-        e.options.clear();
-        e.short = e.short.as_ref().map(|s| s.replace(" Allow?", " It is asking at the keyboard now."));
-    }
-    inner.pending.retain(|p| p.id != permit.entry);
-    inner.touch(&permit.entry);
+    inner.close_permit(id);
     app.save(&inner);
 }
 
 
-/// Is what he just said the answer to a request for permission? It is when he answered that question itself
-/// (`re`), or when exactly one request is waiting and he said a plain yes or no. Otherwise nothing here
-/// touches it. Words of his own on the question itself refuse it, and are passed on as the reason.
 /// What the Allow and Deny buttons send: the two answers that need no reading.
 pub(super) use airband_core::radio::{ALLOW, DENY};
+/// How the line of a request for leave ends while it waits, and what takes its place once it is over.
+pub(super) const ASKS: &str = " Allow?";
+pub(super) const MOVED: &str = " It is asking at the keyboard now.";
 
-/// The request for leave that `re` is a reply to, if it is one and still waits: what he was shown of it.
-/// Nothing for a question of the agent's (whatever he says to that is its answer).
-pub(super) fn asked_leave(app: &App, re: Option<&str>) -> Option<String> {
-    let inner = app.inner.lock().unwrap();
-    let entry = re?;
-    inner.permits.values().find(|p| p.entry == entry && p.decided.is_none() && !p.question)?;
-    inner.log.iter().find(|e| e.id == entry).map(|e| e.full.clone())
+/// What `re` is, as far as permission goes.
+pub(super) enum Leave {
+    /// Not a request for leave: an ordinary message, or a question of the agent's (whatever he says to that
+    /// is its answer).
+    No,
+    /// A request for leave the harness is still waiting on.
+    Waiting,
+    /// A request for leave that is over: answered, withdrawn, replaced by a newer one, or from before the
+    /// tower last started. Nothing he says to it now allows or refuses anything, and nothing is passed on.
+    Over,
+}
+
+/// Is what he just said a reply to a request for leave, and does that request still wait? A request whose
+/// harness has stopped asking after it is closed here, so he is never told "Allowed" about one nobody will
+/// collect.
+pub(super) fn asked_leave(app: &App, re: Option<&str>) -> Leave {
+    let mut inner = app.inner.lock().unwrap();
+    let Some(entry) = re else { return Leave::No };
+    if !inner.log.iter().any(|e| e.id == entry && e.leave) {
+        return Leave::No;
+    }
+    match inner.permits.iter().find(|(_, p)| p.entry == entry && p.decided.is_none()).map(|(id, p)| (id.clone(), p.live())) {
+        Some((_, true)) => Leave::Waiting,
+        Some((id, false)) => {
+            inner.close_permit(&id);
+            app.save(&inner);
+            Leave::Over
+        }
+        None => Leave::Over,
+    }
 }
 
 /// His answer to a request, said in reply to it. `verdict` is what his words came to for a request for leave:
@@ -139,6 +159,10 @@ pub(super) fn answer(app: &App, text: &str, re: Option<&str>, verdict: Option<bo
     let entry = inner.permits[&id].entry.clone();
     if let Some(e) = inner.log.iter_mut().find(|e| e.id == entry) {
         e.permit = None;
+        // answered: the line offers nothing more
+        if e.leave {
+            e.options.clear();
+        }
     }
     inner.pending.retain(|p| p.id != entry);
     let Some(session) = inner.find(&agent_id).cloned() else { return say("That agent has gone.") };

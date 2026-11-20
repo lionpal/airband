@@ -73,17 +73,20 @@ pub(crate) fn work(jobs: Receiver<Job>, link: Arc<Link>, host: Arc<dyn RadioHost
             // He turned reading aloud off: what was on its way is not read, and what is being read stops at
             // once. It is all in the chat.
             Job::Transmission(_) if !calling.load(Ordering::SeqCst) => {
-                let _ = link.post("/ready", &serde_json::json!({}));
+                let _ = link.post(&format!("/ready{}", crate::mouth::asking()), &serde_json::json!({}));
             }
             Job::Transmission(t) => {
                 host.status(RadioStatus::Speaking { callsign: t.callsign.clone() });
-                voice::say_until(&link, &*host, &t.say, t.speech.as_deref(), &|| !calling.load(Ordering::SeqCst));
-                // "heard" is what takes it off the tower's list: if this is lost, he hears it once more, never zero times
-                let _ = link.post("/heard", &Heard { id: t.id.clone() });
+                let heard = voice::say_until(&link, &*host, &t.say, t.speech.as_deref(), &|| !calling.load(Ordering::SeqCst));
+                // "heard" is what takes it off the tower's list: if this is lost, he hears it once more, never zero
+                // times. What the device's own voice failed to say was not heard, and comes round again.
+                if heard {
+                    let _ = link.post("/heard", &Heard { id: t.id.clone() });
+                }
                 // A question is read to him and then waits in the chat, where he answers it when he chooses, by
                 // its own buttons or its microphone. The microphone never opens by itself: he may be in the
                 // middle of saying something to someone else.
-                let _ = link.post("/ready", &serde_json::json!({}));
+                let _ = link.post(&format!("/ready{}", crate::mouth::asking()), &serde_json::json!({}));
             }
             Job::Talk(re, scope) => converse(&link, &*host, &ears, re, scope),
             Job::Dictate(done) => {

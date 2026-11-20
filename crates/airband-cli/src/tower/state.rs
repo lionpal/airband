@@ -122,6 +122,10 @@ pub(super) struct Entry {
     /// The permission request this line puts to him, while it is waiting for his answer.
     #[serde(default, skip)]
     pub(super) permit: Option<String>,
+    /// This line is, or was, a request for leave to do something on his computer. It stays true after the
+    /// request has ended, so a late answer to it is known for what it is and never goes to the agent as words.
+    #[serde(default)]
+    pub(super) leave: bool,
     /// When this line last changed, as a count that only goes up across the whole log. A radio asks for
     /// everything changed since the count it last saw.
     #[serde(default)]
@@ -255,6 +259,14 @@ pub(super) struct Inner {
 }
 
 /// One request for permission.
+impl Permit {
+    /// Is the harness still waiting on this? A decided one waits to be collected; an undecided one is over
+    /// when the harness has stopped asking after it, or an hour has gone by.
+    pub(super) fn live(&self) -> bool {
+        self.asked.elapsed() < Duration::from_secs(3600) && (self.decided.is_some() || self.polled.elapsed() < Duration::from_secs(60))
+    }
+}
+
 pub(super) struct Permit {
     pub(super) agent_id: String,
     /// The log line that puts it to him.
@@ -262,6 +274,9 @@ pub(super) struct Permit {
     /// His answer, once he has given it: allowed or not, and his reason if he refused with one.
     pub(super) decided: Option<(bool, String)>,
     pub(super) asked: Instant,
+    /// When the harness last asked where this stands. It asks every few seconds while it waits; one that has
+    /// stopped asking has stopped waiting.
+    pub(super) polled: Instant,
     /// It is a question of the agent's, not a request for leave: whatever he says is the answer.
     pub(super) question: bool,
 }
@@ -337,8 +352,11 @@ impl Inner {
             log(format!("{callsign} is gone"));
             self.remove(id);
         }
-        // a permission request nobody came back for
-        self.permits.retain(|_, p| p.asked.elapsed() < Duration::from_secs(3600));
+        // a permission request nobody is waiting on any more: its line stops offering an answer
+        let over: Vec<String> = self.permits.iter().filter(|(_, p)| !p.live()).map(|(id, _)| id.clone()).collect();
+        for id in over {
+            self.close_permit(&id);
+        }
         // a radio not heard from in a day has nothing worth keeping
         self.calls.retain(|_, c| c.seen.is_some_and(|t| t.elapsed() < Duration::from_secs(86_400)));
         !dead.is_empty()
@@ -508,6 +526,41 @@ impl Inner {
         }
     }
     /// A logged line changed: every radio should see it again, and it should be written.
+    /// A request ends without an answer from him: the harness stopped waiting, asked something newer, or is
+    /// gone. This is the one way that happens. The line stops offering Allow and Deny and says where the
+    /// question went, and it leaves the call queue.
+    pub(super) fn close_permit(&mut self, id: &str) {
+        let Some(permit) = self.permits.remove(id) else { return };
+        self.close_line(&permit.entry);
+    }
+    /// At start: no harness is waiting on anything asked before the tower stopped, so every request for leave
+    /// still offering an answer is over. Lines from before requests were marked are known by their two buttons;
+    /// those are only marked and stop offering them.
+    pub(super) fn close_requests_from_before(&mut self) {
+        let buttons = [permit::ALLOW.to_string(), permit::DENY.to_string()];
+        let open: Vec<(String, bool)> = self.log.iter().filter(|e| !e.options.is_empty() && (e.leave || e.options == buttons)).map(|e| (e.id.clone(), e.leave)).collect();
+        for (id, marked) in open {
+            if marked {
+                self.close_line(&id);
+            } else if let Some(e) = self.log.iter_mut().find(|e| e.id == id) {
+                e.leave = true;
+                e.options.clear();
+                self.touch(&id);
+            }
+        }
+    }
+    /// The line of a request that is over.
+    pub(super) fn close_line(&mut self, entry: &str) {
+        if let Some(e) = self.log.iter_mut().find(|e| e.id == entry) {
+            e.permit = None;
+            e.options.clear();
+            if e.leave {
+                e.short = e.short.as_ref().map(|s| s.strip_suffix(permit::ASKS).map(|line| format!("{line}{}", permit::MOVED)).unwrap_or_else(|| s.clone()));
+            }
+        }
+        self.pending.retain(|p| p.id != entry);
+        self.touch(entry);
+    }
     pub(super) fn touch(&mut self, id: &str) {
         self.rev += 1;
         let rev = self.rev;
@@ -560,7 +613,8 @@ impl Inner {
             queued: e.queued,
             cancelled: e.cancelled,
             // a question put through the same door is an ordinary question to him: any answer will do
-            permission: e.permit.as_ref().is_some_and(|id| self.permits.get(id).is_none_or(|p| !p.question)),
+            // only while the harness is still waiting on it
+            permission: e.leave && e.permit.as_ref().is_some_and(|id| self.permits.get(id).is_some_and(|p| p.decided.is_none())),
             pictures: e.pictures.clone(),
             links: if e.from == "you" { Vec::new() } else { airband_core::speech::links(&e.full) },
             agent: e.agent.clone(),
@@ -738,6 +792,54 @@ mod tests {
     }
     fn names(inner: &Inner) -> Vec<String> {
         inner.sessions.iter().map(|s| s.callsign.text()).collect()
+    }
+
+    /// A request for leave from `agent_id`, as `permit::ask` records it.
+    fn asks_leave(inner: &mut Inner, agent_id: &str, permit: &str, what: &str) -> String {
+        let s = inner.find(agent_id).unwrap().clone();
+        let id = format!("m{}", inner.seq + 1);
+        let line = format!("Wants to {what}.{}", permit::ASKS);
+        inner.record(Entry { short: Some(line.clone()), options: vec![permit::ALLOW.into(), permit::DENY.into()], permit: Some(permit.into()), leave: true, ..Entry::said(id.clone(), &s, Some(Kind::NeedsYou), line) });
+        inner.permits.insert(permit.into(), Permit { agent_id: agent_id.into(), entry: id.clone(), decided: None, asked: Instant::now(), polled: Instant::now(), question: false });
+        id
+    }
+    fn card(inner: &Inner, id: &str) -> airband_core::radio::Message {
+        inner.message(inner.log.iter().find(|e| e.id == id).unwrap())
+    }
+
+    #[test]
+    fn a_request_for_leave_offers_an_answer_only_while_the_harness_waits() {
+        let mut inner = Inner::default();
+        inner.check_in(&agent("a", "/x/shop", None));
+        let line = asks_leave(&mut inner, "a", "p1", "run `make`");
+        assert!(card(&inner, &line).permission && card(&inner, &line).options.len() == 2);
+        // the harness stopped asking after it: the next sweep closes it, and the line says where it went
+        inner.permits.get_mut("p1").unwrap().polled = Instant::now().checked_sub(Duration::from_secs(61)).unwrap();
+        inner.reap();
+        let over = card(&inner, &line);
+        assert!(!over.permission && over.options.is_empty() && inner.permits.is_empty());
+        assert_eq!(over.text, format!("Wants to run `make`.{}", permit::MOVED));
+        // it is still known as a request for leave, so a late answer is not taken for words to the agent
+        assert!(inner.log.iter().any(|e| e.id == line && e.leave));
+    }
+
+    #[test]
+    fn a_request_from_before_the_tower_started_is_over() {
+        let mut inner = Inner::default();
+        inner.check_in(&agent("a", "/x/shop", None));
+        let line = asks_leave(&mut inner, "a", "p1", "run `make`");
+        // what a restart leaves: the line as saved, and no record of anyone waiting
+        inner.permits.clear();
+        inner.log.iter_mut().for_each(|e| e.permit = None);
+        // and a line saved before requests were marked, known by its two buttons
+        let old = says(&mut inner, "a", Kind::NeedsYou, "Wants to run `ls`. Allow?");
+        inner.log.iter_mut().find(|e| e.id == old).unwrap().options = vec![permit::ALLOW.into(), permit::DENY.into()];
+        inner.close_requests_from_before();
+        for id in [&line, &old] {
+            let c = card(&inner, id);
+            assert!(!c.permission && c.options.is_empty(), "{c:?}");
+            assert!(inner.log.iter().any(|e| e.id == *id && e.leave));
+        }
     }
 
     #[test]

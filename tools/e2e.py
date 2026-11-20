@@ -459,6 +459,8 @@ Send it as written, or do you want changes?""")
     check("the request is put to him word for word, as a yes or no", card and card["text"] == "Wants to run `npm run deploy`. Allow?" and card["options"] == ["Allow", "Deny"] and card.get("permission"), card)
     check("handing the decision back is refused", say("Do whatever you think is best.", re=card["id"]) == "That one needs a yes or a no from you.")
     check("Allow goes back to the harness as yes", say("Allow", re=card["id"]) == "Allowed." and (t.join(30) or out == [(0, "")]), out)
+    before = len(feed()["messages"])
+    check("a second tap on a request that is over allows nothing and reaches nobody", say("Allow", re=card["id"]) == "That request is no longer waiting. Nothing was allowed." and len(feed()["messages"]) == before)
     out = []
     t = threading.Thread(target=ask_permission, args=("deploy", "orders", "run `./migrate --env production`", out)); t.start()
     card = pending_card("orders deploy")

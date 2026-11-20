@@ -24,6 +24,7 @@ mod config;
 #[cfg(unix)]
 mod hold;
 mod install;
+mod providers;
 mod terminal;
 mod tower;
 mod vault;

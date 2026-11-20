@@ -145,54 +145,67 @@ pub fn relay(mut cfg: Config, args: &[String]) -> Result<(), String> {
 fn option(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
 }
-/// A key given as `--key <key>` or, to keep it out of the shell's history, `--key-env <VARIABLE>`.
-fn key(args: &[String]) -> Result<String, String> {
-    option(args, "--key").or_else(|| option(args, "--key-env").and_then(|v| std::env::var(v).ok())).filter(|k| !k.is_empty()).ok_or_else(|| "give the service's key: --key <key>, or --key-env <VARIABLE>".to_string())
-}
-
-/// `airband model [claude | gemini … | openai … | none]`: what reads each agent's message and decides what is
-/// worth showing, and who his words are for.
-pub fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
-    use config::{Summarizer, Voice};
-    cfg.summarizer = match args.first().map(String::as_str) {
+/// `airband model`, `airband voice`, `airband ears`: show or change which provider does a job. Everything it
+/// knows about providers comes from `providers::PROVIDERS`.
+///
+///   airband voice                      what is set, and what can be
+///   airband voice none                 nothing does this job
+///   airband voice <provider> [--key-env VARIABLE] [--<setting> <value> …]
+///   airband voice test                 one real call to what is set
+///
+/// A key is never given on the command line, where the shell and other programs can see it: it comes from an
+/// environment variable, or is one already kept for that provider (`airband keys`).
+fn provider_for(mut cfg: Config, job: crate::providers::Job, cmd: &str, what: &str, without: &str, args: &[String]) -> Result<(), String> {
+    use crate::providers::{self, Use};
+    let offered = || providers::offering(job).map(|p| p.id).collect::<Vec<_>>().join(", ");
+    let chosen = match args.first().map(String::as_str) {
         None => {
-            println!("{}", match &cfg.summarizer {
-                Summarizer::Command { argv } => format!("Model: a command, {}.", argv.iter().take(4).cloned().collect::<Vec<_>>().join(" ")),
-                Summarizer::Gemini { model, .. } => format!("Model: Gemini, {model}, with your own key."),
-                Summarizer::Openai { url, model, .. } => format!("Model: {model} at {url}."),
-                Summarizer::None => "Model: none. You get every message in full, and with several agents you are asked who yours is for.".to_string(),
-            });
-            println!("Change it:  airband model claude  |  airband model gemini [--key-env GEMINI_API_KEY] [--model …]  |  airband model openai --key-env OPENAI_API_KEY --model … [--url https://…/v1]  |  airband model none");
+            let now = crate::setup::slot(&mut cfg, job).clone();
+            println!("{what}: {}.{}", now.describe(job), if now.is_none() { format!(" {without}") } else { String::new() });
+            println!("Change it:  airband {cmd} <provider> [--key-env VARIABLE] [--setting value]  |  airband {cmd} none  |  airband {cmd} test");
+            for p in providers::offering(job) {
+                let asks: Vec<String> = p.offers.iter().filter(|o| o.job == job).flat_map(|o| o.asks).map(|a| if a.usual.is_empty() { format!("--{}", a.field) } else { format!("--{} ({})", a.field, a.usual) }).collect();
+                println!("  {:<11} {}{}", p.id, p.name, if asks.is_empty() { String::new() } else { format!(": {}", asks.join(", ")) });
+            }
             return Ok(());
         }
-        // Claude Code itself, as a command: nothing to give it
-        Some("claude") => Summarizer::default(),
-        Some("gemini") => {
-            // the key the voice already uses will do, if he gave one for that and none here
-            let key = key(args).ok().or(match &cfg.voice {
-                Voice::Gemini { key, .. } => Some(key.clone()),
-                _ => None,
-            });
-            let mut m: Summarizer = serde_json::from_value(json!({ "kind": "gemini", "key": key.ok_or("give Gemini's key: --key-env GEMINI_API_KEY")? })).map_err(|e| e.to_string())?;
-            if let (Summarizer::Gemini { model, .. }, Some(named)) = (&mut m, option(args, "--model")) {
-                *model = named;
-            }
-            m
+        // one real call to what is set
+        Some("test") => {
+            println!("{}", crate::setup::works(&cfg, job)?);
+            return Ok(());
         }
-        Some("openai") => {
-            let model = option(args, "--model").ok_or("say which model: --model <its name>")?;
-            let mut m: Summarizer = serde_json::from_value(json!({ "kind": "openai", "key": key(args).unwrap_or_default(), "model": model })).map_err(|e| e.to_string())?;
-            if let (Summarizer::Openai { url, .. }, Some(given)) = (&mut m, option(args, "--url")) {
-                *url = given;
+        Some("none" | "device") => Use::default(),
+        Some(id) => {
+            let p = providers::offering(job).find(|p| p.id == id).ok_or_else(|| format!("nothing called \"{id}\" does this: {} or none", offered()))?;
+            let mut u = Use::of(p.id);
+            if p.key {
+                u.key = match option(args, "--key-env") {
+                    Some(var) => std::env::var(&var).ok().filter(|k| !k.is_empty()).ok_or_else(|| format!("{var} is not set"))?,
+                    // one he already gave for this provider will do
+                    None => cfg.keys.values().find(|k| k.provider == p.id).map(|k| k.secret.clone()).ok_or_else(|| format!("{} needs a key: --key-env <VARIABLE>, or give one first with  airband keys add {id} {id}", p.name))?,
+                };
+                if !cfg.keys.values().any(|k| k.secret == u.key) {
+                    let name = (1..).map(|n| if n == 1 { id.to_string() } else { format!("{id}-{n}") }).find(|n| !cfg.keys.contains_key(n)).unwrap();
+                    cfg.keys.insert(name, config::StoredKey { provider: id.into(), secret: u.key.clone() });
+                }
             }
-            m
+            for a in p.offers.iter().filter(|o| o.job == job).flat_map(|o| o.asks) {
+                if let Some(said) = option(args, &format!("--{}", a.field)) {
+                    u.set.insert(a.field.into(), json!(said));
+                }
+            }
+            u
         }
-        Some("none") => Summarizer::None,
-        Some(other) => return Err(format!("no model called \"{other}\": claude, gemini, openai or none")),
     };
+    *crate::setup::slot(&mut cfg, job) = chosen;
     config::save(&cfg)?;
     println!("Saved. A running tower uses it from its next start: airband install");
     Ok(())
+}
+
+/// What reads each agent's message and decides what is worth showing, and who his words are for.
+pub fn model(cfg: Config, args: &[String]) -> Result<(), String> {
+    provider_for(cfg, crate::providers::Job::Summary, "model", "Model", "You get every message in full, and with several agents you are asked who yours is for.", args)
 }
 
 /// `airband lan [on | off]`: whether a paired phone on the same network may reach this computer straight.
@@ -212,83 +225,14 @@ pub fn lan(mut cfg: Config, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// `airband voice [device | gemini … | azure …]`: what speaks to him on a call. Separate from `ears`.
-pub fn voice(mut cfg: Config, args: &[String]) -> Result<(), String> {
-    use config::Voice;
-    cfg.voice = match args.first().map(String::as_str) {
-        None => {
-            println!("{}", match &cfg.voice {
-                Voice::Device | Voice::AzurePass { .. } => "Voice: none set here. The relay's is used when it lends one; without, nothing is spoken.".to_string(),
-                Voice::Gemini { model, voice, .. } => format!("Voice: Gemini, {voice} on {model}, made by the tower."),
-                Voice::Azure { region, voice, .. } => format!("Voice: Microsoft, {voice} in {region}, made by the tower."),
-                Voice::Elevenlabs { voice, model, .. } => format!("Voice: ElevenLabs, voice {voice} on {model}, made by the tower."),
-            });
-            println!("Change it:  airband voice device  |  airband voice test  |  airband voice gemini --key-env GEMINI_API_KEY [--voice Leda] [--model …]  |  airband voice azure --key-env AZURE_SPEECH_KEY --region <region> [--voice …]  |  airband voice elevenlabs --key-env ELEVENLABS_API_KEY [--voice <id>] [--model …]");
-            return Ok(());
-        }
-        // try the voice that is set, with a real sentence
-        Some("test") => {
-            println!("{}", crate::tower::try_voice(&cfg)?);
-            return Ok(());
-        }
-        Some("device") => Voice::Device,
-        Some("elevenlabs") => {
-            let mut v: Voice = serde_json::from_value(json!({ "kind": "elevenlabs", "key": key(args)? })).map_err(|e| e.to_string())?;
-            if let Voice::Elevenlabs { model, voice, .. } = &mut v {
-                *model = option(args, "--model").unwrap_or(model.clone());
-                *voice = option(args, "--voice").unwrap_or(voice.clone());
-            }
-            v
-        }
-        Some("gemini") => {
-            let mut v: Voice = serde_json::from_value(json!({ "kind": "gemini", "key": key(args)? })).map_err(|e| e.to_string())?;
-            if let Voice::Gemini { model, voice, .. } = &mut v {
-                *model = option(args, "--model").unwrap_or(model.clone());
-                *voice = option(args, "--voice").unwrap_or(voice.clone());
-            }
-            v
-        }
-        Some("azure") => {
-            let region = option(args, "--region").ok_or("Microsoft's service needs --region (for example japaneast)")?;
-            let mut v: Voice = serde_json::from_value(json!({ "kind": "azure", "key": key(args)?, "region": region })).map_err(|e| e.to_string())?;
-            if let Voice::Azure { voice, .. } = &mut v {
-                *voice = option(args, "--voice").unwrap_or(voice.clone());
-            }
-            v
-        }
-        Some(other) => return Err(format!("no voice called \"{other}\": elevenlabs, gemini, azure or device")),
-    };
-    config::save(&cfg)?;
-    println!("Voice set. Restart the tower to use it:  airband install");
-    Ok(())
+/// What speaks to him on a call. Separate from `ears`.
+pub fn voice(cfg: Config, args: &[String]) -> Result<(), String> {
+    provider_for(cfg, crate::providers::Job::Voice, "voice", "Voice", "The relay's is used when it lends one; without, nothing is spoken.", args)
 }
 
-/// `airband ears [device | azure …]`: what turns his speech into text on a call. Separate from `voice`.
-pub fn ears(mut cfg: Config, args: &[String]) -> Result<(), String> {
-    use config::Ears;
-    cfg.ears = match args.first().map(String::as_str) {
-        None => {
-            println!("{}", match &cfg.ears {
-                Ears::Device => "Ears: none set here. The relay's are used when it lends them; without, he types.".to_string(),
-                Ears::Azure { region, language, .. } => format!("Ears: Microsoft in {region}, {language}; the phone reaches it with a pass from the tower."),
-            });
-            println!("Change it:  airband ears device  |  airband ears azure --key-env AZURE_SPEECH_KEY --region <region> [--language en-US]");
-            return Ok(());
-        }
-        Some("device") => Ears::Device,
-        Some("azure") => {
-            let region = option(args, "--region").ok_or("Microsoft's service needs --region (for example japaneast)")?;
-            let mut e: Ears = serde_json::from_value(json!({ "kind": "azure", "key": key(args)?, "region": region })).map_err(|e| e.to_string())?;
-            if let Ears::Azure { language, .. } = &mut e {
-                *language = option(args, "--language").unwrap_or(language.clone());
-            }
-            e
-        }
-        Some(other) => return Err(format!("no ears called \"{other}\": device or azure")),
-    };
-    config::save(&cfg)?;
-    println!("Ears set. Restart the tower to use it:  airband install");
-    Ok(())
+/// What turns his speech into text on a call. Separate from `voice`.
+pub fn ears(cfg: Config, args: &[String]) -> Result<(), String> {
+    provider_for(cfg, crate::providers::Job::Ears, "ears", "Ears", "The relay's are used when it lends them; without, he types.", args)
 }
 
 pub fn pair(mut cfg: Config, name: &str) -> Result<(), String> {

@@ -1,7 +1,7 @@
 //! The second half of the dispatcher: what his words are for. What needs no reading comes first: a typed
-//! command, tags and spoken callsigns (airband-core's parser), the message he tapped. Everything else a model
-//! reads: which agent it is for, or that he wants a new agent, where, and on which model and effort.
-//! Also the controls the tower answers itself ("say more", "status", "stand by").
+//! command, tags (airband-core's parser), the message he tapped. Everything he says in his own words a model
+//! reads: which agent it is for (a callsign he says, a team, all of them), or that he wants a new agent, where,
+//! and on which model and effort. Also the controls the tower answers itself (`/more`, `/status`, `/hold`).
 use super::*;
 
 pub(super) fn list(names: &[String]) -> String {
@@ -165,7 +165,12 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                  Otherwise a reply right after an agent speaks is to that agent, and with nobody having spoken since he last did \
                  it carries on with the agent he last spoke with: words that only make sense as more of what he was just saying \
                  (\"and make it blue\", \"also the footer\") are for the same agent, and you can be sure of that too. \
-                 Name more than one only if his words plainly address several.{starting}\n\
+                 A callsign he says in full (\"catalog two, leave it\"; speech may write its number as a figure, or as a word \
+                 that sounds like it) is that agent, and you can be sure of it. \
+                 Name more than one only if his words plainly address several: every agent of one team (\"all of catalog, \
+                 pull main\") is each of that team's callsigns, and every agent there is (\"everyone, stop\", \"all of you, \
+                 commit what you have\") is \"to\":[\"*\"]. A sentence that only mentions them all (\"everyone is waiting on \
+                 the deploy\") addresses whoever its words are for, not all of them.{starting}\n\
                  Reply with one line of JSON and nothing else: {{\"to\":[\"<callsign in full, not its letters>\"],\"sure\":true or false{shape}}}\n\
                  \"sure\": false if a careful assistant would check with him before passing this on.",
                 name = app.cfg.name,
@@ -229,6 +234,10 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
             // one of the agents on another computer, and none here: the radio takes it there
             if let Some(o) = others.iter().find(|o| judged.to.iter().any(|c| c.trim().eq_ignore_ascii_case(&o.callsign))).filter(|_| judged.sure && !everyone.iter().any(|s| judged.to.iter().any(|c| c.trim().eq_ignore_ascii_case(&s.callsign.text())))) {
                 return Routed::Elsewhere(o.callsign.clone());
+            }
+            // all of them, said outright
+            if judged.sure && judged.to.iter().any(|c| c.trim() == "*") {
+                return Routed::Sure(all.clone());
             }
             let judged = Some(judged);
             // the model names an agent by its callsign; its letters are taken too when they are one agent's alone
@@ -304,6 +313,54 @@ async fn place_idea(app: &Arc<App>, idea: &str, projects: &[String]) -> Result<S
     }
 }
 
+/// He was asked which project an idea belongs in, and has said something. The project his words name, or
+/// nothing when they are not an answer to that (or no model said).
+async fn named_project(app: &Arc<App>, idea: &str, said: &str, projects: &[String]) -> Option<String> {
+    let prompt = format!(
+        "{name} wanted a new coding agent started on this: \"{idea}\"\nHe was asked which of his projects it is for:\n{list}\n\n\
+         He now says: \"{said}\"\n\n\
+         If that answers the question, which project does he mean? Speech may write a name apart or misspell it.\n\
+         Reply with one line of JSON and nothing else: {{\"project\":\"<name exactly as listed>\"}}\n\
+         Leave the name empty if he names none of them, rules one out without choosing another, or has gone on to \
+         say something else.",
+        name = app.cfg.name,
+        list = projects.iter().map(|p| format!("- {p}")).collect::<Vec<_>>().join("\n"),
+    );
+    #[derive(Deserialize)]
+    struct Out {
+        project: String,
+    }
+    let out = ask_model(&app.cfg, prompt).await.ok()?;
+    let judged: Out = serde_json::from_str(judge::json_in(&out)?).ok()?;
+    projects.iter().find(|p| p.eq_ignore_ascii_case(judged.project.trim())).cloned()
+}
+
+/// He was asked who something he said was for, and has said something more. The agents his words name, or
+/// nothing when they are not an answer to that (or no model said): then they are a message of their own.
+async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope: Option<&str>) -> Option<Vec<Session>> {
+    let room = scope.and_then(|s| s.strip_prefix("group:"));
+    let all: Vec<Session> = app.inner.lock().unwrap().sessions.iter().filter(|s| room.is_none_or(|g| s.callsign.project == g)).cloned().collect();
+    let letters = |s: &Session| airband_core::routing::badge(&s.callsign.project, &s.callsign.text());
+    let prompt = format!(
+        "{name} said this to his coding agents: \"{first}\"\nIt was not clear who it was for, and he was asked. The agents:\n{list}\n\n\
+         He now says: \"{said}\"\n\n\
+         If that answers the question, who does he mean? He may say a callsign, an agent's letters, or a number \
+         (speech may write these apart or as words that sound like them), or all of them.\n\
+         Reply with one line of JSON and nothing else: {{\"to\":[\"<callsign in full>\"]}}, with [\"*\"] for all of them.\n\
+         \"to\" is empty if he names nobody listed, or has gone on to say something else.",
+        name = app.cfg.name,
+        list = all.iter().map(|s| format!("- {} (letters {})", s.callsign.text(), letters(s))).collect::<Vec<_>>().join("\n"),
+    );
+    #[derive(Deserialize)]
+    struct Out {
+        to: Vec<String>,
+    }
+    let out = ask_model(&app.cfg, prompt).await.ok()?;
+    let judged: Out = serde_json::from_str(judge::json_in(&out)?).ok()?;
+    let meant: Vec<Session> = if judged.to.iter().any(|c| c.trim() == "*") { all } else { all.into_iter().filter(|s| judged.to.iter().any(|c| c.trim().eq_ignore_ascii_case(&s.callsign.text()))).collect() };
+    (!meant.is_empty()).then_some(meant)
+}
+
 /// Start the new agent he asked for. With no project, a model is asked where the idea belongs when nobody has
 /// judged that yet (`place`); if nothing points anywhere he is asked, and the idea is kept for his answer.
 async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, projects: &[String], place: bool) -> Reply {
@@ -338,15 +395,18 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
     // The buttons say yes or no outright. Anything else he says to a request for leave is read by a model, and
     // only a plain yes allows it; if his words do not settle it, nothing is decided.
     let verdict = match permit::asked_leave(app, re) {
-        Some(_) if text.trim() == permit::ALLOW => Some(true),
-        Some(_) if text.trim() == permit::DENY => Some(false),
-        Some(request) => match judge::consent(&app.cfg, &request, text).await {
+        permit::Leave::No => None,
+        // an answer to a request that is over answers nothing, and is not passed to the agent as if it did
+        permit::Leave::Over => return Reply { say: "That request is no longer waiting. Nothing was allowed.".into(), ..Reply::default() },
+        permit::Leave::Waiting if text.trim() == permit::ALLOW => Some(true),
+        permit::Leave::Waiting if text.trim() == permit::DENY => Some(false),
+        // The model is given his words and nothing of the request, which the asking agent wrote.
+        permit::Leave::Waiting => match judge::consent(&app.cfg, text).await {
             Some(true) => Some(true),
             // his own words, which are not a yes: they refuse it and go back to the agent as the reason
             Some(false) => None,
             None => return Reply { say: "That one needs a yes or a no from you.".into(), ..Reply::default() },
         },
-        None => None,
     };
     if let Some(reply) = permit::answer(app, text, re, verdict) {
         return reply;
@@ -356,14 +416,17 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
     let (mut files, shown_files) = if attached.is_empty() { (String::new(), Vec::new()) } else { attachments::describe(attached).await };
     // starting a new agent comes next: it is addressed to the tower, not to anyone on the radio
     let projects: Vec<String> = app.inner.lock().unwrap().launchable(&app.cfg).into_keys().collect();
-    // "Which project?" was just asked about an idea, and this names one
+    // "Which project?" was just asked about an idea. A model says whether this answers it and with which one.
+    // Words that are about something else leave the idea waiting for its answer, for as long as it would have.
     let held_idea = app.inner.lock().unwrap().call(radio).unplaced_idea.take().filter(|(_, when)| when.elapsed() < Duration::from_secs(90));
-    if let Some((idea, _)) = held_idea {
-        let said: String = text.to_lowercase().chars().filter(|c| c.is_ascii_alphanumeric()).collect();
-        if let Some(project) = projects.iter().find(|p| said.ends_with(&p.replace(' ', ""))) {
-            log(format!("← radio: \"{text}\" → launch in {project}"));
-            return launch(app, project, &idea).await;
+    if let Some((idea, when)) = held_idea {
+        if !text.trim_start().starts_with(['/', '@']) {
+            if let Some(project) = named_project(app, &idea.task, text, &projects).await {
+                log(format!("← radio: \"{text}\" → launch in {project}"));
+                return launch(app, &project, &idea).await;
+            }
         }
+        app.inner.lock().unwrap().call(radio).unplaced_idea = Some((idea, when));
     }
     // a typed command says what it is and needs no reading
     if text.trim_start().starts_with('/') {
@@ -386,10 +449,18 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
         let held = inner.call(radio).asked.take().filter(|(_, _, when)| when.elapsed() < Duration::from_secs(90)).map(|(t, f, _)| (t, f));
         (parsed, named, inner.roster(), names, inner.pending.len(), held)
     };
-    // "Which one?" was just asked and this is the answer: a callsign and nothing else
-    if let (Some((words, their_files)), true, false, None) = (&held, parsed.rest.is_empty(), named.is_empty(), parsed.control) {
-        parsed.rest = words.clone();
-        files = their_files.clone();
+    // "Who is that for?" was just asked. A tag and nothing else answers it; so do words of his that a model
+    // reads as naming someone. Either way what goes out is what he said the first time.
+    let mut named = named;
+    if let (Some((words, their_files)), None) = (&held, parsed.control) {
+        if parsed.rest.is_empty() && !named.is_empty() {
+            (parsed.rest, files) = (words.clone(), their_files.clone());
+        } else if named.is_empty() && !parsed.rest.is_empty() {
+            if let Some(meant) = named_agents(app, words, &parsed.rest, scope).await {
+                named = meant;
+                (parsed.rest, files) = (words.clone(), their_files.clone());
+            }
+        }
     }
     // work out who it is for only when there is something to deliver
     let mut targets: Vec<Session> = if !named.is_empty() {
@@ -469,7 +540,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
     }
     // His words as he said them, with one line in front that says who they are from and how to answer.
     let many = if targets.len() > 1 { format!(" Sent to {} agents.", targets.len()) } else { String::new() };
-    let content = format!("From {name}, on his phone through Airband. Answer in a sentence or two, outcome first.{many}\n\n{rest}{files}", name = app.cfg.name, rest = parsed.rest);
+    let content = format!("From {name}, on his phone through Airband.{many}\n\n{rest}{files}", name = app.cfg.name, rest = parsed.rest);
     // The line in the chat takes the id the radio gave what he said, when it gave one and it is not in use: the
     // radio can then tell that the message it is still showing as on its way has arrived, and swap one for the
     // other without a gap.

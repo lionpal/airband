@@ -1,9 +1,6 @@
 //! Callsigns, and working out what an utterance means and who it is for.
 
 const WORDS: [&str; 13] = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
-/// What speech recognition tends to write when a number is said after a name.
-const SOUNDS_LIKE: [(&str, &str); 9] =
-    [("won", "one"), ("to", "two"), ("too", "two"), ("for", "four"), ("fore", "four"), ("ate", "eight"), ("tree", "three"), ("free", "three"), ("sex", "six")];
 
 /// A session's name on the radio: its folder's name plus a number word ("shop two"), or plus the name he gave
 /// the session ("warehouse removals"). `number` holds whichever follows the project's name.
@@ -114,7 +111,6 @@ fn key(word: &str) -> String {
     norm(word).replace(' ', "")
 }
 fn number_word(w: &str) -> String {
-    let w = SOUNDS_LIKE.iter().find(|(heard, _)| *heard == w).map(|(_, said)| *said).unwrap_or(w);
     match w.parse::<usize>() {
         Ok(n) if n < WORDS.len() => WORDS[n].to_string(),
         _ => w.to_string(),
@@ -128,12 +124,13 @@ fn digits(number: &str) -> String {
 fn own_name(number: &str) -> bool {
     number.len() > 3 && !WORDS.contains(&number) && number.parse::<usize>().is_err()
 }
-const EVERYONE: [&str; 5] = ["all", "everyone", "everybody", "allstations", "allagents"];
+/// The tag for every agent: `@all`.
+const EVERYONE: &str = "all";
 
 /// Who a typed tag means: `@all`, a whole group (`@shop`), or one agent (`@shop2`, `@shop-two`).
 fn tagged(tag: &str, live: &[Callsign]) -> Option<Vec<usize>> {
     let k = key(tag);
-    if EVERYONE.contains(&k.as_str()) {
+    if k == EVERYONE {
         return Some((0..live.len()).collect());
     }
     let hits: Vec<usize> = live
@@ -149,59 +146,22 @@ fn tagged(tag: &str, live: &[Callsign]) -> Option<Vec<usize>> {
     (!hits.is_empty()).then_some(hits)
 }
 
-/// What he said or typed → who it is for and what it says.
+/// What he typed that needs no reading: who the tags at the front name, and a command if the rest is one.
 ///
-/// Typed: any number of leading tags: `@shop2 @backoffice leave it`, `@shop stop` (the whole group), `@all`.
-/// Spoken: a leading callsign ("shop two, leave it"), "all shop, stop", or "everyone, stop".
+/// Tags: any number of leading ones, `@shop2 @backoffice leave it`, `@shop stop` (the whole group), `@all`.
+/// A command: `/more`, `/status` and the rest of [`COMMANDS`].
+///
+/// Nothing else is read here. Who his own words are for ("shop two, leave it", "everyone, stop") is for a
+/// model to say, with the roster in front of it; his words reach the agent as he said them.
 pub fn parse_utterance(text: &str, live: &[Callsign]) -> Parsed {
-    let mut words: Vec<&str> = text.split_whitespace().collect();
-    // "Tower, status" and "Airband, status" both mean the dispatcher itself. Speech may write "air band".
-    if words.first().is_some_and(|w| matches!(key(w).as_str(), "tower" | "airband")) {
-        words.remove(0);
-    } else if words.len() > 1 && key(words[0]) == "air" && key(words[1]) == "band" {
-        words.drain(..2);
-    }
+    let words: Vec<&str> = text.split_whitespace().collect();
     let mut to: Vec<usize> = Vec::new();
     let mut taken = 0;
-    let add = |to: &mut Vec<usize>, more: Vec<usize>| more.into_iter().for_each(|i| if !to.contains(&i) { to.push(i) });
-
     while let Some(hit) = words.get(taken).filter(|w| w.starts_with('@')).and_then(|w| tagged(w, live)) {
-        add(&mut to, hit);
+        hit.into_iter().for_each(|i| if !to.contains(&i) { to.push(i) });
         taken += 1;
     }
-    if taken == 0 {
-        let first = words.first().map(|w| key(w)).unwrap_or_default();
-        let second = words.get(1).map(|w| key(w)).unwrap_or_default();
-        let group = |name: &str| -> Vec<usize> { live.iter().enumerate().filter(|(_, c)| c.project.replace(' ', "") == name).map(|(i, _)| i).collect() };
-        if first == "all" && !group(&second).is_empty() {
-            // "all shop, stop"
-            add(&mut to, group(&second));
-            taken = 2;
-        } else if matches!(first.as_str(), "everyone" | "everybody") || (first == "all" && matches!(second.as_str(), "stations" | "agents")) {
-            add(&mut to, (0..live.len()).collect());
-            taken = if first == "all" { 2 } else { 1 };
-        } else {
-            for (i, c) in live.iter().enumerate() {
-                let project = c.project.replace(' ', "");
-                let alone = live.iter().filter(|o| o.project == c.project).count() == 1;
-                // "backoffice" may be heard as "back office": compare with the spaces taken out, over the first few words
-                for n in 1..=words.len().min(5) {
-                    let head: Vec<String> = words[..n].iter().map(|w| key(w)).collect();
-                    let joined = head.concat();
-                    let with_number = format!("{}{}", head[..n - 1].concat(), number_word(&head[n - 1]));
-                    let number = c.number.replace(' ', "");
-                    let hit = with_number == format!("{project}{number}") || joined == format!("{project}{number}") || (alone && joined == project);
-                    // the longest match wins, so "shop two" beats a bare "shop"
-                    if hit && n > taken {
-                        taken = n;
-                        to = vec![i];
-                    }
-                }
-            }
-        }
-    }
     let rest = words[taken..].join(" ");
-    let rest = rest.trim_start_matches([' ', ',', '.', ':', ';', '-']).trim().to_string();
     let control = rest.strip_prefix('/').map(|c| c.trim().to_lowercase()).and_then(|c| COMMANDS.iter().find(|(_, name)| *name == c).map(|(c, _)| *c));
     Parsed { to, control, rest: if control.is_some() { String::new() } else { rest } }
 }
@@ -218,39 +178,17 @@ pub struct With {
     pub rest: String,
 }
 
-/// Words that open with a model: "with fable", "using opus high", "hey, with sonnet at max effort: …". `models`
-/// and `efforts` are what the launcher in use offers; a model it does not list is never matched. "Extra high"
-/// is `xhigh` and "maximum" is `max` when the launcher lists those.
+/// The model and effort of a typed launch, written before the task: `with fable`, `with opus high: …`.
+/// `models` and `efforts` are what the launcher in use offers, by the names it lists them under; anything
+/// else is part of the task.
 pub fn parse_with(text: &str, models: &[String], efforts: &[String]) -> Option<With> {
-    let mut words: Vec<&str> = text.split_whitespace().collect();
-    while words.first().is_some_and(|w| matches!(key(w).as_str(), "hey" | "ok" | "okay" | "so" | "tower" | "airband")) {
-        words.remove(0);
-    }
-    if !matches!(key(words.first()?).as_str(), "with" | "using") {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if key(words.first()?) != "with" {
         return None;
     }
     let model = models.iter().find(|m| key(m) == key(words.get(1).copied().unwrap_or_default()))?.clone();
-    let mut at = 2;
-    let level = |at: usize| -> Option<(String, usize)> {
-        let one = key(words.get(at).copied()?);
-        let two = words.get(at + 1).map(|w| format!("{one}{}", key(w)));
-        let said = |name: &str| efforts.iter().find(|e| key(e) == name).cloned();
-        match (one.as_str(), two.as_deref()) {
-            (_, Some("extrahigh")) => said("xhigh").map(|e| (e, 2)),
-            ("maximum", _) => said("max").map(|e| (e, 1)),
-            ("med", _) => said("medium").map(|e| (e, 1)),
-            _ => said(&one).map(|e| (e, 1)),
-        }
-    };
-    // "fable high", "fable on high", "fable at max effort"
-    let lead = usize::from(words.get(at).is_some_and(|w| matches!(key(w).as_str(), "on" | "at" | "set")) && level(at + 1).is_some());
-    let effort = level(at + lead).map(|(e, n)| {
-        at += lead + n;
-        e
-    });
-    if effort.is_some() && words.get(at).is_some_and(|w| matches!(key(w).as_str(), "effort" | "thinking" | "reasoning")) {
-        at += 1;
-    }
+    let effort = words.get(2).and_then(|w| efforts.iter().find(|e| key(e) == key(w)).cloned());
+    let at = 2 + usize::from(effort.is_some());
     let rest = words[at..].join(" ").trim_start_matches([' ', ',', '.', ':', ';', '-']).trim().to_string();
     Some(With { model, effort, rest })
 }
@@ -295,74 +233,26 @@ pub struct Launch {
     pub task: String,
 }
 
-/// Is this a request to start a new agent in one of the projects the tower knows?
+/// The typed command that starts a new agent: `/launch shop write the unit 5 questions` (also `/new` and
+/// `/start`). The project is one the tower knows, by its name ("back office" is backoffice); with none named,
+/// everything after the command is the task and the tower works out where it belongs.
 ///
-/// Typed: `/launch shop write the unit 5 questions` (also `/new`). Spoken: "launch shop: write the unit 5
-/// questions", "start a new agent in shop to write the unit 5 questions", "spin up an agent for back office, …".
-/// "Start" on its own is not enough ("start with the first one" is a reply), so it needs "agent", "session" or
-/// "new" beside it; "launch" and "spin up" stand alone. A project that is not known is never launched into.
+/// Only the command is read here. "Start a new agent in shop to …" in his own words is for a model to read.
 pub fn parse_launch(text: &str, projects: &[String]) -> Option<Launch> {
-    let mut words: Vec<&str> = text.split_whitespace().collect();
-    if words.first().is_some_and(|w| matches!(key(w).as_str(), "tower" | "airband")) {
-        words.remove(0);
-    }
-    let first = words.first()?;
-    let slash = first.starts_with('/');
-    let verb = key(first);
-    let mut at = 1;
-    let mut sure = match (slash, verb.as_str()) {
-        (true, "launch" | "new" | "start") => true,
-        (true, _) => return None,
-        (false, "launch") => true,
-        (false, "spin") if words.get(1).is_some_and(|w| key(w) == "up") => {
-            at = 2;
-            true
-        }
-        (false, "start" | "open" | "new") => verb == "new",
-        _ => return None,
-    };
-    // "a new agent in", "an agent for", "session on": words that only lead up to the project's name
-    let (mut marked, mut naming) = (false, false);
-    while let Some(w) = words.get(at) {
-        match key(w).as_str() {
-            "new" => sure = true,
-            // these say outright that he means a new agent, so a project need not follow
-            "agent" | "session" | "idea" => {
-                sure = true;
-                marked = true;
-                naming = false;
-            }
-            // these say a project's name comes next
-            "in" | "on" | "for" => naming = true,
-            "a" | "an" | "one" => {}
-            _ => break,
-        }
-        at += 1;
-    }
-    if !sure {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if !matches!(words.first()?.strip_prefix('/')?.to_lowercase().as_str(), "launch" | "new" | "start") {
         return None;
     }
-    // the longest run of the next words that spells a known project ("back office" is backoffice)
+    // the longest run of the next words that spells a known project
     let mut found: Option<(usize, &String)> = None;
-    for n in 1..=3.min(words.len().saturating_sub(at)) {
-        let spelled: String = words[at..at + n].iter().map(|w| key(w)).collect();
+    for n in 1..=3.min(words.len() - 1) {
+        let spelled: String = words[1..1 + n].iter().map(|w| key(w)).collect();
         if let Some(p) = projects.iter().find(|p| p.replace(' ', "") == spelled) {
             found = Some((n, p));
         }
     }
-    // No project he knows of follows. If he was naming one ("a new agent in payroll"), it is one the tower does
-    // not have, and this is not a launch. If he went straight to the idea ("new idea: …", "a new agent to …"),
-    // it is a launch with the project left for the tower to work out.
-    let (n, project) = match found {
-        Some((n, p)) => (n, Some(p.clone())),
-        None if marked && !naming => (0, None),
-        None => return None,
-    };
-    let mut rest = &words[at + n..];
-    while rest.first().is_some_and(|w| matches!(key(w).as_str(), "to" | "and" | "that" | "which")) {
-        rest = &rest[1..];
-    }
-    let task = rest.join(" ");
+    let (n, project) = found.map(|(n, p)| (n, Some(p.clone()))).unwrap_or((0, None));
+    let task = words[1 + n..].join(" ");
     Some(Launch { project, task: task.trim_start_matches([' ', ',', '.', ':', ';', '-']).trim().to_string() })
 }
 
@@ -377,11 +267,9 @@ mod tests {
         assert_eq!(Callsign::titled("/x/shop", "curriculum"), Some(c("shop", "curriculum")));
         assert_eq!(Callsign::titled("/x/shop", "shop"), None);
         let live = [c("warehouse", "removals"), c("warehouse", "one"), c("backoffice", "login fix")];
-        assert_eq!(parse_utterance("warehouse removals, stop", &live).to, vec![0]);
-        // spoken, a name of his own needs its project in front: "removals look fine" is a sentence, not an address
-        assert!(parse_utterance("removals look fine", &live).to.is_empty());
+        // only a tag addresses: his own words are not read here
+        assert!(parse_utterance("warehouse removals, stop", &live).to.is_empty());
         assert!(parse_utterance("@one stop", &live).to.is_empty());
-        assert_eq!(parse_utterance("back office login fix, ship it", &live).to, vec![2]);
         assert_eq!(parse_utterance("@removals stop", &live).to, vec![0]);
         assert_eq!(parse_utterance("@backofficeloginfix ship", &live).to, vec![2]);
         assert_eq!(parse_utterance("@warehouse stop", &live).to, vec![0, 1]);
@@ -398,33 +286,17 @@ mod tests {
     }
 
     #[test]
-    fn callsign_then_message() {
-        assert_eq!(p("Shop two, rewrite both questions."), (Some(1), None, "rewrite both questions.".into()));
-    }
-    #[test]
-    fn digits_and_sound_alikes() {
-        assert_eq!(p("shop 2 leave them"), (Some(1), None, "leave them".into()));
-        assert_eq!(p("Shop to leave them"), (Some(1), None, "leave them".into()));
-        assert_eq!(p("Sh op won go"), (Some(0), None, "go".into()));
-    }
-    #[test]
-    fn name_heard_as_two_words_and_bare_name_when_alone() {
-        assert_eq!(p("Back office one ship it"), (Some(2), None, "ship it".into()));
-        assert_eq!(p("back office, ship it"), (Some(2), None, "ship it".into()));
-    }
-    #[test]
-    fn bare_name_shared_by_two_picks_neither() {
-        assert_eq!(p("shop leave them"), (None, None, "shop leave them".into()));
-    }
-    #[test]
-    fn no_callsign() {
-        assert_eq!(p("yes go ahead and fix it"), (None, None, "yes go ahead and fix it".into()));
+    fn his_own_words_address_nobody_here() {
+        // who these are for is a model's to say, and they reach the agent as he said them
+        for said in ["Shop two, rewrite both questions.", "shop 2 leave them", "back office, ship it", "Everyone, wrap up for the night", "All shop, stop and commit", "Tower, status", "shop for the missing tests", "yes go ahead and fix it"] {
+            assert_eq!(p(said), (None, None, said.to_string()), "{said}");
+        }
     }
     #[test]
     fn controls() {
         assert_eq!(p("/more"), (None, Some(Control::More), String::new()));
         assert_eq!(p("/status"), (None, Some(Control::Status), String::new()));
-        assert_eq!(p("shop two /repeat"), (Some(1), Some(Control::Repeat), String::new()));
+        assert_eq!(p("@shop2 /repeat"), (Some(1), Some(Control::Repeat), String::new()));
         assert_eq!(p("/hold"), (None, Some(Control::Hold), String::new()));
         assert_eq!(p("/Poke"), (None, Some(Control::Poke), String::new()));
     }
@@ -437,8 +309,8 @@ mod tests {
         assert_eq!(p("skip the second question and repeat the check").1, None);
     }
     #[test]
-    fn callsign_alone() {
-        assert_eq!(p("shop one"), (Some(0), None, String::new()));
+    fn a_tag_alone() {
+        assert_eq!(p("@shop1"), (Some(0), None, String::new()));
     }
     #[test]
     fn typed_tags_reach_one_a_group_or_everyone() {
@@ -453,36 +325,19 @@ mod tests {
         assert_eq!(parse_utterance("@nobody hello", &live()).rest, "@nobody hello");
     }
     #[test]
-    fn spoken_groups() {
-        let u = parse_utterance("All shop, stop and commit", &live());
-        assert_eq!((u.to, u.rest.as_str()), (vec![0, 1], "stop and commit"));
-        let u = parse_utterance("Everyone, wrap up for the night", &live());
-        assert_eq!((u.to, u.rest.as_str()), (vec![0, 1, 2], "wrap up for the night"));
-        // "all" on its own is an ordinary word
-        assert_eq!(parse_utterance("all good, carry on", &live()).to, Vec::<usize>::new());
-    }
-    #[test]
     fn launching() {
         let projects = vec!["shop".to_string(), "backoffice".to_string(), "ware house".to_string()];
         let l = |t: &str| parse_launch(t, &projects).map(|l| (l.project.unwrap_or_default(), l.task));
         assert_eq!(l("/launch shop write the unit 5 questions"), Some(("shop".into(), "write the unit 5 questions".into())));
-        assert_eq!(l("Tower, launch shop: write the unit 5 questions"), Some(("shop".into(), "write the unit 5 questions".into())));
-        assert_eq!(l("start a new agent in back office to fix the login bug"), Some(("backoffice".into(), "fix the login bug".into())));
-        assert_eq!(l("Spin up an agent for ware house, check today's fakes"), Some(("ware house".into(), "check today's fakes".into())));
-        assert_eq!(l("launch shop"), Some(("shop".into(), String::new())));
-        // ordinary replies that happen to begin with the same words
-        assert_eq!(l("start with the first one"), None);
-        assert_eq!(l("start shop on the second passage"), None);
-        assert_eq!(l("launch it to production"), None);
-        assert_eq!(l("launch a new agent in payroll to do the thing"), None); // not a project the tower knows
-        assert_eq!(l("/deploy shop now"), None);
-        // only the idea: a launch, with the project left to be worked out
-        assert_eq!(l("new idea: warn the warehouse when a part is about to sell out"), Some((String::new(), "warn the warehouse when a part is about to sell out".into())));
-        assert_eq!(l("start a new agent to fix the login bug"), Some((String::new(), "fix the login bug".into())));
-        assert_eq!(l("spin up an agent, check today's fakes"), Some((String::new(), "check today's fakes".into())));
-        // "new" at the start of an ordinary reply is not one
-        assert_eq!(l("new questions look fine"), None);
-        assert_eq!(l("launch it Friday"), None);
+        assert_eq!(l("/new back office: fix the login bug"), Some(("backoffice".into(), "fix the login bug".into())));
+        assert_eq!(l("/launch ware house check today's fakes"), Some(("ware house".into(), "check today's fakes".into())));
+        assert_eq!(l("/launch shop"), Some(("shop".into(), String::new())));
+        // no project named: the task, with the project left to be worked out
+        assert_eq!(l("/launch warn the warehouse when a part is about to sell out"), Some((String::new(), "warn the warehouse when a part is about to sell out".into())));
+        // only the command is one: the same thing in his own words is for a model to read
+        for said in ["launch shop: write the unit 5 questions", "start a new agent in back office to fix the login bug", "new idea: warn the warehouse", "start with the first one", "/deploy shop now"] {
+            assert_eq!(l(said), None, "{said}");
+        }
     }
     #[test]
     fn next_callsign() {
@@ -499,17 +354,14 @@ mod tests {
         let w = |t: &str| parse_with(t, &models, &efforts).map(|w| (w.model, w.effort.unwrap_or_default(), w.rest));
         let got = |m: &str, e: &str, r: &str| Some((m.to_string(), e.to_string(), r.to_string()));
         assert_eq!(w("with Fable, I need you to investigate the refund failures"), got("fable", "", "I need you to investigate the refund failures"));
-        assert_eq!(w("Hey, with Fable high: look into checkout"), got("fable", "high", "look into checkout"));
-        assert_eq!(w("using opus on extra high, compare the two carriers"), got("opus", "xhigh", "compare the two carriers"));
-        assert_eq!(w("with sonnet at maximum effort review the importer"), got("sonnet", "max", "review the importer"));
-        assert_eq!(w("with opus medium thinking, find the slow query"), got("opus", "medium", "find the slow query"));
+        assert_eq!(w("with fable high: look into checkout"), got("fable", "high", "look into checkout"));
+        assert_eq!(w("with opus xhigh compare the two carriers"), got("opus", "xhigh", "compare the two carriers"));
         // a model the launcher does not offer, or no model at all
         assert_eq!(w("with gemini, look into checkout"), None);
         assert_eq!(w("with the new carrier it is cheaper"), None);
         assert_eq!(w("investigate checkout with opus"), None);
         // "high" after the model is the effort only when it is one; here it is part of the task
         assert_eq!(w("with opus highlight the slow parts"), got("opus", "", "highlight the slow parts"));
-
     }
     #[test]
     fn a_badge_is_the_team_and_the_number_or_name() {

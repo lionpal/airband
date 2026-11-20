@@ -27,7 +27,7 @@ pub struct Config {
     #[serde(default = "yes")]
     pub lan: bool,
     /// What cuts a long message down to a spoken sentence or two. Any model, through any command.
-    #[serde(default)]
+    #[serde(default = "default_summarizer")]
     pub summarizer: Summarizer,
     /// A second model, asked when the first does not answer (it is logged out, over its limit, or down). Nothing
     /// is ever worked out from the words themselves in place of a model.
@@ -75,51 +75,12 @@ pub struct Config {
     pub pairings: Vec<PairedRadio>,
 }
 
-/// What speaks. `device` is the phone's own voice (Apple's on an iPhone): free, instant, works with no signal.
-/// The others are made by the tower, which holds the key, and sent to the phone as audio.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-pub enum Voice {
-    #[default]
-    Device,
-    Gemini { key: String, #[serde(default = "gemini_model")] model: String, #[serde(default = "gemini_voice")] voice: String },
-    Azure { key: String, region: String, #[serde(default = "azure_voice")] voice: String },
-    Elevenlabs { key: String, #[serde(default = "elevenlabs_voice")] voice: String, #[serde(default = "elevenlabs_model")] model: String },
-    /// Never written in the configuration: Microsoft's voice by a short-lived pass the relay lends, for a tower
-    /// with no voice of its own set.
-    #[serde(skip)]
-    AzurePass { region: String, token: String },
-}
-
-/// What listens. `device` is the phone's own recognition (Apple's on an iPhone). With `azure` the phone sends
-/// his speech straight to Microsoft, using a ten-minute pass the tower hands it; the key stays on the tower.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-pub enum Ears {
-    #[default]
-    Device,
-    Azure { key: String, region: String, #[serde(default = "language")] language: String },
-}
-
-fn gemini_model() -> String {
-    "gemini-3.8-flash-lite-tts".into()
-}
-fn gemini_voice() -> String {
-    "Leda".into()
-}
-/// Jessica: young, bright and warm.
-fn elevenlabs_voice() -> String {
-    "cgSgspJ2msm6clMCkdW9".into()
-}
-fn elevenlabs_model() -> String {
-    "eleven_flash_v2_5".into()
-}
-fn azure_voice() -> String {
-    "en-US-AvaMultilingualNeural".into()
-}
-fn language() -> String {
-    "en-US".into()
-}
+/// What reads, what speaks and what listens are each a provider in use: a row of `providers::PROVIDERS`, a
+/// key, and what is set differently from the row.
+pub use crate::providers::Use;
+pub type Summarizer = Use;
+pub type Voice = Use;
+pub type Ears = Use;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Launcher {
@@ -253,49 +214,13 @@ pub struct PairedRadio {
     pub secret: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-pub enum Summarizer {
-    /// Run a command: the prompt goes in on standard input, the answer is read from standard output.
-    /// `AIRBAND_INTERNAL=1` is set so the command's own hooks do not report back to the tower.
-    Command { argv: Vec<String> },
-    /// Google's Gemini, with an API key of his own.
-    Gemini {
-        key: String,
-        #[serde(default = "gemini_judge")]
-        model: String,
-    },
-    /// Any service that speaks OpenAI's chat API (OpenAI itself, OpenRouter, Groq, a model on his own computer):
-    /// `url` is its base address, up to and including `/v1`.
-    Openai {
-        #[serde(default = "openai_url")]
-        url: String,
-        #[serde(default)]
-        key: String,
-        model: String,
-    },
-    /// No model: he gets every message as written.
-    None,
+/// What reads when nothing else was chosen: Claude Code on this computer, as a command.
+fn default_summarizer() -> Summarizer {
+    Use::of("claude")
 }
-fn gemini_judge() -> String {
-    // the lite one is cheaper and misread two of the end-to-end checks; this one passes them all
-    "gemini-flash-latest".into()
-}
-fn openai_url() -> String {
-    "https://api.openai.com/v1".into()
-}
-
-/// Claude Haiku with a one-line system prompt and no tools. Measured on 2026-11-18: about 650 tokens a message.
-/// The same call with Claude Code's own system prompt and tool list was about 17,400.
-const LEAN: [&str; 10] = ["claude", "-p", "--model", "haiku", "--no-session-persistence", "--strict-mcp-config", "--system-prompt", "You are a dispatcher. Output only what is asked for.", "--tools", ""];
-/// The default before that measurement. A config still holding it is moved to the lean one.
+/// The command that read before a measurement showed what its tool list cost. Settings still holding it, or
+/// the lean one written out in full, are moved to the row that has the lean one.
 const HEAVY: [&str; 8] = ["claude", "-p", "--model", "haiku", "--no-session-persistence", "--strict-mcp-config", "--disallowedTools", "Bash,Edit,Write,Read,Agent,WebFetch,WebSearch"];
-
-impl Default for Summarizer {
-    fn default() -> Self {
-        Summarizer::Command { argv: LEAN.iter().map(|s| s.to_string()).collect() }
-    }
-}
 
 fn default_port() -> u16 {
     7373
@@ -450,8 +375,9 @@ pub fn load() -> Config {
             std::process::exit(2);
         }
     };
-    if matches!(&cfg.summarizer, Summarizer::Command { argv } if argv.iter().map(String::as_str).eq(HEAVY)) {
-        cfg.summarizer = Summarizer::default();
+    let argv_is = |u: &Use, usual: &[&str]| u.kind == "command" && u.set.get("argv").and_then(|a| a.as_array()).is_some_and(|a| a.iter().map(|v| v.as_str().unwrap_or_default()).eq(usual.iter().copied()));
+    if argv_is(&cfg.summarizer, &HEAVY) || argv_is(&cfg.summarizer, crate::providers::CLAUDE) {
+        cfg.summarizer = default_summarizer();
     }
     if cfg.launchers.get(&default_launcher()).is_some_and(|l| l.models.is_empty() && l.argv.iter().map(String::as_str).eq(LAUNCHER_BEFORE_MODELS.iter().copied())) {
         cfg.launchers.extend(default_launchers());

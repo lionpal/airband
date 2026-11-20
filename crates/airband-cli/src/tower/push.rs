@@ -77,7 +77,11 @@ pub(super) fn there(call: Option<&Call>, rev: u64) -> bool {
 pub(super) fn notice(inner: &Inner, e: &Entry, station: &str) -> Notice {
     let m = inner.message(e);
     let short = |t: &str, most: usize| if t.chars().count() > most { format!("{}…", t.chars().take(most - 1).collect::<String>().trim_end()) } else { t.to_string() };
-    Notice { id: m.id, colour: inner.colours.get(&m.group).copied().unwrap_or(0), from: m.from, group: m.group, station: station.into(), text: short(&m.text, 400), kind: m.kind, options: m.options.iter().take(4).map(|o| short(o, 40)).collect(), permission: m.permission }
+    let text = short(&m.text, 400);
+    // A request for leave that does not fit is shown by its opening and offers no answer from the lock screen:
+    // he opens it, reads all of what would run, and answers there.
+    let cut = m.permission && text != m.text;
+    Notice { id: m.id, colour: inner.colours.get(&m.group).copied().unwrap_or(0), from: m.from, group: m.group, station: station.into(), text, kind: m.kind, options: if cut { Vec::new() } else { m.options.iter().take(4).map(|o| short(o, 40)).collect() }, permission: m.permission && !cut }
 }
 
 /// A line's short version has just been made, or a card was put to him: wake whichever phones should know.
@@ -134,6 +138,10 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
             return log(format!("push: {what} is too long to send to \"{radio}\""));
         }
         note.text = format!("{}…", note.text.chars().take(keep).collect::<String>().trim_end());
+        // cut: never an Allow under part of a command
+        if note.permission {
+            (note.permission, note.options) = (false, Vec::new());
+        }
     };
     use base64::Engine;
     let sealed = base64::engine::general_purpose::STANDARD.encode(sealed);

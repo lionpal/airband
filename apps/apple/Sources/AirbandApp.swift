@@ -61,6 +61,12 @@ extension View {
 }
 
 /// Who an agent is, at a glance: two characters on its team's colour.
+/// How tall the buttons over the bottom of the chat are, told upward by the buttons themselves.
+struct BarHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
 struct Badge: View {
     let text: String
     let colour: UInt8
@@ -147,6 +153,8 @@ struct FeedView: View {
     /// Is the end of the chat on screen, and a count that goes up each time he asks to be taken there.
     @State private var atEnd = true
     @State private var toEnd = 0
+    /// How tall the buttons over the bottom of the chat are now.
+    @State private var barHeight: CGFloat = 0
     @FocusState private var typing: Bool
     /// He has just turned reading aloud on: a line says so for a moment.
     @State private var joined = false
@@ -184,8 +192,10 @@ struct FeedView: View {
                     blank
                     bar
                 } else {
-                    // the chat runs on under the buttons: they sit over it, frosted, and it fades towards the bottom edge
-                    feed.safeAreaInset(edge: .bottom, spacing: 0) {
+                    // The chat runs on under the buttons: they sit over it, frosted, and it fades towards the bottom
+                    // edge. The room they take is part of the chat itself (an empty stretch as tall as they are, after
+                    // the last message), so its end always comes to rest above them however it was scrolled there.
+                    feed.overlay(alignment: .bottom) {
                         VStack(spacing: 0) {
                             // the chat he already has stays readable with the computer out of reach; this says why it is still
                             if model.connecting {
@@ -208,11 +218,13 @@ struct FeedView: View {
                             bar
                         }
                         .frame(maxWidth: .infinity)
+                        .background(GeometryReader { g in Color.clear.preference(key: BarHeight.self, value: g.size.height) })
                         .background(alignment: .bottom) {
                             LinearGradient(stops: [.init(color: Palette.ground.opacity(0), location: 0), .init(color: Palette.ground.opacity(typingOpen || !model.tray.isEmpty ? 0.97 : 0.5), location: typingOpen || !model.tray.isEmpty ? 0.12 : 0.4), .init(color: Palette.ground.opacity(typingOpen || !model.tray.isEmpty ? 1 : 0.82), location: 1)], startPoint: .top, endPoint: .bottom)
                                 .ignoresSafeArea(edges: .bottom).allowsHitTesting(false)
                         }
                     }
+                    .onPreferenceChange(BarHeight.self) { barHeight = $0 }
                 }
             }
         }
@@ -486,6 +498,8 @@ struct FeedView: View {
                             .frame(maxWidth: .infinity, alignment: .trailing)
                             .accessibilityLabel("Sending: \(o.label ?? o.text)")
                     }
+                    // the room the buttons take over the chat
+                    Color.clear.frame(height: barHeight)
                     Color.clear.frame(height: 1).id("end")
                         // whether the end of the chat is on screen: when it is not, a bar offers the way back to it
                         .onAppear { atEnd = true }
@@ -504,6 +518,8 @@ struct FeedView: View {
             .onChange(of: model.view.feed.last?.id) { _, _ in withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("end", anchor: .bottom) } }
             .onChange(of: model.view.sending.count) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
             .onChange(of: toEnd) { _, _ in withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("end", anchor: .bottom) } }
+            // the buttons grew or shrank (the text box opened, a file was added): the end stays in view if it was
+            .onChange(of: barHeight) { _, _ in if atEnd { proxy.scrollTo("end", anchor: .bottom) } }
             // a different team or agent, or back to everyone: he lands at the latest of it, not part way up
             .onChange(of: chosen) { _, _ in
                 Task {
@@ -738,6 +754,7 @@ struct FeedView: View {
     private var quickGrid: some View {
         let all = model.view.quick
         return VStack(spacing: 8) {
+            RecentStrip { withAnimation(.snappy(duration: 0.2)) { showQuick = false } }
             AttachTile { withAnimation(.snappy(duration: 0.2)) { showQuick = false } }
             // two to a row; an odd one out, usually one of his own, takes the whole row
             ForEach(Array(stride(from: 0, to: all.count, by: 2)), id: \.self) { i in

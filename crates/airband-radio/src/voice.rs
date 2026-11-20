@@ -14,24 +14,32 @@ const FIRST_SOUND: Duration = Duration::from_millis(8000);
 /// Say `text`: with the tower's voice when it has one for this (`speech`), otherwise with the host's if that is
 /// worth hearing.
 pub(crate) fn say(link: &Link, host: &dyn RadioHost, text: &str, speech: Option<&str>) {
-    say_until(link, host, text, speech, &|| false)
+    say_until(link, host, text, speech, &|| false);
 }
 
 /// The same, leaving off as soon as `stop` says so.
-pub(crate) fn say_until(link: &Link, host: &dyn RadioHost, text: &str, speech: Option<&str>, stop: &dyn Fn() -> bool) {
+///
+/// False only when the device's own voice was to say it and could not. That voice is then given up, and the
+/// caller leaves the words unheard so the tower offers them again, this time with its own voice.
+pub(crate) fn say_until(link: &Link, host: &dyn RadioHost, text: &str, speech: Option<&str>, stop: &dyn Fn() -> bool) -> bool {
     if text.trim().is_empty() || stop() {
-        return;
+        return true;
     }
     // a voice of the device's own, when he has chosen one, says everything
-    if crate::mouth::ready() && crate::mouth::say(host, text, stop) {
-        return;
+    if crate::mouth::ready() {
+        if crate::mouth::say(host, text, stop) {
+            return true;
+        }
+        crate::mouth::give_up();
+        return false;
     }
     if speech.is_some_and(|id| play(link, host, id, stop)) {
-        return;
+        return true;
     }
     if host.own_voice() {
         host.speak(text.to_string());
     }
+    true
 }
 
 /// Fetch and play one clip, until it is over or `stop` says to leave off. False if not a sound was played, so

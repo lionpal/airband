@@ -1,47 +1,40 @@
 //! Inbound sound: what turns his speech into text. The phone does the listening; the tower only says how, and
-//! when a service is used, gives the phone a short-lived pass for it so the service's key never leaves this
-//! machine. A new listening service is an arm in [`grant`] here, its settings in `config::Ears`, and the code
-//! that talks to it in `airband-radio/src/ears.rs`.
+//! gives the phone a short-lived pass for the service so the service's key never leaves this machine. Which
+//! service is a row of `providers::PROVIDERS`; how to get its pass and how to talk to it is the phone core's
+//! (`airband-radio/src/ears.rs`), asked for here by the dialect the row names.
 use super::*;
+use crate::providers::{By, Job, LENT_LISTENER};
 use airband_core::radio::EarsGrant;
 
-/// A pass from Microsoft lasts ten minutes; one is handed out for eight.
-const AZURE_PASS: Duration = Duration::from_secs(480);
+/// A pass lasts ten minutes at the shortest of the services; one is handed out for eight.
+const PASS: Duration = Duration::from_secs(480);
 
 /// What the phone should listen with right now.
 pub(super) async fn grant(app: &Arc<App>) -> EarsGrant {
-    match app.cfg.ears.clone() {
+    let ears = &app.cfg.ears;
+    let Some((_, offer)) = ears.offer(Job::Ears) else {
         // none set here: the relay's, when it lends one. Never the phone's own recognition
-        config::Ears::Device => match app.lent() {
-            Some((region, token)) => EarsGrant { kind: "azure".into(), region, token, language: "en-US".into(), phrases: phrases(app) },
+        return match app.lent() {
+            Some((region, token)) => EarsGrant { kind: LENT_LISTENER.into(), region, token, language: "en-US".into(), phrases: phrases(app) },
             None => EarsGrant::default(),
-        },
-        config::Ears::Azure { key, region, language } => azure(app, key, region, language).await,
-    }
-}
-
-async fn azure(app: &Arc<App>, key: String, region: String, language: String) -> EarsGrant {
-    let grant = |token: String| EarsGrant { kind: "azure".into(), region: region.clone(), token, language: language.clone(), phrases: phrases(app) };
+        };
+    };
+    let By::Listener(kind) = offer.by else { return EarsGrant::default() };
+    let (region, language, key) = (ears.get(Job::Ears, "region"), ears.get(Job::Ears, "language"), ears.key.clone());
+    let grant = |token: String| EarsGrant { kind: kind.into(), region: region.clone(), token, language: language.clone(), phrases: phrases(app) };
     if let Some((token, when)) = app.ears_pass.lock().unwrap().clone() {
-        if when.elapsed() < AZURE_PASS {
+        if when.elapsed() < PASS {
             return grant(token);
         }
     }
-    let url = format!("https://{region}.api.cognitive.microsoft.com/sts/v1.0/issueToken");
-    let minted = tokio::task::spawn_blocking(move || {
-        let mut res = airband_radio::net::agent(Duration::from_secs(8)).post(&url).header("Ocp-Apim-Subscription-Key", &key).header("Content-Length", "0").send_empty().ok()?;
-        (res.status().as_u16() == 200).then(|| res.body_mut().read_to_string().ok()).flatten()
-    })
-    .await
-    .ok()
-    .flatten();
-    match minted {
-        Some(token) => {
+    let asked = region.clone();
+    match tokio::task::spawn_blocking(move || airband_radio::listening_pass(kind, &asked, &key)).await.map_err(|e| e.to_string()).and_then(|r| r) {
+        Ok(token) => {
             *app.ears_pass.lock().unwrap() = Some((token.clone(), Instant::now()));
             grant(token)
         }
-        None => {
-            log("ears: Microsoft gave no pass; the phone will use its own recognition");
+        Err(why) => {
+            log(format!("ears: no pass from the listening service ({why}); he types until there is one"));
             EarsGrant::default()
         }
     }

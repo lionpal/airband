@@ -3,15 +3,21 @@
 use super::*;
 
 /// One question to a model behind an API key, off the async threads. `read` finds the answer in what came back.
-async fn ask_api(url: String, header: (&'static str, String), body: Value, read: fn(&Value) -> Option<String>) -> Result<String, String> {
+/// One call to a service that speaks OpenAI's chat interface. A service with no key (one on his own computer)
+/// is sent none.
+async fn ask_api(url: String, key: String, body: Value) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        let mut res = airband_radio::net::agent(Duration::from_secs(60)).post(&url).header(header.0, &header.1).send_json(&body).map_err(|e| format!("the model could not be reached: {e}"))?;
+        let mut req = airband_radio::net::agent(Duration::from_secs(60)).post(&url);
+        if !key.is_empty() {
+            req = req.header("authorization", format!("Bearer {key}"));
+        }
+        let mut res = req.send_json(&body).map_err(|e| format!("the model could not be reached: {e}"))?;
         let status = res.status().as_u16();
         let v: Value = res.body_mut().read_json().map_err(|e| e.to_string())?;
         if status != 200 {
             return Err(format!("the model refused ({status}): {}", v["error"]["message"].as_str().unwrap_or("no reason given").chars().take(160).collect::<String>()));
         }
-        read(&v).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).ok_or_else(|| "the model answered with nothing".to_string())
+        v["choices"][0]["message"]["content"].as_str().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).ok_or_else(|| "the model answered with nothing".to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -38,19 +44,28 @@ pub(super) async fn ask_model(cfg: &Config, prompt: String) -> Result<String, St
     }
 }
 
+/// Ask one model, through whichever interface its row names.
 async fn ask(model: &Summarizer, prompt: String) -> Result<String, String> {
-    let argv = match model {
-        Summarizer::Command { argv } => argv,
-        Summarizer::Gemini { key, model } => {
-            let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");
-            let body = json!({ "contents": [{ "parts": [{ "text": prompt }] }], "generationConfig": { "temperature": 0 } });
-            return ask_api(url, ("x-goog-api-key", key.clone()), body, |v| Some(v["candidates"][0]["content"]["parts"].as_array()?.iter().filter_map(|p| p["text"].as_str()).collect::<String>())).await;
+    use crate::providers::{By, Job};
+    if model.is_none() {
+        return Err("no summarizer is configured".into());
+    }
+    let (_, offer) = model.offer(Job::Summary).ok_or_else(|| format!("this version of airband has nothing called \"{}\" that reads", model.kind))?;
+    let argv: Vec<String> = match offer.by {
+        // OpenAI's chat interface, which the row's service speaks at its address
+        By::Chat { cold } => {
+            let mut body = json!({ "model": model.get(Job::Summary, "model"), "messages": [{ "role": "user", "content": prompt }] });
+            if cold {
+                body["temperature"] = json!(0);
+            }
+            let url = format!("{}/chat/completions", model.get(Job::Summary, "url").trim_end_matches('/'));
+            return ask_api(url, model.key.clone(), body).await;
         }
-        Summarizer::Openai { url, key, model } => {
-            let body = json!({ "model": model, "messages": [{ "role": "user", "content": prompt }], "temperature": 0 });
-            return ask_api(format!("{}/chat/completions", url.trim_end_matches('/')), ("authorization", format!("Bearer {key}")), body, |v| v["choices"][0]["message"]["content"].as_str().map(String::from)).await;
-        }
-        Summarizer::None => return Err("no summarizer is configured".into()),
+        By::Command(usual) => match model.set.get("argv").and_then(|a| a.as_array()) {
+            Some(own) => own.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
+            None => usual.iter().map(|s| s.to_string()).collect(),
+        },
+        _ => return Err(format!("\"{}\" does not read", model.kind)),
     };
     let (program, args) = argv.split_first().ok_or("the summarizer command is empty")?;
     // on Windows a command like `claude` is a .cmd shim, which only the shell can start
@@ -163,7 +178,9 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
          - If the agent needs an answer from him, end with that question, with the options if it gave any. \
          The question does not stand in for the rest: a message that reports finished work and then asks \
          something is told as the news first (what is now done, live, moved, spent or broken) and the question \
-         last. He must not lose the news because a question came after it. Take the longer form for it.\n\
+         last. He must not lose the news because a question came after it. Each finished thing is news of its own: \
+         \"the bug is fixed, and the refunds are ready to send\" keeps both, and does not shrink to the one the \
+         question is about. Take the longer form for it.\n\
          - No file paths, code, lists or markdown, and no identifiers other than those just named. Say \"the checker script\", not its filename.\n\
          - Speak as the agent, in the first person. No greeting, no padding (\"nothing needed from you\", \"let me know\").\n\
          - Say only what the message says. Add no fact, date or reassurance that is not in it.\n\n\
@@ -261,10 +278,13 @@ pub(super) async fn progress(cfg: &Config, steps: &[String]) -> Option<String> {
 /// He answered a request for permission in his own words. Did he say yes? `Some(true)` only for a plain yes;
 /// `Some(false)` for anything that is not one (a no, a condition, another instruction); `None` when his words
 /// do not settle it, or no model answered: then nothing is decided and he is asked for a yes or a no.
-pub(super) async fn consent(cfg: &Config, request: &str, said: &str) -> Option<bool> {
+///
+/// The model sees his words only. The request is text the asking agent wrote, and nothing an agent writes is
+/// put beside the one question whose answer lets a command run.
+pub(super) async fn consent(cfg: &Config, said: &str) -> Option<bool> {
     let prompt = format!(
-        "A coding agent asked {name} for permission to do something, and he answered in his own words.\n\n\
-         The request, as he was shown it:\n<request>\n{request}\n</request>\n\nHis answer:\n<answer>\n{said}\n</answer>\n\n\
+        "A coding agent asked {name} for permission to do one thing on his computer. He was shown exactly what, \
+         and answered in his own words.\n\nHis answer:\n<answer>\n{said}\n</answer>\n\n\
          Reply with one word and nothing else:\n\
          - allow: he plainly says yes to exactly what was asked, with no condition and no change.\n\
          - refuse: he says no, or tells it what to do instead or first, or attaches a condition or a change \
@@ -274,7 +294,6 @@ pub(super) async fn consent(cfg: &Config, request: &str, said: &str) -> Option<b
          think\"), asks a question, or is talking about something else.\n\
          When in doubt between allow and anything else, it is not allow.",
         name = cfg.name,
-        request = tail(request, 2000),
         said = tail(said, 1000)
     );
     let out = ask_model(cfg, prompt).await.ok()?;

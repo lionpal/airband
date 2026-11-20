@@ -28,7 +28,7 @@ pub(super) fn due(reports: u32) -> bool {
 
 /// Look at what an agent has been doing and move it if its work is plainly part of another project.
 pub(super) async fn look(app: Arc<App>, agent_id: String) {
-    if matches!(app.cfg.summarizer, Summarizer::None) {
+    if app.cfg.summarizer.is_none() {
         return;
     }
     let (session, said, teams) = {
