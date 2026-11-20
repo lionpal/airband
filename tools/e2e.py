@@ -526,6 +526,28 @@ Send it as written, or do you want changes?""")
             say("Allow", re=card["id"])
         t.join(180)
         check("after Allow from the radio, Claude ran it", os.path.exists(os.path.join(proj, "made-by-claude.txt")), done)
+    print("An answer that comes late")
+    os.makedirs(os.path.join(projects, "late"), exist_ok=True)
+    report("late1", "late", "late", "checkin")
+    report("late1", "late", "late", "said", "The export is ready. Should I also email it to the accountant?")
+    def last_of(who, kind=None):
+        for _ in range(120):
+            hits = [m for m in feed()["messages"] if m["from"].startswith("late") and (kind is None or m.get("kind") == kind)]
+            if hits and hits[-1].get("kind"): return hits[-1]
+            time.sleep(0.5)
+    q = last_of("late")
+    say("Yes", re=q["id"])
+    check("an answer to the last thing an agent said goes as he said it", "Yes" in received("late1") and "asked earlier" not in received("late1"), received("late1")[-300:])
+    report("late1", "late", "late", "said", "Emailed. One more thing: the archive is 40 GB. Should I delete exports older than a year?")
+    q2 = last_of("late")
+    report("late1", "late", "late", "said", "Separately, I finished renaming the columns in the export and all the tests pass.")
+    for _ in range(120):
+        if [m for m in feed()["messages"] if m["from"].startswith("late") and "renam" in (m.get("text") or "").lower() and m.get("kind")]: break
+        time.sleep(0.5)
+    before = len(received("late1"))
+    say("Yes", re=q2["id"])
+    late = received("late1")[before:]
+    check("an answer to a question the agent has since spoken past takes the question with it", "Yes" in late and "asked earlier" in late and ("delete" in late.lower() or "archive" in late.lower() or "exports" in late.lower()), late[-400:])
 finally:
     tower.terminate()
     tower.wait(10)

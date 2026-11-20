@@ -103,7 +103,10 @@ fn remind(app: &Arc<App>, inner: &mut Inner, radio: &str) {
     let open = inner.open_ids();
     // reminders are only owed for what is still open; the rest is forgotten, so this never grows
     inner.offered.retain(|id, _| open.contains(id));
-    let due = inner.log.iter().find(|e| open.contains(&e.id) && e.short.is_some() && inner.offered.get(&e.id).is_none_or(|(n, when)| when.elapsed() >= remind_after(*n))).cloned();
+    // only what was asked since he joined: turning listening on does not play back the afternoon. What was
+    // asked before is in the chat, still marked as waiting on him.
+    let began = inner.call(radio).began;
+    let due = inner.log.iter().find(|e| e.at >= began && open.contains(&e.id) && e.short.is_some() && inner.offered.get(&e.id).is_none_or(|(n, when)| when.elapsed() >= remind_after(*n))).cloned();
     let Some(e) = due else { return };
     let first = !inner.offered.contains_key(&e.id);
     let say = e.short.clone().unwrap_or_default();

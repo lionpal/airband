@@ -194,6 +194,9 @@ pub(super) struct Call {
     /// How far this radio has the chat on screen: the highest change count it has asked for what follows of,
     /// while it was showing the chat. A line changed after this is one he may not have seen.
     pub(super) has: u64,
+    /// When he last joined (turned listening on), in milliseconds since 1970. A call starts from there: he is
+    /// not read what was asked before it.
+    pub(super) began: u64,
 }
 
 impl Call {
@@ -467,7 +470,8 @@ impl Inner {
             }
             // his words as he typed them. Something very long (a pasted log) is shown by its opening and kept whole
             let short: String = if t.text.chars().count() > 1500 { format!("{}…", t.text.chars().take(1500).collect::<String>().trim_end()) } else { t.text.clone() };
-            self.record_at(Entry { short: Some(short), ..Entry::his(id, std::slice::from_ref(&to), t.text) }, t.at);
+            let pictures: Vec<_> = t.images.iter().filter_map(|bytes| pictures::keep_bytes(bytes)).collect();
+            self.record_at(Entry { short: Some(short), pictures, ..Entry::his(id, std::slice::from_ref(&to), t.text) }, t.at);
         }
         if let Some(s) = self.session(agent_id) {
             s.told_upto = upto;

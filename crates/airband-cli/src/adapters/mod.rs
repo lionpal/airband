@@ -54,8 +54,10 @@ pub struct Told {
     pub id: String,
     /// When he said it, in milliseconds since 1970.
     pub at: u64,
-    /// His words, as he typed them.
+    /// His words, as he typed them. Empty when he gave it only a picture.
     pub text: String,
+    /// Pictures he gave it with those words, as the files' own bytes. At most four.
+    pub images: Vec<Vec<u8>>,
     /// False for something the tower passed on to the agent, seen here at the moment the agent took it in:
     /// that is how the tower knows a message of his has been read.
     pub his: bool,

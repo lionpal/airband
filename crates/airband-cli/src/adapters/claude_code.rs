@@ -175,8 +175,17 @@ fn told_in(piece: &str) -> Vec<super::Told> {
             if entry["isSidechain"] == true || entry["isMeta"] == true {
                 return None;
             }
+            // pictures he pasted in with it
+            let images: Vec<Vec<u8>> = entry["message"]["content"]
+                .as_array()
+                .map(|parts| {
+                    use base64::Engine;
+                    parts.iter().filter(|p| p["type"] == "image" && p["source"]["type"] == "base64").filter_map(|p| base64::engine::general_purpose::STANDARD.decode(p["source"]["data"].as_str()?).ok()).take(4).collect()
+                })
+                .unwrap_or_default();
             let (from, id, text) = match entry["type"].as_str()? {
-                "user" => (&entry, entry["uuid"].as_str()?, words(&entry["message"]["content"])?),
+                // a picture by itself is still something he gave it
+                "user" => (&entry, entry["uuid"].as_str()?, words(&entry["message"]["content"]).or_else(|| (!images.is_empty()).then(String::new))?),
                 "attachment" if entry["attachment"]["type"] == "queued_command" => (&entry["attachment"], entry["attachment"]["source_uuid"].as_str().or(entry["uuid"].as_str())?, words(&entry["attachment"]["prompt"])?),
                 _ => return None,
             };
@@ -188,7 +197,7 @@ fn told_in(piece: &str) -> Vec<super::Told> {
                 return None;
             }
             let at = from["timestamp"].as_str().or(entry["timestamp"].as_str()).and_then(super::claude_accounts::iso_ms)?;
-            Some(super::Told { id: id.to_string(), at, text, his })
+            Some(super::Told { id: id.to_string(), at, text, images: if his { images } else { Vec::new() }, his })
         })
         .collect()
 }

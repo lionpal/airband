@@ -448,14 +448,28 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
     // radio can then tell that the message it is still showing as on its way has arrived, and swap one for the
     // other without a gap.
     let message_id = uid.map(str::to_string).filter(|id| !id.is_empty() && id.len() <= 40 && id.bytes().all(|b| b.is_ascii_alphanumeric()) && !app.inner.lock().unwrap().log.iter().any(|e| e.id == *id)).unwrap_or_else(|| config::random_hex(8));
+    // An answer to a question the agent has since spoken past (or he has since said other things to it) would
+    // reach it with nothing to say what it answers: "Yes", to what? Then the question goes with it. When the
+    // question is the last thing between them, the answer needs no help.
+    let answers: Option<(String, String)> = re.and_then(|id| {
+        let inner = app.inner.lock().unwrap();
+        let at = inner.log.iter().position(|e| e.id == id)?;
+        let asked = &inner.log[at];
+        let agent = asked.agent.clone()?;
+        let since = inner.log[at + 1..].iter().any(|e| e.agent.as_deref() == Some(agent.as_str()) && e.kind != Some(super::Kind::Fyi) || e.to_agents.iter().any(|t| *t == agent));
+        since.then(|| (agent, asked.short.clone().unwrap_or_else(|| asked.full.clone())))
+    });
+    let answering = |agent: &str| answers.as_ref().filter(|(a, _)| a == agent).map(|(_, q)| format!("This answers what you asked earlier (as he was shown it): \"{q}\"\n\n")).unwrap_or_default();
     let (mut sent, mut failed) = (Vec::new(), Vec::new());
     let mut queued: Vec<String> = Vec::new();
     for t in &targets {
+        let about = answering(&t.agent.id);
+        let content = if about.is_empty() { content.clone() } else { content.replacen("\n\n", &format!("\n\n{about}"), 1) };
         let outcome = match &t.agent.deliver {
             // One the tower runs itself gets his words as his own turn, with nothing in front. If it is in the
             // middle of something they wait here, where he can still take them back, until it stops.
             Some(Deliver::Held) => {
-                let words = format!("{}{files}", parsed.rest);
+                let words = format!("{about}{}{files}", parsed.rest);
                 let busy = {
                     let mut inner = app.inner.lock().unwrap();
                     match inner.session(&t.agent.id).filter(|s| !s.waiting) {

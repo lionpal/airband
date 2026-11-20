@@ -178,6 +178,7 @@ async fn next(State(app): State<Arc<App>>, headers: HeaderMap) -> Response {
         let mut inner = app.inner.lock().unwrap();
         if !inner.call(&radio).connected() {
             log(format!("{radio} connected"));
+            inner.call(&radio).began = super::now();
             // He has just turned reading aloud on. What was said before this is in the chat for him to read: it is
             // not read out now, hours late. Only what comes from here on is.
             if !inner.connected() {

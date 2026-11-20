@@ -56,6 +56,28 @@ pub(super) fn keep(path: &Path) -> Option<Picture> {
     Some(Picture { id, width: rgb.width(), height: rgb.height(), bytes: bytes.len() as u32 })
 }
 
+/// The same for a picture that came as bytes and not as a file (one he pasted into an agent's own window).
+pub(super) fn keep_bytes(bytes: &[u8]) -> Option<Picture> {
+    if bytes.len() as u64 > TOO_LARGE {
+        return None;
+    }
+    let id: String = Sha256::digest(bytes)[..12].iter().map(|b| format!("{b:02x}")).collect();
+    let out = file(&id)?;
+    if let Ok(kept) = std::fs::metadata(&out) {
+        let (width, height) = image::image_dimensions(&out).ok()?;
+        return Some(Picture { id, width, height, bytes: kept.len() as u32 });
+    }
+    let img = image::load_from_memory(bytes).ok()?;
+    let img = if img.width().max(img.height()) > LONG_SIDE { img.resize(LONG_SIDE, LONG_SIDE, image::imageops::FilterType::Triangle) } else { img };
+    let rgb = img.to_rgb8();
+    let mut small = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut small, 75).encode_image(&rgb).ok()?;
+    std::fs::create_dir_all(folder()).ok()?;
+    let tmp = out.with_extension("tmp");
+    std::fs::write(&tmp, &small).and_then(|_| std::fs::rename(&tmp, &out)).ok()?;
+    Some(Picture { id, width: rgb.width(), height: rgb.height(), bytes: small.len() as u32 })
+}
+
 /// May a picture that is only named in an agent's text be copied for the phone? Only from where an agent makes
 /// pictures: its own project, and the temporary folders. A path in a message is words, not an action the
 /// agent took, so it does not reach into the rest of the disk. (A picture the agent read or sent him is
