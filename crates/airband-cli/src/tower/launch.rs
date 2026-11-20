@@ -9,9 +9,6 @@ use super::*;
 pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply {
     let task = idea.task.as_str();
     let say = |s: String| Reply { say: s, listen: false, ..Reply::default() };
-    if task.is_empty() {
-        return Reply { say: format!("What should it do? Say launch {project}, then the task."), listen: true, ..Reply::default() };
-    }
     let Some(cwd) = app.inner.lock().unwrap().launchable(&app.cfg).get(project).cloned() else {
         return say(format!("I do not know a project called {project}."));
     };
@@ -23,6 +20,11 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
         return say(format!("No launcher called {} is configured.", app.cfg.launcher));
     };
     let named = named.clone();
+    // An agent the tower runs can be started with nothing to do yet: it is there at once, waiting for his first
+    // word. One that is handed off needs its task to start with.
+    if task.is_empty() && launcher.held.is_none() {
+        return Reply { say: format!("What should it do? Say launch {project}, then the task."), listen: true, ..Reply::default() };
+    }
     // the model and effort he asked for, when this launcher offers them
     let model = idea.model.as_ref().filter(|m| launcher.models.contains_key(*m));
     let effort = idea.effort.as_ref().filter(|e| launcher.efforts.contains(*e));
@@ -41,6 +43,10 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
     };
     if launcher.held.is_some() {
         return match held::start(app, &named, &cwd, options, task).await {
+            Ok(_) if task.is_empty() => {
+                log(format!("started {named}{with} in {project}, held by the tower, with nothing to do yet"));
+                say(format!("A new agent is ready in {project}{with}."))
+            }
             Ok(_) => {
                 log(format!("started {named}{with} in {project}, held by the tower: {task}"));
                 let mut inner = app.inner.lock().unwrap();

@@ -300,7 +300,9 @@ pub(super) async fn consent(cfg: &Config, said: &str) -> Option<bool> {
     if std::env::var_os("AIRBAND_TRACE").is_some() {
         log(format!("asked whether \"{said}\" allows it, and was told: {out}"));
     }
-    match out.trim().trim_matches(|c: char| !c.is_ascii_alphabetic()).to_ascii_lowercase().as_str() {
+    // one word was asked for; a model that wraps it in JSON all the same has still said it
+    let word = json_in(&out).and_then(|j| serde_json::from_str::<Value>(j).ok()).and_then(|v| v.as_object().and_then(|o| o.values().find_map(|x| x.as_str().map(String::from)))).unwrap_or(out.clone());
+    match word.trim().trim_matches(|c: char| !c.is_ascii_alphabetic()).to_ascii_lowercase().as_str() {
         "allow" => Some(true),
         "refuse" => Some(false),
         _ => None,

@@ -1601,6 +1601,35 @@ struct DoingBubble: View {
 
 /// Everyone, each team, and each agent in it, as a list to pick from: what he picks is all the feed shows, and
 /// who hears what he says next. Each row carries the same dot as the teams bar.
+/// The + on a team's row: start a new agent in that team. It goes on the computer where the team's others
+/// run. When the team is on several computers, it asks which, with that one first.
+struct NewAgentButton: View {
+    @EnvironmentObject var model: RadioModel
+    let room: String
+
+    var body: some View {
+        let computers = model.computers(for: room)
+        Group {
+            if computers.count > 1 {
+                Menu {
+                    ForEach(computers, id: \.self) { name in
+                        Button(name == computers.first ? "On \(name) (where most of them are)" : "On \(name)") { model.newAgent(in: room, on: name) }
+                    }
+                } label: { plus }
+            } else {
+                Button { model.newAgent(in: room, on: nil) } label: { plus }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("New agent in \(room)")
+    }
+
+    private var plus: some View {
+        Image(systemName: "plus").font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink)
+            .frame(width: 34, height: 34).background(Palette.raised, in: Circle())
+    }
+}
+
 struct AgentsMenu: View {
     @EnvironmentObject var model: RadioModel
     @Environment(\.dismiss) private var dismiss
@@ -1656,6 +1685,8 @@ struct AgentsMenu: View {
                         model.room = was ? nil : room.name
                     }
                     .overlay { if over == room.name { RoundedRectangle(cornerRadius: 14).strokeBorder(Palette.team(room.colour), lineWidth: 2) } }
+                    // a new agent for this team: one tap starts it where the team's others run
+                    .overlay(alignment: .trailing) { NewAgentButton(room: room.name).padding(.trailing, 6) }
                     .dropDestination(for: String.self) { ids, _ in drop(ids, on: room.name) } isTargeted: { over = $0 ? room.name : (over == room.name ? nil : over) }
                     .padding(.top, 4)
                     ForEach(room.members, id: \.id) { agent in

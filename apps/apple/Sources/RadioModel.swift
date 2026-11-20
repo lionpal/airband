@@ -340,6 +340,12 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         setOwnEars(kind: "", key: "", settings: [:])
     }
 
+    /// The computers a new agent of this team can be started on, the usual one first.
+    func computers(for room: String) -> [String] { desk.computersFor(room: room) }
+
+    /// Start a new agent in a team. It appears in the list at once, with nothing to do until he speaks to it.
+    func newAgent(in room: String, on computer: String?) { desk.newAgent(room: room, computer: computer) }
+
     /// Let a question go without answering it.
     func dismiss(_ m: ChatMessage) {
         if replyingTo?.id == m.id { replyingTo = nil }

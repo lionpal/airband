@@ -699,6 +699,32 @@ impl Desk {
         });
     }
 
+    /// The computers a new agent of this team can be started on: the ones where the team already has agents,
+    /// the one with the most of them first. That first one is where a new agent goes unless he says otherwise.
+    pub fn computers_for(&self, room: String) -> Vec<String> {
+        let state = self.shared.state.lock().unwrap();
+        let mut found: Vec<(usize, &Station)> = state.stations.iter().map(|s| (s.agents.iter().filter(|a| a.group == room).count(), s)).filter(|(n, _)| *n > 0).collect();
+        found.sort_by(|a, b| b.0.cmp(&a.0));
+        found.into_iter().map(|(_, s)| s.name.clone()).collect()
+    }
+
+    /// Start a new agent in a team, on the computer named, or where most of that team's agents already run. It
+    /// is started with nothing to do yet and shows up at once, waiting for his first word. Nothing happens for
+    /// a team no computer has.
+    pub fn new_agent(&self, room: String, computer: Option<String>) {
+        let radio = {
+            let state = self.shared.state.lock().unwrap();
+            let has = |s: &&Station| s.agents.iter().any(|a| a.group == room);
+            let named = computer.filter(|c| !c.is_empty()).and_then(|c| state.stations.iter().filter(has).find(|s| s.name == c));
+            let most = || state.stations.iter().filter(has).max_by_key(|s| s.agents.iter().filter(|a| a.group == room).count());
+            named.or_else(most).map(|s| s.radio.clone())
+        };
+        if let Some(radio) = radio {
+            // the typed command, which the tower takes as it is; the chat shows the words beside it
+            radio.queue(format!("/launch {room}"), None, None, Some(format!("New agent in {room}")));
+        }
+    }
+
     /// Send what he typed. Who it is for, in this order: tags at its start (`@shop2`, `@shop`, `@all`); the
     /// message `re` if he picked one; the `agent` he is looking at; otherwise the tower works it out from his
     /// words, among the agents of the `room` he is in or among all of them. It goes to the computer that has

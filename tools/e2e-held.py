@@ -147,6 +147,15 @@ try:
     check("he can end it, and it leaves the radio", http("POST", "/v1/radio/end", {"agent": me["id"]})[1] == {} and until(lambda: agent() is None), feed()["roster"])
     check("one that has gone cannot be ended again, in words", "error" in http("POST", "/v1/radio/end", {"agent": me["id"]})[1])
     check("nothing of it is left running", not subprocess.run(["pgrep", "-f", AGENT], capture_output=True, text=True).stdout.strip())
+
+    print("Started with nothing to do yet, as the + on a team does")
+    before = len(arrived())
+    check("it is there at once, having been told nothing", say("/launch shop") == "A new agent is ready in shop." and until(agent) and len(arrived()) == before, (feed()["roster"], arrived()))
+    fresh = agent()
+    check("and it is waiting, not working", fresh and fresh["state"] not in ("working", "asking"), fresh)
+    check("his first word reaches it as his own", say("@" + fresh["callsign"].replace(" ", "") + " start with the tests").startswith("Sent to") and until(lambda: arrived()[-1:] == ["start with the tests"]), arrived())
+    until(lambda: agent() and agent()["state"] != "working")
+    check("it can be ended like any other", http("POST", "/v1/radio/end", {"agent": fresh["id"]})[1] == {} and until(lambda: agent() is None), feed()["roster"])
 finally:
     tower.terminate()
     try: tower.wait(timeout=10)

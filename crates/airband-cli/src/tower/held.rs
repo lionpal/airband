@@ -220,16 +220,28 @@ pub(super) fn unsend(app: &App, line: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Start a new held agent in `cwd` and give it its task.
+/// Start a new held agent in `cwd` and give it its task. With no task it is started and left waiting for his
+/// first word: it is on the radio at once, before it has said anything, so he can see it and speak to it.
 pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, options: Vec<String>, task: &str) -> Result<String, String> {
     let kept = Kept { id: new_id(), cwd: cwd.to_string(), launcher: launcher.to_string(), options };
     spawn(app, &kept, true).await?;
     {
         let mut inner = app.inner.lock().unwrap();
         inner.held.push(kept.clone());
+        if task.is_empty() {
+            let harness = app.cfg.launchers.get(launcher).map(|l| l.harness.clone()).unwrap_or_default();
+            inner.check_in(&Agent { id: kept.id.clone(), harness, cwd: Some(cwd.to_string()), name: None, title: None, pid: None, deliver: Some(Deliver::Held), meta: Default::default() });
+            if let Some(s) = inner.session(&kept.id) {
+                s.waiting = true;
+            }
+        }
         app.save(&inner);
     }
-    tell(app, &kept.id, task).await?;
+    if task.is_empty() {
+        app.kick.notify_one();
+    } else {
+        tell(app, &kept.id, task).await?;
+    }
     Ok(kept.id)
 }
 
