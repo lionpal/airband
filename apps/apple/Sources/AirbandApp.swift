@@ -359,19 +359,24 @@ struct FeedView: View {
                             GeometryReader { chip in
                                 let (at, screen) = (chip.frame(in: .global), UIScreen.main.bounds.width)
                                 let wide = min(300, screen - 44)
-                                if at.minX > screen - 24 {
+                                // a chip more than half off the screen counts as off it: the bubble sits at that
+                                // edge and points off that way
+                                if at.midX > screen - 8 {
                                     // its chip is off the right of the screen: the bubble stays on screen, at the
                                     // edge, and points off that way
                                     DoingBubble(text: ticker.shown, right: true, tail: .trailing)
                                         .offset(x: screen - 14 - wide - at.minX, y: chip.size.height + 3)
-                                } else if at.maxX < 24 {
+                                } else if at.midX < 8 {
                                     DoingBubble(text: ticker.shown, right: false, tail: .leading)
                                         .offset(x: 14 - at.minX, y: chip.size.height + 3)
                                 } else {
+                                    // under its chip, and never past the edge of the screen: a chip that is partly
+                                    // off it has its bubble pulled back in
                                     let right = at.midX > screen / 2
+                                    let over = right ? max(0, at.maxX - 6 - (screen - 12)) : max(0, 12 - (at.minX + 6))
                                     DoingBubble(text: ticker.shown, right: right)
                                         .frame(width: chip.size.width, alignment: right ? .trailing : .leading)
-                                        .offset(x: right ? -6 : 6, y: chip.size.height + 3)
+                                        .offset(x: right ? -6 - over : 6 + over, y: chip.size.height + 3)
                                 }
                             }
                             .transition(.opacity)
@@ -637,17 +642,6 @@ struct FeedView: View {
                     } label: { PlusButtonLabel(open: showQuick || listeningNow) }
                         .buttonStyle(.plain).accessibilityLabel(listeningNow ? "Cancel" : "Attach, or quick messages").accessibilityAddTraits(showQuick ? .isSelected : [])
                     Spacer(minLength: 0)
-                    Button { showQuick = false; Task { await model.talk() } } label: {
-                        ZStack {
-                            Circle().fill(Palette.signal.opacity(listeningNow ? 0.25 : 0)).frame(width: 104, height: 104)
-                            Circle().fill(listeningNow ? Palette.signal : Palette.ink).frame(width: 88, height: 88)
-                            // open, it is the send button: nothing goes until he taps it
-                            Image(systemName: listeningNow ? "arrow.up" : "mic.fill").font(.system(size: 34, weight: .semibold)).foregroundStyle(Palette.ground)
-                        }
-                        .frame(width: 96, height: 112)
-                    }
-                    .buttonStyle(.plain).accessibilityLabel(listeningNow ? "Send what you said" : "Talk")
-                    Spacer(minLength: 0)
                     // Join the channel: what arrives is read aloud, hands free. As large as the microphone beside
                     // it, since talking and listening are the two things this is for. Green while it is on. It
                     // keeps its place while he talks, dimmed: nothing is read over him.
@@ -668,6 +662,17 @@ struct FeedView: View {
                     .accessibilityLabel(model.calling ? "Stop reading aloud" : "Read aloud")
                     .accessibilityAddTraits(model.calling ? .isSelected : [])
                     Spacer(minLength: 0)
+                    Button { showQuick = false; Task { await model.talk() } } label: {
+                        ZStack {
+                            Circle().fill(Palette.signal.opacity(listeningNow ? 0.25 : 0)).frame(width: 104, height: 104)
+                            Circle().fill(listeningNow ? Palette.signal : Palette.ink).frame(width: 88, height: 88)
+                            // open, it is the send button: nothing goes until he taps it
+                            Image(systemName: listeningNow ? "arrow.up" : "mic.fill").font(.system(size: 34, weight: .semibold)).foregroundStyle(Palette.ground)
+                        }
+                        .frame(width: 96, height: 112)
+                    }
+                    .buttonStyle(.plain).accessibilityLabel(listeningNow ? "Send what you said" : "Talk")
+                                        Spacer(minLength: 0)
                     HStack(spacing: 8) {
                     if listeningNow {
                         // while he talks, this adds a photo or a video to what he is saying
