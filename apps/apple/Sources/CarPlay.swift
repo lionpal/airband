@@ -25,7 +25,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         model.voice.inCar = true
         controller.setRootTemplate(root(), animated: false, completion: nil)
         // what the list says follows whether he is paired; what the voice screen says follows the conversation
-        model.$view.map(\.paired).removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.refreshRoot() }.store(in: &watching)
+        model.$view.map { view in [view.paired ? "paired" : ""] + view.rooms.flatMap(\.members).map { "\($0.callsign):\($0.state)" } }.removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.refreshRoot() }.store(in: &watching)
         model.$status.combineLatest(model.$micOpen).receive(on: DispatchQueue.main).sink { [weak self] _ in self?.show() }.store(in: &watching)
         model.$calling.removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] on in if !on { self?.close() } }.store(in: &watching)
         // a conversation already on when the car connects carries on, on the car's screen
@@ -44,33 +44,54 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     /// the microphone open, for the agent the banner was about if there was one.
     func scene(_ scene: UIScene, openURLContexts contexts: Set<UIOpenURLContext>) {
         guard let url = contexts.first?.url, url.host == "talk" || url.host == "answer", model.view.paired else { return }
-        Task { @MainActor in
-            if !self.model.calling {
-                await self.model.setCalling(true)
-                guard self.model.calling else { return }
-                self.started = true
-            }
-            self.open()
-            self.model.open(url)
+        if url.host == "answer", let agent = OpenWith.agent(in: url) {
+            start(then: agent)
+        } else {
+            model.only = nil
+            start(then: nil)
+            Task { @MainActor in if self.model.calling { self.model.open(url) } }
         }
     }
 
     // MARK: the list
 
     private func root() -> CPListTemplate {
-        let item: CPListItem
-        if model.view.paired {
-            item = CPListItem(text: "Talk to your agents", detailText: nil, image: UIImage(systemName: "mic.fill"))
+        guard model.view.paired else {
+            let item = CPListItem(text: "Not paired with a computer yet", detailText: nil)
+            item.isEnabled = false
+            return CPListTemplate(title: "airband", sections: [CPListSection(items: [item])])
+        }
+        let everyone = CPListItem(text: "Talk to everyone", detailText: nil, image: UIImage(systemName: "mic.fill"))
+        everyone.handler = { [weak self] _, done in
+            self?.model.only = nil
+            self?.model.room = nil
+            self?.start(then: nil)
+            done()
+        }
+        var sections = [CPListSection(items: [everyone])]
+        let agents = model.view.rooms.flatMap(\.members)
+        // Who is waiting on him: choosing one has its question read out, then opens the microphone for the
+        // answer. What it asked is heard, not shown.
+        let waiting = agents.filter { $0.state == "asking" }.map { agent -> CPListItem in
+            let item = CPListItem(text: agent.callsign, detailText: "Waiting on you", image: avatar(of: agent.callsign, side: 44))
             item.handler = { [weak self] _, done in
-                self?.start()
+                self?.start(then: agent.callsign)
                 done()
             }
-        } else {
-            item = CPListItem(text: "Not paired with a computer yet", detailText: nil)
-            item.isEnabled = false
+            return item
         }
-        let list = CPListTemplate(title: "airband", sections: [CPListSection(items: [item])])
-        return list
+        if !waiting.isEmpty { sections.append(CPListSection(items: waiting, header: "Waiting on you", sectionIndexTitle: nil)) }
+        let working = agents.filter { $0.state == "working" }.map { agent -> CPListItem in
+            let item = CPListItem(text: agent.callsign, detailText: "Working", image: avatar(of: agent.callsign, side: 44))
+            item.handler = { [weak self] _, done in
+                self?.model.only = agent.callsign
+                self?.start(then: nil)
+                done()
+            }
+            return item
+        }
+        if !working.isEmpty { sections.append(CPListSection(items: working, header: "Working", sectionIndexTitle: nil)) }
+        return CPListTemplate(title: "airband", sections: sections)
     }
 
     private func refreshRoot() {
@@ -80,9 +101,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     // MARK: the conversation
 
-    private func start() {
+    /// Start the conversation and put up the voice screen. With an agent named, its question is read out
+    /// first and the microphone then opens for the answer.
+    private func start(then answer: String?) {
         Task { @MainActor in
-            await self.model.setCalling(true)
+            if let answer, let team = self.model.view.rooms.first(where: { $0.members.contains { $0.callsign == answer } }) {
+                self.model.room = team.name
+                self.model.only = answer
+            }
+            if !self.model.calling { await self.model.setCalling(true) }
             guard self.model.calling else {
                 // the microphone is not allowed. It can only be allowed on the phone, which he is not asked to touch
                 let ok = CPAlertAction(title: "OK", style: .cancel) { [weak self] _ in self?.car?.dismissTemplate(animated: true, completion: nil) }
@@ -92,6 +119,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             }
             self.started = true
             self.open()
+            if let answer { self.model.answer(answer) }
         }
     }
 

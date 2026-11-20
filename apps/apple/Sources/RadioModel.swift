@@ -182,15 +182,36 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
             replyingTo = nil
             Task { @MainActor in if !self.micOpen { await self.talk() } }
         case "answer":
-            // look at the agent that is waiting, so what he says goes to it
-            if let callsign = OpenWith.agent(in: url), let team = view.rooms.first(where: { $0.members.contains { $0.callsign == callsign } }) {
-                replyingTo = nil
-                room = team.name
-                only = callsign
-            }
-            Task { @MainActor in if !self.micOpen { await self.talk() } }
+            if let callsign = OpenWith.agent(in: url) { answer(callsign) } else { Task { @MainActor in if !self.micOpen { await self.talk() } } }
         default:
             pair(with: url.absoluteString)
+        }
+    }
+
+    /// Answer an agent that is waiting on him, hands free: its question is read out again, with the answers
+    /// it offers, and then the microphone opens. What he says is the answer to that question, in whatever
+    /// words he uses.
+    func answer(_ callsign: String) {
+        guard let team = view.rooms.first(where: { $0.members.contains { $0.callsign == callsign } }), let agent = team.members.first(where: { $0.callsign == callsign }) else { return }
+        // look at that agent, so the question is in view and his words go to it
+        replyingTo = nil
+        room = team.name
+        only = callsign
+        let question = view.feed.last { $0.id == agent.questionId }
+        guard !agent.questionId.isEmpty else {
+            Task { @MainActor in if !self.micOpen { await self.talk() } }
+            return
+        }
+        stopReading()
+        reading = agent.questionId
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = self.desk.readQuestion(messageId: agent.questionId)
+            DispatchQueue.main.async {
+                // he stopped the reading, or went elsewhere: the microphone stays shut
+                guard self.reading == agent.questionId else { return }
+                self.reading = nil
+                Task { @MainActor in if !self.micOpen { await self.talk(about: question) } }
+            }
         }
     }
 

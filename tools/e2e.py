@@ -6,6 +6,7 @@ them (two teams with two agents each, two teams with one), and goes through ever
 each result. Nothing here touches the real tower or its files.
 
     cargo build --release && tools/e2e.py            about two minutes, some dozens of small model calls
+    tools/e2e.py --local                             the same, with the model the tower runs itself doing the reading
     tools/e2e.py --claude                            also asks a real `claude -p` session for permission
     tools/e2e.py --gemini                            the same, with Gemini as the model that reads everything
 
@@ -31,6 +32,13 @@ if "--gemini" in sys.argv:
     MODEL = {"kind": "gemini", "key": json.load(open(os.path.join(REAL_HOME, ".airband", "config.json")))["voice"]["key"]}
     if os.environ.get("GEMINI_MODEL"):
         MODEL["model"] = os.environ["GEMINI_MODEL"]
+# --local runs everything through the model the tower fetches and runs itself (catalog/providers/qwen.json).
+# AIRBAND_LOCAL_CACHE names a folder that already has the model, so it is not fetched again (2.7 GB).
+if "--local" in sys.argv:
+    MODEL = {"kind": "qwen"}
+    if os.environ.get("AIRBAND_LOCAL_CACHE"):
+        os.makedirs(os.path.join(home, ".airband", "local"))
+        os.symlink(os.environ["AIRBAND_LOCAL_CACHE"], os.path.join(home, ".airband", "local", "models"))
 json.dump({
     "port": PORT, "token": OWN, "radio_token": RADIO, "name": "Charles", "station": "e2e", "permission_wait": 25,
     "summarizer": MODEL,
@@ -159,6 +167,16 @@ try:
         time.sleep(0.1)
     else:
         sys.exit("The tower did not start. Its log: " + os.path.join(work, "tower.log"))
+    if "--local" in sys.argv:
+        # the tower fetches the program that runs the model, then loads the model: minutes the first time.
+        # Until it is ready a message is given as written, which is right, and not what is being checked here
+        print("Waiting for the tower's own model to be ready")
+        began = time.time()
+        while "local model: ready" not in open(os.path.join(work, "tower.log")).read():
+            if time.time() - began > 1200:
+                sys.exit("The tower's own model was not ready in twenty minutes. Its log: " + os.path.join(work, "tower.log"))
+            time.sleep(2)
+        print(f"  ready after {time.time() - began:.0f} s")
 
     print("Nobody is there yet")
     r = subprocess.run([BIN, "report", "--id", "early", "--harness", "script", "--cwd", os.path.join(projects, "orders"), "permission", "run something"], env=env, capture_output=True, text=True, timeout=20)
@@ -355,6 +373,8 @@ try:
     check("when it cannot tell, it says who it might be for, to tap, and delivers nothing (model)", len(unsure.get("ask", [])) >= 2 and unsure["say"].startswith("Who is that for?"), unsure)
     say("@catalogpartpage never mind")  # so the words it was holding are not waiting for a name
     check("with no voice set and no relay to lend one, there is nothing to read a message aloud with", http("GET", f"/v1/radio/message/{p['id']}?form=speech")[0] == 404)
+    asked = http("GET", f"/v1/radio/message/{q['id']}?form=spoken&part=asked")[1] or {}
+    check("a question can be read out as it was asked: who asks, its short form, and its answers", asked.get("text", "").startswith("orders refunds. ") and all(o in asked["text"] for o in q["options"]) and "in your own words" in asked["text"], asked)
     check("a tag for a team reaches every agent in it", say("@catalog commit what you have") in ("Sent to catalog part page and catalog import.", "Sent to catalog import and catalog part page."))
     check("a quick message sends the whole instruction and shows its label", say("Send me a picture of the result.", label="Screenshot", re=p["id"]) == "Sent to catalog part page."
           and "picture of the result" in received("page") and message(feed(), "you", "Screenshot") is not None)
