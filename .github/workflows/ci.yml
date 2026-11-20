@@ -35,7 +35,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release -p airband-cli -p airband-relay
-      - name: A tower, a relay and a radio: what he says while the computer is away is kept and delivered
+      - name: What he says while the computer is away is kept by the relay and delivered
         run: python3 tools/e2e-relay.py
       - name: Agents the tower runs itself, with a stand-in for the agent
         run: python3 tools/e2e-held.py
