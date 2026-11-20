@@ -47,7 +47,7 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
             log(format!("{}: asks permission to {what}", session.callsign.text()));
             let line = format!("Wants to {what}. Allow?");
             let detail = if ask.detail.trim().is_empty() { line.clone() } else { ask.detail.clone() };
-            (line, vec!["Allow".into(), "Deny".into()], detail)
+            (line, vec![ALLOW.into(), DENY.into()], detail)
         }
     };
     inner.record(Entry { short: Some(line.clone()), options, permit: Some(id.clone()), ..Entry::said(entry_id.clone(), &session, Some(Kind::NeedsYou), detail.clone()) });
@@ -101,8 +101,7 @@ pub(super) fn withdraw(app: &App, id: &str) {
 /// (`re`), or when exactly one request is waiting and he said a plain yes or no. Otherwise nothing here
 /// touches it. Words of his own on the question itself refuse it, and are passed on as the reason.
 /// What the Allow and Deny buttons send: the two answers that need no reading.
-pub(super) const ALLOW: &str = "Allow";
-pub(super) const DENY: &str = "Deny";
+pub(super) use airband_core::radio::{ALLOW, DENY};
 
 /// The request for leave that `re` is a reply to, if it is one and still waits: what he was shown of it.
 /// Nothing for a question of the agent's (whatever he says to that is its answer).
@@ -145,7 +144,7 @@ pub(super) fn answer(app: &App, text: &str, re: Option<&str>, verdict: Option<bo
     let Some(session) = inner.find(&agent_id).cloned() else { return say("That agent has gone.") };
     inner.session(&agent_id).unwrap().waiting = false;
     log(format!("← radio: \"{text}\" → {} is {} {}", session.callsign.text(), if question { "answered" } else if allow { "allowed" } else { "refused" }, if reason.is_empty() || question { String::new() } else { "with his reason".into() }));
-    let shown = if allow { "Allow".to_string() } else if reason.is_empty() { "Deny".into() } else { reason };
+    let shown = if allow { ALLOW.to_string() } else if reason.is_empty() { DENY.into() } else { reason };
     inner.record(Entry::his(config::random_hex(8), &[session.clone()], shown));
     inner.touch(&entry);
     app.save(&inner);

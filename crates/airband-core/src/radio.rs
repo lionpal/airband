@@ -223,6 +223,11 @@ pub struct EndAgent {
     pub agent: String,
 }
 
+/// What the Allow and Deny buttons send in reply to a request for leave: the two answers a tower takes without
+/// reading. Every radio sends these and no words of its own.
+pub const ALLOW: &str = "Allow";
+pub const DENY: &str = "Deny";
+
 /// `POST taken`: the names agents go by on his other computers, as his radio shows them ("shop 1"). A tower
 /// gives none of its own agents a numbered name on this list, and moves one that already has one to the next
 /// free number, so two agents on his screen are never called the same. A radio tells only the later of two

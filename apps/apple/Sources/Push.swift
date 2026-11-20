@@ -60,8 +60,8 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
                 done()
             }
             return
-        case NoticeButtons.allow: text = "Allow"
-        case NoticeButtons.deny: text = "Deny"
+        case NoticeButtons.allow: text = leaveAnswer(allow: true)
+        case NoticeButtons.deny: text = leaveAnswer(allow: false)
         case NoticeButtons.typed: text = (response as? UNTextInputNotificationResponse)?.userText
         case let id where id.hasPrefix(NoticeButtons.option):
             let options = info["options"] as? [String] ?? []

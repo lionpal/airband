@@ -279,8 +279,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// Send the words of one of his messages again, to another agent.
     func resend(_ m: ChatMessage, to agent: DeskMember) {
-        if m.long { loadFull(m) }
-        desk.send(text: "@\(agent.callsign.replacingOccurrences(of: " ", with: "")) \(full[m.id] ?? m.text)", re: nil, room: nil, agent: nil)
+        fetch.async { self.desk.resend(messageId: m.id, agentId: agent.id) }
     }
 
     /// The phone has made a picked photo or video ready (or could not): hand it to the desk, which sends it to
