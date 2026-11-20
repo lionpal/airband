@@ -145,7 +145,8 @@ impl Link {
                 }
                 let call = Call { t: now_ms(), id: random_hex(12), method: method.into(), path: path.clone(), body: body.clone().unwrap_or(Value::Null), schema: airband_core::radio::SCHEMA.into() };
                 let sealed = keys.seal(Direction::ToTower, &serde_json::to_vec(&call).unwrap());
-                let mut req = self.agent.post(format!("{relay}/v1/channels/{}/call", keys.channel)).header("content-type", "application/octet-stream");
+                // the token shows the relay this is the channel's own radio: it takes nothing on the channel from anyone else
+                let mut req = self.agent.post(format!("{relay}/v1/channels/{}/call", keys.channel)).header("authorization", format!("Bearer {}", keys.radio_token)).header("content-type", "application/octet-stream");
                 if ordered {
                     req = req.header("x-airband-ordered", "1");
                 }
@@ -186,7 +187,7 @@ impl Link {
         let (Route::Relay { relay, keys }, Some(id)) = (&self.route, u.id.as_deref()) else { return Err(LinkError::Offline) };
         let call = Call { t: now_ms(), id: random_hex(12), method: "POST".into(), path: "/v1/radio/utterance".into(), body: serde_json::to_value(u).unwrap(), schema: airband_core::radio::SCHEMA.into() };
         let sealed = keys.seal(Direction::ToTower, &serde_json::to_vec(&call).unwrap());
-        let res = self.agent.post(format!("{relay}/v1/channels/{}/queue", keys.channel)).header("content-type", "application/octet-stream").header("x-airband-id", id).send(&sealed[..]).map_err(|_| LinkError::Offline)?;
+        let res = self.agent.post(format!("{relay}/v1/channels/{}/queue", keys.channel)).header("authorization", format!("Bearer {}", keys.radio_token)).header("content-type", "application/octet-stream").header("x-airband-id", id).send(&sealed[..]).map_err(|_| LinkError::Offline)?;
         if res.status().as_u16() == 202 { Ok(()) } else { Err(LinkError::Offline) }
     }
 

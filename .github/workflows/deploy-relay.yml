@@ -1,37 +1,101 @@
 name: Deploy relay.airband.dev
-# Every push to main that could change the relay deploys it. Only those: the relay is built from its own crate
-# and the core, so a change to the docs, the phone app, the tower or the design files cannot change what runs at
-# relay.airband.dev, and deploying for one would spend build minutes to ship the same image. The list below is
-# what the image and its infrastructure are made from; add to it if the Dockerfile starts copying anything else.
-# It can still be run by hand (Actions tab, "Run workflow").
+# Every push to main that could change the relay ships it to its server (AirbandRelayUs in infra/cdk.mjs). Only
+# those: the relay is built from its own crate and the core, so a change to the docs, the phone app, the tower or
+# the design files cannot change what runs at relay.airband.dev. The list below is what the relay and its
+# infrastructure are made from. It can also be run by hand (Actions tab, "Run workflow").
+#
+# What a deploy does: builds the relay for Linux on arm64 as one static file, brings the infrastructure up to
+# date, puts the relay and the files in infra/host/ in the server's bucket, and asks the server to fetch them and
+# run setup.sh. The relay is off the air for the few seconds its restart takes; towers and phones try again.
+# No SSH and no keys: the server is asked through SSM, by a role that can ask it for this one thing.
+#
+# The same by hand, with the `aws` command set up for the account:
+#   cargo zigbuild --release -p airband-relay --target aarch64-unknown-linux-musl     (pip install cargo-zigbuild)
+#   mkdir pack && cp target/aarch64-unknown-linux-musl/release/airband-relay infra/host/* pack/ && tar -czf relay.tar.gz -C pack .
+#   aws s3 cp relay.tar.gz s3://airband-relay-ship-<account>-us-east-2/relay/relay.tar.gz
+#   aws ssm send-command --region us-east-2 --document-name airband-relay-deploy --targets Key=tag:Name,Values=airband-relay
+#
+# The relay that ran in Tokyo before (AirbandRelay) is still defined and is deployed only when asked for by hand.
 on:
   push:
     branches: [main]
     paths:
       - 'crates/airband-relay/**'
       # of the core, the relay uses only its own protocol and what that is built with: a change to how radios
-      # and agents talk does not touch it, and must not cost every phone a minute off the air
+      # and agents talk does not touch it
       - 'crates/airband-core/src/relay.rs'
       - 'crates/airband-core/src/lib.rs'
       - 'crates/airband-core/Cargo.toml'
       - 'Cargo.toml'
       - 'Cargo.lock'
-      - 'Dockerfile'
-      - '.dockerignore'
       - 'infra/**'
       - '.github/workflows/deploy-relay.yml'
   workflow_dispatch:
+    inputs:
+      tokyo:
+        description: 'Deploy the old relay in Tokyo instead (a minute off the air for anyone still using it)'
+        type: boolean
+        default: false
 concurrency: { group: deploy-relay, cancel-in-progress: false }
 permissions: { id-token: write, contents: read }
+env: { REGION: us-east-2 }
 jobs:
   deploy:
+    if: ${{ !inputs.tokyo }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with: { targets: aarch64-unknown-linux-musl }
       - name: Test the core and the relay here, so a broken build fails before anything is deployed
         run: cargo test -p airband-core -p airband-relay
+      - name: Build the relay for the server (arm64, one static file)
+        run: |
+          pip install --quiet cargo-zigbuild
+          cargo zigbuild --release -p airband-relay --target aarch64-unknown-linux-musl
+          mkdir pack && cp target/aarch64-unknown-linux-musl/release/airband-relay infra/host/* pack/
+          tar -czf relay.tar.gz -C pack .
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: aws-actions/configure-aws-credentials@v4
+        with: { role-to-assume: '${{ vars.AWS_DEPLOY_ROLE_ARN }}', aws-region: '${{ env.REGION }}' }
+      - name: Bring the infrastructure up to date
+        working-directory: infra
+        env: { AIRBAND_INFRA: '${{ secrets.AIRBAND_INFRA }}', AIRBAND_APNS: '${{ vars.AIRBAND_APNS }}' }
+        run: npm ci --no-audit --no-fund && npx cdk deploy AirbandRelayUs --require-approval never
+      - name: The role that ships (in the same account as the one that deploys)
+        id: ship
+        env: { DEPLOY_ROLE: '${{ vars.AWS_DEPLOY_ROLE_ARN }}' }
+        run: |
+          echo "role=${DEPLOY_ROLE%/*}/airband-relay-us-deploy" >> "$GITHUB_OUTPUT"
+          echo "bucket=airband-relay-ship-$(aws sts get-caller-identity --query Account --output text)-$REGION" >> "$GITHUB_OUTPUT"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with: { role-to-assume: '${{ steps.ship.outputs.role }}', aws-region: '${{ env.REGION }}', unset-current-credentials: true }
+      - name: Ship it and have the server put it in service
+        run: |
+          aws s3 cp --only-show-errors relay.tar.gz "s3://${{ steps.ship.outputs.bucket }}/relay/relay.tar.gz"
+          id=$(aws ssm send-command --document-name airband-relay-deploy --targets Key=tag:Name,Values=airband-relay --query Command.CommandId --output text)
+          for i in $(seq 1 60); do
+            sleep 5
+            status=$(aws ssm list-command-invocations --command-id "$id" --query 'CommandInvocations[0].Status' --output text)
+            case "$status" in Success|Failed|TimedOut|Cancelled) break;; esac
+          done
+          aws ssm list-command-invocations --command-id "$id" --details --query 'CommandInvocations[0].CommandPlugins[0].Output' --output text
+          echo "the server says: $status"; [ "$status" = Success ]
+      - name: Check the live relay answers
+        run: |
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' https://relay.airband.dev/healthz || true)
+            echo "attempt $i: $code"; [ "$code" = "200" ] && exit 0; sleep 5
+          done
+          exit 1
+  tokyo:
+    if: ${{ inputs.tokyo }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - uses: aws-actions/configure-aws-credentials@v4
@@ -40,10 +104,3 @@ jobs:
         working-directory: infra
         env: { AIRBAND_INFRA: '${{ secrets.AIRBAND_INFRA }}', AIRBAND_APNS: '${{ vars.AIRBAND_APNS }}' }
         run: npm ci --no-audit --no-fund && npx cdk deploy AirbandRelay --require-approval never
-      - name: Check the live relay answers
-        run: |
-          for i in $(seq 1 20); do
-            code=$(curl -s -o /dev/null -w '%{http_code}' https://relay.airband.dev/healthz || true)
-            echo "attempt $i: $code"; [ "$code" = "200" ] && exit 0; sleep 15
-          done
-          exit 1

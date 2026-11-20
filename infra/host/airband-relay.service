@@ -1,0 +1,29 @@
+# The relay, as its own user with nothing but the network. Put in place by setup.sh.
+[Unit]
+Description=airband relay
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+User=airband
+Group=airband
+Environment=HOME=/tmp
+ExecStart=/opt/airband/start
+Restart=always
+RestartSec=1
+# stopped at once: a request held open for a tower would otherwise keep the old relay alive for half a minute
+KillSignal=SIGKILL
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=300M
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

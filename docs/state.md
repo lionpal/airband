@@ -9,8 +9,13 @@ came back; the relay, run locally over plain HTTP (sealed traffic, a forged requ
 refused). The judging was tried on 24 real end-of-turn messages from working sessions
 (`airband triage < message.txt` judges one): 10 came out fyi, 7 needs-you, 7 report.
 
-The relay is live at `https://relay.airband.dev`: a request and its answer were passed through it by hand over HTTPS,
-and it keeps its channel list in Postgres. CI builds and tests on Linux, Windows and macOS, builds the radio core for
+The relay is live at `https://relay.airband.dev`: one small server in the United States (us-east-2) that keeps
+its channels, kept messages and the waiting list in DynamoDB. `tools/e2e-relay.py` was run against it (13 of 13),
+against a relay on this Mac with a folder and with real DynamoDB tables (19 of 19 each), and the store's own
+rules (an id kept once under five writes at once, the most a channel may have, the count put right) against the
+real tables. A speech pass and a notification to a made-up address (Apple answered `BadDeviceToken`) went
+through it. Not run: the deploy workflow as rewritten for this server; the relay was shipped by hand with the
+same commands. The relay that ran in Tokyo before is still up and is no longer what the name points at. CI builds and tests on Linux, Windows and macOS, builds the radio core for
 Android and compiles the iPhone app.
 
 Launching a new agent, the database (a retried message delivered once across a tower restart) and the installed

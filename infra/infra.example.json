@@ -24,5 +24,11 @@
   "dbSecretArn": "\u2026",
   "rulePriority": 50,
   "albIngressNote": "load balancer to the airband relay task",
-  "speechRegion": "eastus"
+  "speechRegion": "eastus",
+  "us": {
+    "region": "us-east-2",
+    "zone": "us-east-2a",
+    "ami": "ami-\u2026",
+    "githubSubject": "repo:owner/name:ref:refs/heads/main"
+  }
 }

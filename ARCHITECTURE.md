@@ -27,7 +27,7 @@ not importance, not who a message is for, not when to retry.
 | The radio | `crates/airband-radio` | The whole client side. `desk`: every paired computer as one, what is waiting and done, where his messages go, who has the floor on a call. Under it, per computer: reaching the tower (`link`), the call loop (`call`), sending over bad connections (`outbox`), what is kept on the device (`store`), sound in and out (`voice`, `ears`) | Draw, make sound or capture it |
 | Hosts | `apps/apple`, `crates/airband-cli/src/terminal.rs` | Drawing the view the desk gives, playing and capturing audio, the device's own voice and recognition, keeping pairing links safe | Decide order, routing, retries, or what counts as waiting or done |
 | The relay | `crates/airband-relay` | Passing sealed bytes between a radio and its tower; remembering which channels exist | Hold a key or read a message |
-| Deployment | `infra/`, `Dockerfile`, `.github/workflows/` | Running the relay | |
+| Deployment | `infra/`, `.github/workflows/` | Running the relay: one small server with DynamoDB behind it (`AirbandRelayUs` in `infra/cdk.mjs`, what runs on the server in `infra/host/`) | |
 
 ## Where a new thing goes
 
@@ -168,7 +168,7 @@ how `tools/e2e.py` tries all of it against made-up logins.
 `site/index.html` is the whole of airband.dev: one static page, served from a private bucket through a CDN
 (`AirbandSite` in `infra/cdk.mjs`), deployed by its own workflow so that changing it never restarts the relay.
 Its waiting-list form posts an email address to the relay (`POST /v1/waitlist`), which keeps it in the relay's
-database. That one route takes JSON from the homepage's origin only, counts sign-ups per caller, per minute and
+store (a DynamoDB table). That one route takes JSON from the homepage's origin only, counts sign-ups per caller, per minute and
 per day before it touches the database, and writes at most two at a time.
 
 ## What is kept

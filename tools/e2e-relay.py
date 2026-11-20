@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """End to end through a relay: what he says while his computer is away is kept by the relay and reaches the
-tower in order, once each, when it is back.
+tower in order, once each, when it is back; and the relay takes nothing on a channel from anyone but its radio.
 
     cargo build --release && tools/e2e-relay.py          about a minute and a half, no model calls
+    AIRBAND_E2E_DYNAMO=1 tools/e2e-relay.py              the same, with the relay keeping everything in DynamoDB:
+                                                         three throwaway tables, made with the `aws` command as
+                                                         it is set up here (AWS_REGION, default us-east-2) and
+                                                         deleted at the end
 
 A relay, a tower and a radio, all on this machine, in a throwaway folder. The radio is the terminal client with
 a pairing link, which uses the same core as the phone.
 """
-import json, os, shutil, subprocess, sys, tempfile, time, urllib.request, urllib.error
+import base64, hashlib, hmac, json, os, shutil, subprocess, sys, tempfile, time, urllib.parse, urllib.request, urllib.error
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN, RELAY = os.path.join(ROOT, "target", "release", "airband"), os.path.join(ROOT, "target", "release", "airband-relay")
@@ -16,6 +20,9 @@ RELAY_PORT, TOWER_PORT = 7394, 7395
 # that is already up, such as the live one, on a channel of their own that is closed at the end. What the relay
 # keeps cannot be looked at from outside, so those checks are skipped.
 LIVE = os.environ.get("AIRBAND_E2E_RELAY")
+DYNAMO = None if LIVE or not os.environ.get("AIRBAND_E2E_DYNAMO") else "airband-e2e-" + os.urandom(4).hex()
+REGION = os.environ.get("AWS_REGION", "us-east-2")
+BASE = LIVE or f"http://127.0.0.1:{RELAY_PORT}"
 work = tempfile.mkdtemp(prefix="airband-relay-e2e-")
 home, client, data, project, got = (os.path.join(work, d) for d in ("tower", "phone", "relay", "shop", "got.txt"))
 for d in (os.path.join(home, ".airband"), os.path.join(client, ".airband"), data, project):
@@ -40,19 +47,75 @@ def send(text, timeout=120):
     return r.stdout.strip()
 def received():
     return open(got).read() if os.path.exists(got) else ""
+def derive(secret):
+    """What both ends make from a pairing secret (crates/airband-core/src/relay.rs): HKDF-SHA256, RFC 5869."""
+    prk = hmac.new(b"airband.relay/1", bytes.fromhex(secret), hashlib.sha256).digest()
+    take = lambda label: hmac.new(prk, label.encode() + b"\x01", hashlib.sha256).digest()
+    return {"channel": take("channel")[:16].hex(), "radio": take("radio").hex()}
+def aws(*args):
+    r = subprocess.run(["aws", *args, "--region", REGION, "--output", "json"], capture_output=True, text=True)
+    if r.returncode: raise SystemExit(f"aws {args[0]} {args[1]} failed: {r.stderr.strip()[-300:]}")
+    return json.loads(r.stdout) if r.stdout.strip() else {}
+def held_items(channel, kind):
+    return aws("dynamodb", "query", "--table-name", DYNAMO + "-held", "--consistent-read", "--key-condition-expression", "channel = :c AND begins_with(k, :p)",
+               "--expression-attribute-values", json.dumps({":c": {"S": channel}, ":p": {"S": kind}}))["Items"]
 def kept():
-    return sorted(f for _, _, fs in os.walk(os.path.join(data, "held")) for f in fs if not f.startswith("."))
+    """The ids of what the relay is keeping for the channel, in the order they came."""
+    if DYNAMO: return [i["id"]["S"] for i in held_items(keys["channel"], "m#")]
+    return [f.split("-", 1)[1] for f in sorted(f for _, _, fs in os.walk(os.path.join(data, "held")) for f in fs if not f.startswith("."))]
+def kept_bytes():
+    if DYNAMO: return b"".join(base64.b64decode(i["sealed"]["B"]) for i in held_items(keys["channel"], "i#"))
+    return b"".join(open(os.path.join(dp, f), "rb").read() for dp, _, fs in os.walk(os.path.join(data, "held")) for f in fs)
+def post(path, token=None, ident=None, channel=None, body=b"not something the tower's key opens", timeout=10):
+    """A request to the relay as a radio makes it, by hand: with a token or, as an older phone, without."""
+    headers = {"content-type": "application/octet-stream"}
+    if ident is not None: headers["x-airband-id"] = ident
+    if token: headers["authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(f"{BASE}/v1/channels/{channel or keys['channel']}/{path}", data=body, method="POST", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as res: return res.status, res.read()
+    except urllib.error.HTTPError as e: return e.code, e.read()
+def leave(ident, token=None, channel=None):
+    return post("queue", token, ident, channel)[0]
 
-relay = None if LIVE else subprocess.Popen([RELAY], env=dict(os.environ, PORT=str(RELAY_PORT), HOST="127.0.0.1", AIRBAND_RELAY_DATA=data), stdout=open(os.path.join(work, "relay.log"), "w"), stderr=subprocess.STDOUT)
-time.sleep(0.6)
+relay_env = dict(os.environ, PORT=str(RELAY_PORT), HOST="127.0.0.1", AIRBAND_RELAY_DATA=data)
+if DYNAMO:
+    print(f"Making three DynamoDB tables in {REGION}: {DYNAMO}-channels, -held, -waitlist")
+    one = lambda name: [{"AttributeName": name, "AttributeType": "S"}]
+    aws("dynamodb", "create-table", "--table-name", DYNAMO + "-channels", "--billing-mode", "PAY_PER_REQUEST", "--attribute-definitions", json.dumps(one("channel")), "--key-schema", '[{"AttributeName":"channel","KeyType":"HASH"}]', "--tags", "Key=app,Value=airband")
+    aws("dynamodb", "create-table", "--table-name", DYNAMO + "-waitlist", "--billing-mode", "PAY_PER_REQUEST", "--attribute-definitions", json.dumps(one("email")), "--key-schema", '[{"AttributeName":"email","KeyType":"HASH"}]', "--tags", "Key=app,Value=airband")
+    aws("dynamodb", "create-table", "--table-name", DYNAMO + "-held", "--billing-mode", "PAY_PER_REQUEST", "--attribute-definitions", json.dumps(one("channel") + one("k")), "--key-schema", '[{"AttributeName":"channel","KeyType":"HASH"},{"AttributeName":"k","KeyType":"RANGE"}]', "--tags", "Key=app,Value=airband")
+    for name in ("-channels", "-waitlist", "-held"):
+        aws("dynamodb", "wait", "table-exists", "--table-name", DYNAMO + name)
+    aws("dynamodb", "update-time-to-live", "--table-name", DYNAMO + "-held", "--time-to-live-specification", "Enabled=true,AttributeName=expires")
+    # the relay signs its own requests; here it is lent this machine's identity for the length of the test
+    lent = subprocess.run(["aws", "configure", "export-credentials", "--format", "env-no-export"], capture_output=True, text=True).stdout
+    relay_env.update(dict(line.split("=", 1) for line in lent.splitlines() if "=" in line), AIRBAND_RELAY_DYNAMO=DYNAMO, AWS_REGION=REGION)
+relay = None if LIVE else subprocess.Popen([RELAY], env=relay_env, stdout=open(os.path.join(work, "relay.log"), "w"), stderr=subprocess.STDOUT)
+time.sleep(3 if DYNAMO else 0.6)
 tower = start_tower()
 try:
     link = [w for w in subprocess.run([BIN, "pair", "test"], env=tower_env, capture_output=True, text=True).stdout.split() if w.startswith("airband:")][-1]
+    keys = derive(urllib.parse.parse_qs(urllib.parse.urlparse(link).query)["secret"][0])
+    stranger = derive(os.urandom(32).hex())  # another pairing altogether, whose channel was never opened here
     time.sleep(11)  # the tower picks a new pairing up within ten seconds
     subprocess.run([BIN, "report", "--id", "a1", "--harness", "script", "--cwd", project, "--deliver-command", f"sh -c cat>>{got}", "checkin"], env=tower_env)
 
+    print("Before the channel has seen its radio's token")
+    check("a message without a token is taken, as an older phone sends it", leave(os.urandom(8).hex()) == 202)
+    check("but not one with a wrong token", leave(os.urandom(8).hex(), stranger["radio"]) == 401)
+    time.sleep(5)  # the tower takes the one that was kept and finds its key does not open it
+
     print("With the computer there")
     check("what he says goes through the relay to the agent", "Delivered." in send("the first thing") and "the first thing" in received(), received()[-200:])
+
+    print("Now the radio has shown its token")
+    refused = post("queue", None, os.urandom(8).hex())
+    check("a message without a token is refused", refused[0] == 401, refused)
+    check("and one with a wrong token", post("queue", "0" * 64, os.urandom(8).hex()) == refused)
+    check("and one with another channel's token", post("queue", stranger["radio"], os.urandom(8).hex()) == refused)
+    check("a call without the token or with another channel's is refused too", post("call") == refused and post("call", stranger["radio"]) == refused)
+    check("a channel that does not exist answers the same, with or without a token", post("queue", None, os.urandom(8).hex(), stranger["channel"]) == refused and post("call", keys["radio"], channel=stranger["channel"]) == refused)
 
     print("With the computer away")
     tower.terminate(); tower.wait(10)
@@ -60,19 +123,14 @@ try:
     said = send("the second thing")
     check("he is told his computer is away and that it will get it", "Your computer is away" in said, said)
     send("the third thing")
-    if not LIVE: check("the relay keeps both, sealed, in the order they came", len(kept()) == 2 and b"second" not in b"".join(open(os.path.join(dp, f), "rb").read() for dp, _, fs in os.walk(os.path.join(data, "held")) for f in fs), kept())
+    if not LIVE: check("the relay keeps both, sealed, in the order they came", len(kept()) == 2 and len(kept_bytes()) > 100 and b"second" not in kept_bytes(), kept())
     check("and the agent has not had them yet", "second" not in received())
     if not LIVE:
         # the same message left twice is kept once: the relay goes by the id the radio gave it
-        channel = os.listdir(os.path.join(data, "held"))[0]
-        def leave(ident, body=b"not something the tower's key opens"):
-            req = urllib.request.Request(f"http://127.0.0.1:{RELAY_PORT}/v1/channels/{channel}/queue", data=body, method="POST", headers={"x-airband-id": ident, "content-type": "application/octet-stream"})
-            try: return urllib.request.urlopen(req, timeout=10).status
-            except urllib.error.HTTPError as e: return e.code
-        first = kept()[0].split("-", 1)[1]
-        check("leaving one again under the same id keeps it once", leave(first) == 202 and len(kept()) == 2, kept())
-        check("something without an id is not kept", leave("") == 400)
-        check("and something the tower cannot open is kept like the rest (the relay cannot tell)", leave("ab" * 8) == 202 and len(kept()) == 3)
+        first = kept()[0]
+        check("leaving one again under the same id keeps it once", leave(first, keys["radio"]) == 202 and len(kept()) == 2, kept())
+        check("something without an id is not kept", leave("", keys["radio"]) == 400)
+        check("and something the tower cannot open is kept like the rest (the relay cannot tell)", leave("ab" * 8, keys["radio"]) == 202 and len(kept()) == 3)
 
     print("When the computer is back")
     tower = start_tower()
@@ -111,6 +169,10 @@ finally:
         p.terminate()
         try: p.wait(10)
         except Exception: p.kill()
+    if DYNAMO:
+        for name in ("-channels", "-waitlist", "-held"):
+            subprocess.run(["aws", "dynamodb", "delete-table", "--table-name", DYNAMO + name, "--region", REGION], capture_output=True)
+        print(f"Deleted the three tables {DYNAMO}-*")
 failed = [n for n, ok in results if not ok]
 print(f"\n{len(results) - len(failed)} of {len(results)} passed." + ("" if not failed else "  Failed:\n  - " + "\n  - ".join(failed) + f"\nLogs: {work}"))
 if not failed:

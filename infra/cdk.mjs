@@ -1,4 +1,11 @@
-// relay.airband.dev: the Airband relay as one small Fargate task behind an existing load balancer, keeping its
+// The Airband relay and homepage. Three stacks:
+//
+//   AirbandRelayUs  where relay.airband.dev runs: one small server in the United States with DynamoDB behind it.
+//   AirbandRelay    where it ran before, and can again: a Fargate task in Tokyo behind an existing load balancer.
+//                   Nothing deploys it any more unless asked to (see .github/workflows/deploy-relay.yml).
+//   AirbandSite     the homepage.
+//
+// AirbandRelay: the relay as one small Fargate task behind an existing load balancer, keeping its
 // channel list in an existing database cluster. Nothing new is rented but the task itself.
 //
 // Nothing that is already there is replaced. This stack ADDS a
@@ -16,7 +23,9 @@
 // (a by-hand deploy builds the image locally and needs several GB of free disk for Docker)
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { App, CfnOutput, Duration, Stack } from 'aws-cdk-lib';
+import { App, CfnOutput, Duration, RemovalPolicy, Stack, Tags } from 'aws-cdk-lib';
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
@@ -59,6 +68,11 @@ const ALB_ARN = of('albArn'), ALB_DNS = of('albDns'), ALB_ZONE = of('albZone'), 
 const DB_HOST = of('dbHost'), DB_NAME = of('dbName'), AURORA_SG_ID = of('auroraSgId'), DB_SECRET_ARN = of('dbSecretArn');
 const RULE_PRIORITY = of('rulePriority'); // a priority no other rule on the listener uses
 const PORT = 7474;
+// The server in the United States: { region, zone, ami, githubSubject }. `ami` is an Amazon Linux 2023 arm64
+// image in that region, named outright so a newer image never replaces the server behind our back
+// (aws ssm get-parameter --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64).
+// `githubSubject` is what GitHub's token says a run on this repository's main branch is (the `sub` claim).
+const US = INFRA.us;
 
 class AirbandRelay extends Stack {
   constructor(scope, id, props) {
@@ -110,6 +124,100 @@ class AirbandRelay extends Stack {
     new CfnOutput(this, 'Url', { value: `https://${DOMAIN}` });
   }
 }
+// relay.airband.dev in the United States: one small arm64 server with a fixed address, and DynamoDB for what the
+// relay keeps. No load balancer and no database server, which is the point: the server, its disk and its address
+// are all there is to pay for by the month.
+//
+// On the server: Caddy answers on 443 with a certificate it gets and renews itself, proving the names by a DNS
+// record (so the certificate can exist before the name points here), and hands requests to the relay on
+// 127.0.0.1. The relay runs as its own user under systemd. Nobody can sign in from the internet: there is no
+// SSH; `aws ssm start-session` is the way in. The server's role can read and write its three tables, read its
+// own settings and secrets, fetch what is shipped to it, and write the two DNS records Caddy proves itself with.
+//
+// Shipping: the workflow builds the relay for arm64, puts it with the files in infra/host/ in the bucket here,
+// and asks the server to run the `airband-relay-deploy` document, which fetches that and runs its setup.sh.
+// The role the workflow uses for this can do only those two things. A new server does the same on first boot.
+//
+// Before the first deploy, once, by hand (none of it is in the repository):
+//   1. the three secrets, in this stack's region, as SecureString parameters:
+//      /airband/relay-admission, /airband/speech-key, /airband/apns-key
+//   2. a Caddy built with the Route 53 module, in the bucket as caddy/caddy-linux-arm64
+//      (https://caddyserver.com/api/download?os=linux&arch=arm64&p=github.com/caddy-dns/route53)
+// The name itself (the A record for relay.airband.dev) is not made here while the Tokyo stack still owns it:
+// it is pointed at this server's address by hand. This stack makes relay-us.<zone>, which always points here.
+class AirbandRelayUs extends Stack {
+  constructor(scope, id, props) {
+    super(scope, id, props);
+    Tags.of(this).add('app', 'airband');
+    const zone = route53.HostedZone.fromHostedZoneAttributes(this, 'Zone', { hostedZoneId: ZONE_ID, zoneName: ZONE_NAME });
+    const names = [DOMAIN, `relay-us.${ZONE_NAME}`];
+    const prefix = 'airband-relay';
+
+    // what the relay keeps (crates/airband-relay/src/store.rs says what is in each). Paid for by the request.
+    const table = (name, keys, more = {}) => new dynamodb.Table(this, name, { tableName: `${prefix}-${name.toLowerCase()}`, ...keys, billingMode: dynamodb.BillingMode.PAY_PER_REQUEST, removalPolicy: RemovalPolicy.RETAIN, ...more });
+    const text = (name) => ({ name, type: dynamodb.AttributeType.STRING });
+    const tables = [
+      table('Channels', { partitionKey: text('channel') }),
+      table('Held', { partitionKey: text('channel'), sortKey: text('k') }, { timeToLiveAttribute: 'expires' }),
+      // the one thing here that cannot be made again: it can be put back as it was at any moment of the last five weeks
+      table('Waitlist', { partitionKey: text('email') }, { pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true } }),
+    ];
+
+    const ship = new s3.Bucket(this, 'Ship', { bucketName: `airband-relay-ship-${this.account}-${this.region}`, blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL, enforceSSL: true, versioned: true,
+      lifecycleRules: [{ noncurrentVersionExpiration: Duration.days(30) }] });
+
+    // a network of its own with one public subnet: nothing to share with, and nothing that costs by the hour
+    const vpc = new ec2.Vpc(this, 'Vpc', { ipAddresses: ec2.IpAddresses.cidr('10.74.0.0/24'), availabilityZones: [US.zone], natGateways: 0, restrictDefaultSecurityGroup: false,
+      subnetConfiguration: [{ name: 'public', subnetType: ec2.SubnetType.PUBLIC, cidrMask: 26 }] });
+    const sg = new ec2.SecurityGroup(this, 'Sg', { vpc, description: 'airband relay: HTTPS in, anything out', allowAllOutbound: true });
+    sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), 'HTTPS to the relay');
+
+    const role = new iam.Role(this, 'HostRole', { assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'), description: 'The airband relay server',
+      managedPolicies: [iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore')] });
+    role.addToPolicy(new iam.PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:Scan'], resources: tables.map((t) => t.tableArn) }));
+    const settings = ['relay-env', 'relay-admission', 'speech-key', 'apns-key'].map((n) => `arn:aws:ssm:${this.region}:${this.account}:parameter/airband/${n}`);
+    role.addToPolicy(new iam.PolicyStatement({ actions: ['ssm:GetParameter', 'ssm:GetParameters'], resources: settings }));
+    ship.grantRead(role);
+    // the two records Caddy proves the names with, and nothing else in the zone
+    role.addToPolicy(new iam.PolicyStatement({ actions: ['route53:ChangeResourceRecordSets'], resources: [zone.hostedZoneArn],
+      conditions: { 'ForAllValues:StringEquals': { 'route53:ChangeResourceRecordSetsNormalizedRecordNames': names.map((n) => `_acme-challenge.${n}`), 'route53:ChangeResourceRecordSetsRecordTypes': ['TXT'] } } }));
+    role.addToPolicy(new iam.PolicyStatement({ actions: ['route53:ListResourceRecordSets'], resources: [zone.hostedZoneArn] }));
+    role.addToPolicy(new iam.PolicyStatement({ actions: ['route53:GetChange'], resources: ['arn:aws:route53:::change/*'] }));
+
+    // everything the server is told that is not a secret: read by setup.sh at each deploy
+    const env = { AWS_REGION: this.region, AIRBAND_RELAY_DYNAMO: prefix, HOST: '127.0.0.1', PORT: String(PORT), SHIP_BUCKET: ship.bucketName, RELAY_NAMES: `"${names.join(', ')}"`, ZONE_ID,
+      ...(SPEECH_REGION ? { AZURE_SPEECH_REGION: SPEECH_REGION } : {}), ...(APNS ? { APNS_KEY_ID: APNS.keyId, APNS_TEAM_ID: APNS.teamId, APNS_TOPIC: APNS.topic } : {}) };
+    new ssm.StringParameter(this, 'Env', { parameterName: '/airband/relay-env', stringValue: Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n') + '\n' });
+
+    // fetch what was shipped and run its setup: what a deploy asks of the server, and what a new server does by itself
+    const fetchAndSetUp = ['set -euo pipefail', 'd=$(mktemp -d)', `aws s3 cp --only-show-errors s3://${ship.bucketName}/relay/relay.tar.gz "$d/relay.tar.gz"`, 'tar -xzf "$d/relay.tar.gz" -C "$d"', 'bash "$d/setup.sh"', 'rm -rf "$d"'];
+    const document = new ssm.CfnDocument(this, 'Deploy', { name: 'airband-relay-deploy', documentType: 'Command', documentFormat: 'JSON', updateMethod: 'NewVersion',
+      content: { schemaVersion: '2.2', description: 'Fetch the airband relay that was shipped and put it in service', mainSteps: [{ action: 'aws:runShellScript', name: 'deploy', inputs: { timeoutSeconds: '600', runCommand: fetchAndSetUp } }] } });
+
+    const userData = ec2.UserData.forLinux();
+    userData.addCommands('# nothing to do until something has been shipped', ...fetchAndSetUp.slice(1, 3).map((c, i) => (i === 1 ? `${c} || exit 0` : c)), ...fetchAndSetUp.slice(3));
+    // t4g.nano: two arm64 cores' worth of bursts and half a gigabyte, of which the relay and Caddy use about a tenth
+    const host = new ec2.Instance(this, 'Host', { vpc, vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC }, instanceType: new ec2.InstanceType('t4g.nano'), machineImage: ec2.MachineImage.genericLinux({ [this.region]: US.ami }),
+      role, securityGroup: sg, requireImdsv2: true, userData, blockDevices: [{ deviceName: '/dev/xvda', volume: ec2.BlockDeviceVolume.ebs(8, { volumeType: ec2.EbsDeviceVolumeType.GP3, encrypted: true }) }] });
+    Tags.of(host).add('Name', 'airband-relay');
+    const ip = new ec2.CfnEIP(this, 'Ip', { domain: 'vpc' });
+    new ec2.CfnEIPAssociation(this, 'IpOnHost', { allocationId: ip.attrAllocationId, instanceId: host.instanceId });
+    new route53.ARecord(this, 'UsName', { zone, recordName: 'relay-us', target: route53.RecordTarget.fromIpAddresses(ip.attrPublicIp), ttl: Duration.seconds(60) });
+
+    // what the deploy workflow becomes to ship: it can put the relay in the bucket and ask this one server to run
+    // this one document. It cannot run anything else there.
+    const deployer = new iam.Role(this, 'Deployer', { roleName: 'airband-relay-us-deploy', description: 'GitHub Actions: ship the airband relay to its server',
+      assumedBy: new iam.WebIdentityPrincipal(`arn:aws:iam::${this.account}:oidc-provider/token.actions.githubusercontent.com`, { StringEquals: { 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com', 'token.actions.githubusercontent.com:sub': US.githubSubject } }) });
+    deployer.addToPolicy(new iam.PolicyStatement({ actions: ['s3:PutObject'], resources: [ship.arnForObjects('relay/*')] }));
+    deployer.addToPolicy(new iam.PolicyStatement({ actions: ['ssm:SendCommand'], resources: [`arn:aws:ssm:${this.region}:${this.account}:document/${document.name}`] }));
+    deployer.addToPolicy(new iam.PolicyStatement({ actions: ['ssm:SendCommand'], resources: [`arn:aws:ec2:${this.region}:${this.account}:instance/*`], conditions: { StringEquals: { 'ssm:resourceTag/Name': 'airband-relay' } } }));
+    deployer.addToPolicy(new iam.PolicyStatement({ actions: ['ssm:ListCommandInvocations'], resources: ['*'] }));
+
+    new CfnOutput(this, 'Address', { value: ip.attrPublicIp });
+    new CfnOutput(this, 'Url', { value: `https://${names[1]}` });
+  }
+}
+
 // airband.dev: the homepage. One static page (site/index.html) in a private bucket behind a CDN. It is its own
 // stack so that changing the page never restarts the relay: the relay's deploy drops every phone for a minute, and
 // a copy change should not. The page's waiting-list form posts to the relay (POST /v1/waitlist), which keeps the
@@ -159,5 +267,6 @@ class AirbandSite extends Stack {
 }
 
 const app = new App();
+if (US) new AirbandRelayUs(app, 'AirbandRelayUs', { env: { account: ACCOUNT, region: US.region }, description: 'The airband relay in the United States: one small server and DynamoDB' });
 new AirbandRelay(app, 'AirbandRelay', { env: { account: ACCOUNT, region: REGION }, description: 'The airband relay: one small task behind an existing load balancer' });
 new AirbandSite(app, 'AirbandSite', { env: { account: ACCOUNT, region: 'us-east-1' }, description: 'airband.dev: the homepage, one static page behind a CDN' });

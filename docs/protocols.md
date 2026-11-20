@@ -226,7 +226,8 @@ The tower is behind a home router and cannot be called, so both ends call out to
     phone  ◀──response───  relay  ◀──POST reply──  tower      the tower's answer, sealed
 
 Pairing gives the phone and the tower one 32-byte secret; the relay never has it. From it both derive the
-channel's name, the token that lets only the tower pull from the channel (the relay stores its hash), and
+channel's name, the token that lets only the tower pull from the channel, the token that lets only the radio
+send to it (the relay stores the hash of each), and
 one ChaCha20-Poly1305 key per direction (RFC 8439, a random 96-bit nonce on each message). Inside each sealed request is a `airband.radio/1` call with the time
 and a random id: the tower refuses one that is more than two minutes off its clock or that it has answered
 before, and serves only `/v1/radio/` to it. The phone refuses an answer that is not to its own request.
@@ -234,6 +235,28 @@ before, and serves only `/v1/radio/` to it. The phone refuses an answer that is 
 Versions: `airband.relay/1` is part of how the keys are derived, so a later version cannot read or be read by this
 one. Each sealed request names the radio protocol it is in, and a tower that does not speak it answers 400.
 `DELETE /v1/channels/<channel>` with the tower's pull token closes a channel; `airband unpair` sends it.
+
+**Whose channel it is.** Every request on a channel carries a token, `Authorization: Bearer <token>`, and the
+relay compares its SHA-256 with the hash it holds, in constant time.
+
+| Who | Routes | Token |
+|---|---|---|
+| The tower | `PUT /v1/channels/<channel>` (open), `GET …/pull`, `POST …/reply/<id>`, `POST …/push`, `DELETE` (close) | The pull token. Opening a channel the relay does not know also takes the relay's admission key (`x-airband-admission`), if it has one. 403 with another channel's token. |
+| The radio | `POST …/call`, `POST …/queue`, `GET …/ears` | The radio token. 401 without it, with a wrong one, or on a channel that does not exist: the same answer for all three, so it says nothing about which channels exist. |
+
+The tower gives the relay the radio token's hash in `x-airband-radio-hash` when it opens the channel and with
+every pull, and the relay keeps it with the channel. The relay never sees either token until its owner shows it.
+
+Phones from before radios sent their token on `call` and `queue` send none there. So a channel starts unproven:
+`call` and `queue` are taken without a token (never with a wrong one). The first `call` or `queue` that carries
+the right token proves the channel, the relay records that for good, and from then on both are refused without
+it. `ears` has always needed the token and proves nothing, because those older phones do send it there. Once
+every phone in use sends the token, the unproven state can be removed.
+
+Limits, each answered with 429. Per channel in a minute: 3000 calls, 60 messages left in `queue`, 30 passes from
+`ears`; from one internet address, twice that across all channels. At most 16 calls wait for an answer on a
+channel at once. Requests from an address are counted before anything else; a channel's count takes only requests
+that passed the token check, so a stranger cannot use up a radio's share. No message is larger than 256 KB.
 
 **Notifications.** A radio that has given the tower an address (`POST push`) is woken when something deserves it:
 a message judged `needs-you` or `report`, a permission card, a question a harness puts to him. Never `fyi` or
@@ -250,7 +273,7 @@ answer as a notification) and asks the relay to pass it on:
 
 | Call | Body → answer | Meaning |
 |---|---|---|
-| `POST /v1/channels/<channel>/push` | `{ provider, to, sealed, question }` → `{ sent, gone, reason }` | From the channel's tower (its pull token). `to` is the phone's address, `sealed` the notification in base64 (2400 bytes at most before base64), `question` whether it is one. 200 sent; 410 the address is no longer good and the tower forgets it; 429 more than 60 from this channel in ten minutes; 503 this relay has no such push service; 502 the service refused or could not be reached. |
+| `POST /v1/channels/<channel>/push` | `{ provider, to, sealed, question }` → `{ sent, gone, reason }` | From the channel's tower (its pull token). `to` is the phone's address, `sealed` the notification in base64 (2400 bytes at most before base64), `question` whether it is one. 200 sent; 410 the address is no longer good and the tower forgets it; 429 more than 60 from this channel in ten minutes, or 240 from one internet address; 503 this relay has no such push service; 502 the service refused or could not be reached. |
 
 The relay holds the push service's key and adds the same visible words to every notification ("airband", "New
 message" or "A question for you"), which is what shows if the phone cannot open it. Neither the relay nor the
@@ -261,7 +284,7 @@ notification's `id`. Push services are in `crates/airband-relay/src/push.rs`; an
 
 **When the tower is away.** A relay that has not heard from a tower for 45 seconds answers a call with 503. What
 he said is then left with the relay: `POST /v1/channels/<channel>/queue`, the same sealed request, with the
-utterance's own id in `x-airband-id`. The relay keeps at most 200 per channel for a week, still unable to read
+radio token and the utterance's own id in `x-airband-id`. The relay keeps at most 200 per channel for a week, still unable to read
 them, and one left twice under the same id is kept once. When the tower pulls again it is handed them oldest
 first, one at a time, each under a request id that starts with `held-`; its reply takes that one off the relay
 and brings the next. The tower takes a kept request only if it is an utterance with an id, and it takes each

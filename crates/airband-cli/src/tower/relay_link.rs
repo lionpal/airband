@@ -113,7 +113,8 @@ impl Serve {
         };
         while !self.stop.load(Ordering::SeqCst) {
             if !open {
-                let mut req = agent.put(&base).header("authorization", &auth);
+                // who its radio is goes with the opening, so the relay knows from the first moment whose channel it is
+                let mut req = agent.put(&base).header("authorization", &auth).header("x-airband-radio-hash", airband_core::relay::token_hash(&self.keys.radio_token));
                 if let Some(a) = &self.admission {
                     req = req.header("x-airband-admission", a);
                 }
