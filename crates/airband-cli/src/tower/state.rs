@@ -103,6 +103,9 @@ pub(super) struct Entry {
     /// For his words: when the agent took them in, once its harness shows that.
     #[serde(default)]
     pub(super) seen: Option<u64>,
+    /// He let this question go without answering it.
+    #[serde(default)]
+    pub(super) dismissed: bool,
     #[serde(default)]
     pub(super) queued: bool,
     #[serde(default)]
@@ -554,7 +557,11 @@ impl Inner {
         for e in &self.log {
             if let Some(agent) = e.agent.as_deref() {
                 if e.kind == Some(Kind::NeedsYou) {
-                    latest.insert(agent, (&e.id, e.at, 0));
+                    if e.dismissed {
+                        latest.remove(agent);
+                    } else {
+                        latest.insert(agent, (&e.id, e.at, 0));
+                    }
                 } else if e.kind != Some(Kind::Fyi) {
                     if let Some(q) = latest.get_mut(agent) {
                         q.2 += 1;

@@ -119,6 +119,18 @@ async fn end_agent(State(app): State<Arc<App>>, Json(to): Json<airband_core::rad
         Some(true) => json!({ "error": "It had already ended." }),
     })
 }
+/// He let a question go without answering it.
+async fn dismiss(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::Dismiss>) -> Json<Value> {
+    let mut inner = app.inner.lock().unwrap();
+    let Some(e) = inner.log.iter_mut().find(|e| e.id == to.message) else { return Json(json!({ "error": "That message is gone." })) };
+    e.dismissed = true;
+    // it is not read out either
+    inner.pending.retain(|p| p.id != to.message);
+    inner.touch(&to.message);
+    app.save(&inner);
+    app.kick.notify_one();
+    Json(json!({}))
+}
 /// He took back something he said that was still waiting its turn.
 async fn unsend(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::Unsend>) -> Json<Value> {
     Json(match held::unsend(&app, &to.message) {
@@ -493,6 +505,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/radio/takeover", post(takeover))
         .route("/v1/radio/stop", post(stop_agent))
         .route("/v1/radio/unsend", post(unsend))
+        .route("/v1/radio/dismiss", post(dismiss))
         .route("/v1/radio/end", post(end_agent))
         .route("/v1/radio/push", post(push_target))
         .route("/v1/status", get(status))

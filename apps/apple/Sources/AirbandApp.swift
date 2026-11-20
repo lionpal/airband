@@ -815,7 +815,7 @@ struct Question: View {
                     .font(.system(size: m.open ? 20 : 16, weight: m.open ? .semibold : .regular)).tracking(m.open ? -0.3 : 0)
                     .foregroundStyle(m.open ? Palette.ink : Palette.soft)
                     .lineSpacing(2).multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.trailing, m.open ? 30 : 0)
+                    .padding(.trailing, m.open ? 72 : 0)
             }
             .buttonStyle(.plain).accessibilityHint(m.open ? (picked ? "Stop answering this one" : "Answer this one: what you say or type next goes to it") : "Show what was behind this question")
             .accessibilityAddTraits(picked ? .isSelected : [])
@@ -829,12 +829,23 @@ struct Question: View {
         .overlay(RoundedRectangle(cornerRadius: 24).strokeBorder(picked ? Palette.ink : Palette.ask.opacity(0.45), lineWidth: picked ? 2 : (m.open ? 1 : 0)))
         .overlay(alignment: .topTrailing) {
             if m.open {
-                Button { showContext = true } label: {
-                    Image(systemName: "info").font(.system(size: 13, weight: .bold)).foregroundStyle(Palette.soft)
-                        .frame(width: 28, height: 28).background(Palette.raised, in: Circle())
-                        .frame(width: 44, height: 44)
+                // more about it, and to its right the way to let it go unanswered. Each has its own touch area,
+                // with a gap between, so one is not hit for the other
+                HStack(spacing: 6) {
+                    Button { showContext = true } label: {
+                        Image(systemName: "info").font(.system(size: 13, weight: .bold)).foregroundStyle(Palette.soft)
+                            .frame(width: 28, height: 28).background(Palette.raised, in: Circle())
+                            .frame(width: 38, height: 44)
+                    }
+                    .buttonStyle(.plain).accessibilityLabel("More about this question")
+                    Button { model.dismiss(m) } label: {
+                        Image(systemName: "xmark").font(.system(size: 12, weight: .bold)).foregroundStyle(Palette.soft)
+                            .frame(width: 28, height: 28).background(Palette.raised, in: Circle())
+                            .frame(width: 38, height: 44)
+                    }
+                    .buttonStyle(.plain).accessibilityLabel("Ignore this question")
                 }
-                .buttonStyle(.plain).accessibilityLabel("More about this question")
+                .padding(.trailing, 4)
             }
         }
         .sheet(isPresented: $showContext) { ContextView(m: m).environmentObject(model) }

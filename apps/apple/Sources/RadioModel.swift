@@ -142,7 +142,9 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     }
 
     private func refresh() {
-        view = desk.view(room: room, agent: only)
+        // only when something he can see has changed: the chat is not laid out again for nothing
+        let now = desk.view(room: room, agent: only)
+        if now != view { view = now }
         // what has gone with a message has left the desk's list: it leaves the tray too
         if !tray.isEmpty {
             let gone = tray.filter { item in item.attachment.map { id in !view.uploads.contains { $0.id == id } } ?? false }
@@ -206,6 +208,17 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
                 case .failure(RadioError.Offline): self.problem = "Cannot reach that computer."
                 case .failure: self.problem = "It did not end."
                 }
+            }
+        }
+    }
+
+    /// Let a question go without answering it.
+    func dismiss(_ m: ChatMessage) {
+        if replyingTo?.id == m.id { replyingTo = nil }
+        fetch.async {
+            let result = Result { try self.desk.dismiss(messageId: m.id) }
+            DispatchQueue.main.async {
+                if case .failure(RadioError.Told(let reason)) = result { self.problem = reason }
             }
         }
     }

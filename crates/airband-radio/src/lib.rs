@@ -602,6 +602,10 @@ impl Radio {
     pub fn end_agent(&self, agent: String) -> Result<(), RadioError> {
         self.ask("/end", serde_json::json!({ "agent": agent }))
     }
+    /// Let a question go without answering it. Blocks: call it off the main thread.
+    pub fn dismiss(&self, message: String) -> Result<(), RadioError> {
+        self.ask("/dismiss", serde_json::json!({ "message": message }))
+    }
     /// Take back something he said that is still waiting its turn. Blocks: call it off the main thread.
     pub fn unsend(&self, message: String) -> Result<(), RadioError> {
         self.ask("/unsend", serde_json::json!({ "message": message }))

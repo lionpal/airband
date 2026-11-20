@@ -223,6 +223,13 @@ pub struct EndAgent {
     pub agent: String,
 }
 
+/// `POST dismiss`: he does not mean to answer this question. It stops being open: it no longer waits on him
+/// in the chat, on its team or aloud. The agent is told nothing. `{}` or `{error}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Dismiss {
+    pub message: String,
+}
+
 /// `POST unsend`: take back something he said that is still `queued`. `{}`, or `{error}` when it has gone.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Unsend {

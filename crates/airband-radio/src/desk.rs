@@ -208,6 +208,7 @@ struct Upload {
 /// armed on that computer's radio: the next thing he sends there takes it along.
 fn send_file(shared: Arc<Shared>, radio: Arc<Radio>, id: String, file_path: String, name: String, dropped: Arc<AtomicBool>) {
     thread::spawn(move || {
+        let last_told = Mutex::new(std::time::Instant::now());
         let step = |sent: u64, _total: u64| {
             if dropped.load(Ordering::SeqCst) {
                 return false;
@@ -215,7 +216,13 @@ fn send_file(shared: Arc<Shared>, radio: Arc<Radio>, id: String, file_path: Stri
             if let Some(u) = shared.state.lock().unwrap().uploads.iter_mut().find(|u| u.shown.id == id && Arc::ptr_eq(&u.dropped, &dropped)) {
                 u.shown.sent = sent;
             }
-            shared.host.changed();
+            // the screen is told a few times a second at most, however fast the parts land
+            let mut told = last_told.lock().unwrap();
+            if told.elapsed() > Duration::from_millis(250) {
+                *told = std::time::Instant::now();
+                drop(told);
+                shared.host.changed();
+            }
             true
         };
         let outcome = radio.upload(&id, &file_path, &name, step);
@@ -890,6 +897,15 @@ impl Desk {
     pub fn end_agent(&self, agent: String) -> Result<(), RadioError> {
         let radio = self.shared.state.lock().unwrap().stations.iter().find(|s| s.agents.iter().any(|a| a.id == agent)).map(|s| s.radio.clone()).ok_or(RadioError::Refused)?;
         radio.end_agent(agent)
+    }
+
+    /// Let a question go without answering it: it stops waiting on him, here at once and on its computer.
+    /// Blocks: call it off the main thread.
+    pub fn dismiss(&self, message_id: String) -> Result<(), RadioError> {
+        let radio = self.radio_of(&message_id).ok_or(RadioError::Refused)?;
+        self.shared.state.lock().unwrap().answered.insert(message_id.clone());
+        self.shared.host.changed();
+        radio.dismiss(message_id)
     }
 
     /// Take back something he said that is still waiting its turn. Blocks: call it off the main thread.
