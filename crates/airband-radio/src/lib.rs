@@ -394,8 +394,8 @@ impl Radio {
         let calling = Arc::new(AtomicBool::new(false));
         let wake = Arc::new(Wake::default());
         {
-            let (link, host, stop, busy) = (link.clone(), host.clone(), stop.clone(), busy.clone());
-            thread::spawn(move || work(rx, link, host, stop, busy));
+            let (link, host, stop, busy, calling) = (link.clone(), host.clone(), stop.clone(), busy.clone(), calling.clone());
+            thread::spawn(move || work(rx, link, host, stop, busy, calling));
         }
         {
             let (tx, stop, link, calling, host, wake) = (tx.clone(), stop.clone(), link.clone(), calling.clone(), host.clone(), wake.clone());

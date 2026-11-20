@@ -432,11 +432,11 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
             }
             voice.goOnDuty()
             said = ""
-        } else {
-            voice.goOffDuty()
         }
         calling = on
+        // off: the core is told first, so it hands over no more sound, and then what is playing is cut
         desk.setCallMode(on: on)
+        if !on { voice.goOffDuty() }
     }
 
     /// The big button: he wants to say something now. It is the answer to the message he picked, if he picked one;

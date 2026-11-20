@@ -51,7 +51,7 @@ pub(crate) fn poll(jobs: Sender<Job>, link: Arc<Link>, host: Arc<dyn RadioHost>,
     }
 }
 
-pub(crate) fn work(jobs: Receiver<Job>, link: Arc<Link>, host: Arc<dyn RadioHost>, stop: Arc<AtomicBool>, busy: Arc<AtomicBool>) {
+pub(crate) fn work(jobs: Receiver<Job>, link: Arc<Link>, host: Arc<dyn RadioHost>, stop: Arc<AtomicBool>, busy: Arc<AtomicBool>, calling: Arc<AtomicBool>) {
     let ears = ears::Ears::default();
     {
         // the pass for the listening service is fetched before he first needs it, and again now and then, so
@@ -70,9 +70,14 @@ pub(crate) fn work(jobs: Receiver<Job>, link: Arc<Link>, host: Arc<dyn RadioHost
         }
         busy.store(true, Ordering::SeqCst);
         match job {
+            // He turned reading aloud off: what was on its way is not read, and what is being read stops at
+            // once. It is all in the chat.
+            Job::Transmission(_) if !calling.load(Ordering::SeqCst) => {
+                let _ = link.post("/ready", &serde_json::json!({}));
+            }
             Job::Transmission(t) => {
                 host.status(RadioStatus::Speaking { callsign: t.callsign.clone() });
-                voice::say(&link, &*host, &t.say, t.speech.as_deref());
+                voice::say_until(&link, &*host, &t.say, t.speech.as_deref(), &|| !calling.load(Ordering::SeqCst));
                 // "heard" is what takes it off the tower's list: if this is lost, he hears it once more, never zero times
                 let _ = link.post("/heard", &Heard { id: t.id.clone() });
                 // A question is read to him and then waits in the chat, where he answers it when he chooses, by

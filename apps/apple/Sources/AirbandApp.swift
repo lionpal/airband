@@ -148,6 +148,9 @@ struct FeedView: View {
     @State private var atEnd = true
     @State private var toEnd = 0
     @FocusState private var typing: Bool
+    /// He has just turned reading aloud on: a line says so for a moment.
+    @State private var joined = false
+    @State private var joinedNote = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -633,35 +636,43 @@ struct FeedView: View {
                         if listeningNow { model.cancelTalk() } else { withAnimation(.snappy(duration: 0.2)) { showQuick.toggle() } }
                     } label: { PlusButtonLabel(open: showQuick || listeningNow) }
                         .buttonStyle(.plain).accessibilityLabel(listeningNow ? "Cancel" : "Attach, or quick messages").accessibilityAddTraits(showQuick ? .isSelected : [])
-                        // as wide as what is on the other side, so the microphone stays in the middle
-                        .frame(width: 112, alignment: .leading)
                     Spacer(minLength: 0)
                     Button { showQuick = false; Task { await model.talk() } } label: {
                         ZStack {
-                            Circle().fill(Palette.signal.opacity(listeningNow ? 0.25 : 0)).frame(width: 112, height: 112)
+                            Circle().fill(Palette.signal.opacity(listeningNow ? 0.25 : 0)).frame(width: 104, height: 104)
                             Circle().fill(listeningNow ? Palette.signal : Palette.ink).frame(width: 88, height: 88)
                             // open, it is the send button: nothing goes until he taps it
                             Image(systemName: listeningNow ? "arrow.up" : "mic.fill").font(.system(size: 34, weight: .semibold)).foregroundStyle(Palette.ground)
                         }
-                        .frame(width: 112, height: 112)
+                        .frame(width: 96, height: 112)
                     }
                     .buttonStyle(.plain).accessibilityLabel(listeningNow ? "Send what you said" : "Talk")
+                    Spacer(minLength: 0)
+                    // Join the channel: what arrives is read aloud, hands free. As large as the microphone beside
+                    // it, since talking and listening are the two things this is for. Green while it is on. It
+                    // keeps its place while he talks, dimmed: nothing is read over him.
+                    Button {
+                        let on = !model.calling
+                        Task { await model.setCalling(on) }
+                        joinedNote += 1
+                        withAnimation(.easeOut(duration: 0.2)) { joined = on }
+                    } label: {
+                        ZStack {
+                            if model.calling { Circle().fill(Palette.signal).frame(width: 88, height: 88) } else { Circle().fill(.clear).frame(width: 88, height: 88).frosted(Circle()) }
+                            Image(systemName: model.calling ? "speaker.wave.2.fill" : "speaker.slash.fill").font(.system(size: 30, weight: .semibold))
+                                .foregroundStyle(model.calling ? Palette.ground : Palette.ink)
+                        }
+                        .frame(width: 96, height: 112)
+                    }
+                    .buttonStyle(.plain).disabled(listeningNow).opacity(listeningNow ? 0.35 : 1)
+                    .accessibilityLabel(model.calling ? "Stop reading aloud" : "Read aloud")
+                    .accessibilityAddTraits(model.calling ? .isSelected : [])
                     Spacer(minLength: 0)
                     HStack(spacing: 8) {
                     if listeningNow {
                         // while he talks, this adds a photo or a video to what he is saying
                         AttachButton()
                     } else {
-                        // join the channel: what arrives is read aloud, hands free. Lit while it is. Beside the
-                        // microphone, since talking and listening are what this is for.
-                        Button { Task { await model.setCalling(!model.calling) } } label: {
-                            Image(systemName: "speaker.wave.2.fill").font(.system(size: 18, weight: .semibold))
-                                .foregroundStyle(model.calling ? Palette.ground : Palette.ink)
-                                .frame(width: 48, height: 48)
-                                .background { if model.calling { Circle().fill(Palette.signal) } else { Circle().fill(.clear).frosted(Circle()) } }
-                        }
-                        .buttonStyle(.plain).accessibilityLabel(model.calling ? "Stop reading aloud" : "Read aloud")
-                        .accessibilityAddTraits(model.calling ? .isSelected : [])
                         Button { showQuick = false; typingOpen = true; typing = true } label: {
                             Image(systemName: "keyboard").font(.system(size: 20, weight: .semibold))
                                 .frame(width: 56, height: 56).frosted(Circle())
@@ -669,9 +680,20 @@ struct FeedView: View {
                         .buttonStyle(.plain).accessibilityLabel("Type")
                     }
                     }
-                    .frame(width: 112, alignment: .trailing)
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 18)
+                // said once when he joins, then gone: what the green button now does
+                .overlay(alignment: .top) {
+                    if joined {
+                        Text("New messages will be read aloud").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.soft)
+                            .padding(.horizontal, 14).frame(height: 28).frosted(Capsule(), strength: 0.9)
+                            .offset(y: -30).transition(.opacity)
+                            .task(id: joinedNote) {
+                                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                                withAnimation(.easeOut(duration: 0.4)) { joined = false }
+                            }
+                    }
+                }
             }
         }
         .padding(.top, 6).padding(.bottom, 6)

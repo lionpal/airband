@@ -13,10 +13,15 @@ const FIRST_SOUND: Duration = Duration::from_millis(8000);
 /// Say `text`: with the tower's voice when it has one for this (`speech`), otherwise with the host's if that is
 /// worth hearing.
 pub(crate) fn say(link: &Link, host: &dyn RadioHost, text: &str, speech: Option<&str>) {
-    if text.trim().is_empty() {
+    say_until(link, host, text, speech, &|| false)
+}
+
+/// The same, leaving off as soon as `stop` says so.
+pub(crate) fn say_until(link: &Link, host: &dyn RadioHost, text: &str, speech: Option<&str>, stop: &dyn Fn() -> bool) {
+    if text.trim().is_empty() || stop() {
         return;
     }
-    if speech.is_some_and(|id| play(link, host, id, &|| false)) {
+    if speech.is_some_and(|id| play(link, host, id, stop)) {
         return;
     }
     if host.own_voice() {
@@ -63,6 +68,10 @@ pub(crate) fn play(link: &Link, host: &dyn RadioHost, id: &str, stop: &dyn Fn() 
                 pcm.extend_from_slice(&s.to_le_bytes());
             }
             left -= n;
+        }
+        // asked again here: he may have said stop while this part was being fetched
+        if stop() {
+            return true;
         }
         if !pcm.is_empty() || part.done {
             host.play(rate, pcm, part.done);
