@@ -17,9 +17,10 @@ final class Voice: NSObject, @unchecked Sendable {
     private var keepAlive: AVAudioPlayer?
     private var tone: AVAudioPlayer?
     private enum Mode { case idle, speaking, listening }
-    /// The conversation is on a car's screen. Apple asks for one way of holding the audio there, for as long as
-    /// the conversation lasts: play and record, the default mode, mixing with nothing. The car mutes its own
-    /// music for that time and gives it back when the conversation ends. The car does its own echo cancelling.
+    /// The conversation is on a car's screen. Apple asks that the audio be held there only while voice is in
+    /// use, and held one way: play and record, the default mode, mixing with nothing. So it is taken when an
+    /// agent speaks or he does, which mutes the car's own music, and given back as soon as that is over, which
+    /// brings the music back. Nothing is held while he waits. The car does its own echo cancelling.
     var inCar = false
 
     override init() {
@@ -43,7 +44,8 @@ final class Voice: NSObject, @unchecked Sendable {
             keepAlive?.numberOfLoops = -1
             keepAlive?.volume = 0
         }
-        keepAlive?.play()
+        // in the car nothing is held while he waits, not even silence
+        if !inCar { keepAlive?.play() }
     }
 
     /// Stop whatever is playing.
@@ -60,10 +62,23 @@ final class Voice: NSObject, @unchecked Sendable {
     private func set(_ mode: Mode) {
         do {
             switch mode {
+            case .idle where inCar:
+                // nothing to say or hear: the car has its music back
+                keepAlive?.stop()
+                do { try session.setActive(false, options: .notifyOthersOnDeactivation) } catch {
+                    // a closing beep is still sounding: let it finish, then give the audio back
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                        guard let self, self.inCar, !self.recording, !self.session.isOtherAudioPlaying else { return }
+                        try? self.session.setActive(false, options: .notifyOthersOnDeactivation)
+                    }
+                }
+                return
             case _ where inCar:
                 if session.category != .playAndRecord || session.mode != .default || !session.categoryOptions.isEmpty {
                     try session.setCategory(.playAndRecord, mode: .default, options: [])
                 }
+                try session.setActive(true)
+                return
             case .idle: // mixing, not ducking: music returns to full volume
                 try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             case .speaking:
@@ -75,7 +90,7 @@ final class Voice: NSObject, @unchecked Sendable {
         } catch {
             NSLog("airband: audio session \(mode): \(error.localizedDescription)")
         }
-        if keepAlive?.isPlaying == false { keepAlive?.play() }
+        if !inCar, keepAlive?.isPlaying == false { keepAlive?.play() }
     }
 
     @objc private func interrupted(_ note: Notification) {

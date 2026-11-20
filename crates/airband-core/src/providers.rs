@@ -116,6 +116,10 @@ impl Offer {
     }
 }
 
+/// The live listening dialects this build speaks (`airband-radio/src/ears.rs` has one for each). A row that
+/// names another is left out when the catalogue is read: it is for a newer build.
+pub const DIALECTS: &[&str] = &["azure", "gemini", "elevenlabs"];
+
 pub const LENT: &str = "relay-pass";
 pub const LENT_LISTENER: &str = "azure";
 /// What a pass says when the phone is to send its recording to the tower, which holds the key.

@@ -241,6 +241,7 @@ fn read(text: &str) -> Result<Catalog, String> {
                 .offers
                 .into_iter()
                 .filter_map(|o| serde_json::from_value::<OfferRow>(o).ok())
+                .filter(|o| !matches!(&o.by, ByRow::Listener { dialect } if !crate::providers::DIALECTS.contains(&dialect.as_str())))
                 .map(|o| Offer {
                     job: job(o.job),
                     by: match o.by {
@@ -313,6 +314,9 @@ mod tests {
             {"job":"voice","by":"speech","label":"Known"}]}]}"#)
         .unwrap();
         assert_eq!(c.providers[0].offers.iter().map(|o| o.label).collect::<Vec<_>>(), ["Known"]);
+        // the same for a listening dialect this build does not speak
+        let c = read(r#"{"rev":9,"providers":[{"id":"x","name":"X","offers":[{"job":"ears","by":{"listener":{"dialect":"martian"}},"label":"New"}]}]}"#).unwrap();
+        assert!(c.providers[0].offers.is_empty());
     }
 
     #[test]
