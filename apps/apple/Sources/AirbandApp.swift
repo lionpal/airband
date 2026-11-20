@@ -1203,37 +1203,59 @@ struct ContextView: View {
     }
 }
 
-/// His own key for the listening service: optional. With it the microphone works with no computer and no relay.
+/// His own key for a listening service: optional. With it the microphone works with no computer and no relay.
+/// Which services there are, and what each needs, is the core's to say.
 struct SpeechKeyView: View {
     @EnvironmentObject var model: RadioModel
+    private let offered = ownListeners()
+    @State private var kind = ""
     @State private var region = ""
     @State private var key = ""
     @State private var kept = false
     @State private var checking = false
     @State private var wrong: String?
 
+    private var chosen: OwnListener? { offered.first { $0.kind == kind } ?? offered.first }
+    private var using: String {
+        let name = chosen?.name ?? ""
+        return region.isEmpty ? "Using your key for \(name)" : "Using your key for \(name) (\(region))"
+    }
+    /// Everything the chosen service needs has been typed in.
+    private var ready: Bool {
+        guard let chosen, !checking else { return false }
+        let blank: (String) -> Bool = { $0.trimmingCharacters(in: .whitespaces).isEmpty }
+        return !blank(key) && !(chosen.region && blank(region))
+    }
+
     var body: some View {
         Form {
-            Section(footer: Text("Optional. With your own Azure Speech key the mic works without your computer. The key stays in this phone's Keychain and only goes to Azure.")) {
+            Section(footer: Text("Optional. With your own key the mic works without your computer. The key stays in this phone's Keychain and only goes to the service it is for.")) {
                 if kept {
-                    Text("Using your key (" + region + ")")
+                    Text(using)
                     Button("Remove key", role: .destructive) {
                         model.forgetOwnEars()
                         (kept, region, key) = (false, "", "")
                     }
                 } else {
-                    TextField("Region, like eastus", text: $region).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    if offered.count > 1 {
+                        Picker("Service", selection: $kind) { ForEach(offered, id: \.kind) { Text($0.name).tag($0.kind) } }
+                    } else if let only = offered.first {
+                        Text(only.name)
+                    }
+                    if chosen?.region == true {
+                        TextField("Region, like eastus", text: $region).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    }
                     SecureField("Key", text: $key).textContentType(.password)
                     Button {
                         (checking, wrong) = (true, nil)
-                        model.keepOwnEars(region: region, key: key) { problem in
+                        model.keepOwnEars(kind: chosen?.kind ?? "", region: region, key: key) { problem in
                             (checking, wrong) = (false, problem)
                             if problem == nil { (kept, key) = (true, "") }
                         }
                     } label: {
                         HStack { Text("Save"); if checking { Spacer(); ProgressView() } }
                     }
-                    .disabled(checking || region.trimmingCharacters(in: .whitespaces).isEmpty || key.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(!ready)
                     if let wrong { Text(wrong).foregroundStyle(.red) }
                 }
             }
@@ -1248,7 +1270,8 @@ struct SpeechKeyView: View {
         }
         .navigationTitle("Speech key").navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            if let own = model.ownEars { (kept, region) = (true, own.region) }
+            kind = offered.first?.kind ?? ""
+            if let own = model.ownEars { (kept, kind, region) = (true, own.kind, own.region) }
         }
     }
 }

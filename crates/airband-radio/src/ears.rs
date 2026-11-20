@@ -3,7 +3,10 @@
 //! microphone audio, and deciding when he has finished (airband_core::audio::Endpointer) and talking to the
 //! service are done once, for every platform.
 //!
-//! A provider is a function from (pass, microphone) to text; adding one is one more arm in [`hear`].
+//! A listening service is one row of [`LISTENERS`]: how to listen with it as he speaks, how to listen with it in
+//! one upload if that fails (when it can), and how to get a pass for it from a key of his own. Nothing else
+//! here, in the tower or in the app names a service: the tower's pass says which by its `kind`, and the app
+//! asks [`own_listeners`] what it may offer.
 use super::*;
 use airband_core::audio::{Endpointer, Heard, samples};
 use airband_core::radio::EarsGrant;
@@ -15,21 +18,50 @@ const RATE: u32 = 16000;
 /// A pass is asked for again after this long (Microsoft's last ten minutes).
 const PASS_LIFE: Duration = Duration::from_secs(300);
 
-/// A key of his own for the listening service, when he has put one in the app: (region, key). With it the
+/// A pass for the service, live as he speaks: the pass, the microphone, its rate, the header of a recording,
+/// and whether he opened the microphone himself. Ok(None) is silence.
+type Stream = fn(Arc<dyn Fn() -> EarsGrant + Send + Sync>, &dyn RadioHost, u32, Vec<u8>, bool) -> Result<Option<String>, ()>;
+
+pub(crate) struct Listener {
+    /// What the tower's pass calls it (`EarsGrant::kind`), and what its key is kept under.
+    pub kind: &'static str,
+    /// What he is shown.
+    pub name: &'static str,
+    stream: Stream,
+    /// The same microphone in one upload, for when the live connection cannot be made. Not every service has one.
+    upload: Option<fn(&EarsGrant, &dyn RadioHost, bool) -> Result<Option<String>, ()>>,
+    /// A pass from a key of his own: (region, key). Err says why not, in words for him.
+    pass: fn(&str, &str) -> Result<String, String>,
+    /// Whether its keys belong to a region he has to name.
+    pub region: bool,
+}
+
+pub(crate) const LISTENERS: &[Listener] = &[Listener { kind: "azure", name: "Microsoft Azure Speech", stream: crate::ears_stream::azure, upload: Some(azure), pass: azure_pass, region: true }];
+
+fn listener(kind: &str) -> Option<&'static Listener> {
+    LISTENERS.iter().find(|l| l.kind == kind)
+}
+
+/// A key of his own for a listening service, when he has put one in the app: (kind, region, key). With it the
 /// phone gets its pass from the service itself and needs neither his computer nor the relay to listen. The
 /// host keeps it (in the phone's keychain) and gives it here at launch; it is never sent anywhere but to the
 /// service it is for.
-static OWN: Mutex<Option<(String, String)>> = Mutex::new(None);
+static OWN: Mutex<Option<(String, String, String)>> = Mutex::new(None);
 /// The names the tower last said he is likely to say: used with a pass of his own, which comes with none.
 static PHRASES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-pub(crate) fn set_own(region: &str, key: &str) {
+pub(crate) fn set_own(kind: &str, region: &str, key: &str) {
     let (region, key) = (region.trim().to_lowercase(), key.trim().to_string());
-    *OWN.lock().unwrap() = (!region.is_empty() && !key.is_empty()).then_some((region, key));
+    *OWN.lock().unwrap() = (listener(kind).is_some() && !key.is_empty()).then(|| (kind.to_string(), region, key));
 }
 
-/// A pass from the service for a key. Err says why not, in words for him.
-pub(crate) fn pass_for(region: &str, key: &str) -> Result<String, String> {
+/// A pass from a service for a key of his. Err says why not, in words for him.
+pub(crate) fn pass_for(kind: &str, region: &str, key: &str) -> Result<String, String> {
+    let l = listener(kind).ok_or("This version of airband does not know that listening service.")?;
+    (l.pass)(region, key)
+}
+
+fn azure_pass(region: &str, key: &str) -> Result<String, String> {
     let region = region.trim().to_lowercase();
     if region.is_empty() || !region.bytes().all(|b| b.is_ascii_alphanumeric()) {
         return Err("That is not a region. It looks like eastus or japaneast.".into());
@@ -57,9 +89,9 @@ impl Ears {
         }
         // A key of his own comes first: no computer and no relay is asked.
         let own = OWN.lock().unwrap().clone();
-        if let Some((region, key)) = own {
-            if let Ok(token) = pass_for(&region, &key) {
-                let g = EarsGrant { kind: "azure".into(), region, token, language: "en-US".into(), phrases: PHRASES.lock().unwrap().clone() };
+        if let Some((kind, region, key)) = own {
+            if let Ok(token) = pass_for(&kind, &region, &key) {
+                let g = EarsGrant { kind, region, token, language: "en-US".into(), phrases: PHRASES.lock().unwrap().clone() };
                 *self.grant.lock().unwrap() = Some((g.clone(), Instant::now()));
                 return g;
             }
@@ -113,22 +145,23 @@ impl Ears {
             let (ears, link) = (self.clone(), link.clone());
             Arc::new(move || ears.grant(&link))
         };
+        // Which service: the pass says. One this build has no code for cannot be listened with.
+        let Some(with) = listener(&self.grant(link).kind) else {
+            host.record_stop();
+            *self.grant.lock().unwrap() = None;
+            return if host.own_voice() { said(host.listen()) } else { Listened::Cannot };
+        };
         // as he speaks, with the words coming back while he talks. If that connection cannot be made, the same
-        // microphone is listened to again the plain way (one upload, the words at the end).
-        let heard = crate::ears_stream::azure(pass, host, RATE, wav_header(), manual);
+        // microphone is listened to again the plain way (one upload, the words at the end), by a service that has one.
+        let heard = (with.stream)(pass, host, RATE, wav_header(), manual);
         host.record_stop();
-        let heard = match heard {
-            Err(()) => {
-                let grant = self.grant(link);
-                if grant.kind == "azure" && !manual && host.record_start(RATE) {
-                    let plain = azure(&grant, host, manual);
-                    host.record_stop();
-                    plain
-                } else {
-                    Err(())
-                }
+        let heard = match (heard, with.upload) {
+            (Err(()), Some(upload)) if !manual && host.record_start(RATE) => {
+                let plain = upload(&self.grant(link), host, manual);
+                host.record_stop();
+                plain
             }
-            other => other,
+            (heard, _) => heard,
         };
         match heard {
             Ok(text) => said(text),

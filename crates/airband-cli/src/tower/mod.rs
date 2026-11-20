@@ -298,7 +298,7 @@ pub fn try_voice(cfg: &Config) -> Result<String, String> {
 /// Does the listening service give a pass? For `airband setup`.
 pub fn try_ears(cfg: &Config) -> Result<String, String> {
     match &cfg.ears {
-        config::Ears::Azure { key, region, .. } => airband_radio::check_own_ears(region.clone(), key.clone()).map(|_| "It gives a pass.".into()).map_err(|e| e.to_string()),
+        config::Ears::Azure { key, region, .. } => airband_radio::check_own_ears("azure".into(), region.clone(), key.clone()).map(|_| "It gives a pass.".into()).map_err(|e| e.to_string()),
         config::Ears::Device => Ok("Set to none.".into()),
     }
 }
