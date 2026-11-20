@@ -27,6 +27,7 @@ mod install;
 mod terminal;
 mod tower;
 mod vault;
+mod setup;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -46,7 +47,8 @@ fn main() {
         Some("accounts") => adapters::accounts_command(&config::load(), &args[1..]),
         Some("relay") => install::relay(config::load(), &args[1..]),
         Some("lan") => install::lan(config::load(), &args[1..]),
-        Some("keys") => install::keys(&args[1..]),
+        Some("keys") => setup::keys(&args[1..]),
+        Some("setup") => setup::setup(config::load(), !args.iter().any(|a| a == "--no-start")),
         Some("model") => install::model(config::load(), &args[1..]),
         Some("voice") => install::voice(config::load(), &args[1..]),
         Some("ears") => install::ears(config::load(), &args[1..]),

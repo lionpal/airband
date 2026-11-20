@@ -195,29 +195,6 @@ pub fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// `airband keys [lock | unlock]`: where the tower's keys are kept.
-pub fn keys(args: &[String]) -> Result<(), String> {
-    match args.first().map(String::as_str) {
-        None => {
-            println!("{}", if config::locked() { "In the keychain: encrypted with your login password. The settings file holds no key." } else { "In the settings file, which only you can read." });
-            println!("Change it:  airband keys lock  |  airband keys unlock");
-        }
-        Some("lock") => {
-            if !crate::vault::signed() {
-                return Err("This copy of airband is not signed with a developer certificate, so the keychain would ask about it after every update. The keys stay in the settings file, which only you can read.".into());
-            }
-            config::lock()?;
-            println!("The keys are in the keychain. The settings file holds none.");
-        }
-        Some("unlock") => {
-            config::unlock()?;
-            println!("The keys are back in the settings file, which only you can read.");
-        }
-        Some(other) => return Err(format!("airband keys takes lock or unlock, not \"{other}\"")),
-    }
-    Ok(())
-}
-
 /// `airband lan [on | off]`: whether a paired phone on the same network may reach this computer straight.
 pub fn lan(mut cfg: Config, args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {

@@ -37,9 +37,17 @@ fn each(doc: &mut Value, f: &mut dyn FnMut(String, &mut Value)) {
             f(name.to_string(), v);
         }
     }
-    for part in ["voice", "ears", "summarizer"] {
-        if let Some(v) = doc.get_mut(part).and_then(|p| p.get_mut("key")).filter(|v| v.is_string()) {
+    for part in ["voice", "ears", "summarizer", "summarizer_fallback"] {
+        // a key written by its name is not a secret: the key it names is kept below
+        if let Some(v) = doc.get_mut(part).and_then(|p| p.get_mut("key")).filter(|v| v.as_str().is_some_and(|k| !k.starts_with("key:"))) {
             f(format!("{part}.key"), v);
+        }
+    }
+    if let Some(keys) = doc.get_mut("keys").and_then(Value::as_object_mut) {
+        for (name, k) in keys {
+            if let Some(v) = k.get_mut("secret").filter(|v| v.is_string()) {
+                f(format!("key:{name}"), v);
+            }
         }
     }
     if let Some(pairings) = doc.get_mut("pairings").and_then(Value::as_array_mut) {

@@ -33,6 +33,11 @@ pub struct Config {
     /// is ever worked out from the words themselves in place of a model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summarizer_fallback: Option<Summarizer>,
+    /// The keys he has given, each under a name with the provider it is for. What uses a key (summaries,
+    /// voice, listening) holds its value here in memory; the settings file writes that as `key:<name>`, so a
+    /// key is stored once however many things use it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub keys: BTreeMap<String, StoredKey>,
     /// The relay radios reach this tower through ("https://relay.example"). Without one, a radio must be able
     /// to reach this machine itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -185,6 +190,38 @@ fn default_launchers() -> BTreeMap<String, Launcher> {
 /// to date; one he has changed is his and is left alone.
 const LAUNCHER_BEFORE_MODELS: &[&str] = &["tmux", "new-session", "-d", "-s", "{session}", "-c", "{cwd}", "claude", "{task}"];
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredKey {
+    /// The provider it is for, by the name its settings use ("gemini", "azure").
+    pub provider: String,
+    pub secret: String,
+}
+
+/// The places in the settings that use a key.
+const USERS: [&str; 4] = ["summarizer", "summarizer_fallback", "voice", "ears"];
+const BY_NAME: &str = "key:";
+
+/// In the settings as they are written: each use of a kept key becomes the key's name.
+fn name_keys(doc: &mut serde_json::Value) {
+    let kept: Vec<(String, String)> = doc["keys"].as_object().map(|m| m.iter().filter_map(|(n, k)| Some((n.clone(), k["secret"].as_str()?.to_string()))).collect()).unwrap_or_default();
+    for user in USERS {
+        let Some(key) = doc.get_mut(user).and_then(|u| u.get_mut("key")) else { continue };
+        if let Some((name, _)) = kept.iter().find(|(_, secret)| !secret.is_empty() && key.as_str() == Some(secret.as_str())) {
+            *key = serde_json::Value::String(format!("{BY_NAME}{name}"));
+        }
+    }
+}
+
+/// And as they are read: each name becomes the key again. Err names one that is not kept.
+fn fill_keys(doc: &mut serde_json::Value) -> Result<(), String> {
+    for user in USERS {
+        let Some(name) = doc.get(user).and_then(|u| u["key"].as_str()).and_then(|k| k.strip_prefix(BY_NAME)).map(str::to_string) else { continue };
+        let secret = doc["keys"][&name]["secret"].as_str().ok_or_else(|| format!("the settings use a key called \"{name}\" that is not kept; run airband setup"))?.to_string();
+        doc[user]["key"] = serde_json::Value::String(secret);
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PairedRadio {
     pub name: String,
@@ -307,13 +344,15 @@ pub fn keyless() -> Option<String> {
 /// Where the keychain cannot be read (a shell over SSH) the settings still come back, with marks where the
 /// keys are and [`keyless`] saying why: a command that needs no key goes on working.
 fn parse(text: &str) -> Result<Config, String> {
-    if !crate::vault::sealed(text) {
-        return serde_json::from_str(text).map_err(|e| e.to_string());
-    }
     let mut doc: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
-    match kept() {
-        Ok(kept) => crate::vault::open(&mut doc, &kept)?,
-        Err(e) => *KEYLESS.lock().unwrap() = Some(e),
+    if crate::vault::sealed(text) {
+        match kept() {
+            Ok(kept) => crate::vault::open(&mut doc, &kept)?,
+            Err(e) => *KEYLESS.lock().unwrap() = Some(e),
+        }
+    }
+    if keyless().is_none() {
+        fill_keys(&mut doc)?;
     }
     serde_json::from_value(doc).map_err(|e| e.to_string())
 }
@@ -325,10 +364,11 @@ fn render(cfg: &Config, lock: bool) -> Result<String, String> {
         return Err(format!("the settings cannot be changed from here: {why}"));
     }
     let existing = fs::read_to_string(dir().join("config.json")).unwrap_or_default();
-    if !lock && !crate::vault::sealed(&existing) {
-        return Ok(format!("{}\n", serde_json::to_string_pretty(cfg).unwrap()));
-    }
     let mut doc = serde_json::to_value(cfg).unwrap();
+    name_keys(&mut doc);
+    if !lock && !crate::vault::sealed(&existing) {
+        return Ok(format!("{}\n", serde_json::to_string_pretty(&doc).unwrap()));
+    }
     let before = if crate::vault::sealed(&existing) { kept()? } else { Default::default() };
     let now = crate::vault::seal(&mut doc, &before);
     if now != before {
@@ -354,6 +394,7 @@ pub fn lock() -> Result<(), String> {
     let back = crate::vault::get()?;
     let mut doc: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
     crate::vault::open(&mut doc, &back)?;
+    fill_keys(&mut doc)?;
     if serde_json::to_value(&cfg).unwrap() != doc {
         return Err("the keychain did not give back what was put in it; nothing was changed".into());
     }
@@ -363,7 +404,9 @@ pub fn lock() -> Result<(), String> {
 /// Put the keys back in the file, readable by him alone, and take them out of the keychain.
 pub fn unlock() -> Result<(), String> {
     let cfg = read().ok_or("the configuration cannot be read")?;
-    write_private(&dir().join("config.json"), &format!("{}\n", serde_json::to_string_pretty(&cfg).unwrap())).map_err(|e| format!("cannot write ~/.airband/config.json: {e}"))?;
+    let mut doc = serde_json::to_value(&cfg).unwrap();
+    name_keys(&mut doc);
+    write_private(&dir().join("config.json"), &format!("{}\n", serde_json::to_string_pretty(&doc).unwrap())).map_err(|e| format!("cannot write ~/.airband/config.json: {e}"))?;
     crate::vault::forget();
     Ok(())
 }
@@ -402,6 +445,17 @@ pub fn load() -> Config {
     if let (Some(mine), Some(now)) = (cfg.launchers.get_mut(&default_launcher()).and_then(|l| l.held.as_mut()), default_launchers().remove(&default_launcher()).and_then(|l| l.held)) {
         if mine.stop.is_none() && mine.line == now.line {
             mine.stop = now.stop;
+        }
+    }
+    // a key given before keys had names is kept under its provider's name, so it can be used again and shown
+    // (by name only) in `airband keys`
+    if keyless().is_none() {
+        for used in [serde_json::to_value(&cfg.summarizer), serde_json::to_value(&cfg.voice), serde_json::to_value(&cfg.ears)].into_iter().flatten() {
+            let (Some(kind), Some(secret)) = (used["kind"].as_str(), used["key"].as_str().filter(|k| !k.is_empty())) else { continue };
+            if !cfg.keys.values().any(|k| k.secret == secret) {
+                let name = (1..).map(|n| if n == 1 { kind.to_string() } else { format!("{kind}-{n}") }).find(|n| !cfg.keys.contains_key(n)).unwrap();
+                cfg.keys.insert(name, StoredKey { provider: kind.to_string(), secret: secret.to_string() });
+            }
         }
     }
     // without the keys nothing is rewritten: the file is left exactly as it is

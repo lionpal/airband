@@ -282,6 +282,27 @@ pub fn triage(cfg: Config) -> Result<(), String> {
     Ok(())
 }
 
+/// Does the model that reads for the tower answer? For `airband setup`.
+pub fn try_model(cfg: &Config) -> Result<String, String> {
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
+    println!("  Asking it something…");
+    rt.block_on(judge::ask_model(cfg, "Reply with the one word: ready".into())).map(|_| "It answers.".into())
+}
+
+/// Does the voice speak? For `airband setup`.
+pub fn try_voice(cfg: &Config) -> Result<String, String> {
+    println!("  Asking it to speak…");
+    speech::try_voice(&cfg.voice).map(|seconds| format!("It speaks ({seconds:.1} seconds of sound came back)."))
+}
+
+/// Does the listening service give a pass? For `airband setup`.
+pub fn try_ears(cfg: &Config) -> Result<String, String> {
+    match &cfg.ears {
+        config::Ears::Azure { key, region, .. } => airband_radio::check_own_ears(region.clone(), key.clone()).map(|_| "It gives a pass.".into()).map_err(|e| e.to_string()),
+        config::Ears::Device => Ok("Set to none.".into()),
+    }
+}
+
 /// `airband progress`: the labels of an agent's steps on standard input, one to a line; prints the note he
 /// would be given for them, or "none". For trying the judgement by hand.
 pub fn progress(cfg: Config) -> Result<(), String> {

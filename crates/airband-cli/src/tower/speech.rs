@@ -143,6 +143,17 @@ impl Synth for Elevenlabs {
     }
 }
 
+/// Speak a word with this voice and say how many seconds of sound came back. For trying a voice by hand.
+pub(super) fn try_voice(voice: &Voice) -> Result<f32, String> {
+    let synth = synth_for(voice).ok_or("no voice is set")?;
+    let mut bytes = 0usize;
+    synth.speak("Ready.", &mut |pcm| bytes += pcm.len(), &mut |_, _| {})?;
+    if bytes == 0 {
+        return Err("it answered with no sound".into());
+    }
+    Ok(bytes as f32 / 2.0 / synth.rate() as f32)
+}
+
 fn synth_for(voice: &Voice) -> Option<Box<dyn Synth>> {
     match voice {
         Voice::Device => None,
