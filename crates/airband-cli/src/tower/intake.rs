@@ -8,7 +8,10 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
     }
     // copies of pictures are made before anything is locked: shrinking one takes a moment
     let kept: Vec<airband_core::radio::Picture> = match &ev.event {
-        Event::Picture { path, .. } => pictures::keep(std::path::Path::new(path)).into_iter().collect(),
+        // Only a picture the agent sent him is copied. One it only looked at is not shown to him, so the tower
+        // has no business opening it: an agent going through photos on a card or a network drive would have the
+        // system ask him, over and over, whether airband may read that drive.
+        Event::Picture { path, shown: true } => pictures::keep(std::path::Path::new(path)).into_iter().collect(),
         Event::Said { text, .. } => pictures::named_in(text, ev.agent.cwd.as_deref()).iter().take(pictures::PER_MESSAGE).filter_map(|p| pictures::keep(p)).collect(),
         _ => Vec::new(),
     };

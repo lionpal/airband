@@ -82,6 +82,13 @@ pub(super) fn keep_bytes(bytes: &[u8]) -> Option<Picture> {
 /// pictures: its own project, and the temporary folders. A path in a message is words, not an action the
 /// agent took, so it does not reach into the rest of the disk. (A picture the agent read or sent him is
 /// reported by its harness as an event and is not limited this way.)
+/// Could this path, going by how it is written, be within reach? Decided without touching the disk.
+fn near(path: &Path, cwd: Option<&str>) -> bool {
+    let mut roots: Vec<PathBuf> = vec![std::env::temp_dir(), "/tmp".into(), "/private/tmp".into(), "/var/folders".into(), "/private/var/folders".into()];
+    roots.extend(cwd.map(PathBuf::from));
+    !path.components().any(|c| c == std::path::Component::ParentDir) && roots.iter().any(|root| path.starts_with(root))
+}
+
 fn within_reach(path: &Path, cwd: Option<&str>) -> bool {
     let Ok(real) = path.canonicalize() else { return false };
     let mut roots: Vec<PathBuf> = vec![std::env::temp_dir(), "/tmp".into(), "/var/folders".into()];
@@ -104,7 +111,8 @@ pub(super) fn named_in(text: &str, cwd: Option<&str>) -> Vec<PathBuf> {
         } else {
             Path::new(cwd.unwrap_or(".")).join(word)
         };
-        if path.is_file() && within_reach(&path, cwd) && !out.contains(&path) {
+        // by its name first, before the disk is touched: a path on another drive is never even looked at
+        if near(&path, cwd) && path.is_file() && within_reach(&path, cwd) && !out.contains(&path) {
             out.push(path);
         }
     }
