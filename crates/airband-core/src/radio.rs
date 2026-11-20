@@ -321,6 +321,19 @@ impl EarsGrant {
     }
 }
 
+/// `POST reads`: choose what reads for this tower, from a radio. `kind` is a provider that reads and that a
+/// person can choose (a row of the provider table); never a command of the radio's own naming. `key` is its
+/// key, or empty to use one this tower already keeps for that provider. `set` is what else it is told.
+/// The tower tries it with a real call first, and answers `{ reads }` (its name) or `{ error }`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SetReads {
+    pub kind: String,
+    #[serde(default)]
+    pub key: String,
+    #[serde(default)]
+    pub set: std::collections::BTreeMap<String, String>,
+}
+
 /// `POST hear`: part of a recording, for a tower whose listening service takes a finished clip. `data` is
 /// 16 kHz mono in the same compressed blocks speech comes in, base64. With `last`, the answer is [`HeardText`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -567,6 +580,10 @@ pub struct Feed {
     /// This tower has a key of its own for the listening service. Only that it has one: never the key.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub listens: bool,
+    /// What reads the agents' messages on this tower and makes the short of them, by its provider's name for
+    /// showing. Empty when nothing does.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub reads: String,
     /// The ids of every message that needs him and is still unanswered, whether or not it is in `messages`:
     /// the whole inbox, current as of this answer.
     #[serde(default)]

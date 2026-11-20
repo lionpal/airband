@@ -33,7 +33,9 @@ pub enum Job {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum By {
     /// OpenAI Chat Completions. `cold` sends `temperature: 0`, which most services take and some refuse.
-    Chat { cold: bool },
+    /// `shaped`: the service can be held to a JSON schema (`response_format`), so what comes back always
+    /// parses; a call that knows the shape it wants says so. Small models need this most.
+    Chat { cold: bool, shaped: bool },
     /// A program on this computer: the prompt on standard input, the answer on standard output. The arguments
     /// here are the usual ones; `argv` in the settings replaces them.
     Command(&'static [&'static str]),
@@ -93,7 +95,7 @@ pub const PROVIDERS: &[Provider] = &[
         key: true,
         keys_at: "console.anthropic.com/settings/keys",
         offered: true,
-        offers: &[Offer { job: Job::Summary, by: By::Chat { cold: false }, asks: &[ask("url", "Address", "https://api.anthropic.com/v1"), ask("model", "Model", "claude-haiku-5-5")] }],
+        offers: &[Offer { job: Job::Summary, by: By::Chat { cold: false, shaped: false }, asks: &[ask("url", "Address", "https://api.anthropic.com/v1"), ask("model", "Model", "claude-haiku-5-5")] }],
     },
     Provider {
         id: "gemini",
@@ -102,7 +104,7 @@ pub const PROVIDERS: &[Provider] = &[
         keys_at: "aistudio.google.com/apikey",
         offered: true,
         offers: &[
-            Offer { job: Job::Summary, by: By::Chat { cold: true }, asks: &[ask("url", "Address", "https://generativelanguage.googleapis.com/v1beta/openai"), ask("model", "Model", "gemini-3.5-flash-lite")] },
+            Offer { job: Job::Summary, by: By::Chat { cold: true, shaped: true }, asks: &[ask("url", "Address", "https://generativelanguage.googleapis.com/v1beta/openai"), ask("model", "Model", "gemini-3.5-flash-lite")] },
             Offer { job: Job::Voice, by: By::GeminiVoice, asks: &[ask("model", "Model", "gemini-3.8-flash-lite-tts"), ask("voice", "Voice", "Leda")] },
             // its Live API, with the model that only transcribes: the words come back as he speaks
             Offer { job: Job::Ears, by: By::Listener("gemini"), asks: &[ask("model", "Model", "gemini-3.5-transcribe-live"), ask("language", "Language", "en-US")] },
@@ -116,7 +118,7 @@ pub const PROVIDERS: &[Provider] = &[
         offered: true,
         offers: &[
             // a model that reasons takes no temperature
-            Offer { job: Job::Summary, by: By::Chat { cold: false }, asks: &[ask("url", "Address", "https://api.openai.com/v1"), ask("model", "Model", "gpt-6-luna")] },
+            Offer { job: Job::Summary, by: By::Chat { cold: false, shaped: true }, asks: &[ask("url", "Address", "https://api.openai.com/v1"), ask("model", "Model", "gpt-6-luna")] },
             Offer { job: Job::Voice, by: By::Speech, asks: &[ask("url", "Address", "https://api.openai.com/v1"), ask("model", "Model", "gpt-4o-mini-tts"), ask("voice", "Voice", "coral"), ask("rate", "Samples a second", "24000")] },
             Offer { job: Job::Ears, by: By::Transcribe, asks: &[ask("url", "Address", "https://api.openai.com/v1"), ask("model", "Model", "gpt-transcribe")] },
         ],
@@ -127,7 +129,7 @@ pub const PROVIDERS: &[Provider] = &[
         key: true,
         keys_at: "openrouter.ai/keys",
         offered: true,
-        offers: &[Offer { job: Job::Summary, by: By::Chat { cold: true }, asks: &[ask("url", "Address", "https://openrouter.ai/api/v1"), ask("model", "Model", "google/gemini-3.5-flash-lite")] }],
+        offers: &[Offer { job: Job::Summary, by: By::Chat { cold: true, shaped: false }, asks: &[ask("url", "Address", "https://openrouter.ai/api/v1"), ask("model", "Model", "google/gemini-3.5-flash-lite")] }],
     },
     Provider {
         id: "groq",
@@ -136,7 +138,7 @@ pub const PROVIDERS: &[Provider] = &[
         keys_at: "console.groq.com/keys",
         offered: true,
         offers: &[
-            Offer { job: Job::Summary, by: By::Chat { cold: true }, asks: &[ask("url", "Address", "https://api.groq.com/openai/v1"), ask("model", "Model", "openai/gpt-oss-120b")] },
+            Offer { job: Job::Summary, by: By::Chat { cold: true, shaped: false }, asks: &[ask("url", "Address", "https://api.groq.com/openai/v1"), ask("model", "Model", "openai/gpt-oss-120b")] },
             Offer { job: Job::Ears, by: By::Transcribe, asks: &[ask("url", "Address", "https://api.groq.com/openai/v1"), ask("model", "Model", "whisper-large-v3-turbo")] },
         ],
     },
@@ -147,7 +149,7 @@ pub const PROVIDERS: &[Provider] = &[
         keys_at: "",
         offered: true,
         offers: &[
-            Offer { job: Job::Summary, by: By::Chat { cold: true }, asks: &[ask("url", "Address", "http://localhost:11434/v1"), ask("model", "Model", "")] },
+            Offer { job: Job::Summary, by: By::Chat { cold: true, shaped: true }, asks: &[ask("url", "Address", "http://localhost:11434/v1"), ask("model", "Model", "")] },
             Offer { job: Job::Voice, by: By::Speech, asks: &[ask("url", "Address", "http://localhost:8880/v1"), ask("model", "Model", "kokoro"), ask("voice", "Voice", "af_heart"), ask("rate", "Samples a second", "24000")] },
             Offer { job: Job::Ears, by: By::Transcribe, asks: &[ask("url", "Address", "http://localhost:8000/v1"), ask("model", "Model", "whisper-1")] },
         ],

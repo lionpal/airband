@@ -111,6 +111,9 @@ pub struct DeskView {
     pub stations: Vec<String>,
     /// Those of them that have a key of their own for the listening service.
     pub keyed: Vec<String>,
+    /// What reads the agents' messages and makes the short of them, by name: on the first computer that says.
+    /// Empty when none does.
+    pub reads: String,
     /// Files he has attached and not yet sent, in the order he added them: on their way to the computer, there
     /// and waiting for his words, or failed.
     pub uploads: Vec<DeskUpload>,
@@ -162,6 +165,8 @@ struct Station {
     fails: u32,
     failing_since: Option<std::time::Instant>,
     listens: bool,
+    /// What reads the agents' messages there, by name.
+    reads: String,
     agents: Vec<ChatAgent>,
     open: HashSet<String>,
     sending: Vec<Outgoing>,
@@ -498,6 +503,7 @@ impl Desk {
                 fails: 0,
                 failing_since: None,
                 listens: false,
+                reads: String::new(),
                 agents: was.map(|s| s.agents.clone()).unwrap_or_default(),
                 open: was.map(|s| s.open.clone()).unwrap_or_default(),
                 sending: Vec::new(),
@@ -603,6 +609,7 @@ impl Desk {
                 .collect(),
             stations: state.stations.iter().map(|s| s.name.clone()).collect(),
             keyed: state.stations.iter().filter(|s| s.listens).map(|s| s.name.clone()).collect(),
+            reads: state.stations.iter().map(|s| s.reads.clone()).find(|r| !r.is_empty()).unwrap_or_default(),
             uploads: state.uploads.iter().map(|u| u.shown.clone()).collect(),
             asking: state.asking.as_ref().map(|asking| {
                 // the tower's guesses first, in its order; then everyone else, whoever spoke last first
@@ -961,6 +968,20 @@ impl Desk {
         radio.dismiss(message_id)
     }
 
+    /// Choose what reads the agents' messages, on every computer that can be reached: `kind` is one of
+    /// [`crate::reading_services`], `key` its key (empty to use one that computer already keeps for it), and
+    /// `settings` what else it is told. The key goes sealed to each computer, which tries it with a real call
+    /// and keeps it encrypted. Err is what the first computer that would not take it said. Blocks: call it off
+    /// the main thread.
+    pub fn set_reads(&self, kind: String, key: String, settings: std::collections::HashMap<String, String>) -> Result<(), RadioError> {
+        let radios: Vec<Arc<Radio>> = self.shared.state.lock().unwrap().stations.iter().filter(|s| s.online).map(|s| s.radio.clone()).collect();
+        if radios.is_empty() {
+            return Err(RadioError::Offline);
+        }
+        let wanted = airband_core::radio::SetReads { kind, key, set: settings.into_iter().collect() };
+        radios.iter().try_for_each(|radio| radio.set_reads(&wanted))
+    }
+
     /// Take back something he said that is still waiting its turn. Blocks: call it off the main thread.
     pub fn unsend(&self, message_id: String) -> Result<(), RadioError> {
         self.radio_of(&message_id).ok_or(RadioError::Refused)?.unsend(message_id)
@@ -1277,6 +1298,7 @@ fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64)
                     station.online = true;
                     station.name = feed.station.clone();
                     station.listens = feed.listens;
+                    station.reads = feed.reads.clone();
                     station.agents = feed.agents.clone();
                     station.open = feed.open.iter().cloned().collect();
                     station.quick = feed.quick.clone();
@@ -1380,6 +1402,7 @@ mod tests {
             fails: 0,
             failing_since: None,
             listens: false,
+            reads: String::new(),
             agents: agents.iter().map(|(c, g)| ChatAgent { id: c.to_string(), callsign: c.to_string(), group: g.to_string(), harness: "h".into(), waiting: false, reachable: true, state: "working".into(), subagents: 0, doing: None, held: false, model: None, effort: None }).collect(),
             open: messages.iter().filter(|m| m.needs_you).map(|m| m.id.clone()).collect(),
             sending: Vec::new(),

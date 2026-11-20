@@ -10,7 +10,7 @@
 //! A model is fetched and kept by `models.rs`; this runs it. While one is chosen it stays loaded, so a sentence
 //! starts at once.
 use super::*;
-use crate::models::{fetched, folder, model};
+use crate::models::{fetched, model};
 use std::collections::HashMap;
 
 /// The voice in use, if any: the app's folder and the kind.
@@ -100,6 +100,12 @@ fn services(job: airband_core::providers::Job) -> Vec<Service> {
 #[uniffi::export]
 pub fn voice_services() -> Vec<Service> {
     services(airband_core::providers::Job::Voice)
+}
+
+/// What can read the agents' messages on his computer, for choosing it from the device.
+#[uniffi::export]
+pub fn reading_services() -> Vec<Service> {
+    services(airband_core::providers::Job::Summary)
 }
 
 /// And the listening services.
@@ -231,7 +237,7 @@ mod engine {
         let mut loaded = LOADED.lock().unwrap_or_else(|e| e.into_inner());
         if loaded.as_ref().is_none_or(|(of, _, _)| *of != chosen) {
             let said = |e: &dyn std::fmt::Display| format!("The voice could not be loaded: {e}");
-            let checkpoint = Checkpoint::resolve(folder(&chosen.0, m), ResolveOptions { quant: Quant::Q80, weights: None }).map_err(|e| said(&e))?;
+            let checkpoint = Checkpoint::resolve(crate::models::folder(&chosen.0, m), ResolveOptions { quant: Quant::Q80, weights: None }).map_err(|e| said(&e))?;
             let mut synth = checkpoint.builder(Lang::En).device(DeviceKind::Cpu).build().map_err(|e| said(&e))?;
             checkpoint.register_voices(&mut synth);
             *loaded = Some((chosen, m.voice, synth));

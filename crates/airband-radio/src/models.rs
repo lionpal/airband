@@ -22,6 +22,7 @@ pub(crate) struct Model {
     /// not kept.
     files: &'static [(&'static str, u64, &'static str)],
     /// For a voice: the voice it speaks in, by the name its file has under `voices/`.
+    #[cfg_attr(not(feature = "phonon"), allow(dead_code))]
     pub voice: &'static str,
     /// Who made it and under what licence, for the screen that offers it. Its licence asks to be credited.
     pub credit: &'static str,

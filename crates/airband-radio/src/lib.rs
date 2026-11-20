@@ -44,7 +44,7 @@ use call::*;
 pub use desk::*;
 pub use ears::try_listening;
 pub use models::{LocalModel, fetch_local_model, local_listeners, local_model_progress, local_voices, remove_local_model};
-pub use mouth::{Service, ServiceAsk, VoiceSample, check_service_voice, listening_services, own_voice_sample, set_local_voice, set_service_voice, voice_services};
+pub use mouth::{Service, ServiceAsk, VoiceSample, check_service_voice, listening_services, own_voice_sample, reading_services, set_local_voice, set_service_voice, voice_services};
 use link::*;
 use outbox::*;
 use store::*;
@@ -159,6 +159,7 @@ fn chat_feed(feed: Feed) -> ChatFeed {
         colours: feed.colours.into_iter().collect(),
         open: feed.open,
         listens: feed.listens,
+        reads: feed.reads,
         station: feed.station,
     }
 }
@@ -355,6 +356,8 @@ pub struct ChatFeed {
     pub station: String,
     /// That computer has a key of its own for the listening service.
     pub listens: bool,
+    /// What reads the agents' messages on that computer, by name. Empty when nothing does.
+    pub reads: String,
 }
 
 /// What the radio's waiting threads sleep on: they are woken when there is something to do (a message to send,
@@ -646,6 +649,11 @@ impl Radio {
         self.ask("/dismiss", serde_json::json!({ "message": message }))
     }
     /// Take back something he said that is still waiting its turn. Blocks: call it off the main thread.
+    /// Choose what reads for this tower. Blocks while the tower tries it with a real call.
+    pub(crate) fn set_reads(&self, wanted: &airband_core::radio::SetReads) -> Result<(), RadioError> {
+        self.ask("/reads", serde_json::to_value(wanted).unwrap())
+    }
+
     pub fn unsend(&self, message: String) -> Result<(), RadioError> {
         self.ask("/unsend", serde_json::json!({ "message": message }))
     }

@@ -30,14 +30,57 @@ pub(super) fn json_in(out: &str) -> Option<&str> {
     out.get(a..=b)
 }
 
+/// What reads, when he has changed it from a radio since this tower started: used from then on, with no
+/// restart. The settings file has it too, for the next start.
+static READER: Mutex<Option<Summarizer>> = Mutex::new(None);
+
+/// What reads for the tower now.
+pub(super) fn reader(cfg: &Config) -> Summarizer {
+    READER.lock().unwrap().clone().unwrap_or_else(|| cfg.summarizer.clone())
+}
+
+/// Choose what reads, asked for from a radio. Only a provider he could choose in `airband setup`, reached the
+/// way its row says: a radio cannot name a command to run here. It is tried with a real call before anything
+/// is kept. The key is kept encrypted with the others. Returns the provider's name.
+pub(super) async fn set_reader(wanted: airband_core::radio::SetReads) -> Result<String, String> {
+    use crate::providers::{Job, Use, offering};
+    let p = offering(Job::Summary).find(|p| p.id == wanted.kind).ok_or("That is not something that can be chosen to read here.")?;
+    let offer = p.offers.iter().find(|o| o.job == Job::Summary).ok_or("That does not read.")?;
+    let mut cfg = config::read().filter(|_| config::keyless().is_none()).ok_or("This computer's settings cannot be read right now.")?;
+    let key = match (p.key, wanted.key.trim()) {
+        (false, _) => String::new(),
+        (true, "") => cfg.keys.values().find(|k| k.provider == p.id).map(|k| k.secret.clone()).ok_or_else(|| format!("{} needs a key.", p.name))?,
+        (true, given) => given.to_string(),
+    };
+    // only the settings its row asks for
+    let set = wanted.set.into_iter().filter(|(field, value)| !value.trim().is_empty() && offer.asks.iter().any(|a| a.field == field)).map(|(f, v)| (f, Value::String(v.trim().to_string()))).collect();
+    let using = Use { kind: p.id.into(), key: key.clone(), set };
+    ask(&using, "Reply with the one word: ready".into(), None).await.map_err(|why| format!("{} did not answer: {}", p.name, why.chars().take(160).collect::<String>()))?;
+    if p.key && !cfg.keys.values().any(|k| k.secret == key) {
+        let name = (1..).map(|n| if n == 1 { p.id.to_string() } else { format!("{}-{n}", p.id) }).find(|n| !cfg.keys.contains_key(n)).unwrap();
+        cfg.keys.insert(name, config::StoredKey { provider: p.id.into(), secret: key });
+    }
+    cfg.summarizer = using.clone();
+    config::save(&cfg)?;
+    *READER.lock().unwrap() = Some(using);
+    log(format!("a radio chose what reads: {}", p.name));
+    Ok(p.name.to_string())
+}
+
 /// Ask the model that reads for the tower. If it does not answer, the second one is asked, when there is one.
 pub(super) async fn ask_model(cfg: &Config, prompt: String) -> Result<String, String> {
-    match ask(&cfg.summarizer, prompt.clone()).await {
+    ask_shaped(cfg, prompt, None).await
+}
+
+/// The same, for a call that wants JSON of a known shape. A service that can be held to a schema is, so its
+/// answer always parses; the others are asked in words, as before.
+pub(super) async fn ask_shaped(cfg: &Config, prompt: String, shape: Option<Value>) -> Result<String, String> {
+    match ask(&reader(cfg), prompt.clone(), shape.clone()).await {
         Ok(text) => Ok(text),
         Err(first) => match &cfg.summarizer_fallback {
             Some(second) => {
                 log(format!("the model did not answer ({first}); asking the second"));
-                ask(second, prompt).await.map_err(|e| format!("{first}; and the second: {e}"))
+                ask(second, prompt, shape).await.map_err(|e| format!("{first}; and the second: {e}"))
             }
             None => Err(first),
         },
@@ -45,7 +88,7 @@ pub(super) async fn ask_model(cfg: &Config, prompt: String) -> Result<String, St
 }
 
 /// Ask one model, through whichever interface its row names.
-async fn ask(model: &Summarizer, prompt: String) -> Result<String, String> {
+async fn ask(model: &Summarizer, prompt: String, shape: Option<Value>) -> Result<String, String> {
     use crate::providers::{By, Job};
     if model.is_none() {
         return Err("no summarizer is configured".into());
@@ -53,10 +96,13 @@ async fn ask(model: &Summarizer, prompt: String) -> Result<String, String> {
     let (_, offer) = model.offer(Job::Summary).ok_or_else(|| format!("this version of airband has nothing called \"{}\" that reads", model.kind))?;
     let argv: Vec<String> = match offer.by {
         // OpenAI's chat interface, which the row's service speaks at its address
-        By::Chat { cold } => {
+        By::Chat { cold, shaped } => {
             let mut body = json!({ "model": model.get(Job::Summary, "model"), "messages": [{ "role": "user", "content": prompt }] });
             if cold {
                 body["temperature"] = json!(0);
+            }
+            if let (true, Some(shape)) = (shaped, shape) {
+                body["response_format"] = json!({ "type": "json_schema", "json_schema": { "name": "answer", "strict": true, "schema": shape } });
             }
             let url = format!("{}/chat/completions", model.get(Job::Summary, "url").trim_end_matches('/'));
             return ask_api(url, model.key.clone(), body).await;
@@ -218,7 +264,22 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
         #[serde(default)]
         background: bool,
     }
-    let parsed = ask_model(cfg, prompt).await.and_then(|out| {
+    // The shape of the answer, for a service that can be held to one. The words come before the verdict: a
+    // small model that has just written what the message says judges it better than one that judges first.
+    let shape = json!({
+        "type": "object",
+        "properties": {
+            "say": { "type": "string" },
+            "kind": { "type": "string", "enum": ["needs-you", "report", "stalled", "fyi"] },
+            "options": { "type": "array", "items": { "type": "string" }, "maxItems": 3 },
+            "recommended": { "type": ["integer", "null"] },
+            "read": { "type": ["string", "null"] },
+            "background": { "type": "boolean" }
+        },
+        "required": ["say", "kind", "options", "recommended", "read", "background"],
+        "additionalProperties": false
+    });
+    let parsed = ask_shaped(cfg, prompt, Some(shape)).await.and_then(|out| {
         serde_json::from_str::<Out>(json_in(&out).ok_or("no JSON in the answer")?).map_err(|e| e.to_string())
     });
     match parsed {
