@@ -42,12 +42,20 @@ pub(crate) struct Listener {
     upload: Option<fn(&EarsGrant, &dyn RadioHost, bool) -> Result<Option<String>, ()>>,
     /// A short-lived pass for a key: the service's settings, and the key. Err says why not, in words for him.
     pass: fn(&BTreeMap<String, String>, &str) -> Result<String, String>,
+    /// Its pass is good for one connection only: a new one is asked for each time, and none is kept.
+    once: bool,
 }
 
 pub(crate) const LISTENERS: &[Listener] = &[
-    Listener { kind: "azure", stream: crate::ears_stream::azure, upload: Some(azure), pass: azure_pass },
-    Listener { kind: "gemini", stream: crate::ears_stream::gemini, upload: None, pass: gemini_pass },
+    Listener { kind: "azure", stream: crate::ears_stream::azure, upload: Some(azure), pass: azure_pass, once: false },
+    Listener { kind: "gemini", stream: crate::ears_stream::gemini, upload: None, pass: gemini_pass, once: false },
+    Listener { kind: "elevenlabs", stream: crate::ears_stream::elevenlabs, upload: None, pass: elevenlabs_pass, once: true },
 ];
+
+/// A pass for this dialect is used up by one connection, so it is never kept for the next.
+pub(crate) fn once(kind: &str) -> bool {
+    listener(kind).is_some_and(|l| l.once)
+}
 
 fn listener(kind: &str) -> Option<&'static Listener> {
     LISTENERS.iter().find(|l| l.kind == kind)
@@ -128,6 +136,16 @@ fn gemini_pass(_set: &BTreeMap<String, String>, key: &str) -> Result<String, Str
     }
 }
 
+/// ElevenLabs' token for its realtime transcription: good for a quarter of an hour, and for one connection.
+fn elevenlabs_pass(_set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
+    let mut res = crate::net::agent(Duration::from_secs(8)).post("https://api.elevenlabs.io/v1/single-use-token/realtime_scribe").header("xi-api-key", key.trim()).header("Content-Length", "0").send_empty().map_err(|_| "Could not reach ElevenLabs.".to_string())?;
+    match res.status().as_u16() {
+        200 => res.body_mut().read_json::<Value>().ok().and_then(|v| v["token"].as_str().map(String::from)).ok_or_else(|| "ElevenLabs gave no pass.".to_string()),
+        401 | 403 => Err("ElevenLabs did not accept that key.".into()),
+        code => Err(format!("ElevenLabs said no ({code}).")),
+    }
+}
+
 fn azure_pass(set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
     let region = set.get("region").map(|r| r.trim().to_lowercase()).unwrap_or_default();
     if region.is_empty() || !region.bytes().all(|b| b.is_ascii_alphanumeric()) {
@@ -150,7 +168,7 @@ pub(crate) struct Ears {
 impl Ears {
     fn grant(&self, link: &Link) -> EarsGrant {
         if let Some((g, when)) = self.grant.lock().unwrap().clone() {
-            if when.elapsed() < PASS_LIFE {
+            if when.elapsed() < PASS_LIFE && !once(&g.kind) {
                 return g;
             }
         }

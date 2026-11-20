@@ -190,6 +190,65 @@ pub(crate) struct Wire {
 const AZURE: Wire = Wire { connect, audio, end: |request| audio(request, &[]), read: azure_read, header: true, reopens: true };
 const GEMINI: Wire = Wire { connect: gemini_connect, audio: gemini_audio, end: |_| Message::text(json!({ "realtimeInput": { "audioStreamEnd": true } }).to_string()), read: gemini_read, header: false, reopens: false };
 
+const ELEVENLABS: Wire = Wire { connect: elevenlabs_connect, audio: |_, bytes| elevenlabs_chunk(bytes, false), end: |_| elevenlabs_chunk(&[0u8; 3200], true), read: elevenlabs_read, header: false, reopens: false };
+
+pub(crate) fn elevenlabs(pass: Arc<dyn Fn() -> EarsGrant + Send + Sync>, host: &dyn RadioHost, rate: u32, header: Vec<u8>, manual: bool) -> Result<Option<String>, ()> {
+    live(&ELEVENLABS, pass, host, rate, header, manual)
+}
+
+/// ElevenLabs' realtime transcription. The pass goes in the address. A stretch is closed when it is asked to
+/// be (`commit` on a final piece of silence, when he has finished), or by the service itself after about half
+/// a minute of speech; what he has said so far comes back whole each time until then.
+fn elevenlabs_connect(grant: &EarsGrant, _request: &str) -> Result<Socket, ()> {
+    const HOST: &str = "api.elevenlabs.io";
+    let enc = |s: &str| s.bytes().map(|b| if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' { (b as char).to_string() } else { format!("%{b:02X}") }).collect::<String>();
+    let mut url = format!("wss://{HOST}/v1/speech-to-text/realtime?model_id={}&audio_format=pcm_16000&commit_strategy=manual&token={}", enc(&grant.get("model")), enc(&grant.token));
+    // its language codes are two letters ("en"), where a setting may say "en-US"
+    if let Some(language) = grant.get("language").split('-').next().filter(|l| !l.is_empty()) {
+        url.push_str(&format!("&language_code={}", enc(language)));
+    }
+    // the names he is likely to say, so "shop two" is not heard as something else
+    for term in grant.phrases.iter().take(50) {
+        url.push_str(&format!("&keyterms={}", enc(term)));
+    }
+    let mut socket = dial(HOST, url.into_client_request().map_err(|_| ())?)?;
+    // it says when the session has started, or why it will not
+    loop {
+        let m = socket.read().map_err(|_| ())?;
+        if m.is_close() {
+            return Err(());
+        }
+        match serde_json::from_slice::<Value>(&m.into_data()).ok().and_then(|v| v["message_type"].as_str().map(String::from)).as_deref() {
+            Some("session_started") => break,
+            Some(_) => return Err(()),
+            None => {}
+        }
+    }
+    read_briefly(&socket);
+    Ok(socket)
+}
+
+fn elevenlabs_chunk(bytes: &[u8], commit: bool) -> Message {
+    Message::text(json!({ "message_type": "input_audio_chunk", "audio_base_64": airband_core::audio::base64_encode(bytes), "commit": commit, "sample_rate": 16000 }).to_string())
+}
+
+/// A partial replaces the one before it; a committed stretch is final, and the next partial starts from nothing.
+fn elevenlabs_read(m: &Message, kept: &mut Vec<String>, ended: &mut bool) -> Option<String> {
+    let v: Value = serde_json::from_slice(&m.clone().into_data()).ok()?;
+    match v["message_type"].as_str()? {
+        "partial_transcript" => Some(v["text"].as_str().unwrap_or_default().trim().to_string()),
+        "committed_transcript" => {
+            let done = v["text"].as_str().unwrap_or_default().trim();
+            if !done.is_empty() {
+                kept.push(done.to_string());
+            }
+            *ended = true;
+            Some(String::new())
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn azure(pass: Arc<dyn Fn() -> EarsGrant + Send + Sync>, host: &dyn RadioHost, rate: u32, header: Vec<u8>, manual: bool) -> Result<Option<String>, ()> {
     live(&AZURE, pass, host, rate, header, manual)
 }
@@ -433,6 +492,13 @@ mod tests {
             let set = [("model".to_string(), std::env::var("GEMINI_MODEL").unwrap_or("gemini-3.5-transcribe-live".into())), ("language".to_string(), "en-US".to_string())].into();
             let grant = EarsGrant { kind: "gemini".into(), token, set, phrases: vec!["airband".into(), "shop two".into()] };
             gemini(Arc::new(move || grant.clone()), &tape, 16000, crate::ears::wav_header(), std::env::var("MANUAL").is_ok())
+        } else if std::env::var("LISTEN_WITH").as_deref() == Ok("elevenlabs") {
+            // LISTEN_WITH=elevenlabs ELEVENLABS_KEY=… ; WITHOUT_NAMES leaves out the names he is likely to say
+            let token = crate::ears::pass_for("elevenlabs", &Default::default(), &std::env::var("ELEVENLABS_KEY").unwrap()).unwrap();
+            let set = [("model".to_string(), "scribe_v3_live".to_string()), ("language".to_string(), "en".to_string())].into();
+            let phrases = if std::env::var("WITHOUT_NAMES").is_ok() { Vec::new() } else { vec!["airband".into(), "shop two".into()] };
+            let grant = EarsGrant { kind: "elevenlabs".into(), token, set, phrases };
+            elevenlabs(Arc::new(move || grant.clone()), &tape, 16000, crate::ears::wav_header(), std::env::var("MANUAL").is_ok())
         } else {
             let grant = EarsGrant { kind: "azure".into(), token: std::env::var("AZURE_TOKEN").unwrap(), set: [("region".to_string(), std::env::var("AZURE_REGION").unwrap()), ("language".to_string(), "en-US".to_string())].into(), phrases: vec![] };
             azure(Arc::new(move || grant.clone()), &tape, 16000, crate::ears::wav_header(), false)

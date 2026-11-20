@@ -29,7 +29,7 @@ pub(super) async fn grant(app: &Arc<App>) -> EarsGrant {
     };
     let grant = |token: String| EarsGrant { kind: kind.into(), token, set: set.clone(), phrases: phrases(app) };
     if let Some((token, when)) = app.ears_pass.lock().unwrap().clone() {
-        if when.elapsed() < PASS {
+        if when.elapsed() < PASS && !airband_radio::listening_pass_once(kind) {
             return grant(token);
         }
     }

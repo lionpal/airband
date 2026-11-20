@@ -1325,6 +1325,11 @@ pub fn listening_pass(kind: &str, set: &std::collections::BTreeMap<String, Strin
     crate::ears::pass_for(kind, set, key)
 }
 
+/// A pass for this dialect is used up by one connection: whoever hands them out makes a new one each time.
+pub fn listening_pass_once(kind: &str) -> bool {
+    crate::ears::once(kind)
+}
+
 /// What a button answers a request for leave with: `true` for the one that allows. A host's buttons send this
 /// and have no words of their own for it.
 #[uniffi::export]

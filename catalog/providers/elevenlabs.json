@@ -49,6 +49,29 @@
           "usual": "eleven_flash_v2_5"
         }
       ]
+    },
+    {
+      "job": "ears",
+      "by": {
+        "listener": {
+          "dialect": "elevenlabs"
+        }
+      },
+      "label": "ElevenLabs Scribe v3 Live",
+      "preferred": true,
+      "price": "About $0.22 per hour of speech",
+      "asks": [
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "scribe_v3_live"
+        },
+        {
+          "field": "language",
+          "question": "Language",
+          "usual": "en"
+        }
+      ]
     }
   ]
 }
