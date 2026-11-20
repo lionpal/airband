@@ -15,6 +15,34 @@ const RATE: u32 = 16000;
 /// A pass is asked for again after this long (Microsoft's last ten minutes).
 const PASS_LIFE: Duration = Duration::from_secs(300);
 
+/// A key of his own for the listening service, when he has put one in the app: (region, key). With it the
+/// phone gets its pass from the service itself and needs neither his computer nor the relay to listen. The
+/// host keeps it (in the phone's keychain) and gives it here at launch; it is never sent anywhere but to the
+/// service it is for.
+static OWN: Mutex<Option<(String, String)>> = Mutex::new(None);
+/// The names the tower last said he is likely to say: used with a pass of his own, which comes with none.
+static PHRASES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+pub(crate) fn set_own(region: &str, key: &str) {
+    let (region, key) = (region.trim().to_lowercase(), key.trim().to_string());
+    *OWN.lock().unwrap() = (!region.is_empty() && !key.is_empty()).then_some((region, key));
+}
+
+/// A pass from the service for a key. Err says why not, in words for him.
+pub(crate) fn pass_for(region: &str, key: &str) -> Result<String, String> {
+    let region = region.trim().to_lowercase();
+    if region.is_empty() || !region.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return Err("That is not a region. It looks like eastus or japaneast.".into());
+    }
+    let agent = crate::net::agent(Duration::from_secs(8));
+    let mut res = agent.post(format!("https://{region}.api.cognitive.microsoft.com/sts/v1.0/issueToken")).header("Ocp-Apim-Subscription-Key", key.trim()).header("Content-Length", "0").send_empty().map_err(|_| "Could not reach the speech service. Check the region.".to_string())?;
+    match res.status().as_u16() {
+        200 => res.body_mut().read_to_string().map_err(|_| "The speech service gave no pass.".to_string()),
+        401 | 403 => Err("The speech service did not accept that key for that region.".into()),
+        code => Err(format!("The speech service said no ({code}).")),
+    }
+}
+
 #[derive(Default, Clone)]
 pub(crate) struct Ears {
     grant: Arc<Mutex<Option<(EarsGrant, Instant)>>>,
@@ -27,12 +55,24 @@ impl Ears {
                 return g;
             }
         }
+        // A key of his own comes first: no computer and no relay is asked.
+        let own = OWN.lock().unwrap().clone();
+        if let Some((region, key)) = own {
+            if let Ok(token) = pass_for(&region, &key) {
+                let g = EarsGrant { kind: "azure".into(), region, token, language: "en-US".into(), phrases: PHRASES.lock().unwrap().clone() };
+                *self.grant.lock().unwrap() = Some((g.clone(), Instant::now()));
+                return g;
+            }
+        }
         // His computer says what to listen with. When it cannot be reached, the relay lends the same service, so
         // he can still say what he has to say: it is kept for the computer until it is back.
         let g: EarsGrant = match link.request("GET", "/ears", None) {
             Ok((200, v)) => serde_json::from_value(v).unwrap_or_default(),
             _ => link.relay_ears().unwrap_or_default(),
         };
+        if !g.phrases.is_empty() {
+            *PHRASES.lock().unwrap() = g.phrases.clone();
+        }
         let g = if g.kind == "device" { link.relay_ears().unwrap_or(g) } else { g };
         // only a pass that can be used is kept: with none, the tower is asked again next time
         if g.kind != "device" {
@@ -44,6 +84,18 @@ impl Ears {
     /// Ask for the pass now, so it is there before he next opens the microphone.
     pub(crate) fn warm(&self, link: &Link) {
         let _ = self.grant(link);
+        // with a key of his own the tower is still asked, when it is there, for the names he is likely to say
+        if OWN.lock().unwrap().is_some() {
+            if let Ok((200, v)) = link.request("GET", "/ears", None) {
+                let phrases = serde_json::from_value::<EarsGrant>(v).map(|g| g.phrases).unwrap_or_default();
+                if !phrases.is_empty() {
+                    if let Some((g, _)) = self.grant.lock().unwrap().as_mut() {
+                        g.phrases = phrases.clone();
+                    }
+                    *PHRASES.lock().unwrap() = phrases;
+                }
+            }
+        }
     }
 
     /// Open the microphone and listen. The microphone opens first, at once: the pass for the listening service

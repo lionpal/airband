@@ -529,6 +529,9 @@ pub struct Feed {
     /// can read it or stand in for the tower. Empty when the tower offers none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub direct: Vec<String>,
+    /// This tower has a key of its own for the listening service. Only that it has one: never the key.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub listens: bool,
     /// The ids of every message that needs him and is still unanswered, whether or not it is in `messages`:
     /// the whole inbox, current as of this answer.
     #[serde(default)]

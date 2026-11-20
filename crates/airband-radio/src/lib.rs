@@ -147,6 +147,7 @@ fn chat_feed(feed: Feed) -> ChatFeed {
         projects: feed.projects,
         colours: feed.colours.into_iter().collect(),
         open: feed.open,
+        listens: feed.listens,
         station: feed.station,
     }
 }
@@ -332,6 +333,8 @@ pub struct ChatFeed {
     pub open: Vec<String>,
     /// What the tower's computer is called, for an app paired with more than one.
     pub station: String,
+    /// That computer has a key of its own for the listening service.
+    pub listens: bool,
 }
 
 /// What the radio's waiting threads sleep on: they are woken when there is something to do (a message to send,

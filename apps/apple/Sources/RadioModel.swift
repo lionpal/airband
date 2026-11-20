@@ -13,7 +13,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     static let shared = RadioModel()
 
     /// What the screen shows, as the desk last gave it, for the room or agent he is looking at.
-    @Published var view = DeskView(paired: false, online: false, connecting: false, near: false, away: [], feed: [], rooms: [], canPoke: false, quick: [], sending: [], stations: [], uploads: [], asking: nil)
+    @Published var view = DeskView(paired: false, online: false, connecting: false, near: false, away: [], feed: [], rooms: [], canPoke: false, quick: [], sending: [], stations: [], keyed: [], uploads: [], asking: nil)
     /// A project: show just its agents, and keep what he says among them.
     @Published var room: String? { didSet { refresh() } }
     /// A callsign: show just that agent.
@@ -70,6 +70,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     init() {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("radio")
         desk = Desk.open(dataDir: dir.path, host: self)
+        if let own = ownEars { setOwnEars(region: own.region, key: own.key) }
         var links = (try? JSONDecoder().decode([String].self, from: Data((Keychain.read("airband.links") ?? "[]").utf8))) ?? []
         if let old = Keychain.read("airband.link"), !old.isEmpty, !links.contains(old) { links.append(old) } // from the first builds
         #if DEBUG
@@ -210,6 +211,32 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
                 }
             }
         }
+    }
+
+    /// His own key for the listening service, if he has put one in: kept in the keychain, on this phone only.
+    var ownEars: (region: String, key: String)? {
+        guard let kept = Keychain.read("airband.ears"), let parts = try? JSONDecoder().decode([String].self, from: Data(kept.utf8)), parts.count == 2, !parts[1].isEmpty else { return nil }
+        return (parts[0], parts[1])
+    }
+
+    /// Check a key with the service and keep it. Calls back with what is wrong, or nil.
+    func keepOwnEars(region: String, key: String, done: @escaping (String?) -> Void) {
+        fetch.async {
+            var wrong: String?
+            do { try checkOwnEars(region: region, key: key) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "Could not check the key." }
+            DispatchQueue.main.async {
+                if wrong == nil {
+                    Keychain.write("airband.ears", String(data: (try? JSONEncoder().encode([region.trimmingCharacters(in: .whitespaces).lowercased(), key.trimmingCharacters(in: .whitespaces)])) ?? Data(), encoding: .utf8) ?? "")
+                    setOwnEars(region: region, key: key)
+                }
+                done(wrong)
+            }
+        }
+    }
+
+    func forgetOwnEars() {
+        Keychain.write("airband.ears", "")
+        setOwnEars(region: "", key: "")
     }
 
     /// Let a question go without answering it.

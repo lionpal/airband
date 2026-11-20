@@ -105,6 +105,8 @@ pub struct DeskView {
     pub sending: Vec<Outgoing>,
     /// What each paired computer is called.
     pub stations: Vec<String>,
+    /// Those of them that have a key of their own for the listening service.
+    pub keyed: Vec<String>,
     /// Files he has attached and not yet sent, in the order he added them: on their way to the computer, there
     /// and waiting for his words, or failed.
     pub uploads: Vec<DeskUpload>,
@@ -155,6 +157,7 @@ struct Station {
     answered_at: Option<std::time::Instant>,
     fails: u32,
     failing_since: Option<std::time::Instant>,
+    listens: bool,
     agents: Vec<ChatAgent>,
     open: HashSet<String>,
     sending: Vec<Outgoing>,
@@ -487,6 +490,7 @@ impl Desk {
                 answered_at: was.and_then(|s| s.answered_at),
                 fails: 0,
                 failing_since: None,
+                listens: false,
                 agents: was.map(|s| s.agents.clone()).unwrap_or_default(),
                 open: was.map(|s| s.open.clone()).unwrap_or_default(),
                 sending: Vec::new(),
@@ -591,6 +595,7 @@ impl Desk {
                 .flat_map(|s| s.sending.iter().cloned().chain(s.landing.iter().filter(|(o, at)| at.elapsed() < Duration::from_secs(15) && !s.messages.iter().any(|m| m.id == o.id)).map(|(o, _)| o.clone())))
                 .collect(),
             stations: state.stations.iter().map(|s| s.name.clone()).collect(),
+            keyed: state.stations.iter().filter(|s| s.listens).map(|s| s.name.clone()).collect(),
             uploads: state.uploads.iter().map(|u| u.shown.clone()).collect(),
             asking: state.asking.as_ref().map(|asking| {
                 // the tower's guesses first, in its order; then everyone else, whoever spoke last first
@@ -1132,6 +1137,19 @@ fn station_key(link: &str) -> Option<String> {
 /// Open a sealed notification with whichever pairing sealed it. `links` are the pairing links the host keeps;
 /// `sealed` is the notification as the push service delivered it. Nothing when none of them opens it. This
 /// needs no desk: a host calls it from wherever its system hands it a notification.
+/// Use a key of his own for the listening service, so the microphone needs neither his computer nor the relay.
+/// The host keeps it somewhere safe and calls this at launch. An empty key goes back to asking them.
+#[uniffi::export]
+pub fn set_own_ears(region: String, key: String) {
+    crate::ears::set_own(&region, &key);
+}
+
+/// Does the listening service take this key? Blocks: call it off the main thread.
+#[uniffi::export]
+pub fn check_own_ears(region: String, key: String) -> Result<(), RadioError> {
+    crate::ears::pass_for(&region, &key).map(|_| ()).map_err(|reason| RadioError::Told { reason })
+}
+
 #[uniffi::export]
 pub fn open_notice(links: Vec<String>, sealed: String) -> Option<OpenedNotice> {
     use airband_core::routing::{badge, shown};
@@ -1187,6 +1205,7 @@ fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64)
                     station.answered_at = Some(std::time::Instant::now());
                     station.online = true;
                     station.name = feed.station.clone();
+                    station.listens = feed.listens;
                     station.agents = feed.agents.clone();
                     station.open = feed.open.iter().cloned().collect();
                     station.quick = feed.quick.clone();
@@ -1286,6 +1305,7 @@ mod tests {
             answered_at: None,
             fails: 0,
             failing_since: None,
+            listens: false,
             agents: agents.iter().map(|(c, g)| ChatAgent { id: c.to_string(), callsign: c.to_string(), group: g.to_string(), harness: "h".into(), waiting: false, reachable: true, state: "working".into(), subagents: 0, doing: None, held: false, model: None, effort: None }).collect(),
             open: messages.iter().filter(|m| m.needs_you).map(|m| m.id.clone()).collect(),
             sending: Vec::new(),

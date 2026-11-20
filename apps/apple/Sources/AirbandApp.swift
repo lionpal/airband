@@ -1169,6 +1169,56 @@ struct ContextView: View {
     }
 }
 
+/// His own key for the listening service: optional. With it the microphone works with no computer and no relay.
+struct SpeechKeyView: View {
+    @EnvironmentObject var model: RadioModel
+    @State private var region = ""
+    @State private var key = ""
+    @State private var kept = false
+    @State private var checking = false
+    @State private var wrong: String?
+
+    var body: some View {
+        Form {
+            Section(footer: Text("Optional. With your own Azure Speech key the mic works without your computer. The key stays in this phone's Keychain and only goes to Azure.")) {
+                if kept {
+                    Text("Using your key (" + region + ")")
+                    Button("Remove key", role: .destructive) {
+                        model.forgetOwnEars()
+                        (kept, region, key) = (false, "", "")
+                    }
+                } else {
+                    TextField("Region, like eastus", text: $region).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    SecureField("Key", text: $key).textContentType(.password)
+                    Button {
+                        (checking, wrong) = (true, nil)
+                        model.keepOwnEars(region: region, key: key) { problem in
+                            (checking, wrong) = (false, problem)
+                            if problem == nil { (kept, key) = (true, "") }
+                        }
+                    } label: {
+                        HStack { Text("Save"); if checking { Spacer(); ProgressView() } }
+                    }
+                    .disabled(checking || region.trimmingCharacters(in: .whitespaces).isEmpty || key.trimmingCharacters(in: .whitespaces).isEmpty)
+                    if let wrong { Text(wrong).foregroundStyle(.red) }
+                }
+            }
+            // which computers have one of their own: said, never shown
+            if !model.view.stations.filter({ !$0.isEmpty }).isEmpty {
+                Section("On your computers") {
+                    ForEach(model.view.stations.filter { !$0.isEmpty }, id: \.self) { name in
+                        HStack { Text(name); Spacer(); Text(model.view.keyed.contains(name) ? "has a key" : "no key").foregroundStyle(.secondary) }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Speech key").navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            if let own = model.ownEars { (kept, region) = (true, own.region) }
+        }
+    }
+}
+
 struct SetupView: View {
     @EnvironmentObject var model: RadioModel
     @ObservedObject private var push = Push.shared
@@ -1183,6 +1233,7 @@ struct SetupView: View {
                 if model.paired {
                     Section {
                         NavigationLink("Accounts", isActive: $showAccounts) { AccountsView().environmentObject(model) }
+                        NavigationLink("Speech key") { SpeechKeyView().environmentObject(model) }
                         if push.denied {
                             Button("Turn on notifications") { UIApplication.shared.open(URL(string: UIApplication.openNotificationSettingsURLString)!) }
                         }

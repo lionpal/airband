@@ -420,7 +420,7 @@ async fn feed(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
                 m
             })
             .collect();
-        return Json(Feed { schema: airband_core::radio::SCHEMA.into(), rev: upto, messages, roster: inner.roster_entries(), roster_rev: inner.roster_rev(), direct: config::lan_addrs().into_iter().filter(|_| app.cfg.lan).chain(config::tailscale_addrs()).map(|a| format!("http://{a}:{}", app.cfg.port)).collect(), colours: inner.colours.clone(), seq: inner.seq, projects: inner.launchable(&app.cfg).into_keys().collect(), open: open.into_iter().collect(), quick: airband_core::radio::quick_defaults().into_iter().chain(app.cfg.quick.iter().cloned()).collect(), station: config::station(&app.cfg) });
+        return Json(Feed { schema: airband_core::radio::SCHEMA.into(), rev: upto, messages, roster: inner.roster_entries(), roster_rev: inner.roster_rev(), listens: !matches!(app.cfg.ears, config::Ears::Device), direct: config::lan_addrs().into_iter().filter(|_| app.cfg.lan).chain(config::tailscale_addrs()).map(|a| format!("http://{a}:{}", app.cfg.port)).collect(), colours: inner.colours.clone(), seq: inner.seq, projects: inner.launchable(&app.cfg).into_keys().collect(), open: open.into_iter().collect(), quick: airband_core::radio::quick_defaults().into_iter().chain(app.cfg.quick.iter().cloned()).collect(), station: config::station(&app.cfg) });
     }
 }
 
