@@ -310,6 +310,10 @@ pub fn ears(mut cfg: Config, args: &[String]) -> Result<(), String> {
 }
 
 pub fn pair(mut cfg: Config, name: &str) -> Result<(), String> {
+    // a slip like `airband pair --help` must not make a pairing called "--help"
+    if name.starts_with('-') {
+        return Err(format!("\"{name}\" is not a name for a radio. Use:  airband pair [name]"));
+    }
     let pairing = match &cfg.relay {
         Some(relay) => {
             let secret = match cfg.pairings.iter().find(|p| p.name == name) {
