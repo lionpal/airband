@@ -168,6 +168,8 @@ impl Entry {
 /// model and effort are names the launcher offers, or nothing for its own defaults.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(super) struct Idea {
+    /// The harness he asked for by name ("a codex agent"), when he did and a launcher starts it.
+    pub(super) tool: Option<String>,
     pub(super) project: Option<String>,
     pub(super) model: Option<String>,
     pub(super) effort: Option<String>,

@@ -123,6 +123,10 @@ fn language() -> String {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Launcher {
+    /// The harness it starts, by its adapter's name ("claude-code", "codex"): how the tower knows which
+    /// launcher carries on an agent of that kind, and what he means when he asks for a tool by name.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub harness: String,
     /// `{cwd}`, `{task}`, `{project}` and `{session}` are filled in. An argument that is exactly `{options}` is
     /// replaced by `with_model` and `with_effort`, each only when he asked for one, and by nothing otherwise.
     pub argv: Vec<String>,
@@ -170,6 +174,7 @@ const LAUNCHER_HANDED_OFF: &str = "claude-code";
 fn default_launchers() -> BTreeMap<String, Launcher> {
     let list = |words: &[&str]| words.iter().map(|s| s.to_string()).collect::<Vec<String>>();
     let claude = Launcher {
+        harness: "claude-code".into(),
         argv: list(&["tmux", "new-session", "-d", "-s", "{session}", "-c", "{cwd}", "claude", "{options}", "{task}"]),
         models: ["fable", "opus", "sonnet", "haiku"].iter().map(|m| (m.to_string(), m.to_string())).collect(),
         efforts: list(&["low", "medium", "high", "xhigh", "max"]),
@@ -195,6 +200,25 @@ pub struct StoredKey {
     /// The provider it is for, by the name its settings use ("gemini", "azure").
     pub provider: String,
     pub secret: String,
+}
+
+impl Config {
+    /// The launcher for a new agent, or to carry one on. With no harness asked for, the one set as usual.
+    /// For a harness, the usual one if it starts that, else one that runs it itself, else any that starts it.
+    pub fn launcher_for(&self, harness: Option<&str>) -> Option<(&String, &Launcher)> {
+        let usual = self.launchers.get_key_value(&self.launcher);
+        match harness {
+            None => usual,
+            Some(h) => usual.filter(|(_, l)| l.harness == h).or_else(|| self.launchers.iter().find(|(_, l)| l.harness == h && l.held.is_some())).or_else(|| self.launchers.iter().find(|(_, l)| l.harness == h)),
+        }
+    }
+    /// The harnesses a new agent can be started with, the usual one first.
+    pub fn tools(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.launchers.get(&self.launcher).map(|l| l.harness.clone()).into_iter().collect();
+        self.launchers.values().for_each(|l| if !out.contains(&l.harness) { out.push(l.harness.clone()) });
+        out.retain(|h| !h.is_empty());
+        out
+    }
 }
 
 /// The places in the settings that use a key.
@@ -439,6 +463,12 @@ pub fn load() -> Config {
         }
         if cfg.launcher == LAUNCHER_HANDED_OFF {
             cfg.launcher = default_launcher();
+        }
+    }
+    // the two that came with the tower, from before a launcher said what it starts
+    for name in [LAUNCHER_HANDED_OFF.to_string(), default_launcher()] {
+        if let Some(l) = cfg.launchers.get_mut(&name).filter(|l| l.harness.is_empty()) {
+            l.harness = "claude-code".into();
         }
     }
     // the held launcher as first shipped could not stop its agent: one still exactly that gets the line that does

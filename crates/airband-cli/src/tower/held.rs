@@ -278,14 +278,16 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
     let (session, launcher) = {
         let inner = app.inner.lock().unwrap();
         let s = inner.find(id).cloned().ok_or("That agent is no longer running.")?;
-        (s, app.cfg.launcher.clone())
+        // carried on by a launcher that runs this agent's own harness: never one tool's session under another
+        let launcher = app.cfg.launcher_for(Some(&s.agent.harness)).filter(|(_, l)| l.held.is_some()).map(|(name, _)| name.clone());
+        (s, launcher)
     };
     if session.agent.deliver == Some(Deliver::Held) {
         return Err("The tower already runs this one.".into());
     }
-    if app.cfg.launchers.get(&launcher).is_none_or(|l| l.held.is_none()) {
-        return Err("This computer's launcher does not run agents itself.".into());
-    }
+    let Some(launcher) = launcher else {
+        return Err(format!("No launcher here runs {} agents itself.", session.agent.harness));
+    };
     let cwd = session.agent.cwd.clone().ok_or("The tower does not know its folder.")?;
     let pid = session.agent.pid.ok_or("The tower does not know its process. Close it in its terminal, then start it from here.")?;
     if !session.waiting {

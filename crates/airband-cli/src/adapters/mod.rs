@@ -234,7 +234,16 @@ pub fn hook(harness: &str) -> Result<(), String> {
             return Ok(());
         }
     }
-    for event in serde_json::from_str(&input).map(|notification| (adapter.events)(&notification)).unwrap_or_default() {
+    let takes_ids = config::read().is_some_and(|c| c.launchers.values().any(|l| l.harness == harness && l.held.as_ref().is_some_and(|h| h.fresh.iter().any(|a| a.contains("{id}")))));
+    for mut event in serde_json::from_str(&input).map(|notification| (adapter.events)(&notification)).unwrap_or_default() {
+        // An agent the tower runs is known by the id the tower gave it, whatever its harness calls the session,
+        // and takes his words from the tower: true of any harness, so it is said here and not in each adapter.
+        // Not for a harness that starts under an id the tower chose (its launcher says so with `{id}`): its
+        // session already has that id, and a session it starts itself must not pass for it.
+        if let Some(id) = env("AIRBAND_HELD_ID").filter(|_| !takes_ids) {
+            event.agent.id = id;
+            event.agent.deliver = Some(airband_core::agent::Deliver::Held);
+        }
         post(&event);
     }
     Ok(())

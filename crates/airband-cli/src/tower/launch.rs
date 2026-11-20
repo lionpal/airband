@@ -18,9 +18,11 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
     if !std::path::Path::new(&cwd).is_dir() {
         return say(format!("The folder for {project} is gone."));
     }
-    let Some(launcher) = app.cfg.launchers.get(&app.cfg.launcher) else {
+    // the tool he asked for, when he named one; otherwise the usual launcher
+    let Some((named, launcher)) = app.cfg.launcher_for(idea.tool.as_deref()) else {
         return say(format!("No launcher called {} is configured.", app.cfg.launcher));
     };
+    let named = named.clone();
     // the model and effort he asked for, when this launcher offers them
     let model = idea.model.as_ref().filter(|m| launcher.models.contains_key(*m));
     let effort = idea.effort.as_ref().filter(|e| launcher.efforts.contains(*e));
@@ -38,9 +40,9 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
         (None, None) => String::new(),
     };
     if launcher.held.is_some() {
-        return match held::start(app, &app.cfg.launcher, &cwd, options, task).await {
+        return match held::start(app, &named, &cwd, options, task).await {
             Ok(_) => {
-                log(format!("started {}{with} in {project}, held by the tower: {task}", app.cfg.launcher));
+                log(format!("started {named}{with} in {project}, held by the tower: {task}"));
                 let mut inner = app.inner.lock().unwrap();
                 inner.record(Entry { id: config::random_hex(8), from: "you".into(), group: project.into(), to: vec![format!("a new agent in {project}")], short: Some(task.into()), full: task.into(), ..Entry::default() });
                 app.save(&inner);
@@ -61,7 +63,7 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
     let run = tokio::process::Command::new(program).args(args).current_dir(&cwd).env_remove("AIRBAND_INTERNAL").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).kill_on_drop(false).output();
     match tokio::time::timeout(Duration::from_secs(20), run).await {
         Ok(Ok(out)) if out.status.success() => {
-            log(format!("launched {}{with} in {project} ({session}): {task}", app.cfg.launcher));
+            log(format!("launched {named}{with} in {project} ({session}): {task}"));
             let mut inner = app.inner.lock().unwrap();
             inner.record(Entry { id: config::random_hex(8), from: "you".into(), group: project.into(), to: vec![format!("a new agent in {project}")], short: Some(task.into()), full: task.into(), ..Entry::default() });
             app.save(&inner);

@@ -30,8 +30,8 @@ fn new_by_command(app: &App, text: &str, projects: &[String]) -> Option<Idea> {
     let (models, efforts) = app.cfg.launchers.get(&app.cfg.launcher).map(|l| (l.models.keys().cloned().collect::<Vec<_>>(), l.efforts.clone())).unwrap_or_default();
     let l = airband_core::routing::parse_launch(text, projects)?;
     Some(match airband_core::routing::parse_with(&l.task, &models, &efforts).filter(|w| !w.rest.is_empty()) {
-        Some(w) => Idea { project: l.project, model: Some(w.model), effort: w.effort, task: w.rest },
-        None => Idea { project: l.project, model: None, effort: None, task: l.task },
+        Some(w) => Idea { tool: None, project: l.project, model: Some(w.model), effort: w.effort, task: w.rest },
+        None => Idea { tool: None, project: l.project, model: None, effort: None, task: l.task },
     })
 }
 
@@ -122,6 +122,14 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                             })
                             .collect()
                     };
+                    // every model and effort any of the tools offers: which tool he means is settled after
+                    let across = |of: fn(&config::Launcher) -> Vec<String>| {
+                        let mut all: Vec<String> = of(l);
+                        app.cfg.launchers.values().flat_map(of).for_each(|n| if !all.contains(&n) { all.push(n) });
+                        all
+                    };
+                    let tools = app.cfg.tools();
+                    let tool = if tools.len() > 1 { format!("\"tool\" is one of {} when he asked for that tool by name (\"start a codex agent\", \"have codex look into…\"), else null. ", tools.join(", ")) } else { "\"tool\" is null. ".to_string() };
                     let offered = |what: &str, names: Vec<String>| if names.is_empty() { format!("\"{what}\" is null. ") } else { format!("\"{what}\" is one of {} when he named one, else null. ", names.join(", ")) };
                     format!(
                         "\n\nOr he is not talking to any of them: he wants a NEW agent started. Decide this first. He says so \
@@ -134,11 +142,12 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                          what to start: \"project\" is the one he named, else the one the work would be done in{room}, going by \
                          who the work is for and what it changes more than by what data it happens to read (a fair \
                          choice beats asking him: he is told where it started), else null when nothing points to \
-                         any of them; {models}{efforts}\"task\" is the work in his own words, without the words \
-                         about starting an agent, the model or the effort. Otherwise \"new\" is null. The projects:\n{projects}",
+                         any of them; {tool}{models}{efforts}\"task\" is the work in his own words, without the words \
+                         about starting an agent, the tool, the model or the effort. Otherwise \"new\" is null. The projects:\n{projects}",
                         room = room.as_ref().map(|r| format!(" (he is looking at {r})")).unwrap_or_default(),
-                        models = offered("model", l.models.keys().cloned().collect()),
-                        efforts = offered("effort", l.efforts.clone()),
+                        tool = tool,
+                        models = offered("model", across(|l| l.models.keys().cloned().collect())),
+                        efforts = offered("effort", across(|l| l.efforts.clone())),
                         projects = lately.join("\n")
                     )
                 }
@@ -162,11 +171,13 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                 name = app.cfg.name,
                 lines = if lines.is_empty() { "(none are running)".to_string() } else { lines.join("\n") },
                 starting = starting,
-                shape = if can_start { ",\"new\":null or {\"project\":…,\"model\":…,\"effort\":…,\"task\":\"…\"}" } else { "" }
+                shape = if can_start { ",\"new\":null or {\"tool\":…,\"project\":…,\"model\":…,\"effort\":…,\"task\":\"…\"}" } else { "" }
             );
             let everyone: Vec<&Session> = several.iter().map(|(s, _)| s).chain(quiet.iter().map(|(s, _)| s)).collect();
             #[derive(Deserialize)]
             struct New {
+                #[serde(default)]
+                tool: Option<String>,
                 project: Option<String>,
                 model: Option<String>,
                 effort: Option<String>,
@@ -201,7 +212,11 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                 // launcher offers. Anything else it wrote is dropped, not passed to a command line.
                 let same = |a: &str, b: &str| a.replace(' ', "").eq_ignore_ascii_case(&b.replace(' ', ""));
                 let known = |said: Option<String>, names: Vec<String>| said.and_then(|x| names.into_iter().find(|n| same(n, x.trim())));
+                // the tool he named, if a launcher starts it; its models and efforts are then the ones that count
+                let tool = known(new.tool, app.cfg.tools());
+                let launcher = tool.as_deref().and_then(|t| app.cfg.launcher_for(Some(t))).map(|(_, l)| l).or(launcher);
                 return Routed::New(Idea {
+                    tool,
                     project: known(new.project, projects.clone()).or_else(|| (projects.len() == 1).then(|| projects[0].clone())),
                     model: known(new.model, launcher.map(|l| l.models.keys().cloned().collect()).unwrap_or_default()),
                     effort: known(new.effort, launcher.map(|l| l.efforts.clone()).unwrap_or_default()),
