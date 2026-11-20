@@ -7,8 +7,8 @@
 #                              minutes, and it needs `claude` signed in)
 #
 # `git push` runs the first form by itself (.githooks/pre-push, turned on once with
-# `git config core.hooksPath .githooks`). CI on GitHub still runs once a day on Linux, Windows and macOS, and
-# whenever asked for, as the check that the code builds somewhere other than here.
+# `git config core.hooksPath .githooks`). CI on GitHub runs on every push too: every system the tower is meant
+# for, the phone build, and the end-to-end suites that need no model.
 set -e
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"

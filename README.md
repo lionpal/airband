@@ -12,13 +12,13 @@
   <img src="docs/assets/agents.png" width="300" alt="Every team and every agent in it, each with what it is doing">
 </p>
 
-**The slowest part of your agents is you.** It asked at 4pm. Answer at 4:01, not the next morning.
+**Your agent is waiting on you.** It asked a question at 4pm. You answer at 4:01.
 
-**It dumped a wall of text on you.** airband shows you the question buried in it.
+**It wrote you a wall of text.** airband shows you the one question in it.
 
-**Say it to the room.** Answer out loud. It reaches the right agent.
+**Say your answer out loud.** It goes to the agent it's for.
 
-**Keep the Claude Code you already run.** airband sits on top of it.
+**Keep using Claude Code.** airband runs next to it.
 
 ## What it does
 

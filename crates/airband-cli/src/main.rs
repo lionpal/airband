@@ -58,7 +58,7 @@ fn main() {
         Some("progress") => tower::progress(config::load()),
         Some("feed") => terminal::feed(&config::load(), &args[1..]),
         Some("send") => terminal::send(&config::load(), &args[1..]),
-        Some(other) => Err(format!("unknown command \"{other}\": run, install, uninstall, status, relay, model, voice, ears, pair, unpair, quick, accounts, radio, feed, send, launch, hook, report")),
+        Some(other) => Err(format!("unknown command \"{other}\": setup, install, uninstall, status, keys, relay, lan, model, voice, ears, pair, unpair, quick, accounts, radio, feed, send, launch, hook, report, run")),
     };
     if let Err(e) = result {
         eprintln!("airband: {e}");

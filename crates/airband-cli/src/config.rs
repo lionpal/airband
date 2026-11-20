@@ -274,7 +274,7 @@ pub enum Summarizer {
         key: String,
         model: String,
     },
-    /// No model: read out the first two sentences as written.
+    /// No model: he gets every message as written.
     None,
 }
 fn gemini_judge() -> String {

@@ -160,7 +160,7 @@ pub fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
                 Summarizer::Command { argv } => format!("Model: a command, {}.", argv.iter().take(4).cloned().collect::<Vec<_>>().join(" ")),
                 Summarizer::Gemini { model, .. } => format!("Model: Gemini, {model}, with your own key."),
                 Summarizer::Openai { url, model, .. } => format!("Model: {model} at {url}."),
-                Summarizer::None => "Model: none. Messages are cut to their first two sentences, and your words go to whoever you name.".to_string(),
+                Summarizer::None => "Model: none. You get every message in full, and with several agents you are asked who yours is for.".to_string(),
             });
             println!("Change it:  airband model claude  |  airband model gemini [--key-env GEMINI_API_KEY] [--model …]  |  airband model openai --key-env OPENAI_API_KEY --model … [--url https://…/v1]  |  airband model none");
             return Ok(());
