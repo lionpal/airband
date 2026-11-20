@@ -245,6 +245,49 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
 .cpmain { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 2.4cqw 3.2cqw 2cqw; }
 .cphead { display: flex; align-items: center; gap: 1.3cqw; font: 700 2.9cqw var(--sans); letter-spacing: -0.02em; }
 .cphead svg { width: 3.7cqw; height: 3.7cqw; }
+.cpmain { position: relative; padding: 0; }
+.cpmap, .cpvoice { position: absolute; inset: 0; overflow: hidden; transition: opacity 0.35s ease; }
+.cpmap svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.cpturn { position: absolute; left: 2.4cqw; top: 2.2cqw; display: flex; flex-direction: column; padding: 1.2cqw 1.8cqw; border-radius: 1.8cqw; background: #0C0D0E; font: 600 2.2cqw var(--sans); color: var(--quiet); }
+.cpturn b { font: 700 3.2cqw var(--sans); color: var(--ink); }
+.cpsong { position: absolute; right: 2.4cqw; top: 2.2cqw; display: flex; align-items: center; gap: 1.2cqw; padding: 1.1cqw 1.8cqw; border-radius: 1.8cqw; background: #0C0D0E; font: 600 2.2cqw var(--sans); color: var(--quiet); transition: opacity 0.3s; }
+.cpsong.low { opacity: 0.35; }
+.cpsong.low .eq i { animation-play-state: paused; }
+.cpbanner { position: absolute; left: 2.4cqw; right: 2.4cqw; bottom: 2.2cqw; display: flex; align-items: center; gap: 1.8cqw; padding: 1.6cqw 2cqw; border-radius: 2.6cqw; background: var(--ground); border: 1px solid var(--ask-edge); transform: translateY(140%); transition: transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.cpbanner.up { transform: none; }
+.cpbanner .bd { flex: none; width: 5.6cqw; height: 5.6cqw; margin: 0; border-radius: 1.6cqw; font-size: 2.4cqw; }
+.cpvwho .bd { flex: none; width: 3.6cqw; height: 3.6cqw; margin: 0; border-radius: 1cqw; font-size: 1.6cqw; }
+.cpbanner > div { min-width: 0; display: flex; flex-direction: column; gap: 0.2cqw; }
+.cpbanner b { font: 700 2.7cqw var(--sans); letter-spacing: -0.02em; }
+.cpbanner span { font: 500 2.2cqw/1.25 var(--sans); color: var(--soft); }
+.cpbanner em { margin-left: auto; flex: none; display: flex; align-items: center; gap: 0.8cqw; padding: 1.3cqw 2cqw; border-radius: 1.8cqw; background: var(--ink); color: var(--ground); font: 700 2.5cqw var(--sans); font-style: normal; transition: transform 0.15s, background 0.15s; }
+.cpbanner em svg { width: 2.6cqw; height: 2.6cqw; }
+.cpbanner em.tap { transform: scale(0.94); background: var(--soft); }
+.cpvoice { opacity: 0; display: flex; flex-direction: column; padding: 2.2cqw 3cqw 2.4cqw; background: var(--ground); }
+.cp.talking .cpvoice { opacity: 1; }
+.cp.talking .cpmap { opacity: 0; }
+.cpvbar { display: flex; align-items: center; justify-content: space-between; font: 600 2.6cqw var(--sans); color: var(--signal); }
+.cpvwho { display: flex; align-items: center; gap: 1.1cqw; color: var(--ink); }
+.cpvmid { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.6cqw; }
+.cpvpic { height: 12cqw; display: flex; align-items: center; justify-content: center; }
+.cpvpic .bd { width: 11cqw; height: 11cqw; margin: 0; border-radius: 3cqw; font-size: 4.6cqw; }
+.cpvpic .bars { display: flex; align-items: center; gap: 1.2cqw; height: 11cqw; }
+.cpvpic .bars i { width: 1.6cqw; border-radius: 1cqw; background: var(--signal); animation: cpbar 0.9s ease-in-out infinite; }
+.cpvpic .bars i:nth-child(1) { height: 30%; } .cpvpic .bars i:nth-child(2) { height: 65%; animation-delay: -0.2s; } .cpvpic .bars i:nth-child(3) { height: 100%; animation-delay: -0.45s; } .cpvpic .bars i:nth-child(4) { height: 55%; animation-delay: -0.1s; } .cpvpic .bars i:nth-child(5) { height: 25%; animation-delay: -0.6s; }
+@keyframes cpbar { 50% { transform: scaleY(0.45); } }
+.cpvpic .up { width: 9cqw; height: 9cqw; color: var(--ink); }
+.cpvmid p { margin: 0; font: 700 3.6cqw var(--sans); letter-spacing: -0.02em; }
+.cpvbtn { display: flex; justify-content: center; gap: 1.6cqw; min-height: 6.4cqw; }
+.cpvbtn span { min-width: 17cqw; text-align: center; padding: 1.5cqw 2.4cqw; border-radius: 1.9cqw; background: var(--raised); font: 600 2.8cqw var(--sans); transition: transform 0.15s; }
+.cpvbtn span.main { background: var(--ink); color: var(--ground); }
+.cpvbtn span.tap { transform: scale(0.94); }
+.car:not(.live) .cpvpic .bars i { animation-play-state: paused; }
+.carsaid { position: absolute; left: 11%; right: 11%; top: 4%; justify-content: center; width: fit-content; margin: 0 auto; max-width: 78%; display: flex; align-items: flex-start; gap: 0.6em; padding: 0.55em 0.9em; border-radius: 14px; background: rgba(11, 11, 12, 0.82); border: 1px solid #232526; font: 500 clamp(12px, 1.5vw, 16px)/1.35 var(--sans); color: var(--soft); opacity: 0; transition: opacity 0.3s; }
+.carsaid.on { opacity: 1; }
+.carsaid svg { flex: none; width: 1.2em; height: 1.2em; margin-top: 0.1em; color: var(--quiet); }
+.carsaid p { margin: 0; }
+.carsaid p b { color: var(--ink); font-weight: 600; }
+.carsaid.me svg { color: var(--signal); }
 .cpfeed { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 26%); mask-image: linear-gradient(to bottom, transparent 0, #000 26%); }
 .cl { flex: none; display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 0.45s ease, opacity 0.45s ease; }
 .cl.in { grid-template-rows: 1fr; opacity: 1; }
@@ -409,7 +452,7 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
   </div>
 
   <section class="more">
-    <div class="car" id="car" role="img" aria-label="A car's dashboard seen from the driver's seat, the road moving ahead. On the car's wide screen airband reads out what each agent reports and asks, one at a time. He answers out loud without touching anything, and the conversation scrolls up as it goes.">
+    <div class="car" id="car" role="img" aria-label="A car's dashboard seen from the driver's seat, the road moving ahead. A map is on the car's wide screen and music is playing. An agent's report is read out over it. When an agent needs an answer a banner comes up; one tap opens airband, the question is read out, and he answers out loud.">
       <svg class="dash" viewBox="0 0 800 500" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
         <defs>
           <radialGradient id="glow" cx="380" cy="84" r="330" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#7C96A0" stop-opacity="0.22"/><stop offset="0.45" stop-color="#4A5A62" stop-opacity="0.07"/><stop offset="1" stop-color="#0B0B0C" stop-opacity="0"/></radialGradient>
@@ -480,14 +523,23 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
           <div class="home"><i></i><i></i><i></i><i></i></div>
         </div>
         <div class="cpmain">
-          <div class="cphead"><svg viewBox="0 0 512 512"><g transform="translate(256 350) scale(0.88)"><g fill="none" stroke="#3DDC97" stroke-width="44" stroke-linecap="round"><path d="M-93.3 -93.3 A132 132 0 0 1 93.3 -93.3"/><path d="M-151.3 -151.3 A214 214 0 0 1 151.3 -151.3"/><path d="M-209.3 -209.3 A296 296 0 0 1 209.3 -209.3"/></g><g transform="scale(0.82)" fill="#F4F4F0"><path d="M0 -92 C10 -92 14 -70 14 -50 L14 70 C14 82 8 90 0 92 C-8 90 -14 82 -14 70 L-14 -50 C-14 -70 -10 -92 0 -92 Z"/><path d="M0 -40 L96 20 L96 36 L0 8 L-96 36 L-96 20 Z"/><path d="M0 54 L40 84 L40 94 L0 82 L-40 94 L-40 84 Z"/></g></g></svg>airband</div>
-          <div class="cpfeed" id="cpfeed"></div>
-          <div class="cpbar">
-            <div class="cpmic" id="cpmic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div>
-            <div class="cpheard" id="cpheard"></div>
+          <!-- another app is in front: a map, and something playing -->
+          <div class="cpmap" id="cpmap">
+            <svg viewBox="0 0 700 420" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><rect width="700" height="420" fill="#15191A"/><path d="M-20 330 L250 220 L410 268 L730 100" fill="none" stroke="#262B2C" stroke-width="34"/><path d="M170 -20 L246 222 L206 440" fill="none" stroke="#262B2C" stroke-width="22"/><path d="M520 -20 L424 268 L520 440" fill="none" stroke="#262B2C" stroke-width="18"/><path d="M-20 330 L250 220 L410 268" fill="none" stroke="#5B8DEF" stroke-width="10" stroke-linecap="round"/><circle cx="410" cy="268" r="12" fill="#5B8DEF" stroke="#F4F4F0" stroke-width="4"/></svg>
+            <div class="cpturn"><b>400 m</b><span>then left</span></div>
+            <div class="cpsong" id="cpsong"><span class="eq"><i></i><i></i><i></i><i></i></span><span>Music</span></div>
+            <div class="cpbanner" id="cpbanner"><i class="bd" id="cpbwho"></i><div><b id="cpbname"></b><span id="cpbask"></span></div><em id="cpbgo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>Answer</em></div>
+          </div>
+          <!-- airband in front: the voice screen. Nothing said is shown on it -->
+          <div class="cpvoice" id="cpvoice">
+            <div class="cpvbar"><span>End</span><span class="cpvwho"><i class="bd" id="cpvbd"></i><b id="cpvname"></b></span></div>
+            <div class="cpvmid"><div class="cpvpic" id="cpvpic"></div><p id="cpvline"></p></div>
+            <div class="cpvbtn" id="cpvbtn"></div>
           </div>
         </div>
       </div>
+      <!-- what is heard in the car, which the car's screen never shows -->
+      <div class="carsaid" id="carsaid" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg><p id="carsaidp"></p></div>
     </div>
     <div class="morewords">
       <h2>Run your agents from the car.</h2>
@@ -1077,64 +1129,81 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
     };
     new IntersectionObserver((seen) => { on = seen[0].isIntersecting; if (on) { round += 1; run(round); } }, { threshold: 0.3 }).observe(sec);
   })();
-  const feed = document.getElementById("cpfeed"), mic = document.getElementById("cpmic"), heard = document.getElementById("cpheard"), road = car.querySelector("svg.dash");
+  const $ = (id) => document.getElementById(id);
+  const cp = car.querySelector(".cp"), banner = $("cpbanner"), said = $("carsaid"), saidp = $("carsaidp"), song = $("cpsong"), road = car.querySelector("svg.dash");
   road.pauseAnimations();
-  const EQ = '<span class="eq"><i></i><i></i><i></i><i></i></span>';
   const TEAM = { logistics: "#3987e5", catalog: "#d95926", orders: "#9085e9", payouts: "#d55181" };
-  const badge = (name) => { const [team, next] = name.split(" "); return '<i class="bd" style="--team:' + (TEAM[team] || "") + '">' + team[0].toUpperCase() + (next || "")[0].toUpperCase() + "</i>"; };
-  const words = (t, on) => t.split(" ").map((w) => "<b" + (on ? ' class="on"' : "") + ">" + w + "</b>").join(" ");
+  const letters = (name) => { const [team, next] = name.split(" "); return team[0].toUpperCase() + (next || "")[0].toUpperCase(); };
+  const wear = (el, name) => { el.style.setProperty("--team", TEAM[name.split(" ")[0]] || ""); el.textContent = letters(name); };
+  const MIC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
   let turn = 0, showing = false;
-  // every pause ends the conversation if the car has scrolled away or a newer one has started
+  // every pause ends the scene if the car has scrolled away or a newer one has started
   const wait = (ms, mine) => new Promise((go, stop) => setTimeout(() => (showing && mine === turn ? go() : stop()), ms));
-  const line = (kind, html) => {
-    feed.querySelectorAll(".cl").forEach((old) => old.classList.add("old"));
-    const el = document.createElement("div");
-    el.className = "cl " + kind;
-    el.innerHTML = '<div><div class="pad">' + html + "</div></div>";
-    feed.appendChild(el);
-    while (feed.children.length > 5) feed.firstChild.remove();
-    requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add("in")));
-    return el;
+  // What is heard in the car, a word at a time. The car's screen never shows it: this sits over the windscreen.
+  const hear = async (who, text, mine, me) => {
+    said.classList.toggle("me", !!me);
+    said.classList.add("on");
+    song.classList.add("low");
+    saidp.innerHTML = "<b>" + who + "</b> ";
+    for (const w of text.split(" ")) { saidp.insertAdjacentText("beforeend", w + " "); await wait(120 + w.length * 22, mine); }
+    await wait(650, mine);
   };
-  // it is said, not posted: bars move by the name and each word lights as it is spoken
-  const speak = async (el, mine) => {
-    await wait(480, mine);
-    el.classList.add("speaking");
-    for (const w of el.querySelectorAll("p b")) { w.classList.add("on"); await wait(140 + w.textContent.length * 20, mine); }
-    el.classList.remove("speaking");
+  const quiet = () => { said.classList.remove("on"); song.classList.remove("low"); };
+  // the voice screen in one of its states: a picture, one line, and its buttons
+  const voice = (who, pic, line, buttons) => {
+    wear($("cpvbd"), who);
+    $("cpvname").textContent = who;
+    $("cpvpic").innerHTML = pic === "badge" ? '<i class="bd"></i>' : pic === "bars" ? '<span class="bars"><i></i><i></i><i></i><i></i><i></i></span>' : '<svg class="up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg>';
+    if (pic === "badge") wear($("cpvpic").firstChild, who);
+    $("cpvline").textContent = line;
+    $("cpvbtn").innerHTML = buttons.map((b, i) => '<span class="' + (i === 0 ? "main" : "") + '">' + b + "</span>").join("");
   };
-  const report = (who, text, mine) => speak(line("say", "<small>" + badge(who) + who + EQ + "</small><p>" + words(text) + "</p>"), mine);
-  const ask = async (who, text, answers, pick, reply, mine) => {
-    const el = line("ask", '<div class="ccard"><small>' + badge(who) + who + EQ + "</small><p>" + words(text) + '</p><div class="ans">' + answers.map((a) => "<span>" + a + "</span>").join("") + "</div></div>");
-    await speak(el, mine);
-    await wait(550, mine);
-    mic.classList.add("live");
-    for (const w of reply.split(" ")) { await wait(170 + w.length * 24, mine); heard.textContent += (heard.textContent ? " " : "") + w; }
-    await wait(420, mine);
-    mic.classList.remove("live");
-    el.querySelectorAll(".ans span")[pick].classList.add("pick");
-    await wait(520, mine);
-    heard.textContent = "";
-    el.classList.add("done");
-    line("mine", "<p>" + reply + "</p>");
+  const press = async (el, mine) => { el.classList.add("tap"); await wait(220, mine); el.classList.remove("tap"); };
+  // a report: read out over whatever is on the screen, which does not change
+  const report = async (who, text, mine) => { await hear(who, text, mine); quiet(); };
+  // a question: a banner over the map, one tap, the question read out with its answers, and his answer
+  const ask = async (who, text, answers, reply, mine) => {
+    wear($("cpbwho"), who);
+    $("cpbname").textContent = who + " needs you";
+    $("cpbask").textContent = text;
+    banner.classList.add("up");
+    await wait(1900, mine);
+    await press($("cpbgo"), mine);
+    voice(who, "badge", who + " is speaking", ["Talk", "Quiet"]);
+    cp.classList.add("talking");
+    banner.classList.remove("up");
+    await wait(500, mine);
+    await hear(who, text + " You can say " + answers.join(", or ") + ", or answer in your own words.", mine);
+    voice(who, "bars", "Listening, for " + who, ["Send", "Cancel"]);
+    await hear("You", reply, mine, true);
+    await press($("cpvbtn").firstChild, mine);
+    voice(who, "up", "Sending", []);
+    quiet();
+    await wait(900, mine);
+    cp.classList.remove("talking");
   };
   const drive = async (mine) => {
     try {
       for (;;) {
+        await wait(900, mine);
         await report("catalog import", "Imported 1,240 parts. All tests pass.", mine);
-        await wait(1300, mine);
-        await ask("orders refunds", "Refunds for 14 customers are ready. Send them?", ["Send", "Show me first"], 0, "Send them", mine);
-        await wait(1500, mine);
+        await wait(1400, mine);
+        await ask("orders refunds", "Refunds for 14 customers are ready. Send them?", ["Send", "Show me first"], "Send them", mine);
+        await wait(1600, mine);
         await report("logistics rates", "All three carriers are updated.", mine);
-        await wait(1300, mine);
-        await ask("payouts schedule", "Payout email: Mondays or Fridays?", ["Mondays", "Fridays"], 1, "Fridays, right after payouts go out", mine);
+        await wait(1400, mine);
+        await ask("payouts schedule", "Payout email: Mondays or Fridays?", ["Mondays", "Fridays"], "Fridays, right after payouts go out", mine);
         await wait(1900, mine);
       }
     } catch (stopped) {}
   };
+  const reset = () => { cp.classList.remove("talking"); banner.classList.remove("up"); quiet(); saidp.textContent = ""; };
   if (still) {
-    line("say", "<small>" + badge("catalog import") + "catalog import</small><p>" + words("Imported 1,240 parts. All tests pass.", true) + "</p>").classList.add("in");
-    line("ask", '<div class="ccard"><small>' + badge("orders refunds") + 'orders refunds</small><p>' + words("Refunds for 14 customers are ready. Send them?", true) + '</p><div class="ans"><span>Send</span><span>Show me first</span></div></div>').classList.add("in");
+    // no motion: the moment a question has come up over the map
+    wear($("cpbwho"), "orders refunds");
+    $("cpbname").textContent = "orders refunds needs you";
+    $("cpbask").textContent = "Refunds for 14 customers are ready. Send them?";
+    banner.classList.add("up");
     return;
   }
   new IntersectionObserver((seen) => {
@@ -1143,9 +1212,7 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
     showing ? road.unpauseAnimations() : road.pauseAnimations();
     if (!showing) return;
     turn += 1;
-    feed.innerHTML = "";
-    heard.textContent = "";
-    mic.classList.remove("live");
+    reset();
     drive(turn);
   }, { threshold: 0.3 }).observe(car);
 })();

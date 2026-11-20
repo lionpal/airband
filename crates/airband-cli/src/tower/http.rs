@@ -520,7 +520,20 @@ async fn message(State(app): State<Arc<App>>, Path(id): Path<String>, Query(q): 
     // `spoken` is the same words with no sound, for a radio that reads them in a voice of its own
     let form = q.get("form").map(String::as_str);
     if matches!(form, Some("speech" | "spoken")) {
-        let text: Option<String> = app.inner.lock().unwrap().log.iter().find(|e| e.id == id).map(|e| spoken(&e.full).chars().take(3000).collect());
+        // `part=asked` is the question as he would be asked it on a call: who is asking, its short form, and
+        // the answers it offers, for a radio that reads it to him before he answers
+        let text: Option<String> = app.inner.lock().unwrap().log.iter().find(|e| e.id == id).map(|e| match q.get("part").map(String::as_str) {
+            Some("asked") => {
+                let short = e.short.clone().unwrap_or_else(|| spoken(&e.full).chars().take(600).collect());
+                let choices = match e.options.as_slice() {
+                    [] => String::new(),
+                    [one] => format!(" You can say {one}, or answer in your own words."),
+                    [first @ .., last] => format!(" You can say {}, or {last}, or answer in your own words.", first.join(", ")),
+                };
+                format!("{}. {short}{choices}", airband_core::routing::shown(&e.from))
+            }
+            _ => spoken(&e.full).chars().take(3000).collect(),
+        });
         if form == Some("spoken") {
             return match text {
                 Some(text) => Json(json!({ "text": text })).into_response(),

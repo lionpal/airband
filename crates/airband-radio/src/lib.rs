@@ -468,10 +468,18 @@ impl Radio {
     /// Read a whole message aloud in the tower's voice. Blocks until it has been heard or [`Radio::hush`] is
     /// called. False when the tower has no voice to read it with.
     pub(crate) fn read_aloud(&self, id: &str) -> bool {
+        self.read(id, "")
+    }
+    /// Read a question to him as he would be asked it on a call: who is asking, its short form, and the
+    /// answers it offers. Blocks the same way.
+    pub(crate) fn read_question(&self, id: &str) -> bool {
+        self.read(id, "&part=asked")
+    }
+    fn read(&self, id: &str, part: &str) -> bool {
         let mine = self.reading.fetch_add(1, Ordering::SeqCst) + 1;
         // with a voice of the device's own, the tower is asked for the words and they are said here
         if mouth::ready() {
-            if let Ok((200, v)) = self.link.request("GET", &format!("/message/{id}?form=spoken"), None) {
+            if let Ok((200, v)) = self.link.request("GET", &format!("/message/{id}?form=spoken{part}"), None) {
                 if v["text"].as_str().is_some_and(|text| mouth::say(&*self.host, text, &|| self.reading.load(Ordering::SeqCst) != mine)) {
                     return true;
                 }
@@ -479,7 +487,7 @@ impl Radio {
                 mouth::give_up();
             }
         }
-        let speech = match self.link.request("GET", &format!("/message/{id}?form=speech"), None) {
+        let speech = match self.link.request("GET", &format!("/message/{id}?form=speech{part}"), None) {
             Ok((200, v)) => v["speech"].as_str().map(String::from),
             _ => None,
         };
