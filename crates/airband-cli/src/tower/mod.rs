@@ -298,6 +298,12 @@ pub fn try_model(cfg: &Config) -> Result<String, String> {
     rt.block_on(judge::ask_model(cfg, "Reply with the one word: ready".into())).map(|_| "It answers.".into())
 }
 
+/// Does the second model answer, asked by itself? For `airband setup`.
+pub fn try_second(cfg: &Config) -> Result<String, String> {
+    let Some(second) = cfg.summarizer_fallback.clone() else { return Ok("Set to none.".into()) };
+    try_model(&Config { summarizer: second, summarizer_fallback: None, ..cfg.clone() })
+}
+
 /// Does the voice speak? For `airband setup`.
 pub fn try_voice(cfg: &Config) -> Result<String, String> {
     println!("  Asking it to speak…");

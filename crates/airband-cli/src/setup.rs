@@ -151,6 +151,14 @@ fn set_summary(cfg: &mut Config, v: Option<Value>) -> Result<(), String> {
     };
     Ok(())
 }
+fn set_second(cfg: &mut Config, v: Option<Value>) -> Result<(), String> {
+    cfg.summarizer_fallback = match v {
+        Some(v) if v["kind"] == "claude" => Some(config::Summarizer::default()),
+        Some(v) => Some(serde_json::from_value(v).map_err(|e| e.to_string())?),
+        None => None,
+    };
+    Ok(())
+}
 fn set_voice(cfg: &mut Config, v: Option<Value>) -> Result<(), String> {
     cfg.voice = serde_json::from_value(v.unwrap_or(json!({ "kind": "device" }))).map_err(|e| e.to_string())?;
     Ok(())
@@ -174,11 +182,13 @@ pub fn setup(mut cfg: Config, start: bool) -> Result<(), String> {
     if let Some(why) = config::keyless() {
         return Err(format!("Setup needs the keychain, which cannot be read from here: {why}"));
     }
-    println!("Three choices, then your phone. Keys you give stay on this computer{}.\nThey go to the service they are for and nowhere else: never to airband's servers.", if config::locked() { ", in its keychain" } else { "" });
+    println!("Four choices, then your phone. Keys you give stay on this computer{}.\nThey go to the service they are for and nowhere else: never to airband's servers.", if config::locked() { ", in its keychain" } else { "" });
     let (now_summarizer, now_voice, now_ears) = (kind_of(&cfg.summarizer), kind_of(&cfg.voice), kind_of(&cfg.ears));
-    choose(&mut cfg, Job::Summary, "1 of 3. Summaries", "What reads your agents' messages and tells you the short of them.", "None: you get every message as written", &now_summarizer, set_summary, crate::tower::try_model);
-    choose(&mut cfg, Job::Voice, "2 of 3. Voice", "What reads to you when you turn reading aloud on.", "None: nothing is read aloud", &now_voice, set_voice, crate::tower::try_voice);
-    choose(&mut cfg, Job::Ears, "3 of 3. Listening", "What turns what you say into words. Your phone reaches it with a pass from this computer.", "None: you type", &now_ears, set_ears, crate::tower::try_ears);
+    choose(&mut cfg, Job::Summary, "1 of 4. Summaries", "What reads your agents' messages and tells you the short of them.", "None: you get every message as written", &now_summarizer, set_summary, crate::tower::try_model);
+    let now_second = cfg.summarizer_fallback.as_ref().map(kind_of).unwrap_or_else(|| "none".into());
+    choose(&mut cfg, Job::Summary, "2 of 4. A second model for summaries", "Asked when the first does not answer: it is logged out, over its limit, or down.", "None: then you get the message as written", &now_second, set_second, crate::tower::try_second);
+    choose(&mut cfg, Job::Voice, "3 of 4. Voice", "What reads to you when you turn reading aloud on.", "None: nothing is read aloud", &now_voice, set_voice, crate::tower::try_voice);
+    choose(&mut cfg, Job::Ears, "4 of 4. Listening", "What turns what you say into words. Your phone reaches it with a pass from this computer.", "None: you type", &now_ears, set_ears, crate::tower::try_ears);
     config::save(&cfg)?;
     if !start {
         println!("\nSaved.");

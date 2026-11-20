@@ -163,6 +163,15 @@ pub enum RadioError {
     Told { reason: String },
 }
 
+/// A tower that speaks another version of the radio protocol is told apart from one that cannot be reached:
+/// he is asked to update, not left looking at a chat that half works.
+fn spoken_alike(feed: &Feed) -> Result<(), RadioError> {
+    if feed.schema.is_empty() || feed.schema == airband_core::radio::SCHEMA {
+        return Ok(());
+    }
+    Err(RadioError::Told { reason: "This computer runs another version of airband. Update it and this app.".into() })
+}
+
 impl std::fmt::Display for RadioError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -505,6 +514,7 @@ impl Radio {
         let wait = if self.link.untried() { 0 } else { wait_seconds.min(25) };
         let (status, v) = self.link.request("GET", &format!("/feed?scope=all&since={since}&after={after}&roster={roster}&wait={wait}{away}"), None)?;
         let feed: Feed = (status == 200).then(|| serde_json::from_value(v).ok()).flatten().ok_or(RadioError::Refused)?;
+        spoken_alike(&feed)?;
         self.roster.store(feed.roster_rev, Ordering::SeqCst);
         self.link.set_direct(feed.direct.clone());
         // the tower's log is behind ours: it was reset. Start over rather than wait for numbers that will not come.
@@ -546,6 +556,7 @@ impl Radio {
         let scope: String = scope.bytes().map(|b| if b.is_ascii_alphanumeric() || b == b':' { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
         let (status, v) = self.link.request("GET", &format!("/feed?scope={scope}&after={after}&wait={}", wait_seconds.min(25)), None)?;
         let feed: Feed = (status == 200).then(|| serde_json::from_value(v).ok()).flatten().ok_or(RadioError::Refused)?;
+        spoken_alike(&feed)?;
         self.link.set_direct(feed.direct.clone());
         Ok(chat_feed(feed))
     }
