@@ -1,0 +1,32 @@
+import ActivityKit
+import Foundation
+
+/// An agent is waiting on him. Shown as a Live Activity, which iOS also puts on a car's screen when another
+/// app is in front. It says who is waiting and what it asked, in the short form he would see in the chat.
+struct NeedsYouAttributes: ActivityAttributes {
+    struct ContentState: Codable, Hashable {
+        /// How many agents are waiting on him now, this one included.
+        var waiting: Int
+        /// What this one asked, in its short form.
+        var question: String
+    }
+    /// The agent as it is called, and the two letters that stand for it. A tap answers this agent.
+    var callsign: String
+    var badge: String
+}
+
+/// The addresses a tile or a banner opens the app with.
+enum OpenWith {
+    /// Open the microphone, for whoever his words turn out to be for.
+    static let talk = URL(string: "airband://talk")!
+    /// Open the microphone to answer one agent.
+    static func answer(_ callsign: String) -> URL {
+        var parts = URLComponents(string: "airband://answer")!
+        parts.queryItems = [URLQueryItem(name: "agent", value: callsign)]
+        return parts.url ?? talk
+    }
+    /// The agent an address of that kind names.
+    static func agent(in url: URL) -> String? {
+        URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "agent" }?.value
+    }
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Make sure Apple knows the app's two identifiers and what each may do.
+"""Make sure Apple knows the app's three identifiers and what each may do.
 
     scripts/apple-ids.py
 
@@ -27,6 +27,7 @@ API = "https://api.appstoreconnect.apple.com/v1"
 IDS = {
     "dev.airband.app": ("airband", ["PUSH_NOTIFICATIONS"]),
     "dev.airband.app.notify": ("airband notifications", []),
+    "dev.airband.app.widgets": ("airband widgets", []),
 }
 
 

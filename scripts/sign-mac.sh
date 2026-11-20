@@ -26,5 +26,10 @@ if [ -z "$who" ]; then
   echo "No signing certificate here: the binary is left as it is, and its keys stay in the settings file."
   exit 0
 fi
-codesign --force --sign "$who" --identifier dev.airband.tower "$bin"
+# A Developer ID signature is made the way Apple's notary service asks: with the hardened runtime and a
+# timestamp from Apple. Any other certificate signs plainly (it is for this computer only).
+case "$who" in
+  "Developer ID Application:"*) codesign --force --options runtime --timestamp --sign "$who" --identifier dev.airband.tower "$bin" ;;
+  *) codesign --force --sign "$who" --identifier dev.airband.tower "$bin" ;;
+esac
 echo "Signed."

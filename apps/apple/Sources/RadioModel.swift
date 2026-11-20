@@ -7,6 +7,7 @@ import AVFoundation
 import PhononCoreML
 import Foundation
 import Security
+import ActivityKit
 import SwiftUI
 import UIKit
 
@@ -171,6 +172,47 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         if let room, view.online, !view.rooms.contains(where: { $0.name == room }) { self.room = nil }
         if full.count > 60 { full.removeAll() } // opened long ago: fetched again if he looks again
         sendPendingReads()
+        syncBanners()
+    }
+
+    /// An address the app was opened with: a pairing link, or what the Talk tile and a banner open it with.
+    func open(_ url: URL) {
+        switch url.host {
+        case "talk":
+            replyingTo = nil
+            Task { @MainActor in if !self.micOpen { await self.talk() } }
+        case "answer":
+            // look at the agent that is waiting, so what he says goes to it
+            if let callsign = OpenWith.agent(in: url), let team = view.rooms.first(where: { $0.members.contains { $0.callsign == callsign } }) {
+                replyingTo = nil
+                room = team.name
+                only = callsign
+            }
+            Task { @MainActor in if !self.micOpen { await self.talk() } }
+        default:
+            pair(with: url.absoluteString)
+        }
+    }
+
+    /// The banners up now, by the agent each is for.
+    private var banners: [String: Activity<NeedsYouAttributes>] = [:]
+
+    /// While he is on a call, each agent that is waiting on him has a banner: on the lock screen, and on a
+    /// car's screen when another app is in front. It comes down when the agent has its answer or the call ends.
+    private func syncBanners() {
+        let waiting = calling ? view.rooms.flatMap(\.members).filter { $0.state == "asking" } : []
+        for (callsign, banner) in banners where !waiting.contains(where: { $0.callsign == callsign }) {
+            banners[callsign] = nil
+            Task { await banner.end(nil, dismissalPolicy: .immediate) }
+        }
+        guard !waiting.isEmpty, ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        for agent in waiting where banners[agent.callsign] == nil {
+            let state = NeedsYouAttributes.ContentState(waiting: waiting.count, question: agent.question)
+            guard let banner = try? Activity.request(attributes: NeedsYouAttributes(callsign: agent.callsign, badge: agent.badge), content: .init(state: state, staleDate: nil)) else { continue }
+            banners[agent.callsign] = banner
+            // the alert is what makes it show itself, and not only sit on the lock screen
+            Task { await banner.update(.init(state: state, staleDate: nil), alertConfiguration: .init(title: "\(agent.callsign) needs you", body: LocalizedStringResource(stringLiteral: agent.question.isEmpty ? "Tap to answer" : agent.question), sound: .default)) }
+        }
     }
 
     /// The folders inside one of his on a computer. Calls back with them, or with what is wrong.

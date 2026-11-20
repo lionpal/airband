@@ -30,6 +30,7 @@ ARCHIVE="$BUILD/Airband.xcarchive"
 TEAM_ID="${TEAM_ID:-6LYK439Z4F}"
 BUNDLE_ID="dev.airband.app"
 NOTIFY_ID="dev.airband.app.notify"
+WIDGETS_ID="dev.airband.app.widgets"
 # shellcheck disable=SC1091
 [[ -f "$APP/.env.testflight" ]] && source "$APP/.env.testflight"
 : "${ASC_KEY_ID:?set ASC_KEY_ID (apps/apple/.env.testflight)}" "${ASC_ISSUER_ID:?set ASC_ISSUER_ID}" "${ASC_KEY_PATH:?set ASC_KEY_PATH}"
@@ -87,6 +88,7 @@ profile() { # profile <bundle id> <file>: make it, print its name
 }
 PROFILE="$(profile "$BUNDLE_ID" airband_appstore.mobileprovision)"
 NOTIFY_PROFILE="$(profile "$NOTIFY_ID" airband_notify_appstore.mobileprovision)"
+WIDGETS_PROFILE="$(profile "$WIDGETS_ID" airband_widgets_appstore.mobileprovision)"
 echo "✓ $PROFILE"
 echo "✓ $NOTIFY_PROFILE"
 security cms -D -i "$BUILD/profiles/airband_appstore.mobileprovision" | grep -q "aps-environment" || { echo "✗ the app's profile has no push notifications"; exit 1; }
@@ -102,7 +104,7 @@ fi
 
 echo "▸ Archiving…"
 xcodebuild -project "$APP/Airband.xcodeproj" -scheme Airband -configuration Release -destination 'generic/platform=iOS' \
-  -archivePath "$ARCHIVE" DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Manual AIRBAND_APP_PROFILE="$PROFILE" AIRBAND_NOTIFY_PROFILE="$NOTIFY_PROFILE" "${COMMUNICATION[@]}" \
+  -archivePath "$ARCHIVE" DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Manual AIRBAND_APP_PROFILE="$PROFILE" AIRBAND_NOTIFY_PROFILE="$NOTIFY_PROFILE" AIRBAND_WIDGETS_PROFILE="$WIDGETS_PROFILE" "${COMMUNICATION[@]}" \
   "CODE_SIGN_IDENTITY=$SIGN_AS" archive | grep -E "error|warning: .*deprecated|ARCHIVE (SUCCEEDED|FAILED)" || true
 [[ -d "$ARCHIVE" ]] || { echo "✗ no archive was made"; exit 1; }
 echo "✓ $ARCHIVE"
@@ -117,7 +119,7 @@ cat > "$BUILD/ExportOptions.plist" <<PLIST
   <key>teamID</key><string>$TEAM_ID</string>
   <key>signingStyle</key><string>manual</string>
   <key>signingCertificate</key><string>$SIGN_AS</string>
-  <key>provisioningProfiles</key><dict><key>$BUNDLE_ID</key><string>$PROFILE</string><key>$NOTIFY_ID</key><string>$NOTIFY_PROFILE</string></dict>
+  <key>provisioningProfiles</key><dict><key>$BUNDLE_ID</key><string>$PROFILE</string><key>$NOTIFY_ID</key><string>$NOTIFY_PROFILE</string><key>$WIDGETS_ID</key><string>$WIDGETS_PROFILE</string></dict>
   <key>uploadSymbols</key><true/>
   <key>destination</key><string>export</string>
 </dict></plist>
