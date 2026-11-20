@@ -14,7 +14,7 @@ settings:
     SWIFT_VERSION: "5.0"
     DEVELOPMENT_TEAM: 6LYK439Z4F
     MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "74"
+    CURRENT_PROJECT_VERSION: "75"
     SWIFT_INCLUDE_PATHS: $(PROJECT_DIR)/Generated
     HEADER_SEARCH_PATHS: $(PROJECT_DIR)/Generated
     # The Rust core is linked INTO the app and into its notification extension, as a static library named by its
@@ -72,6 +72,15 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
+        # The car's screen is a scene of its own (Sources/CarPlay.swift). The phone's window is still made by
+        # SwiftUI, which needs no entry here.
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+          UISceneConfigurations:
+            CPTemplateApplicationSceneSessionRoleApplication:
+              - UISceneClassName: CPTemplateApplicationScene
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).CarPlaySceneDelegate
+                UISceneConfigurationName: CarPlay
         UIBackgroundModes: [audio, remote-notification]
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         # an iPad, and a Mac running the iPad app, turn and resize freely

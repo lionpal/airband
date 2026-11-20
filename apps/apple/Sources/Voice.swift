@@ -17,6 +17,10 @@ final class Voice: NSObject, @unchecked Sendable {
     private var keepAlive: AVAudioPlayer?
     private var tone: AVAudioPlayer?
     private enum Mode { case idle, speaking, listening }
+    /// The conversation is on a car's screen. Apple asks for one way of holding the audio there, for as long as
+    /// the conversation lasts: play and record, the default mode, mixing with nothing. The car mutes its own
+    /// music for that time and gives it back when the conversation ends. The car does its own echo cancelling.
+    var inCar = false
 
     override init() {
         super.init()
@@ -56,6 +60,10 @@ final class Voice: NSObject, @unchecked Sendable {
     private func set(_ mode: Mode) {
         do {
             switch mode {
+            case _ where inCar:
+                if session.category != .playAndRecord || session.mode != .default || !session.categoryOptions.isEmpty {
+                    try session.setCategory(.playAndRecord, mode: .default, options: [])
+                }
             case .idle: // mixing, not ducking: music returns to full volume
                 try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             case .speaking:
@@ -230,7 +238,7 @@ final class Voice: NSObject, @unchecked Sendable {
         beep(880) // "your turn"
         let input = recEngine.inputNode
         // echo cancellation and noise suppression; without it a car's cabin and the phone's own speaker get in
-        try? input.setVoiceProcessingEnabled(true)
+        if !inCar { try? input.setVoiceProcessingEnabled(true) }
         let from = input.outputFormat(forBus: 0)
         guard from.sampleRate > 0, from.channelCount > 0,
               let to = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Voice.micRate, channels: 1, interleaved: true),
