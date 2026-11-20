@@ -242,6 +242,13 @@ pub fn run(cfg: Config) -> Result<(), String> {
         // a team from before teams had colours gets one now, not at its agents' next word
         inner.colour_teams();
         inner.adopt_old_lines();
+        // credentials said before the chat masked them: masked now, and sent to every radio again as they are
+        let leaked: Vec<String> = inner.log.iter_mut().filter_map(|e| e.scrub().then(|| e.id.clone())).collect();
+        if !leaked.is_empty() {
+            log(format!("masked a credential in {} kept message{}", leaked.len(), if leaked.len() == 1 { "" } else { "s" }));
+            leaked.iter().for_each(|id| inner.touch(id));
+        }
+        store.scrub_events();
         pictures::prune();
         attachments::prune();
         let live: HashSet<String> = inner.sessions.iter().map(|s| s.agent.id.clone()).collect();
@@ -249,6 +256,12 @@ pub fn run(cfg: Config) -> Result<(), String> {
         let port = cfg.port;
         let push = push::Wake::load(&store);
         let app = Arc::new(App { push, cfg, store, speech: speech::Speech::default(), ears_pass: Mutex::new(None), lent_pass: Mutex::new(None), inner: Mutex::new(inner), kick: Notify::new(), accounts: accounts::Kept::default() });
+        // what was changed while starting (a credential masked in a kept message) is written now, not at the
+        // next thing an agent says
+        {
+            let inner = app.inner.lock().unwrap();
+            app.save(&inner);
+        }
         let router = http::router(app.clone());
 
         tokio::spawn(pump_loop(app.clone()));

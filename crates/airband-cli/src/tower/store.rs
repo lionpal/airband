@@ -150,7 +150,7 @@ impl Store {
                 "saving a message",
                 db.execute(
                     "insert into messages (seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
-                     on conflict (seq) do update set kind = excluded.kind, short = excluded.short, detail = excluded.detail, options = excluded.options, recommended = excluded.recommended, rev = excluded.rev, read = excluded.read, waiting = excluded.waiting, seen = excluded.seen",
+                     on conflict (seq) do update set kind = excluded.kind, short = excluded.short, full = excluded.full, detail = excluded.detail, options = excluded.options, recommended = excluded.recommended, rev = excluded.rev, read = excluded.read, waiting = excluded.waiting, seen = excluded.seen",
                     params![e.seq as i64, e.id, e.at as i64, e.from, e.group, serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, if e.cancelled { Some("cancelled") } else if e.queued { Some("queued") } else { None }, e.seen.map(|t| t as i64)],
                 ),
             );
@@ -166,6 +166,21 @@ impl Store {
     /// The record of what an agent's harness reported, as it arrived: the event and what the agent said of
     /// itself, whether or not this build understands them. The one thing left out is a token for reaching the
     /// agent, which is not this file's to keep.
+    /// Mask credentials in the record of raw events kept before they were masked on the way in.
+    pub(super) fn scrub_events(&self) {
+        let db = self.db.lock().unwrap();
+        let rows: Vec<(i64, String)> = match db.prepare("select n, event from events where event like '%ghp_%' or event like '%github_pat_%' or event like '%sk-%' or event like '%sk_live_%' or event like '%AKIA%' or event like '%PRIVATE KEY-----%' or event like '%secret=%' or event like '%AIza%' or event like '%eyJ%' or event like '%xox%'") {
+            Ok(mut q) => q.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).map(|rows| rows.flatten().collect()).unwrap_or_default(),
+            Err(_) => return,
+        };
+        for (n, event) in rows {
+            let clean = airband_core::redact::redact(&event);
+            if clean != event {
+                Self::warn("masking an old event", db.execute("update events set event = ?1 where n = ?2", params![clean, n]));
+            }
+        }
+    }
+
     /// Drop what is too old to be wanted, so the file does not grow for ever: the record of raw events and of
     /// deliveries after a month, the ids of what he said after a month (the relay holds a message for a week at
     /// most, so none can come again later than that), and all but the newest 5,000 messages.
@@ -186,7 +201,7 @@ impl Store {
         let db = self.db.lock().unwrap();
         Self::warn(
             "recording an event",
-            db.execute("insert into events (at, agent, harness, event, agent_doc) values (?1, ?2, ?3, ?4, ?5)", params![now() as i64, raw["agent"]["id"].as_str().unwrap_or(""), raw["agent"]["harness"].as_str().unwrap_or(""), raw["event"].to_string(), about.to_string()]),
+            db.execute("insert into events (at, agent, harness, event, agent_doc) values (?1, ?2, ?3, ?4, ?5)", params![now() as i64, raw["agent"]["id"].as_str().unwrap_or(""), raw["agent"]["harness"].as_str().unwrap_or(""), airband_core::redact::redact(&raw["event"].to_string()), about.to_string()]),
         );
     }
 

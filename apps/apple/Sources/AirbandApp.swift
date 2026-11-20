@@ -473,7 +473,7 @@ struct FeedView: View {
                     ForEach(model.view.feed, id: \.id) { m in
                         Group {
                             if m.from == "you" {
-                                Mine(m: m)
+                                Mine(m: m, latest: m.id == model.view.feed.last(where: { $0.from == "you" })?.id)
                             } else if m.needsYou {
                                 Question(m: m)
                             } else {
@@ -853,6 +853,8 @@ struct Question: View {
 struct Mine: View {
     @EnvironmentObject var model: RadioModel
     let m: ChatMessage
+    /// The last thing he said: the only one that says whether it was delivered and read.
+    var latest = false
     /// A long one shows its first lines; a tap opens it whole, and another closes it.
     @State private var whole = false
     private var long: Bool { m.long || m.text.count > 140 || m.text.filter { $0 == "\n" }.count > 4 }
@@ -920,7 +922,7 @@ struct Mine: View {
             }
             // has it got there, and has the agent read it: one tick when it is delivered, two and the time once
             // the agent has taken it in (an agent busy with something else may not for a long while)
-            if !m.queued, !m.to.isEmpty {
+            if latest, !m.queued, !m.to.isEmpty {
                 HStack(spacing: 4) {
                     Image(systemName: m.seen > 0 ? "checkmark.circle.fill" : "checkmark").font(.system(size: 10, weight: .bold))
                     Text(m.seen > 0 ? "read " + Date(timeIntervalSince1970: Double(m.seen) / 1000).formatted(date: .omitted, time: .shortened) : "delivered")
@@ -1069,6 +1071,7 @@ struct Answers: View {
         HStack(spacing: 10) {
             Button {
                 model.replyingTo = m
+                after()
                 Task { await model.talk() }
             } label: {
                 HStack(spacing: 8) {
@@ -1082,6 +1085,7 @@ struct Answers: View {
             .buttonStyle(.plain).accessibilityLabel("Answer by voice")
             Button {
                 model.replyingTo = m
+                after()
                 model.typeNow = true
             } label: {
                 Image(systemName: "keyboard").font(.system(size: 16, weight: .semibold)).foregroundStyle(Palette.ink)
@@ -1159,24 +1163,9 @@ struct ContextView: View {
                 .onAppear { proxy.scrollTo("question", anchor: .top) }
             }
             VStack(spacing: 10) {
+                // the answers, and the microphone and keyboard for one of his own: both close this and open the
+                // ordinary one at the bottom of the chat, aimed at this question
                 Answers(m: m, after: { dismiss() })
-                HStack(spacing: 10) {
-                    TextField("", text: $draft, prompt: Text("your own answer").foregroundColor(Palette.quiet), axis: .vertical)
-                        .lineLimit(1...4).font(.system(size: 17)).padding(.horizontal, 18).padding(.vertical, 14)
-                        .background(Palette.field, in: RoundedRectangle(cornerRadius: 24))
-                        .submitLabel(.send)
-                    if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Button {
-                            model.replyingTo = m
-                            model.send(draft)
-                            dismiss()
-                        } label: {
-                            Image(systemName: "arrow.up").font(.system(size: 18, weight: .bold)).foregroundStyle(Palette.ground)
-                                .frame(width: 48, height: 48).background(Palette.ink, in: Circle())
-                        }
-                        .buttonStyle(.plain).accessibilityLabel("Send")
-                    }
-                }
             }
             .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 12)
         }

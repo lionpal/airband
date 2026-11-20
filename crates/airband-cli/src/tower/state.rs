@@ -126,6 +126,27 @@ pub(super) struct Entry {
 }
 
 impl Entry {
+    /// Mask any credential in the words this line keeps. Returns whether there was one.
+    pub(super) fn scrub(&mut self) -> bool {
+        use airband_core::redact::redact;
+        let mut changed = false;
+        let mut clean = |t: &mut String| {
+            let r = redact(t);
+            if r != *t {
+                *t = r;
+                changed = true;
+            }
+        };
+        clean(&mut self.full);
+        if let Some(t) = self.short.as_mut() {
+            clean(t);
+        }
+        if let Some(t) = self.detail.as_mut() {
+            clean(t);
+        }
+        changed
+    }
+
     /// Something an agent said.
     pub(super) fn said(id: String, s: &Session, kind: Option<Kind>, full: String) -> Entry {
         Entry { id, from: s.callsign.text(), group: s.callsign.project.clone(), kind, full, agent: Some(s.agent.id.clone()), ..Entry::default() }
@@ -448,6 +469,8 @@ impl Inner {
         e.seq = self.seq;
         e.rev = self.rev;
         e.at = at.min(now());
+        // a key or a token in what was said is not kept in the chat (the agent it went to has it as he said it)
+        e.scrub();
         self.unsaved.borrow_mut().insert(e.id.clone());
         let place = self.log.partition_point(|have| have.at <= e.at);
         self.log.insert(place, e);
@@ -474,7 +497,7 @@ impl Inner {
         }
         if let Some(e) = self.log.iter_mut().find(|e| e.id == id) {
             e.kind = Some(kind);
-            e.short = Some(say.to_string());
+            e.short = Some(airband_core::redact::redact(say));
             e.options = options.to_vec();
             e.recommended = recommended;
             e.read = read.map(String::from);
@@ -521,14 +544,21 @@ impl Inner {
     /// The messages that need him and that nothing has answered yet. One at most per agent: its latest, while
     /// it has said nothing since, he has sent it nothing since, and it is still on the radio.
     pub(super) fn open_ids(&self) -> HashSet<String> {
-        let mut latest: HashMap<&str, &str> = HashMap::new();
+        // A question stays open until he says something to the agent that asked it, or it asks a newer one.
+        // What the agent goes on to report does not close it at once: he still has not answered. But one it
+        // has spoken past three times, or that is six hours old, is let go: by then it has decided for itself
+        // or asked again, and it should not keep calling for him.
+        const SPOKEN_PAST: u32 = 3;
+        const TOO_OLD_MS: u64 = 6 * 3600 * 1000;
+        let mut latest: HashMap<&str, (&str, u64, u32)> = HashMap::new();
         for e in &self.log {
             if let Some(agent) = e.agent.as_deref() {
                 if e.kind == Some(Kind::NeedsYou) {
-                    latest.insert(agent, &e.id);
+                    latest.insert(agent, (&e.id, e.at, 0));
                 } else if e.kind != Some(Kind::Fyi) {
-                    // it reported something, or said something not yet judged: it has moved on from its question
-                    latest.remove(agent);
+                    if let Some(q) = latest.get_mut(agent) {
+                        q.2 += 1;
+                    }
                 }
             } else {
                 for to in &e.to_agents {
@@ -536,7 +566,14 @@ impl Inner {
                 }
             }
         }
-        latest.into_iter().filter(|(agent, _)| self.find(agent).is_some()).map(|(_, id)| id.to_string()).collect()
+        let now = now();
+        // a request for permission is open for as long as the harness is waiting on it, whatever its age
+        let permits: HashSet<&str> = self.permits.values().filter(|p| p.decided.is_none()).map(|p| p.entry.as_str()).collect();
+        latest
+            .into_iter()
+            .filter(|(agent, (id, at, past))| self.find(agent).is_some() && (permits.contains(id) || (*past < SPOKEN_PAST && now.saturating_sub(*at) < TOO_OLD_MS)))
+            .map(|(_, (id, _, _))| id.to_string())
+            .collect()
     }
 
     /// The last thing he said to an agent: a message addressed to it, or the task it was launched with.
@@ -554,9 +591,11 @@ impl Inner {
         if !s.waiting {
             return "working";
         }
-        // it stopped only to wait for something of its own that is still running: that is still work
-        if self.log.iter().rev().find(|e| e.agent.as_deref() == Some(s.agent.id.as_str())).is_some_and(|e| e.background) {
-            return "working";
+        // It stopped only to wait for something of its own that is still running: that is still work, for a
+        // while. If nothing has come of it after twenty minutes it is not coming back by itself: it has
+        // stalled, and a poke is offered.
+        if let Some(e) = self.log.iter().rev().find(|e| e.agent.as_deref() == Some(s.agent.id.as_str())).filter(|e| e.background) {
+            return if now().saturating_sub(e.at) < 20 * 60 * 1000 { "working" } else { "stalled" };
         }
         match self.last_said(&s.agent.id) {
             Some(e) if open.contains(&e.id) => "asking",
@@ -692,7 +731,7 @@ mod tests {
     }
 
     #[test]
-    fn open_means_asked_and_neither_answered_nor_moved_on() {
+    fn open_means_asked_and_not_yet_answered() {
         let mut inner = Inner::default();
         inner.check_in(&agent("a", "/x/shop", None));
         inner.check_in(&agent("b", "/x/backoffice", None));
@@ -705,9 +744,17 @@ mod tests {
         inner.record(Entry::his("r1".into(), &to, "rewrite".into()));
         assert_eq!(inner.open_ids(), HashSet::from([qb.clone()]));
         assert_eq!(inner.last_instruction("a").as_deref(), Some("rewrite"));
-        // the other reports something: it has moved on from its question
-        says(&mut inner, "b", Kind::Report, "Shipped anyway.");
+        // the other goes on to report something: its question is still his to answer
+        says(&mut inner, "b", Kind::Report, "Also fixed the footer.");
+        assert_eq!(inner.open_ids(), HashSet::from([qb.clone()]));
+        // but once it has spoken past it three times it is let go: it has decided for itself by then
+        says(&mut inner, "b", Kind::Report, "And the header.");
+        assert_eq!(inner.open_ids(), HashSet::from([qb.clone()]));
+        says(&mut inner, "b", Kind::Report, "And the sidebar.");
         assert!(inner.open_ids().is_empty());
+        // a newer question of its own is open again
+        let qb2 = says(&mut inner, "b", Kind::NeedsYou, "Ship it now, or after the weekend?");
+        assert_eq!(inner.open_ids(), HashSet::from([qb2]));
     }
 
     #[test]

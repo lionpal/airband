@@ -108,7 +108,9 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
          - \"fyi\": he would not miss it. Progress chatter, an acknowledgement (\"OK, starting\"), a plan it is \
          about to carry out anyway, a restatement of what he just told it, an interim note while work goes on.\n\
          When unsure between two, pick the lower one, unless the agent is waiting on him or has stopped with \
-         work it said it would still do.\n\n\
+         work it said it would still do: a message that ends by saying what comes next (\"next up is the \
+         importer\", \"then I will wire the tests\") from an agent that has stopped is \"stalled\", however \
+         much it reports before that.\n\n\
          Then what to tell him, in plain spoken English. He will not read much: he glances. One short sentence, \
          14 words at most. If the agent is asking him something, the sentence is the question itself, as \
          briefly as it can be put (\"Two questions are too easy. Rewrite or leave?\"); how it got there is \
