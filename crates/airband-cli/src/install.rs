@@ -152,6 +152,7 @@ fn option(args: &[String], name: &str) -> Option<String> {
 ///   airband voice none                 nothing does this job
 ///   airband voice <provider> [--key-env VARIABLE] [--<setting> <value> …]
 ///   airband voice test                 one real call to what is set
+///   airband ears test <recording.wav>  play a recording to what is set, the way a phone would send it
 ///
 /// A key is never given on the command line, where the shell and other programs can see it: it comes from an
 /// environment variable, or is one already kept for that provider (`airband keys`).
@@ -171,7 +172,7 @@ fn provider_for(mut cfg: Config, job: crate::providers::Job, cmd: &str, what: &s
         }
         // one real call to what is set
         Some("test") => {
-            println!("{}", crate::setup::works(&cfg, job)?);
+            println!("{}", crate::setup::works(&cfg, job, args.get(1).map(String::as_str))?);
             return Ok(());
         }
         Some("none" | "device") => Use::default(),

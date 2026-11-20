@@ -238,7 +238,7 @@ async fn lend(relay: &Arc<Relay>) -> Response {
             token
         }
     };
-    axum::Json(serde_json::json!({ "kind": "azure", "region": region, "token": token, "language": "en-US" })).into_response()
+    axum::Json(serde_json::json!({ "kind": "azure", "token": token, "set": { "region": region, "language": "en-US" } })).into_response()
 }
 
 fn valid_channel(c: &str) -> bool {

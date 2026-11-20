@@ -93,6 +93,8 @@ pub struct App {
     speech: speech::Speech,
     /// The listening service's short-lived pass for the phone's ears, and when it was made.
     ears_pass: Mutex<Option<(String, Instant)>>,
+    /// Recordings arriving in parts from a phone, for a listening service that takes a finished clip.
+    clips: Mutex<HashMap<String, (Vec<i16>, Instant)>>,
     /// The pass the relay lends for speech, for a tower with no voice or no ears of its own: region, token,
     /// and when it was fetched.
     lent_pass: Mutex<Option<(String, String, Instant)>>,
@@ -133,7 +135,7 @@ async fn lent_pass_loop(app: Arc<App>) {
         let got = tokio::task::spawn_blocking(move || {
             let mut res = airband_radio::net::agent(Duration::from_secs(10)).post(&url).header("x-airband-admission", &key).header("Content-Length", "0").send_empty().ok()?;
             let v: Value = (res.status().as_u16() == 200).then(|| res.body_mut().read_json().ok()).flatten()?;
-            Some((v["region"].as_str()?.to_string(), v["token"].as_str()?.to_string()))
+            Some((v["set"]["region"].as_str()?.to_string(), v["token"].as_str()?.to_string()))
         })
         .await
         .ok()
@@ -309,11 +311,22 @@ pub fn try_voice(cfg: &Config) -> Result<String, String> {
     speech::try_voice(&cfg.voice).map(|seconds| format!("It speaks ({seconds:.1} seconds of sound came back)."))
 }
 
-/// Does the listening service give a pass? For `airband setup`.
-pub fn try_ears(cfg: &Config) -> Result<String, String> {
+/// Does the listening service answer? For `airband setup` and `airband ears test`. With a recording (a WAV
+/// of someone speaking, 16 kHz 16-bit mono) it is played to the service the way a phone would send it, and
+/// what came back is said.
+pub fn try_ears(cfg: &Config, recording: Option<&str>) -> Result<String, String> {
     use providers::{By, Job};
-    match cfg.ears.offer(Job::Ears).map(|(_, o)| o.by) {
-        Some(By::Listener(kind)) => airband_radio::listening_pass(kind, &cfg.ears.get(Job::Ears, "region"), &cfg.ears.key).map(|_| "It gives a pass.".into()),
+    let by = cfg.ears.offer(Job::Ears).map(|(_, o)| o.by);
+    if let (Some(path), Some(_)) = (recording, by) {
+        let wav = std::fs::read(path).map_err(|e| format!("cannot read {path}: {e}"))?;
+        let pcm = wav.get(44..).filter(|_| wav.starts_with(b"RIFF")).ok_or("that is not a WAV file")?;
+        println!("  Playing it to the service, at the speed it was spoken…");
+        let (said, changes) = airband_radio::try_listening(&cfg.ears, pcm)?;
+        return Ok(if changes > 0 { format!("It heard: \"{said}\"\n  The words on screen changed {changes} times while it played.") } else { format!("It heard: \"{said}\"") });
+    }
+    match by {
+        Some(By::Listener(kind)) => airband_radio::listening_pass(kind, &cfg.ears.settings(Job::Ears), &cfg.ears.key).map(|_| "It gives a pass.".into()),
+        Some(By::Transcribe) => airband_radio::hears::check(&cfg.ears).map(|_| "It listens.".into()),
         _ => Ok("Set to none.".into()),
     }
 }
@@ -331,15 +344,17 @@ pub fn progress(cfg: Config) -> Result<(), String> {
 
 pub fn run(cfg: Config) -> Result<(), String> {
     if let Some(why) = config::keyless() {
-        return Err(format!("The tower's keys are in the keychain and could not be read: {why}"));
+        return Err(format!("The tower's keys could not be read: {why}"));
     }
-    // a signed copy keeps the keys in the keychain: moved there once, by the tower itself, which runs where
-    // the keychain can be used
-    if !config::locked() && crate::vault::signed() {
+    // The keys are kept encrypted and never in the settings file. Settings from before that are moved now, and
+    // keys a run without the keychain had to seal in a file go into the keychain when this one can use it.
+    if !config::locked() {
         match config::lock() {
-            Ok(()) => log("the keys are now in the keychain; the settings file holds none"),
-            Err(e) => log(format!("the keys stay in the settings file: {e}")),
+            Ok(()) => log(format!("the keys are now {}; the settings file holds none", crate::vault::place())),
+            Err(e) => log(format!("the keys could not be moved out of the settings file: {e}")),
         }
+    } else if crate::vault::settle() {
+        log("the keys are now in the keychain");
     }
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().map_err(|e| e.to_string())?;
     rt.block_on(async move {
@@ -365,7 +380,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         inner.pending.retain(|p| live.contains(&p.agent_id));
         let port = cfg.port;
         let push = push::Wake::load(&store);
-        let app = Arc::new(App { push, cfg, store, speech: speech::Speech::default(), ears_pass: Mutex::new(None), lent_pass: Mutex::new(None), inner: Mutex::new(inner), kick: Notify::new(), accounts: accounts::Kept::default() });
+        let app = Arc::new(App { push, cfg, store, speech: speech::Speech::default(), ears_pass: Mutex::new(None), clips: Mutex::new(HashMap::new()), lent_pass: Mutex::new(None), inner: Mutex::new(inner), kick: Notify::new(), accounts: accounts::Kept::default() });
         // what was changed while starting (a credential masked in a kept message) is written now, not at the
         // next thing an agent says
         {

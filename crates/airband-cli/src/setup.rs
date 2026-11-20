@@ -20,12 +20,13 @@ pub(crate) fn slot(cfg: &mut Config, job: Job) -> &mut Use {
     }
 }
 
-/// Try a job's choice for real: one call to the service.
-pub(crate) fn works(cfg: &Config, job: Job) -> Result<String, String> {
+/// Try a job's choice for real: one call to the service. `sample` is a recording to play to a listening
+/// service, when he gave one.
+pub(crate) fn works(cfg: &Config, job: Job, sample: Option<&str>) -> Result<String, String> {
     match job {
         Job::Summary => crate::tower::try_model(cfg),
         Job::Voice => crate::tower::try_voice(cfg),
-        Job::Ears => crate::tower::try_ears(cfg),
+        Job::Ears => crate::tower::try_ears(cfg, sample),
     }
 }
 
@@ -122,7 +123,7 @@ fn choose(cfg: &mut Config, job: Job, title: &str, about: &str, none: &str) {
         };
         let none_chosen = chosen.is_none();
         *slot(cfg, job) = chosen;
-        match if none_chosen { Ok("Set to none.".into()) } else { works(cfg, job) } {
+        match if none_chosen { Ok("Set to none.".into()) } else { works(cfg, job, None) } {
             Ok(said) => {
                 println!("  {said}");
                 return;
@@ -142,9 +143,9 @@ pub fn setup(mut cfg: Config, start: bool) -> Result<(), String> {
         return Err("airband setup asks questions: run it in a terminal.".into());
     }
     if let Some(why) = config::keyless() {
-        return Err(format!("Setup needs the keychain, which cannot be read from here: {why}"));
+        return Err(format!("Setup needs the keys, which cannot be read from here: {why}"));
     }
-    println!("Three choices, then your phone. Keys you give stay on this computer{}.\nThey go to the service they are for and nowhere else: never to airband's servers.", if config::locked() { ", in its keychain" } else { "" });
+    println!("Three choices, then your phone. Keys you give stay on this computer{}.\nThey go to the service they are for and nowhere else: never to airband's servers.", format!(", {}", crate::vault::place()));
     choose(&mut cfg, Job::Summary, "1 of 3. Summaries", "What reads your agents' messages and tells you the short of them.", "None: you get every message in full");
     choose(&mut cfg, Job::Voice, "2 of 3. Voice", "What reads to you when you turn reading aloud on.", "None: nothing is read aloud");
     choose(&mut cfg, Job::Ears, "3 of 3. Listening", "What turns what you say into words. Your phone reaches it with a pass from this computer.", "None: you type");
@@ -180,15 +181,15 @@ fn used_for(cfg: &Config, secret: &str) -> Vec<&'static str> {
     out
 }
 
-/// `airband keys [add <name> <provider> | remove <name> | lock | unlock]`. A key is never shown.
+/// `airband keys [add <name> <provider> | remove <name> | lock]`. A key is never shown.
 pub fn keys(args: &[String]) -> Result<(), String> {
     let mut cfg = config::load();
     if let Some(why) = config::keyless() {
-        return Err(format!("The keys are in the keychain, which cannot be read from here: {why}"));
+        return Err(format!("The keys cannot be read from here: {why}"));
     }
     match args.first().map(String::as_str) {
         None => {
-            println!("{}", if config::locked() { "Kept in the keychain, encrypted with your login password. The settings file holds none." } else { "Kept in the settings file, which only you can read." });
+            println!("{}", if config::locked() { format!("Kept encrypted, {}. The settings file holds none.", crate::vault::place()) } else { "Still in the settings file from an older version. Move them:  airband keys lock".to_string() });
             if cfg.keys.is_empty() {
                 println!("No keys yet. Add them with:  airband setup");
             }
@@ -196,7 +197,7 @@ pub fn keys(args: &[String]) -> Result<(), String> {
                 let uses = used_for(&cfg, &k.secret);
                 println!("  {name}  ({})  {}", providers::PROVIDERS.iter().find(|p| p.id == k.provider).map(|p| p.name).unwrap_or(&k.provider), if uses.is_empty() { "not in use".to_string() } else { format!("used for {}", uses.join(", ")) });
             }
-            println!("Change them:  airband setup  |  airband keys add <name> <provider>  |  airband keys remove <name>  |  airband keys lock  |  airband keys unlock");
+            println!("Change them:  airband setup  |  airband keys add <name> <provider>  |  airband keys remove <name>");
         }
         Some("add") => {
             let (name, provider) = (args.get(1).ok_or("airband keys add <name> <provider>")?, args.get(2).ok_or("airband keys add <name> <provider>")?);
@@ -223,18 +224,12 @@ pub fn keys(args: &[String]) -> Result<(), String> {
             config::save(&cfg)?;
             println!("Removed.");
         }
+        // settings written before the keys were always kept encrypted: move them now
         Some("lock") => {
-            if !crate::vault::signed() {
-                return Err("This copy of airband is not signed with a developer certificate, so the keychain would ask about it after every update. The keys stay in the settings file, which only you can read.".into());
-            }
             config::lock()?;
-            println!("The keys are in the keychain. The settings file holds none.");
+            println!("The keys are {}. The settings file holds none.", crate::vault::place());
         }
-        Some("unlock") => {
-            config::unlock()?;
-            println!("The keys are back in the settings file, which only you can read.");
-        }
-        Some(other) => return Err(format!("airband keys takes add, remove, lock or unlock, not \"{other}\"")),
+        Some(other) => return Err(format!("airband keys takes add, remove or lock, not \"{other}\"")),
     }
     Ok(())
 }

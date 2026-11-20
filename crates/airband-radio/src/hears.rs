@@ -1,0 +1,92 @@
+//! Listening by upload: a finished recording in, the words out. The services here take a whole clip, where a
+//! live one (`ears_stream.rs`) is fed while he talks. Both the phone and the tower call this: the phone when he
+//! has given it a key of his own, the tower when the key is on the computer and the phone sends it the clip.
+//!
+//! A service that speaks OpenAI's transcription interface (`POST {url}/audio/transcriptions`) is a row of
+//! `airband_core::providers::PROVIDERS` and no code.
+use airband_core::providers::{By, Job, Use};
+use serde_json::Value;
+use std::time::Duration;
+
+/// A recording as a WAV file: 16-bit mono PCM at `rate`.
+pub fn wav(rate: u32, pcm: &[i16]) -> Vec<u8> {
+    let data = (pcm.len() * 2) as u32;
+    let mut out = Vec::with_capacity(44 + pcm.len() * 2);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&rate.to_le_bytes());
+    out.extend_from_slice(&(rate * 2).to_le_bytes());
+    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&data.to_le_bytes());
+    pcm.iter().for_each(|s| out.extend_from_slice(&s.to_le_bytes()));
+    out
+}
+
+/// Does this setting listen by upload? False for a live dialect, and for anything that does not listen.
+pub fn by_upload(with: &Use) -> bool {
+    matches!(with.offer(Job::Ears).map(|(_, o)| o.by), Some(By::Transcribe))
+}
+
+/// What was said in a recording, by the service `with` names. `phrases` are names he is likely to say. Empty
+/// when nothing was said. Blocks. Err says why not, in words for him.
+pub fn transcribe(with: &Use, wav: &[u8], phrases: &[String]) -> Result<String, String> {
+    let (_, offer) = with.offer(Job::Ears).ok_or("This version of airband does not know that listening service.")?;
+    let set = |field: &str| with.get(Job::Ears, field);
+    let agent = crate::net::agent(Duration::from_secs(60));
+    let refused = |status: u16| match status {
+        401 | 403 => "The listening service did not accept that key.".to_string(),
+        code => format!("The listening service said no ({code})."),
+    };
+    let unreachable = |_| "Could not reach the listening service.".to_string();
+    match offer.by {
+        // OpenAI's transcription interface: one multipart form with the file and the model
+        By::Transcribe => {
+            let edge = format!("airband{}", airband_core::relay::random_hex(12));
+            let mut body = Vec::with_capacity(wav.len() + 600);
+            let mut field = |name: &str, value: &str| body.extend_from_slice(format!("--{edge}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes());
+            field("model", &set("model"));
+            field("response_format", "json");
+            if !phrases.is_empty() {
+                // the interface's own place for words to expect
+                field("prompt", &phrases.join(", "));
+            }
+            body.extend_from_slice(format!("--{edge}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"said.wav\"\r\nContent-Type: audio/wav\r\n\r\n").as_bytes());
+            body.extend_from_slice(wav);
+            body.extend_from_slice(format!("\r\n--{edge}--\r\n").as_bytes());
+            let mut req = agent.post(format!("{}/audio/transcriptions", set("url").trim_end_matches('/'))).header("content-type", format!("multipart/form-data; boundary={edge}"));
+            if !with.key.is_empty() {
+                req = req.header("authorization", format!("Bearer {}", with.key));
+            }
+            let mut res = req.send(&body[..]).map_err(unreachable)?;
+            if res.status().as_u16() != 200 {
+                return Err(refused(res.status().as_u16()));
+            }
+            let v: Value = res.body_mut().read_json().map_err(|_| "The listening service answered with something unreadable.".to_string())?;
+            Ok(v["text"].as_str().unwrap_or_default().trim().to_string())
+        }
+        _ => Err("That service does not listen this way.".into()),
+    }
+}
+
+/// Does the service take this key and these settings? One real call, with half a second of silence.
+pub fn check(with: &Use) -> Result<(), String> {
+    transcribe(with, &wav(16000, &[0i16; 8000]), &[]).map(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_wav_says_how_long_it_is() {
+        let w = wav(16000, &[1, -1, 2]);
+        assert_eq!((w.len(), &w[..4], u32::from_le_bytes(w[40..44].try_into().unwrap()), u32::from_le_bytes(w[4..8].try_into().unwrap())), (50, &b"RIFF"[..], 6, 42));
+        assert_eq!(&w[44..46], &1i16.to_le_bytes());
+    }
+}

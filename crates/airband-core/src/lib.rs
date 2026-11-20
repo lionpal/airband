@@ -8,6 +8,7 @@
 pub mod agent;
 pub mod audio;
 pub mod pairing;
+pub mod providers;
 pub mod radio;
 pub mod redact;
 pub mod relay;

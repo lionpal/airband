@@ -72,7 +72,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         voiceDir = dir.path
         desk = Desk.open(dataDir: dir.path, host: self)
         setLocalVoice(dir: dir.path, kind: UserDefaults.standard.string(forKey: "airband.voice") ?? "")
-        if let own = ownEars { setOwnEars(kind: own.kind, region: own.region, key: own.key) }
+        if !serviceVoice.isEmpty { setServiceVoice(kind: serviceVoice, key: phoneKeys[serviceVoice] ?? "", settings: serviceSettings) }
+        if !ownEars.isEmpty { setOwnEars(kind: ownEars, key: phoneKeys[ownEars] ?? "", settings: ownEarsSettings) }
         var links = (try? JSONDecoder().decode([String].self, from: Data((Keychain.read("airband.links") ?? "[]").utf8))) ?? []
         if let old = Keychain.read("airband.link"), !old.isEmpty, !links.contains(old) { links.append(old) } // from the first builds
         #if DEBUG
@@ -220,11 +221,59 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// The voice made on this phone that he has chosen, or empty for the computer's.
     @Published var localVoice = UserDefaults.standard.string(forKey: "airband.voice") ?? ""
 
+    /// The keys he has given this phone, by provider: one key serves everything its provider does here (its
+    /// voice and its listening). Kept in the Keychain, on this phone only, and never shown again.
+    var phoneKeys: [String: String] {
+        (try? JSONDecoder().decode([String: String].self, from: Data((Keychain.read("airband.keys") ?? "{}").utf8))) ?? [:]
+    }
+    func keepPhoneKey(_ provider: String, _ key: String?) {
+        var all = phoneKeys
+        all[provider] = key
+        Keychain.write("airband.keys", String(data: (try? JSONEncoder().encode(all)) ?? Data("{}".utf8), encoding: .utf8) ?? "{}")
+        objectWillChange.send()
+    }
+
+    /// The voice service this phone speaks through with his own key, or empty.
+    @Published var serviceVoice = UserDefaults.standard.string(forKey: "airband.voice.service") ?? ""
+    /// What that service was told beyond the key.
+    var serviceSettings: [String: String] {
+        (try? JSONDecoder().decode([String: String].self, from: Data((UserDefaults.standard.string(forKey: "airband.voice.settings") ?? "{}").utf8))) ?? [:]
+    }
+
+    /// Try a voice service with a key and, if it speaks, use it from now on. `key` nil uses the one already kept
+    /// for that provider. Calls back with what is wrong, or nil.
+    func useService(_ kind: String, key: String?, settings: [String: String], done: @escaping (String?) -> Void) {
+        let key = key?.trimmingCharacters(in: .whitespaces) ?? phoneKeys[kind] ?? ""
+        fetch.async {
+            var wrong: String?
+            do { try checkServiceVoice(kind: kind, key: key, settings: settings) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "Could not check the voice." }
+            DispatchQueue.main.async {
+                if wrong == nil {
+                    if !key.isEmpty { self.keepPhoneKey(kind, key) }
+                    UserDefaults.standard.set(kind, forKey: "airband.voice.service")
+                    UserDefaults.standard.set(String(data: (try? JSONEncoder().encode(settings)) ?? Data("{}".utf8), encoding: .utf8), forKey: "airband.voice.settings")
+                    self.serviceVoice = kind
+                    // one voice at a time: the one made on the phone steps aside
+                    self.useVoice("")
+                    setServiceVoice(kind: kind, key: key, settings: settings)
+                }
+                done(wrong)
+            }
+        }
+    }
+
+    func stopService() {
+        UserDefaults.standard.set("", forKey: "airband.voice.service")
+        serviceVoice = ""
+        setServiceVoice(kind: "", key: "", settings: [:])
+    }
+
     /// Speak with a voice made on this phone from now on; empty goes back to the computer's.
     func useVoice(_ kind: String) {
         UserDefaults.standard.set(kind, forKey: "airband.voice")
         localVoice = kind
         setLocalVoice(dir: voiceDir, kind: kind)
+        if !kind.isEmpty { stopService() }
     }
 
     /// Fetch a voice's model. Calls back with what went wrong, or nil. The model can be fetched again, so it
@@ -251,30 +300,34 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         fetch.async {
             var wrong: String?
             do {
-                let pcm = try localVoiceSample(text: "Shop two is waiting. The build passed, and it wants to know whether to push.")
-                self.voice.play(rate: 24000, pcm: pcm, last: true)
+                let sample = try ownVoiceSample()
+                self.voice.play(rate: sample.rate, pcm: sample.pcm, last: true)
             } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "The voice did not speak." }
             DispatchQueue.main.async { done(wrong) }
         }
     }
 
-    /// His own key for the listening service, if he has put one in: kept in the keychain, on this phone only.
-    var ownEars: (kind: String, region: String, key: String)? {
-        guard let kept = Keychain.read("airband.ears"), let parts = try? JSONDecoder().decode([String].self, from: Data(kept.utf8)), parts.count >= 2, !(parts.last ?? "").isEmpty else { return nil }
-        // kept before services had names: the one there was then
-        return parts.count == 2 ? (ownListeners().first?.kind ?? "", parts[0], parts[1]) : (parts[0], parts[1], parts[2])
+    /// The listening service this phone reaches with his own key, or empty.
+    @Published var ownEars = UserDefaults.standard.string(forKey: "airband.ears.service") ?? ""
+    /// What that service was told beyond the key.
+    var ownEarsSettings: [String: String] {
+        (try? JSONDecoder().decode([String: String].self, from: Data((UserDefaults.standard.string(forKey: "airband.ears.settings") ?? "{}").utf8))) ?? [:]
     }
 
-    /// Check a key with its service and keep it. Calls back with what is wrong, or nil.
-    func keepOwnEars(kind: String, region: String, key: String, done: @escaping (String?) -> Void) {
-        let (region, key) = (region.trimmingCharacters(in: .whitespaces).lowercased(), key.trimmingCharacters(in: .whitespaces))
+    /// Try a listening service with a key and, if it answers, listen with it from now on. `key` nil uses the one
+    /// already kept for that provider. Calls back with what is wrong, or nil.
+    func keepOwnEars(_ kind: String, key: String?, settings: [String: String], done: @escaping (String?) -> Void) {
+        let key = key?.trimmingCharacters(in: .whitespaces) ?? phoneKeys[kind] ?? ""
         fetch.async {
             var wrong: String?
-            do { try checkOwnEars(kind: kind, region: region, key: key) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "Could not check the key." }
+            do { try checkOwnEars(kind: kind, key: key, settings: settings) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "Could not check the key." }
             DispatchQueue.main.async {
                 if wrong == nil {
-                    Keychain.write("airband.ears", String(data: (try? JSONEncoder().encode([kind, region, key])) ?? Data(), encoding: .utf8) ?? "")
-                    setOwnEars(kind: kind, region: region, key: key)
+                    if !key.isEmpty { self.keepPhoneKey(kind, key) }
+                    UserDefaults.standard.set(kind, forKey: "airband.ears.service")
+                    UserDefaults.standard.set(String(data: (try? JSONEncoder().encode(settings)) ?? Data("{}".utf8), encoding: .utf8), forKey: "airband.ears.settings")
+                    self.ownEars = kind
+                    setOwnEars(kind: kind, key: key, settings: settings)
                 }
                 done(wrong)
             }
@@ -282,8 +335,9 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     }
 
     func forgetOwnEars() {
-        Keychain.write("airband.ears", "")
-        setOwnEars(kind: "", region: "", key: "")
+        UserDefaults.standard.set("", forKey: "airband.ears.service")
+        ownEars = ""
+        setOwnEars(kind: "", key: "", settings: [:])
     }
 
     /// Let a question go without answering it.

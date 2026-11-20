@@ -487,6 +487,17 @@ async fn ears(State(app): State<Arc<App>>) -> Json<EarsGrant> {
     Json(ears::grant(&app).await)
 }
 
+/// Part of a recording, for a listening service whose key is here. The last part is answered with the words.
+async fn hear(State(app): State<Arc<App>>, Json(part): Json<airband_core::radio::HearPart>) -> Response {
+    match ears::hear(&app, part).await {
+        Ok(text) => Json(airband_core::radio::HeardText { text }).into_response(),
+        Err(why) => {
+            log(format!("ears: a recording was not turned into words ({why})"));
+            StatusCode::BAD_GATEWAY.into_response()
+        }
+    }
+}
+
 async fn status(State(app): State<Arc<App>>) -> Json<Value> {
     let mut inner = app.inner.lock().unwrap();
     inner.reap();
@@ -524,6 +535,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/radio/speech/{id}", get(speech_part))
         .route("/v1/radio/picture/{id}", get(picture_part))
         .route("/v1/radio/ears", get(ears))
+        .route("/v1/radio/hear", post(hear))
         .route("/v1/radio/message/{id}", get(message))
         .route("/v1/radio/attachment", post(attachment))
         .route("/v1/radio/accounts", get(accounts_list))

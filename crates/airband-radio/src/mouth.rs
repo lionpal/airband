@@ -1,4 +1,13 @@
-//! A voice made on the device itself: no key, no computer, no relay, nothing sent anywhere.
+//! The device's own voice, in place of the tower's. One of two kinds, whichever he chose:
+//!
+//! - made on the device itself by a model: no key, no computer, no relay, nothing sent anywhere;
+//! - a voice service reached straight from the device with a key of his own, kept on the device. The services
+//!   are the tower's own (`voices.rs`, by the rows of `airband_core::providers`), so the phone can use any the
+//!   tower can, and his computer is not needed for it.
+//!
+//! Either way the radio tells the tower it speaks for itself, and the tower sends it words only.
+//!
+//! The model:
 //!
 //! The program that runs a voice model is part of the app; the model is not. He asks for it on a settings
 //! screen and it is fetched once into the app's own folder. While one is chosen it stays loaded, so a sentence
@@ -7,6 +16,7 @@
 //! Each model is a row in [`MODELS`]: what to show, what to fetch and where it goes. A host offers what
 //! [`local_voices`] lists and names none itself.
 use super::*;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 
@@ -164,6 +174,7 @@ pub fn set_local_voice(dir: String, kind: String) {
 
 /// The chosen voice could not speak: it is no longer the one in use, so the tower is asked for its own again.
 pub(crate) fn give_up() {
+    *SERVICE.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *CHOSEN.lock().unwrap_or_else(|e| e.into_inner()) = None;
     thread::spawn(engine::drop_loaded);
 }
@@ -174,49 +185,157 @@ pub(crate) fn asking() -> &'static str {
     if ready() { "?voice=own" } else { "" }
 }
 
-/// Is a voice of the device's own chosen and here?
+/// Is a voice of the device's own chosen and usable?
 pub(crate) fn ready() -> bool {
-    CHOSEN.lock().unwrap_or_else(|e| e.into_inner()).is_some()
+    service().is_some() || CHOSEN.lock().unwrap_or_else(|e| e.into_inner()).is_some()
 }
 
-/// A short clip in the chosen voice, as 16-bit little-endian mono PCM at 24000 samples a second, for a "try
-/// it" button. Blocks while it is made.
+/// A service he can reach from the device with a key of his own, for a settings screen: a voice, or a
+/// listening service.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Service {
+    /// What to pass back as `kind`. It also names the key: one key serves everything its provider does.
+    pub kind: String,
+    /// What to show him.
+    pub name: String,
+    /// It takes a key.
+    pub key: bool,
+    /// Where its keys are made.
+    pub keys_at: String,
+    /// What else it can be told. Anything left out is the usual.
+    pub asks: Vec<ServiceAsk>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ServiceAsk {
+    pub field: String,
+    pub question: String,
+    pub usual: String,
+}
+
+fn services(job: airband_core::providers::Job) -> Vec<Service> {
+    airband_core::providers::offering(job)
+        .map(|p| Service {
+            kind: p.id.into(),
+            name: p.name.into(),
+            key: p.key,
+            keys_at: p.keys_at.into(),
+            asks: p.offers.iter().filter(|o| o.job == job).flat_map(|o| o.asks).map(|a| ServiceAsk { field: a.field.into(), question: a.question.into(), usual: a.usual.into() }).collect(),
+        })
+        .collect()
+}
+
+/// The voice services this build can reach, straight from the provider table. A screen offers these and names
+/// none itself.
 #[uniffi::export]
-pub fn local_voice_sample(text: String) -> Result<Vec<u8>, RadioError> {
+pub fn voice_services() -> Vec<Service> {
+    services(airband_core::providers::Job::Voice)
+}
+
+/// And the listening services.
+#[uniffi::export]
+pub fn listening_services() -> Vec<Service> {
+    services(airband_core::providers::Job::Ears)
+}
+
+/// The service in use, if he chose one.
+static SERVICE: Mutex<Option<airband_core::providers::Use>> = Mutex::new(None);
+
+fn service() -> Option<airband_core::providers::Use> {
+    SERVICE.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+pub(crate) fn service_of(kind: &str, key: &str, settings: HashMap<String, String>) -> airband_core::providers::Use {
+    airband_core::providers::Use { kind: kind.into(), key: key.trim().into(), set: settings.into_iter().filter(|(_, v)| !v.trim().is_empty()).map(|(k, v)| (k, serde_json::Value::String(v.trim().to_string()))).collect() }
+}
+
+/// Speak through this service from now on, with his key; an empty `kind` stops. The host keeps the key
+/// somewhere safe and calls this at launch.
+#[uniffi::export]
+pub fn set_service_voice(kind: String, key: String, settings: HashMap<String, String>) {
+    let chosen = (!kind.is_empty()).then(|| service_of(&kind, &key, settings)).filter(|u| crate::voices::synth_for(u).is_some());
+    *SERVICE.lock().unwrap_or_else(|e| e.into_inner()) = chosen;
+}
+
+/// Does the service speak with this key and these settings? One short real call. Blocks: call it off the main
+/// thread.
+#[uniffi::export]
+pub fn check_service_voice(kind: String, key: String, settings: HashMap<String, String>) -> Result<(), RadioError> {
+    let told = |reason: String| RadioError::Told { reason };
+    let synth = crate::voices::synth_for(&service_of(&kind, &key, settings)).ok_or_else(|| told("This app has no such voice service.".into()))?;
+    let mut bytes = 0usize;
+    synth.speak("Ready.", &mut |pcm| bytes += pcm.len(), &mut |_, _| {}).map_err(|e| told(format!("The voice service did not speak: {e}.")))?;
+    if bytes == 0 { Err(told("The voice service answered with no sound.".into())) } else { Ok(()) }
+}
+
+/// A clip of sound: 16-bit little-endian mono PCM at `rate` samples a second.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct VoiceSample {
+    pub rate: u32,
+    pub pcm: Vec<u8>,
+}
+
+/// A sentence in the device's own voice as it is now set, for a "hear it" button. Blocks while it is made.
+#[uniffi::export]
+pub fn own_voice_sample() -> Result<VoiceSample, RadioError> {
+    const SAMPLE: &str = "Shop two is waiting. The build passed, and it wants to know whether to push.";
     let mut pcm = Vec::new();
-    engine::speak(&text, &mut |part| pcm.extend_from_slice(part), &|| false).map_err(|reason| RadioError::Told { reason })?;
-    Ok(pcm)
+    let rate = speak(SAMPLE, &mut |part| pcm.extend_from_slice(part), &mut |_, _| {}, &|| false).map_err(|reason| RadioError::Told { reason })?;
+    Ok(VoiceSample { rate, pcm })
+}
+
+/// Make `text` into sound with whichever voice of the device's own is set: the service if he chose one, else
+/// the model. Returns the rate of what was handed to `sink`.
+fn speak(text: &str, sink: &mut dyn FnMut(&[u8]), mark: &mut dyn FnMut(u32, u32), stop: &dyn Fn() -> bool) -> Result<u32, String> {
+    match service().and_then(|u| crate::voices::synth_for(&u)) {
+        // a service is read to its end; what comes after he says stop is dropped
+        Some(synth) => synth.speak(text, &mut |pcm| if !stop() { sink(pcm) }, mark).map(|_| synth.rate()),
+        None => engine::speak(text, sink, stop).map(|_| RATE),
+    }
 }
 
 /// The rate every model here speaks at.
 const RATE: u32 = 24000;
-/// Sound is handed to the host a quarter of a second at a time, so a slow moment in the making is not heard.
-const HAND: usize = RATE as usize / 4 * 2;
 
 /// Say `text` in the device's own voice, until it is over or `stop` says to leave off. False if not a sound
-/// was made, so the caller can do something else.
+/// was made, so the caller can do something else. Sound is handed to the host about a quarter of a second at a
+/// time, so a slow moment in the making is not heard; a service that says when each word is spoken has that
+/// passed on, for showing the words as they are said.
 pub(crate) fn say(host: &dyn RadioHost, text: &str, stop: &dyn Fn() -> bool) -> bool {
-    let (mut held, mut started) = (Vec::new(), false);
-    let made = engine::speak(
+    use std::cell::RefCell;
+    // what is waiting to be handed over, whether anything has been, and word timings not yet passed on
+    let state = RefCell::new((Vec::<u8>::new(), false, Vec::<(u32, u32)>::new(), false));
+    let rate = service().and_then(|u| crate::voices::synth_for(&u)).map(|s| s.rate()).unwrap_or(RATE);
+    let hand = rate as usize / 4 * 2;
+    let made = speak(
         text,
         &mut |pcm| {
-            held.extend_from_slice(pcm);
-            if held.len() >= HAND {
-                host.play(RATE, std::mem::take(&mut held), false);
-                started = true;
+            let mut s = state.borrow_mut();
+            s.0.extend_from_slice(pcm);
+            if s.0.len() >= hand {
+                if !s.2.is_empty() {
+                    let marks = std::mem::take(&mut s.2);
+                    // the words themselves go with the first timings, and only then
+                    host.words(if s.3 { String::new() } else { text.to_string() }, marks.iter().map(|m| m.0).collect(), marks.iter().map(|m| m.1).collect());
+                    s.3 = true;
+                }
+                host.play(rate, std::mem::take(&mut s.0), false);
+                s.1 = true;
             }
         },
+        &mut |at, ms| state.borrow_mut().2.push((at, ms)),
         stop,
     );
     if stop() {
         return true;
     }
+    let (held, mut started, _, _) = state.into_inner();
     if made.is_ok() && !held.is_empty() {
         started = true;
     }
     if started {
         // the rest, and wait until it has all been heard
-        host.play(RATE, held, true);
+        host.play(rate, held, true);
     }
     started
 }
@@ -306,11 +425,11 @@ mod tests {
         set_local_voice(dir.clone(), "phonon".into());
         assert!(ready());
         let began = std::time::Instant::now();
-        let pcm = local_voice_sample("Shop two is waiting. The build passed and it wants to know whether to push.".into()).unwrap();
+        let pcm = own_voice_sample().unwrap().pcm;
         let seconds = pcm.len() as f32 / 2.0 / RATE as f32;
         println!("{seconds:.1} s of sound in {:.1} s, loading included", began.elapsed().as_secs_f32());
         let again = std::time::Instant::now();
-        local_voice_sample("Shop two is waiting.".into()).unwrap();
+        own_voice_sample().unwrap();
         println!("a short one, loaded: {:.2} s", again.elapsed().as_secs_f32());
         assert!(seconds > 2.0);
         std::fs::write(std::path::Path::new(&dir).join("sample.pcm"), pcm).unwrap();

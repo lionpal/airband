@@ -1152,23 +1152,25 @@ fn station_key(link: &str) -> Option<String> {
 /// Open a sealed notification with whichever pairing sealed it. `links` are the pairing links the host keeps;
 /// `sealed` is the notification as the push service delivered it. Nothing when none of them opens it. This
 /// needs no desk: a host calls it from wherever its system hands it a notification.
-/// Use a key of his own for the listening service, so the microphone needs neither his computer nor the relay.
-/// The host keeps it somewhere safe and calls this at launch. An empty key goes back to asking them.
+/// Listen with a service of his own from now on, with his key: the microphone then needs neither his computer
+/// nor the relay. `kind` is one of [`listening_services`]; an empty one goes back to asking them. The host
+/// keeps the key somewhere safe and calls this at launch.
 #[uniffi::export]
-pub fn set_own_ears(kind: String, region: String, key: String) {
-    crate::ears::set_own(&kind, &region, &key);
+pub fn set_own_ears(kind: String, key: String, settings: std::collections::HashMap<String, String>) {
+    crate::ears::set_own((!kind.is_empty()).then(|| crate::mouth::service_of(&kind, &key, settings)));
 }
 
-/// Does the listening service take this key? Blocks: call it off the main thread.
+/// Does the listening service take this key and these settings? One real call. Blocks: call it off the main
+/// thread.
 #[uniffi::export]
-pub fn check_own_ears(kind: String, region: String, key: String) -> Result<(), RadioError> {
-    crate::ears::pass_for(&kind, &region, &key).map(|_| ()).map_err(|reason| RadioError::Told { reason })
+pub fn check_own_ears(kind: String, key: String, settings: std::collections::HashMap<String, String>) -> Result<(), RadioError> {
+    crate::ears::check(&crate::mouth::service_of(&kind, &key, settings)).map_err(|reason| RadioError::Told { reason })
 }
 
-/// A short-lived pass from a listening service, for a key: what a tower hands a phone so the key stays where
-/// it is. `kind` is the dialect, as [`own_listeners`] lists them. Blocks. Err says why not, in words for him.
-pub fn listening_pass(kind: &str, region: &str, key: &str) -> Result<String, String> {
-    crate::ears::pass_for(kind, region, key)
+/// A short-lived pass from a live listening service, for a key: what a tower hands a phone so the key stays
+/// where it is. `kind` is the dialect a provider's row names. Blocks. Err says why not, in words for him.
+pub fn listening_pass(kind: &str, set: &std::collections::BTreeMap<String, String>, key: &str) -> Result<String, String> {
+    crate::ears::pass_for(kind, set, key)
 }
 
 /// What a button answers a request for leave with: `true` for the one that allows. A host's buttons send this
@@ -1176,24 +1178,6 @@ pub fn listening_pass(kind: &str, region: &str, key: &str) -> Result<String, Str
 #[uniffi::export]
 pub fn leave_answer(allow: bool) -> String {
     if allow { airband_core::radio::ALLOW } else { airband_core::radio::DENY }.to_string()
-}
-
-/// A listening service he can give a key of his own for.
-#[derive(Debug, Clone, uniffi::Record)]
-pub struct OwnListener {
-    /// What to pass back as `kind`.
-    pub kind: String,
-    /// What to show him.
-    pub name: String,
-    /// Its keys belong to a region, which he has to name too.
-    pub region: bool,
-}
-
-/// The listening services this build can use with a key of his own, the usual one first. A screen that asks
-/// for a key offers these and names none itself.
-#[uniffi::export]
-pub fn own_listeners() -> Vec<OwnListener> {
-    crate::ears::LISTENERS.iter().map(|l| OwnListener { kind: l.kind.into(), name: l.name.into(), region: l.region }).collect()
 }
 
 #[uniffi::export]

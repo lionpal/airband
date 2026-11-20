@@ -134,7 +134,8 @@ Chat mode and the rest:
 | `GET feed?scope=…&since=<rev>&wait=<s>` | → `Feed` | Every line new or changed after change count `since`, oldest change first; pass `rev` back next time. `since=0` gets the newest lines. `scope`: `all`, `group:<name>`, `agent:<callsign>`. Held open up to 25 s. `roster=<roster_rev>`: also answer when the roster changes. `away=1`: this radio is following the chat without showing it. `after=<seq>` is the older form (new lines only) and is still answered. |
 | `GET message/<id>?form=detail\|full\|speech\|spoken` | `{ text }`, or `{ speech }` | The fuller spoken version, exactly what the agent wrote, the id of a clip of the whole message read aloud, or (`spoken`) the words of that clip for a radio that reads them in a voice of its own. |
 | `GET speech/<id>?from=<block>` | `{ rate, data, samples, next, done, text, marks }` | The next part of a clip of the tower's voice: IMA ADPCM blocks, base64. `text` comes with the first part; `marks` are pairs of (where a word starts in `text`, milliseconds into the clip) when the voice gives timings. 404 when the tower has no voice. |
-| `GET ears` | `{ kind, region, token, language, phrases }` | What the phone should listen with: `device`, or a service and a short-lived pass for it. `phrases` are names he is likely to say. |
+| `GET ears` | `{ kind, token, set, phrases }` | What the phone should listen with. `kind` is a live dialect the phone speaks to the service itself, with `token` (a short-lived pass) and `set` (what that service has to be told: a region, a language, a model); or `tower`, when the phone records and sends the recording to `POST hear`; or `none`. `phrases` are names he is likely to say. |
+| `POST hear` | `{ clip, data, samples, last }` → `{ text }` | Part of a recording, for a tower whose listening service takes a finished clip: 16 kHz mono in the same compressed blocks speech comes in, ten seconds a part. The last part is answered with the words. |
 | `GET picture/<id>?from=<byte>` | `{ data, next, done }` | One part (120 KB at most, base64) of a picture's kept copy. |
 | `POST attachment` | `{ id, name, from, data, done, total }` → `{ next, any }`, or `{ error }` | One part of a file he is attaching, 120 KB at most. With `total` the parts may come in any order. |
 | `POST dismiss` | `{ message }` → `{}`, or `{ error }` | He does not mean to answer this question. It stops being open. The agent is told nothing. |
@@ -277,7 +278,7 @@ For phones from before radios sent their token, a channel starts unproven: `call
 a token (never with a wrong one). The first that carries the right token proves the channel for good, and from
 then on both are refused without it. `ears` always needs the token.
 
-`GET …/ears` and `POST /v1/speech/pass` answer `{ kind, region, token, language }`: a ten-minute pass to the
+`GET …/ears` and `POST /v1/speech/pass` answer `{ kind, token, set }` (`set` holds the region and language): a ten-minute pass to the
 relay's own speech service, for a radio whose computer cannot be reached and for a tower with no speech service
 of its own. 404 from a relay with no speech service or no admission key.
 

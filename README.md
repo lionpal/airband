@@ -90,9 +90,10 @@ airband keys add <name> <provider>    # paste a key; choose what uses it with ai
 airband keys remove <name>
 ```
 
-On a Mac, a build signed with a developer certificate (`scripts/sign-mac.sh`) keeps the keys in your login
-keychain. An unsigned build, which is what Homebrew installs, keeps them in `~/.airband/config.json`, readable
-only by you. `airband keys lock` and `airband keys unlock` move them.
+Keys are never written in `~/.airband/config.json`. On a Mac, a build signed with a developer certificate
+(`scripts/sign-mac.sh`) keeps them in your login keychain. Everywhere else (Linux, Windows, and an unsigned
+build such as the one Homebrew installs) they are in `~/.airband/keys.sealed`, encrypted with a key made from
+that machine's own id, so a copy of the folder on another machine or in a backup opens nothing.
 
 ## From the terminal
 

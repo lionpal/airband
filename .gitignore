@@ -1,4 +1,4 @@
-target/
+/target
 apps/apple/Generated/
 apps/apple/*.xcodeproj/
 apps/apple/build/

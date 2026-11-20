@@ -1,22 +1,24 @@
-//! The tower's keys, kept in the Mac's keychain and not in a file.
+//! The tower's keys, kept encrypted and out of the settings file.
 //!
-//! `config.json` holds every setting. With the vault on, the secret ones (the tower's tokens, each pairing's
-//! secret, the relay's admission key, the API keys for voice, listening and summaries) are taken out of it and
-//! kept together as one item in the login keychain, which the system encrypts with his login password. The
-//! file keeps a mark in each place a secret was.
+//! `config.json` holds every setting. The secret ones (the tower's tokens, each pairing's secret, the relay's
+//! admission key, the API keys for voice, listening and summaries) are taken out of it and kept together,
+//! encrypted, in one of two places. The file keeps a mark in each place a secret was.
 //!
-//! One thing stays in the file: the token the hooks and commands on this computer show the tower, over the
-//! loopback address only. It is made here, opens nothing from outside, and has to be readable where the
-//! keychain is not (a shell over SSH cannot use the login keychain), or agents started there would go unseen.
-//! A command run where the keychain cannot be read still works for what needs no key; the tower itself will
-//! not start without them.
+//! - The Mac's login keychain, which the system encrypts with his login password. The keychain lets an item
+//!   be read without asking only by the program that made it, and it knows a program by its signature. A
+//!   build signed with a developer certificate is the same program to it from one build to the next; an
+//!   unsigned one is a stranger every time and would be asked about, on a computer where there may be nobody
+//!   to answer. So only a signed build uses it, and reading never brings up a question.
+//! - Everywhere else (Linux, Windows, an unsigned build on a Mac, a shell with no keychain): a sealed file,
+//!   `keys.sealed`, encrypted with a key made from this machine's own id and a salt kept beside it. A copy of
+//!   the folder on another machine, in a backup or in a synced folder, opens nothing. It does not keep the
+//!   keys from a program running as him on this machine; nothing kept on a disk without a password can.
 //!
-//! The keychain lets an item be read without asking only by the program that made it, and it knows a program
-//! by its signature. A build signed with a developer certificate is the same program to it from one build to
-//! the next; an unsigned one is a stranger every time and would be asked about, on a computer where there
-//! may be nobody to answer. So the vault is only turned on by a signed build (`airband keys lock`, which
-//! `airband install` does by itself), reading never brings up a question (it fails with words instead), and
-//! an unsigned build, or one on a system with no keychain, keeps the keys in the file, readable by him alone.
+//! One thing stays in the settings file: the token the hooks and commands on this computer show the tower,
+//! over the loopback address only. It is made here, opens nothing from outside, and has to be readable where
+//! the keychain is not (a shell over SSH cannot use the login keychain), or agents started there would go
+//! unseen. A command run where the keys cannot be read still works for what needs no key; the tower itself
+//! will not start without them.
 use serde_json::{Map, Value};
 
 /// What a secret's place in the file holds while the secret is in the keychain.
@@ -97,7 +99,7 @@ pub fn sealed(text: &str) -> bool {
 mod mac {
     use super::*;
     use security_framework::os::macos::keychain::SecKeychain;
-    use security_framework::passwords::{delete_generic_password, get_generic_password, set_generic_password};
+    use security_framework::passwords::{get_generic_password, set_generic_password};
 
     /// The keychain is only touched in his real home: under a test's made-up one there is no keychain to find.
     fn at_home() -> bool {
@@ -127,15 +129,12 @@ mod mac {
         set_generic_password(SERVICE, ACCOUNT, &serde_json::to_vec(kept).unwrap()).map_err(|e| format!("the keychain did not take airband's keys ({e})"))
     }
 
-    pub fn forget() {
-        if at_home() {
-            let _ = delete_generic_password(SERVICE, ACCOUNT);
-        }
-    }
-
-    /// Is this program signed with a developer certificate? Only then is it the same program to the keychain
-    /// after the next build.
+    /// Is this program signed with a developer certificate, and in his own home? Only then is it the same
+    /// program to the keychain after the next build, with a keychain to find.
     pub fn signed() -> bool {
+        if !at_home() {
+            return false;
+        }
         let Ok(me) = std::env::current_exe() else { return false };
         std::process::Command::new("/usr/bin/codesign").args(["-d", "--verbose=2"]).arg(me).output().is_ok_and(|o| {
             String::from_utf8_lossy(&o.stderr).lines().any(|l| l.strip_prefix("TeamIdentifier=").is_some_and(|team| team != "not set" && !team.is_empty()))
@@ -143,21 +142,148 @@ mod mac {
     }
 }
 
-#[cfg(target_os = "macos")]
-pub use mac::{forget, get, put, signed};
+/// The sealed file: for wherever there is no keychain this program can use without asking.
+mod file {
+    use super::*;
+    use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+    use chacha20poly1305::{ChaCha20Poly1305, Nonce};
+    use std::path::PathBuf;
 
-#[cfg(not(target_os = "macos"))]
+    const BOUND: &[u8] = b"airband.vault/1";
+
+    /// Where the two files are. A test names a folder of its own.
+    fn folder() -> PathBuf {
+        #[cfg(test)]
+        if let Some(dir) = tests_folder::get() {
+            return dir;
+        }
+        crate::config::dir()
+    }
+    #[cfg(test)]
+    pub mod tests_folder {
+        thread_local!(static DIR: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) });
+        pub fn set(dir: std::path::PathBuf) {
+            DIR.with(|d| *d.borrow_mut() = Some(dir));
+        }
+        pub fn get() -> Option<std::path::PathBuf> {
+            DIR.with(|d| d.borrow().clone())
+        }
+    }
+    fn sealed_at() -> PathBuf {
+        folder().join("keys.sealed")
+    }
+    fn salt_at() -> PathBuf {
+        folder().join("keys.salt")
+    }
+
+    /// What this machine calls itself to its own system, the same from one start to the next and different on
+    /// every other machine. Empty where the system has none to give; the salt alone makes the key then.
+    fn machine() -> String {
+        static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        ID.get_or_init(|| {
+            let said = |program: &str, args: &[&str]| std::process::Command::new(program).args(args).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+            if cfg!(target_os = "macos") {
+                said("/usr/sbin/ioreg", &["-rd1", "-c", "IOPlatformExpertDevice"]).lines().find(|l| l.contains("IOPlatformUUID")).and_then(|l| l.split('"').nth(3)).unwrap_or_default().to_string()
+            } else if cfg!(windows) {
+                said("reg", &["query", r"HKLM\SOFTWARE\Microsoft\Cryptography", "/v", "MachineGuid"]).split_whitespace().last().unwrap_or_default().to_string()
+            } else {
+                ["/etc/machine-id", "/var/lib/dbus/machine-id"].iter().find_map(|p| std::fs::read_to_string(p).ok()).unwrap_or_default().trim().to_string()
+            }
+        })
+        .clone()
+    }
+
+    fn cipher(make_salt: bool) -> Result<ChaCha20Poly1305, String> {
+        let salt = match std::fs::read(salt_at()) {
+            Ok(salt) if salt.len() == 32 => salt,
+            _ if make_salt => {
+                let mut salt = vec![0u8; 32];
+                getrandom::fill(&mut salt).map_err(|e| e.to_string())?;
+                crate::config::write_private(&salt_at(), &salt).map_err(|e| format!("cannot write the keys' salt: {e}"))?;
+                salt
+            }
+            _ => return Err("the sealed keys have lost their salt and cannot be opened".into()),
+        };
+        let mut key = [0u8; 32];
+        hkdf::Hkdf::<sha2::Sha256>::new(Some(&salt), machine().as_bytes()).expand(BOUND, &mut key).map_err(|e| e.to_string())?;
+        Ok(ChaCha20Poly1305::new((&key).into()))
+    }
+
+    pub fn has() -> bool {
+        sealed_at().is_file()
+    }
+
+    pub fn get() -> Result<Map<String, Value>, String> {
+        let sealed = std::fs::read(sealed_at()).map_err(|_| "the tower's keys are not on this computer".to_string())?;
+        if sealed.len() < 12 + 16 {
+            return Err("the sealed keys are cut short".into());
+        }
+        let (nonce, body) = sealed.split_at(12);
+        let plain = cipher(false)?.decrypt(Nonce::from_slice(nonce), Payload { msg: body, aad: BOUND }).map_err(|_| "the sealed keys do not open on this machine. They were sealed on another, or the file was changed.".to_string())?;
+        serde_json::from_slice(&plain).map_err(|_| "the sealed keys cannot be read".to_string())
+    }
+
+    pub fn put(kept: &Map<String, Value>) -> Result<(), String> {
+        let mut nonce = [0u8; 12];
+        getrandom::fill(&mut nonce).map_err(|e| e.to_string())?;
+        let sealed = cipher(true)?.encrypt(Nonce::from_slice(&nonce), Payload { msg: &serde_json::to_vec(kept).unwrap(), aad: BOUND }).map_err(|_| "the keys could not be sealed".to_string())?;
+        crate::config::write_private(&sealed_at(), &[nonce.as_slice(), &sealed].concat()).map_err(|e| format!("cannot write the sealed keys: {e}"))
+    }
+
+    pub fn forget() {
+        let _ = std::fs::remove_file(sealed_at());
+        let _ = std::fs::remove_file(salt_at());
+    }
+}
+
+/// Can this program use the keychain without anyone being asked? A signed build on a Mac.
+#[cfg(target_os = "macos")]
+fn keychain() -> bool {
+    static SIGNED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SIGNED.get_or_init(mac::signed)
+}
+
+/// Where the keys are kept on this computer, in words for him.
+pub fn place() -> &'static str {
+    #[cfg(target_os = "macos")]
+    if keychain() && !file::has() {
+        return "in the keychain";
+    }
+    "sealed on this computer"
+}
+
+/// The keys. From the keychain where this program can use it, else from the sealed file.
 pub fn get() -> Result<Map<String, Value>, String> {
-    Err("this system has no keychain airband can use".into())
+    #[cfg(target_os = "macos")]
+    if keychain() && !file::has() {
+        return mac::get();
+    }
+    file::get()
 }
-#[cfg(not(target_os = "macos"))]
-pub fn put(_: &Map<String, Value>) -> Result<(), String> {
-    Err("this system has no keychain airband can use".into())
+
+/// Keep the keys. In the keychain where this program can use it; where it cannot (an unsigned build, a shell
+/// with no keychain, another system) in the sealed file. Never anywhere in the clear.
+pub fn put(kept: &Map<String, Value>) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if keychain() && mac::put(kept).is_ok() {
+        file::forget();
+        return Ok(());
+    }
+    file::put(kept)
 }
-#[cfg(not(target_os = "macos"))]
-pub fn forget() {}
-#[cfg(not(target_os = "macos"))]
-pub fn signed() -> bool {
+
+/// Keys sealed in the file by a run that could not use the keychain are moved into it by one that can: the
+/// tower, at its start. Says so when it moved them.
+pub fn settle() -> bool {
+    #[cfg(target_os = "macos")]
+    if keychain() && file::has() {
+        if let Ok(kept) = file::get() {
+            if mac::put(&kept).is_ok() && mac::get().is_ok_and(|back| back == kept) {
+                file::forget();
+                return true;
+            }
+        }
+    }
     false
 }
 
@@ -165,6 +291,27 @@ pub fn signed() -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_sealed_file_opens_here_and_holds_nothing_readable() {
+        let dir = std::env::temp_dir().join(format!("airband-vault-{}", crate::config::random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        file::tests_folder::set(dir.clone());
+        let kept: Map<String, Value> = serde_json::from_value(json!({"key:eleven": "SECRET-ONE", "pairing:phone": "SECRET-TWO"})).unwrap();
+        file::put(&kept).unwrap();
+        assert_eq!(file::get().unwrap(), kept);
+        let on_disk = std::fs::read(dir.join("keys.sealed")).unwrap();
+        assert!(!String::from_utf8_lossy(&on_disk).contains("SECRET"));
+        // a changed file does not open, and neither does one whose salt has gone
+        let mut bent = on_disk.clone();
+        *bent.last_mut().unwrap() ^= 1;
+        std::fs::write(dir.join("keys.sealed"), &bent).unwrap();
+        assert!(file::get().is_err());
+        std::fs::write(dir.join("keys.sealed"), &on_disk).unwrap();
+        std::fs::write(dir.join("keys.salt"), [7u8; 32]).unwrap();
+        assert!(file::get().is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn secrets_leave_the_file_and_come_back_whole() {

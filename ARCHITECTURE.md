@@ -68,11 +68,16 @@ has to be told.
 A key is kept once in `keys` in `~/.airband/config.json`, under a name, with its provider; each use of it is
 written as `key:<name>`. `airband keys` lists keys by name and use and never shows one.
 
-On a Mac, a build signed with a developer certificate (`scripts/sign-mac.sh`) keeps every secret in one item
-in the login keychain and leaves a mark in its place in the file (`vault.rs`). The keychain would ask about an
-unsigned build after every update, so that one keeps the secrets in the file, readable only by him. The
-loopback token, which hooks and commands on this computer show the tower, always stays in the file: a shell
-over SSH cannot read the keychain.
+No secret is written in that file. Every one is taken out and kept encrypted, with a mark left in its place
+(`vault.rs`), in one of two stores behind the same three calls (`get`, `put`, `settle`):
+
+| Store | Used by | Encrypted with |
+|---|---|---|
+| The login keychain, one item | a build signed with a developer certificate (`scripts/sign-mac.sh`) on a Mac | his login password, by the system. Read without a prompt only by the same signed program |
+| `~/.airband/keys.sealed` | everything else: Linux, Windows, an unsigned build, a shell with no keychain | ChaCha20-Poly1305, with a key made from the machine's own id and a salt beside the file. A copy on another machine or in a backup opens nothing; a program running as him on this machine can still read it |
+
+The loopback token, which hooks and commands on this computer show the tower, always stays in the settings
+file: it opens nothing from outside, and a shell over SSH cannot read the keychain.
 
 ## Agents the tower runs
 
@@ -93,7 +98,8 @@ Outbound and inbound are set separately (`airband setup`, or `airband voice …`
 |---|---|---|---|
 | Outbound: text to audio | `Synth` (text in, PCM out a piece at a time) | `tower/speech.rs` | Any service that speaks OpenAI's `/audio/speech` (a row); Gemini, Microsoft and ElevenLabs by their own routes |
 | Outbound, made on the phone | a row of `MODELS` | `airband-radio/src/mouth.rs` | Phonon (open weights, no key) |
-| Inbound: audio to text | a row of `LISTENERS` | `airband-radio/src/ears.rs` | Microsoft |
+| Inbound, live as he speaks | a dialect: a row of `LISTENERS` | `airband-radio/src/ears.rs` | Microsoft |
+| Inbound, a finished recording | `transcribe` (a WAV in, words out) | `airband-radio/src/hears.rs` | Any service that speaks OpenAI's `/audio/transcriptions` (a row); Gemini by its own route |
 
 The tower makes speech the moment a sentence exists and hands it over in parts (`GET speech/<id>`), compressed
 four to one (`airband-core/src/audio.rs`); the radio decodes each part and gives the host plain PCM, so a host
@@ -127,10 +133,17 @@ The interfaces, and what adding a provider touches:
 | Speaking | OpenAI's speech endpoint (`POST {url}/audio/speech`, raw PCM) | a row |
 | Speaking | a route of its own, for what the common one lacks (ElevenLabs' word timings, Microsoft's lendable pass) | an `impl Synth` in `tower/speech.rs`, a `By` for it, a row |
 | Speaking, on the phone | a row of `MODELS` in `airband-radio/src/mouth.rs` | the row and the code that runs the model; an app release |
-| Listening | no common interface exists for speech as it is spoken, so each is a dialect the phone speaks: a row of `LISTENERS` in `airband-radio/src/ears.rs` | the dialect's code there, a row here naming it; an app release, because the phone talks to the service itself |
+| Listening, a finished recording | OpenAI's transcription endpoint (`POST {url}/audio/transcriptions`) | a row |
+| Listening, a finished recording | a route of its own (Gemini) | an arm of `transcribe` in `airband-radio/src/hears.rs`, a `By` for it, a row |
+| Listening, live as he speaks | no common interface exists, so each is a dialect the phone speaks: a row of `LISTENERS` in `airband-radio/src/ears.rs` | the dialect's code there, a row naming it; an app release, because the phone talks to the service itself |
 
-The tower gets a listening pass by asking the phone core for it (`airband_radio::listening_pass`), so the
-call that turns a key into a pass is written once.
+What the phone listens with comes as one message, `{ kind, token, set, phrases }`, whoever sends it: the phone
+itself from a key of his own, the tower, or the relay when it lends its service. `set` is whatever the service
+has to be told, so a service that needs a model or an address fits without a new field. A live service gives a
+short-lived pass for a key, and the key stays where it is. A service that only takes a finished recording has
+no such pass: with the key on the phone the recording goes straight to it, and with the key on the computer the
+phone sends the recording to the tower (`POST hear`), which makes the call. The phone's own keys are kept by
+provider in its Keychain, so one key serves a provider's voice and its listening.
 
 ## Reaching the tower
 

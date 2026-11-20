@@ -1234,60 +1234,71 @@ struct ContextView: View {
     }
 }
 
-/// His own key for a listening service: optional. With it the microphone works with no computer and no relay.
-/// Which services there are, and what each needs, is the core's to say.
-struct SpeechKeyView: View {
+/// What a service of his own needs: which one, its key unless the phone already has one for it, and whatever
+/// else it has to be told. Used for listening and for the voice alike; which services there are, and what each
+/// needs, is the core's to say.
+struct ServiceForm: View {
     @EnvironmentObject var model: RadioModel
-    private let offered = ownListeners()
+    let services: [Service]
+    /// Try it and keep it: the service, a new key if he typed one, its settings. Calls back with what is wrong.
+    let use: (Service, String?, [String: String], @escaping (String?) -> Void) -> Void
     @State private var kind = ""
-    @State private var region = ""
     @State private var key = ""
-    @State private var kept = false
+    @State private var told: [String: String] = [:]
     @State private var checking = false
     @State private var wrong: String?
+    private var chosen: Service? { services.first { $0.kind == kind } ?? services.first }
 
-    private var chosen: OwnListener? { offered.first { $0.kind == kind } ?? offered.first }
-    private var using: String {
-        let name = chosen?.name ?? ""
-        return region.isEmpty ? "Using your key for \(name)" : "Using your key for \(name) (\(region))"
+    var body: some View {
+        Picker("Service", selection: $kind) { ForEach(services, id: \.kind) { Text($0.name).tag($0.kind) } }
+        if let chosen {
+            if chosen.key {
+                if model.phoneKeys[chosen.kind] != nil {
+                    Text("Uses the key you already gave for it").foregroundStyle(.secondary)
+                } else {
+                    SecureField("Key", text: $key).textContentType(.password)
+                    if !chosen.keysAt.isEmpty { Text("Its keys are made at \(chosen.keysAt).").font(.footnote).foregroundStyle(.secondary) }
+                }
+            }
+            ForEach(chosen.asks, id: \.field) { ask in
+                TextField(ask.usual.isEmpty ? ask.question : "\(ask.question): \(ask.usual)", text: Binding(get: { told[ask.field] ?? "" }, set: { told[ask.field] = $0 }))
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+            }
+            Button {
+                (checking, wrong) = (true, nil)
+                let fresh = key.trimmingCharacters(in: .whitespaces)
+                use(chosen, fresh.isEmpty ? nil : fresh, told.filter { set in chosen.asks.contains { $0.field == set.key } }) { problem in
+                    (checking, wrong) = (false, problem)
+                    if problem == nil { key = "" }
+                }
+            } label: {
+                HStack { Text("Try it and use it"); if checking { Spacer(); ProgressView() } }
+            }
+            .disabled(checking || (chosen.key && model.phoneKeys[chosen.kind] == nil && key.trimmingCharacters(in: .whitespaces).isEmpty))
+            .onChange(of: kind) { _, _ in told = [:] }
+            .onAppear { if kind.isEmpty { kind = services.first?.kind ?? "" } }
+        }
+        if let wrong { Text(wrong).foregroundStyle(.red) }
     }
-    /// Everything the chosen service needs has been typed in.
-    private var ready: Bool {
-        guard let chosen, !checking else { return false }
-        let blank: (String) -> Bool = { $0.trimmingCharacters(in: .whitespaces).isEmpty }
-        return !blank(key) && !(chosen.region && blank(region))
-    }
+}
+
+/// A listening service of his own: optional. With it the microphone works with no computer and no relay.
+struct SpeechKeyView: View {
+    @EnvironmentObject var model: RadioModel
+    private let services = listeningServices()
 
     var body: some View {
         Form {
-            Section(footer: Text("Optional. With your own key the mic works without your computer. The key stays in this phone's Keychain and only goes to the service it is for.")) {
-                if kept {
-                    Text(using)
-                    Button("Remove key", role: .destructive) {
+            Section(footer: Text("Optional. With your own key the mic works without your computer. The key stays in this phone\u{2019}s Keychain and only goes to the service it is for.")) {
+                if let using = services.first(where: { $0.kind == model.ownEars }) {
+                    Text("Listening with \(using.name)")
+                    Button("Stop using it") { model.forgetOwnEars() }
+                    Button("Remove its key", role: .destructive) {
                         model.forgetOwnEars()
-                        (kept, region, key) = (false, "", "")
+                        model.keepPhoneKey(using.kind, nil)
                     }
                 } else {
-                    if offered.count > 1 {
-                        Picker("Service", selection: $kind) { ForEach(offered, id: \.kind) { Text($0.name).tag($0.kind) } }
-                    } else if let only = offered.first {
-                        Text(only.name)
-                    }
-                    if chosen?.region == true {
-                        TextField("Region, like eastus", text: $region).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    }
-                    SecureField("Key", text: $key).textContentType(.password)
-                    Button {
-                        (checking, wrong) = (true, nil)
-                        model.keepOwnEars(kind: chosen?.kind ?? "", region: region, key: key) { problem in
-                            (checking, wrong) = (false, problem)
-                            if problem == nil { (kept, key) = (true, "") }
-                        }
-                    } label: {
-                        HStack { Text("Save"); if checking { Spacer(); ProgressView() } }
-                    }
-                    .disabled(!ready)
-                    if let wrong { Text(wrong).foregroundStyle(.red) }
+                    ServiceForm(services: services) { service, key, settings, done in model.keepOwnEars(service.kind, key: key, settings: settings, done: done) }
                 }
             }
             // which computers have one of their own: said, never shown
@@ -1299,11 +1310,7 @@ struct SpeechKeyView: View {
                 }
             }
         }
-        .navigationTitle("Speech key").navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            kind = offered.first?.kind ?? ""
-            if let own = model.ownEars { (kept, kind, region) = (true, own.kind, own.region) }
-        }
+        .navigationTitle("Listening").navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -1317,6 +1324,8 @@ struct VoiceView: View {
     @State private var sampling = false
     @State private var wrong: String?
     private let tick = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
+    private let services = voiceServices()
+    @State private var serviceWrong: String?
 
     var body: some View {
         Form {
@@ -1354,6 +1363,27 @@ struct VoiceView: View {
                     if let wrong { Text(wrong).foregroundStyle(.red) }
                 }
             }
+            // a voice service reached straight from this phone, with a key of his own
+            Section(header: Text("With your own key"), footer: Text("Optional. Your phone talks to the voice service itself, so it works without your computer. The key stays in this phone\u{2019}s Keychain and only goes to the service it is for.")) {
+                if let using = services.first(where: { $0.kind == model.serviceVoice }) {
+                    Text("Using \(using.name)")
+                    Button {
+                        (sampling, serviceWrong) = (true, nil)
+                        model.sampleVoice { problem in (sampling, serviceWrong) = (false, problem) }
+                    } label: {
+                        HStack { Text("Hear it"); if sampling { Spacer(); ProgressView() } }
+                    }
+                    .disabled(sampling)
+                    Button("Stop using it") { model.stopService() }
+                    Button("Remove its key", role: .destructive) {
+                        model.stopService()
+                        model.keepPhoneKey(using.kind, nil)
+                    }
+                } else {
+                    ServiceForm(services: services) { service, key, settings, done in model.useService(service.kind, key: key, settings: settings, done: done) }
+                }
+                if let serviceWrong { Text(serviceWrong).foregroundStyle(.red) }
+            }
         }
         .navigationTitle("Voice").navigationBarTitleDisplayMode(.inline)
         .onAppear { offered = localVoices(dir: model.voiceDir) }
@@ -1375,10 +1405,8 @@ struct SetupView: View {
                 if model.paired {
                     Section {
                         NavigationLink("Accounts", isActive: $showAccounts) { AccountsView().environmentObject(model) }
-                        NavigationLink("Speech key") { SpeechKeyView().environmentObject(model) }
-                        if !localVoices(dir: model.voiceDir).isEmpty {
-                            NavigationLink("Voice") { VoiceView().environmentObject(model) }
-                        }
+                        NavigationLink("Listening") { SpeechKeyView().environmentObject(model) }
+                        NavigationLink("Voice") { VoiceView().environmentObject(model) }
                         if push.denied {
                             Button("Turn on notifications") { UIApplication.shared.open(URL(string: UIApplication.openNotificationSettingsURLString)!) }
                         }

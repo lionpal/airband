@@ -319,7 +319,9 @@ async fn named_project(app: &Arc<App>, idea: &str, said: &str, projects: &[Strin
     let prompt = format!(
         "{name} wanted a new coding agent started on this: \"{idea}\"\nHe was asked which of his projects it is for:\n{list}\n\n\
          He now says: \"{said}\"\n\n\
-         If that answers the question, which project does he mean? Speech may write a name apart or misspell it.\n\
+         Does that answer the question, and if so with which project? An answer does little more than name one \
+         (speech may write a name apart or misspell it). Anything that asks for other work or says something of \
+         its own is a new message and not an answer, even when it mentions a project.\n\
          Reply with one line of JSON and nothing else: {{\"project\":\"<name exactly as listed>\"}}\n\
          Leave the name empty if he names none of them, rules one out without choosing another, or has gone on to \
          say something else.",
@@ -344,8 +346,11 @@ async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope: Option<&st
     let prompt = format!(
         "{name} said this to his coding agents: \"{first}\"\nIt was not clear who it was for, and he was asked. The agents:\n{list}\n\n\
          He now says: \"{said}\"\n\n\
-         If that answers the question, who does he mean? He may say a callsign, an agent's letters, or a number \
-         (speech may write these apart or as words that sound like them), or all of them.\n\
+         Does that answer the question, and if so who does he mean? An answer does little more than name who: a \
+         callsign, an agent's letters, a number (speech may write these apart or as words that sound like them), \
+         \"the first one\", \"both\", all of them, perhaps with a word or two around it. Anything that asks for \
+         work, gives an instruction or says something of its own is a new message and not an answer, even when it \
+         is about what one of the agents is working on.\n\
          Reply with one line of JSON and nothing else: {{\"to\":[\"<callsign in full>\"]}}, with [\"*\"] for all of them.\n\
          \"to\" is empty if he names nobody listed, or has gone on to say something else.",
         name = app.cfg.name,

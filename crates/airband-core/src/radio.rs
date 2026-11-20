@@ -288,17 +288,18 @@ pub struct Reply {
     pub elsewhere: Option<String>,
 }
 
-/// `GET ears`: what should turn his speech into text. `kind` is "device" (the phone's own recognition) or the
-/// name of a service the phone reaches itself with `token`, a pass that expires in minutes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// `GET ears`: what should turn his speech into text, and what the phone needs for it.
+///
+/// `kind` is a listening dialect the phone speaks to the service itself, with `token` (a pass that expires in
+/// minutes) and `set` (whatever that service has to be told: a region, a language, a model). Or it is `tower`:
+/// the phone records, and sends the recording to the tower (`POST hear`), which holds the key. Or `none`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EarsGrant {
     pub kind: String,
     #[serde(default)]
-    pub region: String,
-    #[serde(default)]
     pub token: String,
     #[serde(default)]
-    pub language: String,
+    pub set: std::collections::BTreeMap<String, String>,
     /// Names he is likely to say (callsigns, projects), for a recogniser that can be told what to expect.
     #[serde(default)]
     pub phrases: Vec<String>,
@@ -306,8 +307,36 @@ pub struct EarsGrant {
 
 impl Default for EarsGrant {
     fn default() -> Self {
-        EarsGrant { kind: "device".into(), region: String::new(), token: String::new(), language: String::new(), phrases: Vec::new() }
+        EarsGrant { kind: crate::providers::NO_EARS.into(), token: String::new(), set: Default::default(), phrases: Vec::new() }
     }
+}
+
+impl EarsGrant {
+    /// One of the settings, or empty.
+    pub fn get(&self, field: &str) -> &str {
+        self.set.get(field).map(String::as_str).unwrap_or_default()
+    }
+    pub fn listens(&self) -> bool {
+        self.kind != crate::providers::NO_EARS
+    }
+}
+
+/// `POST hear`: part of a recording, for a tower whose listening service takes a finished clip. `data` is
+/// 16 kHz mono in the same compressed blocks speech comes in, base64. With `last`, the answer is [`HeardText`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HearPart {
+    /// The same for every part of one recording.
+    pub clip: String,
+    pub data: String,
+    pub samples: u32,
+    #[serde(default)]
+    pub last: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HeardText {
+    #[serde(default)]
+    pub text: String,
 }
 
 /// `GET speech/<id>?from=<block>`: the next part of a clip, as far as the tower has it. The radio asks again

@@ -247,15 +247,24 @@ pub fn dir() -> PathBuf {
     home().join(".airband")
 }
 
-/// Write a file only its owner can read (it holds the token, or sessions' inbox tokens).
-pub fn write_private(path: &PathBuf, text: &str) -> std::io::Result<()> {
-    fs::write(path, text)?;
+/// Write a file only its owner can read (it holds the token, or sessions' inbox tokens). It is made that way
+/// from the start, under another name, and takes its own name once it is whole: nobody else can read it at
+/// any moment, and a write that is cut short leaves the old one as it was.
+pub fn write_private(path: &PathBuf, bytes: impl AsRef<[u8]>) -> std::io::Result<()> {
+    use std::io::Write;
+    let part = path.with_extension(format!("part-{}", random_hex(4)));
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
-    Ok(())
+    let written = options.open(&part).and_then(|mut f| f.write_all(bytes.as_ref()).and_then(|_| f.sync_all())).and_then(|_| fs::rename(&part, path));
+    if written.is_err() {
+        let _ = fs::remove_file(&part);
+    }
+    written
 }
 
 /// The config as it is on disk now, or None if there is none yet.
@@ -326,8 +335,9 @@ fn render(cfg: &Config, lock: bool) -> Result<String, String> {
     Ok(format!("{}\n", serde_json::to_string_pretty(&doc).unwrap()))
 }
 
+/// Write the settings. The keys never go in the file: they are kept encrypted (`vault`), from the first save.
 pub fn save(cfg: &Config) -> Result<(), String> {
-    let text = render(cfg, false)?;
+    let text = render(cfg, true)?;
     write_private(&dir().join("config.json"), &text).map_err(|e| format!("cannot write ~/.airband/config.json: {e}"))
 }
 
@@ -348,16 +358,6 @@ pub fn lock() -> Result<(), String> {
         return Err("the keychain did not give back what was put in it; nothing was changed".into());
     }
     write_private(&dir().join("config.json"), &text).map_err(|e| format!("cannot write ~/.airband/config.json: {e}"))
-}
-
-/// Put the keys back in the file, readable by him alone, and take them out of the keychain.
-pub fn unlock() -> Result<(), String> {
-    let cfg = read().ok_or("the configuration cannot be read")?;
-    let mut doc = serde_json::to_value(&cfg).unwrap();
-    name_keys(&mut doc);
-    write_private(&dir().join("config.json"), &format!("{}\n", serde_json::to_string_pretty(&doc).unwrap())).map_err(|e| format!("cannot write ~/.airband/config.json: {e}"))?;
-    crate::vault::forget();
-    Ok(())
 }
 
 /// Read the config, creating it (with a fresh token) on first use.
