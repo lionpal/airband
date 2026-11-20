@@ -209,6 +209,30 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
     }
 }
 
+/// An agent has been at work for a while without a word. From the labels of its steps: is there something he
+/// would want to know now, before it reports? One sentence if so. The labels say what it set out to do, not
+/// how it went, and the sentence must not claim more.
+pub(super) async fn progress(cfg: &Config, steps: &[String]) -> Option<String> {
+    let prompt = format!(
+        "Below are the steps a coding agent has taken, in order, since it last said anything to {name}, who is away from its screen. \
+         Each line is the agent's own label for a step: what it set out to do, not whether it worked.\n\n\
+         Decide whether anything in them is something he would go and look for, or would want to know before the agent reports: \
+         something sent outside the conversation or made to last (a push or commit, a build or release uploaded, a deploy, \
+         a pull request or ticket, a message sent to someone, something installed or restarted on a machine, something deleted \
+         or moved for good), or a sign the work has hit trouble (the same thing tried again and again, something undone, \
+         a hunt for why something failed). Reading, searching, editing and running tests along the way are not.\n\n\
+         If nothing is, answer with the single word: none\n\
+         Otherwise answer with one sentence of at most 24 words, in the first person as the agent, saying what it is doing or \
+         has set going, with any number or name from the labels that finds it (a build number, a commit id, where a deploy goes). \
+         Do not say that anything succeeded, finished or failed: the labels do not tell. No file paths, no markdown.\n\n<steps>\n{steps}\n</steps>",
+        name = cfg.name,
+        steps = steps.join("\n")
+    );
+    let said = ask_model(cfg, prompt).await.ok()?;
+    let said = said.trim().trim_matches('"').trim();
+    (!said.is_empty() && !said.trim_end_matches('.').eq_ignore_ascii_case("none") && said.chars().count() < 400).then(|| said.to_string())
+}
+
 pub(super) async fn detail(cfg: &Config, item: &Item) -> String {
     if reads_as_written(&item.full, 500) {
         return spoken(&item.full);

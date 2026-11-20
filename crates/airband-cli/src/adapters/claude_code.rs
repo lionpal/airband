@@ -273,6 +273,32 @@ fn step_in(tail: &str) -> Option<String> {
     })
 }
 
+/// Every step a session has taken since `since`, oldest first. From the end of its transcript only: a turn
+/// longer than that reaches back is told by its later steps.
+pub fn steps(agent: &Agent, since: u64) -> Vec<String> {
+    tail_of(agent, 1024 * 1024).map(|tail| steps_in(&tail, since)).unwrap_or_default()
+}
+
+fn steps_in(tail: &str, since: u64) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for line in tail.lines().filter(|l| l.contains("\"tool_use\"")) {
+        let Ok(entry) = serde_json::from_str::<Value>(line) else { continue };
+        if entry["isSidechain"] == true || entry["timestamp"].as_str().and_then(super::claude_accounts::iso_ms).is_none_or(|at| at < since) {
+            continue;
+        }
+        for part in entry["message"]["content"].as_array().into_iter().flatten().filter(|c| c["type"] == "tool_use") {
+            if let Some(label) = part["name"].as_str().and_then(|name| step(name, &part["input"])) {
+                // the same label twice running is one step said twice
+                if found.last() != Some(&label) {
+                    found.push(label);
+                }
+            }
+        }
+    }
+    let most = 80;
+    if found.len() > most { found.split_off(found.len() - most) } else { found }
+}
+
 fn step(tool: &str, input: &Value) -> Option<String> {
     let text = |k: &str| input[k].as_str().map(str::trim).filter(|t| !t.is_empty());
     let file = |k: &str| text(k).map(|p| p.rsplit(['/', '\\']).next().unwrap_or(p).to_string());

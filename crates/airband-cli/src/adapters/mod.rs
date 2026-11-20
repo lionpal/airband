@@ -45,6 +45,9 @@ struct Adapter {
     /// time. What he typed himself comes back with `his` set; what the tower passed on comes back without, when
     /// the agent has taken it in.
     told: Option<fn(&airband_core::agent::Agent, u64) -> (Vec<Told>, u64)>,
+    /// The steps an agent has taken since a moment (milliseconds since 1970), oldest first, each as the few
+    /// words the harness has for it: what it set out to do, not how it went.
+    steps: Option<fn(&airband_core::agent::Agent, u64) -> Vec<String>>,
 }
 
 /// Something he said to an agent directly, at its keyboard.
@@ -98,6 +101,7 @@ const ADAPTERS: &[Adapter] = &[Adapter {
     glance: Some(claude_code::glance),
     touched: Some(claude_code::touched),
     told: Some(claude_code::told),
+    steps: Some(claude_code::steps),
 }];
 
 /// `airband install`: set up every harness that can be. One line to say for each.
@@ -116,6 +120,11 @@ pub fn glance(agent: &airband_core::agent::Agent) -> Glance {
 /// The files and commands of this agent's latest steps, if its harness's adapter can tell.
 pub fn touched(agent: &airband_core::agent::Agent) -> Vec<String> {
     ADAPTERS.iter().find(|a| a.name == agent.harness).and_then(|a| a.touched).map(|ask| ask(agent)).unwrap_or_default()
+}
+
+/// The steps this agent has taken since `since`, if its harness's adapter can tell.
+pub fn steps(agent: &airband_core::agent::Agent, since: u64) -> Vec<String> {
+    ADAPTERS.iter().find(|a| a.name == agent.harness).and_then(|a| a.steps).map(|ask| ask(agent, since)).unwrap_or_default()
 }
 
 /// What he has typed to this agent at its keyboard since `from`, if its harness's adapter can tell.

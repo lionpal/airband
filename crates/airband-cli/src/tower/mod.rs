@@ -193,6 +193,57 @@ async fn activity_loop(app: Arc<App>) {
     }
 }
 
+/// An agent that works for a long time says nothing until it stops, and things he would want to know happen
+/// on the way. Once a minute: for each agent that has been at work without a word for some minutes, the labels
+/// of its steps since then go to the model, which writes one line if there is something in them for him and
+/// nothing if there is not. The line goes in the chat as a note: no notification, not read aloud, and it does
+/// not count as the agent having stopped or having spoken past a question.
+async fn progress_loop(app: Arc<App>) {
+    const QUIET_FOR: u64 = 4 * 60 * 1000;
+    const FEWEST: usize = 4;
+    // when each agent's steps were last looked at, so a quiet stretch with nothing in it is asked about once
+    // every few minutes and not every time round
+    let mut looked: HashMap<String, u64> = HashMap::new();
+    loop {
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        let due: Vec<(agent::Agent, u64)> = {
+            let inner = app.inner.lock().unwrap();
+            let live: HashSet<&str> = inner.sessions.iter().map(|s| s.agent.id.as_str()).collect();
+            looked.retain(|id, _| live.contains(id.as_str()));
+            inner
+                .sessions
+                .iter()
+                .filter(|s| !s.waiting)
+                .filter_map(|s| {
+                    // since it last said anything, or he last said anything to it
+                    let since = inner.log.iter().rev().find(|e| e.agent.as_deref() == Some(s.agent.id.as_str()) || e.to_agents.iter().any(|t| *t == s.agent.id)).map(|e| e.at)?;
+                    let last = since.max(looked.get(&s.agent.id).copied().unwrap_or(0));
+                    (now().saturating_sub(last) >= QUIET_FOR).then(|| (s.agent.clone(), since))
+                })
+                .collect()
+        };
+        for (agent, since) in due {
+            looked.insert(agent.id.clone(), now());
+            let looked_at = agent.clone();
+            let steps = tokio::task::spawn_blocking(move || crate::adapters::steps(&looked_at, since)).await.unwrap_or_default();
+            if steps.len() < FEWEST {
+                continue;
+            }
+            let Some(note) = judge::progress(&app.cfg, &steps).await else { continue };
+            let mut inner = app.inner.lock().unwrap();
+            // it spoke for itself while the model was reading: its own words are the news
+            let Some(s) = inner.find(&agent.id).filter(|s| !s.waiting).cloned() else { continue };
+            if inner.log.iter().any(|e| e.agent.as_deref() == Some(agent.id.as_str()) && e.at > since) {
+                continue;
+            }
+            log(format!("{}: a note on the way ({} steps)", s.callsign.text(), steps.len()));
+            inner.record(Entry { short: Some(note.clone()), ..Entry::said(config::random_hex(8), &s, Some(Kind::Fyi), note) });
+            app.save(&inner);
+            app.kick.notify_one();
+        }
+    }
+}
+
 fn log(msg: impl AsRef<str>) {
     let s = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     println!("{:02}:{:02}:{:02}Z {}", s / 3600 % 24, s / 60 % 60, s % 60, msg.as_ref());
@@ -228,6 +279,17 @@ pub fn triage(cfg: Config) -> Result<(), String> {
     let item = Item { id: String::new(), agent_id: String::new(), notice: false, full: full.trim().to_string(), kind: None, say: None, detail: None, created: 0, asked: None };
     let j = rt.block_on(prepare(&cfg, &item));
     println!("{}\t{}\t{}", serde_json::to_value(j.kind).unwrap().as_str().unwrap_or(""), j.say, j.options.iter().enumerate().map(|(i, o)| if j.recommended == Some(i as u32) { format!("[{o}]") } else { o.clone() }).collect::<Vec<_>>().join(" | "));
+    Ok(())
+}
+
+/// `airband progress`: the labels of an agent's steps on standard input, one to a line; prints the note he
+/// would be given for them, or "none". For trying the judgement by hand.
+pub fn progress(cfg: Config) -> Result<(), String> {
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut std::io::stdin(), &mut text).map_err(|e| e.to_string())?;
+    let steps: Vec<String> = text.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect();
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
+    println!("{}", rt.block_on(judge::progress(&cfg, &steps)).unwrap_or_else(|| "none".into()));
     Ok(())
 }
 
@@ -277,6 +339,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
 
         tokio::spawn(pump_loop(app.clone()));
         tokio::spawn(accounts::keep_alive(app.clone()));
+        tokio::spawn(progress_loop(app.clone()));
         tokio::spawn(activity_loop(app.clone()));
         tokio::spawn(lent_pass_loop(app.clone()));
         held::carry_on(&app).await;

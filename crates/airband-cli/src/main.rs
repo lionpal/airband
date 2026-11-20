@@ -53,6 +53,7 @@ fn main() {
         Some("radio") => terminal::run(&config::load(), &args[1..]),
         Some("launch") => terminal::send(&config::load(), &[vec!["/launch".to_string()], args[1..].to_vec()].concat()),
         Some("triage") => tower::triage(config::load()),
+        Some("progress") => tower::progress(config::load()),
         Some("feed") => terminal::feed(&config::load(), &args[1..]),
         Some("send") => terminal::send(&config::load(), &args[1..]),
         Some(other) => Err(format!("unknown command \"{other}\": run, install, uninstall, status, relay, model, voice, ears, pair, unpair, quick, accounts, radio, feed, send, launch, hook, report")),
