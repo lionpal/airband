@@ -84,6 +84,12 @@ pub enum Voice {
     Device,
     Gemini { key: String, #[serde(default = "gemini_model")] model: String, #[serde(default = "gemini_voice")] voice: String },
     Azure { key: String, region: String, #[serde(default = "azure_voice")] voice: String },
+    /// A model that runs on this computer and needs no key (Gradium's Phonon 31m, English). `voice` is one of
+    /// its catalog's, by name. It is loaded when first used and stays loaded while this is the voice.
+    Phonon {
+        #[serde(default = "phonon_voice")]
+        voice: String,
+    },
     Elevenlabs { key: String, #[serde(default = "elevenlabs_voice")] voice: String, #[serde(default = "elevenlabs_model")] model: String },
     /// Never written in the configuration: Microsoft's voice by a short-lived pass the relay lends, for a tower
     /// with no voice of its own set.
@@ -108,6 +114,9 @@ fn gemini_voice() -> String {
     "Leda".into()
 }
 /// Jessica: young, bright and warm.
+fn phonon_voice() -> String {
+    "Zoey".into()
+}
 fn elevenlabs_voice() -> String {
     "cgSgspJ2msm6clMCkdW9".into()
 }

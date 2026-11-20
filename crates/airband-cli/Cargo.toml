@@ -23,6 +23,14 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 qrcode = { version = "0.14", default-features = false }
 base64 = "0.22"
 
+# A voice that runs on this computer, with no key: Gradium's Phonon. Its model is fetched the first time it is
+# chosen. Leave the feature out (`--no-default-features`) for a tower that should not carry it.
+ptts = { version = "0.7.1", features = ["hf", "hub"], optional = true }
+
+[features]
+default = ["phonon"]
+phonon = ["dep:ptts"]
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

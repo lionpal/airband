@@ -35,6 +35,7 @@ const PROVIDERS: &[Provider] = &[
     Provider { id: "claude", name: "Claude on this computer, with your Claude login", does: &[Job::Summary], key: false, asks: &[], keys_at: "" },
     Provider { id: "gemini", name: "Google Gemini", does: &[Job::Summary, Job::Voice], key: true, asks: &[], keys_at: "aistudio.google.com/apikey" },
     Provider { id: "openai", name: "OpenAI, or any service that speaks its API", does: &[Job::Summary], key: true, asks: &[("url", "Address", "https://api.openai.com/v1"), ("model", "Model", "gpt-4o-mini")], keys_at: "platform.openai.com/api-keys" },
+    Provider { id: "phonon", name: "Phonon, on this computer: no key, about 100 MB fetched once", does: &[Job::Voice], key: false, asks: &[], keys_at: "" },
     Provider { id: "elevenlabs", name: "ElevenLabs", does: &[Job::Voice], key: true, asks: &[], keys_at: "elevenlabs.io/app/settings/api-keys" },
     Provider { id: "azure", name: "Microsoft Azure Speech", does: &[Job::Voice, Job::Ears], key: true, asks: &[("region", "Region", "eastus")], keys_at: "portal.azure.com, a Speech resource, Keys and Endpoint" },
 ];

@@ -143,6 +143,66 @@ impl Synth for Elevenlabs {
     }
 }
 
+/// A voice made on this computer by a small open model, with no key and nothing sent anywhere. The model is
+/// read from disk the first time it speaks (fetched then, if it is not there yet) and kept, so every sentence
+/// after starts at once; it holds a few hundred megabytes while it is the voice in use. It gives no word
+/// timings.
+#[cfg(feature = "phonon")]
+mod phonon {
+    use ptts::checkpoint::{Checkpoint, ResolveOptions};
+    use ptts::preprocess::Lang;
+    use ptts::synth::{DeviceKind, Quant, SpeechOptions};
+    use ptts::voice_catalog::{DEFAULT_VOICE_CATALOG, VoiceCatalog};
+    use std::sync::Mutex;
+
+    /// The one this is built around: English, 31 million parameters, weights under Apache 2.0.
+    const MODEL: &str = "hf://gradium/phonon-31m-en";
+
+    /// The model once loaded, with the voice it was loaded for and the name that voice goes by in it.
+    static WARM: Mutex<Option<(String, String, ptts::synth::Synth)>> = Mutex::new(None);
+
+    pub(super) struct Phonon {
+        pub voice: String,
+    }
+
+    fn load(voice: &str) -> Result<(String, ptts::synth::Synth), String> {
+        let said = |e: &dyn std::fmt::Display| format!("the voice on this computer could not be loaded: {e}");
+        // the small weights, on the processor: a sentence takes a fraction of a second of one core, and the
+        // graphics chip is left to whatever else is using it
+        let checkpoint = Checkpoint::locate(MODEL, ResolveOptions { quant: Quant::Q80, weights: None }).map_err(|e| said(&e))?;
+        let mut tts = checkpoint.builder(Lang::En).device(DeviceKind::Cpu).build().map_err(|e| said(&e))?;
+        checkpoint.register_voices(&mut tts);
+        // a voice of the model's own by that name, else one of the catalog's (only that one is fetched)
+        let name = if tts.voices().iter().any(|v| v == voice) {
+            voice.to_string()
+        } else {
+            VoiceCatalog::new(DEFAULT_VOICE_CATALOG).and_then(|c| c.register(&mut tts, voice)).map_err(|e| format!("it has no voice called {voice}: {e}"))?
+        };
+        Ok((name, tts))
+    }
+
+    impl super::Synth for Phonon {
+        fn rate(&self) -> u32 {
+            24000
+        }
+        fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8]), _mark: &mut dyn FnMut(u32, u32)) -> Result<(), String> {
+            let mut warm = WARM.lock().unwrap_or_else(|e| e.into_inner());
+            if warm.as_ref().is_none_or(|(asked, _, _)| *asked != self.voice) {
+                let (name, tts) = load(&self.voice)?;
+                *warm = Some((self.voice.clone(), name, tts));
+            }
+            let (_, name, tts) = warm.as_mut().unwrap();
+            let stream = tts.stream_with(text, &SpeechOptions::default().voice(name.clone())).map_err(|e| e.to_string())?;
+            for chunk in stream {
+                let chunk = chunk.map_err(|e| e.to_string())?;
+                let pcm: Vec<u8> = chunk.iter().flat_map(|s| ((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes()).collect();
+                sink(&pcm);
+            }
+            Ok(())
+        }
+    }
+}
+
 /// Speak a word with this voice and say how many seconds of sound came back. For trying a voice by hand.
 pub(super) fn try_voice(voice: &Voice) -> Result<f32, String> {
     let synth = synth_for(voice).ok_or("no voice is set")?;
@@ -159,6 +219,10 @@ fn synth_for(voice: &Voice) -> Option<Box<dyn Synth>> {
         Voice::Device => None,
         Voice::Gemini { key, model, voice } => Some(Box::new(Gemini { key: key.clone(), model: model.clone(), voice: voice.clone() })),
         Voice::Azure { key, region, voice } => Some(Box::new(Azure { key: key.clone(), pass: false, region: region.clone(), voice: voice.clone() })),
+        #[cfg(feature = "phonon")]
+        Voice::Phonon { voice } => Some(Box::new(phonon::Phonon { voice: voice.clone() })),
+        #[cfg(not(feature = "phonon"))]
+        Voice::Phonon { .. } => None,
         Voice::Elevenlabs { key, voice, model } => Some(Box::new(Elevenlabs { key: key.clone(), voice: voice.clone(), model: model.clone() })),
         Voice::AzurePass { region, token } => Some(Box::new(Azure { key: token.clone(), pass: true, region: region.clone(), voice: "en-US-AvaMultilingualNeural".into() })),
     }
