@@ -24,21 +24,23 @@
 
 - One feed for every agent on every project: what each one reported, and what each one needs from you.
 - A question arrives as one sentence with its answers as buttons. Tap one, or say it.
+- A report gives the news first and names what was shipped: the commit, the pull request, the build.
 - Talk without naming anyone. Your words go to the agent they are about.
 - Start a new agent by saying what you want: "with Fable high, find out why checkout is slow".
 - Approve or refuse a permission prompt from your phone.
 - See each team's state at a glance, and what each agent is doing right now.
-- Screenshots your agents take come with their messages.
+- An agent long at work gets a one-line note when it does something you would look for.
+- Pictures an agent sends you come with its message. Keys and tokens in a message are masked.
 - Several Claude accounts: see how much of each is used, and switch every running session with one tap.
-- Read aloud when you can't look, with the headset button.
+- Read aloud when you can't look, with the speaker button beside the microphone.
 
 ## How it works
 
 A small program, the tower, runs on your computer next to your agents. It hears from them through Claude
 Code's hooks, decides what is worth your attention, and cuts it to a line. Your phone pairs with the tower.
 
-Messages between the two are end-to-end encrypted. They pass through a relay that sees only sealed bytes, or
-you can skip the relay and pair your phone straight to your computer over your own network.
+Messages between the two are end-to-end encrypted. On the same network the phone talks to your computer
+directly. Anywhere else it goes through a relay, which sees only sealed bytes.
 
 The tower is one Rust program and uses about 6 MB of memory.
 
@@ -48,36 +50,57 @@ You need Claude Code. With [Homebrew](https://brew.sh), on macOS or Linux:
 
 ```sh
 brew install lionpal/airband/airband
-airband install     # hooks Claude Code up and starts the tower at login (macOS)
-airband pair        # shows a QR code: point your phone's camera at it
+airband setup
 ```
 
-`airband install` is what starts the tower. There is no `brew services` entry, so the tower cannot be started
-twice. After `brew upgrade airband`, run `airband install` again to restart the tower on the new version. Before
-`brew uninstall airband`, run `airband uninstall`.
+`airband setup` asks what makes summaries, what speaks and what listens, and tries each choice with a real
+call. Then it hooks up Claude Code, starts the tower at login (macOS) and shows a QR code for your phone's
+camera. Run it again to change a choice.
 
-Or build it yourself. You need Rust.
+Then start Claude Code the way you always do. Each session shows up in the app under its project.
+
+```sh
+airband relay <url>     # reach the tower from any network; set it before you pair
+airband pair [name]     # pair another phone
+airband lan off         # always go through the relay
+airband install         # restart the tower; run it after `brew upgrade airband`
+airband uninstall       # run it before `brew uninstall airband`
+```
+
+Without a relay, a pairing link works only over Tailscale or on the computer itself.
+
+Or build it yourself, with Rust:
 
 ```sh
 git clone https://github.com/lionpal/airband.git && cd airband
 cargo build --release -p airband-cli
-target/release/airband install     # copies the binary to ~/.airband/bin, then the same as above
-airband pair
+target/release/airband setup     # copies the binary to ~/.airband/bin first
 ```
-
-Then start Claude Code the way you always do. Each session shows up in the app under its project.
 
 The iPhone app is in TestFlight. Join the waitlist at [airband.dev](https://airband.dev), or build it yourself
 with `scripts/build-apple.sh` and Xcode.
 
-From the terminal:
+## Keys
+
+Each key you give is kept once, under a name, and goes only to the provider it is for.
+
+```sh
+airband keys                          # every key by name and what uses it, never its value
+airband keys add <name> <provider>    # paste a key; choose what uses it with airband setup
+airband keys remove <name>
+```
+
+On a Mac, a build signed with a developer certificate (`scripts/sign-mac.sh`) keeps the keys in your login
+keychain. An unsigned build, which is what Homebrew installs, keeps them in `~/.airband/config.json`, readable
+only by you. `airband keys lock` and `airband keys unlock` move them.
+
+## From the terminal
 
 ```sh
 airband status                 # who is on, and what is waiting on you
 airband feed                   # the feed, in a terminal
 airband send "ship it"         # say something to your agents
 airband accounts               # your Claude accounts and how much of each is used
-airband model gemini           # read and route with Gemini and your own key, in place of Claude Code
 airband quick add "Make no mistakes"   # add a one-tap message
 ```
 
