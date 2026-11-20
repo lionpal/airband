@@ -90,6 +90,8 @@ NOTIFY_PROFILE="$(profile "$NOTIFY_ID" airband_notify_appstore.mobileprovision)"
 echo "✓ $PROFILE"
 echo "✓ $NOTIFY_PROFILE"
 security cms -D -i "$BUILD/profiles/airband_appstore.mobileprovision" | grep -q "aps-environment" || { echo "✗ the app's profile has no push notifications"; exit 1; }
+# the car's screen: the capability is a tick box on the identifier at developer.apple.com (Capability Requests)
+security cms -D -i "$BUILD/profiles/airband_appstore.mobileprovision" | grep -q "carplay-voice-based-conversation" || { echo "✗ the app's profile has no CarPlay voice conversation capability"; exit 1; }
 if security cms -D -i "$BUILD/profiles/airband_appstore.mobileprovision" | grep -q "usernotifications.communication"; then
   COMMUNICATION=(AIRBAND_COMMUNICATION=YES AIRBAND_COMMUNICATION_SUFFIX=-communication)
   echo "✓ Communication Notifications is on: a notification carries the agent's badge"

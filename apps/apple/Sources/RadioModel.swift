@@ -54,7 +54,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     @Published var switching: String? // the account being switched to, as "station|id"
     @Published var accountsProblem: String?
 
-    private let voice = Voice()
+    let voice = Voice()
     private var desk: Desk!
     private var links: [String] = []
     private var fetching: Set<String> = []
