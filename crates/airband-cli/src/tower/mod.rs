@@ -232,6 +232,17 @@ pub fn triage(cfg: Config) -> Result<(), String> {
 }
 
 pub fn run(cfg: Config) -> Result<(), String> {
+    if let Some(why) = config::keyless() {
+        return Err(format!("The tower's keys are in the keychain and could not be read: {why}"));
+    }
+    // a signed copy keeps the keys in the keychain: moved there once, by the tower itself, which runs where
+    // the keychain can be used
+    if !config::locked() && crate::vault::signed() {
+        match config::lock() {
+            Ok(()) => log("the keys are now in the keychain; the settings file holds none"),
+            Err(e) => log(format!("the keys stay in the settings file: {e}")),
+        }
+    }
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().map_err(|e| e.to_string())?;
     rt.block_on(async move {
         let store = Store::open(&config::dir().join("airband.db"))?;

@@ -270,11 +270,98 @@ pub fn write_private(path: &PathBuf, text: &str) -> std::io::Result<()> {
 
 /// The config as it is on disk now, or None if there is none yet.
 pub fn read() -> Option<Config> {
-    serde_json::from_str(&fs::read_to_string(dir().join("config.json")).ok()?).ok()
+    parse(&fs::read_to_string(dir().join("config.json")).ok()?).ok()
+}
+
+/// What the keychain holds for the tower, read once for each version of the file: every program that changes
+/// the keys also writes the file, so a file that has not changed means keys that have not.
+fn kept() -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    static LAST: std::sync::Mutex<Option<(std::time::SystemTime, serde_json::Map<String, serde_json::Value>)>> = std::sync::Mutex::new(None);
+    let stamp = fs::metadata(dir().join("config.json")).and_then(|m| m.modified()).ok();
+    let mut last = LAST.lock().unwrap();
+    if let (Some(stamp), Some((at, map))) = (stamp, last.as_ref()) {
+        if *at == stamp {
+            return Ok(map.clone());
+        }
+    }
+    let map = crate::vault::get()?;
+    if let Some(stamp) = stamp {
+        *last = Some((stamp, map.clone()));
+    }
+    Ok(map)
+}
+
+/// Why this run has the settings without their keys, when it does: the keychain could not be read here.
+static KEYLESS: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Set when the keys could not be had: what needs one must say so and stop, not go on with a mark for a key.
+pub fn keyless() -> Option<String> {
+    KEYLESS.lock().unwrap().clone()
+}
+
+/// The settings from the file's text, with any secret that is kept in the keychain put back in its place.
+/// Where the keychain cannot be read (a shell over SSH) the settings still come back, with marks where the
+/// keys are and [`keyless`] saying why: a command that needs no key goes on working.
+fn parse(text: &str) -> Result<Config, String> {
+    if !crate::vault::sealed(text) {
+        return serde_json::from_str(text).map_err(|e| e.to_string());
+    }
+    let mut doc: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    match kept() {
+        Ok(kept) => crate::vault::open(&mut doc, &kept)?,
+        Err(e) => *KEYLESS.lock().unwrap() = Some(e),
+    }
+    serde_json::from_value(doc).map_err(|e| e.to_string())
+}
+
+/// The file's text for these settings. When the keys are kept in the keychain (`lock`, or the file as it is
+/// now already has them there) they go there and the text has a mark in their places.
+fn render(cfg: &Config, lock: bool) -> Result<String, String> {
+    if let Some(why) = keyless() {
+        return Err(format!("the settings cannot be changed from here: {why}"));
+    }
+    let existing = fs::read_to_string(dir().join("config.json")).unwrap_or_default();
+    if !lock && !crate::vault::sealed(&existing) {
+        return Ok(format!("{}\n", serde_json::to_string_pretty(cfg).unwrap()));
+    }
+    let mut doc = serde_json::to_value(cfg).unwrap();
+    let before = if crate::vault::sealed(&existing) { kept()? } else { Default::default() };
+    let now = crate::vault::seal(&mut doc, &before);
+    if now != before {
+        crate::vault::put(&now)?;
+    }
+    Ok(format!("{}\n", serde_json::to_string_pretty(&doc).unwrap()))
 }
 
 pub fn save(cfg: &Config) -> Result<(), String> {
-    write_private(&dir().join("config.json"), &format!("{}\n", serde_json::to_string_pretty(cfg).unwrap())).map_err(|e| format!("cannot write ~/.airband/config.json: {e}"))
+    let text = render(cfg, false)?;
+    write_private(&dir().join("config.json"), &text).map_err(|e| format!("cannot write ~/.airband/config.json: {e}"))
+}
+
+/// Are the keys in the keychain?
+pub fn locked() -> bool {
+    fs::read_to_string(dir().join("config.json")).is_ok_and(|t| crate::vault::sealed(&t))
+}
+
+/// Move the keys into the keychain. The file is only rewritten once the keychain has them and gives them back.
+pub fn lock() -> Result<(), String> {
+    let cfg = read().ok_or("there is no configuration to lock yet")?;
+    let text = render(&cfg, true)?;
+    let back = crate::vault::get()?;
+    let mut doc: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    crate::vault::open(&mut doc, &back)?;
+    if serde_json::to_value(&cfg).unwrap() != doc {
+        return Err("the keychain did not give back what was put in it; nothing was changed".into());
+    }
+    write_private(&dir().join("config.json"), &text).map_err(|e| format!("cannot write ~/.airband/config.json: {e}"))
+}
+
+/// Put the keys back in the file, readable by him alone, and take them out of the keychain.
+pub fn unlock() -> Result<(), String> {
+    let cfg = read().ok_or("the configuration cannot be read")?;
+    write_private(&dir().join("config.json"), &format!("{}\n", serde_json::to_string_pretty(&cfg).unwrap())).map_err(|e| format!("cannot write ~/.airband/config.json: {e}"))?;
+    crate::vault::forget();
+    Ok(())
 }
 
 /// Read the config, creating it (with a fresh token) on first use.
@@ -282,7 +369,7 @@ pub fn load() -> Config {
     let path = dir().join("config.json");
     fs::create_dir_all(dir()).expect("cannot create ~/.airband");
     let existing = fs::read_to_string(&path).ok();
-    let mut cfg: Config = match existing.as_deref().map(serde_json::from_str::<Config>) {
+    let mut cfg: Config = match existing.as_deref().map(parse) {
         Some(Ok(cfg)) => cfg,
         None => serde_json::from_str("{}").unwrap(),
         // A config that cannot be read is never replaced: it holds the token, the pairings and the keys. A typo,
@@ -313,7 +400,15 @@ pub fn load() -> Config {
             mine.stop = now.stop;
         }
     }
-    let text = format!("{}\n", serde_json::to_string_pretty(&cfg).unwrap());
+    // without the keys nothing is rewritten: the file is left exactly as it is
+    let text = match render(&cfg, false) {
+        Ok(text) => text,
+        Err(_) if keyless().is_some() => return cfg,
+        Err(e) => {
+            eprintln!("airband: {e}");
+            std::process::exit(2);
+        }
+    };
     if existing.as_deref() != Some(text.as_str()) {
         write_private(&path, &text).expect("cannot write ~/.airband/config.json");
     }

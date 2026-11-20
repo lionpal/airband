@@ -224,6 +224,10 @@ impl RadioHost for Silent {
 }
 
 fn link_from(cfg: &Config, args: &[String]) -> String {
+    if let Some(why) = crate::config::keyless().filter(|_| !args.iter().any(|a| a == "--link")) {
+        eprintln!("airband: this needs the tower's keys, which are in the keychain and could not be read here: {why}");
+        std::process::exit(2);
+    }
     args.iter().position(|a| a == "--link").and_then(|i| args.get(i + 1)).cloned().unwrap_or_else(|| Pairing::Direct { url: format!("http://127.0.0.1:{}", cfg.port), token: cfg.radio_token.clone() }.link())
 }
 

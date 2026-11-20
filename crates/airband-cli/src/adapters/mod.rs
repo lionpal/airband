@@ -233,7 +233,7 @@ pub fn hook(harness: &str) -> Result<(), String> {
 /// had: no tower, no radio there to ask, or he did not answer in the time the tower allows. Then the harness
 /// asks at the keyboard as it always has. Waiting never turns into a yes.
 pub(crate) fn ask_him(request: &PermissionAsk) -> Option<(bool, String)> {
-    let cfg: config::Config = serde_json::from_str(&std::fs::read_to_string(config::dir().join("config.json")).ok()?).ok()?;
+    let cfg = config::read()?;
     let base = format!("http://127.0.0.1:{}/v1/agent/permission", cfg.port);
     let auth = format!("Bearer {}", cfg.token);
     let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(40))).build().into();
@@ -263,8 +263,7 @@ pub(crate) fn ask_him(request: &PermissionAsk) -> Option<(bool, String)> {
 
 /// Post one event to the tower on this machine. Silent on failure.
 pub fn post(event: &AgentEvent) -> bool {
-    let Ok(text) = std::fs::read_to_string(config::dir().join("config.json")) else { return false };
-    let Ok(cfg) = serde_json::from_str::<config::Config>(&text) else { return false };
+    let Some(cfg) = config::read() else { return false };
     let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_millis(1500))).build().into();
     agent.post(format!("http://127.0.0.1:{}/v1/agent/events", cfg.port)).header("authorization", format!("Bearer {}", cfg.token)).send_json(event).is_ok()
 }

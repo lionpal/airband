@@ -265,7 +265,7 @@ struct FeedView: View {
                 }
             }
         }
-        .padding(.leading, 8).padding(.trailing, 12).padding(.top, 10).padding(.bottom, 8)
+        .padding(.leading, 8).padding(.trailing, 12).padding(.top, 2).padding(.bottom, 6)
     }
 
     /// The teams bar: one cell per project, each showing what its agents are doing. Tap one to see only that team
