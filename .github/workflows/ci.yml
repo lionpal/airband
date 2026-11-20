@@ -1,6 +1,11 @@
 name: CI
-# Build and test on every system the tower is meant to run on, and check the phone builds.
+# Build and test. Every push is tested on Linux, which costs one minute for each minute it runs. The other
+# systems the tower runs on, and the phone build, are tested once a day and whenever asked for (Actions tab,
+# "Run workflow"): a macOS minute is charged as ten and a Windows minute as two, and a day of small pushes
+# spent a month's allowance on them.
 on:
+  schedule:
+    - cron: '17 9 * * *' 
   push:
     branches: [main]
     paths: ['crates/**', 'apps/**', 'scripts/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/ci.yml']
@@ -13,7 +18,7 @@ jobs:
     name: Test on ${{ matrix.os }}
     strategy:
       fail-fast: false
-      matrix: { os: [ubuntu-latest, windows-latest, macos-latest] }
+      matrix: { os: "${{ fromJSON(github.event_name == 'push' && '[\"ubuntu-latest\"]' || '[\"ubuntu-latest\",\"windows-latest\",\"macos-latest\"]') }}" }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -24,6 +29,7 @@ jobs:
       - run: cargo test --workspace
   android:
     name: Radio core for Android
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -39,6 +45,7 @@ jobs:
           cargo build --release -p airband-radio --target aarch64-linux-android
   iphone:
     name: iPhone app
+    if: github.event_name != 'push'
     runs-on: macos-latest
     timeout-minutes: 40
     steps:
