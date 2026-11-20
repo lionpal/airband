@@ -34,6 +34,10 @@ impl Callsign {
         let rest: Vec<String> = words[lead..].iter().take(4).map(|w| number_word(w)).collect();
         (!rest.is_empty()).then(|| Callsign { project, number: rest.join(" ") })
     }
+    /// Is this one of the names the tower hands out by number ("shop two"), and not one he gave?
+    pub fn numbered(&self) -> bool {
+        !own_name(&self.number)
+    }
     /// This callsign in another team. A name he gave it goes with it ("warehouse removals" → "shop removals"); a
     /// number was only its place in the team it leaves, so it takes the next free one in the new team. Nothing
     /// when the team's name says nothing.
@@ -265,6 +269,11 @@ pub fn parse_with(text: &str, models: &[String], efforts: &[String]) -> Option<W
     }
     let rest = words[at..].join(" ").trim_start_matches([' ', ',', '.', ':', ';', '-']).trim().to_string();
     Some(With { model, effort, rest })
+}
+
+/// The word a tower numbers an agent with: "one", "two", and figures past twelve.
+pub fn number_name(n: usize) -> String {
+    WORDS.get(n).map(|w| w.to_string()).unwrap_or_else(|| n.to_string())
 }
 
 /// A callsign as a screen shows it: a number said as a word is written as a figure ("shop three" is "shop 3").

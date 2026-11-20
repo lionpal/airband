@@ -93,9 +93,10 @@ pub(super) fn named_in(text: &str, cwd: Option<&str>) -> Vec<PathBuf> {
 /// then the last ones it looked at, [`PER_MESSAGE`] at most.
 pub(super) fn for_message(seen: Vec<Seen>, named: Vec<Picture>) -> Vec<Picture> {
     let mut out: Vec<Picture> = Vec::new();
+    // What it sent him, and what it names in what it says. A picture it only looked at while working is not his
+    // to be shown: most of those are his own screenshots coming back, or scraps it made for itself.
     let shown = seen.iter().filter(|s| s.shown).map(|s| s.picture.clone());
-    let looked = seen.iter().rev().filter(|s| !s.shown).map(|s| s.picture.clone());
-    for p in shown.chain(named).chain(looked) {
+    for p in shown.chain(named) {
         if out.len() < PER_MESSAGE && !out.iter().any(|o| o.id == p.id) {
             out.push(p);
         }
@@ -133,10 +134,10 @@ mod tests {
         Picture { id: id.into(), width: 1, height: 1, bytes: 1 }
     }
     #[test]
-    fn shown_then_named_then_the_last_looked_at() {
+    fn shown_then_named_and_nothing_it_only_looked_at() {
         let seen = vec![Seen { picture: pic("a"), shown: false }, Seen { picture: pic("b"), shown: true }, Seen { picture: pic("c"), shown: false }, Seen { picture: pic("d"), shown: false }];
         let ids: Vec<String> = for_message(seen, vec![pic("n"), pic("b")]).into_iter().map(|p| p.id).collect();
-        assert_eq!(ids, ["b", "n", "d", "c"]);
+        assert_eq!(ids, ["b", "n"]);
     }
     #[test]
     fn finds_pictures_named_in_a_message() {

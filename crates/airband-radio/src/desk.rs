@@ -1161,6 +1161,7 @@ pub fn open_notice(links: Vec<String>, sealed: String) -> Option<OpenedNotice> {
 /// Keeps one computer's part of the chat current. One request is always open with its tower.
 fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64) {
     let mut first = true;
+    let mut told_taken: Option<Vec<String>> = None;
     loop {
         // a computer that has not been told where this device can be woken is told as soon as it is reached
         tell_push(&shared, &radio, index, generation);
@@ -1219,6 +1220,20 @@ fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64)
         shared.host.changed();
         if !seen.is_empty() {
             radio.seen(seen);
+        }
+        // Two computers number their agents without knowing of each other. The later one in his list is told
+        // the names the earlier ones use, whenever those change, and keeps off them.
+        if got.is_ok() && index > 0 {
+            let elsewhere: Vec<String> = {
+                let state = shared.state.lock().unwrap();
+                let mut names: Vec<String> = state.stations.iter().take(index).flat_map(|s| s.agents.iter().map(|a| a.callsign.clone())).collect();
+                names.sort();
+                names.dedup();
+                names
+            };
+            if told_taken.as_ref() != Some(&elsewhere) && radio.taken(&elsewhere) {
+                told_taken = Some(elsewhere);
+            }
         }
         if got.is_err() {
             let fails = shared.state.lock().unwrap().stations.get(index).map(|s| s.fails).unwrap_or(1);

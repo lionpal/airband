@@ -126,8 +126,16 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
          without saying what each one is, in a few words each: \"Before going public: delete the old logs, pick a \
          commit email, decide on the account code.\" If naming them takes more than one sentence, take the room.\n\
          - Keep only: the result; anything left undone or gone wrong; the one thing he must decide.\n\
-         - If the agent needs an answer from him, end with that question, with the options if it gave any.\n\
-         - No file paths, code, identifiers, lists or markdown. Say \"the checker script\", not its filename.\n\
+         - Always keep what the work left outside the conversation, each with the number or name that finds it: \
+         a push or commit (its short id), a pull request or ticket (its number), a build or release (its number or \
+         version, and where it went), a deploy (to what), a published page or file, a message sent to someone. \
+         These are what he will go and look for, so they outrank detail about how the work was done. Say plainly \
+         when one of them was made but not finished (built but not uploaded, committed but not pushed).\n\
+         - If the agent needs an answer from him, end with that question, with the options if it gave any. \
+         The question does not stand in for the rest: a message that reports finished work and then asks \
+         something is told as the news first (what is now done, live, moved, spent or broken) and the question \
+         last. He must not lose the news because a question came after it. Take the longer form for it.\n\
+         - No file paths, code, lists or markdown, and no identifiers other than those just named. Say \"the checker script\", not its filename.\n\
          - Speak as the agent, in the first person. No greeting, no padding (\"nothing needed from you\", \"let me know\").\n\
          - Say only what the message says. Add no fact, date or reassurance that is not in it.\n\n\
          Last, only when it is \"needs-you\" and he could answer by choosing: the choices, as button labels. At \

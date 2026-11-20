@@ -223,6 +223,9 @@ pub(super) struct Inner {
     pub(super) colours: BTreeMap<String, u8>,
     /// The agents the tower runs itself.
     pub(super) held: Vec<held::Kept>,
+    /// Names agents go by on his other computers, as a radio last told it. None of this tower's numbered
+    /// agents is called any of them.
+    pub(super) elsewhere: Vec<Callsign>,
     /// Where each agent that was moved to another team was put, by its id. A session that goes away and comes
     /// back (the computer restarted, he resumed it) is put back there, not in its folder's team again.
     pub(super) placed: BTreeMap<String, (String, Mover)>,
@@ -347,7 +350,17 @@ impl Inner {
         }
         let free = |inner: &Inner, c: &Callsign| !inner.sessions.iter().any(|s| s.callsign == *c);
         if self.find(&agent.id).is_none() {
-            let callsign = wanted.clone().filter(|c| free(self, c)).unwrap_or_else(|| Callsign::next_for(&named, &self.callsigns()));
+            let callsign = wanted.clone().filter(|c| free(self, c)).unwrap_or_else(|| {
+                // the next free number, among the names in use here and on his other computers (as his radio
+                // shows them: "shop 2" there takes "shop two" here)
+                let mut taken = self.callsigns();
+                let mut c = Callsign::next_for(&named, &taken);
+                while self.elsewhere.iter().any(|e| airband_core::routing::shown(&e.text()) == airband_core::routing::shown(&c.text())) {
+                    taken.push(c.clone());
+                    c = Callsign::next_for(&named, &taken);
+                }
+                c
+            });
             log(format!("{} checked in ({}, {})", callsign.text(), agent.harness, agent.cwd.as_deref().unwrap_or("no folder")));
             // remember where this project lives, so a new agent can be launched there later
             if let Some(cwd) = agent.cwd.clone().filter(|_| agent.name.is_none()) {
@@ -650,6 +663,30 @@ impl Inner {
     }
     pub(super) fn callsigns(&self) -> Vec<Callsign> {
         self.sessions.iter().map(|s| s.callsign.clone()).collect()
+    }
+    /// A radio said which names his other computers use. Any agent here that was given one of them by number
+    /// takes the next free number. Returns whether anything was renamed.
+    pub(super) fn taken_elsewhere(&mut self, shown: &[String]) -> bool {
+        use airband_core::routing::shown as as_shown;
+        // as callsigns: the team is everything before the last word
+        self.elsewhere = shown.iter().filter_map(|c| c.rsplit_once(' ')).map(|(project, number)| Callsign { project: project.to_string(), number: number.to_string() }).collect();
+        let clashing: Vec<String> = self.sessions.iter().filter(|s| s.callsign.numbered() && shown.iter().any(|c| *c == as_shown(&s.callsign.text()))).map(|s| s.agent.id.clone()).collect();
+        for id in &clashing {
+            let Some(project) = self.find(id).map(|s| s.callsign.project.clone()) else { continue };
+            // a name nobody has, here or there: numbers are compared as the radio shows them
+            let mut n = 1;
+            let free = loop {
+                let c = Callsign::next_for(&project, &[]);
+                let candidate = Callsign { project: c.project.clone(), number: airband_core::routing::number_name(n) };
+                let text = as_shown(&candidate.text());
+                if !shown.contains(&text) && !self.sessions.iter().any(|s| as_shown(&s.callsign.text()) == text) {
+                    break candidate;
+                }
+                n += 1;
+            };
+            self.rename(id, free);
+        }
+        !clashing.is_empty()
     }
     pub(super) fn roster(&self) -> String {
         if self.sessions.is_empty() {

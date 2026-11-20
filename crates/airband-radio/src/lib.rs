@@ -602,6 +602,10 @@ impl Radio {
     pub fn end_agent(&self, agent: String) -> Result<(), RadioError> {
         self.ask("/end", serde_json::json!({ "agent": agent }))
     }
+    /// Tell this computer which names his other computers' agents go by. Blocks.
+    pub(crate) fn taken(&self, callsigns: &[String]) -> bool {
+        self.link.request("POST", "/taken", Some(serde_json::json!({ "callsigns": callsigns }))).is_ok_and(|(status, _)| status == 200)
+    }
     /// Let a question go without answering it. Blocks: call it off the main thread.
     pub fn dismiss(&self, message: String) -> Result<(), RadioError> {
         self.ask("/dismiss", serde_json::json!({ "message": message }))

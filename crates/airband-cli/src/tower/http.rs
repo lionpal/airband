@@ -119,6 +119,15 @@ async fn end_agent(State(app): State<Arc<App>>, Json(to): Json<airband_core::rad
         Some(true) => json!({ "error": "It had already ended." }),
     })
 }
+/// A radio says which names his other computers use.
+async fn taken(State(app): State<Arc<App>>, Json(t): Json<airband_core::radio::Taken>) -> Json<Value> {
+    let mut inner = app.inner.lock().unwrap();
+    if inner.taken_elsewhere(&t.callsigns) {
+        app.save(&inner);
+        app.kick.notify_one();
+    }
+    Json(json!({}))
+}
 /// He let a question go without answering it.
 async fn dismiss(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::Dismiss>) -> Json<Value> {
     let mut inner = app.inner.lock().unwrap();
@@ -506,6 +515,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/radio/stop", post(stop_agent))
         .route("/v1/radio/unsend", post(unsend))
         .route("/v1/radio/dismiss", post(dismiss))
+        .route("/v1/radio/taken", post(taken))
         .route("/v1/radio/end", post(end_agent))
         .route("/v1/radio/push", post(push_target))
         .route("/v1/status", get(status))

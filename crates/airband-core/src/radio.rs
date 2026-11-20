@@ -223,6 +223,15 @@ pub struct EndAgent {
     pub agent: String,
 }
 
+/// `POST taken`: the names agents go by on his other computers, as his radio shows them ("shop 1"). A tower
+/// gives none of its own agents a numbered name on this list, and moves one that already has one to the next
+/// free number, so two agents on his screen are never called the same. A radio tells only the later of two
+/// computers, so they do not both move. `{}`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Taken {
+    pub callsigns: Vec<String>,
+}
+
 /// `POST dismiss`: he does not mean to answer this question. It stops being open: it no longer waits on him
 /// in the chat, on its team or aloud. The agent is told nothing. `{}` or `{error}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
