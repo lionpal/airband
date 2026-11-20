@@ -5,12 +5,17 @@
 #
 #   scripts/sign-mac.sh [path to the binary]     default: target/release/airband
 #
-# The certificate is the one named in AIRBAND_SIGN, else the first "Developer ID Application" or
+# The certificate is the one named in AIRBAND_SIGN, else the one named in ~/.airband/signing, else the first
+# "Developer ID Application" or
 # "Apple Distribution" one in the keychain. Does nothing, and says so, when there is none.
 set -e
 cd "$(dirname "$0")/.."
 bin="${1:-target/release/airband}"
 who="$AIRBAND_SIGN"
+# this computer's own choice, when it has several: one line, the certificate's name
+if [ -z "$who" ] && [ -f "$HOME/.airband/signing" ]; then
+  who=$(head -1 "$HOME/.airband/signing")
+fi
 if [ -z "$who" ]; then
   who=$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)
 fi

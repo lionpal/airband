@@ -353,6 +353,14 @@ pub fn run(cfg: Config) -> Result<(), String> {
             Ok(()) => log(format!("the keys are now {}; the settings file holds none", crate::vault::place())),
             Err(e) => log(format!("the keys could not be moved out of the settings file: {e}")),
         }
+    } else if crate::vault::carry_asked().exists() {
+        // asked for from a shell that could not read the keychain: this run can
+        let _ = std::fs::remove_file(crate::vault::carry_asked());
+        match crate::vault::carry() {
+            Ok(true) => log("the keys are out of the keychain and sealed in a file, ready for a copy signed with another certificate"),
+            Ok(false) => {}
+            Err(e) => log(format!("the keys could not be carried out of the keychain: {e}")),
+        }
     } else if crate::vault::settle() {
         log("the keys are now in the keychain");
     }

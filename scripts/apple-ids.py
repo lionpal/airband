@@ -49,7 +49,20 @@ def call(method, path, body=None):
         sys.exit(f"✗ Apple refused {method} {path.split('?')[0]} ({e.code}): {detail}")
 
 
+def certificate(serial):
+    """The id Apple knows a signing certificate by, from its serial number: for asking for a profile made with
+    that certificate and no other."""
+    found = call("GET", "/certificates?limit=200")
+    for c in (found or {}).get("data", []):
+        if c["attributes"].get("serialNumber", "").upper().lstrip("0") == serial.upper().lstrip("0"):
+            print(c["id"])
+            return
+    sys.exit(f"Apple has no certificate with serial {serial} for this team")
+
+
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "certificate":
+        return certificate(sys.argv[2])
     for identifier, (name, wanted) in IDS.items():
         found = [b for b in call("GET", f"/bundleIds?filter[identifier]={identifier}&limit=50")["data"] if b["attributes"]["identifier"] == identifier]
         if found:

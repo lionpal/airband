@@ -229,7 +229,16 @@ pub fn keys(args: &[String]) -> Result<(), String> {
             config::lock()?;
             println!("The keys are {}. The settings file holds none.", crate::vault::place());
         }
-        Some(other) => return Err(format!("airband keys takes add, remove or lock, not \"{other}\"")),
+        // before installing a copy signed with another certificate, which the keychain would take for a stranger
+        Some("carry") => match crate::vault::carry() {
+            Ok(true) => println!("The keys are out of the keychain and sealed in a file. Install the newly signed copy now: it puts them back in the keychain as its own."),
+            Ok(false) => println!("There is nothing in the keychain to move."),
+            Err(why) => {
+                std::fs::write(crate::vault::carry_asked(), "").map_err(|e| e.to_string())?;
+                println!("The keychain cannot be read from here ({why}).\nThe tower will move the keys the next time it starts:  airband install");
+            }
+        },
+        Some(other) => return Err(format!("airband keys takes add, remove, lock or carry, not \"{other}\"")),
     }
     Ok(())
 }

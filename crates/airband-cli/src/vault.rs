@@ -99,7 +99,7 @@ pub fn sealed(text: &str) -> bool {
 mod mac {
     use super::*;
     use security_framework::os::macos::keychain::SecKeychain;
-    use security_framework::passwords::{get_generic_password, set_generic_password};
+    use security_framework::passwords::{delete_generic_password, get_generic_password, set_generic_password};
 
     /// The keychain is only touched in his real home: under a test's made-up one there is no keychain to find.
     fn at_home() -> bool {
@@ -127,6 +127,13 @@ mod mac {
         }
         let _quiet = SecKeychain::disable_user_interaction().map_err(|e| e.to_string())?;
         set_generic_password(SERVICE, ACCOUNT, &serde_json::to_vec(kept).unwrap()).map_err(|e| format!("the keychain did not take airband's keys ({e})"))
+    }
+
+    /// Take airband's item out of the keychain.
+    pub fn forget() {
+        if at_home() {
+            let _ = delete_generic_password(SERVICE, ACCOUNT);
+        }
     }
 
     /// Is this program signed with a developer certificate, and in his own home? Only then is it the same
@@ -270,6 +277,31 @@ pub fn put(kept: &Map<String, Value>) -> Result<(), String> {
         return Ok(());
     }
     file::put(kept)
+}
+
+/// Where a request to carry the keys waits for a tower that can read the keychain (a shell over SSH cannot).
+pub fn carry_asked() -> std::path::PathBuf {
+    crate::config::dir().join("carry-keys")
+}
+
+/// Before this program is replaced by a copy signed with another certificate: move the keys out of the
+/// keychain into the sealed file. The keychain knows a program by the certificate that signed it, so the new
+/// copy could not read what this one put there. It reads the sealed file instead, and puts the keys back in
+/// the keychain as its own (`settle`). Nothing is taken out of the keychain until the file gives the same
+/// keys back. Ok(false) when there was nothing in the keychain to move.
+pub fn carry() -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    if keychain() && !file::has() {
+        let kept = mac::get()?;
+        file::put(&kept)?;
+        if file::get()? != kept {
+            file::forget();
+            return Err("the sealed file did not give the keys back; they are still in the keychain".into());
+        }
+        mac::forget();
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 /// Keys sealed in the file by a run that could not use the keychain are moved into it by one that can: the

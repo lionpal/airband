@@ -6,7 +6,7 @@
 #   scripts/testflight.sh upload     upload the .ipa already exported, without rebuilding
 #
 # Needs, once:
-#   - the Apple Distribution certificate and its private key in the login keychain (team 6LYK439Z4F)
+#   - a distribution certificate and its private key in the login keychain (team 6LYK439Z4F)
 #   - fastlane (brew install fastlane) and XcodeGen (brew install xcodegen)
 #   - an App Store Connect API key, named in apps/apple/.env.testflight (not in the repository):
 #       export ASC_KEY_ID=…  ASC_ISSUER_ID=…  ASC_KEY_PATH=/path/to/AuthKey_….p8
@@ -68,9 +68,20 @@ python3 "$ROOT/scripts/apple-ids.py"
 
 echo "▸ Signing profiles…"
 mkdir -p "$BUILD/profiles"
-fastlane cert --development false --team_id "$TEAM_ID" --api_key_path <(asc_key_json) --output_path "$BUILD/profiles" >/dev/null
+# Which certificate signs the app: the one named in AIRBAND_IOS_SIGN (set it in apps/apple/.env.testflight when
+# this Mac holds several), by the name the keychain shows. The profiles are then made with that certificate
+# and no other. Without it, whichever distribution certificate fastlane finds or makes.
+SIGN_AS="${AIRBAND_IOS_SIGN:-Apple Distribution}"
+WITH_CERT=()
+if [[ -n "${AIRBAND_IOS_SIGN:-}" ]]; then
+  serial="$(security find-certificate -c "$AIRBAND_IOS_SIGN" -p | openssl x509 -noout -serial | cut -d= -f2)"
+  WITH_CERT=(--cert_id "$(python3 "$ROOT/scripts/apple-ids.py" certificate "$serial")")
+  echo "✓ signing as $AIRBAND_IOS_SIGN"
+else
+  fastlane cert --development false --team_id "$TEAM_ID" --api_key_path <(asc_key_json) --output_path "$BUILD/profiles" >/dev/null
+fi
 profile() { # profile <bundle id> <file>: make it, print its name
-  fastlane sigh --force --app_identifier "$1" --team_id "$TEAM_ID" --platform ios --api_key_path <(asc_key_json) \
+  fastlane sigh --force --app_identifier "$1" --team_id "$TEAM_ID" --platform ios --api_key_path <(asc_key_json) "${WITH_CERT[@]}" \
     --output_path "$BUILD/profiles" --filename "$2" >/dev/null
   security cms -D -i "$BUILD/profiles/$2" | plutil -extract Name raw -
 }
@@ -90,7 +101,7 @@ fi
 echo "▸ Archiving…"
 xcodebuild -project "$APP/Airband.xcodeproj" -scheme Airband -configuration Release -destination 'generic/platform=iOS' \
   -archivePath "$ARCHIVE" DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Manual AIRBAND_APP_PROFILE="$PROFILE" AIRBAND_NOTIFY_PROFILE="$NOTIFY_PROFILE" "${COMMUNICATION[@]}" \
-  "CODE_SIGN_IDENTITY=Apple Distribution" archive | grep -E "error|warning: .*deprecated|ARCHIVE (SUCCEEDED|FAILED)" || true
+  "CODE_SIGN_IDENTITY=$SIGN_AS" archive | grep -E "error|warning: .*deprecated|ARCHIVE (SUCCEEDED|FAILED)" || true
 [[ -d "$ARCHIVE" ]] || { echo "✗ no archive was made"; exit 1; }
 echo "✓ $ARCHIVE"
 [[ "${1:-}" == "archive" ]] && exit 0
@@ -103,7 +114,7 @@ cat > "$BUILD/ExportOptions.plist" <<PLIST
   <key>method</key><string>app-store-connect</string>
   <key>teamID</key><string>$TEAM_ID</string>
   <key>signingStyle</key><string>manual</string>
-  <key>signingCertificate</key><string>Apple Distribution</string>
+  <key>signingCertificate</key><string>$SIGN_AS</string>
   <key>provisioningProfiles</key><dict><key>$BUNDLE_ID</key><string>$PROFILE</string><key>$NOTIFY_ID</key><string>$NOTIFY_PROFILE</string></dict>
   <key>uploadSymbols</key><true/>
   <key>destination</key><string>export</string>
