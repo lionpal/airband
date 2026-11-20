@@ -101,7 +101,9 @@ pub(super) fn enqueue(inner: &mut Inner, agent_id: &str, notice: bool, full: Str
     inner.drop_pending(agent_id, Some(notice));
     log(format!("{}: {} queued ({} characters)", session.callsign.text(), if notice { "notice" } else { "message" }, full.chars().count()));
     let id = config::random_hex(8);
-    inner.record(Entry { pictures, ..Entry::said(id.clone(), &session, kind, full.clone()) });
+    // a notice from the harness is read to him as it is: it has its line from the start and no model reads it
+    let short = notice.then(|| spoken(&full));
+    inner.record(Entry { pictures, short, ..Entry::said(id.clone(), &session, kind, full.clone()) });
     // the copy a model reads to shorten it has no key in it either
     let full = airband_core::redact::redact(&full);
     inner.pending.push(Item { id, agent_id: agent_id.into(), notice, full, kind, say: None, detail: None, created: now(), asked: None });

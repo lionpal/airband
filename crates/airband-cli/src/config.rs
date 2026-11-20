@@ -29,6 +29,10 @@ pub struct Config {
     /// What cuts a long message down to a spoken sentence or two. Any model, through any command.
     #[serde(default)]
     pub summarizer: Summarizer,
+    /// A second model, asked when the first does not answer (it is logged out, over its limit, or down). Nothing
+    /// is ever worked out from the words themselves in place of a model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summarizer_fallback: Option<Summarizer>,
     /// The relay radios reach this tower through ("https://relay.example"). Without one, a radio must be able
     /// to reach this machine itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]

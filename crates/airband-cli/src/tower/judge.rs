@@ -17,8 +17,22 @@ async fn ask_api(url: String, header: (&'static str, String), body: Value, read:
     .map_err(|e| e.to_string())?
 }
 
+/// Ask the model that reads for the tower. If it does not answer, the second one is asked, when there is one.
 pub(super) async fn ask_model(cfg: &Config, prompt: String) -> Result<String, String> {
-    let argv = match &cfg.summarizer {
+    match ask(&cfg.summarizer, prompt.clone()).await {
+        Ok(text) => Ok(text),
+        Err(first) => match &cfg.summarizer_fallback {
+            Some(second) => {
+                log(format!("the model did not answer ({first}); asking the second"));
+                ask(second, prompt).await.map_err(|e| format!("{first}; and the second: {e}"))
+            }
+            None => Err(first),
+        },
+    }
+}
+
+async fn ask(model: &Summarizer, prompt: String) -> Result<String, String> {
+    let argv = match model {
         Summarizer::Command { argv } => argv,
         Summarizer::Gemini { key, model } => {
             let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");
@@ -84,7 +98,6 @@ pub(super) struct Judged {
 /// The tower's main job: decide how much of his attention a message deserves, what to tell him of it, and, when
 /// it is a question he can answer by picking, what the picks are.
 pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
-    let asks = item.full.trim_end().ends_with('?');
     if item.notice {
         return Judged { kind: Kind::NeedsYou, say: spoken(&item.full), options: Vec::new(), recommended: None, read: None, background: false };
     }
@@ -179,8 +192,6 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
         let (a, b) = (out.find('{').ok_or("no JSON in the answer")?, out.rfind('}').ok_or("no JSON in the answer")?);
         serde_json::from_str::<Out>(&out[a..=b]).map_err(|e| e.to_string())
     });
-    // with no judge, err towards telling him
-    let guess = if asks { Kind::NeedsYou } else { Kind::Report };
     match parsed {
         Ok(o) if !o.say.trim().is_empty() => {
             let judged = match o.kind.as_str() {
@@ -201,10 +212,12 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
             Judged { kind, say, options, recommended, read, background: o.background && kind != Kind::NeedsYou }
         }
         other => {
+            // No model answered. Nothing is guessed from the words: he gets the message as the agent wrote it,
+            // marked as a report unless its harness said what it is.
             if let Err(e) = other {
-                log(format!("no summary, reading the opening instead: {e}"));
+                log(format!("no summary, giving him the message as written: {e}"));
             }
-            Judged { kind: item.kind.unwrap_or(guess), say: opening(&item.full), options: Vec::new(), recommended: None, read: None, background: false }
+            Judged { kind: item.kind.unwrap_or(Kind::Report), say: spoken(&item.full), options: Vec::new(), recommended: None, read: None, background: false }
         }
     }
 }
@@ -231,6 +244,36 @@ pub(super) async fn progress(cfg: &Config, steps: &[String]) -> Option<String> {
     let said = ask_model(cfg, prompt).await.ok()?;
     let said = said.trim().trim_matches('"').trim();
     (!said.is_empty() && !said.trim_end_matches('.').eq_ignore_ascii_case("none") && said.chars().count() < 400).then(|| said.to_string())
+}
+
+/// He answered a request for permission in his own words. Did he say yes? `Some(true)` only for a plain yes;
+/// `Some(false)` for anything that is not one (a no, a condition, another instruction); `None` when his words
+/// do not settle it, or no model answered: then nothing is decided and he is asked for a yes or a no.
+pub(super) async fn consent(cfg: &Config, request: &str, said: &str) -> Option<bool> {
+    let prompt = format!(
+        "A coding agent asked {name} for permission to do something, and he answered in his own words.\n\n\
+         The request, as he was shown it:\n<request>\n{request}\n</request>\n\nHis answer:\n<answer>\n{said}\n</answer>\n\n\
+         Reply with one word and nothing else:\n\
+         - allow: he plainly says yes to exactly what was asked, with no condition and no change.\n\
+         - refuse: he says no, or tells it what to do instead or first, or attaches a condition or a change \
+         (\"run it on staging first\", \"not that folder\", \"only the tests\", \"yes but skip the migration\"). An \
+         instruction of his own is a refusal of what was asked: it goes back to the agent as the reason.\n\
+         - unclear: only when his words give the agent nothing to go on: he hands the choice back (\"whatever you \
+         think\"), asks a question, or is talking about something else.\n\
+         When in doubt between allow and anything else, it is not allow.",
+        name = cfg.name,
+        request = tail(request, 2000),
+        said = tail(said, 1000)
+    );
+    let out = ask_model(cfg, prompt).await.ok()?;
+    if std::env::var_os("AIRBAND_TRACE").is_some() {
+        log(format!("asked whether \"{said}\" allows it, and was told: {out}"));
+    }
+    match out.trim().trim_matches(|c: char| !c.is_ascii_alphabetic()).to_ascii_lowercase().as_str() {
+        "allow" => Some(true),
+        "refuse" => Some(false),
+        _ => None,
+    }
 }
 
 pub(super) async fn detail(cfg: &Config, item: &Item) -> String {

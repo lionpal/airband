@@ -83,15 +83,11 @@ pub enum Control {
     Poke,
 }
 
-const CONTROLS: [(Control, &[&str]); 7] = [
-    (Control::Poke, &["poke", "poke them", "poke everyone", "poke all", "give them a poke"]),
-    (Control::More, &["say more", "more", "more detail", "more details", "details", "elaborate", "tell me more", "go on"]),
-    (Control::Repeat, &["repeat", "say again", "again", "repeat that", "say that again"]),
-    (Control::Status, &["status", "whos waiting", "who is waiting", "roll call", "sitrep", "whats waiting"]),
-    (Control::Skip, &["skip", "next", "no reply", "roger", "copy", "copy that", "nothing", "never mind"]),
-    (Control::Hold, &["stand by", "standby", "hold", "quiet", "hold traffic"]),
-    (Control::Resume, &["go ahead", "resume", "continue traffic"]),
-];
+/// What a radio's own buttons send for each control: a word behind a slash. Only that form is one. What he
+/// says or types in his own words is never read as an order to the tower, however much it sounds like one:
+/// "go ahead", "skip" and "never mind" are answers he gives agents all day.
+const COMMANDS: [(Control, &str); 7] =
+    [(Control::Poke, "poke"), (Control::More, "more"), (Control::Repeat, "repeat"), (Control::Status, "status"), (Control::Skip, "skip"), (Control::Hold, "hold"), (Control::Resume, "resume")];
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Parsed {
@@ -206,8 +202,7 @@ pub fn parse_utterance(text: &str, live: &[Callsign]) -> Parsed {
     }
     let rest = words[taken..].join(" ");
     let rest = rest.trim_start_matches([' ', ',', '.', ':', ';', '-']).trim().to_string();
-    let said = norm(&rest);
-    let control = CONTROLS.iter().find(|(_, phrases)| phrases.contains(&said.as_str())).map(|(c, _)| *c);
+    let control = rest.strip_prefix('/').map(|c| c.trim().to_lowercase()).and_then(|c| COMMANDS.iter().find(|(_, name)| *name == c).map(|(c, _)| *c));
     Parsed { to, control, rest: if control.is_some() { String::new() } else { rest } }
 }
 
@@ -221,17 +216,6 @@ pub struct With {
     pub effort: Option<String>,
     /// The task: everything after.
     pub rest: String,
-}
-
-impl With {
-    /// With no other sign that he wants a new agent, do these words ask for one? "With fable, look into the
-    /// refund failures" does. "With opus it is too slow" is a remark to whoever he is talking to, and is not.
-    pub fn asks_for_an_agent(&self) -> bool {
-        let mut words = self.rest.split_whitespace();
-        let first = words.next().map(key).unwrap_or_default();
-        const REMARK: &[&str] = &["it", "its", "is", "was", "were", "we", "the", "that", "this", "there", "being", "selected", "on", "in", "and", "or", "as"];
-        words.count() >= 2 && !REMARK.contains(&first.as_str())
-    }
 }
 
 /// Words that open with a model: "with fable", "using opus high", "hey, with sonnet at max effort: …". `models`
@@ -438,16 +422,18 @@ mod tests {
     }
     #[test]
     fn controls() {
-        assert_eq!(p("say more"), (None, Some(Control::More), String::new()));
-        assert_eq!(p("Tower, status."), (None, Some(Control::Status), String::new()));
-        assert_eq!(p("Airband, status."), (None, Some(Control::Status), String::new()));
-        assert_eq!(p("Air band, who's waiting"), (None, Some(Control::Status), String::new()));
-        assert_eq!(p("who's waiting"), (None, Some(Control::Status), String::new()));
-        assert_eq!(p("shop two say again"), (Some(1), Some(Control::Repeat), String::new()));
-        assert_eq!(p("Stand by."), (None, Some(Control::Hold), String::new()));
+        assert_eq!(p("/more"), (None, Some(Control::More), String::new()));
+        assert_eq!(p("/status"), (None, Some(Control::Status), String::new()));
+        assert_eq!(p("shop two /repeat"), (Some(1), Some(Control::Repeat), String::new()));
+        assert_eq!(p("/hold"), (None, Some(Control::Hold), String::new()));
+        assert_eq!(p("/Poke"), (None, Some(Control::Poke), String::new()));
     }
     #[test]
-    fn control_word_inside_a_sentence_is_not_a_control() {
+    fn his_own_words_are_never_an_order_to_the_tower() {
+        for said in ["go ahead", "Skip.", "never mind", "next", "more", "say more", "stand by", "status", "poke", "who's waiting", "nothing", "hold"] {
+            assert_eq!(p(said).1, None, "{said}");
+            assert!(!p(said).2.is_empty(), "{said} must be passed on");
+        }
         assert_eq!(p("skip the second question and repeat the check").1, None);
     }
     #[test]
@@ -505,6 +491,7 @@ mod tests {
         assert_eq!(live()[0].spoken(), "Shop one");
     }
 
+
     #[test]
     fn a_model_and_an_effort_before_the_task() {
         let models = ["fable", "opus", "sonnet"].map(String::from);
@@ -523,15 +510,7 @@ mod tests {
         // "high" after the model is the effort only when it is one; here it is part of the task
         assert_eq!(w("with opus highlight the slow parts"), got("opus", "", "highlight the slow parts"));
 
-        let asks = |t: &str| parse_with(t, &models, &efforts).is_some_and(|w| w.asks_for_an_agent());
-        assert!(asks("with fable, look into the refund failures"));
-        assert!(asks("with opus high investigate x y and z"));
-        // remarks to whoever he is talking to
-        assert!(!asks("with opus it is too slow"));
-        assert!(!asks("with sonnet the summaries were fine"));
-        assert!(!asks("with fable, yes"));
     }
-
     #[test]
     fn a_badge_is_the_team_and_the_number_or_name() {
         assert_eq!(badge("shop", "shop three"), "S3");

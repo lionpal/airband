@@ -96,51 +96,39 @@ pub(super) fn withdraw(app: &App, id: &str) {
     app.save(&inner);
 }
 
-/// What his words say about a request: yes, no, or neither.
-fn verdict(text: &str) -> Option<bool> {
-    let said: String = text.to_lowercase().chars().filter(|c| c.is_ascii_alphanumeric() || *c == ' ').collect();
-    let said = said.trim();
-    const YES: [&str; 14] = ["allow", "allow it", "yes", "yeah", "yep", "yup", "ok", "okay", "go ahead", "do it", "approve", "approved", "sure", "fine"];
-    const NO: [&str; 8] = ["deny", "deny it", "no", "nope", "dont", "do not", "stop", "refuse"];
-    if YES.contains(&said) {
-        Some(true)
-    } else if NO.contains(&said) {
-        Some(false)
-    } else {
-        None
-    }
-}
 
 /// Is what he just said the answer to a request for permission? It is when he answered that question itself
 /// (`re`), or when exactly one request is waiting and he said a plain yes or no. Otherwise nothing here
 /// touches it. Words of his own on the question itself refuse it, and are passed on as the reason.
-pub(super) fn answer(app: &App, text: &str, re: Option<&str>) -> Option<Reply> {
+/// What the Allow and Deny buttons send: the two answers that need no reading.
+pub(super) const ALLOW: &str = "Allow";
+pub(super) const DENY: &str = "Deny";
+
+/// The request for leave that `re` is a reply to, if it is one and still waits: what he was shown of it.
+/// Nothing for a question of the agent's (whatever he says to that is its answer).
+pub(super) fn asked_leave(app: &App, re: Option<&str>) -> Option<String> {
+    let inner = app.inner.lock().unwrap();
+    let entry = re?;
+    inner.permits.values().find(|p| p.entry == entry && p.decided.is_none() && !p.question)?;
+    inner.log.iter().find(|e| e.id == entry).map(|e| e.full.clone())
+}
+
+/// His answer to a request, said in reply to it. `verdict` is what his words came to for a request for leave:
+/// yes, no, or (None) his own words that are not a yes, which refuse it and go back as the reason.
+pub(super) fn answer(app: &App, text: &str, re: Option<&str>, verdict: Option<bool>) -> Option<Reply> {
     let say = |s: &str| Some(Reply { say: s.into(), listen: false, ..Reply::default() });
     let mut inner = app.inner.lock().unwrap();
     let waiting = |p: &Permit| p.decided.is_none();
     let on_question = re.and_then(|r| inner.permits.iter().find(|(_, p)| p.entry == r && waiting(p)).map(|(id, _)| id.clone()));
     let id = match on_question {
         Some(id) => id,
-        None => {
-            // not aimed at a question: only a plain yes or no, and only when it can mean one thing
-            if re.is_some() || verdict(text).is_none() {
-                return None;
-            }
-            let mut open = inner.permits.iter().filter(|(_, p)| waiting(p) && !p.question);
-            let (first, more) = (open.next().map(|(id, _)| id.clone()), open.next().is_some());
-            match (first, more) {
-                (Some(id), false) => id,
-                _ => return None,
-            }
-        }
+        // Not said to a request: it answers none. A "yes" or an "ok" he says to someone else, or to nobody in
+        // particular, must never let a command run.
+        None => return None,
     };
     let question = inner.permits[&id].question;
-    // handing the decision back is not an answer to "may I": he has to say which
-    if !question && text.trim().trim_end_matches('.').eq_ignore_ascii_case("do whatever you think is best") {
-        return say("That one needs a yes or a no from you.");
-    }
     // to a question of the agent's, whatever he says is the answer
-    let (allow, reason) = match verdict(text).filter(|_| !question) {
+    let (allow, reason) = match verdict.filter(|_| !question) {
         Some(allow) => (allow, String::new()),
         None => (false, text.trim().to_string()),
     };
@@ -162,20 +150,4 @@ pub(super) fn answer(app: &App, text: &str, re: Option<&str>) -> Option<Reply> {
     inner.touch(&entry);
     app.save(&inner);
     say(if question { "Sent to it." } else if allow { "Allowed." } else { "Refused." })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_a_plain_yes_or_no_is_a_verdict() {
-        assert_eq!(verdict("Allow"), Some(true));
-        assert_eq!(verdict("go ahead."), Some(true));
-        assert_eq!(verdict("No!"), Some(false));
-        assert_eq!(verdict("Don't"), Some(false));
-        assert_eq!(verdict("use the staging database instead"), None);
-        assert_eq!(verdict("yes but only on staging"), None);
-        assert_eq!(verdict("Do whatever you think is best."), None);
-    }
 }

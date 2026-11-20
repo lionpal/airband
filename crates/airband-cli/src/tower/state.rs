@@ -188,7 +188,7 @@ pub(super) struct Call {
     /// When this radio last did anything at all: a radio that only reads the feed and types never polls.
     pub(super) seen: Option<Instant>,
     /// Words he said that the tower could not place, held while it asks him who they are for.
-    pub(super) asked: Option<(String, Instant)>,
+    pub(super) asked: Option<(String, String, Instant)>,
     /// An idea for a new agent whose project the tower could not work out, held while it asks him which.
     pub(super) unplaced_idea: Option<(Idea, Instant)>,
     /// How far this radio has the chat on screen: the highest change count it has asked for what follows of,

@@ -307,9 +307,8 @@ fn judge_later(app: &Arc<App>, entries: Vec<Entry>) {
 }
 
 async fn judge_entry(app: &Arc<App>, e: Entry) -> Judged {
-    let notice = e.full.starts_with("Needs you at the keyboard: ");
     let asked = e.agent.as_deref().and_then(|a| app.inner.lock().unwrap().last_instruction(a));
-    prepare(&app.cfg, &Item { id: e.id, agent_id: e.agent.unwrap_or_default(), notice, full: e.full, kind: e.kind, say: None, detail: None, created: e.at, asked }).await
+    prepare(&app.cfg, &Item { id: e.id, agent_id: e.agent.unwrap_or_default(), notice: false, full: e.full, kind: e.kind, say: None, detail: None, created: e.at, asked }).await
 }
 
 /// One request for the whole chat, for as long as it is open.

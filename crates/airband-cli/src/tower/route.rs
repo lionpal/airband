@@ -24,18 +24,14 @@ pub(super) enum Routed {
     Elsewhere(String),
 }
 
-/// What the plain rules make of his words, for a typed command and for when no model answers: `/launch shop
-/// with opus: …`, "new idea: …", "with fable high, …". Everything looser than that is the model's to read.
-fn new_by_rule(app: &App, text: &str, projects: &[String]) -> Option<Idea> {
+/// A typed command to start an agent: `/launch shop with opus: …`. It says what it is; everything he says in
+/// his own words is the model's to read.
+fn new_by_command(app: &App, text: &str, projects: &[String]) -> Option<Idea> {
     let (models, efforts) = app.cfg.launchers.get(&app.cfg.launcher).map(|l| (l.models.keys().cloned().collect::<Vec<_>>(), l.efforts.clone())).unwrap_or_default();
-    let with = |t: &str| airband_core::routing::parse_with(t, &models, &efforts).filter(|w| !w.rest.is_empty());
-    let (project, task) = match airband_core::routing::parse_launch(text, projects) {
-        Some(l) => (l.project, l.task),
-        None => (None, with(text).filter(|w| w.asks_for_an_agent()).map(|_| text.to_string())?),
-    };
-    Some(match with(&task) {
-        Some(w) => Idea { project, model: Some(w.model), effort: w.effort, task: w.rest },
-        None => Idea { project, model: None, effort: None, task },
+    let l = airband_core::routing::parse_launch(text, projects)?;
+    Some(match airband_core::routing::parse_with(&l.task, &models, &efforts).filter(|w| !w.rest.is_empty()) {
+        Some(w) => Idea { project: l.project, model: Some(w.model), effort: w.effort, task: w.rest },
+        None => Idea { project: l.project, model: None, effort: None, task: l.task },
     })
 }
 
@@ -192,12 +188,12 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
             }
             let judged = answer.ok().and_then(|out| serde_json::from_str::<Out>(&out[out.find('{')?..=out.rfind('}')?]).ok());
             let Some(mut judged) = judged else {
-                // no model answered: the plain rules, which know the set phrases and nothing looser
-                return match (new_by_rule(app, rest, &projects).filter(|_| can_start), all.as_slice()) {
-                    (Some(idea), _) => Routed::New(idea),
-                    (None, []) => Routed::Ask(Vec::new()),
-                    (None, [only]) => Routed::Sure(vec![only.clone()]),
-                    (None, several) => Routed::Ask(several.iter().take(3).map(|s| s.callsign.text()).collect()),
+                // No model answered. Nothing is read into his words: with one agent it is for that one, and
+                // with several he is asked.
+                return match all.as_slice() {
+                    [] => Routed::Ask(Vec::new()),
+                    [only] => Routed::Sure(vec![only.clone()]),
+                    several => Routed::Ask(several.iter().take(3).map(|s| s.callsign.text()).collect()),
                 };
             };
             if let Some(new) = judged.new.take().filter(|_| can_start) {
@@ -324,12 +320,25 @@ async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, projects: &[
 /// `label` is the button's words when this is a quick message: the chat shows those, and the agent gets `text`.
 pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>, text: &str, re: Option<&str>, scope: Option<&str>, label: Option<&str>, attached: &[String], others: &[airband_core::radio::Other]) -> Reply {
     // an answer to a request for permission goes back to the harness that asked, not to the agent as a message
-    if let Some(reply) = permit::answer(app, text, re) {
+    // The buttons say yes or no outright. Anything else he says to a request for leave is read by a model, and
+    // only a plain yes allows it; if his words do not settle it, nothing is decided.
+    let verdict = match permit::asked_leave(app, re) {
+        Some(_) if text.trim() == permit::ALLOW => Some(true),
+        Some(_) if text.trim() == permit::DENY => Some(false),
+        Some(request) => match judge::consent(&app.cfg, &request, text).await {
+            Some(true) => Some(true),
+            // his own words, which are not a yes: they refuse it and go back to the agent as the reason
+            Some(false) => None,
+            None => return Reply { say: "That one needs a yes or a no from you.".into(), ..Reply::default() },
+        },
+        None => None,
+    };
+    if let Some(reply) = permit::answer(app, text, re, verdict) {
         return reply;
     }
     // files that came with his words: where each is on this computer, for whoever the words go to, and the
     // pictures to show beside them in the chat
-    let (files, shown_files) = if attached.is_empty() { (String::new(), Vec::new()) } else { attachments::describe(attached).await };
+    let (mut files, shown_files) = if attached.is_empty() { (String::new(), Vec::new()) } else { attachments::describe(attached).await };
     // starting a new agent comes next: it is addressed to the tower, not to anyone on the radio
     let projects: Vec<String> = app.inner.lock().unwrap().launchable(&app.cfg).into_keys().collect();
     // "Which project?" was just asked about an idea, and this names one
@@ -343,14 +352,14 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
     }
     // a typed command says what it is and needs no reading
     if text.trim_start().starts_with('/') {
-        if let Some(mut idea) = new_by_rule(app, text, &projects) {
+        if let Some(mut idea) = new_by_command(app, text, &projects) {
             idea.task.push_str(&files);
             return start(app, radio, text, idea, &projects, true).await;
         }
     }
     let say = |s: String| Reply { say: s, ..Reply::default() };
     let ask = |s: String| Reply { say: s, listen: true, ..Reply::default() };
-    let (mut parsed, named, roster, names, pending, held_text) = {
+    let (mut parsed, named, roster, names, pending, held) = {
         let mut inner = app.inner.lock().unwrap();
         inner.reap();
         let parsed = parse_utterance(text, &inner.callsigns());
@@ -359,12 +368,13 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
             inner.call(radio).focus = Some(one.agent.id.clone());
         }
         let names = inner.sessions.iter().map(|s| s.callsign.text()).collect::<Vec<_>>();
-        let held_text = inner.call(radio).asked.take().filter(|(_, when)| when.elapsed() < Duration::from_secs(90)).map(|(t, _)| t);
-        (parsed, named, inner.roster(), names, inner.pending.len(), held_text)
+        let held = inner.call(radio).asked.take().filter(|(_, _, when)| when.elapsed() < Duration::from_secs(90)).map(|(t, f, _)| (t, f));
+        (parsed, named, inner.roster(), names, inner.pending.len(), held)
     };
     // "Which one?" was just asked and this is the answer: a callsign and nothing else
-    if let (Some(held), true, false, None) = (&held_text, parsed.rest.is_empty(), named.is_empty(), parsed.control) {
-        parsed.rest = held.clone();
+    if let (Some((words, their_files)), true, false, None) = (&held, parsed.rest.is_empty(), named.is_empty(), parsed.control) {
+        parsed.rest = words.clone();
+        files = their_files.clone();
     }
     // work out who it is for only when there is something to deliver
     let mut targets: Vec<Session> = if !named.is_empty() {
@@ -389,7 +399,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
             Routed::Ask(options) if options.is_empty() => return say("No agents are running.".into()),
             Routed::Ask(options) => {
                 // held with its files, so they go along when he says who it was for
-                app.inner.lock().unwrap().call(radio).asked = Some((format!("{}{files}", parsed.rest), Instant::now()));
+                app.inner.lock().unwrap().call(radio).asked = Some((parsed.rest.clone(), files.clone(), Instant::now()));
                 log(format!("← radio: \"{text}\" → unsure; asking between {}", options.join(", ")));
                 return Reply { ask: options.clone(), ..ask(format!("Who is that for? {}.", options.join(", or "))) };
             }
@@ -513,8 +523,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
     if !sent.is_empty() {
         // a quick message shows as the button he tapped; the whole instruction is still what was sent and kept
         // what he sees of his own message is his words, without the list of file paths that the agent got
-        let said = parsed.rest.split("\n\nHe attached ").next().unwrap_or(&parsed.rest).to_string();
-        let entry = Entry::his(message_id, &sent, said);
+        let entry = Entry::his(message_id, &sent, parsed.rest.clone());
         inner.record(Entry { short: shown.or(entry.short.clone()), pictures: shown_files, queued: !queued.is_empty(), ..entry });
     }
     app.save(&inner);

@@ -472,7 +472,10 @@ Send it as written, or do you want changes?""")
     out = []
     t = threading.Thread(target=ask_permission, args=("deploy", "orders", "run `rm -rf build`", out)); t.start()
     card = pending_card("orders deploy")
-    check("a spoken \"yes\" with one request waiting answers it", card and say("yes") == "Allowed." and (t.join(30) or out == [(0, "")]), out)
+    said = say("yes")
+    still = pending_card("orders deploy")
+    check("a \"yes\" that is not said to the request does not answer it", card and said != "Allowed." and still is not None and out == [], (said, out))
+    check("said in reply to it, a plain yes in his own words allows it (model)", card and say("yeah, that's fine", re=card["id"]) == "Allowed." and (t.join(30) or out == [(0, "")]), out)
     out = []
     t = threading.Thread(target=ask_permission, args=("deploy", "orders", "run `sleep 1`", out)); t.start()
     card = pending_card("orders deploy")
