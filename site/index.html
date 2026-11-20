@@ -45,10 +45,16 @@ body { background: var(--ground); color: var(--ink); font-family: var(--sans); m
 h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.04em; font-weight: 700; margin: 0; text-wrap: balance; min-width: 0; }
 .words { min-width: 0; }
 .sub { margin: 16px 0 0; max-width: 34em; font-size: clamp(18px, 2vw, 22px); line-height: 1.4; color: var(--quiet); }
+.get { display: flex; align-items: center; gap: 10px; max-width: 100%; height: 54px; padding: 0 8px 0 18px; border-radius: 16px; background: var(--ink); color: var(--ground); }
+.get code { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 16px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.get button { height: 38px; padding: 0 14px; border: 0; border-radius: 11px; background: var(--ground); color: var(--ink); font: 600 15px var(--sans); cursor: pointer; }
+.get button:focus-visible { outline: 3px solid var(--signal); outline-offset: 2px; }
+.src { margin: 12px 0 18px; font-size: 15px; color: var(--quiet); }
+.src a { color: var(--ink); }
 .join { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; max-width: 100%; }
 .join input { flex: 1 1 220px; min-width: 0; height: 54px; padding: 0 18px; border-radius: 16px; border: 1px solid #2A2C2D; background: var(--field); color: var(--ink); font: 17px var(--sans); }
 .join input::placeholder { color: var(--dim); }
-.join button { height: 54px; padding: 0 24px; border: 0; border-radius: 16px; background: var(--ink); color: var(--ground); font: 600 17px var(--sans); cursor: pointer; white-space: nowrap; }
+.join button { height: 54px; padding: 0 24px; border: 1px solid #2A2C2D; border-radius: 16px; background: var(--field); color: var(--ink); font: 600 17px var(--sans); cursor: pointer; white-space: nowrap; }
 .join button:disabled { opacity: 0.6; cursor: default; }
 .join input:focus-visible, .join button:focus-visible { outline: 3px solid var(--signal); outline-offset: 2px; }
 .join p { flex-basis: 100%; margin: 0; min-height: 20px; font-size: 15px; color: var(--quiet); }
@@ -352,12 +358,17 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
       <h1>Squad comms for your Claudes.</h1>
       <p class="sub">Voice channels to manage all your agent teams.</p>
     </div>
+    <div class="get">
+      <code id="cmd">brew install lionpal/airband/airband</code>
+      <button type="button" id="copy">Copy</button>
+    </div>
+    <p class="src"><a href="https://github.com/lionpal/airband">Source on GitHub</a>, by Lionpal. The iPhone app is in TestFlight: leave your email for an invite.</p>
     <form class="join" id="join" novalidate>
       <label class="hide" for="email">Your email</label>
       <input id="email" name="email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com">
       <!-- not for people: a form-filling robot fills this in, and is ignored for it -->
       <input class="hide" id="company" name="company" type="text" tabindex="-1" autocomplete="off" aria-hidden="true">
-      <button type="submit" id="joinbtn">Join the waitlist</button>
+      <button type="submit" id="joinbtn">Get the app</button>
       <p id="joinmsg" role="status" aria-live="polite"></p>
     </form>
   </div>
@@ -519,6 +530,12 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
 <script>
 // The waiting list. The address goes to airband's own server and nowhere else.
 (function () {
+  document.getElementById("copy").addEventListener("click", (e) => {
+    navigator.clipboard?.writeText(document.getElementById("cmd").textContent).then(() => {
+      e.target.textContent = "Copied";
+      setTimeout(() => { e.target.textContent = "Copy"; }, 1600);
+    });
+  });
   const form = document.getElementById("join"), input = document.getElementById("email"), button = document.getElementById("joinbtn"), msg = document.getElementById("joinmsg");
   form.addEventListener("submit", async (e) => {
     e.preventDefault();

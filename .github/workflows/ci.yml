@@ -1,9 +1,11 @@
 name: CI
-# Build and test on every system the tower is meant to run on, and check the phone builds: once a day, and
-# whenever asked for (Actions tab, "Run workflow"). Not on a push. The tests run on the computer the push comes
-# from (scripts/check.sh, by a git hook): a day of small pushes once spent a month's build minutes here, with a
-# macOS minute charged as ten and a Windows minute as two.
+# Build and test on every system the tower is meant to run on, check the phone builds, and run the end-to-end
+# suites that need no model: on every push, once a day, and whenever asked for. The repository is public, so
+# the minutes cost nothing. The suite that needs a model (tools/e2e.py) runs on the computer a push comes from.
 on:
+  push:
+    branches: [main]
+    paths: ['crates/**', 'apps/**', 'scripts/**', 'tools/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/ci.yml']
   schedule:
     - cron: '17 9 * * *'
   pull_request:
@@ -24,6 +26,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --release
       - run: cargo test --workspace
+  e2e:
+    name: End to end (relay, held agents)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p airband-cli -p airband-relay
+      - name: A tower, a relay and a radio: what he says while the computer is away is kept and delivered
+        run: python3 tools/e2e-relay.py
+      - name: Agents the tower runs itself, with a stand-in for the agent
+        run: python3 tools/e2e-held.py
   android:
     name: Radio core for Android
     runs-on: ubuntu-latest
