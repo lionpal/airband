@@ -34,8 +34,8 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, store: Arc<Store>, host: Arc<dyn R
             }
             Ok(reply) => {
                 wait = 1;
-                // "Sent to …" shows up as his own line in the chat; anything else he has to see
-                done((!reply.say.is_empty() && !reply.say.starts_with("Sent to")).then_some(reply.say));
+                // what was done as he asked shows as his own line in the chat; anything else he has to see
+                done((!reply.say.is_empty() && !reply.done).then_some(reply.say));
             }
             Err(LinkError::Refused) => done(Some(format!("The tower refused: “{}”", next.text))),
             // no network, or the relay could not keep it either: it stays here and is tried again

@@ -1775,6 +1775,7 @@ struct AgentsMenu: View {
     @EnvironmentObject var model: RadioModel
     @Environment(\.dismiss) private var dismiss
     let openSetup: () -> Void
+    @State private var makingTeam = false
     /// The team an agent is being held over, while he drags one.
     @State private var over: String?
     /// The agent a new team is being named for.
@@ -1862,9 +1863,21 @@ struct AgentsMenu: View {
                         }
                     }
                 }
+                if model.view.online {
+                    Button { makingTeam = true } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "plus").font(.system(size: 15, weight: .semibold))
+                            Text("New team").font(.system(size: 16, weight: .medium))
+                            Spacer()
+                        }
+                        .foregroundStyle(Palette.soft).padding(.horizontal, 14).frame(minHeight: 44)
+                    }
+                    .buttonStyle(.plain).padding(.top, 6)
+                }
             }
             .padding(.horizontal, 12).padding(.top, 18).padding(.bottom, 10)
         }
+        .sheet(isPresented: $makingTeam) { NewTeamSheet().environmentObject(model) }
         // Settings stays at the bottom, whatever the list above it is scrolled to
         .safeAreaInset(edge: .bottom, spacing: 0) {
             Button(action: openSetup) {

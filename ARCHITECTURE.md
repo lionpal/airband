@@ -97,8 +97,8 @@ Outbound and inbound are set separately (`airband setup`, or `airband voice …`
 | | Interface | Where | Providers |
 |---|---|---|---|
 | Outbound: text to audio | `Synth` (text in, PCM out a piece at a time) | `tower/speech.rs` | Any service that speaks OpenAI's `/audio/speech` (a row); Gemini, Microsoft and ElevenLabs by their own routes |
-| Outbound, made on the phone | a row of `MODELS` | `airband-radio/src/models.rs`, run by `mouth.rs` | Phonon (Gradium, open weights, no key) |
-| Inbound, on the phone | a row of `MODELS` | `airband-radio/src/models.rs`, run by the host (`transcribe`) | Phonon 2.5 English (Fermion Research, open weights, no key) |
+| Outbound, made on the phone | a file in `catalog/models/` | `airband-radio/src/models.rs`, run by `mouth.rs` | Phonon (Gradium, open weights, no key) |
+| Inbound, on the phone | a file in `catalog/models/` | `airband-radio/src/models.rs`, run by the host (`transcribe`) | Phonon 2.5 English (Fermion Research, open weights, no key) |
 | Inbound, live as he speaks | a dialect: a row of `LISTENERS` | `airband-radio/src/ears.rs` | Microsoft |
 | Inbound, a finished recording | `transcribe` (a WAV in, words out) | `airband-radio/src/hears.rs` | Any service that speaks OpenAI's `/audio/transcriptions` (a row); Gemini by its own route |
 
@@ -124,8 +124,18 @@ to show his words as he talks, and has all of it read once more when he stops.
 A call starts from when he joins: what was said before is in the chat and is not read out. The microphone never
 opens by itself: a question is read to him and then waits in the chat (`airband-radio/src/call.rs`).
 
-Every outside service is one row of `PROVIDERS` (`crates/airband-cli/src/providers.rs`). A row says which jobs
-the service does (reading, speaking, listening), through which interface, and what it has to be told. `airband
+Every outside service, and every model that runs on a phone, is one small file in the catalogue: `catalog/providers/<id>.json`
+and `catalog/models/<kind>.json`. Building `airband-core` puts them together into one document that is
+compiled into the tower and the app (`crates/airband-core/src/catalog.rs`), so both know all of it with no
+network. A newer copy is fetched from `airband.dev/catalog/1/` when he opens a chooser, and by the tower
+twice a day; it is taken only if it is signed with airband's catalogue key and its `rev` is higher. So a new
+voice, model id or price needs `scripts/publish-catalog.sh` and no new build. A way of calling a service is
+code and cannot arrive this way: a row names one, and a build leaves out a row that names one it lacks.
+
+A provider's row says which jobs
+the service does (reading, speaking, listening), through which interface, and what it has to be told, and what
+to show where he chooses it: its maker and model, its price, whether it is one of the few shown first, and
+for a voice a few voices with their makers' sample clips. `airband
 setup`, `airband model`, `airband voice` and `airband ears` are driven by the table, and so are the calls. A
 setting in use is `{"kind": <row id>, "key": …, <what differs from the row>}`.
 
@@ -137,7 +147,7 @@ The interfaces, and what adding a provider touches:
 | Reading | a command: prompt on standard input, answer on standard output | a row with its arguments |
 | Speaking | OpenAI's speech endpoint (`POST {url}/audio/speech`, raw PCM) | a row |
 | Speaking | a route of its own, for what the common one lacks (ElevenLabs' word timings, Microsoft's lendable pass) | an `impl Synth` in `tower/speech.rs`, a `By` for it, a row |
-| Speaking or listening, on the phone | a row of `MODELS` in `airband-radio/src/models.rs` | the row, the files under `airband.dev/models/`, and the code that runs the model; an app release |
+| Speaking or listening, on the phone | a file in `catalog/models/` | the row, the files under `airband.dev/models/`, and the code that runs the model; an app release |
 | Listening, a finished recording | OpenAI's transcription endpoint (`POST {url}/audio/transcriptions`) | a row |
 | Listening, a finished recording | a route of its own (Gemini) | an arm of `transcribe` in `airband-radio/src/hears.rs`, a `By` for it, a row |
 | Listening, live as he speaks | no common interface exists, so each is a dialect the phone speaks: a row of `LISTENERS` in `airband-radio/src/ears.rs` | the dialect's code there, a row naming it; an app release, because the phone talks to the service itself |

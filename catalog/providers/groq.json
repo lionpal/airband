@@ -1,0 +1,51 @@
+{
+  "id": "groq",
+  "name": "Groq",
+  "key": {
+    "name": "Groq API key",
+    "at": "console.groq.com/keys"
+  },
+  "offers": [
+    {
+      "job": "summary",
+      "by": {
+        "chat": {
+          "cold": true,
+          "shaped": false
+        }
+      },
+      "label": "Groq GPT-OSS 120B",
+      "price": "About $0.15 per 1,000 messages",
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "https://api.groq.com/openai/v1"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "openai/gpt-oss-120b"
+        }
+      ]
+    },
+    {
+      "job": "ears",
+      "by": "transcribe",
+      "label": "Groq Whisper Large v3 Turbo",
+      "price": "About $0.04 per hour of speech",
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "https://api.groq.com/openai/v1"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "whisper-large-v3-turbo"
+        }
+      ]
+    }
+  ]
+}

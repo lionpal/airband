@@ -258,7 +258,7 @@ class AirbandSite extends Stack {
     // that Homebrew downloads (https://airband.dev/releases/<version>/…) are put there by the Release workflow.
     // And models/: the speech models a phone fetches when he chooses one made on the phone, put there by
     // scripts/host-model.sh (https://airband.dev/models/<name>/<version>/…).
-    new s3deploy.BucketDeployment(this, 'Publish', { sources: [s3deploy.Source.asset(join(HERE, '..', 'site'))], destinationBucket: bucket, distribution: cdn, distributionPaths: ['/*'], cacheControl: [s3deploy.CacheControl.fromString('public, max-age=300')], exclude: ['releases/*', 'models/*'] });
+    new s3deploy.BucketDeployment(this, 'Publish', { sources: [s3deploy.Source.asset(join(HERE, '..', 'site'))], destinationBucket: bucket, distribution: cdn, distributionPaths: ['/*'], cacheControl: [s3deploy.CacheControl.fromString('public, max-age=300')], exclude: ['releases/*', 'models/*', 'catalog/*'] });
     for (const [label, recordName] of [['Apex', undefined], ['Www', 'www']]) {
       const target = route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(cdn));
       new route53.ARecord(this, `${label}A`, { zone, recordName, target });

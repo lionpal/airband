@@ -71,6 +71,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     init() {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("radio")
         voiceDir = dir.path
+        // the newest catalogue of services and models this phone has kept, before anything is listed from it
+        loadCatalog(dir: dir.path)
         desk = Desk.open(dataDir: dir.path, host: self)
         // A new install starts with the models that run on this phone chosen for listening and for the voice:
         // they need nothing from him, and are fetched when he finishes the first run. Someone who was already
@@ -169,6 +171,38 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         if let room, view.online, !view.rooms.contains(where: { $0.name == room }) { self.room = nil }
         if full.count > 60 { full.removeAll() } // opened long ago: fetched again if he looks again
         sendPendingReads()
+    }
+
+    /// The folders inside one of his on a computer. Calls back with them, or with what is wrong.
+    func folders(on computer: String, under: String, done: @escaping (DeskFolders?, String?) -> Void) {
+        fetch.async {
+            var (found, wrong): (DeskFolders?, String?) = (nil, nil)
+            do { found = try self.desk.folders(computer: computer, under: under) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "Cannot reach that computer." }
+            DispatchQueue.main.async { done(found, wrong) }
+        }
+    }
+
+    /// Make a new team on a computer. Calls back with what is wrong, or nil.
+    func newTeam(_ name: String, on computer: String, folder: String, make: Bool, done: @escaping (String?) -> Void) {
+        fetch.async {
+            var wrong: String?
+            do { try self.desk.newTeam(computer: computer, name: name, folder: folder, make: make) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "Cannot reach that computer." }
+            DispatchQueue.main.async { done(wrong) }
+        }
+    }
+
+    /// Goes up when a newer catalogue of services and models has been taken: what the choosers list is read again.
+    @Published var catalogRev = 0
+    private var catalogAsked = Date.distantPast
+
+    /// Ask for a newer catalogue, at most once every few minutes. The choosers call this when they open.
+    func refreshCatalog() {
+        guard Date().timeIntervalSince(catalogAsked) > 300 else { return }
+        catalogAsked = Date()
+        let dir = voiceDir
+        fetch.async {
+            if Airband.refreshCatalog(dir: dir) { DispatchQueue.main.async { self.catalogRev += 1 } }
+        }
     }
 
     /// What he chose to write his summaries before any computer was paired: its kind. Sent when one is.

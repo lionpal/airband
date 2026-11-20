@@ -376,7 +376,7 @@ pub fn load() -> Config {
         }
     };
     let argv_is = |u: &Use, usual: &[&str]| u.kind == "command" && u.set.get("argv").and_then(|a| a.as_array()).is_some_and(|a| a.iter().map(|v| v.as_str().unwrap_or_default()).eq(usual.iter().copied()));
-    if argv_is(&cfg.summarizer, &HEAVY) || argv_is(&cfg.summarizer, crate::providers::CLAUDE) {
+    if argv_is(&cfg.summarizer, &HEAVY) || argv_is(&cfg.summarizer, match crate::providers::provider("claude").and_then(|p| p.offers.first()).map(|o| o.by) { Some(crate::providers::By::Command(usual)) => usual, _ => &[] }) {
         cfg.summarizer = default_summarizer();
     }
     if cfg.launchers.get(&default_launcher()).is_some_and(|l| l.models.is_empty() && l.argv.iter().map(String::as_str).eq(LAUNCHER_BEFORE_MODELS.iter().copied())) {

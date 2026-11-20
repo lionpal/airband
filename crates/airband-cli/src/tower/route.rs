@@ -620,10 +620,12 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
     }
     app.save(&inner);
     let sent_names: Vec<String> = sent.iter().map(|s| s.callsign.text()).collect();
-    say(match (sent_names.len(), failed.len()) {
+    let reply = say(match (sent_names.len(), failed.len()) {
         (0, _) => format!("Could not reach {}.", list(&failed)),
         (n, 0) if n > 3 => format!("Sent to all {n}."),
         (_, 0) => format!("Sent to {}.", list(&sent_names)),
         _ => format!("Sent to {}. Could not reach {}.", list(&sent_names), list(&failed)),
-    })
+    });
+    // it reached everyone it was for: the words only confirm that
+    Reply { done: failed.is_empty() && !sent_names.is_empty(), ..reply }
 }

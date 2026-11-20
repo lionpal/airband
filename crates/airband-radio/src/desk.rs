@@ -479,6 +479,19 @@ impl RadioHost for StationHost {
     }
 }
 
+/// The folders inside one of his on a computer.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct DeskFolders {
+    /// This folder's whole path, to pass back.
+    pub path: String,
+    /// The same as he would read it: "~/Companies".
+    pub shown: String,
+    /// The folder above, to pass back; nothing at his home folder.
+    pub up: Option<String>,
+    /// The folders inside, by name.
+    pub folders: Vec<String>,
+}
+
 #[derive(uniffi::Object)]
 pub struct Desk {
     shared: Arc<Shared>,
@@ -780,6 +793,20 @@ impl Desk {
         found.into_iter().map(|(_, s)| s.name.clone()).collect()
     }
 
+    /// The folders inside one of his on a computer, for choosing where a new team works. `computer` is its
+    /// name, or empty for the first that can be reached; `under` is a folder's whole path, or empty for his
+    /// home folder. Blocks: call it off the main thread.
+    pub fn folders(&self, computer: String, under: String) -> Result<DeskFolders, RadioError> {
+        let f = self.station_radio(&computer).ok_or(RadioError::Offline)?.folders(under)?;
+        Ok(DeskFolders { path: f.path, shown: f.shown, up: f.up, folders: f.folders })
+    }
+
+    /// Make a new team on a computer: its name, and the folder its agents work in (made first with `make`).
+    /// Its first agent is started there with nothing to do yet. Blocks: call it off the main thread.
+    pub fn new_team(&self, computer: String, name: String, folder: String, make: bool) -> Result<(), RadioError> {
+        self.station_radio(&computer).ok_or(RadioError::Offline)?.new_project(name, folder, make)
+    }
+
     /// Start a new agent in a team, on the computer named, or where most of that team's agents already run. It
     /// is started with nothing to do yet and shows up at once, waiting for his first word. Nothing happens for
     /// a team no computer has.
@@ -1064,6 +1091,11 @@ impl Desk {
         deliver(&self.shared, text, label, re, room, agent);
     }
 
+    /// The computer called this, or with no name the first that can be reached.
+    fn station_radio(&self, computer: &str) -> Option<Arc<Radio>> {
+        let state = self.shared.state.lock().unwrap();
+        state.stations.iter().filter(|s| s.online).find(|s| computer.is_empty() || s.name == computer).map(|s| s.radio.clone())
+    }
     fn radio_of(&self, message: &str) -> Option<Arc<Radio>> {
         let state = self.shared.state.lock().unwrap();
         state.owner(message).map(|i| state.stations[i].radio.clone())

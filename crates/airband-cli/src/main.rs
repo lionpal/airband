@@ -20,6 +20,7 @@
 //!   airband report ...           put any other agent on the radio from a script (see `airband report` with no arguments)
 //!   airband --version            which version this is
 mod adapters;
+mod catalog;
 mod config;
 #[cfg(unix)]
 mod hold;
@@ -32,6 +33,16 @@ mod setup;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // The catalogue: the newest signed copy this computer has kept, for everything but the small commands a
+    // harness runs many times a minute. Where he is about to choose from it, a newer one is fetched first.
+    match args.first().map(String::as_str) {
+        Some("hook" | "report" | "hold" | "catalog") => {}
+        Some("setup" | "model" | "voice" | "ears") => {
+            catalog::load();
+            catalog::refresh();
+        }
+        _ => catalog::load(),
+    }
     let result = match args.first().map(String::as_str) {
         Some("--version" | "-V" | "version") => Ok(println!("airband {}", env!("CARGO_PKG_VERSION"))),
         Some("hook") => adapters::hook(args.get(1).map(String::as_str).unwrap_or("claude-code")),
@@ -61,6 +72,7 @@ fn main() {
         Some("relay") => install::relay(config::load(), &args[1..]),
         Some("lan") => install::lan(config::load(), &args[1..]),
         Some("keys") => setup::keys(&args[1..]),
+        Some("catalog") => catalog::command(&args[1..]),
         Some("setup") => setup::setup(config::load(), !args.iter().any(|a| a == "--no-start")),
         Some("model") => install::model(config::load(), &args[1..]),
         Some("voice") => install::voice(config::load(), &args[1..]),

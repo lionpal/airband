@@ -374,6 +374,13 @@ pub fn run(cfg: Config) -> Result<(), String> {
     } else if crate::vault::settle() {
         log("the keys are now in the keychain");
     }
+    // a newer catalogue, now and twice a day: what a phone is offered for this computer comes from it
+    std::thread::spawn(|| loop {
+        if crate::catalog::refresh() {
+            log(format!("catalogue: now rev {}", airband_core::catalog::current().rev));
+        }
+        std::thread::sleep(Duration::from_secs(12 * 3600));
+    });
     // a model on this computer is started now, so it is ready when the first message comes; until it is, a
     // message is given as written
     local::listen_after(cfg.port);

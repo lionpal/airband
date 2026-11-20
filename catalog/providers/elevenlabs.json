@@ -1,0 +1,54 @@
+{
+  "id": "elevenlabs",
+  "name": "ElevenLabs",
+  "key": {
+    "name": "ElevenLabs API key",
+    "at": "elevenlabs.io/app/settings/api-keys"
+  },
+  "offers": [
+    {
+      "job": "voice",
+      "by": "elevenlabs_voice",
+      "label": "ElevenLabs Flash 2.5",
+      "preferred": true,
+      "price": "About $2.16 per hour of speech",
+      "voices": [
+        {
+          "id": "cgSgspJ2msm6clMCkdW9",
+          "name": "Jessica",
+          "about": "Playful, American",
+          "sample": "https://storage.googleapis.com/eleven-public-prod/premade/voices/cgSgspJ2msm6clMCkdW9/56a97bf8-b69b-448f-846c-c3a11683d45a.mp3"
+        },
+        {
+          "id": "FGY2WhTYpPnrIDTdsKH5",
+          "name": "Laura",
+          "about": "Quirky, American"
+        },
+        {
+          "id": "Xb7hH8MSUJpSbSDYk0k2",
+          "name": "Alice",
+          "about": "Clear, British",
+          "sample": "https://storage.googleapis.com/eleven-public-prod/premade/voices/Xb7hH8MSUJpSbSDYk0k2/d10f7534-11f6-41fe-a012-2de1e482d336.mp3"
+        },
+        {
+          "id": "pFZP5JQG7iQjIQuC4Bku",
+          "name": "Lily",
+          "about": "Velvety, British",
+          "sample": "https://storage.googleapis.com/eleven-public-prod/premade/voices/pFZP5JQG7iQjIQuC4Bku/89b68b35-b3dd-4348-a84a-a3c13a3c2b30.mp3"
+        }
+      ],
+      "asks": [
+        {
+          "field": "voice",
+          "question": "Voice id",
+          "usual": "cgSgspJ2msm6clMCkdW9"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "eleven_flash_v2_5"
+        }
+      ]
+    }
+  ]
+}

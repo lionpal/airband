@@ -107,7 +107,6 @@ pub struct ServiceAsk {
 fn services(job: airband_core::providers::Job) -> Vec<Service> {
     airband_core::providers::in_order(job)
         .into_iter()
-        .filter(|(p, _)| p.in_app)
         .map(|(p, o)| Service {
             kind: p.id.into(),
             more: !o.preferred,

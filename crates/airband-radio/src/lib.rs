@@ -657,6 +657,21 @@ impl Radio {
         self.ask("/reads", serde_json::to_value(wanted).unwrap())
     }
 
+    /// The folders inside one of his on this computer. Blocks.
+    pub(crate) fn folders(&self, under: String) -> Result<airband_core::radio::Folders, RadioError> {
+        let (status, v) = self.link.request("POST", "/folders", Some(serde_json::json!({ "under": under })))?;
+        match (status, v["error"].as_str()) {
+            (200, Some(why)) => Err(RadioError::Told { reason: why.into() }),
+            (200, None) => serde_json::from_value(v).map_err(|_| RadioError::Refused),
+            (404, _) => Err(RadioError::Told { reason: "Update airband on this computer first.".into() }),
+            _ => Err(RadioError::Refused),
+        }
+    }
+    /// Make a new team on this computer. Blocks.
+    pub(crate) fn new_project(&self, name: String, folder: String, make: bool) -> Result<(), RadioError> {
+        self.ask("/project", serde_json::to_value(airband_core::radio::NewProject { name, folder, make }).unwrap())
+    }
+
     pub fn unsend(&self, message: String) -> Result<(), RadioError> {
         self.ask("/unsend", serde_json::json!({ "message": message }))
     }

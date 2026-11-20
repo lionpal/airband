@@ -1,0 +1,78 @@
+{
+  "id": "azure",
+  "name": "Microsoft Azure Speech",
+  "key": {
+    "name": "Azure key",
+    "at": "portal.azure.com, a Speech resource, Keys and Endpoint"
+  },
+  "offers": [
+    {
+      "job": "voice",
+      "by": {
+        "azure_voice": {
+          "pass": false
+        }
+      },
+      "label": "Microsoft Azure Speech",
+      "preferred": true,
+      "price": "About $0.81 per hour of speech",
+      "voices": [
+        {
+          "id": "en-US-AvaMultilingualNeural",
+          "name": "Ava",
+          "about": "Expressive, American"
+        },
+        {
+          "id": "en-US-EmmaMultilingualNeural",
+          "name": "Emma",
+          "about": "Cheerful, American"
+        },
+        {
+          "id": "en-GB-SoniaNeural",
+          "name": "Sonia",
+          "about": "Friendly, British"
+        },
+        {
+          "id": "en-GB-LibbyNeural",
+          "name": "Libby",
+          "about": "Positive, British"
+        }
+      ],
+      "asks": [
+        {
+          "field": "region",
+          "question": "Region",
+          "usual": "eastus"
+        },
+        {
+          "field": "voice",
+          "question": "Voice",
+          "usual": "en-US-AvaMultilingualNeural"
+        }
+      ]
+    },
+    {
+      "job": "ears",
+      "by": {
+        "listener": {
+          "dialect": "azure"
+        }
+      },
+      "label": "Microsoft Azure Speech",
+      "preferred": true,
+      "price": "About $1 per hour, 5 hours a month free",
+      "asks": [
+        {
+          "field": "region",
+          "question": "Region",
+          "usual": "eastus"
+        },
+        {
+          "field": "language",
+          "question": "Language",
+          "usual": "en-US"
+        }
+      ]
+    }
+  ]
+}

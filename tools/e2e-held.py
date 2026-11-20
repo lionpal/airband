@@ -156,6 +156,21 @@ try:
     check("his first word reaches it as his own", say("@" + fresh["callsign"].replace(" ", "") + " start with the tests").startswith("Sent to") and until(lambda: arrived()[-1:] == ["start with the tests"]), arrived())
     until(lambda: agent() and agent()["state"] != "working")
     check("it can be ended like any other", http("POST", "/v1/radio/end", {"agent": fresh["id"]})[1] == {} and until(lambda: agent() is None), feed()["roster"])
+
+    print("A new team, made from the phone")
+    os.makedirs(os.path.join(home, "work", "garden"))
+    top = http("POST", "/v1/radio/folders", {"under": ""})[1]
+    check("his home folder is listed, without the hidden folders", top and "work" in top["folders"] and not any(n.startswith(".") for n in top["folders"]) and top.get("up") is None and top["shown"] == "~", top)
+    inside = http("POST", "/v1/radio/folders", {"under": top["path"] + "/work"})[1]
+    check("a folder inside it is walked into", inside and inside["folders"] == ["garden"] and inside["shown"] == "~/work" and inside["up"] == top["path"], inside)
+    check("nothing outside his home folder is listed", "error" in http("POST", "/v1/radio/folders", {"under": "/etc"})[1])
+    check("a team's name is one plain word", "error" in http("POST", "/v1/radio/project", {"name": "my team!", "folder": inside["path"]})[1])
+    check("a team is not made outside his home folder", "error" in http("POST", "/v1/radio/project", {"name": "etc", "folder": "/etc"})[1])
+    made = http("POST", "/v1/radio/project", {"name": "Garden", "folder": inside["path"] + "/garden"})[1]
+    check("a new team is made in the folder he chose, and its first agent is there with nothing to do", made and "error" not in made and until(lambda: any(a["group"] == "garden" for a in feed()["roster"])), (made, feed()["roster"]))
+    made = http("POST", "/v1/radio/project", {"name": "orchard", "folder": inside["path"] + "/orchard", "make": True})[1]
+    check("a folder that is not there yet is made for it", made and "error" not in made and os.path.isdir(os.path.join(home, "work", "orchard")), made)
+    check("a name another folder already has is refused", "error" in http("POST", "/v1/radio/project", {"name": "garden", "folder": inside["path"]})[1])
 finally:
     tower.terminate()
     try: tower.wait(timeout=10)

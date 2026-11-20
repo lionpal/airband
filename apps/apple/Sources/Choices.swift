@@ -143,7 +143,7 @@ private struct Fetching: View {
 struct ReadsPicker: View {
     @EnvironmentObject var model: RadioModel
     let mode: ChoiceMode
-    private let services = readingServices()
+    private var services: [Service] { readingServices() }
     @State private var open: String?
     @State private var asking: Service?
     @State private var busy: String?
@@ -175,6 +175,7 @@ struct ReadsPicker: View {
             MoreServices(shown: $more)
             if let wrong { Text(wrong).font(.system(size: 13)).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading) }
         }
+        .onAppear { model.refreshCatalog() }
         .confirmationDialog(asking.map { "Have \($0.name) write your summaries?" } ?? "", isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } }), titleVisibility: .visible) {
             Button("Switch") { if let s = asking { apply(s, key: nil, settings: [:]) { _ in } } }
             Button("Cancel", role: .cancel) {}
@@ -196,7 +197,7 @@ struct ReadsPicker: View {
 struct EarsPicker: View {
     @EnvironmentObject var model: RadioModel
     let mode: ChoiceMode
-    private let services = listeningServices()
+    private var services: [Service] { listeningServices() }
     @State private var local: [LocalModel] = []
     @State private var open: String?
     @State private var asking: LocalModel?
@@ -245,7 +246,8 @@ struct EarsPicker: View {
             MoreServices(shown: $more)
             if let wrong { Text(wrong).font(.system(size: 13)).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading) }
         }
-        .onAppear { local = localListeners(dir: model.voiceDir) }
+        .onAppear { local = localListeners(dir: model.voiceDir); model.refreshCatalog() }
+        .onChange(of: model.catalogRev) { _, _ in local = localListeners(dir: model.voiceDir) }
         .onReceive(tick) { _ in if fetching != nil && !preparing { progress = Double(localModelProgress()) / 100 } }
         .confirmationDialog(asking.map { $0.fetched ? "Listen with \($0.name) on this phone?" : "Download \($0.name) (\($0.megabytes) MB) and listen with it?" } ?? "", isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } }), titleVisibility: .visible) {
             Button(asking?.fetched == true ? "Switch" : "Download") { if let m = asking { fetch(m) } }
@@ -276,7 +278,7 @@ struct EarsPicker: View {
 struct VoicePicker: View {
     @EnvironmentObject var model: RadioModel
     let mode: ChoiceMode
-    private let services = voiceServices()
+    private var services: [Service] { voiceServices() }
     @State private var local: [LocalModel] = []
     @State private var open: String?
     @State private var asking: LocalModel?
@@ -330,7 +332,8 @@ struct VoicePicker: View {
             MoreServices(shown: $more)
             if let wrong { Text(wrong).font(.system(size: 13)).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading) }
         }
-        .onAppear { local = localVoices(dir: model.voiceDir) }
+        .onAppear { local = localVoices(dir: model.voiceDir); model.refreshCatalog() }
+        .onChange(of: model.catalogRev) { _, _ in local = localVoices(dir: model.voiceDir) }
         .onReceive(tick) { _ in if fetching != nil { progress = Double(localModelProgress()) / 100 } }
         .confirmationDialog(asking.map { $0.fetched ? "Speak with \($0.name) on this phone?" : "Download \($0.name) (\($0.megabytes) MB) and speak with it?" } ?? "", isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } }), titleVisibility: .visible) {
             Button(asking?.fetched == true ? "Switch" : "Download") { if let m = asking { fetch(m) } }
@@ -433,4 +436,98 @@ enum Headline {
     static let reads = "Long messages, cut down to what you need to read."
     static let ears = "Talk to your agents."
     static let voice = "Your agents talk back."
+}
+
+/// Make a new team: a name, the computer it is on, and the folder its agents work in, chosen by walking that
+/// computer's folders. Its first agent is started there, with nothing to do yet.
+struct NewTeamSheet: View {
+    @EnvironmentObject var model: RadioModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var computer = ""
+    @State private var here: DeskFolders?
+    @State private var makeNew = false
+    @State private var loading = false
+    @State private var making = false
+    @State private var wrong: String?
+
+    private var team: String { name.trimmingCharacters(in: .whitespaces).lowercased() }
+    private var ready: Bool { !team.isEmpty && here != nil && !making }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Name") {
+                    TextField("One word, like shop", text: $name).textInputAutocapitalization(.never).autocorrectionDisabled()
+                }
+                if model.view.stations.count > 1 {
+                    Section("Computer") {
+                        Picker("Computer", selection: $computer) {
+                            ForEach(model.view.stations, id: \.self) { Text($0).tag($0) }
+                        }
+                        .pickerStyle(.segmented).onChange(of: computer) { _, _ in open("") }
+                    }
+                }
+                Section {
+                    if let here {
+                        if let up = here.up {
+                            Button { open(up) } label: { Label("Up", systemImage: "arrow.up") }
+                        }
+                        ForEach(here.folders, id: \.self) { folder in
+                            Button { open(here.path + "/" + folder) } label: {
+                                HStack { Label(folder, systemImage: "folder"); Spacer(); Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.tertiary) }
+                            }
+                            .foregroundStyle(.primary)
+                        }
+                        if here.folders.isEmpty { Text("No folders inside this one").foregroundStyle(.secondary) }
+                    } else if loading {
+                        ProgressView()
+                    }
+                } header: {
+                    Text("Folder: \(here?.shown ?? "")")
+                } footer: {
+                    Text("Agents in this team work in the folder you are looking at.")
+                }
+                Section {
+                    Toggle("Make a new folder here", isOn: $makeNew)
+                } footer: {
+                    if makeNew, let here, !team.isEmpty { Text("It will be \(here.shown)/\(team).") }
+                }
+                if let wrong { Section { Text(wrong).foregroundStyle(.red) } }
+            }
+            .navigationTitle("New team").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    if making { ProgressView() } else { Button("Create") { create() }.disabled(!ready) }
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+        .onAppear {
+            computer = model.view.stations.first ?? ""
+            open("")
+        }
+    }
+
+    private func open(_ path: String) {
+        (loading, wrong) = (true, nil)
+        model.folders(on: computer, under: path) { found, problem in
+            loading = false
+            if let found { here = found } else { wrong = problem }
+        }
+    }
+
+    private func create() {
+        guard let here else { return }
+        (making, wrong) = (true, nil)
+        model.newTeam(team, on: computer, folder: makeNew ? here.path + "/" + team : here.path, make: makeNew) { problem in
+            making = false
+            if let problem { wrong = problem } else {
+                model.only = nil
+                model.room = team
+                dismiss()
+            }
+        }
+    }
 }

@@ -196,13 +196,13 @@ pub fn keys(args: &[String]) -> Result<(), String> {
             }
             for (name, k) in &cfg.keys {
                 let uses = used_for(&cfg, &k.secret);
-                println!("  {name}  ({})  {}", providers::PROVIDERS.iter().find(|p| p.id == k.provider).map(|p| p.name).unwrap_or(&k.provider), if uses.is_empty() { "not in use".to_string() } else { format!("used for {}", uses.join(", ")) });
+                println!("  {name}  ({})  {}", airband_core::catalog::current().providers.iter().find(|p| p.id == k.provider).map(|p| p.name).unwrap_or(&k.provider), if uses.is_empty() { "not in use".to_string() } else { format!("used for {}", uses.join(", ")) });
             }
             println!("Change them:  airband setup  |  airband keys add <name> <provider>  |  airband keys remove <name>");
         }
         Some("add") => {
             let (name, provider) = (args.get(1).ok_or("airband keys add <name> <provider>")?, args.get(2).ok_or("airband keys add <name> <provider>")?);
-            let p = providers::PROVIDERS.iter().find(|p| p.id == *provider && p.key).ok_or_else(|| format!("no provider called \"{provider}\" takes a key: {}", providers::PROVIDERS.iter().filter(|p| p.key).map(|p| p.id).collect::<Vec<_>>().join(", ")))?;
+            let p = airband_core::catalog::current().providers.iter().find(|p| p.id == *provider && p.key).ok_or_else(|| format!("no provider called \"{provider}\" takes a key: {}", airband_core::catalog::current().providers.iter().filter(|p| p.key).map(|p| p.id).collect::<Vec<_>>().join(", ")))?;
             if name.starts_with('-') || cfg.keys.contains_key(name) {
                 return Err(format!("\"{name}\" is taken or is not a name."));
             }

@@ -1,0 +1,28 @@
+{
+  "id": "claude",
+  "name": "Claude on this computer, with your Claude login",
+  "offers": [
+    {
+      "job": "summary",
+      "by": {
+        "command": {
+          "argv": [
+            "claude",
+            "-p",
+            "--model",
+            "haiku",
+            "--no-session-persistence",
+            "--strict-mcp-config",
+            "--system-prompt",
+            "You are a dispatcher. Output only what is asked for.",
+            "--tools",
+            ""
+          ]
+        }
+      },
+      "label": "Anthropic Claude Haiku 5.5",
+      "about": "Uses the Claude login on your computer",
+      "preferred": true
+    }
+  ]
+}

@@ -172,5 +172,6 @@ pub(super) fn answer(app: &App, text: &str, re: Option<&str>, verdict: Option<bo
     inner.record(Entry::his(config::random_hex(8), &[session.clone()], shown));
     inner.touch(&entry);
     app.save(&inner);
-    say(if question { "Sent to it." } else if allow { "Allowed." } else { "Refused." })
+    // his answer was taken as he gave it, and is in the chat as his own line: the words only confirm it
+    say(if question { "Sent to it." } else if allow { "Allowed." } else { "Refused." }).map(|r| Reply { done: true, ..r })
 }

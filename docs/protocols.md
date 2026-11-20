@@ -123,7 +123,9 @@ room he was in (`group:<name>`). `label` is the button's words when it is a quic
 ids of files sent with `POST attachment`. `others` are the agents on his screen that another of his computers
 has, each `{ callsign, group, said, ago }`.
 
-A `Reply` is `{ say, listen, speech, ask, elsewhere }`. `say` is spoken back and `listen` asks for the
+A `Reply` is `{ say, done, listen, speech, ask, elsewhere }`. `done` says that what he asked was done whole and
+`say` only confirms it: a radio with a screen already shows his words in the chat, so it shows `say` only when
+`done` is not set. `say` is spoken back and `listen` asks for the
 microphone again. `ask` lists the agents his words could be for, likeliest first, when the tower could not
 tell. `elsewhere` is the callsign of one of `others`: the radio sends his words to that computer.
 
@@ -142,6 +144,8 @@ Chat mode and the rest:
 | `POST unsend` | `{ message }` → `{}`, or `{ error }` | Take back something he said that is still `queued`. |
 | `POST taken` | `{ callsigns }` → `{}` | The names agents go by on his other computers, as his radio shows them ("shop 1"). The tower moves any of its own agents with one of those numbered names to the next free number. A radio tells only the later of two computers. |
 | `POST team` | `{ agent, team }` → `{ callsign, team }`, or `{ error }` | Put an agent in another team, one that exists or a new one. A name he gave the agent goes with it; a number is replaced by the next free one there. |
+| `POST folders` | `{ under }` → `{ path, shown, up, folders }`, or `{ error }` | The folders inside one of his on this computer, by name and without the hidden ones, for choosing where a new team works. `under` empty is his home folder; nothing outside it is listed. |
+| `POST project` | `{ name, folder, make }` → `{ say }`, or `{ error }` | Make a new team: one plain word for its name, and the folder its agents work in (inside his home folder; made first with `make`). A tower that runs agents itself starts the team's first one there with nothing to do yet. |
 | `POST takeover` | `{ agent }` → `{}`, or `{ error }` | Have the tower take over an agent he started in a terminal: that session ends there and carries on under a held launcher of the agent's own harness. Refused while it is in the middle of something. |
 | `POST stop` | `{ agent }` → `{}`, or `{ error }` | Stop what an agent the tower runs is doing. What he said to it meanwhile it then reads as one turn. |
 | `POST end` | `{ agent }` → `{}`, or `{ error }` | End an agent the tower runs: its input is closed, and it finishes and signs off. |

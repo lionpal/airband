@@ -1,0 +1,102 @@
+{
+  "id": "gemini",
+  "name": "Google Gemini",
+  "key": {
+    "name": "Gemini API key",
+    "at": "aistudio.google.com/apikey"
+  },
+  "offers": [
+    {
+      "job": "summary",
+      "by": {
+        "chat": {
+          "cold": true,
+          "shaped": true
+        }
+      },
+      "label": "Google Gemini 3.5 Flash-Lite",
+      "preferred": true,
+      "price": "About $0.40 per 1,000 messages",
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "https://generativelanguage.googleapis.com/v1beta/openai"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "gemini-3.5-flash-lite"
+        }
+      ]
+    },
+    {
+      "job": "voice",
+      "by": "gemini_voice",
+      "label": "Google Gemini 3.8 Flash-Lite TTS",
+      "preferred": true,
+      "price": "About $0.54 per hour of speech",
+      "voices": [
+        {
+          "id": "Leda",
+          "name": "Leda",
+          "about": "Youthful, American",
+          "sample": "https://docs.cloud.google.com/static/text-to-speech/docs/audio/chirp3-hd-leda.wav"
+        },
+        {
+          "id": "Kore",
+          "name": "Kore",
+          "about": "Firm, American",
+          "sample": "https://docs.cloud.google.com/static/text-to-speech/docs/audio/chirp3-hd-kore.wav"
+        },
+        {
+          "id": "Zephyr",
+          "name": "Zephyr",
+          "about": "Bright, American",
+          "sample": "https://docs.cloud.google.com/static/text-to-speech/docs/audio/chirp3-hd-zephyr.wav"
+        },
+        {
+          "id": "Sulafat",
+          "name": "Sulafat",
+          "about": "Warm, American",
+          "sample": "https://docs.cloud.google.com/static/text-to-speech/docs/audio/chirp3-hd-sulafat.wav"
+        }
+      ],
+      "asks": [
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "gemini-3.8-flash-lite-tts"
+        },
+        {
+          "field": "voice",
+          "question": "Voice",
+          "usual": "Leda"
+        }
+      ]
+    },
+    {
+      "job": "ears",
+      "by": {
+        "listener": {
+          "dialect": "gemini"
+        }
+      },
+      "label": "Google Gemini 3.5 Transcribe",
+      "preferred": true,
+      "price": "About $0.54 per hour of speech",
+      "asks": [
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "gemini-3.5-transcribe-live"
+        },
+        {
+          "field": "language",
+          "question": "Language",
+          "usual": "en-US"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,97 @@
+{
+  "id": "openai",
+  "name": "OpenAI",
+  "key": {
+    "name": "OpenAI API key",
+    "at": "platform.openai.com/api-keys"
+  },
+  "offers": [
+    {
+      "job": "summary",
+      "by": {
+        "chat": {
+          "cold": false,
+          "shaped": true
+        }
+      },
+      "label": "OpenAI GPT-6 Luna",
+      "preferred": true,
+      "price": "About $0.11 per 1,000 messages",
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "https://api.openai.com/v1"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "gpt-6-luna"
+        }
+      ]
+    },
+    {
+      "job": "voice",
+      "by": "speech",
+      "label": "OpenAI GPT-4o mini TTS",
+      "voices": [
+        {
+          "id": "coral",
+          "name": "Coral",
+          "sample": "https://cdn.openai.com/API/docs/audio/coral.wav"
+        },
+        {
+          "id": "nova",
+          "name": "Nova",
+          "sample": "https://cdn.openai.com/API/docs/audio/nova.wav"
+        },
+        {
+          "id": "shimmer",
+          "name": "Shimmer",
+          "sample": "https://cdn.openai.com/API/docs/audio/shimmer.wav"
+        }
+      ],
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "https://api.openai.com/v1"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "gpt-4o-mini-tts"
+        },
+        {
+          "field": "voice",
+          "question": "Voice",
+          "usual": "coral"
+        },
+        {
+          "field": "rate",
+          "question": "Samples a second",
+          "usual": "24000"
+        }
+      ]
+    },
+    {
+      "job": "ears",
+      "by": "transcribe",
+      "label": "OpenAI GPT Transcribe",
+      "preferred": true,
+      "price": "About $0.27 per hour of speech",
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "https://api.openai.com/v1"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "gpt-transcribe"
+        }
+      ]
+    }
+  ]
+}

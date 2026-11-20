@@ -1,0 +1,75 @@
+{
+  "id": "local",
+  "name": "A model server on this computer or your network (Ollama, LM Studio, llama.cpp, a voice server)",
+  "offers": [
+    {
+      "job": "summary",
+      "by": {
+        "chat": {
+          "cold": true,
+          "shaped": true
+        }
+      },
+      "label": "Your own model server",
+      "about": "Ollama, LM Studio or llama.cpp, at an address you give",
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "http://localhost:11434/v1"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": ""
+        }
+      ]
+    },
+    {
+      "job": "voice",
+      "by": "speech",
+      "label": "Your own voice server",
+      "about": "At an address you give",
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "http://localhost:8880/v1"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "kokoro"
+        },
+        {
+          "field": "voice",
+          "question": "Voice",
+          "usual": "af_heart"
+        },
+        {
+          "field": "rate",
+          "question": "Samples a second",
+          "usual": "24000"
+        }
+      ]
+    },
+    {
+      "job": "ears",
+      "by": "transcribe",
+      "label": "Your own speech server",
+      "about": "At an address you give",
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "http://localhost:8000/v1"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "whisper-1"
+        }
+      ]
+    }
+  ]
+}

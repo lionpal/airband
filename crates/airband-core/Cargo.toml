@@ -15,3 +15,4 @@ hkdf = "0.12"
 sha2 = "0.10"
 getrandom = "0.3"
 base64 = "0.22"
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }

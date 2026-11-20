@@ -202,6 +202,37 @@ pub struct MoveAgent {
     pub team: String,
 }
 
+/// `POST folders`: the folders inside one of his folders on this computer, for choosing where a new team
+/// works. `under` is a folder's whole path; empty is his home folder. Only his home folder and what is
+/// inside it can be listed.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FoldersAsk {
+    #[serde(default)]
+    pub under: String,
+}
+
+/// The answer: where this is, as a whole path and as he would read it ("~/Companies"), the folder above it
+/// (nothing at his home folder), and the folders inside it by name, without the hidden ones.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Folders {
+    pub path: String,
+    pub shown: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub up: Option<String>,
+    pub folders: Vec<String>,
+}
+
+/// `POST project`: make a new team. Agents started in it work in `folder` (a whole path inside his home
+/// folder), which is made first when `make` is set. The tower then starts the team's first agent with
+/// nothing to do yet, if it runs agents itself. The answer is `{say}` or `{error}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewProject {
+    pub name: String,
+    pub folder: String,
+    #[serde(default)]
+    pub make: bool,
+}
+
 /// `POST takeover`: have the tower take over an agent he started in a terminal of his own. That terminal's
 /// session is ended and the same conversation carried on in a process the tower holds, so his words reach it
 /// as his own. The answer is `{}` or `{error}`.
@@ -272,6 +303,11 @@ pub struct Reply {
     /// Words to speak back ("Sent to shop two."); empty for nothing.
     #[serde(default)]
     pub say: String,
+    /// What he asked was done, whole, and `say` only confirms it. A radio with a screen already shows it
+    /// (his words are in the chat), so it shows `say` only when this is false: then something did not go as
+    /// he asked and he has to see it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub done: bool,
     /// Open the microphone again after speaking.
     #[serde(default)]
     pub listen: bool,

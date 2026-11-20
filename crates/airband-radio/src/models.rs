@@ -5,70 +5,55 @@
 //! only then is it fetched, once, into the app's own folder. The files come from airband's own address,
 //! already in the form the device runs, each checked against its hash before it takes its name.
 //!
-//! Each model is a row of [`MODELS`]: what job it does, what to show, what to fetch and where it goes. A host
+//! Each model is a row of the catalogue (`catalog/models/`, see `airband_core::catalog`): what job it does, what to show, what to fetch and where it goes. A host
 //! offers what [`local_models`] lists and names none itself.
 use super::*;
 use airband_core::providers::Job;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 
-pub(crate) struct Model {
-    pub kind: &'static str,
-    pub name: &'static str,
-    pub job: Job,
-    /// Where its files are kept: each is fetched from here by its path.
-    base: &'static str,
-    /// Each file: its path under the model's folder, its size, and its SHA-256. A file that does not match is
-    /// not kept.
-    files: &'static [(&'static str, u64, &'static str)],
-    /// For a voice model: the voices he can choose between, the usual one first. Each is a name (its file is
-    /// `voices/<name>.safetensors`, and a short clip of it for hearing before anything is fetched is at
-    /// `previews/<name>.m4a` beside the model) and a few words on how it sounds.
-    pub voices: &'static [(&'static str, &'static str)],
-    /// Who made it and under what licence, for the screen that offers it. Its licence asks to be credited.
-    pub credit: &'static str,
+pub(crate) use airband_core::catalog::PhoneModel as Model;
+
+/// The programs in this build that run a model, by the name a row gives its `engine`. `ptts` is the voice
+/// engine compiled in with the `phonon` feature; `host-transcribe` is the host's own (`DeskHost::transcribe`).
+const ENGINES: &[&str] = &[
+    #[cfg(feature = "phonon")]
+    "ptts",
+    "host-transcribe",
+];
+
+/// The models in the catalogue that this build can run.
+pub(crate) fn models() -> impl Iterator<Item = &'static Model> {
+    airband_core::catalog::current().models.iter().filter(|m| ENGINES.contains(&m.engine))
 }
 
-pub(crate) const MODELS: &[Model] = &[
-    // Gradium's Phonon, 31 million parameters, English, in eight-bit weights, with four of its voices.
-    #[cfg(feature = "phonon")]
-    Model {
-        kind: "phonon",
-        name: "Gradium Phonon",
-        job: Job::Voice,
-        base: "https://airband.dev/models/phonon-31m-en/1",
-        files: &[
-            ("config.json", 4_634, "b5d0f88353638370d94035b7d73d7d6577c0554d78f8d7ecfd40490aae39ae85"),
-            ("tokenizer.json", 277_967, "691a00068fa7b989f2f3e5ae5daa2d1a5bb319f2d5360deafcfb19a8bb6e7936"),
-            ("voices/Zoey.safetensors", 256_136, "97c7f8c253413574406ab80dd23f49c3ebb2517163b00a9bf86b9c4cf43e7e23"),
-            ("voices/Harper.safetensors", 256_136, "6b3da6e2d796a20c51af892c482bd6509fb88267a221aff83c870843dee2a123"),
-            ("voices/Freya.safetensors", 256_136, "eb3cd47418349e618408c16bea7153988b3ad04b41a6033039dd474a9a4dcd23"),
-            ("voices/Pippa.safetensors", 256_136, "d41a8f01d6e33450f1ce062d332914da10beee99e585dab531750706f187c48a"),
-            ("model.q8.gguf", 64_512_352, "a7d9aad2cd6dc66473f24a08bc6d2939030ef4d751ef82349361fbef3272dbae"),
-        ],
-        voices: &[("Zoey", "Playful, American"), ("Harper", "Confident, American"), ("Freya", "Bubbly, British"), ("Pippa", "Upbeat, British")],
-        credit: "Phonon by Gradium, Apache 2.0.",
-    },
-    // Fermion Research's Phonon-2.5 English, compiled for the Neural Engine. The host runs it (`transcribe`).
-    Model {
-        kind: "phonon-2.5-en",
-        name: "Fermion Phonon 2.5",
-        job: Job::Ears,
-        base: "https://airband.dev/models/phonon-2.5-en/1",
-        files: &[
-            ("manifest.json", 597, "4682560886674dfa082ee26133e2797ac404ac519dd76704f81d21529ee4e6ad"),
-            ("NOTICE.txt", 1_901, "33c1c49cbad0fc9dd8da7a9b4f7a17f0e86a41c793ae792942e79b48da2255ea"),
-            ("decoder.bin", 13_301_279, "0bc5d72c61d48f3ca731fae0824bd415278c5fb7c0fba6dc41941f9f2951d4ee"),
-            ("Phonon-2.5-English.mlmodelc/analytics/coremldata.bin", 243, "c7916daab8e2af5e111473da8f9f86d222e8dbeed48e19c21e13e33097b6cefb"),
-            ("Phonon-2.5-English.mlmodelc/coremldata.bin", 750, "9e8514ea3128326850181e1b8056d965ab521bbc89dae3ab115e5462752b14d9"),
-            ("Phonon-2.5-English.mlmodelc/metadata.json", 15_619, "26729c24178409c1b6b2d566695fe4bb68d35e36ed5b363e57c23440073cce7d"),
-            ("Phonon-2.5-English.mlmodelc/model.mil", 2_713_692, "fc6b8c27b168f326f1c006bce0e84a7da11787955edd2b09a4af6304d473ff93"),
-            ("Phonon-2.5-English.mlmodelc/weights/weight.bin", 329_432_768, "597947905f317ee9bfed5efb84b60880217584046d5cb193a910c9959fe6e1bb"),
-        ],
-        voices: &[],
-        credit: "Phonon-2.5 English by Fermion Research, from NVIDIA's Parakeet TDT 0.6B v3. CC BY 4.0.",
-    },
-];
+/// Use the newest catalogue this device has kept (in `dir`, a folder of the app's own), if it is newer than
+/// the one built in. Nothing is fetched. Call once at the start.
+#[uniffi::export]
+pub fn load_catalog(dir: String) {
+    let at = Path::new(&dir).join("catalog.json");
+    if let (Ok(doc), Ok(sig)) = (std::fs::read(&at), std::fs::read_to_string(at.with_extension("json.sig"))) {
+        let _ = airband_core::catalog::accept(&doc, &sig);
+    }
+}
+
+/// Fetch the published catalogue and, if it is airband's and newer, use it and keep it in `dir`. True when
+/// what a chooser lists may have changed. Blocks for a few seconds at most; does nothing with no network.
+#[uniffi::export]
+pub fn refresh_catalog(dir: String) -> bool {
+    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(6))).build().into();
+    let get = |url: &str| agent.get(url).call().ok().and_then(|mut r| r.body_mut().read_to_vec().ok());
+    let address = airband_core::catalog::ADDRESS;
+    let (Some(doc), Some(sig)) = (get(address), get(&format!("{address}.sig"))) else { return false };
+    let sig = String::from_utf8_lossy(&sig).to_string();
+    if airband_core::catalog::accept(&doc, &sig) != Ok(true) {
+        return false;
+    }
+    let at = Path::new(&dir).join("catalog.json");
+    let _ = std::fs::write(&at, &doc);
+    let _ = std::fs::write(at.with_extension("json.sig"), sig);
+    true
+}
 
 /// A model the device can run itself, for a settings screen.
 #[derive(Debug, Clone, uniffi::Record)]
@@ -86,7 +71,7 @@ pub struct LocalModel {
 }
 
 pub(crate) fn model(kind: &str) -> Option<&'static Model> {
-    MODELS.iter().find(|m| m.kind == kind)
+    models().find(|m| m.kind == kind)
 }
 /// Where a model's files are, under the app's folder.
 pub(crate) fn folder(dir: &str, m: &Model) -> PathBuf {
@@ -98,7 +83,7 @@ pub(crate) fn fetched(dir: &str, m: &Model) -> bool {
 }
 
 fn listed(dir: &str, job: Job) -> Vec<LocalModel> {
-    MODELS.iter().filter(|m| m.job == job).map(|m| LocalModel { kind: m.kind.into(), name: m.name.into(), megabytes: (m.files.iter().map(|f| f.1).sum::<u64>() as f64 / 1e6).round() as u32, fetched: fetched(dir, m), credit: m.credit.into() }).collect()
+    models().filter(|m| m.job == job).map(|m| LocalModel { kind: m.kind.into(), name: m.name.into(), megabytes: (m.files.iter().map(|f| f.1).sum::<u64>() as f64 / 1e6).round() as u32, fetched: fetched(dir, m), credit: m.credit.into() }).collect()
 }
 
 /// The voices this build can make on the device, and whether each one's model is here. `dir` is a folder of
@@ -224,10 +209,10 @@ mod tests {
 
     #[test]
     fn every_model_says_what_to_fetch_and_who_made_it() {
-        for m in MODELS {
+        for m in models() {
             assert!(!m.files.is_empty() && !m.credit.is_empty() && m.base.starts_with("https://"), "{}", m.kind);
             assert!(m.files.iter().all(|(to, size, sha)| !to.starts_with('/') && *size > 0 && sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_hexdigit())), "{}", m.kind);
-            assert_eq!(MODELS.iter().filter(|o| o.kind == m.kind).count(), 1, "{} is listed twice", m.kind);
+            assert_eq!(models().filter(|o| o.kind == m.kind).count(), 1, "{} is listed twice", m.kind);
         }
         // nothing is here until it is fetched
         let dir = std::env::temp_dir().join(format!("airband-models-{}", random_hex(4))).display().to_string();

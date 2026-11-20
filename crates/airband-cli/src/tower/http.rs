@@ -94,6 +94,86 @@ async fn team(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::M
     })
 }
 
+/// A folder that is his home folder or inside it, as it really is on disk (links followed). Nothing else on
+/// this computer is shown to a radio or worked in at its asking.
+fn inside_home(path: &str) -> Result<std::path::PathBuf, String> {
+    let home = config::home().canonicalize().map_err(|e| e.to_string())?;
+    let at = if path.trim().is_empty() { home.clone() } else { std::path::Path::new(path).canonicalize().map_err(|_| "That folder is not there.".to_string())? };
+    if !at.starts_with(&home) || !at.is_dir() {
+        return Err("Only folders inside your home folder can be used.".into());
+    }
+    Ok(at)
+}
+
+/// The folders inside one of his, for choosing where a new team works.
+async fn folders(Json(ask): Json<airband_core::radio::FoldersAsk>) -> Json<Value> {
+    let listed = inside_home(&ask.under).and_then(|at| {
+        let home = config::home().canonicalize().map_err(|e| e.to_string())?;
+        let mut inside: Vec<String> = std::fs::read_dir(&at).map_err(|e| e.to_string())?.flatten().filter(|e| e.path().is_dir()).filter_map(|e| e.file_name().into_string().ok()).filter(|n| !n.starts_with('.')).collect();
+        inside.sort_by_key(|n| n.to_lowercase());
+        let shown = match at.strip_prefix(&home) {
+            Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+            Ok(rest) => format!("~/{}", rest.display()),
+            Err(_) => at.display().to_string(),
+        };
+        Ok(airband_core::radio::Folders { path: at.display().to_string(), shown, up: (at != home).then(|| at.parent().map(|p| p.display().to_string())).flatten(), folders: inside })
+    });
+    Json(match listed {
+        Ok(f) => serde_json::to_value(f).unwrap(),
+        Err(why) => json!({ "error": why }),
+    })
+}
+
+/// He made a new team from a radio: a name, and the folder its agents work in.
+async fn project(State(app): State<Arc<App>>, Json(new): Json<airband_core::radio::NewProject>) -> Json<Value> {
+    let name = new.name.trim().to_lowercase();
+    // a team's name is part of what its agents are called, and is said aloud: short, and plain
+    if name.is_empty() || name.chars().count() > 24 || !name.chars().all(|c| c.is_alphanumeric() || c == '-') {
+        return Json(json!({ "error": "A team\u{2019}s name is one word: letters, numbers and dashes." }));
+    }
+    let folder = if new.make {
+        let wanted = std::path::PathBuf::from(&new.folder);
+        match wanted.parent().map(|p| inside_home(&p.display().to_string())) {
+            Some(Ok(parent)) => match wanted.file_name().filter(|n| !n.to_string_lossy().starts_with('.')) {
+                Some(last) => {
+                    let made = parent.join(last);
+                    if let Err(e) = std::fs::create_dir(&made) {
+                        if !made.is_dir() {
+                            return Json(json!({ "error": format!("That folder could not be made: {e}") }));
+                        }
+                    }
+                    Ok(made)
+                }
+                None => Err("That is not a name for a folder.".to_string()),
+            },
+            Some(Err(why)) => Err(why),
+            None => Err("That is not a folder.".to_string()),
+        }
+    } else {
+        inside_home(&new.folder)
+    };
+    let folder = match folder {
+        Ok(f) => f.display().to_string(),
+        Err(why) => return Json(json!({ "error": why })),
+    };
+    {
+        let mut inner = app.inner.lock().unwrap();
+        if inner.launchable(&app.cfg).get(&name).is_some_and(|has| *has != folder) {
+            return Json(json!({ "error": format!("There is already a team called {name}.") }));
+        }
+        inner.projects.insert(name.clone(), folder.clone());
+        app.save(&inner);
+    }
+    log(format!("a radio made the team {name}, in {folder}"));
+    // its first agent, with nothing to do yet, when the tower runs agents itself: the team is then there to see
+    let held = app.cfg.launcher_for(None).is_some_and(|(_, l)| l.held.is_some());
+    if !held {
+        return Json(json!({ "say": format!("{name} is ready. Say launch {name}, then what it should do.") }));
+    }
+    let reply = launch::launch(&app, &name, &Idea { tool: None, project: Some(name.clone()), model: None, effort: None, task: String::new() }).await;
+    Json(json!({ "say": reply.say }))
+}
+
 /// He asked the tower to take over an agent he started in a terminal.
 async fn takeover(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::TakeOver>) -> Json<Value> {
     Json(match held::take_over(&app, &to.agent).await {
@@ -550,6 +630,8 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/radio/accounts", get(accounts_list))
         .route("/v1/radio/accounts/use", post(accounts_use))
         .route("/v1/radio/team", post(team))
+        .route("/v1/radio/folders", post(folders))
+        .route("/v1/radio/project", post(project))
         .route("/v1/radio/takeover", post(takeover))
         .route("/v1/radio/stop", post(stop_agent))
         .route("/v1/radio/unsend", post(unsend))

@@ -1,0 +1,16 @@
+{
+  "id": "command",
+  "name": "A command of your own",
+  "offered": false,
+  "offers": [
+    {
+      "job": "summary",
+      "by": {
+        "command": {
+          "argv": []
+        }
+      },
+      "label": "A command of your own"
+    }
+  ]
+}

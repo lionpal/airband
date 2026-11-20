@@ -1,0 +1,33 @@
+{
+  "id": "openrouter",
+  "name": "OpenRouter",
+  "key": {
+    "name": "OpenRouter API key",
+    "at": "openrouter.ai/keys"
+  },
+  "offers": [
+    {
+      "job": "summary",
+      "by": {
+        "chat": {
+          "cold": true,
+          "shaped": false
+        }
+      },
+      "label": "OpenRouter",
+      "price": "About $0.40 per 1,000 messages",
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "https://openrouter.ai/api/v1"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "google/gemini-3.5-flash-lite"
+        }
+      ]
+    }
+  ]
+}

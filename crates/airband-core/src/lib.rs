@@ -7,6 +7,7 @@
 //!   that can read none of it. [`pairing`] is the link that sets a radio up for either route.
 pub mod agent;
 pub mod audio;
+pub mod catalog;
 pub mod pairing;
 pub mod providers;
 pub mod radio;

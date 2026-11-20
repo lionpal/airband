@@ -1,0 +1,50 @@
+{
+  "kind": "phonon-2.5-en",
+  "name": "Fermion Phonon 2.5",
+  "job": "ears",
+  "engine": "host-transcribe",
+  "base": "https://airband.dev/models/phonon-2.5-en/1",
+  "files": [
+    [
+      "manifest.json",
+      597,
+      "4682560886674dfa082ee26133e2797ac404ac519dd76704f81d21529ee4e6ad"
+    ],
+    [
+      "NOTICE.txt",
+      1901,
+      "33c1c49cbad0fc9dd8da7a9b4f7a17f0e86a41c793ae792942e79b48da2255ea"
+    ],
+    [
+      "decoder.bin",
+      13301279,
+      "0bc5d72c61d48f3ca731fae0824bd415278c5fb7c0fba6dc41941f9f2951d4ee"
+    ],
+    [
+      "Phonon-2.5-English.mlmodelc/analytics/coremldata.bin",
+      243,
+      "c7916daab8e2af5e111473da8f9f86d222e8dbeed48e19c21e13e33097b6cefb"
+    ],
+    [
+      "Phonon-2.5-English.mlmodelc/coremldata.bin",
+      750,
+      "9e8514ea3128326850181e1b8056d965ab521bbc89dae3ab115e5462752b14d9"
+    ],
+    [
+      "Phonon-2.5-English.mlmodelc/metadata.json",
+      15619,
+      "26729c24178409c1b6b2d566695fe4bb68d35e36ed5b363e57c23440073cce7d"
+    ],
+    [
+      "Phonon-2.5-English.mlmodelc/model.mil",
+      2713692,
+      "fc6b8c27b168f326f1c006bce0e84a7da11787955edd2b09a4af6304d473ff93"
+    ],
+    [
+      "Phonon-2.5-English.mlmodelc/weights/weight.bin",
+      329432768,
+      "597947905f317ee9bfed5efb84b60880217584046d5cb193a910c9959fe6e1bb"
+    ]
+  ],
+  "credit": "Phonon-2.5 English by Fermion Research, from NVIDIA's Parakeet TDT 0.6B v3. CC BY 4.0."
+}
