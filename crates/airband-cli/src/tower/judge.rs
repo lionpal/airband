@@ -149,6 +149,12 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
          without saying what each one is, in a few words each: \"Before going public: delete the old logs, pick a \
          commit email, decide on the account code.\" If naming them takes more than one sentence, take the room.\n\
          - Keep only: the result; anything left undone or gone wrong; the one thing he must decide.\n\
+         - Always keep anything the work is waiting on that only he can do (a request he has to file, an approval, \
+         a payment, a sign-in, a setting only his account can change, a choice he has not made), whether or not \
+         the agent has stopped for it: an agent that went on with other work has still left that part blocked on \
+         him. Say it in its own sentence, beginning \"Waiting on you:\", with what he has to do and what it \
+         unblocks (\"Waiting on you: request the CarPlay entitlement from Apple, before the car screen can ship.\"). \
+         If there are several, name each. This comes before detail about what was done.\n\
          - Always keep what the work left outside the conversation, each with the number or name that finds it: \
          a push or commit (its short id), a pull request or ticket (its number), a build or release (its number or \
          version, and where it went), a deploy (to what), a published page or file, a message sent to someone. \
