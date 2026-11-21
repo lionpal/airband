@@ -90,6 +90,13 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
             links = dev.split(separator: " ").map(String.init) // several links, separated by spaces
         }
         #endif
+        #if DEBUG
+        // development only: `-airband.devMic YES` opens the microphone a few seconds after launch, as a tap on
+        // the big button would, for a run nobody is there to tap
+        if UserDefaults.standard.bool(forKey: "airband.devMic") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in Task { await self?.talk() } }
+        }
+        #endif
         let center = NotificationCenter.default
         center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.setFront(true)
