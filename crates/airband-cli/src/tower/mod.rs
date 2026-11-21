@@ -376,6 +376,8 @@ pub fn run(cfg: Config) -> Result<(), String> {
     } else if crate::vault::settle() {
         log("the keys are now in the keychain");
     }
+    // tools that have no hooks and are watched: OpenCode's server, when it is running on this computer
+    std::thread::spawn(crate::adapters::opencode::watch);
     // a newer catalogue, now and twice a day: what a phone is offered for this computer comes from it
     std::thread::spawn(|| loop {
         if crate::catalog::refresh() {
