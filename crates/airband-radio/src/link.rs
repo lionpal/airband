@@ -9,6 +9,8 @@ pub(crate) const POLL_TIMEOUT: Duration = Duration::from_secs(50);
 pub(crate) enum Route {
     Direct { url: String, auth: String, radio: String },
     Relay { relay: String, keys: Keys },
+    /// Sealed like the relay's, with no relay: only ever straight to the tower's own addresses.
+    Near { keys: Keys },
 }
 
 /// Which way a request was tried.
@@ -187,11 +189,16 @@ impl Link {
     /// in a call by it. Through a relay the tower knows a radio by its pairing and this is not sent.
     pub(crate) fn new(pairing: Pairing, radio: &str) -> Result<Self, String> {
         let agent = crate::net::agent(POLL_TIMEOUT);
+        let mut at = Vec::new();
         let route = match pairing {
+            Pairing::Near { at: given, secret } => {
+                at = given;
+                Route::Near { keys: Keys::derive(&secret)? }
+            }
             Pairing::Direct { url, token } => Route::Direct { url, auth: format!("Bearer {token}"), radio: radio.to_string() },
             Pairing::Relay { relay, secret } => Route::Relay { relay, keys: Keys::derive(&secret)? },
         };
-        Ok(Link { route, agent, near: crate::net::agent_quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct::default()), trail: Mutex::new(Default::default()), armed: Mutex::new(Vec::new()) })
+        Ok(Link { route, agent, near: crate::net::agent_quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct { addrs: at, ..Direct::default() }), trail: Mutex::new(Default::default()), armed: Mutex::new(Vec::new()) })
     }
 
     /// The tower said where it can be reached without the relay. Anything new is tried at the next request.
@@ -204,7 +211,7 @@ impl Link {
 
     /// Is the tower being reached straight, on its own network, and not through the relay?
     pub(crate) fn is_direct(&self) -> bool {
-        matches!(self.route, Route::Direct { .. }) || self.direct.lock().unwrap().good.is_some()
+        matches!(self.route, Route::Direct { .. } | Route::Near { .. }) || self.direct.lock().unwrap().good.is_some()
     }
 
     /// The tower has given addresses that have not been tried yet (or not lately): the next request finds out
@@ -281,7 +288,8 @@ impl Link {
         }
         let mut d = self.direct.lock().unwrap();
         d.good = None;
-        d.rest_until = Some(std::time::Instant::now() + Duration::from_secs(40));
+        // with a relay to fall back on, a dead address is left alone for a while; with none it is the only way
+        d.rest_until = matches!(self.route, Route::Relay { .. }).then(|| std::time::Instant::now() + Duration::from_secs(40));
         Some(Err(last))
     }
 
@@ -320,6 +328,7 @@ impl Link {
                 self.note(steps, ordered, began, &what, Way::Paired, got.as_ref().map(|(status, _)| *status).map_err(Clone::clone));
                 got
             }
+            Route::Near { keys } => self.straight(keys, method, &path, &body, ordered, steps).unwrap_or(Err(LinkError::Unreachable(Way::Near))),
             Route::Relay { relay, keys } => {
                 // Straight to the tower when it is on this network: no trip to the relay and back, and it works
                 // when the relay does not. Something he said goes by the relay first all the same, so it keeps

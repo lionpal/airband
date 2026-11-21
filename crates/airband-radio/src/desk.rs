@@ -1367,7 +1367,7 @@ pub struct OpenedNotice {
 /// What names a computer to this device, from its pairing link: nothing secret, the same every time.
 fn station_key(link: &str) -> Option<String> {
     match Pairing::parse(link).ok()? {
-        Pairing::Relay { secret, .. } => Keys::derive(&secret).ok().map(|k| k.channel),
+        Pairing::Relay { secret, .. } | Pairing::Near { secret, .. } => Keys::derive(&secret).ok().map(|k| k.channel),
         Pairing::Direct { .. } => None,
     }
 }
