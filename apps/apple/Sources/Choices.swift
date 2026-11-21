@@ -59,7 +59,7 @@ extension ChoiceCard where Extra == EmptyView {
 }
 
 /// What a service needs before it can be used: its key unless one is already kept, and anything else it is
-/// told. "Use it" has the core try it with a real call.
+/// told. "Use it" has the core test the key with its service first (a request that costs nothing); a key that does not pass is not kept.
 struct ServiceEntry: View {
     @EnvironmentObject var model: RadioModel
     let choice: Choice
