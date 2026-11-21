@@ -28,9 +28,13 @@
       "id": "flash",
       "job": "voice",
       "by": {
-        "interface": "elevenlabs",
+        "interface": "timed-stream",
         "with": {
-          "url": "https://api.elevenlabs.io/v1"
+          "url": "https://api.elevenlabs.io/v1/text-to-speech/{voice}/stream/with-timestamps?output_format=pcm_24000",
+          "auth": {
+            "header": "xi-api-key"
+          },
+          "rate": 24000
         }
       },
       "label": "ElevenLabs Flash 2.5",
@@ -79,7 +83,14 @@
       "id": "scribe",
       "job": "ears",
       "by": {
-        "interface": "elevenlabs"
+        "interface": "chunks",
+        "with": {
+          "pass": "https://api.elevenlabs.io/v1/single-use-token/realtime_scribe",
+          "stream": "wss://api.elevenlabs.io/v1/speech-to-text/realtime",
+          "auth": {
+            "header": "xi-api-key"
+          }
+        }
       },
       "label": "ElevenLabs Scribe v3 Live",
       "preferred": true,

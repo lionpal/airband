@@ -36,7 +36,7 @@ struct Upload {
 }
 
 /// Every upload interface this build speaks.
-const UPLOADS: &[Upload] = &[Upload { is: Interface { name: "transcribe", can: &[], told: &[] }, hear: openai_transcribe }];
+const UPLOADS: &[Upload] = &[Upload { is: Interface { name: "transcribe", can: &[], told: &[] }, hear: transcriptions }];
 
 fn upload(offer: &Offer) -> Option<&'static Upload> {
     UPLOADS.iter().find(|u| offer.job == Job::Ears && u.is.fits(offer))
@@ -61,7 +61,7 @@ pub fn transcribe(with: &Use, wav: &[u8], phrases: &[String]) -> Result<String, 
 }
 
 /// OpenAI's transcription interface: one multipart form with the file and the model.
-fn openai_transcribe(with: &Use, by: &By, wav: &[u8], phrases: &[String]) -> Result<String, String> {
+fn transcriptions(with: &Use, by: &By, wav: &[u8], phrases: &[String]) -> Result<String, String> {
     let set = |field: &str| with.get(Job::Ears, field);
     let agent = crate::net::agent(Duration::from_secs(60));
     let edge = format!("airband{}", airband_core::relay::random_hex(12));

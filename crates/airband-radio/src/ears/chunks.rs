@@ -1,31 +1,30 @@
-//! ElevenLabs' realtime transcription.
+//! Listening by audio chunks with manual commits: each piece of audio goes up as base64 in JSON, what he has
+//! said so far comes back whole each time (`partial_transcript`), and a stretch is closed when it is asked to
+//! be (`commit` on a final piece of silence, when he has finished) or by the service itself after about half a
+//! minute of speech (`committed_transcript`). Where the service is, where its pass is asked for and how the
+//! key is presented are its row's to say (`stream`, `pass`, `auth`).
 use super::*;
 use crate::ears_stream::{Socket, Wire, dial, read_briefly};
 use serde_json::json;
 use tungstenite::Message;
 use tungstenite::client::IntoClientRequest;
 
-pub(super) const LISTENER: Listener = Listener { is: Interface { name: "elevenlabs", can: &[], told: &[] }, wire: &WIRE, upload: None, pass, once: true };
+pub(super) const LISTENER: Listener = Listener { is: Interface { name: "chunks", can: &[], told: &["stream", "pass", "auth"] }, wire: &WIRE, pass, once: true };
 
 const WIRE: Wire = Wire { connect, audio: |_, bytes| chunk(bytes, false), end: |_| chunk(&[0u8; 3200], true), read, header: false, reopens: false };
 
-/// ElevenLabs' token for its realtime transcription: good for a quarter of an hour, and for one connection.
-fn pass(_set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
-    let mut res = crate::net::agent(Duration::from_secs(8)).post("https://api.elevenlabs.io/v1/single-use-token/realtime_scribe").header("xi-api-key", key.trim()).header("Content-Length", "0").send_empty().map_err(|_| "Could not reach ElevenLabs.".to_string())?;
-    match res.status().as_u16() {
-        200 => res.body_mut().read_json::<Value>().ok().and_then(|v| v["token"].as_str().map(String::from)).ok_or_else(|| "ElevenLabs gave no pass.".to_string()),
-        401 | 403 => Err("ElevenLabs did not accept that key.".into()),
-        code => Err(format!("ElevenLabs said no ({code}).")),
-    }
+/// The service's token: asked for with nothing in the request, good for a quarter of an hour and for one
+/// connection.
+fn pass(by: &By, name: &str, set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
+    let mut res = ask_pass(by, name, set, key, None)?;
+    res.body_mut().read_json::<Value>().ok().and_then(|v| v["token"].as_str().map(String::from)).ok_or_else(|| format!("{name} gave no pass to listen with."))
 }
 
-/// ElevenLabs' realtime transcription. The pass goes in the address. A stretch is closed when it is asked to
-/// be (`commit` on a final piece of silence, when he has finished), or by the service itself after about half
-/// a minute of speech; what he has said so far comes back whole each time until then.
+/// The pass goes in the address, with the model, the language and the names he is likely to say.
 fn connect(grant: &Pass, _request: &str) -> Result<Socket, ()> {
-    const HOST: &str = "api.elevenlabs.io";
+    let (stream, host) = grant.stream()?;
     let enc = |s: &str| s.bytes().map(|b| if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' { (b as char).to_string() } else { format!("%{b:02X}") }).collect::<String>();
-    let mut url = format!("wss://{HOST}/v1/speech-to-text/realtime?model_id={}&audio_format=pcm_16000&commit_strategy=manual&token={}", enc(&grant.get("model")), enc(&grant.token));
+    let mut url = format!("{stream}?model_id={}&audio_format=pcm_16000&commit_strategy=manual&token={}", enc(&grant.get("model")), enc(&grant.token));
     // its language codes are two letters ("en"), where a setting may say "en-US"
     if let Some(language) = grant.get("language").split('-').next().filter(|l| !l.is_empty()) {
         url.push_str(&format!("&language_code={}", enc(language)));
@@ -34,7 +33,7 @@ fn connect(grant: &Pass, _request: &str) -> Result<Socket, ()> {
     for term in grant.phrases.iter().take(50) {
         url.push_str(&format!("&keyterms={}", enc(term)));
     }
-    let mut socket = dial(HOST, url.into_client_request().map_err(|_| ())?)?;
+    let mut socket = dial(&host, url.into_client_request().map_err(|_| ())?)?;
     // it says when the session has started, or why it will not
     loop {
         let m = socket.read().map_err(|_| ())?;

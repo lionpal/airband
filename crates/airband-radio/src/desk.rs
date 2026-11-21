@@ -421,9 +421,6 @@ impl RadioHost for StationHost {
     fn listen(&self) -> Option<String> {
         None
     }
-    fn own_voice(&self) -> bool {
-        false
-    }
     fn told(&self, text: String) {
         // what he chose stays chosen and now says why it did not work: the screens that show it are told too
         self.shared.host.note(text);
@@ -1637,9 +1634,6 @@ mod tests {
     impl RadioHost for Quiet {
         fn told(&self, _: String) {}
         fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
-        fn own_voice(&self) -> bool {
-            false
-        }
         fn unplaced(&self, _: Outgoing, _: Option<String>, _: Vec<String>) {}
         fn speak(&self, _: String) {}
         fn listen(&self) -> Option<String> {

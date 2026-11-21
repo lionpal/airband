@@ -32,7 +32,7 @@ pub(crate) fn poll(jobs: Sender<Job>, link: Arc<Link>, host: Arc<dyn RadioHost>,
             continue;
         }
         // with no voice chosen there is nothing to read with: nothing is asked for, and it all stays in the chat
-        if !voice::can_speak(&*host, &senses.mouth) {
+        if !voice::can_speak(&senses.mouth) {
             online = false;
             joined = true;
             wake.wait(Duration::from_secs(5));

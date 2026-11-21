@@ -81,12 +81,11 @@ pub enum RadioStatus {
 /// What the host app provides. Calls arrive on the radio's own thread, one at a time, and may block.
 #[uniffi::export(with_foreign)]
 pub trait RadioHost: Send + Sync {
-    /// Say this the host's own way; return when it has finished. Only asked of a host that says its own way
-    /// is worth using (`own_voice`): a terminal, which prints.
+    /// Show this, for a radio started on its own ([`Radio::start`]: a terminal, which prints); return when it
+    /// has. Never asked of a phone, where what speaks is what he chose in the app.
     fn speak(&self, text: String);
-    /// Take what he says the host's own way, or nothing if he stayed silent. Only asked of a host that says
-    /// its own way is worth using (`own_voice`) and has no microphone to read: a terminal, which takes a
-    /// typed line.
+    /// Take a line he types, for a radio started on its own (a terminal), or nothing if he gave none. Never
+    /// asked of a phone, where what listens is what he chose in the app.
     fn listen(&self) -> Option<String>;
     /// For the screen.
     fn status(&self, status: RadioStatus);
@@ -119,10 +118,6 @@ pub trait RadioHost: Send + Sync {
     /// gives). Nothing when the host cannot: it has no such engine, or the model would not load. Blocks while
     /// it works.
     fn run_model(&self, engine: String, folder: String, job: ChoiceJob, input: Vec<u8>) -> Option<Vec<u8>>;
-    /// Are this host's own `speak` and `listen` worth using? A terminal's are (it prints, and a typed line is
-    /// what he "said"). A phone's are not: what listens and what speaks there are what he chose in the app
-    /// (a model on the phone, or a service with his key), and with nothing chosen there is neither.
-    fn own_voice(&self) -> bool;
     /// Something he chose on this device (what listens, what speaks) could not do its job just now, and why.
     /// It stays chosen. A host with a screen says so; one without need not.
     fn told(&self, text: String);
@@ -482,8 +477,12 @@ impl Radio {
     /// unsent messages and the recent chat are kept across restarts; empty keeps nothing.
     #[uniffi::constructor]
     pub fn start(link: String, data_dir: String, host: Arc<dyn RadioHost>) -> Result<Arc<Self>, RadioError> {
-        // on its own, with nothing chosen on the device: nothing listens and nothing speaks but the host itself
-        Self::start_with(link, data_dir, host, Arc::default())
+        // a radio on its own is a text radio (a terminal): what is said is shown by the host and what he says
+        // is a line he types. That is what it is started with, as its choice for each.
+        let senses = Senses::default();
+        senses.mouth.set(Some(mouth::Own::Host));
+        senses.ears.set(Some(ears::Own::Host));
+        Self::start_with(link, data_dir, host, Arc::new(senses))
     }
 
     /// Chat, for a bad connection: take what he typed and keep trying until the tower has it. Returns at
@@ -559,7 +558,7 @@ impl Radio {
         let mine = self.reading.fetch_add(1, Ordering::SeqCst) + 1;
         // With no voice chosen nothing can read it: he is told where to choose one, before anything is asked
         // of his computer.
-        if !voice::can_speak(&*self.host, &self.senses.mouth) {
+        if !voice::can_speak(&self.senses.mouth) {
             self.host.told(voice::NOTHING_CHOSEN.into());
             return false;
         }

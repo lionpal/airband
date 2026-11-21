@@ -27,10 +27,17 @@
       "id": "neural-voices",
       "job": "voice",
       "by": {
-        "interface": "azure",
+        "interface": "ssml",
         "with": {
           "url": "https://{region}.tts.speech.microsoft.com/cognitiveservices/v1",
-          "language": "en-US"
+          "language": "en-US",
+          "auth": {
+            "header": "ocp-apim-subscription-key"
+          },
+          "headers": {
+            "X-Microsoft-OutputFormat": "raw-24khz-16bit-mono-pcm"
+          },
+          "rate": 24000
         }
       },
       "label": "Microsoft Azure Speech",
@@ -77,7 +84,14 @@
       "id": "speech-to-text",
       "job": "ears",
       "by": {
-        "interface": "azure"
+        "interface": "usp",
+        "with": {
+          "pass": "https://{region}.api.cognitive.microsoft.com/sts/v1.0/issueToken",
+          "stream": "wss://{region}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1",
+          "auth": {
+            "header": "ocp-apim-subscription-key"
+          }
+        }
       },
       "label": "Microsoft Azure Speech",
       "preferred": true,

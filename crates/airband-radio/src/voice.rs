@@ -1,7 +1,7 @@
 //! Outbound: saying something aloud. The words come from his computer; the sound is made on this device, by the
 //! voice he chose on it ([`crate::mouth`]): a model here, or a service reached with a key of his kept here. His
-//! computer makes no sound. A host that speaks its own way (a terminal prints) does that. With no voice chosen
-//! nothing is said, and the reason goes back so what was not heard is not counted as heard.
+//! computer makes no sound. With no voice chosen nothing is said, and the reason goes back so what was not
+//! heard is not counted as heard. Nothing ever speaks in place of what he chose.
 use super::*;
 
 /// Why nothing was said, when no voice is chosen. Also what he is told where he turns reading aloud on.
@@ -15,9 +15,9 @@ pub(crate) enum Said {
     Nothing(String),
 }
 
-/// Is there anything to speak with: a voice he chose here, or a host that speaks its own way?
-pub(crate) fn can_speak(host: &dyn RadioHost, mouth: &crate::mouth::Mouth) -> bool {
-    mouth.ready() || host.own_voice()
+/// Is there anything to speak with?
+pub(crate) fn can_speak(mouth: &crate::mouth::Mouth) -> bool {
+    mouth.ready()
 }
 
 /// Say `text` with the voice he chose on this device.
@@ -41,10 +41,6 @@ pub(crate) fn say_until(host: &dyn RadioHost, mouth: &crate::mouth::Mouth, text:
                 Said::Nothing(why)
             }
         };
-    }
-    if host.own_voice() {
-        host.speak(text.to_string());
-        return Said::Aloud;
     }
     Said::Nothing(NOTHING_CHOSEN.into())
 }

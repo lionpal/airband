@@ -44,9 +44,6 @@ impl RadioHost for Terminal {
     fn run_model(&self, _: String, _: String, _: airband_radio::ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
         None
     }
-    fn own_voice(&self) -> bool {
-        true
-    }
     fn unplaced(&self, message: airband_radio::Outgoing, elsewhere: Option<String>, ask: Vec<String>) {
         match elsewhere {
             Some(callsign) => println!("Not sent: “{}” is for {callsign}, on another computer.", message.text),
@@ -124,9 +121,6 @@ impl RadioHost for Silent {
     fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
     fn run_model(&self, _: String, _: String, _: airband_radio::ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
         None
-    }
-    fn own_voice(&self) -> bool {
-        true
     }
     fn unplaced(&self, message: airband_radio::Outgoing, elsewhere: Option<String>, ask: Vec<String>) {
         match elsewhere {
