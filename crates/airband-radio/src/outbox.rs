@@ -128,6 +128,7 @@ mod tests {
     #[derive(Default)]
     struct Watching(Mutex<Vec<(Vec<Outgoing>, Option<String>)>>);
     impl RadioHost for Watching {
+        fn told(&self, _: String) {}
         fn outbox(&self, waiting: Vec<Outgoing>, note: Option<String>) {
             self.0.lock().unwrap().push((waiting, note));
         }

@@ -45,6 +45,9 @@ fn wav(rate: u32, pcm: &[u8]) -> Vec<u8> {
 }
 
 impl RadioHost for Terminal {
+    fn told(&self, text: String) {
+        println!("{text}");
+    }
     fn speak(&self, text: String) {
         println!("🔊 {text}");
         if self.quiet {
@@ -192,6 +195,7 @@ pub fn run(cfg: &Config, args: &[String]) -> Result<(), String> {
 /// Says nothing; the flag is set when the outbox has emptied.
 struct Silent(Arc<AtomicBool>);
 impl RadioHost for Silent {
+    fn told(&self, _: String) {}
     fn speak(&self, _: String) {}
     fn listen(&self) -> Option<String> {
         None

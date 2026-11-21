@@ -27,6 +27,7 @@ use airband_core::radio::{Feed, Heard, Kind, Reply, Transmission, Utterance};
 use airband_core::relay::{Answer, Call, Direction, Keys, random_hex};
 
 mod call;
+mod choices;
 mod desk;
 mod ears;
 mod ears_stream;
@@ -41,11 +42,12 @@ mod voice;
 pub mod voices;
 
 use call::*;
+pub use choices::{Choice, ChoiceJob, ChoicePlace, ChoiceState};
 pub use desk::*;
 pub use ears::try_listening;
 pub use models::{catalog_load, catalog_refresh};
-pub use models::{LocalModel, VoiceChoice, fetch_local_model, local_listeners, local_model_progress, local_voice_choices, local_voices, remove_local_model};
-pub use mouth::{Service, ServiceAsk, VoiceSample, check_service_voice, listening_services, own_voice_sample, reading_services, set_local_voice, set_service_voice, voice_services};
+pub use models::VoiceChoice;
+pub use mouth::{CodingTool, ServiceAsk, VoiceSample, coding_tools, own_voice_sample};
 use link::*;
 use outbox::*;
 use store::*;
@@ -107,6 +109,9 @@ pub trait RadioHost: Send + Sync {
     /// what he "said"). A phone's are not: its own recognition and voice are too poor to hand him, so with no
     /// listening service there is no listening, and with no audio from the tower nothing is spoken.
     fn own_voice(&self) -> bool;
+    /// Something he chose on this device (what listens, what speaks) could not do its job just now, and why.
+    /// It stays chosen. A host with a screen says so; one without need not.
+    fn told(&self, text: String);
     /// The tower did not deliver this message of his. Either it is for an agent another of his computers has
     /// (`elsewhere`, a callsign), or the tower could not tell who it is for (`ask`: who it might be, likeliest
     /// first). A host with a screen offers the choice; nothing more is sent until he makes it.
@@ -502,15 +507,18 @@ impl Radio {
     }
     fn read(&self, id: &str, part: &str) -> bool {
         let mine = self.reading.fetch_add(1, Ordering::SeqCst) + 1;
-        // with a voice of the device's own, the tower is asked for the words and they are said here
+        // With a voice of the device's own, the tower is asked for the words and they are said here. When that
+        // voice cannot speak he is told why, and nothing else reads it in its place.
         if mouth::ready() {
-            if let Ok((200, v)) = self.link.request("GET", &format!("/message/{id}?form=spoken{part}"), None) {
-                if v["text"].as_str().is_some_and(|text| mouth::say(&*self.host, text, &|| self.reading.load(Ordering::SeqCst) != mine)) {
-                    return true;
+            let Ok((200, v)) = self.link.request("GET", &format!("/message/{id}?form=spoken{part}"), None) else { return false };
+            let Some(text) = v["text"].as_str() else { return false };
+            return match mouth::say(&*self.host, text, &|| self.reading.load(Ordering::SeqCst) != mine) {
+                Ok(()) => true,
+                Err(why) => {
+                    self.host.told(why);
+                    false
                 }
-                // it could not speak: the tower's voice reads this one, and everything after
-                mouth::give_up();
-            }
+            };
         }
         let speech = match self.link.request("GET", &format!("/message/{id}?form=speech{part}"), None) {
             Ok((200, v)) => v["speech"].as_str().map(String::from),
@@ -725,6 +733,15 @@ impl Radio {
     /// Choose what reads for this tower. Blocks while the tower tries it with a real call.
     pub(crate) fn set_reads(&self, wanted: &airband_core::radio::SetReads) -> Result<(), RadioError> {
         self.ask("/reads", serde_json::to_value(wanted).unwrap())
+    }
+
+    /// What this computer can read with, and what it reads with now, by its own account. Nothing when it
+    /// cannot be reached, or is a version from before it could say. Blocks.
+    pub(crate) fn reads_offered(&self) -> Option<airband_core::radio::ReadsOffered> {
+        match self.link.request("GET", "/reads", None) {
+            Ok((200, v)) => serde_json::from_value(v).ok(),
+            _ => None,
+        }
     }
 
     /// The folders inside one of his on this computer. Blocks.

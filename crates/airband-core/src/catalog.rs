@@ -94,6 +94,22 @@ pub struct PhoneModel {
     /// Who made it and under what licence, for the screen that offers it.
     #[serde(default)]
     pub credit: String,
+    /// What its engine is told about this model, so that another model for the same engine is a row and no
+    /// code: for a voice, the `rate` it speaks at, its `lang` and its `quant`. And `prepare`: when the
+    /// device has work of its own to do before the model first runs, the sentence to show while it does.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub with: std::collections::BTreeMap<String, Value>,
+}
+
+impl PhoneModel {
+    /// One of the things its engine is told, as text. Empty when the row does not say.
+    pub fn told(&self, name: &str) -> String {
+        match self.with.get(name) {
+            Some(Value::String(s)) => s.clone(),
+            Some(Value::Number(n)) => n.to_string(),
+            _ => String::new(),
+        }
+    }
 }
 
 /// A program the tower fetches once and runs beside itself, for a provider whose model runs on his computer.

@@ -5,8 +5,9 @@
 //! only then is it fetched, once, into the app's own folder. The files come from airband's own address,
 //! already in the form the device runs, each checked against its hash before it takes its name.
 //!
-//! Each model is a row of the catalogue (`catalog/models/`, see `airband_core::catalog`): what job it does, what to show, what to fetch and where it goes. A host
-//! offers what [`local_models`] lists and names none itself.
+//! Each model is a row of the catalogue (`catalog/models/`, see `airband_core::catalog`): what job it does,
+//! what to show, what to fetch, where it goes and what its engine is told about it. Where he chooses
+//! (`choices.rs`) lists them beside the services; a host names none itself.
 use super::*;
 use airband_core::providers::{Job, Offer};
 use std::path::{Path, PathBuf};
@@ -22,9 +23,10 @@ const ENGINES: &[&str] = &[
     "host-transcribe",
 ];
 
-/// The models in the catalogue that this build can run.
+/// The models in the catalogue that this build can run. Each says which version of its files it is: that is
+/// the folder they are kept in.
 pub(crate) fn models() -> impl Iterator<Item = &'static Model> {
-    airband_core::catalog::current().models.iter().filter(|m| ENGINES.contains(&m.engine.as_str()))
+    airband_core::catalog::current().models.iter().filter(|m| ENGINES.contains(&m.engine.as_str()) && !m.version.is_empty())
 }
 
 /// The name a copy of the catalogue is kept under, by the form of the document.
@@ -108,23 +110,6 @@ pub fn refresh_catalog(dir: String) -> bool {
     changed
 }
 
-/// A model the device can run itself, for a settings screen.
-#[derive(Debug, Clone, uniffi::Record)]
-pub struct LocalModel {
-    /// What to pass back as `kind`.
-    pub kind: String,
-    /// What to show him.
-    pub name: String,
-    /// How much is fetched, in megabytes.
-    pub megabytes: u32,
-    /// It is on this device, whole, and can be used.
-    pub fetched: bool,
-    /// What is on this device is an earlier version: it works, and fetching again brings the new one.
-    pub stale: bool,
-    /// Who made it and under what licence: shown where it is offered.
-    pub credit: String,
-}
-
 pub(crate) fn model(kind: &str) -> Option<&'static Model> {
     models().find(|m| m.kind == kind)
 }
@@ -135,33 +120,15 @@ fn home(dir: &str, m: &Model) -> PathBuf {
 }
 /// Where the version the catalogue now names is kept.
 fn version_folder(dir: &str, m: &Model) -> PathBuf {
-    if m.version.is_empty() { home(dir, m) } else { home(dir, m).join(&m.version) }
+    home(dir, m).join(&m.version)
 }
 /// Left in a version's folder when every file of it has been fetched and checked: it says the folder is whole
 /// without the catalogue row it was fetched by, which may since have moved on.
 const WHOLE: &str = ".whole";
 
-/// Files fetched before versions had folders of their own sit in the model's folder itself. When they are
-/// the version the catalogue names, whole, they are moved into its folder, so nothing is fetched twice.
-fn settle(dir: &str, m: &Model) {
-    let (home, to) = (home(dir, m), version_folder(dir, m));
-    let whole_in = |folder: &Path| m.files.iter().all(|(path, size, _)| std::fs::metadata(folder.join(path)).is_ok_and(|f| f.is_file() && f.len() == *size));
-    if m.version.is_empty() || to.exists() || !whole_in(&home) {
-        return;
-    }
-    for (path, _, _) in &m.files {
-        let dest = to.join(path);
-        if std::fs::create_dir_all(dest.parent().unwrap_or(&to)).and_then(|_| std::fs::rename(home.join(path), &dest)).is_err() {
-            return;
-        }
-    }
-    let _ = std::fs::write(to.join(WHOLE), "");
-}
-
 /// The version the catalogue names is on this device, whole: each file was checked against its hash before
 /// it took its name.
-fn current(dir: &str, m: &Model) -> bool {
-    settle(dir, m);
+pub(crate) fn current(dir: &str, m: &Model) -> bool {
     m.files.iter().all(|(to, size, _)| std::fs::metadata(version_folder(dir, m).join(to)).is_ok_and(|f| f.is_file() && f.len() == *size))
 }
 
@@ -185,24 +152,6 @@ pub(crate) fn fetched(dir: &str, m: &Model) -> bool {
     usable(dir, m).is_some()
 }
 
-/// Where the files of a model are on this device, for a host that runs the model itself. Empty for a model
-/// this build does not have.
-#[uniffi::export]
-pub fn local_model_folder(dir: String, kind: String) -> String {
-    model(&kind).map(|m| folder(&dir, m).display().to_string()).unwrap_or_default()
-}
-
-fn listed(dir: &str, job: Job) -> Vec<LocalModel> {
-    models().filter(|m| m.job == job).map(|m| LocalModel { kind: m.kind.clone(), name: m.name.clone(), megabytes: (m.files.iter().map(|f| f.1).sum::<u64>() as f64 / 1e6).round() as u32, fetched: fetched(dir, m), stale: fetched(dir, m) && !current(dir, m), credit: m.credit.clone() }).collect()
-}
-
-/// The voices this build can make on the device, and whether each one's model is here. `dir` is a folder of
-/// the app's own, the same every time.
-#[uniffi::export]
-pub fn local_voices(dir: String) -> Vec<LocalModel> {
-    listed(&dir, Job::Voice)
-}
-
 /// One of the voices a voice model can speak in.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct VoiceChoice {
@@ -217,18 +166,6 @@ pub struct VoiceChoice {
     pub preview: String,
 }
 
-/// The voices a voice model offers, the usual one first. Empty for a model that is not a voice.
-#[uniffi::export]
-pub fn local_voice_choices(kind: String) -> Vec<VoiceChoice> {
-    model(&kind).map(|m| m.voices.iter().map(|(name, about)| VoiceChoice { name: name.clone(), label: name.clone(), about: about.clone(), preview: format!("{}/previews/{name}.m4a", m.base) }).collect()).unwrap_or_default()
-}
-
-/// And the listening models it can run.
-#[uniffi::export]
-pub fn local_listeners(dir: String) -> Vec<LocalModel> {
-    listed(&dir, Job::Ears)
-}
-
 /// How far the fetch now running has got: bytes so far, and bytes in all.
 static GOT: AtomicU64 = AtomicU64::new(0);
 static OF: AtomicU64 = AtomicU64::new(0);
@@ -236,20 +173,17 @@ static OF: AtomicU64 = AtomicU64::new(0);
 static FETCHING: Mutex<()> = Mutex::new(());
 
 /// How far the fetch now running has got, in hundredths. For a progress bar, asked a few times a second.
-#[uniffi::export]
-pub fn local_model_progress() -> u32 {
+pub(crate) fn local_model_progress() -> u32 {
     let of = OF.load(Ordering::SeqCst);
     if of == 0 { 0 } else { (GOT.load(Ordering::SeqCst).min(of) * 100 / of) as u32 }
 }
 
 /// Fetch a model. Blocks until it is all here: call it off the main thread. Files already here are kept, so
 /// one that was cut short goes on from the last whole file.
-#[uniffi::export]
-pub fn fetch_local_model(dir: String, kind: String) -> Result<(), RadioError> {
+pub(crate) fn fetch_local_model(dir: String, kind: String) -> Result<(), RadioError> {
     let told = |reason: &str| RadioError::Told { reason: reason.into() };
     let m = model(&kind).ok_or_else(|| told("This app has no such model."))?;
     let _one = FETCHING.lock().unwrap_or_else(|e| e.into_inner());
-    settle(&dir, m);
     let folder = version_folder(&dir, m);
     GOT.store(0, Ordering::SeqCst);
     OF.store(m.files.iter().map(|f| f.1).sum(), Ordering::SeqCst);
@@ -298,28 +232,13 @@ pub fn fetch_local_model(dir: String, kind: String) -> Result<(), RadioError> {
         }
         std::fs::rename(&part, &path).map_err(|_| told("Could not write the model to this device."))?;
     }
-    // This version is whole: say so, and only now let go of what was here before it (an earlier version, or
-    // files from before versions had folders), which was in use until this moment.
-    if !m.version.is_empty() {
-        let _ = std::fs::write(folder.join(WHOLE), "");
-        for other in std::fs::read_dir(home(&dir, m)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| *p != folder) {
-            let _ = if other.is_dir() { std::fs::remove_dir_all(&other) } else { std::fs::remove_file(&other) };
-        }
+    // This version is whole: say so, and only now let go of the one that was here before it, which was in use
+    // until this moment.
+    let _ = std::fs::write(folder.join(WHOLE), "");
+    for other in std::fs::read_dir(home(&dir, m)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| *p != folder) {
+        let _ = if other.is_dir() { std::fs::remove_dir_all(&other) } else { std::fs::remove_file(&other) };
     }
     Ok(())
-}
-
-/// Take a model off this device. If it is the one in use, it is no longer.
-#[uniffi::export]
-pub fn remove_local_model(dir: String, kind: String) {
-    if let Some(m) = model(&kind) {
-        match m.job {
-            Job::Voice => crate::mouth::stop_using(&kind),
-            Job::Ears => crate::ears::stop_using(&kind),
-            Job::Summary => {}
-        }
-        let _ = std::fs::remove_dir_all(home(&dir, m));
-    }
 }
 
 #[cfg(test)]
@@ -335,7 +254,7 @@ mod tests {
         }
         // nothing is here until it is fetched
         let dir = std::env::temp_dir().join(format!("airband-models-{}", random_hex(4))).display().to_string();
-        assert!(local_listeners(dir.clone()).iter().chain(local_voices(dir).iter()).all(|m| !m.fetched && m.megabytes > 0));
+        assert!(models().all(|m| !fetched(&dir, m)));
     }
 
     #[test]
@@ -353,7 +272,7 @@ mod tests {
 
     /// A model like one in the catalogue, with two small files.
     fn small(version: &str) -> Model {
-        Model { kind: "tiny".into(), name: "Tiny".into(), job: Job::Voice, engine: "ptts".into(), version: version.into(), base: "https://airband.dev/models/tiny".into(), files: vec![("a.bin".into(), 3, "0".repeat(64)), ("voices/b.bin".into(), 2, "0".repeat(64))], voices: Vec::new(), credit: String::new() }
+        Model { kind: "tiny".into(), name: "Tiny".into(), job: Job::Voice, engine: "ptts".into(), version: version.into(), base: "https://airband.dev/models/tiny".into(), files: vec![("a.bin".into(), 3, "0".repeat(64)), ("voices/b.bin".into(), 2, "0".repeat(64))], voices: Vec::new(), credit: String::new(), with: Default::default() }
     }
     fn put(folder: &Path) {
         std::fs::create_dir_all(folder.join("voices")).unwrap();
@@ -366,11 +285,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("airband-models-{}", random_hex(4)));
         let at = dir.display().to_string();
         let (one, two) = (small("1"), small("2"));
-        // fetched before versions had folders: found, and moved into the folder of the version it is
-        put(&dir.join("models/tiny"));
+        // version 1 is here, whole
+        put(&dir.join("models/tiny/1"));
+        std::fs::write(dir.join("models/tiny/1/.whole"), "").unwrap();
         assert!(fetched(&at, &one) && current(&at, &one));
         assert_eq!(folder(&at, &one), dir.join("models/tiny/1"));
-        assert!(!dir.join("models/tiny/a.bin").exists() && dir.join("models/tiny/1/.whole").is_file());
         // the catalogue moves on to version 2: version 1 is still what runs, and it is known to be behind
         assert!(fetched(&at, &two) && !current(&at, &two));
         assert_eq!(folder(&at, &two), dir.join("models/tiny/1"));
