@@ -4,52 +4,95 @@
 //!
 //! To put another harness on the radio:
 //! - with no code, call `airband report` from whatever the harness can run (see `report.rs`);
-//! - or add a module here and a line in [`ADAPTERS`]: a function from the harness's notification to events,
-//!   and, if the harness has to be told to call `airband hook`, how to set that up and take it out again.
-//!   `claude_code.rs` is the model.
+//! - or add a module here that implements [`Harness`] and a line in [`HARNESSES`]. A tool says only what it
+//!   has: one that reports through hooks says which (`hooks.rs` puts them in its file), one that is a server
+//!   to watch says how (`watch`), and either says how his words get into a session of its own (`deliver`).
+//!   Its row in `catalog/tools/` says what it is called and how the tower starts one. `claude_code.rs` is the
+//!   model for hooks, `opencode.rs` for a server.
 pub mod claude_accounts;
 pub mod claude_code;
 pub mod codex;
+pub mod hooks;
 pub mod opencode;
 pub mod report;
 
 use crate::config;
-use airband_core::agent::{AgentEvent, PermissionAsk, PermissionState};
+use airband_core::agent::{Agent, AgentEvent, PermissionAsk, PermissionState};
 use airband_core::radio::{Account, Accounts};
 use serde_json::Value;
 use std::io::Read;
 use std::time::Duration;
 
-/// One harness the tower can hear from.
-struct Adapter {
-    /// What `airband hook <name>` is called with.
-    name: &'static str,
+/// One coding tool the tower can hear from, by the id its row in the catalogue has. Everything but the name
+/// has a default that means "this tool does not have that".
+pub(crate) trait Harness: Sync {
+    /// What `airband hook <name>` is called with, and what `Agent::harness` says.
+    fn name(&self) -> &'static str;
     /// A notification of the harness's, as JSON, to the events it means (none, when it means nothing to the tower).
-    events: fn(&Value) -> Vec<AgentEvent>,
-    /// Set the harness up on this machine to run `airband hook <name>` (given the installed binary); returns
-    /// what to tell him. Nothing for a harness that is wired up some other way.
-    install: Option<fn(&std::path::Path) -> Result<String, String>>,
-    uninstall: Option<fn() -> Result<(), String>>,
-    /// For a harness that can let something else answer its permission prompts: turn its notification into the
-    /// request to put to him (or nothing, when the notification is not one), and turn his answer into what the
-    /// harness wants printed on standard output.
-    permission: Option<(fn(&Value) -> Option<PermissionAsk>, fn(&PermissionAsk, bool, &str) -> String)>,
+    fn events(&self, _notification: &Value) -> Vec<AgentEvent> {
+        Vec::new()
+    }
+    /// For a tool that reports through hooks: its hooks file and the events wanted in it. Nothing when the tool
+    /// is not on this computer, or is wired up some other way.
+    fn hooks(&self) -> Option<hooks::File> {
+        None
+    }
+    /// What to tell him once its hooks are in place; `changed` when the file was written.
+    fn installed(&self, file: &hooks::File, _changed: bool) -> String {
+        format!("Hooks added to {}.", file.path.display())
+    }
+    /// For a harness that can let something else answer its permission prompts: its notification as the request
+    /// to put to him, or nothing when the notification is not one.
+    fn permission(&self, _notification: &Value) -> Option<PermissionAsk> {
+        None
+    }
+    /// His answer to that request, as the harness wants it printed on standard output.
+    fn permission_answer(&self, ask: &PermissionAsk, allow: bool, reason: &str) -> String {
+        hooks::decision(allow, reason, ask.question.is_some())
+    }
     /// For a harness whose sessions can be moved between logins while they run.
-    accounts: Option<AccountBook>,
+    fn accounts(&self) -> Option<&'static AccountBook> {
+        None
+    }
     /// A look at one of its agents, when the harness keeps this somewhere the tower can read cheaply. Asked
     /// every couple of seconds while a radio is looking, so it must be quick.
-    glance: Option<fn(&airband_core::agent::Agent) -> Glance>,
+    fn glance(&self, _agent: &Agent) -> Glance {
+        Glance::default()
+    }
     /// The files and commands of an agent's latest steps, newest first, as the harness wrote them. For working
     /// out which project it is working on; asked now and then, not on every look.
-    touched: Option<fn(&airband_core::agent::Agent) -> Vec<String>>,
+    fn touched(&self, _agent: &Agent) -> Vec<String> {
+        Vec::new()
+    }
     /// What he has said to an agent at its own keyboard since `from`, a place in the harness's record that an
     /// earlier call returned (0 the first time). Returns his words, oldest first, and the place to ask from next
     /// time. What he typed himself comes back with `his` set; what the tower passed on comes back without, when
     /// the agent has taken it in.
-    told: Option<fn(&airband_core::agent::Agent, u64) -> (Vec<Told>, u64)>,
+    fn told(&self, _agent: &Agent, from: u64) -> (Vec<Told>, u64) {
+        (Vec::new(), from)
+    }
     /// The steps an agent has taken since a moment (milliseconds since 1970), oldest first, each as the few
     /// words the harness has for it: what it set out to do, not how it went.
-    steps: Option<fn(&airband_core::agent::Agent, u64) -> Vec<String>>,
+    fn steps(&self, _agent: &Agent, _since: u64) -> Vec<String> {
+        Vec::new()
+    }
+    /// For a tool with no hooks that the tower watches instead: watch it for as long as the tower runs,
+    /// telling the tower what is seen. Run on a thread of its own; returns at once for a tool that is not
+    /// watched.
+    fn watch(&self, _tower: Tower) {}
+    /// Put his words into a session of this tool's that is already open, as a turn of his own
+    /// (`Deliver::Harness`).
+    fn deliver(&self, _session: &str, _words: &str) -> Result<(), String> {
+        Err(format!("{} sessions cannot be reached this way.", self.name()))
+    }
+}
+
+/// What a watcher is given of the tower it runs in.
+pub struct Tower {
+    /// Hand the tower an event. False when it was not taken: it should be offered again.
+    pub event: Box<dyn Fn(AgentEvent) -> bool + Send>,
+    /// Is this session of the tool's one the tower runs itself? Those are reported by their own driver.
+    pub holds: Box<dyn Fn(&str) -> bool + Send>,
 }
 
 /// Something he said to an agent directly, at its keyboard.
@@ -80,79 +123,80 @@ pub struct Glance {
 }
 
 /// How one harness's accounts are listed, switched and kept. Every function answers in words for him.
-struct AccountBook {
+pub(crate) struct AccountBook {
     /// Every account with how much of it is used, and anything to say about the list as a whole.
-    list: fn() -> (Vec<Account>, Option<String>),
+    pub(crate) list: fn() -> (Vec<Account>, Option<String>),
     /// Make this account the one in use. The swap is done on return; the thread finishes the tidying.
-    switch: fn(&str) -> Result<std::thread::JoinHandle<()>, String>,
+    pub(crate) switch: fn(&str) -> Result<std::thread::JoinHandle<()>, String>,
     /// Keep the login in use now. Returns what it is called.
-    save: fn() -> Result<String, String>,
+    pub(crate) save: fn() -> Result<String, String>,
     /// Sign in to another account, at the computer, and keep it.
-    add: fn() -> Result<String, String>,
-    forget: fn(&str) -> Result<String, String>,
+    pub(crate) add: fn() -> Result<String, String>,
+    pub(crate) forget: fn(&str) -> Result<String, String>,
 }
 
-/// Every harness `airband hook <name>` understands. A new one is a module and a line here.
-const ADAPTERS: &[Adapter] = &[
-Adapter {
-    name: "claude-code",
-    events: claude_code::events,
-    install: Some(claude_code::install),
-    uninstall: Some(claude_code::uninstall),
-    permission: Some((claude_code::permission, claude_code::permission_answer)),
-    accounts: Some(AccountBook { list: claude_accounts::list, switch: claude_accounts::switch, save: claude_accounts::save, add: claude_accounts::add, forget: claude_accounts::forget }),
-    glance: Some(claude_code::glance),
-    touched: Some(claude_code::touched),
-    told: Some(claude_code::told),
-    steps: Some(claude_code::steps),
-},
-Adapter {
-    name: "codex",
-    events: codex::events,
-    install: Some(codex::install),
-    uninstall: Some(codex::uninstall),
-    permission: Some((codex::permission, codex::permission_answer)),
-    accounts: None,
-    glance: Some(codex::glance),
-    touched: None,
-    told: None,
-    steps: None,
-},
-// OpenCode has no hooks: the tower watches its server (`opencode::watch`). It is listed so that it has a name.
-Adapter { name: "opencode", events: |_| Vec::new(), install: None, uninstall: None, permission: None, accounts: None, glance: None, touched: None, told: None, steps: None }];
+/// Every coding tool with an adapter. A new one is a module and a line here.
+static HARNESSES: &[&dyn Harness] = &[&claude_code::ClaudeCode, &codex::Codex, &opencode::OpenCode];
+
+fn harness(name: &str) -> Option<&'static dyn Harness> {
+    HARNESSES.iter().copied().find(|h| h.name() == name)
+}
 
 /// `airband install`: set up every harness that can be. One line to say for each.
 pub fn install(exe: &std::path::Path) -> Result<Vec<String>, String> {
-    ADAPTERS.iter().filter_map(|a| a.install).map(|install| install(exe)).collect()
+    HARNESSES.iter().filter_map(|h| h.hooks().map(|file| (h, file))).map(|(h, file)| file.install(exe).map(|changed| h.installed(&file, changed))).collect()
 }
 pub fn uninstall() -> Result<(), String> {
-    ADAPTERS.iter().filter_map(|a| a.uninstall).try_for_each(|uninstall| uninstall())
+    HARNESSES.iter().filter_map(|h| h.hooks()).try_for_each(|file| file.uninstall())
 }
 
 /// What this agent is doing right now and what it runs on, as far as its harness's adapter can tell.
-pub fn glance(agent: &airband_core::agent::Agent) -> Glance {
-    ADAPTERS.iter().find(|a| a.name == agent.harness).and_then(|a| a.glance).map(|look| look(agent)).unwrap_or_default()
+pub fn glance(agent: &Agent) -> Glance {
+    harness(&agent.harness).map(|h| h.glance(agent)).unwrap_or_default()
 }
 
 /// The files and commands of this agent's latest steps, if its harness's adapter can tell.
-pub fn touched(agent: &airband_core::agent::Agent) -> Vec<String> {
-    ADAPTERS.iter().find(|a| a.name == agent.harness).and_then(|a| a.touched).map(|ask| ask(agent)).unwrap_or_default()
+pub fn touched(agent: &Agent) -> Vec<String> {
+    harness(&agent.harness).map(|h| h.touched(agent)).unwrap_or_default()
 }
 
 /// The steps this agent has taken since `since`, if its harness's adapter can tell.
-pub fn steps(agent: &airband_core::agent::Agent, since: u64) -> Vec<String> {
-    ADAPTERS.iter().find(|a| a.name == agent.harness).and_then(|a| a.steps).map(|ask| ask(agent, since)).unwrap_or_default()
+pub fn steps(agent: &Agent, since: u64) -> Vec<String> {
+    harness(&agent.harness).map(|h| h.steps(agent, since)).unwrap_or_default()
 }
 
 /// What he has typed to this agent at its keyboard since `from`, if its harness's adapter can tell.
-pub fn told(agent: &airband_core::agent::Agent, from: u64) -> (Vec<Told>, u64) {
-    ADAPTERS.iter().find(|a| a.name == agent.harness).and_then(|a| a.told).map(|ask| ask(agent, from)).unwrap_or((Vec::new(), from))
+pub fn told(agent: &Agent, from: u64) -> (Vec<Told>, u64) {
+    harness(&agent.harness).map(|h| h.told(agent, from)).unwrap_or((Vec::new(), from))
+}
+
+/// Start watching every tool that is watched and not hooked, each on a thread of its own. `tower` makes
+/// what each is given.
+pub fn watch_all(tower: impl Fn() -> Tower) {
+    for h in HARNESSES.iter().copied() {
+        let tower = tower();
+        std::thread::spawn(move || h.watch(tower));
+    }
+}
+
+/// His words into a session of a tool's own, by that tool's way in. Blocks.
+pub fn deliver(name: &str, session: &str, words: &str) -> Result<(), String> {
+    harness(name).ok_or_else(|| format!("there is no adapter for \"{name}\""))?.deliver(session, words)
+}
+
+/// `airband deliver <harness> <session>`: the same, with his words on standard input. What an agent that
+/// checked in under an earlier version is still reached by.
+pub fn deliver_command(args: &[String]) -> Result<(), String> {
+    let (Some(name), Some(session)) = (args.first(), args.get(1)) else { return Err(format!("usage: airband deliver <{}> <session>", names().join("|"))) };
+    let mut words = String::new();
+    std::io::stdin().read_to_string(&mut words).map_err(|e| e.to_string())?;
+    deliver(name, session, words.trim())
 }
 
 /// Every account of every harness that has them.
 pub fn accounts() -> Accounts {
     let (mut all, mut notes) = (Vec::new(), Vec::new());
-    for book in ADAPTERS.iter().filter_map(|a| a.accounts.as_ref()) {
+    for book in HARNESSES.iter().filter_map(|h| h.accounts()) {
         let (accounts, note) = (book.list)();
         all.extend(accounts);
         notes.extend(note);
@@ -161,7 +205,7 @@ pub fn accounts() -> Accounts {
     Accounts { schema: airband_core::radio::SCHEMA.into(), accounts: all, note: (!notes.is_empty()).then(|| notes.join(" ")), checked_at }
 }
 fn book(harness: &str) -> Result<&'static AccountBook, String> {
-    ADAPTERS.iter().find(|a| a.name == harness).and_then(|a| a.accounts.as_ref()).ok_or_else(|| format!("{harness} has no accounts to switch between."))
+    self::harness(harness).and_then(|h| h.accounts()).ok_or_else(|| format!("{harness} has no accounts to switch between."))
 }
 pub fn use_account(harness: &str, id: &str) -> Result<std::thread::JoinHandle<()>, String> {
     (book(harness)?.switch)(id)
@@ -170,7 +214,7 @@ pub fn use_account(harness: &str, id: &str) -> Result<std::thread::JoinHandle<()
 /// `airband accounts`: list them. `save`, `add`, `use <account>`, `forget <account>`. With a tower running,
 /// listing and switching go through it, so there is one keeper of the saved logins at a time.
 pub fn accounts_command(cfg: &config::Config, args: &[String]) -> Result<(), String> {
-    let harness = ADAPTERS.iter().find(|a| a.accounts.is_some()).map(|a| a.name).ok_or("No harness here has accounts.")?;
+    let harness = HARNESSES.iter().find(|h| h.accounts().is_some()).map(|h| h.name()).ok_or("No harness here has accounts.")?;
     let tower = |method: &str, path: &str, body: Option<Value>| -> Option<Result<Accounts, String>> {
         let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(60))).http_status_as_error(false).build().into();
         let url = format!("http://127.0.0.1:{}{path}", cfg.port);
@@ -222,7 +266,7 @@ pub fn accounts_command(cfg: &config::Config, args: &[String]) -> Result<(), Str
 }
 
 pub fn names() -> Vec<&'static str> {
-    ADAPTERS.iter().map(|a| a.name).collect()
+    HARNESSES.iter().map(|h| h.name()).collect()
 }
 
 pub(crate) fn env(k: &str) -> Option<String> {
@@ -230,34 +274,31 @@ pub(crate) fn env(k: &str) -> Option<String> {
 }
 
 /// `airband hook <harness>`: read the harness's notification from standard input, translate it, post it.
-pub fn hook(harness: &str) -> Result<(), String> {
-    let Some(adapter) = ADAPTERS.iter().find(|a| a.name == harness) else {
-        // said aloud, because this is a mistake in someone's setup, not a failure to hide from a running agent
-        return Err(format!("no adapter for \"{harness}\"; there is one for: {}. Any other harness can use `airband report`.", names().join(", ")));
-    };
-    // the tower's own model calls must not report to the tower
+pub fn hook(name: Option<&str>) -> Result<(), String> {
+    // said aloud, because this is a mistake in someone's setup, not a failure to hide from a running agent
+    let unknown = || format!("there is an adapter for: {}. Any other harness can use `airband report`.", names().join(", "));
+    let name = name.ok_or_else(|| format!("usage: airband hook <harness>; {}", unknown()))?;
+    let adapter = harness(name).ok_or_else(|| format!("no adapter for \"{name}\"; {}", unknown()))?;
+    // the tower's own model calls, and an agent whose holder reports for it, must not report to the tower
     if env("AIRBAND_INTERNAL").is_some() {
         return Ok(());
     }
     let mut input = String::new();
     let _ = std::io::stdin().read_to_string(&mut input);
+    let notification: Value = serde_json::from_str(&input).unwrap_or_default();
     // the harness is about to ask for permission at the keyboard: ask him on the radio first
-    if let Some((ask, answer)) = adapter.permission {
-        if let Some(request) = serde_json::from_str(&input).ok().and_then(|notification| ask(&notification)) {
-            if let Some((allow, reason)) = ask_him(&request) {
-                println!("{}", answer(&request, allow, &reason));
-            }
-            // no answer in time, or nobody there: print nothing, and the harness asks in its own way
-            return Ok(());
+    if let Some(request) = adapter.permission(&notification) {
+        if let Some((allow, reason)) = ask_him(&request) {
+            println!("{}", adapter.permission_answer(&request, allow, &reason));
         }
+        // no answer in time, or nobody there: print nothing, and the harness asks in its own way
+        return Ok(());
     }
-    let takes_ids = config::read().is_some_and(|c| c.launchers.values().any(|l| l.harness == harness && l.held.as_ref().is_some_and(|h| h.fresh.iter().any(|a| a.contains("{id}")))));
-    for mut event in serde_json::from_str(&input).map(|notification| (adapter.events)(&notification)).unwrap_or_default() {
-        // An agent the tower runs is known by the id the tower gave it, whatever its harness calls the session,
-        // and takes his words from the tower: true of any harness, so it is said here and not in each adapter.
-        // Not for a harness that starts under an id the tower chose (its launcher says so with `{id}`): its
-        // session already has that id, and a session it starts itself must not pass for it.
-        if let Some(id) = env("AIRBAND_HELD_ID").filter(|_| !takes_ids) {
+    for mut event in adapter.events(&notification) {
+        // An agent the tower runs whose program was not started under the id the tower gave it is known by
+        // that id all the same, whatever its harness calls the session: its holder says so (`hold.rs`). True
+        // of any harness, so it is said here and not in each adapter.
+        if let Some(id) = env("AIRBAND_HELD_ID") {
             event.agent.id = id;
             event.agent.deliver = Some(airband_core::agent::Deliver::Held);
         }
@@ -266,36 +307,56 @@ pub fn hook(harness: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// What came of putting a request to him.
+pub(crate) enum Answer {
+    /// He answered: yes or no, and with a no the reason he gave, if any.
+    Said(bool, String),
+    /// Nobody was there to ask (no tower, or no radio), so nothing was put in front of anyone.
+    Nobody,
+    /// It was put to him and he did not answer in the time the tower allows, or it was answered elsewhere.
+    Unanswered,
+}
+
 /// Put a permission request to him through the tower, and wait for his answer. Nothing when there is none to be
 /// had: no tower, no radio there to ask, or he did not answer in the time the tower allows. Then the harness
 /// asks at the keyboard as it always has. Waiting never turns into a yes.
 pub(crate) fn ask_him(request: &PermissionAsk) -> Option<(bool, String)> {
-    let cfg = config::read()?;
+    match ask_him_while(request, None) {
+        Answer::Said(allow, reason) => Some((allow, reason)),
+        Answer::Nobody | Answer::Unanswered => None,
+    }
+}
+
+/// The same, for a request that can also be answered somewhere else meanwhile (at the tool's own screen):
+/// `still` is asked every few seconds whether the tool is still waiting, and when it is not the question is
+/// taken back.
+pub(crate) fn ask_him_while(request: &PermissionAsk, still: Option<&dyn Fn() -> bool>) -> Answer {
+    let Some(cfg) = config::read() else { return Answer::Nobody };
     let base = format!("http://127.0.0.1:{}/v1/agent/permission", cfg.port);
     let auth = format!("Bearer {}", cfg.token);
     let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(40))).build().into();
-    let asked: PermissionState = agent.post(&base).header("authorization", &auth).send_json(request).ok()?.body_mut().read_json().ok()?;
-    if asked.state != "pending" {
-        return None;
-    }
+    let asked: Option<PermissionState> = agent.post(&base).header("authorization", &auth).send_json(request).ok().and_then(|mut res| res.body_mut().read_json().ok());
+    let Some(asked) = asked.filter(|a| a.state == "pending") else { return Answer::Nobody };
     let until = std::time::Instant::now() + Duration::from_secs(asked.wait_seconds.max(5));
     while std::time::Instant::now() < until {
-        let left = until.saturating_duration_since(std::time::Instant::now()).as_secs().clamp(1, 20);
-        let now: PermissionState = match agent.get(format!("{base}/{}?wait={left}", asked.id)).header("authorization", &auth).call() {
-            Ok(mut res) => res.body_mut().read_json().ok()?,
-            // the tower went away mid-wait: stop waiting and let the harness ask
-            Err(_) => return None,
-        };
+        if still.is_some_and(|still| !still()) {
+            break;
+        }
+        let left = until.saturating_duration_since(std::time::Instant::now()).as_secs().clamp(1, if still.is_some() { 3 } else { 20 });
+        let now: Option<PermissionState> = agent.get(format!("{base}/{}?wait={left}", asked.id)).header("authorization", &auth).call().ok().and_then(|mut res| res.body_mut().read_json().ok());
+        // the tower went away mid-wait: stop waiting and let the harness ask
+        let Some(now) = now else { return Answer::Unanswered };
         match now.state.as_str() {
-            "allow" => return Some((true, String::new())),
-            "deny" => return Some((false, now.message)),
+            "allow" => return Answer::Said(true, String::new()),
+            "deny" => return Answer::Said(false, now.message),
             "pending" => {}
-            _ => return None,
+            _ => return Answer::Unanswered,
         }
     }
-    // he did not answer: take the question back, so the feed does not offer an answer that no longer does anything
+    // he did not answer, or it was answered elsewhere: take the question back, so the feed does not offer an
+    // answer that no longer does anything
     let _ = agent.delete(format!("{base}/{}", asked.id)).header("authorization", &auth).call();
-    None
+    Answer::Unanswered
 }
 
 /// Post one event to the tower on this machine. One the tower did not take (it is being restarted or

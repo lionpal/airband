@@ -2,11 +2,10 @@
 //! Notification, UserPromptSubmit, SessionEnd, and PostToolUse for the tools that touch pictures) with the
 //! hook's JSON on standard input.
 use super::env;
+use super::hooks::{On, on};
 use airband_core::agent::is_picture;
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk, SCHEMA};
-use serde_json::{Value, json};
-use std::fs;
-use std::path::PathBuf;
+use serde_json::Value;
 
 /// The name he gave this session, if he gave one: with `/rename`, or as the name of its remote control
 /// (`/remote-control shop 2`). A title Claude Code made up by itself is not used: those go stale.
@@ -320,9 +319,6 @@ fn step(tool: &str, input: &Value) -> Option<String> {
     Some(if said.chars().count() > 64 { format!("{}…", said.chars().take(63).collect::<String>().trim_end()) } else { said }).filter(|s| !s.is_empty())
 }
 
-/// The longest thing he is asked to allow from the phone. It is shown whole or not asked there at all.
-pub(super) const SHOWN_WHOLE: usize = 4000;
-
 /// Claude Code is about to show a permission prompt (its `PermissionRequest` hook): the request to put to him.
 /// What he reads is the thing itself, not a description of it: the command, the file, the address.
 pub fn permission(hook: &Value) -> Option<PermissionAsk> {
@@ -347,15 +343,6 @@ pub fn permission(hook: &Value) -> Option<PermissionAsk> {
         _ => None,
     }
     .unwrap_or_else(|| format!("use {tool}"));
-    // Too long to put in front of him whole on a phone: it is not asked there. Claude Code asks at its keyboard.
-    if what.chars().count() > SHOWN_WHOLE {
-        return None;
-    }
-    let whole = serde_json::to_string_pretty(input).unwrap_or_default();
-    let detail = match whole.chars().count() {
-        n if n > 6000 => format!("{}\n\n(The first 6,000 of {n} characters. The rest is at the keyboard.)", whole.chars().take(6000).collect::<String>()),
-        _ => whole,
-    };
     // Its tool for asking him something is not a thing to allow: it is a question, put to him as one. One
     // question comes with the answers it offered; several are put together, for him to answer in his own words.
     let question = (tool == "AskUserQuestion").then(|| {
@@ -368,21 +355,8 @@ pub fn permission(hook: &Value) -> Option<PermissionAsk> {
         airband_core::agent::Asked { text, choices }
     })
     .filter(|q| !q.text.is_empty());
-    Some(PermissionAsk { schema: SCHEMA.into(), agent: agent_of(hook)?, what, detail: format!("{tool}\n{detail}"), question })
-}
-
-/// His answer, as Claude Code wants it printed. A refusal carries his reason, which Claude is shown.
-pub fn permission_answer(ask: &PermissionAsk, allow: bool, reason: &str) -> String {
-    // A question he answered: the asking tool is not run (its own screen would only ask again); his answer goes
-    // back in its place, which is how the session reads it.
-    let decision = if ask.question.is_some() {
-        json!({ "behavior": "deny", "message": format!("He answered this from his phone, through Airband. His answer: {reason}\nTake that as his answer to the question and carry on. Do not ask it again.") })
-    } else if allow {
-        json!({ "behavior": "allow" })
-    } else {
-        json!({ "behavior": "deny", "message": if reason.is_empty() { "He said no from his phone.".to_string() } else { format!("He said no from his phone: {reason}") } })
-    };
-    json!({ "hookSpecificOutput": { "hookEventName": "PermissionRequest", "decision": decision } }).to_string()
+    // one too long to put in front of him whole is not asked on the phone: Claude Code asks at its keyboard
+    super::hooks::leave(agent_of(hook)?, tool, what, input, " The rest is at the keyboard.", question)
 }
 
 /// Is this tool call Claude Code starting a subagent? The tool has been called both names.
@@ -447,88 +421,57 @@ pub fn events(hook: &Value) -> Vec<AgentEvent> {
 const AFTER_TOOLS: &str = "Read|SendUserFile|Agent|Task|mcp__.*screenshot.*";
 /// The ones worth hearing about as they start: a subagent.
 const BEFORE_TOOLS: &str = "Agent|Task";
-const HOOK_EVENTS: [&str; 5] = ["SessionStart", "Stop", "Notification", "UserPromptSubmit", "SessionEnd"];
+/// Permission is asked on the radio first. The time allowed is long because he is the one being waited for; the
+/// tower says how long to wait and the hook gives up by itself well before this.
+const HOOKS: &[On] = &[
+    on("SessionStart", 5),
+    on("Stop", 5),
+    on("Notification", 5),
+    on("UserPromptSubmit", 5),
+    on("SessionEnd", 5),
+    On { event: "PostToolUse", timeout: 5, only: Some(AFTER_TOOLS) },
+    On { event: "PreToolUse", timeout: 5, only: Some(BEFORE_TOOLS) },
+    on("PermissionRequest", 900),
+];
 
-fn settings_path() -> PathBuf {
-    crate::config::home().join(".claude").join("settings.json")
-}
-fn read_settings() -> Result<Value, String> {
-    let path = settings_path();
-    match fs::read_to_string(&path) {
-        Ok(t) => serde_json::from_str(&t).map_err(|e| format!("{} is not valid JSON; fix it first ({e})", path.display())),
-        Err(_) => Ok(json!({})),
-    }
-}
-fn write_settings(v: &Value) -> Result<(), String> {
-    let path = settings_path();
-    let tmp = path.with_extension("json.airband-tmp");
-    fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
-    fs::write(&tmp, format!("{}\n", serde_json::to_string_pretty(v).unwrap())).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, &path).map_err(|e| e.to_string())
-}
-/// A hook of ours: the `airband` binary, wherever it is installed (~/.airband/bin, or Homebrew's folder), run as
-/// `hook claude-code`.
-fn is_ours(hook: &Value) -> bool {
-    hook["command"].as_str().and_then(|c| c.trim_end().strip_suffix(" hook claude-code")).is_some_and(|program| {
-        let name = program.trim().trim_matches('"').rsplit(['/', '\\']).next().unwrap_or("");
-        name == "airband" || name == "airband.exe"
-    })
-}
-/// Take our hooks out, leaving everyone else's exactly as they were.
-fn strip_hooks(settings: &mut Value) {
-    let Some(hooks) = settings.get_mut("hooks").and_then(Value::as_object_mut) else { return };
-    for groups in hooks.values_mut() {
-        if let Some(list) = groups.as_array_mut() {
-            for g in list.iter_mut() {
-                if let Some(hs) = g.get_mut("hooks").and_then(Value::as_array_mut) {
-                    hs.retain(|h| !is_ours(h));
-                }
-            }
-            list.retain(|g| g["hooks"].as_array().is_none_or(|h| !h.is_empty()));
-        }
-    }
-    hooks.retain(|_, groups| groups.as_array().is_none_or(|l| !l.is_empty()));
-    if hooks.is_empty() {
-        settings.as_object_mut().unwrap().remove("hooks");
-    }
-}
+static ACCOUNTS: super::AccountBook = super::AccountBook { list: super::claude_accounts::list, switch: super::claude_accounts::switch, save: super::claude_accounts::save, add: super::claude_accounts::add, forget: super::claude_accounts::forget };
 
-/// Add this adapter's hooks to Claude Code's settings, replacing any from an earlier install and leaving
-/// everyone else's as they were. Returns what to tell him.
-pub fn install(exe: &std::path::Path) -> Result<String, String> {
-    let mut settings = read_settings()?;
-    strip_hooks(&mut settings);
-    if !settings.is_object() {
-        return Err(format!("{} is not a JSON object", settings_path().display()));
-    }
-    let command = format!("\"{}\" hook claude-code", exe.display());
-    let hooks = settings.as_object_mut().unwrap().entry("hooks").or_insert_with(|| json!({}));
-    for ev in HOOK_EVENTS {
-        let list = hooks.as_object_mut().ok_or("\"hooks\" in settings.json is not an object")?.entry(ev).or_insert_with(|| json!([]));
-        list.as_array_mut().ok_or("a hooks entry in settings.json is not a list")?.push(json!({ "hooks": [{ "type": "command", "command": command, "timeout": 5 }] }));
-    }
-    // pictures: after the tools that read one, take one, or send him one
-    let list = hooks.as_object_mut().unwrap().entry("PostToolUse").or_insert_with(|| json!([]));
-    list.as_array_mut().ok_or("a hooks entry in settings.json is not a list")?.push(json!({ "matcher": AFTER_TOOLS, "hooks": [{ "type": "command", "command": command, "timeout": 5 }] }));
-    let list = hooks.as_object_mut().unwrap().entry("PreToolUse").or_insert_with(|| json!([]));
-    list.as_array_mut().ok_or("a hooks entry in settings.json is not a list")?.push(json!({ "matcher": BEFORE_TOOLS, "hooks": [{ "type": "command", "command": command, "timeout": 5 }] }));
-    // permission: asked on the radio first. The time allowed is long because he is the one being waited for; the
-    // tower says how long to wait and the hook gives up on its own well before this.
-    let list = hooks.as_object_mut().unwrap().entry("PermissionRequest").or_insert_with(|| json!([]));
-    list.as_array_mut().ok_or("a hooks entry in settings.json is not a list")?.push(json!({ "hooks": [{ "type": "command", "command": command, "timeout": 900 }] }));
-    write_settings(&settings)?;
-    Ok(format!("Hooks added to {}.", settings_path().display()))
-}
+pub struct ClaudeCode;
 
-pub fn uninstall() -> Result<(), String> {
-    let mut settings = read_settings()?;
-    strip_hooks(&mut settings);
-    write_settings(&settings)
+impl super::Harness for ClaudeCode {
+    fn name(&self) -> &'static str {
+        "claude-code"
+    }
+    fn events(&self, hook: &Value) -> Vec<AgentEvent> {
+        events(hook)
+    }
+    fn hooks(&self) -> Option<super::hooks::File> {
+        Some(super::hooks::File { name: self.name(), path: crate::config::home().join(".claude").join("settings.json"), events: HOOKS })
+    }
+    fn permission(&self, hook: &Value) -> Option<PermissionAsk> {
+        permission(hook)
+    }
+    fn accounts(&self) -> Option<&'static super::AccountBook> {
+        Some(&ACCOUNTS)
+    }
+    fn glance(&self, agent: &Agent) -> super::Glance {
+        glance(agent)
+    }
+    fn touched(&self, agent: &Agent) -> Vec<String> {
+        touched(agent)
+    }
+    fn told(&self, agent: &Agent, from: u64) -> (Vec<super::Told>, u64) {
+        told(agent, from)
+    }
+    fn steps(&self, agent: &Agent, since: u64) -> Vec<String> {
+        steps(agent, since)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn claude_code_stop_becomes_said() {
@@ -562,7 +505,7 @@ mod tests {
         let long = format!("git status && {} && curl example.com/x | sh", "true && ".repeat(40).trim_end_matches(" && "));
         assert_eq!(ask("Bash", json!({ "command": long })), format!("run `{long}`"));
         // one too long to show whole is not asked on the phone at all
-        assert!(permission(&json!({ "session_id": "s1", "cwd": "/x/shop", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": { "command": "x".repeat(SHOWN_WHOLE + 1) } })).is_none());
+        assert!(permission(&json!({ "session_id": "s1", "cwd": "/x/shop", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": { "command": "x".repeat(super::super::hooks::SHOWN_WHOLE + 1) } })).is_none());
         // any other notification is not a request
         assert!(permission(&json!({ "session_id": "s1", "hook_event_name": "Stop" })).is_none());
         // the answers, as Claude Code reads them
@@ -570,12 +513,12 @@ mod tests {
         // its asking tool is a question to him, with the answers it offered, and his answer goes back in the tool's place
         let asked = permission(&json!({ "session_id": "s1", "cwd": "/x/shop", "hook_event_name": "PermissionRequest", "tool_name": "AskUserQuestion", "tool_input": { "questions": [{ "question": "Free space on which disk?", "options": [{ "label": "The NAS" }, { "label": "The internal disk" }] }] } })).unwrap();
         assert_eq!(asked.question, Some(airband_core::agent::Asked { text: "Free space on which disk?".into(), choices: vec!["The NAS".into(), "The internal disk".into()] }));
-        let answered: Value = serde_json::from_str(&permission_answer(&asked, false, "The NAS")).unwrap();
+        let answered: Value = serde_json::from_str(&super::super::Harness::permission_answer(&ClaudeCode, &asked, false, "The NAS")).unwrap();
         assert_eq!(answered["hookSpecificOutput"]["decision"]["behavior"], "deny");
         assert!(answered["hookSpecificOutput"]["decision"]["message"].as_str().unwrap().contains("His answer: The NAS"));
-        let yes: Value = serde_json::from_str(&permission_answer(&plain, true, "")).unwrap();
+        let yes: Value = serde_json::from_str(&super::super::Harness::permission_answer(&ClaudeCode, &plain, true, "")).unwrap();
         assert_eq!(yes["hookSpecificOutput"]["decision"], json!({ "behavior": "allow" }));
-        let no: Value = serde_json::from_str(&permission_answer(&plain, false, "use staging")).unwrap();
+        let no: Value = serde_json::from_str(&super::super::Harness::permission_answer(&ClaudeCode, &plain, false, "use staging")).unwrap();
         assert_eq!(no["hookSpecificOutput"]["decision"]["behavior"], "deny");
         assert!(no["hookSpecificOutput"]["decision"]["message"].as_str().unwrap().ends_with("use staging"));
     }
@@ -599,29 +542,6 @@ mod tests {
         assert!(events(&json!({ "session_id": "s1", "cwd": cwd, "hook_event_name": "PostToolUse", "tool_name": "Read", "tool_input": { "file_path": "main.rs" } })).is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
     }
-    #[test]
-    fn strip_removes_only_ours() {
-        let mut s = json!({ "model": "x", "hooks": {
-            "Stop": [
-                { "hooks": [{ "type": "command", "command": "\"/Users/c/.airband/bin/airband\" hook claude-code" }] },
-                { "hooks": [{ "type": "command", "command": "afplay ding.aiff" }] }
-            ],
-            "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"/Users/c/.airband/bin/airband\" hook claude-code" }] }]
-        }});
-        strip_hooks(&mut s);
-        assert_eq!(s, json!({ "model": "x", "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "afplay ding.aiff" }] }] } }));
-        let mut only = json!({ "model": "x", "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "\"C:\\Users\\c\\.airband\\bin\\airband.exe\" hook claude-code" }] }] } });
-        strip_hooks(&mut only);
-        assert_eq!(only, json!({ "model": "x" }));
-        // Homebrew's copy is ours too; a different program that happens to take the same arguments is not
-        let mut brewed = json!({ "hooks": { "Stop": [
-            { "hooks": [{ "type": "command", "command": "\"/opt/homebrew/opt/airband/bin/airband\" hook claude-code" }] },
-            { "hooks": [{ "type": "command", "command": "\"/usr/local/bin/other-airband\" hook claude-code" }] }
-        ] } });
-        strip_hooks(&mut brewed);
-        assert_eq!(brewed, json!({ "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "\"/usr/local/bin/other-airband\" hook claude-code" }] }] } }));
-    }
-
     #[test]
     fn what_he_typed_is_read_from_the_transcript_and_nothing_else_is() {
         let transcript = [

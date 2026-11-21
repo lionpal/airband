@@ -31,36 +31,43 @@ async fn events(State(app): State<Arc<App>>, body: String) -> Response {
         Ok(ev) => ev,
         Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": format!("not an airband.agent/1 event: {e}") }))).into_response(),
     };
+    // an event with a picture is slow to take in (the picture is shrunk); the other requests must not wait behind it
+    match tokio::task::block_in_place(|| take_event(&app, ev)) {
+        Ok(()) => Json(json!({})).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response(),
+    }
+}
+
+/// Take in one event of an agent's, and set going what follows from it. The one way in, for an event that
+/// came over HTTP and for one a watcher inside the tower saw. Call it where a runtime can be reached.
+pub(super) fn take_event(app: &Arc<App>, ev: AgentEvent) -> Result<(), String> {
     // on some of an agent's reports the tower looks at whether it is in the right team
     let reported = matches!(ev.event, Event::Said { .. }).then(|| ev.agent.id.clone());
     let spoke = matches!(ev.event, Event::Said { .. } | Event::Notice { .. }).then(|| ev.agent.id.clone());
-    // an event with a picture is slow to take in (the picture is shrunk); the other requests must not wait behind it
-    match tokio::task::block_in_place(|| on_event(&app, ev)) {
-        Ok(()) => {
-            // With a phone that can be woken and nobody reading the chat, what it said is read now: whether it
-            // deserves a notification is not known until then. With a radio reading, that radio's own request
-            // has it read.
-            if let Some(id) = spoke.filter(|_| app.push.any()) {
-                let unread: Vec<Entry> = {
-                    let inner = app.inner.lock().unwrap();
-                    inner.log.iter().rev().take(8).filter(|e| inner.readers == 0 && e.short.is_none() && e.agent.as_deref() == Some(id.as_str())).take(1).cloned().collect()
-                };
-                judge_later(&app, unread);
-            }
-            if let Some(id) = &reported {
-                // one the tower runs has stopped: what he said to it meanwhile goes to it now
-                if app.inner.lock().unwrap().find(id).is_some_and(|s| !s.queue.is_empty()) {
-                    let (app, id) = (app.clone(), id.clone());
-                    tokio::spawn(async move { held::flush(&app, &id).await });
-                }
-            }
-            if let Some(id) = reported.filter(|id| app.inner.lock().unwrap().find(id).is_some_and(|s| place::due(s.reports))) {
-                tokio::spawn(place::look(app.clone(), id));
-            }
-            Json(json!({})).into_response()
-        }
-        Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response(),
+    // its turn is over, with or without words
+    let ended = matches!(ev.event, Event::Said { .. } | Event::Stopped { .. }).then(|| ev.agent.id.clone());
+    on_event(app, ev)?;
+    // With a phone that can be woken and nobody reading the chat, what it said is read now: whether it
+    // deserves a notification is not known until then. With a radio reading, that radio's own request
+    // has it read.
+    if let Some(id) = spoke.filter(|_| app.push.any()) {
+        let unread: Vec<Entry> = {
+            let inner = app.inner.lock().unwrap();
+            inner.log.iter().rev().take(8).filter(|e| inner.readers == 0 && e.short.is_none() && e.agent.as_deref() == Some(id.as_str())).take(1).cloned().collect()
+        };
+        judge_later(app, unread);
     }
+    if let Some(id) = &ended {
+        // one the tower runs has stopped: what he said to it meanwhile goes to it now
+        if app.inner.lock().unwrap().find(id).is_some_and(|s| !s.queue.is_empty()) {
+            let (app, id) = (app.clone(), id.clone());
+            tokio::spawn(async move { held::flush(&app, &id).await });
+        }
+    }
+    if let Some(id) = reported.filter(|id| app.inner.lock().unwrap().find(id).is_some_and(|s| place::due(s.reports))) {
+        tokio::spawn(place::look(app.clone(), id));
+    }
+    Ok(())
 }
 
 /// One part of a file he is attaching. Answers with where the next part starts.
