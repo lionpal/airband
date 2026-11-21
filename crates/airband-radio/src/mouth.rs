@@ -139,12 +139,14 @@ pub struct CodingTool {
     pub id: String,
     pub name: String,
     pub maker: String,
+    /// What he has to do once before its agents are heard; empty when there is nothing.
+    pub first: String,
 }
 
 /// The coding tools airband works with, in the order to show them.
 #[uniffi::export]
 pub fn coding_tools() -> Vec<CodingTool> {
-    airband_core::catalog::current().tools.iter().map(|t| CodingTool { id: t.id.into(), name: t.name.into(), maker: t.maker.into() }).collect()
+    airband_core::catalog::current().tools.iter().map(|t| CodingTool { id: t.id.into(), name: t.name.into(), maker: t.maker.into(), first: t.first.into() }).collect()
 }
 
 pub(crate) fn service_of(kind: &str, key: &str, settings: HashMap<String, String>) -> airband_core::providers::Use {

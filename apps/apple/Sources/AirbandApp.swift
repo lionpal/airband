@@ -498,6 +498,9 @@ struct FeedView: View {
                     Text("You\u{2019}re connected").font(.system(size: 19, weight: .semibold))
                     Text("Start \(tool) in a project on your computer and it shows up here. A session that was already open needs to be started again.")
                         .font(.system(size: 16)).foregroundStyle(Palette.quiet).multilineTextAlignment(.center).lineSpacing(3)
+                    if let first = model.usedTools.first?.first, !first.isEmpty {
+                        Text(first).font(.system(size: 15)).foregroundStyle(Palette.quiet).multilineTextAlignment(.center).padding(.top, 6)
+                    }
                 } else {
                     Text("No messages yet").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.quiet)
                 }
@@ -1344,7 +1347,9 @@ struct SetupView: View {
                             VStack(alignment: .leading, spacing: 14) {
                                 Text("Tick the ones you use. What can write your summaries follows from them.").font(.system(size: 15)).foregroundStyle(Palette.soft)
                                 ToolsPicker(single: false)
-                                Text("Codex runs airband\u{2019}s hooks once you have trusted them: open Codex on your computer and type /hooks.").font(.system(size: 13)).foregroundStyle(Palette.quiet)
+                                ForEach(model.usedTools.filter { !$0.first.isEmpty }, id: \.id) { tool in
+                                    Text(tool.first).font(.system(size: 13)).foregroundStyle(Palette.quiet)
+                                }
                             }
                         }
                         .environmentObject(model)

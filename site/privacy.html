@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>airband: privacy</title>
+<meta name="description" content="What airband keeps, what passes through its server, and what never leaves your devices.">
+<style>
+:root { --ground: #0B0B0C; --ink: #F4F4F0; --soft: #C9C9C5; --quiet: #8E8E93; --line: #1B1D1E; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--ground); color: var(--soft); font: 17px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+main { max-width: 680px; margin: 0 auto; padding: 48px 20px 96px; }
+a { color: var(--ink); }
+h1 { margin: 28px 0 8px; font-size: 40px; line-height: 1.1; letter-spacing: -0.03em; color: var(--ink); }
+h2 { margin: 40px 0 8px; font-size: 21px; letter-spacing: -0.01em; color: var(--ink); }
+p, li { margin: 0 0 12px; }
+ul { margin: 0; padding-left: 20px; }
+.when { color: var(--quiet); font-size: 15px; }
+hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0 0; }
+</style>
+</head>
+<body>
+<main>
+  <a href="/">airband</a>
+  <h1>Privacy</h1>
+  <p class="when">Last changed 20 November 2026.</p>
+
+  <p>airband has no accounts. The app has no analytics and no tracking, and nothing in it reports back to us.</p>
+
+  <h2>What stays on your devices</h2>
+  <ul>
+    <li>Your messages, your agents' messages and your settings are kept on your phone and your computer.</li>
+    <li>API keys you enter are stored encrypted on your phone or your computer. We never see them.</li>
+    <li>Logs stay on the device that wrote them. A diagnostic is only ever shared if you copy it and send it yourself.</li>
+    <li>Models you run on your phone or your computer work there. Nothing they hear, read or say is sent anywhere.</li>
+  </ul>
+
+  <h2>What passes through our server</h2>
+  <p>When your phone is away from your computer's network, messages between them go through our relay. They are end-to-end encrypted with a key that only your phone and your computer hold, so we cannot read them.</p>
+  <ul>
+    <li>If your computer is off, the relay holds the encrypted messages for it for up to seven days, then deletes them.</li>
+    <li>For each pairing the relay keeps a random channel name and two check values that let it tell your devices from anyone else's.</li>
+    <li>To send a notification, your computer hands the relay an encrypted note and your phone's notification address, which the relay passes to Apple. The relay does not keep the address.</li>
+    <li>For a request that fails, the relay records the time, the kind of request, its size and the first characters of the channel name. It counts requests by internet address, in memory, to limit abuse.</li>
+  </ul>
+  <p>You can pair your phone straight to your computer and not use the relay at all.</p>
+
+  <h2>Services you choose</h2>
+  <p>You pick what writes your summaries, what listens and what speaks. If you pick a service from another company, such as Anthropic, OpenAI, Google or ElevenLabs, the text or audio for that job goes from your device to that company, under your own login or key and their terms. It does not pass through us.</p>
+  <p>Your coding agents talk to their own providers as they always have. airband does not change that.</p>
+
+  <h2>This website</h2>
+  <ul>
+    <li>If you leave your email for a TestFlight invite, we keep it to send you that invite and news about airband. Ask and we delete it.</li>
+    <li>The page loads its typeface from Google Fonts, so Google sees the request. There are no cookies and no analytics.</li>
+  </ul>
+
+  <h2>Who we are</h2>
+  <p>airband is made by Lionpal. Questions, or a request to delete your email: open an issue <a href="https://github.com/lionpal/airband/issues">on GitHub</a>.</p>
+  <hr>
+</main>
+</body>
+</html>

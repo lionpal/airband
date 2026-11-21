@@ -61,6 +61,9 @@ pub struct Tool {
     pub id: &'static str,
     pub name: &'static str,
     pub maker: &'static str,
+    /// What he has to do once before this tool's agents are heard, when there is anything; shown where he
+    /// picks the tool and where the app waits for its first agent.
+    pub first: &'static str,
     /// How the tower starts its agents, the one to prefer first. Each names a program that is run, so these
     /// are always the ones this build came with: a copy fetched later can change what a tool is called, and
     /// never what is run for it.
@@ -253,7 +256,7 @@ fn weigh_against(text: &str, now: u64, have: &Catalog, built: &Catalog) -> Resul
     newer.servers = built.servers.clone();
     // How a coding tool is started is a program to run, and is this build's own for every tool it knows. What
     // a later copy says about that is not kept: a tool new to this build comes with no way to start it.
-    newer.tools = keep_all(newer.tools.iter().map(|t| Tool { id: t.id, name: t.name, maker: t.maker, launchers: built.tools.iter().find(|b| b.id == t.id).map(|b| b.launchers).unwrap_or_default() }).collect());
+    newer.tools = keep_all(newer.tools.iter().map(|t| Tool { id: t.id, name: t.name, maker: t.maker, first: t.first, launchers: built.tools.iter().find(|b| b.id == t.id).map(|b| b.launchers).unwrap_or_default() }).collect());
     if newer.providers.is_empty() {
         return Err("the catalogue has no providers in it".into());
     }
@@ -429,6 +432,8 @@ struct ToolRow {
     name: String,
     #[serde(default)]
     maker: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    first: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     launchers: Vec<crate::tools::Launcher>,
 }
@@ -495,7 +500,7 @@ fn read(text: &str) -> Result<Catalog, String> {
         .map(|t| {
             // a launcher in a tool's row starts that tool
             let launchers = t.launchers.into_iter().map(|l| crate::tools::Launcher { harness: t.id.clone(), ..l }).collect();
-            Tool { id: keep(t.id), name: keep(t.name), maker: keep(t.maker), launchers: keep_all(launchers) }
+            Tool { id: keep(t.id), name: keep(t.name), maker: keep(t.maker), first: keep(t.first), launchers: keep_all(launchers) }
         })
         .collect();
     Ok(Catalog { rev: doc.rev, hash: doc.hash, providers, tools: keep_all(tools), models, servers, phrases: doc.phrases, retired: doc.retired, left_out })
