@@ -452,7 +452,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
         }
         let names = inner.sessions.iter().map(|s| s.callsign.text()).collect::<Vec<_>>();
         let held = inner.call(radio).asked.take().filter(|(_, _, when)| when.elapsed() < Duration::from_secs(90)).map(|(t, f, _)| (t, f));
-        (parsed, named, inner.roster(), names, inner.pending.len(), held)
+        (parsed, named, inner.roster(), names, inner.unheard().count(), held)
     };
     // "Who is that for?" was just asked. A tag and nothing else answers it; so do words of his that a model
     // reads as naming someone. Either way what goes out is what he said the first time.
@@ -526,8 +526,9 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
             return say(if pending > 0 { format!("Go ahead. {pending} waiting.") } else { "Go ahead. Nothing waiting.".into() });
         }
         Some(c @ (Control::More | Control::Repeat)) => {
-            let Some((s, last)) = targets.first().and_then(|s| s.last.clone().map(|l| (s.clone(), l))) else { return say("Nothing to repeat yet.".into()) };
-            let body = if c == Control::Repeat { last.say.clone().unwrap_or_default() } else { detail_of(app, &last.id).await.unwrap_or_default() };
+            let last = targets.first().and_then(|s| s.last_heard.clone().map(|l| (s.clone(), l))).and_then(|(s, id)| app.inner.lock().unwrap().log.iter().find(|e| e.id == id).map(|e| (s, id, e.short.clone().unwrap_or_default())));
+            let Some((s, last, said)) = last else { return say("Nothing to repeat yet.".into()) };
+            let body = if c == Control::Repeat { said } else { detail_of(app, &last).await.unwrap_or_default() };
             app.inner.lock().unwrap().call(radio).focus = Some(s.agent.id.clone());
             return ask(format!("{}. {body}", s.callsign.spoken()));
         }

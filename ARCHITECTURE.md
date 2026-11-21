@@ -251,6 +251,13 @@ receipt for every utterance the tower has taken, and every attempt to deliver hi
 receipt before it is routed, and an event is recorded before it is acted on, which makes a retry safe across a
 restart. Events, receipts and deliveries go after a month; the newest 5,000 messages stay.
 
+Whether he has heard a message is kept on the message (`aloud`), not in a second list, and changes through one
+function that logs each change with its reason (`Inner::set_aloud`). Whether a radio is there is one record
+per radio read by one clock (`Presence`, `THERE`). On the phone, every failed request ends in one named cause
+(`LinkError`), and the trail of them stays on the phone. No log, trail or diagnostic is uploaded anywhere; the
+relay logs only its own failed calls, with no content and six characters of the channel. `docs/protocols.md`,
+"What is written down, and where it stays".
+
 ## Compatibility
 
 Unknown fields are ignored, and unknown `type` and `kind` values are accepted and skipped. Adding is never a

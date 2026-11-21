@@ -102,13 +102,12 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
 pub(super) fn enqueue(inner: &mut Inner, agent_id: &str, notice: bool, full: String, kind: Option<Kind>, pictures: Vec<airband_core::radio::Picture>) {
     let Some(session) = inner.find(agent_id).cloned() else { return };
     // only the latest thing each agent said is worth hearing
-    inner.drop_pending(agent_id, Some(notice));
+    inner.supersede(agent_id, notice);
     log(format!("{}: {} queued ({} characters)", session.callsign.text(), if notice { "notice" } else { "message" }, full.chars().count()));
     let id = config::random_hex(8);
     // a notice from the harness is read to him as it is: it has its line from the start and no model reads it
     let short = notice.then(|| spoken(&full));
-    inner.record(Entry { pictures, short, ..Entry::said(id.clone(), &session, kind, full.clone()) });
-    // the copy a model reads to shorten it has no key in it either
-    let full = airband_core::redact::redact(&full);
-    inner.pending.push(Item { id, agent_id: agent_id.into(), notice, full, kind, say: None, detail: None, created: now(), asked: None, callsign: Some(session.callsign.clone()) });
+    // the line is its own place in the reading queue (a key in it is masked as it is recorded, so the copy a
+    // model reads to shorten it has none either)
+    inner.record(Entry { pictures, short, notice, aloud: Aloud::Waiting, ..Entry::said(id, &session, kind, full) });
 }

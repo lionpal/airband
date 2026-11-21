@@ -175,6 +175,13 @@ struct Relay {
     limits: Mutex<Limits>,
 }
 
+/// The line for a radio's request that failed: see [`Relay::note_failed`].
+fn failed_line(route: &str, channel: &str, status: u16, took: Duration, bytes: usize, in_flight: usize, has_held: bool, pulling: bool) -> String {
+    // six characters tell one channel's lines from another's in the log and are not enough to use the channel
+    let short: String = channel.chars().filter(char::is_ascii_hexdigit).take(6).collect();
+    format!("airband-relay: {route} on {short} answered {status} after {} ms ({bytes} bytes sent; {in_flight} in flight; kept messages: {}; tower pulling: {})", took.as_millis(), if has_held { "yes" } else { "no" }, if pulling { "yes" } else { "no" })
+}
+
 fn same(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
@@ -262,6 +269,19 @@ impl Relay {
         if let Err(e) = self.store.set_radio(channel, given).await {
             eprintln!("airband-relay: could not save a channel's radio token hash: {e}");
         }
+    }
+
+    /// A radio's request did not come to what it asked for: one line saying so. It has what the relay itself
+    /// handled and nothing else: the route, the status, how long it took, how much was sent, a shortened name
+    /// for the channel, how many requests were in flight on it, whether messages are kept for its tower, and
+    /// whether its tower has been pulling. Never what was sent (it is sealed, and the relay has no key to it),
+    /// and never a token or an internet address.
+    fn note_failed(&self, route: &str, channel: &str, status: StatusCode, began: Instant, bytes: usize, wanted: StatusCode) {
+        if status == wanted {
+            return;
+        }
+        let (in_flight, has_held, pulling) = self.channels.lock().unwrap().get(channel).map(|ch| (ch.waiting.len(), ch.has_held, ch.last_pull.is_some_and(|t| t.elapsed() <= AIRBAND_GONE))).unwrap_or_default();
+        eprintln!("{}", failed_line(route, channel, status.as_u16(), began.elapsed(), bytes, in_flight, has_held, pulling));
     }
 
     /// The channel, if this request carries its tower's pull token.
@@ -520,16 +540,22 @@ async fn reply(State(relay): State<Arc<Relay>>, Path((channel, id)): Path<(Strin
 /// Keep a sealed message for a tower that is away. The radio names it (`x-airband-id`), so sending it twice keeps
 /// it once; the tower is handed what is kept in the order it came, as soon as it is back.
 async fn hold(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, headers: HeaderMap, sealed: Bytes) -> Response {
+    let (began, bytes) = (Instant::now(), sealed.len());
+    let answer = keep(&relay, &channel, &headers, sealed).await;
+    relay.note_failed("queue", &channel, answer.status(), began, bytes, StatusCode::ACCEPTED);
+    answer
+}
+async fn keep(relay: &Arc<Relay>, channel: &str, headers: &HeaderMap, sealed: Bytes) -> Response {
     let id = headers.get("x-airband-id").and_then(|v| v.to_str().ok()).unwrap_or("");
     if !(8..=40).contains(&id.len()) || !id.bytes().all(|b| b.is_ascii_hexdigit()) || sealed.is_empty() {
         return say(StatusCode::BAD_REQUEST, "a kept message needs an id and a body");
     }
-    if let Err(no) = relay.admit(Asks::Queue, &channel, &headers).await {
+    if let Err(no) = relay.admit(Asks::Queue, channel, headers).await {
         return no;
     }
-    match relay.store.hold(&channel, id, &sealed, HELD_MOST).await {
+    match relay.store.hold(channel, id, &sealed, HELD_MOST).await {
         Ok(true) => {
-            if let Some(ch) = relay.channels.lock().unwrap().get_mut(&channel) {
+            if let Some(ch) = relay.channels.lock().unwrap().get_mut(channel) {
                 ch.has_held = true;
                 ch.wake.notify_one();
             }
@@ -544,13 +570,19 @@ async fn hold(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, head
 }
 
 async fn call(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, headers: HeaderMap, sealed: Bytes) -> Response {
-    if let Err(no) = relay.admit(Asks::Call, &channel, &headers).await {
+    let (began, bytes) = (Instant::now(), sealed.len());
+    let answer = carry(&relay, &channel, &headers, sealed).await;
+    relay.note_failed("call", &channel, answer.status(), began, bytes, StatusCode::OK);
+    answer
+}
+async fn carry(relay: &Arc<Relay>, channel: &str, headers: &HeaderMap, sealed: Bytes) -> Response {
+    if let Err(no) = relay.admit(Asks::Call, channel, headers).await {
         return no;
     }
     let id = random_hex(12);
     let answer = {
         let mut channels = relay.channels.lock().unwrap();
-        let Some(ch) = channels.get_mut(&channel) else { return not_the_radio() };
+        let Some(ch) = channels.get_mut(channel) else { return not_the_radio() };
         if ch.last_pull.is_none_or(|t| t.elapsed() > AIRBAND_GONE) {
             return say(StatusCode::SERVICE_UNAVAILABLE, "the tower is not connected to the relay");
         }
@@ -572,7 +604,7 @@ async fn call(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, head
         Ok(Ok(sealed)) => sealed.into_response(),
         _ => {
             // nothing of a request nobody waits for stays in memory
-            if let Some(ch) = relay.channels.lock().unwrap().get_mut(&channel) {
+            if let Some(ch) = relay.channels.lock().unwrap().get_mut(channel) {
                 ch.waiting.remove(&id);
                 ch.queue.retain(|(queued, _)| queued != &id);
             }
@@ -713,6 +745,16 @@ mod tests {
             headers.insert(auth.0, auth.1.parse().unwrap());
         }
         text(hold(State(relay.clone()), Path(channel.to_string()), headers, Bytes::from_static(b"sealed")).await).await
+    }
+
+    #[test]
+    fn a_failed_request_is_one_line_with_nothing_of_the_channel_but_its_first_six_characters() {
+        let channel = "0123456789abcdef0123456789abcdef";
+        let line = failed_line("call", channel, 504, Duration::from_millis(40_012), 412, 3, true, true);
+        assert_eq!(line, "airband-relay: call on 012345 answered 504 after 40012 ms (412 bytes sent; 3 in flight; kept messages: yes; tower pulling: yes)");
+        assert!(!line.contains(&channel[..7]));
+        // a name that is not a channel's at all says nothing of itself either
+        assert!(failed_line("queue", "../../etc/passwd", 400, Duration::ZERO, 0, 0, false, false).contains("queue on ecad answered 400"));
     }
 
     #[tokio::test]

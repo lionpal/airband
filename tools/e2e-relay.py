@@ -108,6 +108,8 @@ try:
 
     print("With the computer there")
     check("what he says goes through the relay to the agent", "Delivered." in send("the first thing") and "the first thing" in received(), received()[-200:])
+    logged = lambda name: open(os.path.join(work, name)).read()
+    check("the tower writes one line for it: how it came, what became of it and how long it took", " by the relay: answered in " in logged("tower.log"), logged("tower.log")[-400:])
 
     print("Now the radio has shown its token")
     refused = post("queue", None, os.urandom(8).hex())
@@ -126,6 +128,11 @@ try:
     if not LIVE: check("the relay keeps both, sealed, in the order they came", len(kept()) == 2 and len(kept_bytes()) > 100 and b"second" not in kept_bytes(), kept())
     check("and the agent has not had them yet", "second" not in received())
     if not LIVE:
+        # the relay's own record of the call it could not carry: six characters of the channel, and nothing sealed
+        lines = [l for l in logged("relay.log").splitlines() if f"call on {keys['channel'][:6]} answered 503" in l]
+        check("the relay writes one line for a call it could not carry, with six characters of the channel and nothing that was said",
+              lines and "tower pulling: no" in lines[-1] and keys["channel"] not in logged("relay.log") and keys["radio"] not in logged("relay.log") and "second" not in logged("relay.log"), logged("relay.log")[-400:])
+    if not LIVE:
         # the same message left twice is kept once: the relay goes by the id the radio gave it
         first = kept()[0]
         check("leaving one again under the same id keeps it once", leave(first, keys["radio"]) == 202 and len(kept()) == 2, kept())
@@ -140,6 +147,7 @@ try:
     text = received()
     check("the agent gets what he said, in the order he said it", 0 < text.find("the first thing") < text.find("the second thing") < text.find("the third thing"), text[-400:])
     check("each of them once", text.count("the second thing") == 1 and text.count("the third thing") == 1)
+    check("and the tower's log says they came late, from what the relay kept", " by the relay, kept while the tower was away: answered in " in logged("tower.log"), logged("tower.log")[-600:])
     if not LIVE: check("the relay keeps nothing once it is handed over, the unreadable one included", not kept(), kept())
     check("and what he says now goes straight through again", "Delivered." in send("the fourth thing") and received().count("the fourth thing") == 1)
     if not LIVE:

@@ -222,7 +222,7 @@ mod tests {
         inner.call("phone").has = rev;
         assert!(there(inner.calls.get("phone"), rev));
         // on a call it is read out
-        inner.call("car").last_poll = Some(Instant::now());
+        inner.call("car").presence.polls();
         assert!(there(inner.calls.get("car"), rev));
     }
 

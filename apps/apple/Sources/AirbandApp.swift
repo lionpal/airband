@@ -533,13 +533,7 @@ struct FeedView: View {
                         .id(m.id)
                     }
                     // what he sent that has not reached the tower yet
-                    ForEach(model.view.sending, id: \.id) { o in
-                        Text(o.label ?? o.text).font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.ground)
-                            .padding(.horizontal, 14).padding(.vertical, 9)
-                            .background(Palette.ink.opacity(0.45), in: RoundedRectangle(cornerRadius: 18))
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                            .accessibilityLabel("Sending: \(o.label ?? o.text)")
-                    }
+                    ForEach(model.view.sending, id: \.id) { o in Unsent(o: o) }
                     // the room the buttons take over the chat
                     Color.clear.frame(height: barHeight)
                     Color.clear.frame(height: 1).id("end")
@@ -1588,6 +1582,7 @@ struct SetupView: View {
                 }
                 if model.paired {
                     Section {
+                        NavigationLink("Connection") { ConnectionPage().environmentObject(model) }
                         NavigationLink("Accounts", isActive: $showAccounts) { AccountsView().environmentObject(model) }
                         if push.denied {
                             Button("Turn on notifications") { UIApplication.shared.open(URL(string: UIApplication.openNotificationSettingsURLString)!) }
@@ -1802,6 +1797,76 @@ struct DoingBubble: View {
 /// who hears what he says next. Each row carries the same dot as the teams bar.
 /// The + on a team's row: start a new agent in that team. It goes on the computer where the team's others
 /// run. When the team is on several computers, it asks which, with that one first.
+/// Something he sent that has not reached his computer. Once it has been trying for a while it says how the
+/// last try went, each way it was tried. One that was given up on says why and stays, to send again or delete.
+struct Unsent: View {
+    @EnvironmentObject var model: RadioModel
+    let o: Outgoing
+
+    /// Said only once it has been trying for ten seconds: before that it is simply on its way.
+    private var trying: String? {
+        guard o.failed == nil, !o.trail.isEmpty, o.lastTried >= o.at + 10_000 else { return nil }
+        return "Trying. " + o.trail.joined(separator: " ") + (o.tries > 1 ? " \(o.tries) tries." : "")
+    }
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 5) {
+            Text(o.label ?? o.text).font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.ground)
+                .padding(.horizontal, 14).padding(.vertical, 9)
+                .background(Palette.ink.opacity(o.failed == nil ? 0.45 : 0.3), in: RoundedRectangle(cornerRadius: 18))
+            if let failed = o.failed {
+                Text("Not sent. " + failed).font(.system(size: 13)).foregroundStyle(Palette.ask).multilineTextAlignment(.trailing)
+                HStack(spacing: 18) {
+                    Button("Delete") { model.discardUnsent(o) }.foregroundStyle(Palette.quiet)
+                    Button("Send again") { model.sendAgain(o) }.foregroundStyle(Palette.ink)
+                }
+                .font(.system(size: 14, weight: .semibold)).buttonStyle(.plain)
+            } else if let trying {
+                Text(trying).font(.system(size: 13)).foregroundStyle(Palette.quiet).multilineTextAlignment(.trailing)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(o.failed == nil ? "Sending: \(o.label ?? o.text)" : "Not sent: \(o.label ?? o.text)")
+    }
+}
+
+/// How each computer was last reached, and the record to copy when something is wrong. All of it is what this
+/// phone saw itself and kept in memory. Nothing here is sent anywhere.
+struct ConnectionPage: View {
+    @EnvironmentObject var model: RadioModel
+    @State private var reach: [DeskReach] = []
+    @State private var copied = false
+
+    var body: some View {
+        Form {
+            ForEach(reach, id: \.computer) { r in
+                Section(r.computer.isEmpty ? "Your computer" : r.computer) {
+                    line("Through the relay", r.relay)
+                    line("On this network", r.near)
+                }
+            }
+            Section {
+                Button(copied ? "Copied" : "Copy the connection record") {
+                    UIPasteboard.general.string = model.diagnostics()
+                    copied = true
+                }
+            } footer: {
+                Text("The record lists requests that failed and each try at sending what you said, with the time, the way it went and how it ended. Nothing you or your agents said is in it. It stays on this phone unless you paste it somewhere.")
+            }
+        }
+        .navigationTitle("Connection").navigationBarTitleDisplayMode(.inline)
+        .onAppear { reach = model.reach() }
+    }
+
+    private func line(_ title: String, _ last: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+            Text(last.isEmpty ? "Nothing has failed" : last.prefix(1).uppercased() + last.dropFirst()).font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+}
+
 struct NewAgentButton: View {
     @EnvironmentObject var model: RadioModel
     let room: String

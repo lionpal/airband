@@ -8,9 +8,6 @@
 use super::*;
 use airband_core::agent::{PermissionAsk, PermissionState};
 
-/// A radio that has not asked for the feed for this long is not there to be asked.
-const NOBODY_AFTER: Duration = Duration::from_secs(90);
-
 /// A harness asks. The question goes into the feed, and the id comes back for fetching the answer.
 pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
     let nobody = PermissionState { state: "nobody".into(), ..PermissionState::default() };
@@ -18,7 +15,8 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
         return nobody;
     }
     let mut inner = app.inner.lock().unwrap();
-    if !inner.last_reader.is_some_and(|t| t.elapsed() < NOBODY_AFTER) && !inner.connected() {
+    // no radio is following the chat or on a call: there is nobody to ask
+    if !inner.following() && !inner.connected() {
         return nobody;
     }
     inner.check_in(&ask.agent);
@@ -53,9 +51,8 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
             (line, vec![ALLOW.into(), DENY.into()], detail)
         }
     };
-    inner.record(Entry { short: Some(line.clone()), options, permit: Some(id.clone()), leave: ask.question.is_none(), ..Entry::said(entry_id.clone(), &session, Some(Kind::NeedsYou), detail.clone()) });
     // on a call it is read out like any other question
-    inner.pending.push(Item { id: entry_id.clone(), agent_id: agent_id.clone(), notice: false, full: detail, kind: Some(Kind::NeedsYou), say: Some(line), detail: None, created: now(), asked: None, callsign: Some(session.callsign.clone()) });
+    inner.record(Entry { short: Some(line), options, permit: Some(id.clone()), leave: ask.question.is_none(), aloud: Aloud::Waiting, ..Entry::said(entry_id.clone(), &session, Some(Kind::NeedsYou), detail) });
     inner.permits.insert(id.clone(), Permit { agent_id, entry: entry_id.clone(), decided: None, asked: Instant::now(), polled: Instant::now(), question: ask.question.is_some() });
     // he had the chat open a moment ago and may have put the phone down since: it is woken if so
     push::consider(app, &mut inner, &entry_id);
@@ -164,7 +161,9 @@ pub(super) fn answer(app: &App, text: &str, re: Option<&str>, verdict: Option<bo
             e.options.clear();
         }
     }
-    inner.pending.retain(|p| p.id != entry);
+    if inner.log.iter().any(|e| e.id == entry && e.aloud.unheard()) {
+        inner.set_aloud(&entry, Aloud::Dropped { why: Dropped::Answered });
+    }
     let Some(session) = inner.find(&agent_id).cloned() else { return say("That agent has gone.") };
     inner.session(&agent_id).unwrap().waiting = false;
     log(format!("← radio: \"{text}\" → {} is {} {}", session.callsign.text(), if question { "answered" } else if allow { "allowed" } else { "refused" }, if reason.is_empty() || question { String::new() } else { "with his reason".into() }));

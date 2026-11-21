@@ -13,8 +13,9 @@ pub(super) struct Session {
     pub(super) callsign: Callsign,
     /// It finished a turn and is waiting on him.
     pub(super) waiting: bool,
-    /// The last thing he heard from it, for "say more" and "repeat".
-    pub(super) last: Option<Item>,
+    /// The line of the last thing he heard from it, for "say more" and "repeat".
+    #[serde(default)]
+    pub(super) last_heard: Option<String>,
     /// Pictures it has touched since it last spoke; they go with what it says next.
     #[serde(default)]
     pub(super) pictures: Vec<pictures::Seen>,
@@ -51,29 +52,76 @@ pub(super) enum Mover {
     Tower,
 }
 
-/// Something an agent said that he has not heard yet.
-#[derive(Clone, Serialize, Deserialize)]
+/// Where something an agent said stands with being read out to him on a call. It is kept on the line itself, so
+/// there is one record of a message and of whether he has heard it. [`Inner::set_aloud`] is the only thing that
+/// changes it, and it writes down every change with its reason.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub(super) enum Aloud {
+    /// Not for reading out: his own words, and lines from before this was kept.
+    #[default]
+    No,
+    /// To be read out when a radio on a call is free.
+    Waiting,
+    /// Given to a radio to read out. It has not yet said whether he heard it.
+    Handed { radio: String, at: u64 },
+    Heard { radio: String, at: u64 },
+    /// It will not be read out, and why.
+    Dropped { why: Dropped },
+}
+
+/// Why something an agent said is not read out.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Dropped {
+    /// The judge found nothing in it for his ears.
+    Routine,
+    /// Its agent said something newer before he heard it.
+    Superseded,
+    /// It was waiting on him, and he has since spoken to its agent, or the agent has gone back to work.
+    Answered,
+    /// He let the question go.
+    Dismissed,
+    /// It was waiting on him, and its agent has gone.
+    AgentGone,
+    /// It was said long before he turned reading aloud on.
+    Stale,
+    /// The request for leave it put to him is over.
+    PermissionEnded,
+}
+
+impl Aloud {
+    /// Still to be heard: waiting its turn, or with a radio that has not said he heard it.
+    pub(super) fn unheard(&self) -> bool {
+        matches!(self, Aloud::Waiting | Aloud::Handed { .. })
+    }
+    /// For the log: the state in a word or two.
+    pub(super) fn words(&self) -> String {
+        match self {
+            Aloud::No => "not for reading".into(),
+            Aloud::Waiting => "waiting".into(),
+            Aloud::Handed { radio, .. } => format!("handed to {radio}"),
+            Aloud::Heard { radio, .. } => format!("heard on {radio}"),
+            Aloud::Dropped { why } => format!("dropped ({})", serde_json::to_value(why).ok().and_then(|v| v.as_str().map(|w| w.replace('_', " "))).unwrap_or_default()),
+        }
+    }
+}
+
+/// What the judge is given to read: one thing an agent said, as it stands in the log.
+#[derive(Clone)]
 pub(super) struct Item {
     pub(super) id: String,
-    pub(super) agent_id: String,
     /// It needs him at the keyboard; a spoken reply cannot help.
     pub(super) notice: bool,
     pub(super) full: String,
     pub(super) kind: Option<Kind>,
     pub(super) say: Option<String>,
-    pub(super) detail: Option<String>,
-    pub(super) created: u64,
     /// The last thing he told this agent, if anything: what the judge needs to tell "done what you asked" from
     /// chatter along the way.
-    #[serde(default)]
     pub(super) asked: Option<String>,
-    /// What its agent was called when it said this: it is read out under that name even after the agent has
-    /// gone, because a report is his news whether or not its agent is still there.
-    #[serde(default)]
-    pub(super) callsign: Option<Callsign>,
 }
 
-/// One line of the chat log. An agent's message shares its id with the pending [`Item`] it came from.
+/// One line of the chat log. For an agent's message, `aloud` says where it stands with being read out.
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub(super) struct Entry {
     pub(super) seq: u64,
@@ -137,6 +185,12 @@ pub(super) struct Entry {
     /// everything changed since the count it last saw.
     #[serde(default)]
     pub(super) rev: u64,
+    /// Where it stands with being read out on a call.
+    #[serde(default)]
+    pub(super) aloud: Aloud,
+    /// It is a notice from the harness that the agent needs him at the keyboard: read to him as it is.
+    #[serde(default)]
+    pub(super) notice: bool,
 }
 
 impl Entry {
@@ -197,7 +251,11 @@ pub(super) struct Call {
     pub(super) held: bool,
     /// The agent that last spoke on this radio or was last addressed from it.
     pub(super) focus: Option<String>,
-    pub(super) last_poll: Option<Instant>,
+    /// Whether it is there.
+    pub(super) presence: Presence,
+    /// What it took to read out and has not answered for yet (heard, not heard, or ready for the next). If the
+    /// answer that carried it was lost on the way, it is given the same thing again.
+    pub(super) handed: Option<Transmission>,
     /// When this radio last did anything at all: a radio that only reads the feed and types never polls.
     pub(super) seen: Option<Instant>,
     /// Words he said that the tower could not place, held while it asks him who they are for.
@@ -217,9 +275,44 @@ pub(super) struct Call {
     pub(super) quiet_until: Option<Instant>,
 }
 
+/// Whether a radio is there, as it last showed. Every rule that turns on "is he there" reads this, by the one
+/// clock [`THERE`]: who can be handed something to read out, whether there is anyone to ask for leave, whether
+/// a notification is needed, whether it is worth asking the harnesses what their agents are doing.
+#[derive(Default)]
+pub(super) struct Presence {
+    /// When it last asked for something to read out, or said it was still on the call.
+    polled: Option<Instant>,
+    /// When it last asked for the chat.
+    followed: Option<Instant>,
+}
+
+impl Presence {
+    /// It is on a call: it has asked for something to read out lately.
+    pub(super) fn on_call(&self) -> bool {
+        self.polled.is_some_and(|t| t.elapsed() < THERE)
+    }
+    /// It is following the chat.
+    pub(super) fn following(&self) -> bool {
+        self.followed.is_some_and(|t| t.elapsed() < THERE)
+    }
+    pub(super) fn polls(&mut self) {
+        self.polled = Some(Instant::now());
+    }
+    /// It says it is still on the call while it asks for nothing (he has the microphone open). Nothing for a
+    /// radio that was never on one.
+    pub(super) fn still_on_call(&mut self) {
+        if self.polled.is_some() {
+            self.polls();
+        }
+    }
+    pub(super) fn follows(&mut self) {
+        self.followed = Some(Instant::now());
+    }
+}
+
 impl Call {
     pub(super) fn connected(&self) -> bool {
-        self.last_poll.is_some_and(|t| t.elapsed() < RADIO_GONE)
+        self.presence.on_call()
     }
     pub(super) fn can_send(&self) -> bool {
         self.connected() && self.ready && !self.held && self.outbox.is_none() && self.quiet_until.is_none_or(|t| Instant::now() >= t)
@@ -232,8 +325,9 @@ pub(super) const LOG_KEEP: usize = 1000;
 #[derive(Default)]
 pub(super) struct Inner {
     pub(super) sessions: Vec<Session>,
-    pub(super) pending: Vec<Item>,
     pub(super) log: Vec<Entry>,
+    /// The last changes to what is read out, as the log has them: for `airband status`.
+    pub(super) aloud_trail: std::collections::VecDeque<String>,
     pub(super) seq: u64,
     /// The change count: see [`Entry::rev`].
     pub(super) rev: u64,
@@ -260,8 +354,6 @@ pub(super) struct Inner {
     pub(super) judging: HashSet<String>,
     /// Requests for permission that are waiting for his answer, or have just had it, by id.
     pub(super) permits: HashMap<String, Permit>,
-    /// When a radio last asked for the feed: whether anyone is there to be asked something.
-    pub(super) last_reader: Option<Instant>,
     /// Ids of the lines a notification has been decided for, so each is decided once.
     pub(super) pushed: HashSet<String>,
     /// How many requests for the whole chat are open right now: while there is one, it reads what agents say.
@@ -294,7 +386,10 @@ pub(super) struct Permit {
 #[derive(Serialize, Deserialize, Default)]
 pub(crate) struct Saved {
     pub(super) sessions: Vec<Session>,
-    pub(super) pending: Vec<Item>,
+    /// From a tower before each line kept its own place in the reading queue: what was unheard then, read once
+    /// to mark those lines, and never written again.
+    #[serde(default, skip_serializing)]
+    pub(super) pending: Vec<Value>,
     #[serde(default)]
     pub(super) projects: BTreeMap<String, String>,
     #[serde(default)]
@@ -309,6 +404,11 @@ impl Inner {
     /// Is any radio there?
     pub(super) fn connected(&self) -> bool {
         self.calls.values().any(Call::connected)
+    }
+    /// Is any radio following the chat? Then there is someone to put a question to, and someone to see what
+    /// the agents are doing.
+    pub(super) fn following(&self) -> bool {
+        self.calls.values().any(|c| c.presence.following())
     }
     /// Does anyone on a call need the tower's voice? Not when every radio there makes its own.
     pub(super) fn wants_voice(&self) -> bool {
@@ -336,34 +436,107 @@ impl Inner {
         e.agent.as_deref().and_then(|id| self.find(id))
     }
 
+    /// The one way a line's place in the reading queue changes. Every change is written to the log with what it
+    /// was and what it became, so "why was that not read to me" has an answer.
+    pub(super) fn set_aloud(&mut self, id: &str, to: Aloud) {
+        let Some(e) = self.log.iter_mut().find(|e| e.id == id) else { return };
+        if e.aloud == to {
+            return;
+        }
+        let line = format!("aloud: {} ({id}) {} → {}", e.from, e.aloud.words(), to.words());
+        e.aloud = to;
+        self.unsaved.borrow_mut().insert(id.to_string());
+        // not to be read by the radio that had it (it is heard, or is not to be read after all, or goes back in
+        // the queue): that radio is not waited on for it any more
+        if !matches!(e.aloud, Aloud::Handed { .. }) {
+            for call in self.calls.values_mut() {
+                if call.outbox.as_ref().is_some_and(|t| t.id == id) {
+                    call.outbox = None;
+                    call.ready = true;
+                }
+                if call.handed.as_ref().is_some_and(|t| t.id == id) {
+                    call.handed = None;
+                }
+            }
+        }
+        log(&line);
+        self.aloud_trail.push_back(format!("{} {line}", clock()));
+        while self.aloud_trail.len() > 20 {
+            self.aloud_trail.pop_front();
+        }
+    }
+    /// The lines still to be heard, oldest first.
+    pub(super) fn unheard(&self) -> impl Iterator<Item = &Entry> {
+        self.log.iter().filter(|e| e.aloud.unheard())
+    }
+    /// What the judge reads of a line.
+    pub(super) fn item(&self, e: &Entry) -> Item {
+        Item { asked: e.agent.as_deref().and_then(|a| self.last_instruction(a)), id: e.id.clone(), notice: e.notice, full: e.full.clone(), kind: e.kind, say: e.short.clone() }
+    }
+
     /// This agent is no longer waiting on him: he spoke to it, or it went back to work. What it was waiting
     /// for is not read out any more. A report he has not heard yet still is: he asked to hear what his
     /// agents report, and talking to one is not the same as having heard it.
     pub(super) fn no_longer_waiting(&mut self, agent_id: &str) {
-        let gone: HashSet<String> = self.pending.iter().filter(|p| p.agent_id == agent_id && matches!(p.kind, Some(Kind::NeedsYou | Kind::Stalled))).map(|p| p.id.clone()).collect();
-        self.pending.retain(|p| !gone.contains(&p.id));
-        for call in self.calls.values_mut() {
-            if call.outbox.as_ref().is_some_and(|t| gone.contains(&t.id)) {
-                call.outbox = None;
-                call.ready = true;
-            }
+        self.drop_asks(agent_id, Dropped::Answered);
+    }
+    fn drop_asks(&mut self, agent_id: &str, why: Dropped) {
+        let asks: Vec<String> = self.unheard().filter(|e| e.agent.as_deref() == Some(agent_id) && matches!(e.kind, Some(Kind::NeedsYou | Kind::Stalled))).map(|e| e.id.clone()).collect();
+        for id in asks {
+            self.set_aloud(&id, Aloud::Dropped { why });
+        }
+    }
+    /// This agent has said something newer: only the latest thing each agent said is read out. A notice from
+    /// its harness takes the place of an earlier notice, and what it said of what it said before.
+    pub(super) fn supersede(&mut self, agent_id: &str, notice: bool) {
+        let older: Vec<String> = self.unheard().filter(|e| e.agent.as_deref() == Some(agent_id) && e.notice == notice).map(|e| e.id.clone()).collect();
+        for id in older {
+            self.set_aloud(&id, Aloud::Dropped { why: Dropped::Superseded });
+        }
+    }
+    /// A radio that took something to read out is not going to say he heard it (it came back to the call anew,
+    /// said it was ready for the next thing, or went quiet): what it had goes back in the queue.
+    pub(super) fn give_back(&mut self, radio: &str) {
+        let had: Vec<String> = self.log.iter().filter(|e| matches!(&e.aloud, Aloud::Handed { radio: r, .. } if r == radio)).map(|e| e.id.clone()).collect();
+        for id in had {
+            self.set_aloud(&id, Aloud::Waiting);
+        }
+        if let Some(call) = self.calls.get_mut(radio) {
+            call.handed = None;
+        }
+    }
+    /// He has just turned reading aloud on: what was said long before is in the chat for him to read, and is
+    /// not read out now, hours late.
+    pub(super) fn leave_old_news(&mut self) {
+        let recent = now().saturating_sub(STILL_NEWS.as_millis() as u64);
+        let old: Vec<String> = self.unheard().filter(|e| e.at < recent).map(|e| e.id.clone()).collect();
+        for id in old {
+            self.set_aloud(&id, Aloud::Dropped { why: Dropped::Stale });
+        }
+    }
+    /// At start. Nothing is with a radio any more. What an agent that is gone was waiting on him for goes; what
+    /// it reported in the last while is still his news. `before` is what a tower from before lines kept their
+    /// own place had unheard: those lines are marked once.
+    pub(super) fn settle_reading(&mut self, before: &[Value]) {
+        let marked: Vec<String> = before.iter().filter_map(|p| p["id"].as_str()).filter(|id| self.log.iter().any(|e| e.id == *id && e.aloud == Aloud::No)).map(String::from).collect();
+        for id in marked {
+            self.set_aloud(&id, Aloud::Waiting);
+        }
+        let live: HashSet<String> = self.sessions.iter().map(|s| s.agent.id.clone()).collect();
+        let recent = now().saturating_sub(STILL_NEWS.as_millis() as u64);
+        let unheard: Vec<(String, bool, bool, bool)> = self.unheard().map(|e| (e.id.clone(), e.agent.as_ref().is_some_and(|a| live.contains(a)), e.kind == Some(Kind::Report), e.at >= recent)).collect();
+        for (id, live, report, recent) in unheard {
+            self.set_aloud(&id, match (live, report, recent) {
+                (true, _, _) | (false, true, true) => Aloud::Waiting,
+                (false, true, false) => Aloud::Dropped { why: Dropped::Stale },
+                (false, false, _) => Aloud::Dropped { why: Dropped::AgentGone },
+            });
         }
     }
 
-    /// What this agent last said is stale: it has said something newer, or it has gone.
-    pub(super) fn drop_pending(&mut self, agent_id: &str, only_notice: Option<bool>) {
-        let gone: HashSet<String> = self.pending.iter().filter(|p| p.agent_id == agent_id && only_notice.is_none_or(|n| p.notice == n)).map(|p| p.id.clone()).collect();
-        self.pending.retain(|p| !gone.contains(&p.id));
-        for call in self.calls.values_mut() {
-            if call.outbox.as_ref().is_some_and(|t| gone.contains(&t.id)) {
-                call.outbox = None;
-                call.ready = true;
-            }
-        }
-    }
     pub(super) fn remove(&mut self, agent_id: &str) {
         // it has gone: what it was waiting on him for goes with it, and what it reported is still to be heard
-        self.no_longer_waiting(agent_id);
+        self.drop_asks(agent_id, Dropped::AgentGone);
         self.sessions.retain(|s| s.agent.id != agent_id);
         for call in self.calls.values_mut() {
             if call.focus.as_deref() == Some(agent_id) {
@@ -420,7 +593,7 @@ impl Inner {
             if let Some(cwd) = agent.cwd.clone().filter(|_| agent.name.is_none()) {
                 self.projects.insert(callsign.project.clone(), cwd);
             }
-            self.sessions.push(Session { agent: agent.clone(), callsign, waiting: false, last: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new() });
+            self.sessions.push(Session { agent: agent.clone(), callsign, waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new() });
             // one that was moved to another team before it went away goes back there
             if let Some((team, by)) = self.placed.get(&agent.id).cloned() {
                 self.move_to(&agent.id, &team, by);
@@ -583,7 +756,9 @@ impl Inner {
                 e.short = e.short.as_ref().map(|s| s.strip_suffix(permit::ASKS).map(|line| format!("{line}{}", permit::MOVED)).unwrap_or_else(|| s.clone()));
             }
         }
-        self.pending.retain(|p| p.id != entry);
+        if self.log.iter().any(|e| e.id == entry && e.aloud.unheard()) {
+            self.set_aloud(entry, Aloud::Dropped { why: Dropped::PermissionEnded });
+        }
         self.touch(entry);
     }
     pub(super) fn touch(&mut self, id: &str) {
@@ -597,10 +772,6 @@ impl Inner {
     /// The short version of a message is ready: for the call queue and for the chat alike.
     pub(super) fn fill(&mut self, id: &str, kind: Kind, say: &str, options: &[String], recommended: Option<u32>, read: Option<&str>, background: bool, own_session: bool) {
         self.judging.remove(id);
-        if let Some(p) = self.pending.iter_mut().find(|p| p.id == id) {
-            p.kind = Some(kind);
-            p.say = Some(say.to_string());
-        }
         if let Some(e) = self.log.iter_mut().find(|e| e.id == id) {
             e.kind = Some(kind);
             e.short = Some(airband_core::redact::redact(say));
@@ -610,6 +781,10 @@ impl Inner {
             e.background = background;
             e.own_session = own_session;
             self.touch(id);
+        }
+        // not worth his ears: it stays in the chat, dimmed, and is not read out
+        if kind == Kind::Fyi && self.log.iter().any(|e| e.id == id && e.aloud.unheard()) {
+            self.set_aloud(id, Aloud::Dropped { why: Dropped::Routine });
         }
     }
 
@@ -966,32 +1141,113 @@ mod tests {
         let mut inner = Inner::default();
         for radio in ["phone", "desk"] {
             let c = inner.call(radio);
-            c.last_poll = Some(Instant::now());
+            c.presence.polls();
             c.ready = true;
         }
         inner.call("desk").held = true;
         assert_eq!(inner.free_radio().as_deref(), Some("phone"));
         inner.check_in(&agent("a", "/x/shop", None));
-        inner.pending.push(Item { id: "t".into(), agent_id: "a".into(), notice: false, full: String::new(), kind: None, say: None, detail: None, created: 0, asked: None, callsign: None });
-        inner.call("phone").outbox = Some(Transmission { id: "t".into(), callsign: "shop one".into(), kind: Kind::Report, say: String::new(), waiting: 0, speech: None });
+        let t = queued(&mut inner, "a", Kind::NeedsYou, "Ship it?");
+        inner.call("phone").outbox = Some(Transmission { id: t.clone(), callsign: "shop one".into(), kind: Kind::NeedsYou, say: String::new(), waiting: 0, speech: None });
         inner.call("phone").ready = false;
         // the agent goes back to work: what the phone was about to say is withdrawn, and only there
-        inner.drop_pending("a", None);
+        inner.no_longer_waiting("a");
         assert!(inner.call("phone").outbox.is_none() && inner.call("phone").ready);
+    }
+
+    /// Something an agent said that is in the reading queue, as `intake::enqueue` leaves it once judged.
+    fn queued(inner: &mut Inner, agent_id: &str, kind: Kind, text: &str) -> String {
+        let s = inner.find(agent_id).unwrap().clone();
+        let id = format!("m{}", inner.seq + 1);
+        inner.record(Entry { aloud: Aloud::Waiting, short: Some(text.into()), ..Entry::said(id.clone(), &s, Some(kind), text.into()) });
+        id
+    }
+    fn aloud(inner: &Inner, id: &str) -> Aloud {
+        inner.log.iter().find(|e| e.id == id).unwrap().aloud.clone()
+    }
+    fn dropped(why: Dropped) -> Aloud {
+        Aloud::Dropped { why }
     }
 
     #[test]
     fn a_report_he_has_not_heard_is_kept_when_he_speaks_to_its_agent_and_its_question_is_not() {
         let mut inner = Inner::default();
         inner.check_in(&agent("a", "/x/shop", None));
-        let item = |id: &str, kind| Item { id: id.into(), agent_id: "a".into(), notice: false, full: String::new(), kind: Some(kind), say: Some("said".into()), detail: None, created: 0, asked: None, callsign: None };
-        inner.pending.push(item("report", Kind::Report));
-        inner.pending.push(item("question", Kind::NeedsYou));
+        let report = queued(&mut inner, "a", Kind::Report, "Shipped.");
+        let question = queued(&mut inner, "a", Kind::NeedsYou, "Ship the next one?");
         inner.no_longer_waiting("a");
-        assert_eq!(inner.pending.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["report"]);
+        assert_eq!((aloud(&inner, &report), aloud(&inner, &question)), (Aloud::Waiting, dropped(Dropped::Answered)));
         // something newer from the same agent still takes the place of what it said before
-        inner.drop_pending("a", None);
-        assert!(inner.pending.is_empty());
+        inner.supersede("a", false);
+        assert_eq!(aloud(&inner, &report), dropped(Dropped::Superseded));
+        assert_eq!(inner.unheard().count(), 0);
+    }
+
+    #[test]
+    fn every_way_out_of_the_reading_queue_is_written_down_with_its_reason() {
+        let mut inner = Inner::default();
+        inner.check_in(&agent("a", "/x/shop", None));
+        inner.check_in(&agent("b", "/x/backoffice", None));
+        // routine: the judge found nothing for his ears
+        let routine = queued(&mut inner, "a", Kind::Report, "Still going.");
+        inner.fill(&routine, Kind::Fyi, "Still going.", &[], None, None, false, false);
+        assert_eq!(aloud(&inner, &routine), dropped(Dropped::Routine));
+        // dismissed, and a request for leave that is over
+        let leave = asks_leave(&mut inner, "a", "p1", "run `make`");
+        inner.set_aloud(&leave, Aloud::Waiting);
+        inner.close_permit("p1");
+        assert_eq!(aloud(&inner, &leave), dropped(Dropped::PermissionEnded));
+        // its agent has gone: the question goes, the report is still his news
+        let report = queued(&mut inner, "b", Kind::Report, "Refunds sent.");
+        let question = queued(&mut inner, "b", Kind::NeedsYou, "Send the rest?");
+        inner.remove("b");
+        assert_eq!((aloud(&inner, &report), aloud(&inner, &question)), (Aloud::Waiting, dropped(Dropped::AgentGone)));
+        // said long before he turned reading aloud on
+        inner.log.iter_mut().find(|e| e.id == report).unwrap().at = 1;
+        inner.leave_old_news();
+        assert_eq!(aloud(&inner, &report), dropped(Dropped::Stale));
+        // each of those is in the trail `airband status` shows, with what it was and what it became
+        let trail: Vec<&String> = inner.aloud_trail.iter().collect();
+        for reason in ["routine", "permission ended", "agent gone", "stale"] {
+            assert!(trail.iter().any(|l| l.contains(&format!("waiting → dropped ({reason})"))), "{reason}: {trail:?}");
+        }
+        assert!(inner.unheard().next().is_none());
+    }
+
+    #[test]
+    fn what_a_radio_took_and_did_not_hear_goes_back_in_the_queue() {
+        let mut inner = Inner::default();
+        inner.check_in(&agent("a", "/x/shop", None));
+        let report = queued(&mut inner, "a", Kind::Report, "Shipped.");
+        inner.set_aloud(&report, Aloud::Handed { radio: "phone".into(), at: 1 });
+        inner.call("phone").handed = Some(Transmission { id: report.clone(), callsign: "shop one".into(), kind: Kind::Report, say: String::new(), waiting: 0, speech: None });
+        assert_eq!(inner.unheard().count(), 1);
+        inner.give_back("phone");
+        assert_eq!(aloud(&inner, &report), Aloud::Waiting);
+        assert!(inner.call("phone").handed.is_none());
+        // heard: it is out of the queue, and stays on record as heard
+        inner.set_aloud(&report, Aloud::Heard { radio: "phone".into(), at: 2 });
+        inner.give_back("phone");
+        assert!(matches!(aloud(&inner, &report), Aloud::Heard { .. }) && inner.unheard().next().is_none());
+    }
+
+    #[test]
+    fn at_start_a_gone_agents_question_goes_and_its_recent_report_stays() {
+        let mut inner = Inner::default();
+        inner.check_in(&agent("a", "/x/shop", None));
+        inner.check_in(&agent("b", "/x/backoffice", None));
+        let live = queued(&mut inner, "a", Kind::NeedsYou, "Ship it?");
+        let report = queued(&mut inner, "b", Kind::Report, "Refunds sent.");
+        let old = queued(&mut inner, "b", Kind::Report, "Started.");
+        let question = queued(&mut inner, "b", Kind::NeedsYou, "Send the rest?");
+        inner.log.iter_mut().find(|e| e.id == old).unwrap().at = 1;
+        inner.set_aloud(&live, Aloud::Handed { radio: "phone".into(), at: 1 });
+        // a line a tower from before kept in its own list
+        let before = says(&mut inner, "a", Kind::Report, "From before.");
+        inner.sessions.retain(|s| s.agent.id != "b");
+        inner.settle_reading(&[json!({ "id": before })]);
+        assert_eq!([aloud(&inner, &live), aloud(&inner, &report), aloud(&inner, &before)], [Aloud::Waiting, Aloud::Waiting, Aloud::Waiting]);
+        assert_eq!((aloud(&inner, &old), aloud(&inner, &question)), (dropped(Dropped::Stale), dropped(Dropped::AgentGone)));
     }
 
     #[test]
