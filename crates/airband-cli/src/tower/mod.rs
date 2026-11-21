@@ -428,7 +428,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         {
             let (app, runtime) = (app.clone(), tokio::runtime::Handle::current());
             crate::adapters::watch_all(move || {
-                let (taking, runtime, holding) = (app.clone(), runtime.clone(), app.clone());
+                let (taking, runtime, holding, having) = (app.clone(), runtime.clone(), app.clone(), app.clone());
                 crate::adapters::Tower {
                     event: Box::new(move |event| {
                         let _here = runtime.enter();
@@ -436,6 +436,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
                         http::take_event(&taking, event).is_ok()
                     }),
                     holds: Box::new(move |session| held::holds(&holding.inner.lock().unwrap(), session)),
+                    has: Box::new(move |harness| having.inner.lock().unwrap().sessions.iter().filter(|s| s.agent.harness == harness).map(|s| s.agent.id.clone()).collect()),
                 }
             });
         }

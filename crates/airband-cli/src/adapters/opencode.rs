@@ -184,7 +184,11 @@ fn watch(tower: Tower) {
         }
         // one that has gone from the list (he archived or deleted it), or has been quiet for hours, has left
         let here: Vec<&str> = sessions.iter().filter(ours).filter(|s| now.saturating_sub(s["time"]["updated"].as_u64().unwrap_or(0)) <= QUIET).filter_map(|s| s["id"].as_str()).collect();
-        let gone: Vec<String> = seen.keys().filter(|id| !here.contains(&id.as_str())).cloned().collect();
+        let mut gone: Vec<String> = seen.keys().filter(|id| !here.contains(&id.as_str())).cloned().collect();
+        if first {
+            // and on the first look, one the tower still has from before it last stopped that is not here now
+            gone.extend((tower.has)(NAME).into_iter().filter(|id| !here.contains(&id.as_str()) && !(tower.holds)(id) && !seen.contains_key(id)));
+        }
         for id in gone {
             if send(&id, None, Event::Signoff) {
                 seen.remove(&id);

@@ -93,6 +93,9 @@ pub struct Tower {
     pub event: Box<dyn Fn(AgentEvent) -> bool + Send>,
     /// Is this session of the tool's one the tower runs itself? Those are reported by their own driver.
     pub holds: Box<dyn Fn(&str) -> bool + Send>,
+    /// The sessions of a harness the tower has on its roster. A watcher that starts and does not find one of
+    /// them at the tool any more says it has left: it went while no watcher was looking.
+    pub has: Box<dyn Fn(&str) -> Vec<String> + Send>,
 }
 
 /// Something he said to an agent directly, at its keyboard.
