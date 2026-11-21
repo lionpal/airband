@@ -37,7 +37,7 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
         let Some(s) = inner.find(&agent_id).filter(|s| s.moved != Some(Mover::Him)).cloned() else { return };
         let said: Vec<String> = inner.log.iter().rev().filter(|e| e.agent.as_deref() == Some(agent_id.as_str()) && e.kind != Some(Kind::Fyi)).take(3).map(|e| e.short.clone().unwrap_or_else(|| opening(&e.full))).collect();
         // his teams, each with its folder when the tower knows it
-        let folders = inner.launchable(&app.cfg);
+        let folders = inner.teams(&app.cfg);
         let mut teams: Vec<String> = inner.sessions.iter().map(|s| s.callsign.project.clone()).chain(folders.keys().cloned()).collect();
         teams.sort();
         teams.dedup();

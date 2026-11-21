@@ -162,6 +162,98 @@ json.dump({"url": f"http://127.0.0.1:{fake.server_address[1]}", "password": PASS
 env = dict(os.environ, HOME=home, XDG_STATE_HOME=os.path.join(work, "state"))
 env.pop("AIRBAND_INTERNAL", None)
 
+# Sessions that are already open when the tower starts, as each tool keeps its own record of them. The folders
+# they work in are under this checkout, not under the system's temporary folders: nothing there is offered as
+# a place to start an agent.
+import hashlib, struct
+lasting = os.path.join(ROOT, "target", f"e2e-held-{os.getpid()}")
+barn, loft, hay = (os.path.join(lasting, n) for n in ("barn", "loft", "hay-store"))
+for d in (barn, loft, hay): os.makedirs(d)
+short = tempfile.mkdtemp(prefix="ab", dir="/tmp")   # a socket's path cannot be long
+
+# Claude Code: a record per running session, the token for its socket beside it, and a transcript per project.
+class Claude:
+    lines = []
+its = subprocess.Popen(["sleep", "600"])
+started = subprocess.run(["ps", "-p", str(its.pid), "-o", "lstart="], capture_output=True, text=True, env=dict(os.environ, LC_ALL="C", TZ="UTC")).stdout.strip()
+inbox = socket.socket(socket.AF_UNIX); inbox.bind(os.path.join(short, "claude.sock")); inbox.listen(8)
+def take_claude():
+    while True:
+        conn, _ = inbox.accept()
+        data = b""
+        while chunk := conn.recv(65536): data += chunk
+        Claude.lines.append([json.loads(l) for l in data.decode().splitlines() if l.strip()])
+threading.Thread(target=take_claude, daemon=True).start()
+claude_home = os.path.join(home, ".claude")
+os.makedirs(os.path.join(claude_home, "sessions")); os.makedirs(os.path.join(claude_home, "projects", "-barn"))
+record = os.path.join(claude_home, "sessions", f"{its.pid}.json")
+def claude_record(**more):
+    json.dump({"pid": its.pid, "sessionId": "claude-open-before", "cwd": barn, "procStart": started, "kind": "interactive", "entrypoint": "cli", "status": "idle",
+               "messagingSocketPath": os.path.join(short, "claude.sock"), "name": "barn-a1", "nameSource": "derived", **more}, open(record, "w"))
+claude_record()
+json.dump({"peerToken": "claude-socket-token", "procStart": started}, open(os.path.join(claude_home, "sessions", f"{its.pid}.abc.key"), "w"))
+# a one-off run has a record too, and is not his to talk to
+json.dump({"pid": its.pid, "sessionId": "claude-one-off", "cwd": barn, "procStart": started, "kind": "interactive", "entrypoint": "sdk-cli", "messagingSocketPath": os.path.join(short, "claude.sock")},
+          open(os.path.join(claude_home, "sessions", "1.json"), "w"))
+open(os.path.join(claude_home, "projects", "-barn", "claude-open-before.jsonl"), "w").write(json.dumps({"type": "user", "cwd": barn}) + "\n")
+os.makedirs(os.path.join(claude_home, "projects", "-gone"))
+open(os.path.join(claude_home, "projects", "-gone", "old.jsonl"), "w").write(json.dumps({"type": "user", "cwd": os.path.join(lasting, "pulled-down")}) + "\n")
+os.makedirs(os.path.join(claude_home, "projects", "-scratch")); os.makedirs(os.path.join(work, "code", "scratch"))
+open(os.path.join(claude_home, "projects", "-scratch", "passing.jsonl"), "w").write(json.dumps({"type": "user", "cwd": os.path.join(work, "code", "scratch")}) + "\n")
+
+# Codex: a server of its own on a socket file, speaking JSON-RPC over a websocket, that says which threads are
+# loaded; its `queue` command, which is how his words get in; and a file per session that says where it was.
+class Codex:
+    loaded, queued = ["thread-open-before", "thread-of-a-subagent"], os.path.join(got, "codex-queue")
+    threads = {"thread-open-before": {"id": "thread-open-before", "cwd": loft, "parentThreadId": None, "ephemeral": False, "model": "gpt-stand-in", "name": "Made up by Codex", "status": {"type": "idle"}},
+               "thread-of-a-subagent": {"id": "thread-of-a-subagent", "cwd": loft, "parentThreadId": "thread-open-before", "ephemeral": False, "status": {"type": "idle"}}}
+codex_home = short
+os.makedirs(os.path.join(codex_home, "app-server-control")); os.makedirs(os.path.join(codex_home, "sessions", "2026", "11", "21"))
+open(os.path.join(codex_home, "sessions", "2026", "11", "21", "rollout-a.jsonl"), "w").write(json.dumps({"type": "session_meta", "payload": {"id": "thread-open-before", "cwd": loft}}) + "\n")
+daemon = socket.socket(socket.AF_UNIX); daemon.bind(os.path.join(codex_home, "app-server-control", "app-server-control.sock")); daemon.listen(8)
+def serve_codex(conn):
+    try:
+        head = b""
+        while b"\r\n\r\n" not in head: head += conn.recv(1)
+        key = next(l.split(":", 1)[1].strip() for l in head.decode().split("\r\n") if l.lower().startswith("sec-websocket-key"))
+        accept = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
+        conn.sendall(f"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n".encode())
+        def read(n):
+            data = b""
+            while len(data) < n:
+                more = conn.recv(n - len(data))
+                if not more: raise EOFError
+                data += more
+            return data
+        def send(m):
+            body = json.dumps(m).encode()
+            conn.sendall(bytes([0x81]) + (bytes([len(body)]) if len(body) < 126 else bytes([126]) + struct.pack(">H", len(body))) + body)
+        while True:
+            first, second = read(2)
+            n = second & 0x7f
+            if n == 126: n = struct.unpack(">H", read(2))[0]
+            mask = read(4) if second & 0x80 else b"\0\0\0\0"
+            body = bytes(c ^ mask[i % 4] for i, c in enumerate(read(n)))
+            if first & 0xf == 8: return
+            if first & 0xf != 1: continue
+            m = json.loads(body)
+            if "id" not in m: continue
+            if m["method"] == "initialize": send({"id": m["id"], "result": {}})
+            elif m["method"] == "thread/loaded/list": send({"id": m["id"], "result": {"data": list(Codex.loaded), "nextCursor": None}})
+            elif m["method"] == "thread/read": send({"id": m["id"], "result": {"thread": Codex.threads[m["params"]["threadId"]]}})
+            else: send({"id": m["id"], "error": {"code": -32601, "message": "not known"}})
+    except (EOFError, OSError, StopIteration): pass
+    finally: conn.close()
+def take_codex():
+    while True:
+        conn, _ = daemon.accept()
+        threading.Thread(target=serve_codex, args=(conn,), daemon=True).start()
+threading.Thread(target=take_codex, daemon=True).start()
+programs = os.path.join(work, "bin"); os.makedirs(programs)
+open(os.path.join(programs, "codex"), "w").write(f"#!{sys.executable}\nimport json, sys\nopen({Codex.queued!r}, 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n")
+os.chmod(os.path.join(programs, "codex"), 0o755)
+env.update(CODEX_HOME=codex_home, PATH=programs + os.pathsep + env["PATH"])
+
 results = []
 def check(name, ok, detail=""):
     results.append((name, bool(ok)))
@@ -206,6 +298,32 @@ def start_tower():
 
 tower = start_tower()
 try:
+    print("Sessions that were open before the tower started")
+    one = lambda harness: next((a for a in feed()["roster"] if a.get("harness") == harness), None)
+    check("a Claude Code session is on the radio with nothing typed in it, in its folder's team", until(lambda: one("claude-code"), 10) and one("claude-code")["callsign"] == "barn one", feed()["roster"])
+    check("so is a Codex session, and a subagent's thread and a one-off run are not", until(lambda: one("codex"), 10) and one("codex")["callsign"] == "loft one" and len(feed()["roster"]) == 2, feed()["roster"])
+    check("a name Codex made up for a thread is not taken for one he gave", "made" not in one("codex")["callsign"], one("codex"))
+    check("his words reach the Claude Code session through its own socket, with its token first", say("@barn1 are you there") == "Sent to barn one." and
+          until(lambda: Claude.lines and Claude.lines[-1][0] == {"type": "auth", "token": "claude-socket-token"} and "are you there" in json.dumps(Claude.lines[-1][1])), Claude.lines)
+    queued = lambda: [json.loads(l) for l in open(Codex.queued)] if os.path.exists(Codex.queued) else []
+    check("and the Codex session through Codex's own queue, as one argument", say("@loft1 what is in the loft") == "Sent to loft one." and
+          until(lambda: queued() == [["queue", "--thread", "thread-open-before", "--resume", "--message", "what is in the loft"]]), queued())
+    claude_record(name="barn removals", nameSource="user")
+    check("a name he gives a session afterwards is taken up", until(lambda: one("claude-code")["callsign"] == "barn removals", 10), one("claude-code"))
+    recent = http("GET", "/v1/radio/recent")[1]["folders"]
+    by = {r["folder"]: r for r in recent}
+    check("the folders his coding tools have worked in are listed, each with the tools and its team", by.get(barn, {}).get("tools") == ["claude-code"] and by[barn]["team"] and by[barn]["name"] == "barn"
+          and by.get(loft, {}).get("tools") == ["codex"] and by[loft]["name"] == "loft" and by[barn]["at"] > 0, recent)
+    check("one that is gone is left out, and so is anything in the temporary folders", not [r for r in recent if "pulled-down" in r["folder"] or (r["folder"].startswith(work) and not r["team"])], recent)
+    tower.terminate(); tower.wait(timeout=10)
+    Codex.loaded = []
+    tower = start_tower()
+    check("one that closed while the tower was away is signed off when it is back", until(lambda: one("codex") is None, 10) and one("claude-code"), feed()["roster"])
+    os.remove(record)
+    check("and one that closes is signed off, though it said nothing", until(lambda: one("claude-code") is None, 10), feed()["roster"])
+    check("a new agent can be started by name in a folder a tool has worked in", "loft" in http("GET", "/v1/status", token=OWN)[1]["projects"] and say("/launch loft") == "A new agent is ready in loft." and until(agent), (http("GET", "/v1/status", token=OWN)[1]["projects"], feed()["roster"]))
+    http("POST", "/v1/radio/end", {"agent": agent()["id"]}); until(lambda: agent() is None)
+
     print("An agent the tower runs")
     check("it is started by the tower and reports in, marked as held", say("/launch shop say hello to the shop") == "Launching in shop." and until(agent), feed()["roster"])
     me = agent()
@@ -265,17 +383,23 @@ try:
     print("A new team, made from the phone")
     os.makedirs(os.path.join(home, "work", "garden"))
     top = http("POST", "/v1/radio/folders", {"under": ""})[1]
-    check("his home folder is listed, without the hidden folders", top and "work" in top["folders"] and not any(n.startswith(".") for n in top["folders"]) and top.get("up") is None and top["shown"] == "~", top)
+    check("his home folder is listed, without the hidden folders", top and "work" in top["folders"] and not any(n.startswith(".") for n in top["folders"]) and top["shown"] == "~", top)
     inside = http("POST", "/v1/radio/folders", {"under": top["path"] + "/work"})[1]
     check("a folder inside it is walked into", inside and inside["folders"] == ["garden"] and inside["shown"] == "~/work" and inside["up"] == top["path"], inside)
-    check("nothing outside his home folder is listed", "error" in http("POST", "/v1/radio/folders", {"under": "/etc"})[1])
-    check("a team's name is one plain word", "error" in http("POST", "/v1/radio/project", {"name": "my team!", "folder": inside["path"]})[1])
-    check("a team is not made outside his home folder", "error" in http("POST", "/v1/radio/project", {"name": "etc", "folder": "/etc"})[1])
+    above = http("POST", "/v1/radio/folders", {"under": top["up"]})[1]
+    whole = http("POST", "/v1/radio/folders", {"under": "/"})[1]
+    check("he can go up from his home folder, to the top of the disk", above and "home" in above["folders"] and above["shown"] == above["path"] and whole and whole.get("up") is None and whole["folders"], (above, whole))
+    check("a folder that is not there is said to be so", "error" in http("POST", "/v1/radio/folders", {"under": "/no/such/place"})[1] and "error" in http("POST", "/v1/radio/project", {"name": "nowhere", "folder": "/no/such/place"})[1])
+    check("a team's name has to say something, and be short", "error" in http("POST", "/v1/radio/project", {"name": "!!!", "folder": inside["path"]})[1] and "error" in http("POST", "/v1/radio/project", {"name": "a" * 25, "folder": inside["path"]})[1])
     made = http("POST", "/v1/radio/project", {"name": "Garden", "folder": inside["path"] + "/garden"})[1]
-    check("a new team is made in the folder he chose, and its first agent is there with nothing to do", made and "error" not in made and until(lambda: any(a["group"] == "garden" for a in feed()["roster"])), (made, feed()["roster"]))
+    check("a new team is made in the folder he chose, and its first agent is there with nothing to do", made and made.get("team") == "garden" and until(lambda: any(a["group"] == "garden" for a in feed()["roster"])), (made, feed()["roster"]))
+    more = http("POST", "/v1/radio/project", {"name": "garden", "folder": inside["path"] + "/garden"})[1]
+    check("asked again for the same folder, another agent joins the team", more and "error" not in more and until(lambda: len([a for a in feed()["roster"] if a["group"] == "garden"]) == 2), (more, feed()["roster"]))
     made = http("POST", "/v1/radio/project", {"name": "orchard", "folder": inside["path"] + "/orchard", "make": True})[1]
     check("a folder that is not there yet is made for it", made and "error" not in made and os.path.isdir(os.path.join(home, "work", "orchard")), made)
     check("a name another folder already has is refused", "error" in http("POST", "/v1/radio/project", {"name": "garden", "folder": inside["path"]})[1])
+    made = http("POST", "/v1/radio/project", {"name": "hay store", "folder": hay})[1]
+    check("a team can work in any folder on the computer, and is called as a callsign is written", made and made.get("team") == "hay store" and until(lambda: any(a["group"] == "hay store" for a in feed()["roster"])), (made, feed()["roster"]))
 
     print("An agent that speaks the Agent Client Protocol")
     noted = lambda: open(os.path.join(got, "acp")).read().split("\n")[:-1] if os.path.exists(os.path.join(got, "acp")) else []
@@ -378,6 +502,8 @@ finally:
     for pid in subprocess.run(["pgrep", "-f", ACP], capture_output=True, text=True).stdout.split() + subprocess.run(["pgrep", "-f", AGENT], capture_output=True, text=True).stdout.split():
         try: os.kill(int(pid), signal.SIGTERM)
         except (ProcessLookupError, ValueError): pass
+its.kill()
+shutil.rmtree(lasting, ignore_errors=True); shutil.rmtree(short, ignore_errors=True)
 failed = [n for n, ok in results if not ok]
 print(f"\n{len(results) - len(failed)} of {len(results)} passed." + ("" if not failed else "  Failed:\n  - " + "\n  - ".join(failed) + f"\nThe tower's log: {os.path.join(work, 'tower.log')}"))
 if not failed and "--keep" not in sys.argv:

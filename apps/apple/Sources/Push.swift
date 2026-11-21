@@ -21,6 +21,10 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     /// Called at every launch once a computer is paired, and when one is added. Asks him the first time; after
     /// that only asks Apple for the phone's address, which can change.
     func setUp() {
+        #if DEBUG
+        // development only: `-airband.devNoPush YES` leaves the question about notifications unasked, for a screenshot
+        if UserDefaults.standard.bool(forKey: "airband.devNoPush") { return }
+        #endif
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         NoticeButtons.register(NoticeButtons.fixed)

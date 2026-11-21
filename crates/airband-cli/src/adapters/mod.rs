@@ -6,7 +6,8 @@
 //! - with no code, call `airband report` from whatever the harness can run (see `report.rs`);
 //! - or add a module here that implements [`Harness`] and a line in [`HARNESSES`]. A tool says only what it
 //!   has: one that reports through hooks says which (`hooks.rs` puts them in its file), one that is a server
-//!   to watch says how (`watch`), and either says how his words get into a session of its own (`deliver`).
+//!   to watch says how (`watch`), and either says how his words get into a session of its own (`deliver`),
+//!   which of its sessions are open now (`open`) and which folders it has worked in (`worked`).
 //!   Its row in `catalog/tools/` says what it is called and how the tower starts one. `claude_code.rs` is the
 //!   model for hooks, `opencode.rs` for a server.
 pub mod claude_accounts;
@@ -85,6 +86,32 @@ pub(crate) trait Harness: Sync {
     fn deliver(&self, _session: &str, _words: &str) -> Result<(), String> {
         Err(format!("{} sessions cannot be reached this way.", self.name()))
     }
+    /// The sessions of this tool's that are open on this computer right now, by the tool's own record of
+    /// them, each as an agent the tower can put on the radio and reach. Nothing when the tool cannot say
+    /// (it is not on this computer, it is not running, it keeps no such record): then the tower learns of
+    /// its sessions only as they report. Asked every few seconds, so it must be quick.
+    fn open(&self) -> Option<Vec<Open>> {
+        None
+    }
+    /// The folders this tool has had sessions in, by its own record, each with when the last one was.
+    fn worked(&self) -> Vec<Worked> {
+        Vec::new()
+    }
+}
+
+/// A session its tool says is open: who it is, where, and how his words reach it. Whether it is working
+/// is not said here; that comes with its own reports.
+#[derive(Debug, Clone)]
+pub struct Open {
+    pub agent: Agent,
+}
+
+/// A folder a tool has had a session in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Worked {
+    pub folder: String,
+    /// When its latest session there was last written to, in milliseconds since 1970.
+    pub at: u64,
 }
 
 /// What a watcher is given of the tower it runs in.
@@ -93,9 +120,12 @@ pub struct Tower {
     pub event: Box<dyn Fn(AgentEvent) -> bool + Send>,
     /// Is this session of the tool's one the tower runs itself? Those are reported by their own driver.
     pub holds: Box<dyn Fn(&str) -> bool + Send>,
-    /// The sessions of a harness the tower has on its roster. A watcher that starts and does not find one of
-    /// them at the tool any more says it has left: it went while no watcher was looking.
-    pub has: Box<dyn Fn(&str) -> Vec<String> + Send>,
+    /// A session its tool lists as open. The tower puts it on the radio if it is not there, and marks it as
+    /// one its tool lists. False when it was not taken: it should be offered again.
+    pub found: Box<dyn Fn(Agent) -> bool + Send>,
+    /// The sessions of a harness on the tower's roster that its tool has listed as open, now or before the
+    /// tower last stopped. One of these the tool no longer lists has gone.
+    pub listed: Box<dyn Fn(&str) -> Vec<String> + Send>,
 }
 
 /// Something he said to an agent directly, at its keyboard.
@@ -191,6 +221,80 @@ pub fn watch_all(tower: impl Fn() -> Tower) {
         let tower = tower();
         std::thread::spawn(move || h.watch(tower));
     }
+}
+
+/// Keep the tower's roster in step with what every tool says is open, for as long as the tower runs: a
+/// session its tool lists that the tower does not have is put on the radio, and one the tool listed before
+/// and lists no longer is signed off. One way for every tool; a tool that cannot say what is open is left
+/// to its own reports. Blocks: run it on a thread of its own.
+pub fn find_all(tower: Tower) {
+    // what was last handed to the tower of each session, so that only news is handed over
+    let mut told: std::collections::HashMap<String, Value> = Default::default();
+    loop {
+        for h in HARNESSES.iter().copied() {
+            look(h, &tower, &mut told);
+        }
+        std::thread::sleep(Duration::from_secs(3));
+    }
+}
+
+/// One look at one tool's open sessions.
+fn look(h: &dyn Harness, tower: &Tower, told: &mut std::collections::HashMap<String, Value>) {
+    let Some(open) = h.open() else { return };
+    // the ones the tower runs itself are reported by their own driver
+    let open: Vec<Open> = open.into_iter().filter(|o| !(tower.holds)(&o.agent.id)).collect();
+    let listed = (tower.listed)(h.name());
+    for o in &open {
+        let now = serde_json::to_value(&o.agent).unwrap_or_default();
+        if (!listed.contains(&o.agent.id) || told.get(&o.agent.id) != Some(&now)) && (tower.found)(o.agent.clone()) {
+            told.insert(o.agent.id.clone(), now);
+        }
+    }
+    for id in listed.iter().filter(|id| !open.iter().any(|o| o.agent.id == **id)) {
+        let gone = Agent { id: id.clone(), harness: h.name().into(), cwd: None, name: None, title: None, pid: None, deliver: None, meta: Default::default() };
+        if (tower.event)(AgentEvent { schema: airband_core::agent::SCHEMA.into(), agent: gone, event: airband_core::agent::Event::Signoff }) {
+            told.remove(id);
+        }
+    }
+}
+
+/// Every folder a coding tool here has had a session in, with the tools that did and when the last one
+/// was, newest first. Folders that are gone are left out. Reads each tool's records: not for a hot path.
+pub fn worked_all() -> Vec<(String, Vec<String>, u64)> {
+    let mut all: Vec<(String, Vec<String>, u64)> = Vec::new();
+    for h in HARNESSES.iter().copied() {
+        for w in h.worked() {
+            match all.iter_mut().find(|(folder, _, _)| *folder == w.folder) {
+                Some((_, tools, at)) => {
+                    if !tools.iter().any(|t| t == h.name()) {
+                        tools.push(h.name().to_string());
+                    }
+                    *at = (*at).max(w.at);
+                }
+                None => all.push((w.folder, vec![h.name().to_string()], w.at)),
+            }
+        }
+    }
+    // not the ones that are gone, nor the ones in the computer's temporary folders: nothing lasting is there
+    let passing: Vec<std::path::PathBuf> = [std::env::temp_dir(), "/tmp".into(), "/private/tmp".into(), "/var/folders".into(), "/private/var/folders".into()].into_iter().collect();
+    all.retain(|(folder, _, _)| std::path::Path::new(folder).is_dir() && !passing.iter().any(|temp| std::path::Path::new(folder).starts_with(temp)));
+    all.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+    all
+}
+
+/// The newest record of each folder: many sessions in one folder are one folder.
+pub(crate) fn newest(found: impl IntoIterator<Item = Worked>) -> Vec<Worked> {
+    let mut by: std::collections::HashMap<String, u64> = Default::default();
+    for w in found {
+        let at = by.entry(w.folder).or_insert(0);
+        *at = (*at).max(w.at);
+    }
+    by.into_iter().map(|(folder, at)| Worked { folder, at }).collect()
+}
+
+/// When a file was last written, in milliseconds since 1970.
+pub(crate) fn written(path: &std::path::Path) -> u64 {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 /// His words into a session of a tool's own, by that tool's way in. Blocks.
@@ -400,6 +504,74 @@ pub fn drain_spool(take: impl Fn(AgentEvent) -> bool) {
             None => {}
         }
         let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[cfg(test)]
+mod finding {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    /// A tool that lists whatever the test says is open.
+    struct Lists(Mutex<Option<Vec<&'static str>>>);
+    impl Harness for Lists {
+        fn name(&self) -> &'static str {
+            "lists"
+        }
+        fn open(&self) -> Option<Vec<Open>> {
+            let open = self.0.lock().unwrap().clone()?;
+            Some(open.into_iter().map(|id| Open { agent: Agent { id: id.into(), harness: "lists".into(), cwd: Some("/x/shop".into()), name: None, title: None, pid: None, deliver: None, meta: Default::default() } }).collect())
+        }
+    }
+
+    #[test]
+    fn what_a_tool_lists_as_open_goes_on_the_radio_and_what_it_lists_no_longer_is_signed_off() {
+        // the tower, as far as a look can tell: what it was handed, and which sessions it has marked as listed
+        let (found, events, listed): (Arc<Mutex<Vec<String>>>, Arc<Mutex<Vec<String>>>, Arc<Mutex<Vec<String>>>) = Default::default();
+        let tower = {
+            let (found, events, listed, marks) = (found.clone(), events.clone(), listed.clone(), listed.clone());
+            Tower {
+                event: Box::new(move |e| {
+                    events.lock().unwrap().push(format!("{:?} {}", e.event, e.agent.id));
+                    true
+                }),
+                holds: Box::new(|session| session == "held"),
+                found: Box::new(move |agent| {
+                    found.lock().unwrap().push(agent.id.clone());
+                    marks.lock().unwrap().push(agent.id);
+                    true
+                }),
+                listed: Box::new(move |_| listed.lock().unwrap().clone()),
+            }
+        };
+        let tool = Lists(Mutex::new(Some(vec!["a", "b", "held"])));
+        let mut told = Default::default();
+        look(&tool, &tower, &mut told);
+        // the two that are his, not the one the tower runs itself
+        assert_eq!(*found.lock().unwrap(), ["a", "b"]);
+        // nothing new: nothing is handed over again
+        look(&tool, &tower, &mut told);
+        assert_eq!(found.lock().unwrap().len(), 2);
+        assert!(events.lock().unwrap().is_empty());
+        // one the tower has from before it last stopped, which the tool no longer lists, and one that closed
+        listed.lock().unwrap().push("from-before".into());
+        *tool.0.lock().unwrap() = Some(vec!["a"]);
+        look(&tool, &tower, &mut told);
+        let mut gone = events.lock().unwrap().clone();
+        gone.sort();
+        assert_eq!(gone, ["Signoff b", "Signoff from-before"]);
+        // a tool that cannot say what is open just now has nothing signed off on its silence
+        events.lock().unwrap().clear();
+        *tool.0.lock().unwrap() = None;
+        look(&tool, &tower, &mut told);
+        assert!(events.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn many_sessions_in_one_folder_are_one_folder_by_its_latest() {
+        let mut once = newest([Worked { folder: "/x/shop".into(), at: 5 }, Worked { folder: "/x/garden".into(), at: 7 }, Worked { folder: "/x/shop".into(), at: 9 }]);
+        once.sort_by(|a, b| a.folder.cmp(&b.folder));
+        assert_eq!(once, [Worked { folder: "/x/garden".into(), at: 7 }, Worked { folder: "/x/shop".into(), at: 9 }]);
     }
 }
 

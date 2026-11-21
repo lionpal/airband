@@ -261,8 +261,8 @@ pub struct MoveAgent {
 }
 
 /// `POST folders`: the folders inside one of his folders on this computer, for choosing where a new team
-/// works. `under` is a folder's whole path; empty is his home folder. Only his home folder and what is
-/// inside it can be listed.
+/// works. `under` is a folder's whole path; empty is his home folder, where the walk starts. Any folder
+/// on the computer can be listed, up to the top and into other disks.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FoldersAsk {
     #[serde(default)]
@@ -270,7 +270,7 @@ pub struct FoldersAsk {
 }
 
 /// The answer: where this is, as a whole path and as he would read it ("~/Companies"), the folder above it
-/// (nothing at his home folder), and the folders inside it by name, without the hidden ones.
+/// (nothing at the top of the disk), and the folders inside it by name, without the hidden ones.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Folders {
     pub path: String,
@@ -280,9 +280,37 @@ pub struct Folders {
     pub folders: Vec<String>,
 }
 
-/// `POST project`: make a new team. Agents started in it work in `folder` (a whole path inside his home
-/// folder), which is made first when `make` is set. The tower then starts the team's first agent with
-/// nothing to do yet, if it runs agents itself. The answer is `{say}` or `{error}`.
+/// `GET recent`: the folders the coding tools on this computer have had sessions in, newest first, for
+/// choosing where a new agent works without walking there.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Recent {
+    pub folders: Vec<RecentFolder>,
+}
+
+/// One of them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RecentFolder {
+    /// Its whole path, to pass back.
+    pub folder: String,
+    /// The same as he would read it: "~/Companies/shop".
+    pub shown: String,
+    /// The team an agent started there is in: the one that already works there, or else the folder's own name.
+    pub name: String,
+    /// There is a team in this folder already.
+    #[serde(default)]
+    pub team: bool,
+    /// The coding tools that have had sessions there, by id.
+    #[serde(default)]
+    pub tools: Vec<String>,
+    /// When the last of those sessions was, in milliseconds since 1970. 0 when no tool has a record of one.
+    #[serde(default)]
+    pub at: u64,
+}
+
+/// `POST project`: make a new team, or start another agent in one that is there. Agents started in it work
+/// in `folder` (a whole path, anywhere on the computer), which is made first when `make` is set. The tower then starts an agent there with
+/// nothing to do yet, if it runs agents itself. The answer is `{say, team}` (the team's name as the tower
+/// writes it) or `{error}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewProject {
     pub name: String,

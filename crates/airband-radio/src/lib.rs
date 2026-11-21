@@ -818,9 +818,22 @@ impl Radio {
             _ => Err(RadioError::Refused),
         }
     }
-    /// Make a new team on this computer. Blocks.
-    pub(crate) fn new_project(&self, name: String, folder: String, make: bool, tool: Option<String>) -> Result<(), RadioError> {
-        self.ask("/project", serde_json::to_value(airband_core::radio::NewProject { name, folder, make, tool }).unwrap())
+    /// The folders the coding tools on this computer have had sessions in, newest first. Blocks.
+    pub(crate) fn recent(&self) -> Result<airband_core::radio::Recent, RadioError> {
+        match self.link.request("GET", "/recent", None)? {
+            (200, v) => serde_json::from_value(v).map_err(|_| RadioError::Refused),
+            _ => Err(RadioError::Refused),
+        }
+    }
+    /// Make a new team on this computer, or start another agent in one that is there. Blocks.
+    /// Answers with the team's name as the computer writes it.
+    pub(crate) fn new_project(&self, name: String, folder: String, make: bool, tool: Option<String>) -> Result<String, RadioError> {
+        let (status, v) = self.link.request("POST", "/project", Some(serde_json::to_value(airband_core::radio::NewProject { name, folder, make, tool }).unwrap()))?;
+        match (status, v["error"].as_str(), v["team"].as_str()) {
+            (200, Some(why), _) => Err(RadioError::Told { reason: why.into() }),
+            (200, None, Some(team)) => Ok(team.to_string()),
+            _ => Err(RadioError::Refused),
+        }
     }
 
     pub fn unsend(&self, message: String) -> Result<(), RadioError> {

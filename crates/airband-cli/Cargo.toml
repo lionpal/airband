@@ -31,6 +31,8 @@ base64 = "0.22"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+# Codex's own server on this computer is spoken to over a socket file, as a websocket
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3"

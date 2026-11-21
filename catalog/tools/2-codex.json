@@ -2,7 +2,7 @@
   "id": "codex",
   "name": "Codex",
   "maker": "OpenAI",
-  "first": "In Codex, type /hooks once and trust airband’s hooks.",
+  "first": "Open a new Codex session and trust airband’s hooks when it asks. A session opened before that shows here, and its answers come through after you start it again.",
   "launchers": [
     {
       "name": "codex",

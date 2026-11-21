@@ -372,8 +372,9 @@ pub fn run(cfg: Config) -> Result<(), String> {
         // started, and tells the tower what it sees the same way an event over HTTP is taken
         {
             let (app, runtime) = (app.clone(), tokio::runtime::Handle::current());
-            crate::adapters::watch_all(move || {
+            let tower = move || {
                 let (taking, runtime, holding, having) = (app.clone(), runtime.clone(), app.clone(), app.clone());
+                let (finding, entering) = (app.clone(), runtime.clone());
                 crate::adapters::Tower {
                     event: Box::new(move |event| {
                         let _here = runtime.enter();
@@ -381,8 +382,36 @@ pub fn run(cfg: Config) -> Result<(), String> {
                         http::take_event(&taking, event).is_ok()
                     }),
                     holds: Box::new(move |session| held::holds(&holding.inner.lock().unwrap(), session)),
-                    has: Box::new(move |harness| having.inner.lock().unwrap().sessions.iter().filter(|s| s.agent.harness == harness).map(|s| s.agent.id.clone()).collect()),
+                    found: Box::new(move |agent| {
+                        let _here = entering.enter();
+                        let id = agent.id.clone();
+                        let event = AgentEvent { schema: agent::SCHEMA.into(), agent, event: Event::Checkin };
+                        finding.store.event(&serde_json::to_value(&event).unwrap_or_default());
+                        if http::take_event(&finding, event).is_err() {
+                            return false;
+                        }
+                        let mut inner = finding.inner.lock().unwrap();
+                        if let Some(s) = inner.session(&id).filter(|s| !s.listed) {
+                            s.listed = true;
+                            finding.save(&inner);
+                        }
+                        true
+                    }),
+                    // one the tower runs itself is reported by its own driver, whatever its tool lists
+                    listed: Box::new(move |harness| having.inner.lock().unwrap().sessions.iter().filter(|s| s.agent.harness == harness && s.listed && s.agent.deliver != Some(Deliver::Held)).map(|s| s.agent.id.clone()).collect()),
                 }
+            };
+            crate::adapters::watch_all(&tower);
+            // which of each tool's sessions are open now, by one look for all of them
+            std::thread::spawn(move || crate::adapters::find_all(tower()));
+        }
+        // the folders his coding tools have had sessions in, read now and every minute: a new agent can be
+        // started in any of them by name
+        {
+            let app = app.clone();
+            std::thread::spawn(move || loop {
+                http::read_worked(&app);
+                std::thread::sleep(Duration::from_secs(60));
             });
         }
         // what an agent's tool could not hand over while the tower was away is taken now, and whenever more is

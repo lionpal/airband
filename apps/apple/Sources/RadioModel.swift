@@ -338,12 +338,23 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
     }
 
-    /// Make a new team on a computer. Calls back with what is wrong, or nil.
-    func newTeam(_ name: String, on computer: String, folder: String, make: Bool, tool: String?, done: @escaping (String?) -> Void) {
+    /// The folders the coding tools on a computer have had sessions in, newest first. Calls back with them, or
+    /// with what is wrong.
+    func recentFolders(on computer: String, done: @escaping ([DeskRecent]?, String?) -> Void) {
         fetch.async {
-            var wrong: String?
-            do { try self.desk.newTeam(computer: computer, name: name, folder: folder, make: make, tool: tool) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "Cannot reach that computer." }
-            DispatchQueue.main.async { done(wrong) }
+            var (found, wrong): ([DeskRecent]?, String?) = (nil, nil)
+            do { found = try self.desk.recentFolders(computer: computer) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "Cannot reach that computer." }
+            DispatchQueue.main.async { done(found, wrong) }
+        }
+    }
+
+    /// Start an agent in a folder on a computer: in the team that works there, or a new one of this name.
+    /// Calls back with the team's name as the computer writes it, or with what is wrong.
+    func newTeam(_ name: String, on computer: String, folder: String, make: Bool, tool: String?, done: @escaping (String?, String?) -> Void) {
+        fetch.async {
+            var (team, wrong): (String?, String?) = (nil, nil)
+            do { team = try self.desk.newTeam(computer: computer, name: name, folder: folder, make: make, tool: tool) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "Cannot reach that computer." }
+            DispatchQueue.main.async { done(team, wrong) }
         }
     }
 

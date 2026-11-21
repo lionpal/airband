@@ -550,6 +550,23 @@ pub struct DeskFolders {
     pub folders: Vec<String>,
 }
 
+/// A folder the coding tools on a computer have had sessions in.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct DeskRecent {
+    /// Its whole path, to pass back.
+    pub folder: String,
+    /// The same as he would read it: "~/Companies/shop".
+    pub shown: String,
+    /// The team an agent started there is in: the one that already works there, or the folder's own name.
+    pub name: String,
+    /// There is a team in this folder already.
+    pub team: bool,
+    /// The coding tools that have had sessions there, as they are called.
+    pub tools: Vec<String>,
+    /// When the last of those sessions was, in milliseconds since 1970; 0 when no tool has a record of one.
+    pub at: u64,
+}
+
 #[derive(uniffi::Object)]
 pub struct Desk {
     pub(crate) shared: Arc<Shared>,
@@ -920,10 +937,21 @@ impl Desk {
         Ok(DeskFolders { path: f.path, shown: f.shown, up: f.up, folders: f.folders })
     }
 
-    /// Make a new team on a computer: its name, and the folder its agents work in (made first with `make`).
+    /// The folders the coding tools on a computer have had sessions in, newest first, then the teams there
+    /// that no tool has a record of. `computer` is its name, or empty when he has only one. Blocks: call it
+    /// off the main thread.
+    pub fn recent_folders(&self, computer: String) -> Result<Vec<DeskRecent>, RadioError> {
+        let tools = airband_core::catalog::current();
+        let called = |id: &String| tools.tools.iter().find(|t| t.id == *id).map(|t| t.name.clone()).unwrap_or_else(|| id.clone());
+        Ok(self.station_radio(&computer)?.recent()?.folders.into_iter().map(|r| DeskRecent { tools: r.tools.iter().map(called).collect(), folder: r.folder, shown: r.shown, name: r.name, team: r.team, at: r.at }).collect())
+    }
+
+    /// Make a new team on a computer, or start another agent in one that is there: its name, and the folder
+    /// its agents work in (made first with `make`).
     /// Its first agent is started there with nothing to do yet. Blocks: call it off the main thread.
     /// `tool` is the coding tool its first agent is, by id; nothing is the computer's usual one.
-    pub fn new_team(&self, computer: String, name: String, folder: String, make: bool, tool: Option<String>) -> Result<(), RadioError> {
+    /// Answers with the team's name as that computer writes it.
+    pub fn new_team(&self, computer: String, name: String, folder: String, make: bool, tool: Option<String>) -> Result<String, RadioError> {
         self.station_radio(&computer)?.new_project(name, folder, make, tool.filter(|t| !t.is_empty()))
     }
 

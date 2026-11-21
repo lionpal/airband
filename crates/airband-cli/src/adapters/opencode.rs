@@ -115,7 +115,32 @@ fn put_to_him(session: String, request: Value, cwd: Option<String>, asked: Arc<M
     }
 }
 
-/// Watch OpenCode's server for as long as the tower runs. Blocks: run it on a thread of its own.
+/// The sessions on the radio, of those the server lists: not the ones put away (a one-off run, a summary
+/// being made), nor the ones quiet for hours.
+fn current(sessions: &[Value]) -> Vec<&Value> {
+    let now = sessions.iter().filter_map(|s| s["time"]["updated"].as_u64()).max().unwrap_or(0);
+    let put_away = |s: &Value| s["time"]["archived"].as_u64().is_some_and(|at| at > 0) || s["time"]["archived"] == true;
+    sessions.iter().filter(|s| s["id"].is_string() && !put_away(s) && now.saturating_sub(s["time"]["updated"].as_u64().unwrap_or(0)) <= QUIET).collect()
+}
+
+/// The sessions open now, as the server lists them. Nothing when OpenCode is not running.
+fn open() -> Option<Vec<super::Open>> {
+    let list = get("/api/session?limit=40")?;
+    Some(current(list["data"].as_array()?).into_iter().filter_map(|s| Some(super::Open { agent: agent(s["id"].as_str()?, s["location"]["directory"].as_str()) })).collect())
+}
+
+/// The folders OpenCode has had sessions in, as its server lists them. Nothing when it is not running.
+fn worked() -> Vec<super::Worked> {
+    get("/api/session?limit=200").map(|list| worked_of(&list)).unwrap_or_default()
+}
+fn worked_of(list: &Value) -> Vec<super::Worked> {
+    let found = list["data"].as_array().into_iter().flatten().filter_map(|s| Some(super::Worked { folder: s["location"]["directory"].as_str().filter(|d| !d.is_empty())?.to_string(), at: s["time"]["updated"].as_u64().unwrap_or(0) }));
+    super::newest(found)
+}
+
+/// Watch OpenCode's server for as long as the tower runs: what its sessions are doing, what they say and
+/// what they ask leave for. Which sessions there are is not this watcher's to say (`open`, which every
+/// tool has). Blocks: run it on a thread of its own.
 fn watch(tower: Tower) {
     // each session seen: when it was last busy and last idle, by OpenCode's own clock, as far as the tower has
     // been told. Something the tower did not take is not marked, and is told again on the next look.
@@ -126,26 +151,19 @@ fn watch(tower: Tower) {
         std::thread::sleep(Duration::from_secs(if service().is_some() { 2 } else { 20 }));
         let Some(list) = get("/api/session?limit=40") else { continue };
         let Some(sessions) = list["data"].as_array() else { continue };
-        let now = sessions.iter().filter_map(|s| s["time"]["updated"].as_u64()).max().unwrap_or(0);
         let send = |id: &str, cwd: Option<&str>, event: Event| (tower.event)(AgentEvent { schema: SCHEMA.into(), agent: agent(id, cwd), event });
-        // the ones on the radio: not the ones the tower runs itself (their driver reports for them), nor the
-        // ones put away (a one-off run, a summary being made), nor the ones quiet for hours
-        let ours = |s: &&Value| s["id"].as_str().is_some_and(|id| !(tower.holds)(id)) && !(s["time"]["archived"].as_u64().is_some_and(|at| at > 0) || s["time"]["archived"] == true);
-        for s in sessions.iter().filter(ours) {
+        // not the ones the tower runs itself: their driver reports for them
+        let here: Vec<&Value> = current(sessions).into_iter().filter(|s| s["id"].as_str().is_some_and(|id| !(tower.holds)(id))).collect();
+        for s in &here {
             let (Some(id), time) = (s["id"].as_str(), &s["time"]) else { continue };
-            let (busy, idle, updated) = (time["busy"].as_u64().unwrap_or(0), time["idle"].as_u64().unwrap_or(0), time["updated"].as_u64().unwrap_or(0));
+            let (busy, idle) = (time["busy"].as_u64().unwrap_or(0), time["idle"].as_u64().unwrap_or(0));
             let cwd = s["location"]["directory"].as_str();
             match seen.get(id).copied() {
                 None => {
-                    // what was already there when the tower started has been said already: it is on the radio
-                    // if it is recent, and nothing of it is said again
-                    if now.saturating_sub(updated) > QUIET {
-                        continue;
-                    }
-                    if send(id, cwd, Event::Checkin) {
-                        let working = !first && busy > idle && send(id, cwd, Event::Working);
-                        seen.insert(id.to_string(), (if first || working { busy } else { 0 }, idle));
-                    }
+                    // what was already there when the tower started has been said already: nothing of it is
+                    // said again
+                    let working = !first && busy > idle && send(id, cwd, Event::Working);
+                    seen.insert(id.to_string(), (if first || working { busy } else { 0 }, idle));
                 }
                 Some((was_busy, was_idle)) => {
                     let (mut told_busy, mut told_idle) = (was_busy, was_idle);
@@ -166,7 +184,7 @@ fn watch(tower: Tower) {
                 }
             }
             // while it is busy it may be waiting for leave
-            if busy > idle && seen.contains_key(id) {
+            if busy > idle {
                 for request in get(&format!("/api/session/{id}/permission")).and_then(|l| l["data"].as_array().cloned()).unwrap_or_default() {
                     let Some(request_id) = request["id"].as_str() else { continue };
                     {
@@ -182,18 +200,8 @@ fn watch(tower: Tower) {
                 }
             }
         }
-        // one that has gone from the list (he archived or deleted it), or has been quiet for hours, has left
-        let here: Vec<&str> = sessions.iter().filter(ours).filter(|s| now.saturating_sub(s["time"]["updated"].as_u64().unwrap_or(0)) <= QUIET).filter_map(|s| s["id"].as_str()).collect();
-        let mut gone: Vec<String> = seen.keys().filter(|id| !here.contains(&id.as_str())).cloned().collect();
-        if first {
-            // and on the first look, one the tower still has from before it last stopped that is not here now
-            gone.extend((tower.has)(NAME).into_iter().filter(|id| !here.contains(&id.as_str()) && !(tower.holds)(id) && !seen.contains_key(id)));
-        }
-        for id in gone {
-            if send(&id, None, Event::Signoff) {
-                seen.remove(&id);
-            }
-        }
+        // one that is no longer listed is forgotten here; that it has left is said by the look every tool has
+        seen.retain(|id, _| here.iter().any(|s| s["id"].as_str() == Some(id.as_str())));
         first = false;
     }
 }
@@ -220,6 +228,12 @@ impl super::Harness for OpenCode {
     fn deliver(&self, session: &str, words: &str) -> Result<(), String> {
         deliver(session, words)
     }
+    fn open(&self) -> Option<Vec<super::Open>> {
+        open()
+    }
+    fn worked(&self) -> Vec<super::Worked> {
+        worked()
+    }
 }
 
 #[cfg(test)]
@@ -239,6 +253,23 @@ mod tests {
         assert_eq!(newest_answer(&json!({ "data": [{ "type": "user", "text": "hello" }] })), None);
         // his words go to the session through OpenCode's server
         assert_eq!(agent("ses_1", Some("/x/shop")).deliver, Some(Deliver::Harness { name: "opencode".into(), session: "ses_1".into() }));
+    }
+
+    #[test]
+    fn the_sessions_on_the_radio_are_the_recent_ones_not_put_away_and_each_folder_is_listed_once() {
+        let hour = 3600 * 1000;
+        let sessions = json!({ "data": [
+            { "id": "ses_new", "time": { "updated": 10 * hour }, "location": { "directory": "/x/shop" } },
+            { "id": "ses_older", "time": { "updated": 9 * hour }, "location": { "directory": "/x/shop" } },
+            { "id": "ses_quiet", "time": { "updated": 7 * hour }, "location": { "directory": "/x/garden" } },
+            { "id": "ses_away", "time": { "updated": 10 * hour, "archived": 10 * hour }, "location": { "directory": "/x/once" } },
+        ] });
+        let ids: Vec<&str> = current(sessions["data"].as_array().unwrap()).iter().filter_map(|s| s["id"].as_str()).collect();
+        assert_eq!(ids, ["ses_new", "ses_older"]);
+        // where it has worked: every folder, by its latest session, whether or not that one is still on the radio
+        let mut worked = worked_of(&sessions);
+        worked.sort_by(|a, b| a.folder.cmp(&b.folder));
+        assert_eq!(worked, [super::super::Worked { folder: "/x/garden".into(), at: 7 * hour }, super::super::Worked { folder: "/x/once".into(), at: 10 * hour }, super::super::Worked { folder: "/x/shop".into(), at: 10 * hour }]);
     }
 
     #[test]

@@ -93,6 +93,87 @@ fn agent_of(hook: &Value) -> Option<Agent> {
     })
 }
 
+/// Is the process a session's record names still that session? Its number alone could have been given to
+/// another program since; the moment it started could not.
+fn running(pid: u32, started: &str) -> bool {
+    #[cfg(unix)]
+    {
+        // as Claude Code writes it: in English, by the clock at Greenwich
+        let Ok(out) = std::process::Command::new("ps").args(["-p", &pid.to_string(), "-o", "lstart="]).env("LC_ALL", "C").env("TZ", "UTC").output() else { return false };
+        let words = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ");
+        out.status.success() && !started.trim().is_empty() && words(&String::from_utf8_lossy(&out.stdout)) == words(started)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (pid, started);
+        false
+    }
+}
+
+/// The sessions he has open in a terminal, from the record Claude Code keeps of each while it runs
+/// (`sessions/<process>.json` in its folder: the session, its folder, the socket it takes messages on) and
+/// the token for that socket beside it. A one-off run (`claude -p`) and a session another program drives
+/// have a record too, with another `entrypoint`: those are not his to talk to and are left out.
+fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> bool) -> Option<Vec<super::Open>> {
+    let dir = claude.join("sessions");
+    let read = |path: &std::path::Path| std::fs::read(path).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok());
+    let files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir).ok()?.flatten().map(|f| f.path()).collect();
+    let mut open = Vec::new();
+    for path in files.iter().filter(|p| p.extension().is_some_and(|e| e == "json")) {
+        let Some(v) = read(path) else { continue };
+        let text = |k: &str| v[k].as_str().map(str::trim).filter(|t| !t.is_empty()).map(String::from);
+        if v["kind"] != "interactive" || v["entrypoint"] != "cli" {
+            continue;
+        }
+        let (Some(pid), Some(id), Some(socket), Some(started)) = (v["pid"].as_u64().map(|p| p as u32), text("sessionId"), text("messagingSocketPath"), text("procStart")) else { continue };
+        if !running(pid, &started) {
+            continue;
+        }
+        // the token its socket asks for: in a file of that process's, written when the same process started
+        let key = files.iter().filter(|p| p.extension().is_some_and(|e| e == "key") && p.file_name().is_some_and(|n| n.to_string_lossy().split('.').next() == Some(pid.to_string().as_str()))).find_map(|p| read(p).filter(|k| k["procStart"].as_str().map(str::trim) == Some(started.as_str())));
+        let token = key.and_then(|k| k["peerToken"].as_str().filter(|t| !t.is_empty()).map(String::from));
+        let transcript = transcript_of(claude, &id);
+        open.push(super::Open {
+            agent: Agent {
+                harness: "claude-code".into(),
+                cwd: text("cwd"),
+                name: None,
+                // a name he gave it; one Claude Code made up is not used
+                title: text("name").filter(|_| v["nameSource"] == "user"),
+                pid: Some(pid),
+                deliver: Some(Deliver::Socket { path: socket, token }),
+                meta: transcript.map(|t| serde_json::Map::from_iter([("transcript".to_string(), Value::String(t))])).unwrap_or_default(),
+                id,
+            },
+        });
+    }
+    Some(open)
+}
+
+/// Where a session's transcript is: the file named for the session, in one of the folders Claude Code keeps
+/// per project.
+fn transcript_of(claude: &std::path::Path, session: &str) -> Option<String> {
+    if !session.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return None;
+    }
+    std::fs::read_dir(claude.join("projects")).ok()?.flatten().map(|d| d.path().join(format!("{session}.jsonl"))).find(|p| p.is_file()).map(|p| p.display().to_string())
+}
+
+/// The folders Claude Code has had sessions in: it keeps a folder of transcripts for each, and a transcript
+/// says on its lines which folder the session was in. The newest transcript of each is asked, and only its
+/// first lines are read.
+fn worked_in(claude: &std::path::Path) -> Vec<super::Worked> {
+    use std::io::BufRead;
+    let Ok(projects) = std::fs::read_dir(claude.join("projects")) else { return Vec::new() };
+    let found = projects.flatten().filter_map(|project| {
+        let newest = std::fs::read_dir(project.path()).ok()?.flatten().map(|f| f.path()).filter(|p| p.extension().is_some_and(|e| e == "jsonl")).map(|p| (super::written(&p), p)).max_by_key(|(at, _)| *at)?;
+        let lines = std::io::BufReader::new(std::fs::File::open(&newest.1).ok()?).lines();
+        let folder = lines.take(40).map_while(Result::ok).find_map(|line| serde_json::from_str::<Value>(&line).ok()?["cwd"].as_str().filter(|c| !c.is_empty()).map(String::from))?;
+        Some(super::Worked { folder, at: newest.0 })
+    });
+    super::newest(found)
+}
+
 /// A look at a session, from the end of its transcript: what it is doing right now, in its own words for its
 /// latest step, and the model and effort its latest answer was made with. A command or a subagent comes with a
 /// description Claude wrote for it ("Run the payments tests"); for the rest, a few plain words. Reads at most
@@ -468,6 +549,12 @@ impl super::Harness for ClaudeCode {
     fn steps(&self, agent: &Agent, since: u64) -> Vec<String> {
         steps(agent, since)
     }
+    fn open(&self) -> Option<Vec<super::Open>> {
+        open_in(&crate::config::home().join(".claude"), &running)
+    }
+    fn worked(&self) -> Vec<super::Worked> {
+        worked_in(&crate::config::home().join(".claude"))
+    }
 }
 
 #[cfg(test)]
@@ -481,6 +568,60 @@ mod tests {
         assert_eq!(e.agent.id, "s1");
         assert_eq!(e.event, Event::Said { text: "Done.".into(), kind: None });
     }
+    #[test]
+    fn a_session_open_in_a_terminal_is_found_from_its_record_and_can_be_reached() {
+        let claude = std::env::temp_dir().join(format!("airband-claude-{}", crate::config::random_hex(6)));
+        let (sessions, project) = (claude.join("sessions"), claude.join("projects").join("-x-shop"));
+        std::fs::create_dir_all(&sessions).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        let record = |pid: u32, id: &str, more: Value| {
+            let mut v = serde_json::json!({ "pid": pid, "sessionId": id, "cwd": "/x/shop", "procStart": format!("start {pid}"), "kind": "interactive", "entrypoint": "cli", "messagingSocketPath": format!("/tmp/cc-socks/{pid}.sock"), "name": "shop-a1", "nameSource": "derived", "status": "idle" });
+            v.as_object_mut().unwrap().extend(more.as_object().unwrap().clone());
+            std::fs::write(sessions.join(format!("{pid}.json")), v.to_string()).unwrap();
+        };
+        record(11, "open-one", serde_json::json!({}));
+        std::fs::write(sessions.join("11.abc.key"), serde_json::json!({ "peerToken": "tok-11", "procStart": "start 11" }).to_string()).unwrap();
+        std::fs::write(project.join("open-one.jsonl"), "{}\n").unwrap();
+        // one he named, with a key file left by an earlier process of the same number
+        record(12, "open-two", serde_json::json!({ "name": "shop removals", "nameSource": "user" }));
+        std::fs::write(sessions.join("12.def.key"), serde_json::json!({ "peerToken": "stale", "procStart": "start long ago" }).to_string()).unwrap();
+        // not his to talk to: a one-off run, one whose process has gone, one with no way in
+        record(13, "one-off", serde_json::json!({ "entrypoint": "sdk-cli" }));
+        record(14, "gone", serde_json::json!({}));
+        record(15, "no-way-in", serde_json::json!({ "messagingSocketPath": "" }));
+        let running = |pid: u32, started: &str| pid != 14 && started == format!("start {pid}");
+        let mut open = open_in(&claude, &running).unwrap();
+        open.sort_by(|a, b| a.agent.id.cmp(&b.agent.id));
+        let ids: Vec<&str> = open.iter().map(|o| o.agent.id.as_str()).collect();
+        assert_eq!(ids, ["open-one", "open-two"]);
+        let one = &open[0].agent;
+        assert_eq!((one.harness.as_str(), one.cwd.as_deref(), one.pid, one.title.as_deref()), ("claude-code", Some("/x/shop"), Some(11), None));
+        assert_eq!(one.deliver, Some(Deliver::Socket { path: "/tmp/cc-socks/11.sock".into(), token: Some("tok-11".into()) }));
+        assert_eq!(one.meta.get("transcript").and_then(Value::as_str), Some(project.join("open-one.jsonl").display().to_string().as_str()));
+        let two = &open[1].agent;
+        assert_eq!(two.title.as_deref(), Some("shop removals"));
+        assert_eq!(two.deliver, Some(Deliver::Socket { path: "/tmp/cc-socks/12.sock".into(), token: None }));
+        // with no record kept at all, Claude Code cannot say what is open: nothing is signed off on that
+        assert!(open_in(&claude.join("nowhere"), &running).is_none());
+        let _ = std::fs::remove_dir_all(&claude);
+    }
+
+    #[test]
+    fn where_claude_code_has_worked_is_read_from_the_newest_transcript_of_each_project() {
+        let claude = std::env::temp_dir().join(format!("airband-claude-{}", crate::config::random_hex(6)));
+        let line = |cwd: &str| format!("{}\n{}\n", serde_json::json!({ "type": "queue-operation" }), serde_json::json!({ "type": "user", "cwd": cwd }));
+        for (project, file, cwd) in [("-x-shop", "a.jsonl", "/x/shop"), ("-x-shop", "b.jsonl", "/x/shop"), ("-x-garden", "c.jsonl", "/x/garden")] {
+            std::fs::create_dir_all(claude.join("projects").join(project)).unwrap();
+            std::fs::write(claude.join("projects").join(project).join(file), line(cwd)).unwrap();
+        }
+        // a project folder with no transcript in it says nothing
+        std::fs::create_dir_all(claude.join("projects").join("-x-empty")).unwrap();
+        let mut worked: Vec<String> = worked_in(&claude).into_iter().inspect(|w| assert!(w.at > 0)).map(|w| w.folder).collect();
+        worked.sort();
+        assert_eq!(worked, ["/x/garden", "/x/shop"]);
+        let _ = std::fs::remove_dir_all(&claude);
+    }
+
     #[test]
     fn claude_code_idle_notification_is_dropped() {
         // by the kind Claude Code says it is, whatever its words: the same words under another kind are passed on

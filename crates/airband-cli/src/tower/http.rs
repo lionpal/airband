@@ -111,29 +111,22 @@ async fn team(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::M
     })
 }
 
-/// A folder that is his home folder or inside it, as it really is on disk (links followed). Nothing else on
-/// this computer is shown to a radio or worked in at its asking.
-fn inside_home(path: &str) -> Result<std::path::PathBuf, String> {
-    let home = config::home().canonicalize().map_err(|e| e.to_string())?;
-    let at = if path.trim().is_empty() { home.clone() } else { std::path::Path::new(path).canonicalize().map_err(|_| "That folder is not there.".to_string())? };
-    if !at.starts_with(&home) || !at.is_dir() {
-        return Err("Only folders inside your home folder can be used.".into());
+/// A folder on this computer, as it really is on disk (links followed). With none named, his home folder:
+/// that is where a walk starts, and from there he can go up to the top and into other disks.
+fn folder_at(path: &str) -> Result<std::path::PathBuf, String> {
+    let at = if path.trim().is_empty() { config::home().canonicalize().map_err(|e| e.to_string())? } else { std::path::Path::new(path).canonicalize().map_err(|_| "That folder is not there.".to_string())? };
+    if !at.is_dir() {
+        return Err("That is not a folder.".into());
     }
     Ok(at)
 }
 
 /// The folders inside one of his, for choosing where a new team works.
 async fn folders(Json(ask): Json<airband_core::radio::FoldersAsk>) -> Json<Value> {
-    let listed = inside_home(&ask.under).and_then(|at| {
-        let home = config::home().canonicalize().map_err(|e| e.to_string())?;
-        let mut inside: Vec<String> = std::fs::read_dir(&at).map_err(|e| e.to_string())?.flatten().filter(|e| e.path().is_dir()).filter_map(|e| e.file_name().into_string().ok()).filter(|n| !n.starts_with('.')).collect();
+    let listed = folder_at(&ask.under).and_then(|at| {
+        let mut inside: Vec<String> = std::fs::read_dir(&at).map_err(|_| "That folder cannot be opened from here.".to_string())?.flatten().filter(|e| e.path().is_dir()).filter_map(|e| e.file_name().into_string().ok()).filter(|n| !n.starts_with('.')).collect();
         inside.sort_by_key(|n| n.to_lowercase());
-        let shown = match at.strip_prefix(&home) {
-            Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
-            Ok(rest) => format!("~/{}", rest.display()),
-            Err(_) => at.display().to_string(),
-        };
-        Ok(airband_core::radio::Folders { path: at.display().to_string(), shown, up: (at != home).then(|| at.parent().map(|p| p.display().to_string())).flatten(), folders: inside })
+        Ok(airband_core::radio::Folders { path: at.display().to_string(), shown: shown(&at), up: at.parent().map(|p| p.display().to_string()), folders: inside })
     });
     Json(match listed {
         Ok(f) => serde_json::to_value(f).unwrap(),
@@ -141,16 +134,29 @@ async fn folders(Json(ask): Json<airband_core::radio::FoldersAsk>) -> Json<Value
     })
 }
 
-/// He made a new team from a radio: a name, and the folder its agents work in.
+/// The folders his coding tools have had sessions in, newest first, then his teams no tool has a record of.
+async fn recent(State(app): State<Arc<App>>) -> Json<airband_core::radio::Recent> {
+    Json(airband_core::radio::Recent { folders: app.inner.lock().unwrap().recent(&app.cfg) })
+}
+
+/// Read again which folders his coding tools have had sessions in, and keep the answer. Reads their
+/// records, so it is done off the lock; the tower does it when it starts and every minute after.
+pub(super) fn read_worked(app: &App) {
+    let worked = crate::adapters::worked_all();
+    app.inner.lock().unwrap().worked = worked;
+}
+
+/// He made a new team from a radio, or asked for another agent in one: a name, and the folder its agents
+/// work in.
 async fn project(State(app): State<Arc<App>>, Json(new): Json<airband_core::radio::NewProject>) -> Json<Value> {
-    let name = new.name.trim().to_lowercase();
-    // a team's name is part of what its agents are called, and is said aloud: short, and plain
-    if name.is_empty() || name.chars().count() > 24 || !name.chars().all(|c| c.is_alphanumeric() || c == '-') {
-        return Json(json!({ "error": "A team\u{2019}s name is one word: letters, numbers and dashes." }));
-    }
+    // a team's name is part of what its agents are called, and is said aloud: short, and written as a
+    // callsign is
+    let Some(name) = airband_core::routing::team_name(&new.name).filter(|n| n.chars().count() <= 24) else {
+        return Json(json!({ "error": "A team\u{2019}s name is letters and numbers, 24 at most." }));
+    };
     let folder = if new.make {
         let wanted = std::path::PathBuf::from(&new.folder);
-        match wanted.parent().map(|p| inside_home(&p.display().to_string())) {
+        match wanted.parent().map(|p| folder_at(&p.display().to_string())) {
             Some(Ok(parent)) => match wanted.file_name().filter(|n| !n.to_string_lossy().starts_with('.')) {
                 Some(last) => {
                     let made = parent.join(last);
@@ -166,29 +172,37 @@ async fn project(State(app): State<Arc<App>>, Json(new): Json<airband_core::radi
             Some(Err(why)) => Err(why),
             None => Err("That is not a folder.".to_string()),
         }
+    } else if new.folder.trim().is_empty() {
+        Err("Choose a folder for it to work in.".to_string())
     } else {
-        inside_home(&new.folder)
+        folder_at(&new.folder)
     };
     let folder = match folder {
-        Ok(f) => f.display().to_string(),
+        Ok(f) => f,
         Err(why) => return Json(json!({ "error": why })),
     };
     {
         let mut inner = app.inner.lock().unwrap();
-        if inner.launchable(&app.cfg).get(&name).is_some_and(|has| *has != folder) {
-            return Json(json!({ "error": format!("There is already a team called {name}.") }));
+        // the same folder, however it was written when the team was made
+        let same = |has: &String| std::path::Path::new(has).canonicalize().is_ok_and(|has| has == folder);
+        match inner.teams(&app.cfg).get(&name) {
+            Some(has) if !same(has) => return Json(json!({ "error": format!("There is already a team called {name}, in another folder.") })),
+            // another agent for a team that is there
+            Some(_) => {}
+            None => {
+                inner.projects.insert(name.clone(), folder.display().to_string());
+                app.save(&inner);
+                log(format!("a radio made the team {name}, in {}", folder.display()));
+            }
         }
-        inner.projects.insert(name.clone(), folder.clone());
-        app.save(&inner);
     }
-    log(format!("a radio made the team {name}, in {folder}"));
     // its first agent, with nothing to do yet, when the tower runs agents itself: the team is then there to see
     let held = held::launcher_for(&app, new.tool.as_deref()).is_some_and(|(_, l)| l.held.is_some());
     if !held {
-        return Json(json!({ "say": format!("{name} is ready. Say launch {name}, then what it should do.") }));
+        return Json(json!({ "say": format!("{name} is ready. Say launch {name}, then what it should do."), "team": name }));
     }
     let reply = launch::launch(&app, &name, &Idea { tool: new.tool.clone(), project: Some(name.clone()), model: None, effort: None, task: String::new() }).await;
-    Json(json!({ "say": reply.say }))
+    Json(json!({ "say": reply.say, "team": name }))
 }
 
 /// He asked the tower to take over an agent he started in a terminal.
@@ -613,7 +627,7 @@ async fn feed(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
                 m
             })
             .collect();
-        return Json(Feed { schema: airband_core::radio::SCHEMA.into(), rev: upto, messages, roster: inner.roster_entries(), roster_rev: inner.roster_rev(), reads: { let r = judge::reader(&app.cfg); r.offer(crate::providers::Job::Summary).map(|(_, o)| o.label.clone()).unwrap_or_default() }, direct: config::lan_addrs().into_iter().filter(|_| app.cfg.lan).chain(config::tailscale_addrs()).map(|a| format!("http://{a}:{}", app.cfg.port)).collect(), colours: inner.colours.clone(), seq: inner.seq, projects: inner.launchable(&app.cfg).into_keys().collect(), open: open.into_iter().collect(), quick: airband_core::radio::quick_defaults().into_iter().chain(app.cfg.quick.iter().cloned()).collect(), station: config::station(&app.cfg), reads_failed: judge::failed(), answers: inner.settled_for(&radio, since) });
+        return Json(Feed { schema: airband_core::radio::SCHEMA.into(), rev: upto, messages, roster: inner.roster_entries(), roster_rev: inner.roster_rev(), reads: { let r = judge::reader(&app.cfg); r.offer(crate::providers::Job::Summary).map(|(_, o)| o.label.clone()).unwrap_or_default() }, direct: config::lan_addrs().into_iter().filter(|_| app.cfg.lan).chain(config::tailscale_addrs()).map(|a| format!("http://{a}:{}", app.cfg.port)).collect(), colours: inner.colours.clone(), seq: inner.seq, projects: inner.teams(&app.cfg).into_keys().collect(), open: open.into_iter().collect(), quick: airband_core::radio::quick_defaults().into_iter().chain(app.cfg.quick.iter().cloned()).collect(), station: config::station(&app.cfg), reads_failed: judge::failed(), answers: inner.settled_for(&radio, since) });
     }
 }
 
@@ -722,6 +736,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/radio/accounts/use", post(accounts_use))
         .route("/v1/radio/team", post(team))
         .route("/v1/radio/folders", post(folders))
+        .route("/v1/radio/recent", get(recent))
         .route("/v1/radio/project", post(project))
         .route("/v1/radio/takeover", post(takeover))
         .route("/v1/radio/stop", post(stop_agent))

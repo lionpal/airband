@@ -44,6 +44,10 @@ pub(super) struct Session {
     /// id of the chat line and the words. Held here, where he can still take it back, until it stops.
     #[serde(default)]
     pub(super) queue: Vec<(String, String)>,
+    /// Its own tool has listed it among its open sessions. One of these that the tool lists no longer has
+    /// gone, whether or not it said so.
+    #[serde(default)]
+    pub(super) listed: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -325,6 +329,16 @@ impl Call {
 /// How many log lines the tower keeps in memory. The database keeps them all.
 pub(super) const LOG_KEEP: usize = 1000;
 
+/// A folder's path as he would read it: "~/Companies/shop" inside his home folder, whole anywhere else.
+pub(super) fn shown(at: &std::path::Path) -> String {
+    let homes = [config::home().canonicalize().ok(), Some(config::home())];
+    match homes.iter().flatten().find_map(|home| at.strip_prefix(home).ok()) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+        Some(rest) => format!("~/{}", rest.display()),
+        None => at.display().to_string(),
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Inner {
     pub(super) sessions: Vec<Session>,
@@ -337,6 +351,9 @@ pub(super) struct Inner {
     /// Every project an agent has been seen working in, by spoken name, with its folder. A new agent can be
     /// launched in any of these.
     pub(super) projects: BTreeMap<String, String>,
+    /// The folders his coding tools have had sessions in, as last read from their records
+    /// (`adapters::worked_all`): the folder, the tools, when. Never kept: it is read again every minute.
+    pub(super) worked: Vec<(String, Vec<String>, u64)>,
     /// Each team's colour: its place in a radio's list of team colours. Given when the team is first seen.
     pub(super) colours: BTreeMap<String, u8>,
     /// The agents the tower runs itself.
@@ -636,13 +653,20 @@ impl Inner {
             if let Some(cwd) = agent.cwd.clone().filter(|_| agent.name.is_none()) {
                 self.projects.insert(callsign.project.clone(), cwd);
             }
-            self.sessions.push(Session { agent: agent.clone(), callsign, waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new() });
+            self.sessions.push(Session { agent: agent.clone(), callsign, waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false });
             // one that was moved to another team before it went away goes back there
             if let Some((team, by)) = self.placed.get(&agent.id).cloned() {
                 self.move_to(&agent.id, &team, by);
             }
         } else if let Some(want) = wanted.filter(|c| free(self, c)) {
             self.rename(&agent.id, want);
+        }
+        // one first heard of from its tool's list of open sessions comes without the name it was started
+        // under; its own first report has it, and it goes to the team of that name
+        if let Some(name) = agent.name.clone().filter(|_| self.find(&agent.id).is_some_and(|s| s.agent.name.is_none() && s.moved != Some(Mover::Him))) {
+            let team = Callsign::next_for(&name, &[]).project;
+            self.session(&agent.id).unwrap().agent.name = Some(name);
+            self.move_to(&agent.id, &team, Mover::Tower);
         }
         self.colour_teams();
         let s = self.session(&agent.id).unwrap();
@@ -987,12 +1011,43 @@ impl Inner {
         let open = self.open_ids();
         self.sessions.iter().map(|s| RosterEntry { id: s.agent.id.clone(), callsign: s.callsign.text(), group: s.callsign.project.clone(), number: s.callsign.number.clone(), harness: s.agent.harness.clone(), waiting: s.waiting, state: self.state_of(s, &open).into(), subagents: s.subagents, reachable: s.agent.deliver.is_some(), doing: s.doing.clone().filter(|_| !s.waiting), held: s.agent.deliver == Some(Deliver::Held), model: s.model.clone(), effort: s.effort.clone() }).collect()
     }
-    /// Where a new agent can be started: what the configuration lists, then wherever agents have been seen.
-    pub(super) fn launchable(&self, cfg: &Config) -> BTreeMap<String, String> {
+    /// His teams that have a folder: what the configuration lists, then wherever agents have been seen.
+    pub(super) fn teams(&self, cfg: &Config) -> BTreeMap<String, String> {
         let mut all = self.projects.clone();
         all.extend(cfg.projects.iter().map(|(k, v)| (k.to_lowercase(), v.clone())));
         // a project whose folder has gone is not offered
         all.retain(|_, folder| std::path::Path::new(folder).is_dir());
+        all
+    }
+    /// Where a new agent can be started by name: his teams, then the folders his coding tools have lately
+    /// had sessions in, each by the name a team there would have. A team's name is never taken from it.
+    pub(super) fn launchable(&self, cfg: &Config) -> BTreeMap<String, String> {
+        let mut all = self.teams(cfg);
+        for recent in self.recent(cfg).into_iter().filter(|r| !r.team && !r.name.is_empty()).take(20) {
+            all.entry(recent.name).or_insert(recent.folder);
+        }
+        all
+    }
+    /// The folders his coding tools have had sessions in, newest first, with his teams: one that has a team
+    /// is called by it, and a team no tool has a record of comes last.
+    pub(super) fn recent(&self, cfg: &Config) -> Vec<airband_core::radio::RecentFolder> {
+        let teams = self.teams(cfg);
+        let team_in = |folder: &str| teams.iter().find(|(_, has)| has.as_str() == folder).map(|(name, _)| name.clone());
+        let mut all: Vec<airband_core::radio::RecentFolder> = self
+            .worked
+            .iter()
+            .take(60)
+            .cloned()
+            .map(|(folder, tools, at)| {
+                let team = team_in(&folder);
+                airband_core::radio::RecentFolder { shown: shown(std::path::Path::new(&folder)), name: team.clone().or_else(|| airband_core::routing::team_name(&folder)).unwrap_or_default(), team: team.is_some(), tools, at, folder }
+            })
+            .collect();
+        for (name, folder) in teams {
+            if !all.iter().any(|r| r.folder == folder) {
+                all.push(airband_core::radio::RecentFolder { shown: shown(std::path::Path::new(&folder)), name, team: true, tools: Vec::new(), at: 0, folder });
+            }
+        }
         all
     }
     pub(super) fn callsigns(&self) -> Vec<Callsign> {
@@ -1050,6 +1105,52 @@ mod tests {
     }
     fn names(inner: &Inner) -> Vec<String> {
         inner.sessions.iter().map(|s| s.callsign.text()).collect()
+    }
+
+    #[test]
+    fn a_new_agent_can_be_started_by_name_in_a_folder_a_coding_tool_has_worked_in() {
+        let cfg = config::blank();
+        let here = std::env::temp_dir().join(format!("airband-recent-{}", config::random_hex(6)));
+        let folder = |name: &str| {
+            std::fs::create_dir_all(here.join(name)).unwrap();
+            here.join(name).display().to_string()
+        };
+        let (shop, back, other_shop) = (folder("shop"), folder("back-office"), folder("elsewhere/shop"));
+        let mut inner = Inner::default();
+        inner.check_in(&agent("a", &shop, None));
+        inner.worked = vec![(back.clone(), vec!["codex".into()], 9), (other_shop.clone(), vec!["claude-code".into()], 7), (shop.clone(), vec!["claude-code".into(), "codex".into()], 5)];
+        let recent = inner.recent(&cfg);
+        let listed: Vec<(&str, &str, bool, u64)> = recent.iter().map(|r| (r.name.as_str(), r.folder.as_str(), r.team, r.at)).collect();
+        // newest first; a folder is called as its team is when it has one, and as a team there would be when not
+        assert_eq!(listed, [("back office", back.as_str(), false, 9), ("shop", other_shop.as_str(), false, 7), ("shop", shop.as_str(), true, 5)]);
+        // by name: his team keeps its name, and a folder that is only recent never takes it
+        let launchable = inner.launchable(&cfg);
+        assert_eq!(launchable.get("shop"), Some(&shop));
+        assert_eq!(launchable.get("back office"), Some(&back));
+        assert_eq!(inner.teams(&cfg).len(), 1);
+        // a team no tool has a record of is still listed, last
+        inner.worked = vec![(back.clone(), vec!["codex".into()], 9)];
+        assert_eq!(inner.recent(&cfg).iter().map(|r| (r.name.as_str(), r.team, r.at)).collect::<Vec<_>>(), [("back office", false, 9), ("shop", true, 0)]);
+        let _ = std::fs::remove_dir_all(&here);
+    }
+
+    #[test]
+    fn one_found_by_its_tools_list_goes_to_the_team_it_was_started_under_when_it_says_so() {
+        let mut inner = Inner::default();
+        // first heard of from its tool's list: no name, so it is in its folder's team
+        assert_eq!(inner.check_in(&agent("a", "/x/shop", None)).text(), "shop one");
+        // its own first report has the name it was started under
+        let mut named = agent("a", "/x/shop", None);
+        named.name = Some("garden".into());
+        assert_eq!(inner.check_in(&named).text(), "garden one");
+        // and stays there on every report after
+        assert_eq!(inner.check_in(&named).text(), "garden one");
+        // one he moved himself is left where he put it
+        inner.check_in(&agent("b", "/x/shop", None));
+        inner.move_to("b", "orchard", Mover::Him);
+        let mut late = agent("b", "/x/shop", None);
+        late.name = Some("garden".into());
+        assert_eq!(inner.check_in(&late).project, "orchard");
     }
 
     /// A request for leave from `agent_id`, as `permit::ask` records it.

@@ -198,6 +198,8 @@ struct FeedView: View {
     /// He has just turned reading aloud on: a line says so for a moment.
     @State private var joined = false
     @State private var joinedNote = 0
+    /// The sheet that starts a new agent, opened from the screen that has none yet.
+    @State private var showNewAgent = false
     @Environment(\.horizontalSizeClass) private var width
     /// A wide window (an iPad, a Mac): the teams and agents stay open down the left, and the chat has the rest.
     private var wide: Bool { width == .regular && model.paired }
@@ -216,6 +218,7 @@ struct FeedView: View {
         .sheet(isPresented: $showSetup) { SetupView().environmentObject(model) }
         .fullScreenCover(isPresented: $onboarding) { OnboardingView().environmentObject(model) }
         .fullScreenCover(isPresented: $showScan) { ScanSheet().environmentObject(model) }
+        .sheet(isPresented: $showNewAgent) { NewAgentSheet().environmentObject(model) }
         .sheet(isPresented: $showAgents) { AgentsMenu(openSetup: { showAgents = false; showSetup = true }).environmentObject(model).presentationDetents([.medium, .large]) }
         .task { await ticker.run { model.view.rooms } }
     }
@@ -284,6 +287,8 @@ struct FeedView: View {
             if UserDefaults.standard.bool(forKey: "airband.devAgents") { showAgents = true }
             // `-airband.devProse YES` opens a message with every kind of formatting in it
             if UserDefaults.standard.bool(forKey: "airband.devProse") { showProse = true }
+            // `-airband.devNewAgent YES` opens the sheet that starts a new agent, for a screenshot
+            if UserDefaults.standard.string(forKey: "airband.devNewAgent") != nil { showNewAgent = true }
         }
         .sheet(isPresented: $showProse) { ProseSample() }
         #endif
@@ -502,10 +507,16 @@ struct FeedView: View {
                     // paired, and no agent has been heard from: say what makes one appear
                     let tool = model.usedTools.first?.name ?? "your coding agent"
                     Text("You\u{2019}re connected").font(.system(size: 19, weight: .semibold))
-                    Text("Start \(tool) in a project on your computer and it shows up here. A session that was already open needs to be started again.")
+                    Text("Start \(tool) in a project on your computer and it shows up here, or start one from here.")
                         .font(.system(size: 16)).foregroundStyle(Palette.quiet).multilineTextAlignment(.center).lineSpacing(3)
+                    Button { showNewAgent = true } label: {
+                        Text("Start an agent").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.ground)
+                            .padding(.horizontal, 22).frame(minHeight: 50).background(Palette.ink, in: RoundedRectangle(cornerRadius: 16))
+                    }
+                    .buttonStyle(.plain).padding(.top, 14)
+                    Text("Sessions that are already open show up by themselves.").font(.system(size: 13)).foregroundStyle(Palette.quiet).multilineTextAlignment(.center).padding(.top, 18)
                     if let first = model.usedTools.first?.first, !first.isEmpty {
-                        Text(first).font(.system(size: 15)).foregroundStyle(Palette.quiet).multilineTextAlignment(.center).padding(.top, 6)
+                        Text(first).font(.system(size: 13)).foregroundStyle(Palette.quiet).multilineTextAlignment(.center)
                     }
                 } else {
                     Text("No messages yet").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.quiet)
@@ -1755,7 +1766,7 @@ struct AgentsMenu: View {
                     Button { makingTeam = true } label: {
                         HStack(spacing: 10) {
                             Image(systemName: "plus").font(.system(size: 15, weight: .semibold))
-                            Text("New team").font(.system(size: 16, weight: .medium))
+                            Text("New agent").font(.system(size: 16, weight: .medium))
                             Spacer()
                         }
                         .foregroundStyle(Palette.soft).padding(.horizontal, 14).frame(minHeight: 44)
@@ -1765,7 +1776,7 @@ struct AgentsMenu: View {
             }
             .padding(.horizontal, 12).padding(.top, 18).padding(.bottom, 10)
         }
-        .sheet(isPresented: $makingTeam) { NewTeamSheet().environmentObject(model) }
+        .sheet(isPresented: $makingTeam) { NewAgentSheet().environmentObject(model) }
         // Settings stays at the bottom, whatever the list above it is scrolled to
         .safeAreaInset(edge: .bottom, spacing: 0) {
             Button(action: openSetup) {
