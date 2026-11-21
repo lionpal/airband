@@ -22,7 +22,7 @@ fn pass(_set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
 /// ElevenLabs' realtime transcription. The pass goes in the address. A stretch is closed when it is asked to
 /// be (`commit` on a final piece of silence, when he has finished), or by the service itself after about half
 /// a minute of speech; what he has said so far comes back whole each time until then.
-fn connect(grant: &EarsGrant, _request: &str) -> Result<Socket, ()> {
+fn connect(grant: &Pass, _request: &str) -> Result<Socket, ()> {
     const HOST: &str = "api.elevenlabs.io";
     let enc = |s: &str| s.bytes().map(|b| if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' { (b as char).to_string() } else { format!("%{b:02X}") }).collect::<String>();
     let mut url = format!("wss://{HOST}/v1/speech-to-text/realtime?model_id={}&audio_format=pcm_16000&commit_strategy=manual&token={}", enc(&grant.get("model")), enc(&grant.token));

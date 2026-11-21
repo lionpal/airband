@@ -88,11 +88,11 @@ fn key_for(cfg: &mut Config, p: &Provider) -> Option<String> {
 /// `set` puts the choice in the settings, or says why it cannot; `works` tries it for real.
 fn choose(cfg: &mut Config, job: Job, title: &str, about: &str, none: &str) {
     println!("\n{title}\n  {about}\n  Now: {}", slot(cfg, job).describe(job));
-    let offered: Vec<&Provider> = providers::offering(job).collect();
+    // every offer for the job: a provider that does it more than one way is listed once for each
+    let offered = providers::in_order(job);
     loop {
-        for (i, p) in offered.iter().enumerate() {
-            let o = p.offers.iter().find(|o| o.job == job);
-            println!("  {}. {}{}", i + 1, o.map(|o| &o.label).unwrap_or(&p.name), o.filter(|o| !o.about.is_empty()).map(|o| format!(". {}.", o.about)).unwrap_or_default());
+        for (i, (_, o)) in offered.iter().enumerate() {
+            println!("  {}. {}{}", i + 1, o.label, if o.about.is_empty() { String::new() } else { format!(". {}.", o.about) });
         }
         println!("  {}. {none}", offered.len() + 1);
         let pick = line("  Which? (return keeps what you have) ");
@@ -106,13 +106,14 @@ fn choose(cfg: &mut Config, job: Job, title: &str, about: &str, none: &str) {
         let before = serde_json::to_value(&*cfg).unwrap();
         let chosen = match offered.get(n - 1) {
             None => Use::default(),
-            Some(p) => {
-                let mut u = Use::of(&p.id);
+            Some((p, o)) => {
+                let mut u = Use::of(&p.id, &o.id);
                 if p.key {
+                    // the key is the provider's: one already given for another of its offers is this one's too
                     let Some(key) = key_for(cfg, p) else { continue };
                     u.key = key;
                 }
-                for a in p.offers.iter().filter(|o| o.job == job).flat_map(|o| &o.asks) {
+                for a in &o.asks {
                     let said = line(&format!("  {} [{}]: ", a.question, a.usual));
                     // what he leaves as usual is not written down, so it follows the row if the row changes
                     if !said.is_empty() && said != a.usual {
@@ -202,7 +203,7 @@ pub fn keys(args: &[String]) -> Result<(), String> {
         }
         Some("add") => {
             let (name, provider) = (args.get(1).ok_or("airband keys add <name> <provider>")?, args.get(2).ok_or("airband keys add <name> <provider>")?);
-            let p = airband_core::catalog::current().providers.iter().find(|p| p.id == *provider && p.key).ok_or_else(|| format!("no provider called \"{provider}\" takes a key: {}", airband_core::catalog::current().providers.iter().filter(|p| p.key).map(|p| p.id.as_str()).collect::<Vec<_>>().join(", ")))?;
+            let p = providers::provider(provider).filter(|p| p.key).ok_or_else(|| format!("no provider called \"{provider}\" takes a key: {}", airband_core::catalog::current().providers.iter().filter(|p| p.key).map(|p| p.id.as_str()).collect::<Vec<_>>().join(", ")))?;
             if name.starts_with('-') || cfg.keys.contains_key(name) {
                 return Err(format!("\"{name}\" is taken or is not a name."));
             }

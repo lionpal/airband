@@ -25,8 +25,8 @@ const ENGINES: &[&str] = &[
 
 /// The models in the catalogue that this build can run. Each says which version of its files it is: that is
 /// the folder they are kept in.
-pub(crate) fn models() -> impl Iterator<Item = &'static Model> {
-    airband_core::catalog::current().models.iter().filter(|m| ENGINES.contains(&m.engine.as_str()) && !m.version.is_empty())
+pub(crate) fn models() -> impl Iterator<Item = Arc<Model>> {
+    airband_core::catalog::current().models.clone().into_iter().filter(|m| ENGINES.contains(&m.engine.as_str()) && !m.version.is_empty())
 }
 
 /// The name a copy of the catalogue is kept under, by the form of the document.
@@ -110,7 +110,7 @@ pub fn refresh_catalog(dir: String) -> bool {
     changed
 }
 
-pub(crate) fn model(kind: &str) -> Option<&'static Model> {
+pub(crate) fn model(kind: &str) -> Option<Arc<Model>> {
     models().find(|m| m.kind == kind)
 }
 
@@ -184,7 +184,7 @@ pub(crate) fn fetch_local_model(dir: String, kind: String) -> Result<(), RadioEr
     let told = |reason: &str| RadioError::Told { reason: reason.into() };
     let m = model(&kind).ok_or_else(|| told("This app has no such model."))?;
     let _one = FETCHING.lock().unwrap_or_else(|e| e.into_inner());
-    let folder = version_folder(&dir, m);
+    let folder = version_folder(&dir, &m);
     GOT.store(0, Ordering::SeqCst);
     OF.store(m.files.iter().map(|f| f.1).sum(), Ordering::SeqCst);
     // no limit on the whole of it (a model is tens or hundreds of megabytes on whatever connection he has),
@@ -235,7 +235,7 @@ pub(crate) fn fetch_local_model(dir: String, kind: String) -> Result<(), RadioEr
     // This version is whole: say so, and only now let go of the one that was here before it, which was in use
     // until this moment.
     let _ = std::fs::write(folder.join(WHOLE), "");
-    for other in std::fs::read_dir(home(&dir, m)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| *p != folder) {
+    for other in std::fs::read_dir(home(&dir, &m)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| *p != folder) {
         let _ = if other.is_dir() { std::fs::remove_dir_all(&other) } else { std::fs::remove_file(&other) };
     }
     Ok(())
@@ -254,7 +254,7 @@ mod tests {
         }
         // nothing is here until it is fetched
         let dir = std::env::temp_dir().join(format!("airband-models-{}", random_hex(4))).display().to_string();
-        assert!(models().all(|m| !fetched(&dir, m)));
+        assert!(models().all(|m| !fetched(&dir, &m)));
     }
 
     #[test]
@@ -313,7 +313,7 @@ mod tests {
         let began = std::time::Instant::now();
         fetch_local_model(dir.clone(), kind.clone()).unwrap();
         let m = model(&kind).unwrap();
-        assert!(fetched(&dir, m) && local_model_progress() == 100);
-        println!("{kind}: fetched to {} in {:.0} s", folder(&dir, m).display(), began.elapsed().as_secs_f32());
+        assert!(fetched(&dir, &m) && local_model_progress() == 100);
+        println!("{kind}: fetched to {} in {:.0} s", folder(&dir, &m).display(), began.elapsed().as_secs_f32());
     }
 }

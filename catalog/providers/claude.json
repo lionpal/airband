@@ -3,6 +3,7 @@
   "name": "Claude on this computer, with your Claude login",
   "offers": [
     {
+      "id": "haiku",
       "job": "summary",
       "by": {
         "interface": "command",

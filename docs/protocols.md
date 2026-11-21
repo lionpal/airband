@@ -140,7 +140,7 @@ Chat mode and the rest:
 | `GET feed?scope=…&since=<rev>&wait=<s>` | → `Feed` | Every line new or changed after change count `since`, oldest change first; pass `rev` back next time. `since=0` gets the newest lines. `scope`: `all`, `group:<name>`, `agent:<callsign>`. Held open up to 25 s. `roster=<roster_rev>`: also answer when the roster changes. `away=1`: this radio is following the chat without showing it. `after=<seq>` is the older form (new lines only) and is still answered. |
 | `GET message/<id>?form=detail\|full\|speech\|spoken` | `{ text }`, or `{ speech }` | The fuller spoken version, exactly what the agent wrote, the id of a clip of the whole message read aloud, or (`spoken`) the words of that clip for a radio that reads them in a voice of its own. |
 | `GET speech/<id>?from=<block>` | `{ rate, data, samples, next, done, text, marks }` | The next part of a clip of the tower's voice: IMA ADPCM blocks, base64. `text` comes with the first part; `marks` are pairs of (where a word starts in `text`, milliseconds into the clip) when the voice gives timings. 404 when the tower has no voice. |
-| `GET ears` | `{ kind, token, set, phrases }` | What the phone should listen with. `kind` is a live dialect the phone speaks to the service itself, with `token` (a short-lived pass) and `set` (what that service has to be told: a region, a language, a model); or `tower`, when the phone records and sends the recording to `POST hear`; or `none`. `phrases` are names he is likely to say. |
+| `GET ears` | `{ by: "live", dialect, token, set, phrases }`, `{ by: "tower" }` or `{ by: "none", phrases }` | What the phone should listen with. `live`: the phone speaks to the service itself in `dialect`, with `token` (a short-lived pass) and `set` (what that service has to be told: a region, a language, a model). `tower`: the phone records and sends the recording to `POST hear`. `none`: nothing is set to listen here. `phrases` are names he is likely to say. |
 | `POST hear` | `{ clip, data, samples, last }` → `{ text }` | Part of a recording, for a tower whose listening service takes a finished clip: 16 kHz mono in the same compressed blocks speech comes in, ten seconds a part. The last part is answered with the words. |
 | `GET picture/<id>?from=<byte>` | `{ data, next, done }` | One part (120 KB at most, base64) of a picture's kept copy. |
 | `POST attachment` | `{ id, name, from, data, done, total }` → `{ next, any }`, or `{ error }` | One part of a file he is attaching, 120 KB at most. With `total` the parts may come in any order. |
@@ -151,8 +151,8 @@ Chat mode and the rest:
 | `POST folders` | `{ under }` → `{ path, shown, up, folders }`, or `{ error }` | The folders inside one of his on this computer, by name and without the hidden ones, for choosing where a new team works. `under` empty is his home folder; nothing outside it is listed. |
 | `POST project` | `{ name, folder, make }` → `{ say }`, or `{ error }` | Make a new team: one plain word for its name, and the folder its agents work in (inside his home folder; made first with `make`). A tower that runs agents itself starts the team's first one there with nothing to do yet. |
 | `POST takeover` | `{ agent }` → `{}`, or `{ error }` | Have the tower take over an agent he started in a terminal: that session ends there and carries on under a held launcher of the agent's own harness. Refused while it is in the middle of something. |
-| `GET reads` | `{ now, offers: [{ id, label, about, price, preferred, free, login, key, has_key, key_name, keys_at, asks }] }` | What can read the agents' messages on this tower, from the tower's own catalogue and in the order to show it, and the id of the one that reads now (empty when none does). `has_key` says only that the tower keeps a key for it. |
-| `POST reads` | `{ kind, key, set }` → `{ reads }`, or `{ error }` | Choose what reads, by an `id` from `GET reads`. `key` empty uses one the tower keeps. The tower tries it with a real call before keeping it. A radio cannot name a command to run. |
+| `GET reads` | `{ now: { provider, offer }, offers: [{ provider, offer, label, about, price, preferred, free, login, key, has_key, key_name, keys_at, asks }] }` | What can read the agents' messages on this tower, from the tower's own catalogue and in the order to show it, and which one reads now (`now` is absent when none does). `has_key` says only that the tower keeps a key for that provider; one key serves all a provider's offers. |
+| `POST reads` | `{ kind, offer, key, set }` → `{ reads }`, or `{ error }` | Choose what reads, by a `provider` (as `kind`) and `offer` from `GET reads`. `key` empty uses one the tower keeps. The tower tries it with a real call before keeping it. A radio cannot name a command to run. |
 | `POST stop` | `{ agent }` → `{}`, or `{ error }` | Stop what an agent the tower runs is doing. What he said to it meanwhile it then reads as one turn. |
 | `POST end` | `{ agent }` → `{}`, or `{ error }` | End an agent the tower runs: its input is closed, and it finishes and signs off. |
 | `GET accounts?fresh=1` | → `{ schema, accounts, note, checked_at }` | Every account of every harness whose sessions can be moved between logins. Kept for five minutes; `fresh` checks again. |
@@ -258,7 +258,7 @@ Nothing that could sign in as an account is ever sent.
 
 ### Listening
 
-`kind` in the answer to `GET ears` names a live dialect: a line of `LISTENERS` in `crates/airband-radio/src/ears.rs`, which is also the `by.interface` of the provider's row. The radio
+`dialect` in the answer to `GET ears` names a live dialect: a line of `LISTENERS` in `crates/airband-radio/src/ears.rs`, which is also the `by.interface` of the provider's row. The radio
 streams the microphone to that service as he speaks, and falls back to one upload if the connection cannot be
 made. With a key of his own in the phone, the radio gets its pass from the service itself and asks neither the
 tower nor the relay.
@@ -383,11 +383,14 @@ It is given no tools. `airband setup` or `airband model` chooses it; it is `summ
 `~/.airband/config.json`:
 
 ```json
-{ "kind": "command", "argv": ["claude", "-p", "--model", "haiku", "…"] }
-{ "kind": "gemini", "key": "key:gemini", "model": "gemini-flash-latest" }
-{ "kind": "openai", "url": "https://api.openai.com/v1", "key": "key:openai", "model": "…" }
+{ "kind": "command", "offer": "own", "argv": ["claude", "-p", "--model", "haiku", "…"] }
+{ "kind": "gemini", "offer": "flash-lite", "key": "key:gemini", "model": "gemini-flash-latest" }
+{ "kind": "openai", "offer": "luna", "url": "https://api.openai.com/v1", "key": "key:openai", "model": "…" }
 { "kind": "none" }
 ```
+
+`kind` is a provider's id and `offer` is which of its offers (a provider can do one job more than one way).
+The key is the provider's: one key serves all its offers.
 
 `command` is any program that reads a prompt on standard input and writes the answer to standard output.
 `openai` is any service that speaks OpenAI's chat API, a model on his own computer included. `key` is written
