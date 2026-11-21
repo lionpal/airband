@@ -40,6 +40,12 @@ pub trait DeskHost: Send + Sync {
     /// model's files are; `pcm` is 16-bit little-endian mono at 16 kHz. Nothing when the host cannot. May
     /// block for as long as it takes.
     fn transcribe(&self, folder: String, pcm: Vec<u8>) -> Option<String>;
+    /// A key he gave for a service, by that service's provider id; nothing when none is kept. The host keeps
+    /// keys where its system keeps secrets, on this device only. The core asks for one only to use it: it is
+    /// never handed to a screen.
+    fn secret(&self, name: String) -> Option<String>;
+    /// Keep this key under that name from now on, or with nothing, forget it.
+    fn keep_secret(&self, name: String, value: Option<String>);
 }
 
 /// One team: a project and the agents working in it.
@@ -168,11 +174,11 @@ pub struct DeskUpload {
 /// How many lines of the feed a view carries.
 const FEED_SHOWN: usize = 80;
 
-struct Station {
+pub(crate) struct Station {
     link: String,
-    radio: Arc<Radio>,
+    pub(crate) radio: Arc<Radio>,
     name: String,
-    online: bool,
+    pub(crate) online: bool,
     /// It has been asked at least once and has answered or failed.
     tried: bool,
     /// When it last answered, and how many times in a row it has not since.
@@ -201,12 +207,12 @@ struct Asking {
 }
 
 #[derive(Default)]
-struct State {
+pub(crate) struct State {
     /// What he said that is waiting to be told who it is for.
     asking: Option<Asking>,
     /// He took back what he was saying: when the microphone closes, nothing is sent.
     discard: bool,
-    stations: Vec<Station>,
+    pub(crate) stations: Vec<Station>,
     /// Answered here a moment ago: hidden from "waiting" before the tower confirms.
     answered: HashSet<String>,
     /// Goes up each time the set of computers changes, so threads following the old set stop.
@@ -371,10 +377,12 @@ impl Floor {
     }
 }
 
-struct Shared {
-    state: Mutex<State>,
+pub(crate) struct Shared {
+    pub(crate) state: Mutex<State>,
     floor: Floor,
-    host: Arc<dyn DeskHost>,
+    pub(crate) host: Arc<dyn DeskHost>,
+    /// What he chose to read, listen and speak with.
+    pub(crate) chooser: crate::choices::Chooser,
 }
 
 /// What one computer's radio calls back into: it knows which computer it is, and the desk does the rest.
@@ -392,6 +400,11 @@ impl RadioHost for StationHost {
     }
     fn own_voice(&self) -> bool {
         false
+    }
+    fn told(&self, text: String) {
+        // what he chose stays chosen and now says why it did not work: the screens that show it are told too
+        self.shared.host.note(text);
+        self.shared.host.changed();
     }
     fn unplaced(&self, message: Outgoing, elsewhere: Option<String>, ask: Vec<String>) {
         {
@@ -512,8 +525,16 @@ pub struct DeskFolders {
 
 #[derive(uniffi::Object)]
 pub struct Desk {
-    shared: Arc<Shared>,
+    pub(crate) shared: Arc<Shared>,
     data_dir: String,
+}
+
+#[cfg(test)]
+impl Desk {
+    /// A desk with no computers, keeping what it keeps in `data_dir`.
+    pub(crate) fn alone(data_dir: &str, host: Arc<dyn DeskHost>) -> Desk {
+        Desk { shared: Arc::new(Shared { state: Mutex::new(State::default()), floor: Floor::default(), host, chooser: crate::choices::Chooser::open(data_dir) }), data_dir: data_dir.into() }
+    }
 }
 
 /// A folder name that is the same every launch for the same link.
@@ -532,7 +553,10 @@ impl Desk {
     #[uniffi::constructor]
     pub fn open(data_dir: String, host: Arc<dyn DeskHost>) -> Arc<Self> {
         let state = State { read: ReadMarks::load(&data_dir), ..State::default() };
-        Arc::new(Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host }), data_dir })
+        let chooser = crate::choices::Chooser::open(&data_dir);
+        // what he chose to listen and speak with is in use from the start
+        chooser.apply(&*host);
+        Arc::new(Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser }), data_dir })
     }
 
     /// The computers he is paired with, as the links `airband pair` printed, one each. Replaces whatever set
@@ -1085,20 +1109,6 @@ impl Desk {
         radio.dismiss(message_id)
     }
 
-    /// Choose what reads the agents' messages, on every computer that can be reached: `kind` is one of
-    /// [`crate::reading_services`], `key` its key (empty to use one that computer already keeps for it), and
-    /// `settings` what else it is told. The key goes sealed to each computer, which tries it with a real call
-    /// and keeps it encrypted. Err is what the first computer that would not take it said. Blocks: call it off
-    /// the main thread.
-    pub fn set_reads(&self, kind: String, key: String, settings: std::collections::HashMap<String, String>) -> Result<(), RadioError> {
-        let radios: Vec<Arc<Radio>> = self.shared.state.lock().unwrap().stations.iter().filter(|s| s.online).map(|s| s.radio.clone()).collect();
-        if radios.is_empty() {
-            return Err(RadioError::Offline);
-        }
-        let wanted = airband_core::radio::SetReads { kind, key, set: settings.into_iter().collect() };
-        radios.iter().try_for_each(|radio| radio.set_reads(&wanted))
-    }
-
     /// Try again a message that was not sent ([`Outgoing::failed`]). It goes after anything else still waiting.
     pub fn send_again(&self, id: String) {
         if let Some(radio) = self.sender_of(&id) {
@@ -1320,7 +1330,7 @@ fn pick_station(state: &State, text: &str, re: Option<&str>, room: Option<&str>,
 }
 
 /// Tell one computer where this device can be woken, if it has not been told. A computer that cannot be reached
-/// is told the next time round; one that answers at all, even to say it does not know how, is not asked again.
+/// or does not take it is told the next time round.
 fn tell_push(shared: &Arc<Shared>, radio: &Arc<Radio>, index: usize, generation: u64) {
     let (link, push) = {
         let state = shared.state.lock().unwrap();
@@ -1328,7 +1338,7 @@ fn tell_push(shared: &Arc<Shared>, radio: &Arc<Radio>, index: usize, generation:
         let Some(push) = state.push.clone().filter(|_| !state.push_told.contains(&station.link)) else { return };
         (station.link.clone(), push)
     };
-    if !matches!(radio.push_target(&push.0, &push.1), Err(RadioError::Offline)) {
+    if radio.push_target(&push.0, &push.1).is_ok() {
         let mut state = shared.state.lock().unwrap();
         // unless the address changed while this one was on its way
         if state.push.as_ref() == Some(&push) {
@@ -1375,29 +1385,6 @@ fn station_key(link: &str) -> Option<String> {
 /// Open a sealed notification with whichever pairing sealed it. `links` are the pairing links the host keeps;
 /// `sealed` is the notification as the push service delivered it. Nothing when none of them opens it. This
 /// needs no desk: a host calls it from wherever its system hands it a notification.
-/// Listen with a service of his own from now on, with his key: the microphone then needs neither his computer
-/// nor the relay. `kind` is one of [`listening_services`]; an empty one goes back to asking them. The host
-/// keeps the key somewhere safe and calls this at launch.
-#[uniffi::export]
-pub fn set_own_ears(kind: String, key: String, settings: std::collections::HashMap<String, String>) {
-    crate::ears::set_own((!kind.is_empty()).then(|| crate::mouth::service_of(&kind, &key, settings)));
-}
-
-/// Listen with a model on the device from now on: `kind` is one of [`crate::local_listeners`], and `dir` the
-/// app's folder it was fetched into. An empty `kind` stops. The host remembers the choice and calls this at
-/// launch. Nothing is chosen if the model is not here.
-#[uniffi::export]
-pub fn set_local_ears(dir: String, kind: String) {
-    crate::ears::set_local(&dir, &kind);
-}
-
-/// Does the listening service take this key and these settings? One real call. Blocks: call it off the main
-/// thread.
-#[uniffi::export]
-pub fn check_own_ears(kind: String, key: String, settings: std::collections::HashMap<String, String>) -> Result<(), RadioError> {
-    crate::ears::check(&crate::mouth::service_of(&kind, &key, settings)).map_err(|reason| RadioError::Told { reason })
-}
-
 /// A short-lived pass from a live listening service, for a key: what a tower hands a phone so the key stays
 /// where it is. `kind` is the dialect a provider's row names. Blocks. Err says why not, in words for him.
 pub fn listening_pass(kind: &str, set: &std::collections::BTreeMap<String, String>, key: &str) -> Result<String, String> {
@@ -1454,6 +1441,8 @@ fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64)
         // the first answer must come at once: it is what says the tower is there and who is on it
         let got = radio.follow(if first { 0 } else { 25 });
         let mut seen: Vec<String> = Vec::new();
+        // this computer has just been reached, or says it now reads with something else
+        let mut reached = false;
         {
             let mut state = shared.state.lock().unwrap();
             if state.generation != generation {
@@ -1469,6 +1458,7 @@ fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64)
                     station.fails = 0;
                     station.failing_since = None;
                     station.answered_at = Some(std::time::Instant::now());
+                    reached = !station.online || station.reads != feed.reads;
                     station.online = true;
                     station.name = feed.station.clone();
                     station.listens = feed.listens;
@@ -1507,6 +1497,12 @@ fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64)
         if !seen.is_empty() {
             radio.seen(seen);
         }
+        // What waits to write his summaries goes to it, and it is asked what it can read with: on a thread of
+        // its own, because the computer tries a choice with a real call before it answers.
+        if reached {
+            let (shared, radio) = (shared.clone(), radio.clone());
+            thread::spawn(move || crate::choices::computer_reached(&shared, &radio));
+        }
         // Two computers number their agents without knowing of each other. The later one in his list is told
         // the names the earlier ones use, whenever those change, and keeps off them.
         if got.is_ok() && index > 0 {
@@ -1534,6 +1530,7 @@ mod tests {
 
     struct Quiet;
     impl RadioHost for Quiet {
+        fn told(&self, _: String) {}
         fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
         fn own_voice(&self) -> bool {
             false
@@ -1598,6 +1595,10 @@ mod tests {
 
     struct Watching(std::sync::atomic::AtomicBool);
     impl DeskHost for Watching {
+        fn secret(&self, _: String) -> Option<String> {
+            None
+        }
+        fn keep_secret(&self, _: String, _: Option<String>) {}
         fn play(&self, _: u32, _: Vec<u8>, _: bool) {}
         fn record_start(&self, _: u32) -> bool {
             false
@@ -1624,7 +1625,7 @@ mod tests {
         let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
         let dir = std::env::temp_dir().join(format!("airband-read-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(two()), floor: Floor::default(), host: host.clone() }), data_dir: dir.display().to_string() };
+        let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(two()), floor: Floor::default(), host: host.clone(), chooser: crate::choices::Chooser::open("") }), data_dir: dir.display().to_string() };
         let counts = |v: &DeskView| (v.unread, v.rooms.iter().map(|r| (r.name.clone(), r.unread)).collect::<Vec<_>>());
         // looking at one team: what it said is read, and the other two teams' one thing each is not
         let v = desk.view(Some("shop".into()), None);

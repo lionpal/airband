@@ -93,7 +93,6 @@ pub(crate) fn work(jobs: Receiver<Job>, link: Arc<Link>, host: Arc<dyn RadioHost
                     voice::Said::Aloud => {
                         let _ = link.post("/heard", &Heard { id: t.id.clone() });
                     }
-                    voice::Said::OwnVoiceFailed => {}
                     voice::Said::Nothing(why) => {
                         let _ = link.post("/unheard", &serde_json::json!({ "id": t.id, "why": why }));
                     }
