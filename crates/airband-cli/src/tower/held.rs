@@ -22,10 +22,14 @@ pub(crate) struct Kept {
     /// Its session's id, which is also its agent id.
     pub(super) id: String,
     pub(super) cwd: String,
-    /// The launcher that started it, by name, and the options it was started with (model, effort).
+    /// The launcher that started it, by name.
     pub(super) launcher: String,
-    #[serde(default)]
-    pub(super) options: Vec<String>,
+    /// The model and effort he asked for when he started it, if he did: what it is set to again each time
+    /// it is carried on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) effort: Option<String>,
     /// What the agent's own tool calls its session, when that is not `id`: what carries it on, and how the
     /// tower knows a session it sees elsewhere (a tool's own server) is this agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -36,6 +40,30 @@ pub(crate) struct Kept {
 /// session of its tool, so that one the tower runs is reported by its driver and by nothing else.
 pub(super) fn holds(inner: &Inner, session: &str) -> bool {
     inner.held.iter().any(|k| k.session.as_deref() == Some(session))
+}
+
+/// What a new agent of this launcher can be started on. A program started with arguments takes what its row
+/// lists. One that speaks the Agent Client Protocol says for itself each time a session of its opens, and what
+/// it last said is what is offered: nothing, until the first of its agents has been started here.
+pub(super) fn offers(inner: &Inner, name: &str, launcher: &config::Launcher) -> airband_core::tools::Offers {
+    match launcher.held {
+        Some(config::Held::Acp { .. }) => inner.menus.get(name).cloned().unwrap_or_default(),
+        _ => launcher.offers(),
+    }
+}
+
+/// An agent that is there: what its tool calls its session, and what it said a session can be set to.
+#[cfg_attr(not(unix), allow(dead_code))]
+struct Started {
+    session: Option<String>,
+    offers: airband_core::tools::Offers,
+}
+
+/// Remember what a launcher's agent said it can be set to, when it is the agent that says.
+fn learn(app: &App, inner: &mut Inner, launcher: &str, offers: airband_core::tools::Offers) {
+    if matches!(app.cfg.launchers.get(launcher).and_then(|l| l.held.as_ref()), Some(config::Held::Acp { .. })) {
+        inner.menus.insert(launcher.to_string(), offers);
+    }
 }
 
 /// Where a held agent's holder listens: a short path (a socket's may not be long), of this user's own, that is
@@ -90,7 +118,7 @@ const STARTS_WITHIN: Duration = Duration::from_secs(150);
 /// from the tower, so the agent goes on when the tower is restarted. Returns once the agent is there (the
 /// holder says so), with what its tool calls its session; or with why it is not.
 #[cfg(unix)]
-async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Option<String>, String> {
+async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Started, String> {
     let launcher = app.cfg.launchers.get(&kept.launcher).ok_or_else(|| format!("no launcher called {} is configured", kept.launcher))?;
     let held = launcher.held.as_ref().ok_or_else(|| format!("the launcher {} does not hold its agents", kept.launcher))?;
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -114,7 +142,15 @@ async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Option<String
                 given_id |= a.contains("{id}");
                 a.replace("{cwd}", &kept.cwd).replace("{id}", &kept.id)
             };
-            let argv: Vec<String> = launcher.argv.iter().flat_map(|a| if a == "{options}" { kept.options.clone() } else { vec![fill(a)] }).collect();
+            // the model and effort go where the launcher's command says its options go, as its row writes them
+            let mut options: Vec<String> = Vec::new();
+            if let Some(m) = &kept.model {
+                options.extend(launcher.with_model.iter().map(|a| a.replace("{model}", m)));
+            }
+            if let Some(e) = &kept.effort {
+                options.extend(launcher.with_effort.iter().map(|a| a.replace("{effort}", e)));
+            }
+            let argv: Vec<String> = launcher.argv.iter().flat_map(|a| if a == "{options}" { options.clone() } else { vec![fill(a)] }).collect();
             let session: Vec<String> = if fresh { new } else { resume }.iter().map(&mut fill).collect();
             argv.into_iter().chain(session).collect()
         }
@@ -122,6 +158,13 @@ async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Option<String
             holder.arg("--by").arg("acp");
             if let Some(mode) = mode {
                 holder.arg("--mode").arg(mode);
+            }
+            // set by its holder from what the agent itself lists, or it does not start
+            if let Some(m) = &kept.model {
+                holder.arg("--model").arg(m);
+            }
+            if let Some(e) = &kept.effort {
+                holder.arg("--effort").arg(e);
             }
             if !fresh {
                 // carried on by what the agent's own tool calls its session, or not at all
@@ -165,7 +208,7 @@ async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Option<String
     let mut listening = false;
     while Instant::now() < until {
         match status(&kept.id).await {
-            Ok(crate::hold::State::Ready { session }) => return Ok(session),
+            Ok(crate::hold::State::Ready { session, offers }) => return Ok(Started { session, offers }),
             Ok(crate::hold::State::Failed { why }) => return Err(why),
             Ok(_) => listening = true,
             // its holder has gone again without a word: the program could not be started at all
@@ -179,17 +222,18 @@ async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Option<String
     Err(format!("{called} had not started after {} seconds", STARTS_WITHIN.as_secs()))
 }
 #[cfg(not(unix))]
-async fn spawn(_: &Arc<App>, _: &Kept, _: bool) -> Result<Option<String>, String> {
+async fn spawn(_: &Arc<App>, _: &Kept, _: bool) -> Result<Started, String> {
     Err("the tower cannot run agents itself on this system yet".into())
 }
 
 /// Carry on a held agent whose holder has gone, and remember what its session is called now.
 async fn revive(app: &Arc<App>, kept: &Kept) -> Result<(), String> {
-    let session = spawn(app, kept, false).await?;
+    let started = spawn(app, kept, false).await?;
     let mut inner = app.inner.lock().unwrap();
     if let Some(k) = inner.held.iter_mut().find(|k| k.id == kept.id) {
-        k.session = session.or(k.session.take());
+        k.session = started.session.or(k.session.take());
     }
+    learn(app, &mut inner, &kept.launcher, started.offers);
     app.save(&inner);
     Ok(())
 }
@@ -316,11 +360,14 @@ pub(super) fn unsend(app: &App, line: &str) -> Result<(), String> {
 /// Start a new held agent in `cwd` and give it its task. It returns once the agent is there, and not before:
 /// one that could not be started is an error that says why, and nothing is left on the radio. With no task it
 /// is left waiting for his first word, on the radio at once so he can see it and speak to it.
-pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, options: Vec<String>, task: &str) -> Result<String, String> {
-    let mut kept = Kept { id: new_id(), cwd: cwd.to_string(), launcher: launcher.to_string(), options, session: None };
-    kept.session = spawn(app, &kept, true).await?;
+/// `model` and `effort` are what he asked for it to be set to, as its tool takes them.
+pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, model: Option<String>, effort: Option<String>, task: &str) -> Result<String, String> {
+    let mut kept = Kept { id: new_id(), cwd: cwd.to_string(), launcher: launcher.to_string(), model, effort, session: None };
+    let started = spawn(app, &kept, true).await?;
+    kept.session = started.session;
     {
         let mut inner = app.inner.lock().unwrap();
+        learn(app, &mut inner, launcher, started.offers);
         inner.held.push(kept.clone());
         if task.is_empty() {
             let harness = app.cfg.launchers.get(launcher).map(|l| l.harness.clone()).unwrap_or_default();
@@ -419,10 +466,12 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
     if alive(pid) {
         return Err("Its terminal session did not end. Close it there, then try again.".into());
     }
-    let mut kept = Kept { id: id.to_string(), cwd, launcher, options: Vec::new(), session: Some(id.to_string()) };
+    let mut kept = Kept { id: id.to_string(), cwd, launcher, model: None, effort: None, session: Some(id.to_string()) };
     // ending it signed it off; it reports in again from the new process, under the same id
-    kept.session = spawn(app, &kept, false).await?.or(kept.session);
+    let started = spawn(app, &kept, false).await?;
+    kept.session = started.session.or(kept.session);
     let mut inner = app.inner.lock().unwrap();
+    learn(app, &mut inner, &kept.launcher, started.offers);
     inner.held.retain(|k| k.id != id);
     inner.held.push(kept);
     // it is on the radio from now, before it has reported in: held, and reachable

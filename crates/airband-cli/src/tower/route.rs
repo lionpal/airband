@@ -29,7 +29,8 @@ pub(super) enum Routed {
 fn new_by_command(app: &App, text: &str, projects: &[String]) -> Option<Idea> {
     let l = airband_core::routing::parse_launch(text, projects)?;
     // the models and efforts that can be named are the ones of the tool the command names, or of the usual one
-    let (models, efforts) = app.cfg.launcher_for(l.tool.as_deref()).map(|(_, l)| (l.models.keys().cloned().collect::<Vec<_>>(), l.efforts.clone())).unwrap_or_default();
+    let menu = app.cfg.launcher_for(l.tool.as_deref()).map(|(name, l)| held::offers(&app.inner.lock().unwrap(), name, l)).unwrap_or_default();
+    let (models, efforts) = (menu.model_words(), menu.effort_words());
     Some(match airband_core::routing::parse_with(&l.task, &models, &efforts).filter(|w| !w.rest.is_empty()) {
         Some(w) => Idea { tool: l.tool, project: l.project, model: Some(w.model), effort: w.effort, task: w.rest },
         None => Idea { tool: l.tool, project: l.project, model: None, effort: None, task: l.task },
@@ -112,7 +113,7 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
             // the other thing his words can be: a request for a new agent, on a model and at an effort he may name
             let starting = match launcher {
                 None => String::new(),
-                Some(l) => {
+                Some(_) => {
                     let lately: Vec<String> = {
                         let inner = app.inner.lock().unwrap();
                         projects
@@ -124,9 +125,13 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                             .collect()
                     };
                     // every model and effort any of the tools offers: which tool he means is settled after
-                    let across = |of: fn(&config::Launcher) -> Vec<String>| {
-                        let mut all: Vec<String> = of(l);
-                        app.cfg.launchers.values().flat_map(of).for_each(|n| if !all.contains(&n) { all.push(n) });
+                    let menus: Vec<airband_core::tools::Offers> = {
+                        let inner = app.inner.lock().unwrap();
+                        app.cfg.launchers.get_key_value(&app.cfg.launcher).into_iter().chain(app.cfg.launchers.iter()).map(|(name, l)| held::offers(&inner, name, l)).collect()
+                    };
+                    let across = |of: fn(&airband_core::tools::Offers) -> &Vec<airband_core::tools::Choice>| {
+                        let mut all: Vec<String> = Vec::new();
+                        menus.iter().flat_map(of).for_each(|c| if !all.contains(&c.name) { all.push(c.name.clone()) });
                         all
                     };
                     let tools = app.cfg.tools();
@@ -149,8 +154,8 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                          about starting an agent, the tool, the model or the effort. Otherwise \"new\" is null. The projects:\n{projects}",
                         room = room.as_ref().map(|r| format!(" (he is looking at {r})")).unwrap_or_default(),
                         tool = tool,
-                        models = offered("model", across(|l| l.models.keys().cloned().collect())),
-                        efforts = offered("effort", across(|l| l.efforts.clone())),
+                        models = offered("model", across(|m| &m.models)),
+                        efforts = offered("effort", across(|m| &m.efforts)),
                         projects = lately.join("\n")
                     )
                 }
@@ -224,10 +229,14 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                 let known = |said: Option<String>, names: Vec<String>| named(said).map(|x| names.into_iter().find(|n| same(n, &x)).unwrap_or(x));
                 // the tool he named; its models and efforts are then the ones that count
                 let tool = known(new.tool, app.cfg.tools());
-                let launcher = match &tool {
-                    Some(t) => app.cfg.launcher_for(Some(t)).map(|(_, l)| l),
-                    None => launcher,
-                };
+                let menu = match &tool {
+                    Some(t) => app.cfg.launcher_for(Some(t)),
+                    None => app.cfg.launchers.get_key_value(&app.cfg.launcher),
+                }
+                .map(|(name, l)| held::offers(&app.inner.lock().unwrap(), name, l))
+                .unwrap_or_default();
+                // by the name the tool's launcher offers it under, when it offers one he named
+                let offered = |said: Option<String>, choices: &[airband_core::tools::Choice]| named(said).map(|x| airband_core::tools::named(choices, &x).map(|c| c.name.clone()).unwrap_or(x));
                 let project = match named(new.project) {
                     // one he named that the tower does not know is not swapped for another: he is asked which
                     Some(said) => projects.iter().find(|p| same(p, &said)).cloned(),
@@ -237,8 +246,8 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                 return Routed::New(Idea {
                     tool,
                     project,
-                    model: known(new.model, launcher.map(|l| l.models.keys().cloned().collect()).unwrap_or_default()),
-                    effort: known(new.effort, launcher.map(|l| l.efforts.clone()).unwrap_or_default()),
+                    model: offered(new.model, &menu.models),
+                    effort: offered(new.effort, &menu.efforts),
                     // with no work named it is started with nothing to do yet, or he is asked what it should do
                     task: new.task.trim().to_string(),
                 });
