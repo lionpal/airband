@@ -1,4 +1,4 @@
-//! Every outside service the tower can use, one row each. The rows themselves are data: the files under
+//! Every outside service airband can use, one row each. The rows themselves are data: the files under
 //! `catalog/providers/`, read by [`crate::catalog`]. This is what a row is made of and how one is used.
 //!
 //! A provider does up to three jobs: it reads (summaries and routing), it speaks, it listens. For each job a row
@@ -15,9 +15,10 @@
 //!   common interface, so each such service is a dialect the phone speaks (`airband-radio/src/ears.rs`),
 //!   named here.
 //!
-//! `airband setup`, `airband model`, `airband voice` and `airband ears` are all driven by this table, and so
-//! are the calls themselves (`tower/judge.rs`, `airband-radio/src/voices.rs`, `tower/ears.rs`). The phone reads
-//! the same table for the voices it can reach with a key of his own. Nothing else names a provider. A setting in use is a [`Use`]: the row's id, a key, and whatever was set differently
+//! Reading is done on his computer, and `airband setup` and `airband model` are driven by this table, as is
+//! the call itself (`tower/judge.rs`). Speaking and listening are done on the phone and nowhere else, with a
+//! key of his kept there: the phone reads the same table for what it can reach (`airband-radio/src/voices.rs`,
+//! `ears.rs`, `hears.rs`). Nothing else names a provider. A setting in use is a [`Use`]: the row's id, a key, and whatever was set differently
 //! from the row.
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -189,13 +190,11 @@ impl Offer {
     }
 }
 
-/// What "whatever his computer is set up with" is called where he chooses on the phone.
-pub const BY_TOWER: &str = "tower";
 /// The `kind` of a setting when nothing does the job.
 const NONE: &str = "none";
 /// Words that stand where a provider's id or a setting's name would (`Use::kind`, a choice on the phone, the
 /// fields of a `Use` as written down). No provider, offer or setting may take one of these as its name.
-pub const NOT_AN_ID: &[&str] = &[BY_TOWER, NONE, "device", "own-key", "on-device", "kind", "offer", "key"];
+pub const NOT_AN_ID: &[&str] = &[NONE, "device", "own-key", "on-device", "kind", "offer", "key"];
 
 impl Use {
     /// Every setting of a job as it stands, set or usual: what a phone is told beside its pass.

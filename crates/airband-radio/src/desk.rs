@@ -136,8 +136,6 @@ pub struct DeskView {
     pub sending: Vec<Outgoing>,
     /// What each paired computer is called.
     pub stations: Vec<String>,
-    /// Those of them that have a key of their own for the listening service.
-    pub keyed: Vec<String>,
     /// What reads the agents' messages and makes the short of them, by name: on the first computer that says.
     /// Empty when none does.
     pub reads: String,
@@ -191,7 +189,6 @@ pub(crate) struct Station {
     answered_at: Option<std::time::Instant>,
     fails: u32,
     failing_since: Option<std::time::Instant>,
-    listens: bool,
     /// What reads the agents' messages there, by name.
     reads: String,
     agents: Vec<ChatAgent>,
@@ -633,7 +630,6 @@ impl Desk {
                 answered_at: was.and_then(|s| s.answered_at),
                 fails: 0,
                 failing_since: None,
-                listens: false,
                 reads: String::new(),
                 agents: was.map(|s| s.agents.clone()).unwrap_or_default(),
                 open: was.map(|s| s.open.clone()).unwrap_or_default(),
@@ -765,7 +761,6 @@ impl Desk {
                 .flat_map(|s| s.sending.iter().filter(|o| !s.messages.iter().any(|m| m.id == o.id)).cloned().chain(s.landing.iter().filter(|(o, at)| at.elapsed() < Duration::from_secs(15) && !s.messages.iter().any(|m| m.id == o.id)).map(|(o, _)| o.clone())))
                 .collect(),
             stations: state.stations.iter().map(|s| s.name.clone()).collect(),
-            keyed: state.stations.iter().filter(|s| s.listens).map(|s| s.name.clone()).collect(),
             reads: state.stations.iter().map(|s| s.reads.clone()).find(|r| !r.is_empty()).unwrap_or_default(),
             uploads: state.uploads.iter().map(|u| u.shown.clone()).collect(),
             asking: state.asking.as_ref().map(|asking| {
@@ -1070,6 +1065,10 @@ impl Desk {
         if !on {
             self.shared.floor.clear();
         }
+        // with no voice chosen there is nothing to read aloud with: he is told now, where he turned it on
+        if on && !self.shared.senses.mouth.ready() {
+            self.shared.host.note(crate::voice::NOTHING_CHOSEN.into());
+        }
         radios.iter().for_each(|r| r.set_call_mode(on));
     }
 
@@ -1078,15 +1077,15 @@ impl Desk {
         self.radio_of(&message_id).ok_or(RadioError::Refused)?.more(message_id, true)
     }
 
-    /// Read a whole message aloud, in the voice of the computer that has it. Blocks until it has been heard or
-    /// [`Desk::stop_reading`] is called: call it off the main thread. False when that computer has no voice.
+    /// Read a whole message aloud, in the voice he chose on this device. Blocks until it has been heard or
+    /// [`Desk::stop_reading`] is called: call it off the main thread. False when it was not read (he is told why).
     pub fn read_aloud(&self, message_id: String) -> bool {
         self.radio_of(&message_id).is_some_and(|radio| radio.read_aloud(&message_id))
     }
 
     /// Read a question to him before he answers it: who is asking, its short form, and the answers it offers,
-    /// in the voice of the computer that has it. Blocks until it has been heard or [`Desk::stop_reading`] is
-    /// called. False when that computer has no voice.
+    /// in the voice he chose on this device. Blocks until it has been heard or [`Desk::stop_reading`] is
+    /// called. False when it was not read.
     pub fn read_question(&self, message_id: String) -> bool {
         self.radio_of(&message_id).is_some_and(|radio| radio.read_question(&message_id))
     }
@@ -1486,17 +1485,6 @@ fn station_key(link: &str) -> Option<String> {
 /// Open a sealed notification with whichever pairing sealed it. `links` are the pairing links the host keeps;
 /// `sealed` is the notification as the push service delivered it. Nothing when none of them opens it. This
 /// needs no desk: a host calls it from wherever its system hands it a notification.
-/// A short-lived pass from a live listening service, for a key: what a tower hands a phone so the key stays
-/// where it is. `kind` is the dialect a provider's row names (`Pass::dialect`). Blocks. Err says why not, in words for him.
-pub fn listening_pass(kind: &str, set: &std::collections::BTreeMap<String, String>, key: &str) -> Result<String, String> {
-    crate::ears::pass_for(kind, set, key)
-}
-
-/// A pass for this dialect is used up by one connection: whoever hands them out makes a new one each time.
-pub fn listening_pass_once(kind: &str) -> bool {
-    crate::ears::once(kind)
-}
-
 /// What a button answers a request for leave with: `true` for the one that allows. A host's buttons send this
 /// and have no words of their own for it.
 #[uniffi::export]
@@ -1563,7 +1551,6 @@ fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64)
                     reached = !station.online || station.reads != feed.reads;
                     station.online = true;
                     station.name = feed.station.clone();
-                    station.listens = feed.listens;
                     station.reads = feed.reads.clone();
                     station.agents = feed.agents.clone();
                     station.open = feed.open.iter().cloned().collect();
@@ -1594,6 +1581,11 @@ fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64)
             if now_open != open {
                 state.answered.retain(|id| now_open.contains(id));
             }
+        }
+        // the names he is likely to say, for whatever listens on this device: his agents and their teams
+        if got.is_ok() {
+            let names: Vec<String> = shared.state.lock().unwrap().stations.iter().flat_map(|s| s.agents.iter().flat_map(|a| [a.callsign.clone(), a.group.clone()])).collect();
+            shared.senses.ears.expect(names);
         }
         shared.host.changed();
         if !seen.is_empty() {
@@ -1674,7 +1666,6 @@ mod tests {
             answered_at: None,
             fails: 0,
             failing_since: None,
-            listens: false,
             reads: String::new(),
             agents: agents.iter().map(|(c, g)| ChatAgent { id: c.to_string(), callsign: c.to_string(), group: g.to_string(), harness: "h".into(), waiting: false, reachable: true, state: "working".into(), subagents: 0, doing: None, held: false, model: None, effort: None }).collect(),
             open: messages.iter().filter(|m| m.needs_you).map(|m| m.id.clone()).collect(),

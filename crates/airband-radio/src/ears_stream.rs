@@ -6,7 +6,7 @@
 //! each has a file of its own under `ears/`.
 use super::*;
 use airband_core::audio::{Endpointer, Heard, samples};
-use airband_core::radio::Pass;
+use crate::ears::Pass;
 use std::collections::VecDeque;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{Receiver, channel};
@@ -226,8 +226,9 @@ pub(crate) fn live(wire: &'static Wire, pass: Arc<dyn Fn() -> Option<Pass> + Sen
     Ok((!said.is_empty()).then_some(said))
 }
 
-/// A recording played in place of the microphone, at the speed it was spoken, for trying a listening service
-/// without one: it hears what a phone would send and notes what comes back and when.
+/// A recording played in place of the microphone, at the speed it was spoken, for the tests: it hears what a
+/// phone would send and notes what comes back and when.
+#[cfg(test)]
 pub(crate) struct Tape {
     left: Mutex<VecDeque<Vec<u8>>>,
     /// What the service said he had said so far, each time that changed, with the milliseconds since the start.
@@ -236,6 +237,7 @@ pub(crate) struct Tape {
     print: bool,
 }
 
+#[cfg(test)]
 impl Tape {
     /// `pcm` is 16 kHz 16-bit mono. A second and a half of quiet follows it, as after someone stops talking.
     pub fn of(pcm: &[u8], print: bool) -> Tape {
@@ -245,6 +247,7 @@ impl Tape {
     }
 }
 
+#[cfg(test)]
 impl RadioHost for Tape {
     fn told(&self, _: String) {}
     fn speak(&self, _: String) {}
