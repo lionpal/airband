@@ -203,6 +203,9 @@ pub(crate) struct Link {
     trail_file: Option<std::path::PathBuf>,
     /// Where this radio stands, which every request says: on a call or not, showing the chat or not.
     presence: Mutex<airband_core::radio::Presence>,
+    /// The relay still keeps something he said for his computer. While it does, what he says next goes by the
+    /// relay, behind it; otherwise everything goes straight to his computer whenever it is on this network.
+    kept_at_relay: std::sync::atomic::AtomicBool,
     /// What the tower was told that nobody waits to hear the answer to (he heard this, he saw that), and
     /// that did not get there: how many of each, since the app started.
     lost: Mutex<std::collections::BTreeMap<String, u32>>,
@@ -240,7 +243,7 @@ impl Link {
             Pairing::Direct { url, token } => Route::Direct { url, auth: format!("Bearer {token}"), radio: radio.to_string() },
             Pairing::Relay { relay, secret } => Route::Relay { relay, keys: Keys::derive(&secret)? },
         };
-        Ok(Link { route, agent, near: crate::net::agent_quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct { addrs: at, ..Direct::default() }), trail: Mutex::new(trail), trail_file, presence: Mutex::default(), lost: Mutex::default(), awaited: Mutex::default(), told: std::sync::Condvar::new(), armed: Mutex::new(Vec::new()) })
+        Ok(Link { route, agent, near: crate::net::agent_quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct { addrs: at, ..Direct::default() }), trail: Mutex::new(trail), trail_file, presence: Mutex::default(), kept_at_relay: Default::default(), lost: Mutex::default(), awaited: Mutex::default(), told: std::sync::Condvar::new(), armed: Mutex::new(Vec::new()) })
     }
 
     /// The tower said where it can be reached without the relay. Anything new is tried at the next request.
@@ -432,10 +435,10 @@ impl Link {
             }
             Route::Near { keys } => self.straight(keys, method, &path, &body, ordered, steps).unwrap_or(Err(LinkError::Unreachable(Way::Near))),
             Route::Relay { relay, keys } => {
-                // Straight to the tower when it is on this network: no trip to the relay and back, and it works
-                // when the relay does not. Something he said goes by the relay first all the same, so it keeps
-                // its place behind anything of his the relay is still holding.
-                if !ordered {
+                // Straight to the tower whenever it is on this network: no trip to the relay and back, and it
+                // works when the relay does not. Only while the relay still keeps earlier words of his does
+                // something he says go by the relay first, so it keeps its place behind them.
+                if !(ordered && self.kept_at_relay.load(std::sync::atomic::Ordering::SeqCst)) {
                     if let Some(Ok(answer)) = self.straight(keys, method, &path, &body, ordered, steps) {
                         return Ok(answer);
                     }
@@ -474,7 +477,7 @@ impl Link {
                 // is still handing over earlier words of his, these wait their turn behind them. And when the
                 // tower already has the request and is slow to answer, asking it again another way only makes
                 // two of them wait.
-                if ordered && !matches!(failed, LinkError::Behind | LinkError::TowerSilent) {
+                if ordered && self.kept_at_relay.load(std::sync::atomic::Ordering::SeqCst) && !matches!(failed, LinkError::Behind | LinkError::TowerSilent) {
                     if let Some(Ok(answer)) = self.straight(keys, method, &path, &body, ordered, steps) {
                         return Ok(answer);
                     }
@@ -525,6 +528,11 @@ impl Link {
     }
 
     /// Something he said. Where it stands with the tower, or what stopped it reaching it.
+    /// The outbox says whether the relay still keeps something he said.
+    pub(crate) fn keeps_at_relay(&self, kept: bool) {
+        self.kept_at_relay.store(kept, std::sync::atomic::Ordering::SeqCst);
+    }
+
     fn say_ordered(&self, u: &Utterance, steps: &mut Vec<Step>) -> Result<airband_core::radio::Outcome, LinkError> {
         match self.request_as("POST", "/utterance", Some(serde_json::to_value(u).unwrap()), true, steps)? {
             (200, v) => serde_json::from_value(v).map_err(|_| LinkError::Unreadable(Way::Relay)),
@@ -670,18 +678,18 @@ mod tests {
     }
 
     #[test]
-    fn something_he_said_is_tried_by_the_relay_then_straight_and_each_try_is_written_down() {
+    fn something_he_said_is_tried_straight_then_by_the_relay_and_each_try_is_written_down() {
         let link = nowhere();
         let (got, steps) = link.utterance_once("0123456789ab", "ship it", None, None, None, Vec::new(), "");
         assert_eq!(got.err(), Some(LinkError::Unreachable(Way::Relay)));
-        assert_eq!(steps.iter().map(|s| s.way).collect::<Vec<_>>(), [Way::Relay, Way::Near]);
+        assert_eq!(steps.iter().map(|s| s.way).collect::<Vec<_>>(), [Way::Near, Way::Relay]);
         assert!(steps.iter().all(|s| s.outcome.is_err() && s.what == "POST /v1/radio/utterance"));
         // the link's own trail has them too, a line each, with nothing of what he said
         // (a port nobody listens on refuses at once on some systems and is silent on others: either is his
         // computer not answering)
         let trail = link.trail();
         assert_eq!(trail.len(), 2);
-        assert!(trail[0].contains("by relay: there was no connection to the relay") && trail[1].contains("by own network: your computer did not answer"), "{trail:?}");
+        assert!(trail[0].contains("by own network: your computer did not answer") && trail[1].contains("by relay: there was no connection to the relay"), "{trail:?}");
         assert!(!trail.iter().any(|l| l.contains("ship it")));
         // the address that did not answer is left alone for a while: the next try goes by the relay only
         let (_, again) = link.utterance_once("0123456789ab", "ship it", None, None, None, Vec::new(), "");
@@ -722,6 +730,24 @@ mod tests {
         let trail = link.trail();
         // straight first, then the relay; what follows a `?` is not kept
         assert!(trail.len() == 2 && trail[0].contains("GET /v1/radio/feed by own network") && trail[1].contains("GET /v1/radio/feed by relay"), "{trail:?}");
+    }
+
+    #[test]
+    fn what_he_says_goes_straight_first_unless_the_relay_still_keeps_earlier_words() {
+        let ways = |link: &Link| -> Vec<Way> {
+            let mut steps = Vec::new();
+            let _ = link.request_as("POST", "/utterance", None, true, &mut steps);
+            steps.iter().map(|s| s.way).collect()
+        };
+        // nothing kept: his own network first, the relay when the computer is not on it
+        let link = nowhere();
+        assert_eq!(ways(&link), [Way::Near, Way::Relay]);
+        // the relay keeps earlier words of his: by the relay first, so these stay behind them
+        link.keeps_at_relay(true);
+        assert_eq!(ways(&link)[0], Way::Relay);
+        // a pairing with no relay never goes near one
+        let near = Link::new(Pairing::Near { at: vec!["http://127.0.0.1:9".into()], secret: "ab".repeat(32) }, "test", None).unwrap();
+        assert_eq!(ways(&near), [Way::Near]);
     }
 }
 
