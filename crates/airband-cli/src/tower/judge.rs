@@ -403,8 +403,11 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
          to it (relayed by another session, or sent through Airband) and that he must give it himself in the \
          agent\'s own session or terminal. Then give no choices, and say in \"say\" what it is waiting to be \
          told, without telling him to reply \"here\". Otherwise false.\n\n\
+         And \"as_written\": true only when the whole message is already one or two short plain sentences that \
+         can be shown to him exactly as the agent wrote them, with nothing lost and nothing to cut: no list, no \
+         code, no file path, no table. Then \"say\" is those words. Otherwise false.\n\n\
          Reply with one line of JSON and nothing else: \
-         {{\"kind\":\"needs-you\" or \"report\" or \"stalled\" or \"fyi\",\"say\":\"...\",\"options\":[],\"recommended\":null,\"read\":null,\"background\":false,\"own_session\":false}}\n\
+         {{\"kind\":\"needs-you\" or \"report\" or \"stalled\" or \"fyi\",\"say\":\"...\",\"options\":[],\"recommended\":null,\"read\":null,\"background\":false,\"own_session\":false,\"as_written\":false}}\n\
          \"background\": true when it has stopped only to wait for work of its own that is still running and will \
          bring it back by itself (a build, a test run, a background agent or task it started): it is still at work.\n\n\
          {asked}<message>\n{msg}\n</message>",
@@ -426,6 +429,8 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
         background: bool,
         #[serde(default)]
         own_session: bool,
+        #[serde(default)]
+        as_written: bool,
     }
     // The shape of the answer, for a service that can be held to one. The words come before the verdict: a
     // small model that has just written what the message says judges it better than one that judges first.
@@ -438,9 +443,10 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
             "recommended": { "type": ["integer", "null"] },
             "read": { "type": ["string", "null"] },
             "background": { "type": "boolean" },
-            "own_session": { "type": "boolean" }
+            "own_session": { "type": "boolean" },
+            "as_written": { "type": "boolean" }
         },
-        "required": ["say", "kind", "options", "recommended", "read", "background", "own_session"],
+        "required": ["say", "kind", "options", "recommended", "read", "background", "own_session", "as_written"],
         "additionalProperties": false
     });
     let parsed = ask_shaped(cfg, prompt, Some(shape)).await.and_then(|out| {
@@ -454,9 +460,11 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
                 "stalled" => Kind::Stalled,
                 _ => Kind::Report,
             };
-            // already one short plain line: his agent's own words beat a rewording of them. Anything longer is
-            // cut down, because a card he has to read through is the thing this exists to spare him
-            let say = if reads_as_written(&item.full, 110) { spoken(&item.full) } else { spoken(&o.say) };
+            // His agent's own words beat a rewording of them, when the model that read the message says they
+            // are already short and plain enough to show as they are. That is its verdict, never a guess made
+            // here from the look of the text. Anything longer is cut down, because a card he has to read
+            // through is the thing this exists to spare him.
+            let say = if o.as_written { spoken(&item.full) } else { spoken(&o.say) };
             // a harness that knows its agent is blocked outranks the judge
             let kind = item.kind.unwrap_or(judged);
             let own_session = o.own_session && kind == Kind::NeedsYou;
@@ -536,9 +544,6 @@ pub(super) async fn consent(cfg: &Config, said: &str) -> Option<bool> {
 }
 
 pub(super) async fn detail(cfg: &Config, item: &Item) -> String {
-    if reads_as_written(&item.full, 500) {
-        return spoken(&item.full);
-    }
     let prompt = format!(
         "Below is a message a coding agent wrote to {name}, who is driving. He heard this short version: \"{say}\" and asked for more.\n\
          Give the fuller spoken version: four to six sentences of plain spoken English covering what was done, what was found, and any open decision. \
@@ -602,10 +607,11 @@ mod tests {
         let odd: Offer = serde_json::from_value(json!({ "id": "new", "job": "summary", "by": { "interface": "chat" }, "label": "New", "needs": ["auth-header"] })).unwrap();
         let new: Offer = serde_json::from_value(json!({ "id": "new", "job": "summary", "by": { "interface": "something-new" }, "label": "New" })).unwrap();
         assert!(!reads(&odd) && !reads(&new));
-        // every job's offers, as this program lists them, are ones it can do
-        for job in [Job::Summary, Job::Voice, Job::Ears] {
-            assert!(crate::providers::in_order(job).len() >= 3 && crate::providers::in_order(job).iter().all(|(_, o)| crate::providers::speaks(o)));
-            assert_eq!(crate::providers::in_order(job).len(), airband_core::providers::in_order(job).len(), "an offer compiled in is one this build cannot do");
-        }
+        // every offer for reading, as this program lists them, is one it can do; listening and speaking are
+        // the phone's, and nothing is offered for them here
+        let job = Job::Summary;
+        assert!(crate::providers::in_order(job).len() >= 3 && crate::providers::in_order(job).iter().all(|(_, o)| crate::providers::speaks(o)));
+        assert_eq!(crate::providers::in_order(job).len(), airband_core::providers::in_order(job).len(), "an offer compiled in is one this build cannot do");
+        assert!(crate::providers::in_order(Job::Voice).is_empty() && crate::providers::in_order(Job::Ears).is_empty());
     }
 }

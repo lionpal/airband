@@ -274,8 +274,6 @@ pub(super) struct Call {
     /// When he last joined (turned listening on), in milliseconds since 1970. A call starts from there: he is
     /// not read what was asked before it.
     pub(super) began: u64,
-    /// This radio makes the speech itself, from the words: the tower makes none for it.
-    pub(super) speaks: bool,
     /// It was handed something and no sound came out of it: nothing more is handed to it before this moment,
     /// so a voice that is not answering does not run the whole queue past him in silence.
     pub(super) quiet_until: Option<Instant>,
@@ -448,10 +446,6 @@ impl Inner {
             self.give_back(radio);
             self.reap();
         }
-    }
-    /// Does anyone on a call need the tower's voice? Not when every radio there makes its own.
-    pub(super) fn wants_voice(&self) -> bool {
-        self.calls.values().any(|c| c.connected() && !c.speaks)
     }
     pub(super) fn call(&mut self, radio: &str) -> &mut Call {
         let call = self.calls.entry(radio.to_string()).or_default();
@@ -1236,7 +1230,7 @@ mod tests {
         assert_eq!(inner.free_radio().as_deref(), Some("phone"));
         inner.check_in(&agent("a", "/x/shop", None));
         let t = queued(&mut inner, "a", Kind::NeedsYou, "Ship it?");
-        inner.call("phone").outbox = Some(Transmission { id: t.clone(), callsign: "shop one".into(), kind: Kind::NeedsYou, say: String::new(), waiting: 0, speech: None });
+        inner.call("phone").outbox = Some(Transmission { id: t.clone(), callsign: "shop one".into(), kind: Kind::NeedsYou, say: String::new(), waiting: 0 });
         inner.call("phone").ready = false;
         // the agent goes back to work: what the phone was about to say is withdrawn, and only there
         inner.no_longer_waiting("a");
@@ -1377,7 +1371,7 @@ mod tests {
         inner.check_in(&agent("a", "/x/shop", None));
         let report = queued(&mut inner, "a", Kind::Report, "Shipped.");
         inner.set_aloud(&report, Aloud::Handed { radio: "phone".into(), at: 1 });
-        inner.call("phone").handed = Some(Transmission { id: report.clone(), callsign: "shop one".into(), kind: Kind::Report, say: String::new(), waiting: 0, speech: None });
+        inner.call("phone").handed = Some(Transmission { id: report.clone(), callsign: "shop one".into(), kind: Kind::Report, say: String::new(), waiting: 0 });
         assert_eq!(inner.unheard().count(), 1);
         inner.give_back("phone");
         assert_eq!(aloud(&inner, &report), Aloud::Waiting);

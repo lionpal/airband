@@ -33,9 +33,9 @@ pub struct Config {
     /// is ever worked out from the words themselves in place of a model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summarizer_fallback: Option<Summarizer>,
-    /// The keys he has given, each under a name with the provider it is for. What uses a key (summaries,
-    /// voice, listening) holds its value here in memory; the settings file writes that as `key:<name>`, so a
-    /// key is stored once however many things use it.
+    /// The keys he has given, each under a name with the provider it is for. What uses a key (summaries)
+    /// holds its value here in memory; the settings file writes that as `key:<name>`, so a key is stored once
+    /// however many things use it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub keys: BTreeMap<String, StoredKey>,
     /// The relay radios reach this tower through: airband's own unless he names another (`airband relay <url>`)
@@ -46,12 +46,6 @@ pub struct Config {
     /// The key the relay asks for before it opens a channel, if it asks for one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relay_admission: Option<String>,
-    /// Outbound: what speaks to him on a call. Set separately from `ears`.
-    #[serde(default)]
-    pub voice: Voice,
-    /// Inbound: what turns his speech into text on a call. Set separately from `voice`.
-    #[serde(default)]
-    pub ears: Ears,
     /// How to start a new agent, by name. The ones for the coding tools airband knows come with it (a tool's
     /// row, `catalog/tools/`), are here whenever the settings are read, and are never written to the file: a
     /// later version's correction to one reaches every computer. The file holds only the ones he added, under
@@ -79,12 +73,10 @@ pub struct Config {
     pub pairings: Vec<PairedRadio>,
 }
 
-/// What reads, what speaks and what listens are each a provider in use: a row of the catalogue, a
-/// key, and what is set differently from the row.
+/// What reads is a provider in use: a row of the catalogue, a key, and what is set differently from the row.
+/// (What listens and what speaks are the phone's, chosen and run there.)
 pub use crate::providers::Use;
 pub type Summarizer = Use;
-pub type Voice = Use;
-pub type Ears = Use;
 
 pub use airband_core::tools::{Held, Launcher};
 
@@ -143,7 +135,7 @@ impl Config {
 }
 
 /// The places in the settings that use a key.
-const USERS: [&str; 4] = ["summarizer", "summarizer_fallback", "voice", "ears"];
+const USERS: [&str; 2] = ["summarizer", "summarizer_fallback"];
 const BY_NAME: &str = "key:";
 
 /// In the settings as they are written: each use of a kept key becomes the key's name.

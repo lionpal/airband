@@ -15,7 +15,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     static let shared = RadioModel()
 
     /// What the screen shows, as the desk last gave it, for the room or agent he is looking at.
-    @Published var view = DeskView(paired: false, online: false, connecting: false, near: false, away: [], feed: [], rooms: [], unread: 0, canPoke: false, quick: [], sending: [], stations: [], keyed: [], reads: "", uploads: [], asking: nil)
+    @Published var view = DeskView(paired: false, online: false, connecting: false, near: false, away: [], feed: [], rooms: [], unread: 0, canPoke: false, quick: [], sending: [], stations: [], reads: "", uploads: [], asking: nil)
     /// A project: show just its agents, and keep what he says among them.
     @Published var room: String? { didSet { refresh() } }
     /// A callsign: show just that agent.
@@ -701,7 +701,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
             DispatchQueue.main.async {
                 guard self.reading == m.id else { return }
                 self.reading = nil
-                if !read { self.problem = "That computer has no voice to read with." }
+                // the core says why when it is the voice (none chosen, or the one chosen could not speak)
+                if !read && self.problem == nil { self.problem = "That was not read aloud." }
             }
         }
     }
@@ -807,6 +808,11 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
         if let missing = await voice.authorize() {
             problem = missing
+            return
+        }
+        // nothing is chosen to listen with, or what he chose cannot: he is told, and the microphone stays shut
+        if let why = desk.cannotListen() {
+            note(text: why)
             return
         }
         // open at once, on its own queue: the screen and the microphone do not wait for anything else

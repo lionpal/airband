@@ -21,8 +21,6 @@
 //! - `http`: the routes
 //! - `permit`: permission an agent's harness asks for, put to him and answered from the phone
 //! - `pictures`: small copies of the pictures agents look at or make for him
-//! - `ears`: what listens to him, and the pass the phone needs for it
-//! - `speech`: the tower's voice: a sentence to audio, started early and handed over in parts
 //! - `store`: the database: the chat log, the raw event record, receipts, delivery attempts
 //! - `relay_link`: the outbound connection to the relay, one per paired radio
 //! - `push`: waking his phone with a sealed notification when a message deserves it and he is not looking
@@ -32,7 +30,6 @@ mod attachments;
 mod banner;
 mod deliver;
 mod held;
-mod ears;
 mod http;
 mod intake;
 pub(crate) mod judge;
@@ -45,7 +42,6 @@ mod pump;
 mod push;
 mod relay_link;
 mod route;
-mod speech;
 mod state;
 mod store;
 
@@ -59,7 +55,6 @@ use state::*;
 use store::*;
 
 use crate::config::{self, Config, Summarizer};
-use crate::providers;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
@@ -77,7 +72,7 @@ use tokio::sync::Notify;
 use airband_core::agent::{self, Agent, AgentEvent, Deliver, Event};
 use airband_core::radio::{Feed, Heard, Kind, Message, More, Reply, RosterEntry, Transmission, Utterance, in_scope};
 use airband_core::routing::{Callsign, Control, parse_utterance};
-use airband_core::speech::{opening, reads_as_written, spoken};
+use airband_core::speech::{opening, spoken};
 
 /// The header a radio names itself in, so each has its own place in a call. A radio that comes through the
 /// relay is named by its pairing; one that sends nothing is "radio".
@@ -104,11 +99,6 @@ const READY_TIMEOUT: Duration = Duration::from_secs(120);
 pub struct App {
     pub cfg: Config,
     store: Store,
-    speech: speech::Speech,
-    /// The listening service's short-lived pass for the phone's ears, and when it was made.
-    ears_pass: Mutex<Option<(String, Instant)>>,
-    /// Recordings arriving in parts from a phone, for a listening service that takes a finished clip.
-    clips: Mutex<HashMap<String, (Vec<i16>, Instant)>>,
     inner: Mutex<Inner>,
     kick: Notify,
     /// What each radio has said and the tower has yet to answer, in the order it came: one is finished before
@@ -121,17 +111,6 @@ pub struct App {
     banner: banner::Banners,
 }
 
-impl App {
-    /// What speaks: the voice he set. With none set, nothing is spoken by the tower: a phone speaks with a
-    /// voice of its own, or he reads.
-    /// The voice for one radio: none for a radio that makes its own speech.
-    fn voice_to(&self, speaks: bool) -> config::Voice {
-        if speaks { config::Voice::default() } else { self.voice() }
-    }
-    fn voice(&self) -> config::Voice {
-        self.cfg.voice.clone()
-    }
-}
 
 /// What each working agent is doing and what it runs on, asked of its harness's adapter every couple of seconds,
 /// and only while a radio has read the feed lately: with nobody looking this costs nothing. An adapter that
@@ -297,32 +276,6 @@ pub fn try_model(cfg: &Config) -> Result<String, String> {
     answered
 }
 
-/// Does the voice speak? For `airband setup`.
-pub fn try_voice(cfg: &Config) -> Result<String, String> {
-    println!("  Asking it to speak…");
-    speech::try_voice(&cfg.voice).map(|seconds| format!("It speaks ({seconds:.1} seconds of sound came back)."))
-}
-
-/// Does the listening service answer? For `airband setup` and `airband ears test`. With a recording (a WAV
-/// of someone speaking, 16 kHz 16-bit mono) it is played to the service the way a phone would send it, and
-/// what came back is said.
-pub fn try_ears(cfg: &Config, recording: Option<&str>) -> Result<String, String> {
-    use providers::Job;
-    if let (Some(path), Some(_)) = (recording, cfg.ears.offer(Job::Ears)) {
-        let wav = std::fs::read(path).map_err(|e| format!("cannot read {path}: {e}"))?;
-        let pcm = wav.get(44..).filter(|_| wav.starts_with(b"RIFF")).ok_or("that is not a WAV file")?;
-        println!("  Playing it to the service, at the speed it was spoken…");
-        let (said, changes) = airband_radio::try_listening(&cfg.ears, pcm)?;
-        return Ok(if changes > 0 { format!("It heard: \"{said}\"\n  The words on screen changed {changes} times while it played.") } else { format!("It heard: \"{said}\"") });
-    }
-    match (airband_radio::hears::live(&cfg.ears), airband_radio::hears::by_upload(&cfg.ears)) {
-        (Some(kind), _) => airband_radio::listening_pass(kind, &cfg.ears.settings(Job::Ears), &cfg.ears.key).map(|_| "It gives a pass.".into()),
-        (None, true) => airband_radio::hears::check(&cfg.ears).map(|_| "It listens.".into()),
-        (None, false) if cfg.ears.is_none() => Ok("Set to none.".into()),
-        (None, false) => Err(format!("This version of airband cannot listen with \"{}\".", cfg.ears.kind)),
-    }
-}
-
 /// `airband progress`: the labels of an agent's steps on standard input, one to a line; prints the note he
 /// would be given for them, or "none". For trying the judgement by hand.
 pub fn progress(cfg: Config) -> Result<(), String> {
@@ -408,7 +361,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         let port = cfg.port;
         let push = push::Wake::load(&store);
         let banner = banner::Banners::load(&store, inner.rev);
-        let app = Arc::new(App { push, banner, cfg, store, speech: speech::Speech::default(), ears_pass: Mutex::new(None), clips: Mutex::new(HashMap::new()), inner: Mutex::new(inner), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default() });
+        let app = Arc::new(App { push, banner, cfg, store, inner: Mutex::new(inner), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default() });
         // what was changed while starting (a credential masked in a kept message) is written now, not at the
         // next thing an agent says
         {

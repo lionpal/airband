@@ -1,4 +1,4 @@
-//! Every outside service the tower can use, one row each. The rows themselves are data: the files under
+//! Every outside service airband can use, one row each. The rows themselves are data: the files under
 //! `catalog/providers/`, read by [`crate::catalog`]. This is what a row is made of and how one is used.
 //!
 //! A provider does up to three jobs: it reads (summaries and routing), it speaks, it listens. For each job a row
@@ -15,9 +15,10 @@
 //!   common interface, so each such service is a dialect the phone speaks (`airband-radio/src/ears.rs`),
 //!   named here.
 //!
-//! `airband setup`, `airband model`, `airband voice` and `airband ears` are all driven by this table, and so
-//! are the calls themselves (`tower/judge.rs`, `airband-radio/src/voices.rs`, `tower/ears.rs`). The phone reads
-//! the same table for the voices it can reach with a key of his own. Nothing else names a provider. A setting in use is a [`Use`]: the row's id, a key, and whatever was set differently
+//! Reading is done on his computer, and `airband setup` and `airband model` are driven by this table, as is
+//! the call itself (`tower/judge.rs`). Speaking and listening are done on the phone and nowhere else, with a
+//! key of his kept there: the phone reads the same table for what it can reach (`airband-radio/src/voices.rs`,
+//! `ears.rs`, `hears.rs`). Nothing else names a provider. A setting in use is a [`Use`]: the row's id, a key, and whatever was set differently
 //! from the row.
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -167,6 +168,75 @@ pub struct Voice {
     pub sample: String,
 }
 
+/// How a key is tested when he gives it, before it is kept: one request to the service that costs nothing
+/// and that a wrong key fails. Part of the provider's row, beside what its key is called.
+///
+/// `url` may name settings of the offer he is choosing in braces (`{url}/models`, `https://{region}.…`): they
+/// are filled with what he set, or the row's usual. What the answer means is said by its status alone, in the
+/// lists here. Nothing the service writes in its answer is read.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct Check {
+    /// `GET` or `POST` (sent with an empty body).
+    pub method: String,
+    pub url: String,
+    /// How the key is presented for this request.
+    pub auth: Auth,
+    /// Anything else the service must be sent with it (a version header).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    /// The statuses that mean the key is good.
+    pub good: Vec<u16>,
+    /// Those that mean it is not a key the service knows.
+    pub wrong_key: Vec<u16>,
+    /// Those that mean the service knows the key and will not serve it: no credit, not allowed, too many
+    /// requests.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refused: Vec<u16>,
+    /// This request is one the service charges for: it has none that is free and needs the key. He is told
+    /// one was made.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub paid: bool,
+}
+
+/// What testing a key came to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum KeyCheck {
+    /// The service took it. `paid`: the request was one it charges for.
+    Good { paid: bool },
+    /// The service does not know this key.
+    WrongKey,
+    /// The service knows the key and will not serve it.
+    Refused,
+    /// The service could not be reached, so nothing is known about the key.
+    Unreachable,
+    /// The service answered with a status the row does not account for.
+    Unexpected { status: u16 },
+}
+
+impl Check {
+    /// The address to ask, with the settings filled in. Nothing when it names one that is not set.
+    pub fn address(&self, settings: &BTreeMap<String, String>) -> Option<String> {
+        let mut url = self.url.clone();
+        for (field, value) in settings {
+            url = url.replace(&format!("{{{field}}}"), value.trim_end_matches('/'));
+        }
+        (!url.contains('{')).then_some(url)
+    }
+
+    /// What a status means.
+    pub fn read(&self, status: u16) -> KeyCheck {
+        if self.good.contains(&status) {
+            KeyCheck::Good { paid: self.paid }
+        } else if self.wrong_key.contains(&status) {
+            KeyCheck::WrongKey
+        } else if self.refused.contains(&status) {
+            KeyCheck::Refused
+        } else {
+            KeyCheck::Unexpected { status }
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub struct Provider {
     /// Its name in the settings (`"kind"`), on the command line, and the usual name for its key.
@@ -177,6 +247,8 @@ pub struct Provider {
     pub key_name: String,
     /// Where its keys are made.
     pub keys_at: String,
+    /// How its key is tested when he gives it. Every provider that takes a key has one.
+    pub check: Option<Check>,
     pub offers: Vec<Arc<Offer>>,
     /// Offered when he chooses. Not so for what the tower sets for itself.
     pub offered: bool,
@@ -189,13 +261,11 @@ impl Offer {
     }
 }
 
-/// What "whatever his computer is set up with" is called where he chooses on the phone.
-pub const BY_TOWER: &str = "tower";
 /// The `kind` of a setting when nothing does the job.
 const NONE: &str = "none";
 /// Words that stand where a provider's id or a setting's name would (`Use::kind`, a choice on the phone, the
 /// fields of a `Use` as written down). No provider, offer or setting may take one of these as its name.
-pub const NOT_AN_ID: &[&str] = &[BY_TOWER, NONE, "device", "own-key", "on-device", "kind", "offer", "key"];
+pub const NOT_AN_ID: &[&str] = &[NONE, "kind", "offer", "key"];
 
 impl Use {
     /// Every setting of a job as it stands, set or usual: what a phone is told beside its pass.

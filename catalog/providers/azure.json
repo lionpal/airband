@@ -3,17 +3,41 @@
   "name": "Microsoft Azure Speech",
   "key": {
     "name": "Azure key",
-    "at": "portal.azure.com, a Speech resource, Keys and Endpoint"
+    "at": "portal.azure.com, a Speech resource, Keys and Endpoint",
+    "check": {
+      "method": "POST",
+      "url": "https://{region}.api.cognitive.microsoft.com/sts/v1.0/issueToken",
+      "auth": {
+        "header": "ocp-apim-subscription-key"
+      },
+      "good": [
+        200
+      ],
+      "wrong_key": [
+        401
+      ],
+      "refused": [
+        403,
+        429
+      ]
+    }
   },
   "offers": [
     {
       "id": "neural-voices",
       "job": "voice",
       "by": {
-        "interface": "azure",
+        "interface": "ssml",
         "with": {
           "url": "https://{region}.tts.speech.microsoft.com/cognitiveservices/v1",
-          "language": "en-US"
+          "language": "en-US",
+          "auth": {
+            "header": "ocp-apim-subscription-key"
+          },
+          "headers": {
+            "X-Microsoft-OutputFormat": "raw-24khz-16bit-mono-pcm"
+          },
+          "rate": 24000
         }
       },
       "label": "Microsoft Azure Speech",
@@ -60,7 +84,14 @@
       "id": "speech-to-text",
       "job": "ears",
       "by": {
-        "interface": "azure"
+        "interface": "usp",
+        "with": {
+          "pass": "https://{region}.api.cognitive.microsoft.com/sts/v1.0/issueToken",
+          "stream": "wss://{region}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1",
+          "auth": {
+            "header": "ocp-apim-subscription-key"
+          }
+        }
       },
       "label": "Microsoft Azure Speech",
       "preferred": true,

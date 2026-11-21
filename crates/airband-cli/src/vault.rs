@@ -1,7 +1,7 @@
 //! The tower's keys, kept encrypted and out of the settings file.
 //!
 //! `config.json` holds every setting. The secret ones (the tower's tokens, each pairing's secret, the relay's
-//! admission key, the API keys for voice, listening and summaries) are taken out of it and kept together,
+//! admission key, the API keys for summaries) are taken out of it and kept together,
 //! encrypted, in one of two places. The file keeps a mark in each place a secret was.
 //!
 //! - The Mac's login keychain, which the system encrypts with his login password. The keychain lets an item
@@ -35,7 +35,7 @@ fn each(doc: &mut Value, f: &mut dyn FnMut(String, &mut Value)) {
             f(name.to_string(), v);
         }
     }
-    for part in ["voice", "ears", "summarizer", "summarizer_fallback"] {
+    for part in ["summarizer", "summarizer_fallback"] {
         // a key written by its name is not a secret: the key it names is kept below
         if let Some(v) = doc.get_mut(part).and_then(|p| p.get_mut("key")).filter(|v| v.as_str().is_some_and(|k| !k.starts_with("key:"))) {
             f(format!("{part}.key"), v);
@@ -343,7 +343,7 @@ mod tests {
 
     #[test]
     fn secrets_leave_the_file_and_come_back_whole() {
-        let whole = json!({"port": 7373, "token": "local", "radio_token": "t2", "name": "C", "voice": {"kind": "elevenlabs", "key": "vk", "voice": "v"}, "ears": {"kind": "device"}, "pairings": [{"name": "phone", "secret": "s1"}, {"name": "pad", "secret": "s2"}]});
+        let whole = json!({"port": 7373, "token": "local", "radio_token": "t2", "name": "C", "summarizer": {"kind": "gemini", "key": "vk", "model": "v"}, "pairings": [{"name": "phone", "secret": "s1"}, {"name": "pad", "secret": "s2"}]});
         let mut doc = whole.clone();
         let kept = seal(&mut doc, &Map::new());
         let text = doc.to_string();
@@ -353,7 +353,7 @@ mod tests {
             assert!(!text.contains(&format!("\"{secret}\"")), "{secret} is still in the file");
         }
         assert_eq!(kept.len(), 4);
-        assert_eq!(doc["voice"]["voice"], "v");
+        assert_eq!(doc["summarizer"]["model"], "v");
         // sealing what is already sealed loses nothing
         let again = seal(&mut doc.clone(), &kept);
         assert_eq!(again, kept);
