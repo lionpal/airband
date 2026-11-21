@@ -1737,7 +1737,7 @@ mod tests {
         let radio = Radio::start(link.clone(), dir.display().to_string(), Arc::new(Quiet)).unwrap();
         radio.queue("the door code is 4471".into(), None, None, None);
         for _ in 0..200 {
-            if !radio.link_trail().is_empty() {
+            if radio.link_trail().iter().any(|l| l.contains("/v1/radio/utterance")) {
                 break;
             }
             thread::sleep(Duration::from_millis(50));
