@@ -122,12 +122,18 @@ pub fn uninstall() -> Result<(), String> {
 /// `airband relay <url> [--admission <key>]` / `airband relay off`
 pub fn relay(mut cfg: Config, args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
-        None => println!("{}", cfg.relay.as_deref().map(|r| format!("Radios reach this tower through {r}.")).unwrap_or("No relay is set: a radio must reach this machine itself.".into())),
+        None => println!("{}", cfg.relay.as_deref().map(|r| format!("Radios reach this tower through {r}.")).unwrap_or("No relay: a radio reaches this computer at its own addresses, on its network or over Tailscale.".into())),
         Some("off") => {
             cfg.relay = None;
             cfg.relay_admission = None;
             config::save(&cfg)?;
-            println!("Relay removed. Paired radios can no longer reach this tower through it.");
+            println!("No relay from now on. A phone paired through it must be paired again:  airband pair");
+        }
+        Some("on") => {
+            cfg.relay = Some(config::RELAY.into());
+            cfg.relay_admission = None;
+            config::save(&cfg)?;
+            println!("Relay set to {}. A phone paired without it must be paired again:  airband pair", config::RELAY);
         }
         Some(url) => {
             if !url.starts_with("https://") && !url.starts_with("http://") {
@@ -241,24 +247,29 @@ pub fn pair(mut cfg: Config, name: &str) -> Result<(), String> {
     if name.starts_with('-') {
         return Err(format!("\"{name}\" is not a name for a radio. Use:  airband pair [name]"));
     }
+    // one secret for a radio, whichever way it reaches the tower
+    let secret = match cfg.pairings.iter().find(|p| p.name == name) {
+        Some(p) => p.secret.clone(),
+        None => {
+            let secret = airband_core::relay::new_secret();
+            cfg.pairings.push(config::PairedRadio { name: name.into(), secret: secret.clone() });
+            config::save(&cfg)?;
+            secret
+        }
+    };
     let pairing = match &cfg.relay {
         Some(relay) => {
-            let secret = match cfg.pairings.iter().find(|p| p.name == name) {
-                Some(p) => p.secret.clone(),
-                None => {
-                    let secret = airband_core::relay::new_secret();
-                    cfg.pairings.push(config::PairedRadio { name: name.into(), secret: secret.clone() });
-                    config::save(&cfg)?;
-                    secret
-                }
-            };
             println!("Pairing \"{name}\", through the relay at {relay}. Works from any network.");
             Pairing::Relay { relay: relay.clone(), secret }
         }
         None => {
-            let host = config::tailscale_addrs().first().map(|a| a.to_string());
-            println!("No relay is set (airband relay <url>), so this link only works where the radio can reach this machine: {}.", if host.is_some() { "over Tailscale" } else { "on this machine itself" });
-            Pairing::Direct { url: format!("http://{}:{}", host.as_deref().unwrap_or("127.0.0.1"), cfg.port), token: cfg.radio_token.clone() }
+            // where a radio can find this computer: its private network, and its own when that is allowed
+            let at: Vec<String> = config::tailscale_addrs().into_iter().chain(config::lan_addrs().into_iter().filter(|_| cfg.lan)).map(|a| format!("http://{a}:{}", cfg.port)).collect();
+            if at.is_empty() {
+                return Err("with no relay a phone must reach this computer itself, and it has no address a phone could use: join a network (and `airband lan on`), start Tailscale, or `airband relay on`".into());
+            }
+            println!("Pairing \"{name}\" with no relay. It works where the phone can reach this computer: on its network, or over Tailscale. Notifications need the relay, so none are sent.");
+            Pairing::Near { at, secret }
         }
     };
     let link = pairing.link();
