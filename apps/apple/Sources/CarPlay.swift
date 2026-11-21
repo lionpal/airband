@@ -214,7 +214,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         case .speaking: wanted = "speaking"
         case .idle: wanted = model.micOpen ? "listening" : "idle"
         }
-        if case .speaking(let callsign) = model.status, callsign != "tower", speaker?.title != callsign {
+        if case .speaking(let callsign?) = model.status, speaker?.title != callsign {
             speaker?.title = callsign
             if let face = avatar(of: callsign, side: 28) { speakerFace?.image = face }
         }

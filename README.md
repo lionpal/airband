@@ -4,7 +4,7 @@
 
 <p align="center"><b>Squad comms for your Claudes, Codexes and OpenCodes.</b><br>Voice channels to manage all your agent teams.</p>
 
-<p align="center"><a href="https://airband.dev">airband.dev</a></p>
+<p align="center"><a href="https://airband.dev">airband.dev</a> · <a href="https://airband.dev/architecture.html">How it works</a></p>
 
 <p align="center">
   <img src="docs/assets/app.png" width="300" alt="The feed: what each agent reported, one question with its answers as buttons, and what a working team is doing right now">
