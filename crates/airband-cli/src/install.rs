@@ -156,7 +156,7 @@ fn option(args: &[String], name: &str) -> Option<String> {
 ///
 ///   airband voice                      what is set, and what can be
 ///   airband voice none                 nothing does this job
-///   airband voice <provider> [--key-env VARIABLE] [--<setting> <value> …]
+///   airband voice <provider> [<offer>] [--key-env VARIABLE] [--<setting> <value> …]
 ///   airband voice test                 one real call to what is set
 ///   airband ears test <recording.wav>  play a recording to what is set, the way a phone would send it
 ///
@@ -164,15 +164,15 @@ fn option(args: &[String], name: &str) -> Option<String> {
 /// environment variable, or is one already kept for that provider (`airband keys`).
 fn provider_for(mut cfg: Config, job: crate::providers::Job, cmd: &str, what: &str, without: &str, args: &[String]) -> Result<(), String> {
     use crate::providers::{self, Use};
-    let offered = || providers::offering(job).map(|p| p.id.as_str()).collect::<Vec<_>>().join(", ");
+    let offered = || providers::offering(job).iter().map(|p| p.id.clone()).collect::<Vec<_>>().join(", ");
     let chosen = match args.first().map(String::as_str) {
         None => {
             let now = crate::setup::slot(&mut cfg, job).clone();
             println!("{what}: {}.{}", now.describe(job), if now.is_none() { format!(" {without}") } else { String::new() });
-            println!("Change it:  airband {cmd} <provider> [--key-env VARIABLE] [--setting value]  |  airband {cmd} none  |  airband {cmd} test");
-            for p in providers::offering(job) {
-                let asks: Vec<String> = p.offers.iter().filter(|o| o.job == job).flat_map(|o| &o.asks).map(|a| if a.usual.is_empty() { format!("--{}", a.field) } else { format!("--{} ({})", a.field, a.usual) }).collect();
-                println!("  {:<11} {}{}", p.id, p.name, if asks.is_empty() { String::new() } else { format!(": {}", asks.join(", ")) });
+            println!("Change it:  airband {cmd} <provider> [<offer>] [--key-env VARIABLE] [--setting value]  |  airband {cmd} none  |  airband {cmd} test");
+            for (p, o) in providers::in_order(job) {
+                let asks: Vec<String> = o.asks.iter().map(|a| if a.usual.is_empty() { format!("--{}", a.field) } else { format!("--{} ({})", a.field, a.usual) }).collect();
+                println!("  {:<11} {:<15} {}{}", p.id, o.id, o.label, if asks.is_empty() { String::new() } else { format!(": {}", asks.join(", ")) });
             }
             return Ok(());
         }
@@ -183,8 +183,17 @@ fn provider_for(mut cfg: Config, job: crate::providers::Job, cmd: &str, what: &s
         }
         Some("none") => Use::default(),
         Some(id) => {
-            let p = providers::offering(job).find(|p| p.id == id).ok_or_else(|| format!("nothing called \"{id}\" does this: {} or none", offered()))?;
-            let mut u = Use::of(&p.id);
+            let p = providers::offering(job).into_iter().find(|p| p.id == id).ok_or_else(|| format!("nothing called \"{id}\" does this: {} or none", offered()))?;
+            // which of its offers: the one named after it, or the only one it has for this job. With several
+            // and none named, he is asked which.
+            let ways: Vec<_> = providers::in_order(job).into_iter().filter(|(q, _)| q.id == p.id).map(|(_, o)| o).collect();
+            let named = args.get(1).filter(|a| !a.starts_with("--"));
+            let o = match (named, ways.as_slice()) {
+                (Some(name), _) => ways.iter().find(|o| o.id == **name).ok_or_else(|| format!("{} has nothing called \"{name}\" for this: {}", p.name, ways.iter().map(|o| o.id.as_str()).collect::<Vec<_>>().join(", ")))?,
+                (None, [only]) => only,
+                (None, _) => return Err(format!("{} does this more than one way. Say which:  airband {cmd} {id} <{}>", p.name, ways.iter().map(|o| o.id.as_str()).collect::<Vec<_>>().join(" | "))),
+            };
+            let mut u = Use::of(&p.id, &o.id);
             if p.key {
                 u.key = match option(args, "--key-env") {
                     Some(var) => std::env::var(&var).ok().filter(|k| !k.is_empty()).ok_or_else(|| format!("{var} is not set"))?,
@@ -196,7 +205,7 @@ fn provider_for(mut cfg: Config, job: crate::providers::Job, cmd: &str, what: &s
                     cfg.keys.insert(name, config::StoredKey { provider: id.into(), secret: u.key.clone() });
                 }
             }
-            for a in p.offers.iter().filter(|o| o.job == job).flat_map(|o| &o.asks) {
+            for a in &o.asks {
                 if let Some(said) = option(args, &format!("--{}", a.field)) {
                     u.set.insert(a.field.clone(), json!(said));
                 }
@@ -268,7 +277,7 @@ pub fn pair(mut cfg: Config, name: &str) -> Result<(), String> {
             if at.is_empty() {
                 return Err("with no relay a phone must reach this computer itself, and it has no address a phone could use: join a network (and `airband lan on`), start Tailscale, or `airband relay on`".into());
             }
-            println!("Pairing \"{name}\" with no relay. It works where the phone can reach this computer: on its network, or over Tailscale. Notifications need the relay, so none are sent.");
+            println!("Pairing \"{name}\" with no relay. It works where the phone can reach this computer: on its network, or over Tailscale. Notifications and the lock screen banner need the relay, so you get neither.");
             Pairing::Near { at, secret }
         }
     };

@@ -41,7 +41,7 @@ callsigns that name an agent, and the shape of a credential.
 | Another coding tool with an adapter of its own | One file in `adapters/` that implements `Harness` and one line in `HARNESSES`. It says only what the tool has: its hook events (the shared installer in `adapters/hooks.rs` puts them in the tool's file), or how to watch its server, and how his words get into one of its sessions. A request for leave goes through `hooks::leave`, which owns the length rules for every tool. Its row in `catalog/tools/` says what it is called and how it is started. | `adapters/`, one row |
 | A coding tool that speaks the Agent Client Protocol, started from the phone | One row in `catalog/tools/`: `{ id, name, maker, launchers: [{ name, held: { by: "acp", program: […] } }] }`. No code: the holder's ACP driver (`acp.rs`) runs it and reports for it. The rows are compiled in; a catalogue fetched later can rename a tool and never change or add a program. | One row |
 | A launcher of his own (another way to start a tool, or a tool airband has no row for) | An entry in `launchers` in `~/.airband/config.json`, under a name of its own: the `harness` it starts, and either a command (`argv`, with `{cwd}`, `{task}`, `{project}`, `{session}` filled in) or `held` (`by: lines` with the line templates, or `by: acp` with the program). The file holds only his own; the ones that come with airband are never written there. | Config only |
-| The models and efforts he can ask a new agent for ("with fable high, …") | `models`, `efforts`, `with_model` and `with_effort` on the launcher. One he names that the launcher does not offer is refused in words. | The row |
+| The models and efforts he can ask a new agent for ("with fable high, …") | For a program started with arguments: `models`, `efforts`, `with_model` and `with_effort` on the launcher, and one he names that the row does not list is refused in words. An agent that speaks the Agent Client Protocol lists its own when a session opens (its settings of the protocol's kinds `model` and `thought_level`): its holder passes the two lists to the tower, which offers what the tool last listed (nothing until one of its agents has been started on this computer), and sets what he asked for before the agent is said to be there. One the agent does not have starts nothing, and he is told. | The row, or nothing |
 | Another way to drive a held program | A kind of `Held` in `airband-core/src/tools.rs` and its driver in `hold.rs`. The tower says the same typed lines to every holder (`hold::Tell`) and asks it where it has got to (`hold::State`). | Two files |
 | Another way to reach an agent (an HTTP callback, a queue) | A variant of `Deliver` in `airband-core/src/agent.rs`; its arm in `tower/deliver.rs`. A tool that takes his words in a way of its own needs neither: `Deliver::Harness` and the adapter's `deliver`. | Two files |
 | Something else an agent can report (a file, a cost) | A variant of `Event`. Old towers skip what they do not know. | `agent.rs`, `tower/intake.rs` |
@@ -184,8 +184,16 @@ the service does (reading, speaking, listening), through which interface, and wh
 to show where he chooses it: its maker and model, its price and the day that price was read, whether it is one
 of the few shown first, and for a voice a few voices with their makers' sample clips. `airband
 setup`, `airband model`, `airband voice` and `airband ears` are driven by the table, and so are the calls. A
-setting in use is `{"kind": <row id>, "key": …, <what differs from the row>}`. What can read on a tower is
-the tower's to say: `GET reads` lists its own offers and which one reads now, by id.
+setting in use is `{"kind": <row id>, "offer": <offer id>, "key": …, <what differs from the offer>}`. A
+provider can do one job more than one way (two voice models): each is an offer with an id of its own, and
+the key is the provider's, asked for once. How a key is presented to a service on a common interface is in
+the row too (`by.with.auth`: the header and what stands before the key). What can read on a tower is the
+tower's to say: `GET reads` lists its own offers and which one reads now, by provider and offer.
+
+The catalogue in use is one shared value (`catalog::current()`, an `Arc`), replaced when a newer signed
+copy is taken; the tower and the app load and fetch it with the same code (`airband_radio::catalog_load`,
+`catalog_refresh`). A later copy can add an offer to a provider a build knows only when it is reached
+exactly as one of that provider's compiled-in offers is; any other is left out and logged.
 
 The interfaces, and what adding one touches:
 
@@ -274,6 +282,13 @@ What deserves a notification is the tower's decision (`tower/push.rs`): a questi
 when the phone is neither on a call nor showing the chat. The tower seals it and the relay hands it to the push
 service, so neither can read it. On the iPhone a notification extension (`apps/apple/Notify`) opens it with the
 radio core. An answer given there is sent in the background (`Desk.answer_now`), or kept and sent later.
+
+While the app is asleep and an agent is waiting, the lock screen has a banner of three numbers: how many
+agents are waiting, working, and how many reports are unread (`tower/banner.rs`, `StatusAttributes` in
+`apps/apple/Live`). A push service delivers a banner unsealed, so the numbers are all it is ever given: the type
+that carries them (`Counts` in `core/relay.rs`) can hold no text. Who is waiting and what was asked stay in the
+sealed notification and in the app. On a call the app puts up a banner for each waiting agent itself, with the
+question, and nothing of those leaves the phone.
 
 ## Accounts
 

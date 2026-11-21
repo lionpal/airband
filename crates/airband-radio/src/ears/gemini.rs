@@ -24,7 +24,7 @@ fn pass(_set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
 
 /// Google's Live API, with its model that only transcribes. The pass is a short-lived token made for the Live
 /// API; the model, the language and the names to expect go in the first message.
-fn connect(grant: &EarsGrant, _request: &str) -> Result<Socket, ()> {
+fn connect(grant: &Pass, _request: &str) -> Result<Socket, ()> {
     const HOST: &str = "generativelanguage.googleapis.com";
     let url = format!("wss://{HOST}/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token={}", grant.token);
     let mut socket = dial(HOST, url.into_client_request().map_err(|_| ())?)?;

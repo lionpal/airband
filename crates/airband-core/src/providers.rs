@@ -22,6 +22,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -51,8 +52,28 @@ impl By {
     pub fn flag(&self, name: &str) -> bool {
         self.with.get(name).and_then(Value::as_bool).unwrap_or(false)
     }
+    /// How this service is handed a key: the header it goes in and what stands before it there. Nothing when
+    /// the row does not say; an interface that sends a key then has no way to, and says so.
+    pub fn auth(&self) -> Option<Auth> {
+        self.with.get("auth").and_then(|a| serde_json::from_value(a.clone()).ok())
+    }
     pub fn list(&self, name: &str) -> Vec<String> {
         self.with.get(name).and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default()
+    }
+}
+
+/// How a key is presented to a service: `{ "header": "authorization", "prefix": "Bearer " }`.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct Auth {
+    pub header: String,
+    #[serde(default)]
+    pub prefix: String,
+}
+
+impl Auth {
+    /// The header's value for this key.
+    pub fn value(&self, key: &str) -> String {
+        format!("{}{key}", self.prefix)
     }
 }
 
@@ -90,6 +111,10 @@ fn no(b: &bool) -> bool {
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Offer {
+    /// Its name among its provider's offers, and what a setting names beside the provider (`Use::offer`). A
+    /// provider can do one job more than one way (two voice models, say): each is an offer of its own, and
+    /// one key serves them all.
+    pub id: String,
     pub job: Job,
     pub by: By,
     /// What this is called where he chooses it: the maker and the model ("Google Gemini 3.5 Flash-Lite").
@@ -152,7 +177,7 @@ pub struct Provider {
     pub key_name: String,
     /// Where its keys are made.
     pub keys_at: String,
-    pub offers: Vec<Offer>,
+    pub offers: Vec<Arc<Offer>>,
     /// Offered when he chooses. Not so for what the tower sets for itself.
     pub offered: bool,
 }
@@ -164,13 +189,13 @@ impl Offer {
     }
 }
 
-/// What a pass says when the phone is to send its recording to the tower, which holds the key.
+/// What "whatever his computer is set up with" is called where he chooses on the phone.
 pub const BY_TOWER: &str = "tower";
-/// What it says when nothing listens.
-pub const NO_EARS: &str = "none";
-/// Words that mean "no provider" or a way of listening where a provider's id would stand (`Use::kind`,
-/// `EarsGrant::kind`). No provider may take one of these as its id.
-pub const NOT_AN_ID: &[&str] = &[BY_TOWER, NO_EARS, "device", "own-key", "on-device", "kind", "key"];
+/// The `kind` of a setting when nothing does the job.
+const NONE: &str = "none";
+/// Words that stand where a provider's id or a setting's name would (`Use::kind`, a choice on the phone, the
+/// fields of a `Use` as written down). No provider, offer or setting may take one of these as its name.
+pub const NOT_AN_ID: &[&str] = &[BY_TOWER, NONE, "device", "own-key", "on-device", "kind", "offer", "key"];
 
 impl Use {
     /// Every setting of a job as it stands, set or usual: what a phone is told beside its pass.
@@ -179,30 +204,33 @@ impl Use {
     }
 }
 
-pub fn provider(id: &str) -> Option<&'static Provider> {
-    crate::catalog::current().providers.iter().find(|p| p.id == id)
+pub fn provider(id: &str) -> Option<Arc<Provider>> {
+    crate::catalog::current().providers.iter().find(|p| p.id == id).cloned()
 }
 
 /// The offers for a job in the order to show them where he chooses: what runs on his own computer first,
 /// then what needs no key (neither costs him anything more), then the preferred, then the rest. Within each,
 /// by name.
-pub fn in_order(job: Job) -> Vec<(&'static Provider, &'static Offer)> {
-    let mut all: Vec<(&Provider, &Offer)> = offering(job).filter_map(|p| p.offers.iter().find(|o| o.job == job).map(|o| (p, o))).collect();
-    all.sort_by_key(|(p, o)| (!o.local(), p.key, !o.preferred, o.label.as_str()));
+pub fn in_order(job: Job) -> Vec<(Arc<Provider>, Arc<Offer>)> {
+    let mut all: Vec<(Arc<Provider>, Arc<Offer>)> = offering(job).into_iter().flat_map(|p| p.offers.iter().filter(|o| o.job == job).map(|o| (p.clone(), o.clone())).collect::<Vec<_>>()).collect();
+    all.sort_by(|(p, o), (q, r)| (!o.local(), p.key, !o.preferred, o.label.as_str()).cmp(&(!r.local(), q.key, !r.preferred, r.label.as_str())));
     all
 }
 
 /// The providers he can choose for a job. Every one the catalogue has: a program lists the ones whose
 /// interface it has the code for.
-pub fn offering(job: Job) -> impl Iterator<Item = &'static Provider> {
-    crate::catalog::current().providers.iter().filter(move |p| p.offered && p.offers.iter().any(|o| o.job == job))
+pub fn offering(job: Job) -> Vec<Arc<Provider>> {
+    crate::catalog::current().providers.iter().filter(move |p| p.offered && p.offers.iter().any(|o| o.job == job)).cloned().collect()
 }
 
-/// A provider in use for one job: which row, with what key, and whatever is set differently from the row.
-/// Written in the settings as `{"kind": …, "key": …, …}`.
+/// A provider in use for one job: which row and which of its offers, with what key, and whatever is set
+/// differently from the offer. Written in the settings as `{"kind": …, "offer": …, "key": …, …}`. The key is
+/// the provider's: the same one whichever of its offers is used.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Use {
     pub kind: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub offer: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub key: String,
     #[serde(flatten)]
@@ -211,42 +239,43 @@ pub struct Use {
 
 impl Default for Use {
     fn default() -> Self {
-        Use::of(NONE)
+        Use { kind: NONE.into(), offer: String::new(), key: String::new(), set: BTreeMap::new() }
     }
 }
 
-const NONE: &str = "none";
 
 impl Use {
-    pub fn of(kind: &str) -> Use {
-        Use { kind: kind.into(), key: String::new(), set: BTreeMap::new() }
+    /// This offer of this provider, with no key and everything as usual.
+    pub fn of(kind: &str, offer: &str) -> Use {
+        Use { kind: kind.into(), offer: offer.into(), key: String::new(), set: BTreeMap::new() }
     }
     /// Nothing is set.
     pub fn is_none(&self) -> bool {
         matches!(self.kind.as_str(), NONE | "")
     }
-    /// The row for this job, and how the job is done. Nothing when the settings name a provider this build
-    /// does not have, or one that does not do this job.
-    pub fn offer(&self, job: Job) -> Option<(&'static Provider, &'static Offer)> {
+    /// The row for this job, and how the job is done. Nothing when the settings name a provider or an offer
+    /// this build does not have, or one that does not do this job.
+    pub fn offer(&self, job: Job) -> Option<(Arc<Provider>, Arc<Offer>)> {
         let p = provider(&self.kind)?;
-        p.offers.iter().find(|o| o.job == job).map(|o| (p, o))
+        let o = p.offers.iter().find(|o| o.job == job && o.id == self.offer).cloned()?;
+        Some((p, o))
     }
     /// A setting for this job: what was set, else what the row usually uses.
     pub fn get(&self, job: Job, field: &str) -> String {
         match self.set.get(field) {
             Some(Value::String(s)) => s.clone(),
             Some(other) => other.to_string(),
-            None => self.offer(job).and_then(|(_, o)| o.asks.iter().find(|a| a.field == field)).map(|a| a.usual.clone()).unwrap_or_default(),
+            None => self.offer(job).and_then(|(_, o)| o.asks.iter().find(|a| a.field == field).map(|a| a.usual.clone())).unwrap_or_default(),
         }
     }
     /// One line for him: the provider and what it is set to. Never the key.
     pub fn describe(&self, job: Job) -> String {
         match self.offer(job) {
             None if self.is_none() => "none".into(),
-            None => format!("\"{}\", which this version of airband does not have", self.kind),
-            Some((p, o)) => {
+            None => format!("\"{} {}\", which this version of airband does not have", self.kind, self.offer),
+            Some((_, o)) => {
                 let told: Vec<String> = o.asks.iter().map(|a| format!("{} {}", a.question.to_lowercase(), self.get(job, &a.field))).collect();
-                if told.is_empty() { p.name.clone() } else { format!("{} ({})", p.name, told.join(", ")) }
+                if told.is_empty() { o.label.clone() } else { format!("{} ({})", o.label, told.join(", ")) }
             }
         }
     }
@@ -257,19 +286,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn settings_written_before_the_table_still_read() {
-        let v: Use = serde_json::from_str(r#"{"kind":"elevenlabs","key":"SECRETKEY","voice":"abc","model":"eleven_x"}"#).unwrap();
+    fn a_setting_names_an_offer_and_reads_what_was_set_or_the_usual() {
+        let v: Use = serde_json::from_str(r#"{"kind":"elevenlabs","offer":"flash","key":"SECRETKEY","voice":"abc","model":"eleven_x"}"#).unwrap();
         assert_eq!((v.get(Job::Voice, "voice"), v.get(Job::Voice, "model"), v.key.as_str()), ("abc".into(), "eleven_x".into(), "SECRETKEY"));
-        // what was not set is the row's usual
-        let e: Use = serde_json::from_str(r#"{"kind":"azure","key":"k","region":"japaneast"}"#).unwrap();
+        // what was not set is the offer's usual
+        let e: Use = serde_json::from_str(r#"{"kind":"azure","offer":"speech-to-text","key":"k","region":"japaneast"}"#).unwrap();
         assert_eq!((e.get(Job::Ears, "region"), e.get(Job::Ears, "language")), ("japaneast".into(), "en-US".into()));
         // nothing set
         assert!(serde_json::from_str::<Use>(r#"{"kind":"none"}"#).unwrap().is_none());
         // a command of his own keeps its arguments, and round-trips as it was written
-        let c: Use = serde_json::from_str(r#"{"kind":"command","argv":["mine","-x"]}"#).unwrap();
-        assert_eq!(serde_json::to_string(&c).unwrap(), r#"{"kind":"command","argv":["mine","-x"]}"#);
+        let c: Use = serde_json::from_str(r#"{"kind":"command","offer":"own","argv":["mine","-x"]}"#).unwrap();
+        assert_eq!(serde_json::to_string(&c).unwrap(), r#"{"kind":"command","offer":"own","argv":["mine","-x"]}"#);
         // the key is never part of what is said about it
         assert!(!v.describe(Job::Voice).contains("SECRETKEY"));
         assert_eq!(e.describe(Job::Ears), "Microsoft Azure Speech (region japaneast, language en-US)");
+        // an offer is named, never guessed: a provider with no offer named does nothing, nor does an offer
+        // asked to do another job
+        assert!(Use::of("azure", "").offer(Job::Ears).is_none() && e.offer(Job::Voice).is_none());
     }
 }

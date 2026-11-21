@@ -84,8 +84,10 @@ impl Mouth {
 /// A service for one job, as a provider's row offers it: what where he chooses (`choices.rs`) lists.
 #[derive(Debug, Clone)]
 pub(crate) struct Service {
-    /// What to pass back as `kind`. It also names the key: one key serves everything its provider does.
+    /// Its provider's id. It also names the key: one key serves everything its provider does.
     pub kind: String,
+    /// Which of that provider's offers it is.
+    pub offer: String,
     /// What to show him: the maker and the model.
     pub name: String,
     /// Not one of the few shown first: offered behind "More services".
@@ -133,6 +135,7 @@ pub(crate) fn services(job: airband_core::providers::Job) -> Vec<Service> {
         })
         .map(|(p, o)| Service {
             kind: p.id.clone(),
+            offer: o.id.clone(),
             more: !o.preferred,
             free: o.local(),
             login: o.login.clone(),
@@ -162,11 +165,11 @@ pub struct CodingTool {
 /// The coding tools airband works with, in the order to show them.
 #[uniffi::export]
 pub fn coding_tools() -> Vec<CodingTool> {
-    airband_core::catalog::current().tools.iter().map(|t| CodingTool { id: t.id.into(), name: t.name.into(), maker: t.maker.into(), first: t.first.into() }).collect()
+    airband_core::catalog::current().tools.iter().map(|t| CodingTool { id: t.id.clone(), name: t.name.clone(), maker: t.maker.clone(), first: t.first.clone() }).collect()
 }
 
-pub(crate) fn service_of(kind: &str, key: &str, settings: HashMap<String, String>) -> airband_core::providers::Use {
-    airband_core::providers::Use { kind: kind.into(), key: key.trim().into(), set: settings.into_iter().filter(|(_, v)| !v.trim().is_empty()).map(|(k, v)| (k, serde_json::Value::String(v.trim().to_string()))).collect() }
+pub(crate) fn service_of(kind: &str, offer: &str, key: &str, settings: HashMap<String, String>) -> airband_core::providers::Use {
+    airband_core::providers::Use { kind: kind.into(), offer: offer.into(), key: key.trim().into(), set: settings.into_iter().filter(|(_, v)| !v.trim().is_empty()).map(|(k, v)| (k, serde_json::Value::String(v.trim().to_string()))).collect() }
 }
 
 /// Does the service speak with this key and these settings? One short real call. Blocks.
@@ -292,14 +295,14 @@ mod tests {
         let dir = std::env::var("AIRBAND_VOICE_DIR").expect("AIRBAND_VOICE_DIR");
         let device = HostDevice::default();
         let m = model("phonon", &device).unwrap();
-        fetch_local_model(dir.clone(), m).unwrap();
+        fetch_local_model(dir.clone(), &m).unwrap();
         assert_eq!(local_model_progress(), 100);
         let mouth = Mouth::default();
         // every voice it offers speaks, and changing voice does not load the model again
         let mut took = Vec::new();
         let mut loaded: Option<Arc<Held>> = None;
         for (name, _) in m.voices.clone() {
-            let held = mouth.held(m, folder(&dir, m));
+            let held = mouth.held(&m, folder(&dir, &m));
             assert!(loaded.as_ref().is_none_or(|was| Arc::ptr_eq(was, &held)));
             loaded = Some(held.clone());
             mouth.set(Some(Own::Model { held, voice: name.clone() }));

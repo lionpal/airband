@@ -93,12 +93,14 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         let center = NotificationCenter.default
         center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.setFront(true)
+            self?.syncStatusBanners()
             // a request left open when the app went away is dead by now: ask the computers again, at once
             DispatchQueue.global(qos: .userInitiated).async { self?.desk.wake() }
         }
         center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in self?.wentAway() }
         center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.setFront(false) }
         connect(links)
+        watchStatusBanners()
     }
 
     /// The app was put away. Reading messages aloud goes on only where that is wanted with the screen off:
@@ -167,6 +169,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         if full.count > (showWhole ? 400 : 60) { full.removeAll() } // opened long ago: fetched again if he looks again
         refreshChoices()
         syncBanners()
+        syncStatusBanners()
     }
 
     /// An address the app was opened with: a pairing link, or what the Talk tile and a banner open it with.
@@ -175,6 +178,9 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         case "talk":
             replyingTo = nil
             Task { @MainActor in if !self.micOpen { await self.talk() } }
+        case "chat":
+            // the banner for when the app is asleep: opening the app is all it asks
+            break
         case "answer":
             if let callsign = OpenWith.agent(in: url) { answer(callsign) } else { Task { @MainActor in if !self.micOpen { await self.talk() } } }
         default:
@@ -229,6 +235,64 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
             Task { await banner.update(.init(state: state, staleDate: nil), alertConfiguration: .init(title: "\(agent.callsign) needs you", body: LocalizedStringResource(stringLiteral: agent.question.isEmpty ? "Tap to answer" : agent.question), sound: .default)) }
         }
     }
+
+    // MARK: the banner while the app is asleep
+
+    /// The banners of that kind this run of the app is already following, by id.
+    private var followedStatus: Set<String> = []
+
+    /// While the app is asleep each of his computers keeps a banner of numbers current by itself, through
+    /// Apple's push service (Live/NeedsYou.swift says why it is numbers only). The app's part: give the
+    /// computers the address that puts one up, give each the address of the banner that is up for it, and
+    /// take them down when he is back, since by then the app shows him all of it.
+    private func watchStatusBanners() {
+        Task { [weak self] in
+            for await token in Activity<StatusAttributes>.pushToStartTokenUpdates { self?.desk.setBannerStart(provider: "apns", token: Self.hex(token)) }
+        }
+        Task { @MainActor [weak self] in
+            // left up from before the app was last closed: one for a computer at most
+            var kept: Set<UInt32> = []
+            for banner in Activity<StatusAttributes>.activities {
+                if kept.insert(banner.attributes.slot).inserted { self?.followStatus(banner) } else { await banner.end(nil, dismissalPolicy: .immediate) }
+            }
+            for await banner in Activity<StatusAttributes>.activityUpdates {
+                guard let self, !self.followedStatus.contains(banner.id) else { continue }
+                // a new one for a computer replaces the one before it
+                for old in Activity<StatusAttributes>.activities where old.id != banner.id && old.attributes.slot == banner.attributes.slot { await old.end(nil, dismissalPolicy: .immediate) }
+                self.followStatus(banner)
+                self.syncStatusBanners()
+            }
+        }
+    }
+
+    /// Tell the computer a banner is for where to change it, and when it has come down.
+    private func followStatus(_ banner: Activity<StatusAttributes>) {
+        followedStatus.insert(banner.id)
+        let slot = banner.attributes.slot
+        Task { [weak self] in
+            for await token in banner.pushTokenUpdates { self?.desk.setBannerUpdate(slot: slot, provider: "apns", token: Self.hex(token)) }
+        }
+        Task { [weak self] in
+            for await state in banner.activityStateUpdates where state == .ended || state == .dismissed {
+                // unless a newer one for the same computer is up
+                if !Activity<StatusAttributes>.activities.contains(where: { $0.id != banner.id && $0.attributes.slot == slot && $0.activityState == .active }) {
+                    self?.desk.setBannerUpdate(slot: slot, provider: "apns", token: "")
+                }
+                break
+            }
+        }
+    }
+
+    /// He has the app in front of him, or is on a call (each waiting agent has its own banner then): the
+    /// banners of numbers come down.
+    private func syncStatusBanners() {
+        guard calling || UIApplication.shared.applicationState == .active else { return }
+        for banner in Activity<StatusAttributes>.activities where banner.activityState == .active || banner.activityState == .stale {
+            Task { await banner.end(nil, dismissalPolicy: .immediate) }
+        }
+    }
+
+    private static func hex(_ data: Data) -> String { data.map { String(format: "%02x", $0) }.joined() }
 
     /// The coding tools he uses, by id, the one he uses most first. The core keeps them: what can write his
     /// summaries follows from them.

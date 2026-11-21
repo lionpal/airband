@@ -229,7 +229,22 @@ pub(crate) struct State {
     /// there), and the links of the computers that have been told.
     push: Option<(String, String)>,
     push_told: HashSet<String>,
+    banner: BannerAddresses,
     read: ReadMarks,
+}
+
+/// Where this device's banner can be changed while the app is asleep. One address puts a banner up, and every
+/// computer is given it. Each computer has a banner of its own, and the address that changes it goes to that
+/// computer only.
+#[derive(Default)]
+struct BannerAddresses {
+    /// The push service's name. Empty until the host has given an address.
+    provider: String,
+    start: String,
+    /// The address of the banner that is up for a computer, by its link. None up: no entry.
+    update: HashMap<String, String>,
+    /// What each computer has been told, by its link: the address that puts one up and the one that changes it.
+    told: HashMap<String, (String, String)>,
 }
 
 /// What he has read: for each agent, by callsign, the time of the last thing it said that was on screen in
@@ -547,6 +562,22 @@ impl Desk {
     }
 }
 
+impl Desk {
+    /// Tell every computer what it has not been told about the banner's addresses.
+    fn tell_banners(&self) {
+        let shared = self.shared.clone();
+        thread::spawn(move || {
+            let (generation, radios): (u64, Vec<Arc<Radio>>) = {
+                let state = shared.state.lock().unwrap();
+                (state.generation, state.stations.iter().map(|s| s.radio.clone()).collect())
+            };
+            for (index, radio) in radios.iter().enumerate() {
+                tell_banner(&shared, radio, index, generation);
+            }
+        });
+    }
+}
+
 /// A folder name that is the same every launch for the same link.
 fn folder(link: &str) -> String {
     let mut h: u64 = 1469598103934665603;
@@ -837,6 +868,37 @@ impl Desk {
                 tell_push(&shared, radio, index, generation);
             }
         });
+    }
+
+    /// Where a banner can be put up on this device while the app is asleep: the push service's name and the
+    /// address the system gave for it. Every paired computer is told, now and whenever one is paired later.
+    pub fn set_banner_start(&self, provider: String, token: String) {
+        {
+            let mut state = self.shared.state.lock().unwrap();
+            if state.banner.provider == provider && state.banner.start == token {
+                return;
+            }
+            (state.banner.provider, state.banner.start) = (provider, token);
+        }
+        self.tell_banners();
+    }
+
+    /// A banner is up for one of his computers and this is the address that changes it, or (with an empty
+    /// token) that banner has come down. `slot` is the number the banner carries
+    /// ([`airband_core::relay::banner_slot`]): it says which computer. Only that computer is told.
+    pub fn set_banner_update(&self, slot: u32, provider: String, token: String) {
+        {
+            let mut state = self.shared.state.lock().unwrap();
+            let Some(link) = state.stations.iter().map(|s| s.link.clone()).find(|link| station_key(link).is_some_and(|channel| airband_core::relay::banner_slot(&channel) == slot)) else { return };
+            if state.banner.provider.is_empty() {
+                state.banner.provider = provider;
+            }
+            if state.banner.update.get(&link).map(String::as_str).unwrap_or("") == token {
+                return;
+            }
+            if token.is_empty() { state.banner.update.remove(&link) } else { state.banner.update.insert(link, token) };
+        }
+        self.tell_banners();
     }
 
     /// The computers a new agent of this team can be started on: the ones where the team already has agents,
@@ -1358,6 +1420,29 @@ fn tell_push(shared: &Arc<Shared>, radio: &Arc<Radio>, index: usize, generation:
     }
 }
 
+/// Tell one computer where this device's banner can be put up and changed, if what it was told is not what is
+/// so now. A computer that cannot be reached is told the next time round.
+fn tell_banner(shared: &Arc<Shared>, radio: &Arc<Radio>, index: usize, generation: u64) {
+    use airband_core::radio::BannerAddress;
+    let (link, provider, now, told) = {
+        let state = shared.state.lock().unwrap();
+        let Some(station) = state.stations.get(index).filter(|_| state.generation == generation && !state.banner.provider.is_empty()) else { return };
+        let now = (state.banner.start.clone(), state.banner.update.get(&station.link).cloned().unwrap_or_default());
+        (station.link.clone(), state.banner.provider.clone(), now, state.banner.told.get(&station.link).cloned().unwrap_or_default())
+    };
+    for (which, token, was) in [(BannerAddress::Start, &now.0, &told.0), (BannerAddress::Update, &now.1, &told.1)] {
+        if token == was || radio.banner_target(&provider, which, token).is_err() {
+            continue;
+        }
+        let mut state = shared.state.lock().unwrap();
+        let told = state.banner.told.entry(link.clone()).or_default();
+        match which {
+            BannerAddress::Start => told.0 = token.clone(),
+            BannerAddress::Update => told.1 = token.clone(),
+        }
+    }
+}
+
 /// What a notification says once this device has opened it: everything a host needs to show it and to send an
 /// answer to it, with the app running or not.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -1397,7 +1482,7 @@ fn station_key(link: &str) -> Option<String> {
 /// `sealed` is the notification as the push service delivered it. Nothing when none of them opens it. This
 /// needs no desk: a host calls it from wherever its system hands it a notification.
 /// A short-lived pass from a live listening service, for a key: what a tower hands a phone so the key stays
-/// where it is. `kind` is the dialect a provider's row names. Blocks. Err says why not, in words for him.
+/// where it is. `kind` is the dialect a provider's row names (`Pass::dialect`). Blocks. Err says why not, in words for him.
 pub fn listening_pass(kind: &str, set: &std::collections::BTreeMap<String, String>, key: &str) -> Result<String, String> {
     crate::ears::pass_for(kind, set, key)
 }
@@ -1447,6 +1532,7 @@ fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64)
     loop {
         // a computer that has not been told where this device can be woken is told as soon as it is reached
         tell_push(&shared, &radio, index, generation);
+        tell_banner(&shared, &radio, index, generation);
         // the tower is told whether the chat is in front of him: only then does having it count as seeing it
         radio.set_away(!shared.host.watching());
         // the first answer must come at once: it is what says the tower is there and who is on it

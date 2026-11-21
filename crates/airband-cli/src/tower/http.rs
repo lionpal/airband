@@ -47,10 +47,11 @@ pub(super) fn take_event(app: &Arc<App>, ev: AgentEvent) -> Result<(), String> {
     // its turn is over, with or without words
     let ended = matches!(ev.event, Event::Said { .. } | Event::Stopped { .. }).then(|| ev.agent.id.clone());
     on_event(app, ev)?;
-    // With a phone that can be woken and nobody reading the chat, what it said is read now: whether it
-    // deserves a notification is not known until then. With a radio reading, that radio's own request
+    // With a phone that can be woken, or one with a banner to keep current, and nobody reading the chat,
+    // what it said is read now: whether it deserves a notification, and whether it is a report he has not
+    // seen, is not known until then. With a radio reading, that radio's own request
     // has it read.
-    if let Some(id) = spoke.filter(|_| app.push.any()) {
+    if let Some(id) = spoke.filter(|_| app.push.any() || app.banner.any()) {
         let unread: Vec<Entry> = {
             let inner = app.inner.lock().unwrap();
             inner.log.iter().rev().take(8).filter(|e| inner.readers == 0 && e.short.is_none() && e.agent.as_deref() == Some(id.as_str())).take(1).cloned().collect()
@@ -247,6 +248,12 @@ async fn held_end(State(app): State<Arc<App>>, Path(id): Path<String>) -> Status
 /// A radio says where it can be woken when it is not listening (its address at a push service), or takes that back.
 async fn push_target(State(app): State<Arc<App>>, headers: HeaderMap, Json(target): Json<airband_core::radio::PushTarget>) -> Json<Value> {
     push::register(&app, &radio_of(&headers), target);
+    Json(json!({}))
+}
+
+/// A radio says where its banner can be put up or changed while the app is asleep, or takes that back.
+async fn banner_target(State(app): State<Arc<App>>, headers: HeaderMap, Json(target): Json<airband_core::radio::BannerTarget>) -> Json<Value> {
+    banner::register(&app, &radio_of(&headers), target);
     Json(json!({}))
 }
 
@@ -514,6 +521,7 @@ async fn feed(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
         let has = since.min(inner.rev);
         let call = inner.call(&radio_of(&headers));
         call.has = call.has.max(has);
+        call.presence.shows();
     }
     // while a request for the whole chat is open, what agents say is read by it
     let _reading = (scope == "all").then(|| {
@@ -746,6 +754,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/radio/taken", post(taken))
         .route("/v1/radio/end", post(end_agent))
         .route("/v1/radio/push", post(push_target))
+        .route("/v1/radio/banner", post(banner_target))
         .route("/v1/status", get(status))
         .layer(middleware::from_fn_with_state(app.clone(), auth))
         .with_state(app)

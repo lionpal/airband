@@ -7,12 +7,17 @@
   },
   "offers": [
     {
+      "id": "flash-lite",
       "job": "summary",
       "by": {
         "interface": "chat",
         "with": {
           "cold": true,
-          "shaped": true
+          "shaped": true,
+          "auth": {
+            "header": "authorization",
+            "prefix": "Bearer "
+          }
         }
       },
       "label": "Google Gemini 3.5 Flash-Lite",
@@ -34,6 +39,7 @@
       ]
     },
     {
+      "id": "flash-lite-tts",
       "job": "voice",
       "by": {
         "interface": "gemini",
@@ -86,6 +92,7 @@
       ]
     },
     {
+      "id": "transcribe",
       "job": "ears",
       "by": {
         "interface": "gemini"

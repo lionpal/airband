@@ -3,8 +3,8 @@
 //! service is a row of the catalogue; how to get its pass and how to talk to it is the phone core's
 //! (`airband-radio/src/ears.rs`), asked for here by the dialect the row names.
 use super::*;
-use crate::providers::{BY_TOWER, Job};
-use airband_core::radio::EarsGrant;
+use crate::providers::Job;
+use airband_core::radio::{EarsGrant, Pass};
 
 /// A pass lasts ten minutes at the shortest of the services; one is handed out for eight.
 const PASS: Duration = Duration::from_secs(480);
@@ -12,17 +12,17 @@ const PASS: Duration = Duration::from_secs(480);
 /// What the phone should listen with right now.
 pub(super) async fn grant(app: &Arc<App>) -> EarsGrant {
     let ears = &app.cfg.ears;
-    let none = EarsGrant { phrases: phrases(app), ..EarsGrant::default() };
+    let none = EarsGrant::None { phrases: phrases(app) };
     let set = ears.settings(Job::Ears);
     let kind = match (airband_radio::hears::live(ears), airband_radio::hears::by_upload(ears)) {
         (Some(kind), _) => kind,
         // a service that takes a finished recording: the phone sends it here, where the key is
-        (None, true) => return EarsGrant { kind: BY_TOWER.into(), token: String::new(), set: Default::default(), phrases: Vec::new() },
+        (None, true) => return EarsGrant::Tower,
         // none set here, or one this build has no code for: the phone listens with a model or a key of its
         // own, or he types
         (None, false) => return none,
     };
-    let grant = |token: String| EarsGrant { kind: kind.into(), token, set: set.clone(), phrases: phrases(app) };
+    let grant = |token: String| EarsGrant::Live(Pass { dialect: kind.into(), token, set: set.clone(), phrases: phrases(app) });
     if let Some((token, when)) = app.ears_pass.lock().unwrap().clone() {
         if when.elapsed() < PASS && !airband_radio::listening_pass_once(kind) {
             return grant(token);
