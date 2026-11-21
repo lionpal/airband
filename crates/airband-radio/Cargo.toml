@@ -21,6 +21,8 @@ sha2 = "0.10"
 tungstenite = { version = "0.30", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "1"
+# what an agent wrote, read as the markdown it is (prose.rs)
+pulldown-cmark = { version = "0.13", default-features = false }
 # a voice made on the phone itself: the program is here, its model is fetched when he asks for it
 ptts = { version = "0.7.1", features = ["hf"], optional = true }
 
