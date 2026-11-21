@@ -65,47 +65,62 @@ pub(crate) fn live(offer: &Offer) -> Option<&'static Listener> {
 /// decided where he chooses (`choices.rs`) and only carried out here.
 #[derive(Clone)]
 pub(crate) enum Own {
-    /// A model on the device: nothing he says leaves it. `folder` is where its files are.
-    Model { name: String, folder: String },
+    /// A model on the device: nothing he says leaves it.
+    Model(Arc<crate::engines::Held>),
     /// A listening service reached straight from the device with a key of his own. The key is never sent
     /// anywhere but to the service it is for.
     Service(Use),
     /// What he chose cannot be used as things are, and why. Nothing else listens in its place.
     Cannot(String),
 }
-static USING: Mutex<Option<Own>> = Mutex::new(None);
-/// Why what he chose did not listen the last time it was tried. Cleared when it next does.
-static FAILED: Mutex<Option<String>> = Mutex::new(None);
-/// How long the model took over the last thing it heard, and how long that recording was, in seconds.
-static LAST: Mutex<Option<(f32, f32)>> = Mutex::new(None);
-/// The names the tower last said he is likely to say: used with a pass of his own, which comes with none.
-static PHRASES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-fn using() -> Option<Own> {
-    USING.lock().unwrap_or_else(|e| e.into_inner()).clone()
+/// What listens on this device: one for everything that shares what he chose (a desk and its radios).
+#[derive(Default)]
+pub(crate) struct Chosen {
+    using: Mutex<Option<Own>>,
+    /// Why what he chose did not listen the last time it was tried. Cleared when it next does.
+    failed: Mutex<Option<String>>,
+    /// How long the model took over the last thing it heard, and how long that recording was, in seconds.
+    last: Mutex<Option<(f32, f32)>>,
+    /// The names the tower last said he is likely to say: used with a pass of his own, which comes with none.
+    phrases: Mutex<Vec<String>>,
 }
 
-/// Listen with this from now on; nothing is his computer's choice.
-pub(crate) fn set(own: Option<Own>) {
-    *USING.lock().unwrap_or_else(|e| e.into_inner()) = own;
-    *FAILED.lock().unwrap_or_else(|e| e.into_inner()) = None;
-}
+impl Chosen {
+    fn using(&self) -> Option<Own> {
+        self.using.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
 
-/// Why what he chose did not listen the last time, if it did not.
-pub(crate) fn failed() -> Option<String> {
-    FAILED.lock().unwrap_or_else(|e| e.into_inner()).clone()
-}
+    /// Listen with this from now on; nothing is his computer's choice.
+    pub(crate) fn set(&self, own: Option<Own>) {
+        *self.using.lock().unwrap_or_else(|e| e.into_inner()) = own;
+        *self.failed.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
 
-/// What the model on the device last took: seconds of speech, and seconds to turn it into words.
-pub(crate) fn last_heard() -> Option<(f32, f32)> {
-    *LAST.lock().unwrap_or_else(|e| e.into_inner())
-}
+    /// The model to listen with, from that folder: the one already in use when it is the same.
+    pub(crate) fn held(&self, m: &crate::models::Model, folder: std::path::PathBuf) -> Arc<crate::engines::Held> {
+        match self.using() {
+            Some(Own::Model(held)) if held.is(m, &folder) => held,
+            _ => crate::engines::Held::of(m, folder),
+        }
+    }
 
-/// What he chose could not listen. It stays chosen, and he is told: moving to something else is his to do.
-fn fail(host: &dyn RadioHost, why: String) -> Listened {
-    *FAILED.lock().unwrap_or_else(|e| e.into_inner()) = Some(why.clone());
-    host.told(why);
-    Listened::Cannot
+    /// Why what he chose did not listen the last time, if it did not.
+    pub(crate) fn failed(&self) -> Option<String> {
+        self.failed.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// What the model on the device last took: seconds of speech, and seconds to turn it into words.
+    pub(crate) fn last_heard(&self) -> Option<(f32, f32)> {
+        *self.last.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// What he chose could not listen. It stays chosen, and he is told: moving to something else is his to do.
+    fn fail(&self, host: &dyn RadioHost, why: String) -> Listened {
+        *self.failed.lock().unwrap_or_else(|e| e.into_inner()) = Some(why.clone());
+        host.told(why);
+        Listened::Cannot
+    }
 }
 
 /// A pass from a live service for a key. Err says why not, in words for him.
@@ -146,7 +161,7 @@ pub(crate) fn check(with: &Use) -> Result<(), String> {
 #[derive(Clone)]
 enum Way {
     /// By the model on the device.
-    Model { name: String, folder: String },
+    Model(Arc<crate::engines::Held>),
     /// In one upload to a service, with the key of his own that is already here.
     OwnUpload { with: Use, phrases: Vec<String> },
     /// In one upload to his computer, which has the key.
@@ -157,13 +172,19 @@ enum Way {
     Nothing(Option<String>),
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub(crate) struct Ears {
     /// What was last granted, and when: a live pass is good for a few minutes.
     pass: Arc<Mutex<Option<(EarsGrant, Instant)>>>,
+    /// What he chose on the device.
+    chosen: Arc<Senses>,
 }
 
 impl Ears {
+    pub(crate) fn new(chosen: Arc<Senses>) -> Ears {
+        Ears { pass: Default::default(), chosen }
+    }
+
     fn kept(&self) -> Option<EarsGrant> {
         self.pass.lock().unwrap().clone().filter(|(g, when)| when.elapsed() < PASS_LIFE && !matches!(g, EarsGrant::Live(p) if once(&p.dialect))).map(|(g, _)| g)
     }
@@ -175,11 +196,11 @@ impl Ears {
     }
 
     fn way(&self, link: &Link) -> Way {
-        match using() {
-            Some(Own::Model { name, folder }) => Way::Model { name, folder },
+        match self.chosen.ears.using() {
+            Some(Own::Model(held)) => Way::Model(held),
             Some(Own::Cannot(why)) => Way::Nothing(Some(why)),
             Some(Own::Service(with)) => {
-                let phrases = PHRASES.lock().unwrap().clone();
+                let phrases = self.chosen.ears.phrases.lock().unwrap().clone();
                 match with.offer(Job::Ears).map(|(_, o)| (live(&o), crate::hears::by_upload(&with))) {
                     Some((Some(l), _)) => {
                         if let Some(EarsGrant::Live(pass)) = self.kept() {
@@ -210,7 +231,7 @@ impl Ears {
                             _ => EarsGrant::default(),
                         };
                         if !pass.phrases().is_empty() {
-                            *PHRASES.lock().unwrap() = pass.phrases().to_vec();
+                            *self.chosen.ears.phrases.lock().unwrap() = pass.phrases().to_vec();
                         }
                         // only a pass that can be used is kept: with none, the tower is asked again next time
                         if pass.listens() {
@@ -232,14 +253,14 @@ impl Ears {
     pub(crate) fn warm(&self, link: &Link) {
         let _ = self.way(link);
         // with a service of his own the tower is still asked, when it is there, for the names he is likely to say
-        if matches!(using(), Some(Own::Service(_))) {
+        if matches!(self.chosen.ears.using(), Some(Own::Service(_))) {
             if let Ok((200, v)) = link.request("GET", "/ears", None) {
                 let phrases = serde_json::from_value::<EarsGrant>(v).map(|g| g.phrases().to_vec()).unwrap_or_default();
                 if !phrases.is_empty() {
                     if let Some((EarsGrant::Live(p), _)) = self.pass.lock().unwrap().as_mut() {
                         p.phrases = phrases.clone();
                     }
-                    *PHRASES.lock().unwrap() = phrases;
+                    *self.chosen.ears.phrases.lock().unwrap() = phrases;
                 }
             }
         }
@@ -256,10 +277,12 @@ impl Ears {
             // no microphone to read: a terminal's typed line will do; a phone's own recognition will not
             return if host.own_voice() { said(host.listen()) } else { Listened::Cannot };
         }
-        let heard_well = || *FAILED.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let heard_well = || *self.chosen.ears.failed.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let fail = |host: &dyn RadioHost, why: String| self.chosen.ears.fail(host, why);
         match self.way(link) {
-            Way::Model { name, folder } => {
-                let heard = by_model(host, folder, manual);
+            Way::Model(held) => {
+                let name = held.m.name.clone();
+                let heard = by_model(host, &held, &self.chosen.ears, manual);
                 host.record_stop();
                 match heard {
                     Ok(text) => {
@@ -433,18 +456,19 @@ fn record_with(host: &dyn RadioHost, manual: bool, so_far: &mut dyn FnMut(&[i16]
     Ok((speaking && !kept.is_empty()).then_some(kept))
 }
 
-/// Listen with a model on the device, which the host runs. The model takes a whole recording, so to show his
+/// Listen with a model on the device, run by its engine. The model takes a whole recording, so to show his
 /// words while he talks the recording so far is read again about twice a second, on a thread of its own: the
 /// microphone is never kept waiting, and a reading that is still going when the next is due is let finish
 /// and the next one skipped. When he stops, all of it is read once more, and that is what he said.
-fn by_model(host: &dyn RadioHost, folder: String, manual: bool) -> Result<Option<String>, ()> {
+fn by_model(host: &dyn RadioHost, held: &crate::engines::Held, chosen: &Chosen, manual: bool) -> Result<Option<String>, ()> {
+    let read = |pcm: Vec<u8>| held.with(|m| m.hear(&|engine, folder, job, input| host.run_model(engine.into(), folder.into(), job, input), pcm)).and_then(|heard| heard).ok();
     let bytes = |pcm: &[i16]| pcm.iter().flat_map(|s| s.to_le_bytes()).collect::<Vec<u8>>();
     let clip = thread::scope(|scope| {
         let (tx, rx) = sync_channel::<Vec<u8>>(1);
-        let reading = folder.clone();
+        let read = &read;
         scope.spawn(move || {
             while let Ok(pcm) = rx.recv() {
-                if let Some(now) = host.transcribe(reading.clone(), pcm) {
+                if let Some(now) = read(pcm) {
                     host.hearing(now);
                 }
             }
@@ -460,9 +484,9 @@ fn by_model(host: &dyn RadioHost, folder: String, manual: bool) -> Result<Option
     let Some(pcm) = clip else { return Ok(None) };
     host.status(RadioStatus::Sending);
     let began = Instant::now();
-    let heard = host.transcribe(folder, bytes(&pcm));
+    let heard = read(bytes(&pcm));
     if heard.is_some() {
-        *LAST.lock().unwrap_or_else(|e| e.into_inner()) = Some((pcm.len() as f32 / RATE as f32, began.elapsed().as_secs_f32()));
+        *chosen.last.lock().unwrap_or_else(|e| e.into_inner()) = Some((pcm.len() as f32 / RATE as f32, began.elapsed().as_secs_f32()));
     }
     heard.map(|text| Some(text.trim().to_string()).filter(|t| !t.is_empty())).ok_or(())
 }

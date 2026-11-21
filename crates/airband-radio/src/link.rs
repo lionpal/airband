@@ -491,12 +491,12 @@ impl Link {
 
     /// The next transmission, or None when the tower had nothing for 25 seconds. `have` is the id of the last
     /// one this radio got, so a tower that gave it another since, in an answer that never arrived, gives it
-    /// that one again.
-    pub(crate) fn next(&self, joined: bool, have: &str) -> Result<Option<Transmission>, LinkError> {
-        // a radio that makes its own speech says so, and the tower makes none for it
-        let asking = crate::mouth::asking();
-        let mut query: Vec<String> = asking.strip_prefix('?').into_iter().map(String::from).collect();
-        query.push(format!("have={have}"));
+    /// that one again. `own_voice` when this radio makes its own speech: the tower then makes none for it.
+    pub(crate) fn next(&self, joined: bool, have: &str, own_voice: bool) -> Result<Option<Transmission>, LinkError> {
+        let mut query = vec![format!("have={have}")];
+        if own_voice {
+            query.push("voice=own".into());
+        }
         if joined {
             query.push("joined=1".into());
         }

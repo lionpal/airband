@@ -21,20 +21,20 @@ pub(crate) enum Said {
 
 /// Say `text`: with the tower's voice when it has one for this (`speech`), otherwise with the host's if that is
 /// worth hearing.
-pub(crate) fn say(link: &Link, host: &dyn RadioHost, text: &str, speech: Option<&str>) {
-    say_until(link, host, text, speech, &|| false);
+pub(crate) fn say(link: &Link, host: &dyn RadioHost, mouth: &crate::mouth::Mouth, text: &str, speech: Option<&str>) {
+    say_until(link, host, mouth, text, speech, &|| false);
 }
 
 /// The same, leaving off as soon as `stop` says so, and saying how it went: only what made a sound counts as
 /// heard.
-pub(crate) fn say_until(link: &Link, host: &dyn RadioHost, text: &str, speech: Option<&str>, stop: &dyn Fn() -> bool) -> Said {
+pub(crate) fn say_until(link: &Link, host: &dyn RadioHost, mouth: &crate::mouth::Mouth, text: &str, speech: Option<&str>, stop: &dyn Fn() -> bool) -> Said {
     if text.trim().is_empty() || stop() {
         return Said::Aloud;
     }
     // A voice of the device's own, when he has chosen one, says everything. When it cannot, it stays the one
     // he chose and he is told: nothing else speaks in its place.
-    if crate::mouth::ready() {
-        return match crate::mouth::say(host, text, stop) {
+    if mouth.ready() {
+        return match mouth.say(host, text, stop) {
             Ok(()) => Said::Aloud,
             Err(why) => {
                 host.told(why.clone());

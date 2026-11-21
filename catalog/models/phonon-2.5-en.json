@@ -2,7 +2,7 @@
   "kind": "phonon-2.5-en",
   "name": "Fermion Phonon 2.5",
   "job": "ears",
-  "engine": "host-transcribe",
+  "engine": "phonon-coreml",
   "version": "1",
   "base": "https://airband.dev/models/phonon-2.5-en/1",
   "files": [
@@ -48,5 +48,5 @@
     ]
   ],
   "credit": "Phonon-2.5 English by Fermion Research, from NVIDIA's Parakeet TDT 0.6B v3. CC BY 4.0.",
-  "with": {"prepare": "Getting it ready for this phone. About a minute, once."}
+  "with": {"prepare": "Getting it ready for this phone. About a minute, once.", "min_os": {"ios": 18}}
 }
