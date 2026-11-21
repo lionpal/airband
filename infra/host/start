@@ -4,12 +4,12 @@
 set -euo pipefail
 set -a; . /etc/airband/relay.env; set +a
 eval "$(aws ssm get-parameters --region "$AWS_REGION" --with-decryption --output json \
-  --names /airband/relay-admission /airband/apns-key | python3 -c '
+  --names /airband/apns-key | python3 -c '
 import json, shlex, sys
-names = {"/airband/relay-admission": "AIRBAND_RELAY_ADMISSION", "/airband/apns-key": "APNS_KEY"}
+names = {"/airband/apns-key": "APNS_KEY"}
 for p in json.load(sys.stdin)["Parameters"]:
     print("export %s=%s" % (names[p["Name"]], shlex.quote(p["Value"])))
 ')"
-# without the admission key anyone could open channels here: do not start at all
-: "${AIRBAND_RELAY_ADMISSION:?the admission key could not be read}"
+# This relay is open: anyone may pair through it, and the relay's own limits bound how much (new channels per
+# address and in all, requests per channel and per address). It sees only sealed messages either way.
 exec /opt/airband/airband-relay

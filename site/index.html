@@ -332,18 +332,15 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
 
 /* who can read it: what is on his phone, beside all that the relay ever sees of it */
 .sec { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
-.pane { min-width: 0; height: 268px; overflow: hidden; display: flex; flex-direction: column; padding: 20px 20px 0; border-radius: 22px; border: 1px solid #1B1D1E; background: #0D0E0F; }
+.pane { min-width: 0; height: 330px; overflow: hidden; display: flex; flex-direction: column; padding: 20px 20px 0; border-radius: 22px; border: 1px solid #1B1D1E; background: #0D0E0F; }
 .pane h3 { margin: 0 0 18px; font-size: 13px; font-weight: 600; color: var(--quiet); }
-.pane.yours small { font-size: 12px; font-weight: 600; color: var(--quiet); }
-.pane.yours p { margin: 4px 0 0; font-size: 18px; line-height: 1.28; font-weight: 600; letter-spacing: -0.015em; }
-.pane.yours .said { align-self: flex-end; margin-top: 16px; padding: 7px 13px; border-radius: 14px 14px 5px 14px; background: var(--ink); color: var(--ground); font-size: 15px; font-weight: 600; opacity: 0; transform: translateY(4px); transition: opacity 0.25s, transform 0.25s; }
-.pane.yours .said.on { opacity: 1; transform: none; }
-.pane.yours .asked { transition: opacity 0.25s; }
-.pane.ours { background: var(--term); font-family: var(--mono); }
-.pane.ours h3 { font-family: var(--sans); }
-.pane.ours .req { font-size: 12px; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pane.ours .size { margin-top: 3px; font-size: 12px; color: var(--dim); }
-.pane.ours .hex { margin-top: 14px; font-size: 12.5px; line-height: 1.75; color: var(--signal); opacity: 0.8; word-spacing: 0.25em; overflow-wrap: anywhere; }
+.mem .pass { margin: 0 0 4px; min-height: 1.4em; font-size: 15px; line-height: 1.4; color: var(--quiet); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: opacity 0.25s; }
+.mem .pass b { font-weight: 600; color: var(--soft); }
+.mem.flow .mbar { width: var(--w, 0%); transition: width 0.6s cubic-bezier(0.2, 0.7, 0.2, 1); }
+.mem .mbar.none { width: 0; min-width: 0; }
+.mem .us .track { border-left: 2px solid var(--signal); }
+.pane.ours { background: var(--term); }
+.pane.ours .hex { margin-top: 6px; height: 1.75em; overflow: hidden; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; line-height: 1.75; color: var(--signal); opacity: 0.8; word-spacing: 0.25em; overflow-wrap: anywhere; }
 
 /* what a working team is doing right now: a small bubble out of its chip, typed fast, one team at a time,
    lying over the top of the feed */
@@ -378,8 +375,6 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
   .more .car, .more .mem { order: 2; }
   .more .sec { order: 2; grid-template-columns: minmax(0, 1fr); }
   .pane { height: auto; padding-bottom: 20px; }
-  .pane.yours { min-height: 190px; }
-  .pane.ours .hex { max-height: 7em; overflow: hidden; }
   .car { aspect-ratio: 4 / 3.3; border-radius: 22px; }
   .cp { left: 3%; top: 36%; width: 94%; bottom: 4%; }
 }
@@ -388,7 +383,6 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
   .it, .quick, .look { transition: none; }
   .cpmic.live { animation: none; }
   .cl, .mem .mbar { transition: none; }
-  .pane.yours .said { opacity: 1; transform: none; transition: none; }
 }
 </style>
 </head>
@@ -564,22 +558,14 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
   </section>
 
   <section class="more">
-    <div class="sec" id="sec" role="img" aria-label="Two panels side by side. On your phone: an agent's question and your answer, in plain words. On our server: the same messages as they pass through, a web address, a size in bytes, and unreadable sealed data.">
-      <div class="pane yours">
-        <h3>On your phone</h3>
-        <div class="asked"><small id="secwho">orders refunds</small><p id="secask">Refunds for 14 customers are ready. Send them?</p></div>
-        <div class="said" id="secsaid">Send them</div>
-      </div>
-      <div class="pane ours">
-        <h3>On our server</h3>
-        <div class="req">POST /v1/channels/8f2c41d0&hellip;/call</div>
-        <div class="size" id="secsize">412 bytes</div>
-        <div class="hex" id="sechex"></div>
-      </div>
+    <div class="mem flow" id="sec" role="img" aria-label="Two meters. Between your phone and your computer: growing as messages pass. Sent to our servers: zero bytes.">
+      <p class="pass" id="secpass"></p>
+      <div><div class="lab"><span>Between your phone and your computer</span><b id="secnear">0 KB</b></div><div class="track"><div class="mbar" id="secbar"></div></div></div>
+      <div class="us"><div class="lab"><span>Sent to our servers</span><b>0 bytes</b></div><div class="track"><div class="mbar none"></div></div></div>
     </div>
     <div class="morewords">
-      <h2>End&#8209;to&#8209;end encrypted.</h2>
-      <p class="sub2">Our server sees nothing. Or skip it and pair your phone straight to your computer.</p>
+      <h2>Nothing has to leave your devices.</h2>
+      <p class="sub2">Run every model on your own phone and computer. Anything that does go through us is end&#8209;to&#8209;end encrypted, and we can't read it.</p>
     </div>
   </section>
 
@@ -1097,42 +1083,30 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
   if (!("IntersectionObserver" in window)) { mem.classList.add("go"); return; }
   new IntersectionObserver((seen, o) => { if (seen[0].isIntersecting) { mem.classList.add("go"); o.disconnect(); } }, { threshold: 0.4 }).observe(mem);
 
-  // the same conversation twice: as he reads it, and as it looks on its way through the relay
+  // Messages pass between his phone and his computer, and one meter counts them. The other is what reaches us
+  // when the models run on his own devices and the two are paired straight: nothing.
   (function () {
-    const sec = document.getElementById("sec"), who = document.getElementById("secwho"), askEl = document.getElementById("secask"), said = document.getElementById("secsaid"), size = document.getElementById("secsize"), hex = document.getElementById("sechex");
+    const sec = document.getElementById("sec"), line = document.getElementById("secpass"), near = document.getElementById("secnear"), bar = document.getElementById("secbar");
     const talk = [
-      ["orders refunds", "Refunds for 14 customers are ready. Send them?", "Send them"],
-      ["payouts schedule", "Payout email: Mondays or Fridays?", "Fridays, right after payouts go out"],
-      ["catalog part page", "Part page B is built. Ship it?", "Ship it"],
+      ["orders refunds", "Refunds for 14 customers are ready. Send them?"], ["You", "Send them"],
+      ["payouts schedule", "Payout email: Mondays or Fridays?"], ["You", "Fridays, right after payouts go out"],
+      ["catalog part page", "Part page B is built. Ship it?"], ["You", "Ship it"],
     ];
-    const sealed = () => Array.from({ length: 84 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, "0")).join("").replace(/(.{4})/g, "$1 ");
-    hex.textContent = sealed();
+    const show = (i, bytes) => {
+      line.innerHTML = "<b>" + talk[i][0] + "</b> " + talk[i][1];
+      near.textContent = (bytes / 1024).toFixed(1) + " KB";
+      bar.style.setProperty("--w", Math.min(100, bytes / 160) + "%");
+    };
+    show(0, 2400);
     if (still) return;
-    let on = false, round = 0;
-    const wait = (ms, mine) => new Promise((go, stop) => setTimeout(() => (on && mine === round ? go() : stop()), ms));
-    // a message passes: the bytes churn and settle, and nothing about them says what it was
-    const pass = async (text, mine) => {
-      size.textContent = 236 + text.length * 4 + " bytes";
-      for (let i = 0; i < 8; i++) { hex.textContent = sealed(); await wait(55, mine); }
-    };
-    const run = async (mine) => {
-      try {
-        for (let i = 0; ; i = (i + 1) % talk.length) {
-          const [name, question, answer] = talk[i];
-          said.classList.remove("on");
-          askEl.parentNode.style.opacity = 0;
-          await wait(260, mine);
-          who.textContent = name; askEl.textContent = question; said.textContent = answer;
-          askEl.parentNode.style.opacity = 1;
-          await pass(question, mine);
-          await wait(1700, mine);
-          said.classList.add("on");
-          await pass(answer, mine);
-          await wait(2400, mine);
-        }
-      } catch (stopped) {}
-    };
-    new IntersectionObserver((seen) => { on = seen[0].isIntersecting; if (on) { round += 1; run(round); } }, { threshold: 0.3 }).observe(sec);
+    let shown = false, i = 0, bytes = 2400;
+    new IntersectionObserver((seen) => { shown = seen[0].isIntersecting; }, { threshold: 0.3 }).observe(sec);
+    setInterval(() => {
+      if (!shown) return;
+      i = (i + 1) % talk.length;
+      bytes = bytes > 15000 ? 1200 : bytes + 700 + talk[i][1].length * 30;
+      show(i, bytes);
+    }, 1900);
   })();
   const $ = (id) => document.getElementById(id);
   const cp = car.querySelector(".cp"), banner = $("cpbanner"), said = $("carsaid"), saidp = $("carsaidp"), song = $("cpsong"), road = car.querySelector("svg.dash");
