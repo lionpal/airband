@@ -376,17 +376,20 @@ pub fn run(cfg: Config) -> Result<(), String> {
                         http::take_event(&taking, event).is_ok()
                     }),
                     holds: Box::new(move |session| held::holds(&holding.inner.lock().unwrap(), session)),
-                    found: Box::new(move |agent| {
+                    found: Box::new(move |agent, idle| {
                         let _here = entering.enter();
                         let id = agent.id.clone();
+                        let new = finding.inner.lock().unwrap().find(&id).is_none();
                         let event = AgentEvent { schema: agent::SCHEMA.into(), agent, event: Event::Checkin };
                         finding.store.event(&serde_json::to_value(&event).unwrap_or_default());
                         if http::take_event(&finding, event).is_err() {
                             return false;
                         }
                         let mut inner = finding.inner.lock().unwrap();
-                        if let Some(s) = inner.session(&id).filter(|s| !s.listed) {
+                        if let Some(s) = inner.session(&id).filter(|s| !s.listed || (new && idle)) {
                             s.listed = true;
+                            // one that is new to the tower and doing nothing is waiting for him, not working
+                            s.waiting = s.waiting || (new && idle);
                             finding.save(&inner);
                         }
                         true

@@ -63,8 +63,11 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
             app.save(&inner);
             return Ok(());
         }
-        Event::Said { text, kind } => {
+        Event::Said { text, kind, turn } => {
             let s = inner.session(&id).unwrap();
+            if turn.is_some() {
+                s.turn = turn;
+            }
             s.waiting = true;
             s.doing = None;
             s.reports += 1;

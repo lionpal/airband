@@ -99,11 +99,13 @@ pub(crate) trait Harness: Sync {
     }
 }
 
-/// A session its tool says is open: who it is, where, and how his words reach it. Whether it is working
-/// is not said here; that comes with its own reports.
+/// A session its tool says is open: who it is, where, and how his words reach it.
 #[derive(Debug, Clone)]
 pub struct Open {
     pub agent: Agent,
+    /// Its tool says it is doing nothing right now. One the tower first learns of this way starts out
+    /// waiting for him, not working; what it does after that comes with its own reports.
+    pub idle: bool,
 }
 
 /// A folder a tool has had a session in.
@@ -122,7 +124,7 @@ pub struct Tower {
     pub holds: Box<dyn Fn(&str) -> bool + Send>,
     /// A session its tool lists as open. The tower puts it on the radio if it is not there, and marks it as
     /// one its tool lists. False when it was not taken: it should be offered again.
-    pub found: Box<dyn Fn(Agent) -> bool + Send>,
+    pub found: Box<dyn Fn(Agent, bool) -> bool + Send>,
     /// The sessions of a harness on the tower's roster that its tool has listed as open, now or before the
     /// tower last stopped. One of these the tool no longer lists has gone.
     pub listed: Box<dyn Fn(&str) -> Vec<String> + Send>,
@@ -246,7 +248,7 @@ fn look(h: &dyn Harness, tower: &Tower, told: &mut std::collections::HashMap<Str
     let listed = (tower.listed)(h.name());
     for o in &open {
         let now = serde_json::to_value(&o.agent).unwrap_or_default();
-        if (!listed.contains(&o.agent.id) || told.get(&o.agent.id) != Some(&now)) && (tower.found)(o.agent.clone()) {
+        if (!listed.contains(&o.agent.id) || told.get(&o.agent.id) != Some(&now)) && (tower.found)(o.agent.clone(), o.idle) {
             told.insert(o.agent.id.clone(), now);
         }
     }
@@ -520,7 +522,7 @@ mod finding {
         }
         fn open(&self) -> Option<Vec<Open>> {
             let open = self.0.lock().unwrap().clone()?;
-            Some(open.into_iter().map(|id| Open { agent: Agent { id: id.into(), harness: "lists".into(), cwd: Some("/x/shop".into()), name: None, title: None, pid: None, deliver: None, meta: Default::default() } }).collect())
+            Some(open.into_iter().map(|id| Open { agent: Agent { id: id.into(), harness: "lists".into(), cwd: Some("/x/shop".into()), name: None, title: None, pid: None, deliver: None, meta: Default::default() }, idle: true }).collect())
         }
     }
 
@@ -536,7 +538,7 @@ mod finding {
                     true
                 }),
                 holds: Box::new(|session| session == "held"),
-                found: Box::new(move |agent| {
+                found: Box::new(move |agent, _idle| {
                     found.lock().unwrap().push(agent.id.clone());
                     marks.lock().unwrap().push(agent.id);
                     true

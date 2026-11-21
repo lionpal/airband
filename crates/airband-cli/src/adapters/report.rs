@@ -73,8 +73,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let event = match rest.first().map(String::as_str) {
         Some("checkin") => Event::Checkin,
         Some("working") => Event::Working,
-        Some("said") => Event::Said { text: body()?, kind: None },
-        Some("asked") => Event::Said { text: body()?, kind: Some(airband_core::radio::Kind::NeedsYou) },
+        Some("said") => Event::Said { text: body()?, kind: None, turn: None },
+        Some("asked") => Event::Said { text: body()?, kind: Some(airband_core::radio::Kind::NeedsYou), turn: None },
         Some("notice") => Event::Notice { text: body()? },
         // a picture goes with the next thing the agent says: `show` for one he should see, `picture` for one it only looked at
         Some(word @ ("picture" | "show")) => Event::Picture { path: std::path::absolute(rest.get(1).ok_or("give the picture's file")?).map_err(|e| e.to_string())?.display().to_string(), shown: word == "show" },

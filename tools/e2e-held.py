@@ -189,7 +189,7 @@ os.makedirs(os.path.join(claude_home, "sessions")); os.makedirs(os.path.join(cla
 record = os.path.join(claude_home, "sessions", f"{its.pid}.json")
 def claude_record(**more):
     json.dump({"pid": its.pid, "sessionId": "claude-open-before", "cwd": barn, "procStart": started, "kind": "interactive", "entrypoint": "cli", "status": "idle",
-               "messagingSocketPath": os.path.join(short, "claude.sock"), "name": "barn-a1", "nameSource": "derived", **more}, open(record, "w"))
+               "messagingSocketPath": os.path.join(short, "claude.sock"), "name": "barn-a1", "nameSource": "derived", "status": "idle", **more}, open(record, "w"))
 claude_record()
 json.dump({"peerToken": "claude-socket-token", "procStart": started}, open(os.path.join(claude_home, "sessions", f"{its.pid}.abc.key"), "w"))
 # a one-off run has a record too, and is not his to talk to
@@ -202,8 +202,11 @@ os.makedirs(os.path.join(claude_home, "projects", "-scratch")); os.makedirs(os.p
 open(os.path.join(claude_home, "projects", "-scratch", "passing.jsonl"), "w").write(json.dumps({"type": "user", "cwd": os.path.join(work, "code", "scratch")}) + "\n")
 
 # Codex: a server of its own on a socket file, speaking JSON-RPC over a websocket, that says which threads are
-# loaded; its `queue` command, which is how his words get in; and a file per session that says where it was.
+# loaded and what each one's newest turn has come to; its `queue` command, which is how his words get in; and a
+# file per session that says where it was.
 class Codex:
+    # the newest turn of each thread: one that was over before the tower started
+    turns = {"thread-open-before": {"id": "turn-before", "status": "completed", "items": [{"type": "agentMessage", "id": "i0", "text": "SAID BEFORE THE TOWER STARTED"}]}}
     loaded, queued = ["thread-open-before", "thread-of-a-subagent"], os.path.join(got, "codex-queue")
     threads = {"thread-open-before": {"id": "thread-open-before", "cwd": loft, "parentThreadId": None, "ephemeral": False, "model": "gpt-stand-in", "name": "Made up by Codex", "status": {"type": "idle"}},
                "thread-of-a-subagent": {"id": "thread-of-a-subagent", "cwd": loft, "parentThreadId": "thread-open-before", "ephemeral": False, "status": {"type": "idle"}}}
@@ -241,6 +244,7 @@ def serve_codex(conn):
             if m["method"] == "initialize": send({"id": m["id"], "result": {}})
             elif m["method"] == "thread/loaded/list": send({"id": m["id"], "result": {"data": list(Codex.loaded), "nextCursor": None}})
             elif m["method"] == "thread/read": send({"id": m["id"], "result": {"thread": Codex.threads[m["params"]["threadId"]]}})
+            elif m["method"] == "thread/turns/list": send({"id": m["id"], "result": {"data": [t for t in [Codex.turns.get(m["params"]["threadId"])] if t], "nextCursor": None}})
             else: send({"id": m["id"], "error": {"code": -32601, "message": "not known"}})
     except (EOFError, OSError, StopIteration): pass
     finally: conn.close()
@@ -302,7 +306,22 @@ try:
     one = lambda harness: next((a for a in feed()["roster"] if a.get("harness") == harness), None)
     check("a Claude Code session is on the radio with nothing typed in it, in its folder's team", until(lambda: one("claude-code"), 10) and one("claude-code")["callsign"] == "barn one", feed()["roster"])
     check("so is a Codex session, and a subagent's thread and a one-off run are not", until(lambda: one("codex"), 10) and one("codex")["callsign"] == "loft one" and len(feed()["roster"]) == 2, feed()["roster"])
+    check("each is shown doing nothing, as its tool says, not working", one("claude-code")["state"] == "idle" and one("codex")["state"] == "idle", feed()["roster"])
     check("a name Codex made up for a thread is not taken for one he gave", "made" not in one("codex")["callsign"], one("codex"))
+    # what it says is read from Codex's server: this session's hooks were never trusted, so none report
+    codex_said = lambda has: [m for m in feed()["messages"] if m.get("agent") == "thread-open-before" and has in m["text"]]
+    time.sleep(3.5)
+    check("what it had said before the tower started is not said again", not codex_said("BEFORE THE TOWER"), feed()["messages"])
+    Codex.turns["thread-open-before"] = {"id": "turn-1", "status": "inProgress", "items": [{"type": "userMessage", "id": "i1", "content": []}]}
+    check("a Codex session with no hooks reporting is seen to be working, by Codex's own server", until(lambda: one("codex")["state"] == "working", 10), one("codex"))
+    Codex.turns["thread-open-before"] = {"id": "turn-1", "status": "completed", "items": [{"type": "agentMessage", "id": "i2", "text": "Looking."}, {"type": "commandExecution", "id": "i3", "command": "ls"}, {"type": "agentMessage", "id": "i4", "text": "TWO BOXES IN THE LOFT"}]}
+    check("and what it says when its turn is over arrives: the last thing it wrote", until(lambda: codex_said("TWO BOXES"), 10) and one("codex")["state"] != "working", [m["text"] for m in feed()["messages"]])
+    # the same turn told by its hook as well, as one whose hooks do report would: taken once
+    hooked = http("POST", "/v1/agent/events", {"schema": "airband.agent/1", "agent": {"id": "thread-open-before", "harness": "codex"}, "event": {"type": "said", "text": "TWO BOXES IN THE LOFT", "turn": "turn-1"}}, token=OWN)
+    time.sleep(3)
+    check("the same turn said by its hook too is taken once", hooked[0] == 200 and len(codex_said("TWO BOXES")) == 1, [m["text"] for m in feed()["messages"]])
+    Codex.turns["thread-open-before"] = {"id": "turn-2", "status": "failed", "error": {"message": "THE MODEL COULD NOT BE REACHED"}, "items": []}
+    check("a turn that failed is told to him in Codex's own words", until(lambda: codex_said("COULD NOT BE REACHED"), 10), [m["text"] for m in feed()["messages"]])
     check("his words reach the Claude Code session through its own socket, with its token first", say("@barn1 are you there") == "Sent to barn one." and
           until(lambda: Claude.lines and Claude.lines[-1][0] == {"type": "auth", "token": "claude-socket-token"} and "are you there" in json.dumps(Claude.lines[-1][1])), Claude.lines)
     queued = lambda: [json.loads(l) for l in open(Codex.queued)] if os.path.exists(Codex.queued) else []

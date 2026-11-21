@@ -51,6 +51,15 @@ async fn events(State(app): State<Arc<App>>, body: String) -> Response {
 /// Take in one event of an agent's, and set going what follows from it. The one way in, for an event that
 /// came over HTTP and for one a watcher inside the tower saw. Call it where a runtime can be reached.
 pub(super) fn take_event(app: &Arc<App>, ev: AgentEvent) -> Result<(), String> {
+    // what a turn said is taken once, whichever of its tool's ways of saying it came first
+    if let Event::Said { turn: Some(turn), .. } = &ev.event {
+        let mut inner = app.inner.lock().unwrap();
+        if let Some(s) = inner.session(&ev.agent.id).filter(|s| s.turn.as_ref() == Some(turn)) {
+            // that turn is over, whatever was heard of it since by the slower way
+            s.waiting = true;
+            return Ok(());
+        }
+    }
     // on some of an agent's reports the tower looks at whether it is in the right team
     let reported = matches!(ev.event, Event::Said { .. }).then(|| ev.agent.id.clone());
     let spoke = matches!(ev.event, Event::Said { .. } | Event::Notice { .. }).then(|| ev.agent.id.clone());

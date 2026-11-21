@@ -48,6 +48,10 @@ pub(super) struct Session {
     /// gone, whether or not it said so.
     #[serde(default)]
     pub(super) listed: bool,
+    /// The last turn of its own it was heard to end, by its tool's id for the turn, when the tool gives one.
+    /// The same turn told a second time, by another way the tool has of saying it, is not taken again.
+    #[serde(default)]
+    pub(super) turn: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -653,7 +657,7 @@ impl Inner {
             if let Some(cwd) = agent.cwd.clone().filter(|_| agent.name.is_none()) {
                 self.projects.insert(callsign.project.clone(), cwd);
             }
-            self.sessions.push(Session { agent: agent.clone(), callsign, waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false });
+            self.sessions.push(Session { agent: agent.clone(), callsign, waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false, turn: None });
             // one that was moved to another team before it went away goes back there
             if let Some((team, by)) = self.placed.get(&agent.id).cloned() {
                 self.move_to(&agent.id, &team, by);

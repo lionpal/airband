@@ -221,7 +221,7 @@ pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>, aske
                         tell(match (text.trim(), v.get("error")) {
                             ("", Some(e)) => Event::Stopped { why: Some(e["message"].as_str().unwrap_or("the agent gave no reason").to_string()) },
                             ("", None) => Event::Stopped { why: None },
-                            (text, _) => Event::Said { text: text.to_string(), kind: None },
+                            (text, _) => Event::Said { text: text.to_string(), kind: None, turn: None },
                         });
                     }
                     _ => {}

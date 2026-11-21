@@ -145,6 +145,7 @@ fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> bool) -> Opt
                 meta: transcript.map(|t| serde_json::Map::from_iter([("transcript".to_string(), Value::String(t))])).unwrap_or_default(),
                 id,
             },
+            idle: v["status"] == "idle",
         });
     }
     Some(open)
@@ -473,7 +474,7 @@ pub fn events(hook: &Value) -> Vec<AgentEvent> {
     let events = match hook["hook_event_name"].as_str().unwrap_or("") {
         "SessionStart" => vec![Event::Checkin],
         "UserPromptSubmit" => vec![Event::Working],
-        "Stop" => text("last_assistant_message").map(|text| Event::Said { text, kind: None }).into_iter().collect(),
+        "Stop" => text("last_assistant_message").map(|text| Event::Said { text, kind: None, turn: None }).into_iter().collect(),
         // the notice that it has been idle only repeats the Stop that came just before it. Claude Code says
         // which kind a notice is; none is told from its wording.
         "Notification" => match text("message") {
@@ -566,7 +567,7 @@ mod tests {
     fn claude_code_stop_becomes_said() {
         let e = events(&json!({ "session_id": "s1", "cwd": "/x/shop", "hook_event_name": "Stop", "last_assistant_message": " Done. " })).remove(0);
         assert_eq!(e.agent.id, "s1");
-        assert_eq!(e.event, Event::Said { text: "Done.".into(), kind: None });
+        assert_eq!(e.event, Event::Said { text: "Done.".into(), kind: None, turn: None });
     }
     #[test]
     fn a_session_open_in_a_terminal_is_found_from_its_record_and_can_be_reached() {

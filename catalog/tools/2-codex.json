@@ -2,7 +2,7 @@
   "id": "codex",
   "name": "Codex",
   "maker": "OpenAI",
-  "first": "Open a new Codex session and trust airband’s hooks when it asks. A session opened before that shows here, and its answers come through after you start it again.",
+  "first": "Open a new Codex session and trust airband’s hooks when it asks. Until you do, Codex asks for permission at its own keyboard, and airband cannot ask you on your phone.",
   "launchers": [
     {
       "name": "codex",

@@ -126,7 +126,7 @@ fn current(sessions: &[Value]) -> Vec<&Value> {
 /// The sessions open now, as the server lists them. Nothing when OpenCode is not running.
 fn open() -> Option<Vec<super::Open>> {
     let list = get("/api/session?limit=40")?;
-    Some(current(list["data"].as_array()?).into_iter().filter_map(|s| Some(super::Open { agent: agent(s["id"].as_str()?, s["location"]["directory"].as_str()) })).collect())
+    Some(current(list["data"].as_array()?).into_iter().filter_map(|s| Some(super::Open { agent: agent(s["id"].as_str()?, s["location"]["directory"].as_str()), idle: s["time"]["idle"].as_u64().unwrap_or(0) >= s["time"]["busy"].as_u64().unwrap_or(0) })).collect())
 }
 
 /// The folders OpenCode has had sessions in, as its server lists them. Nothing when it is not running.
@@ -173,7 +173,7 @@ fn watch(tower: Tower) {
                     if idle > was_idle && idle >= busy {
                         // its turn is over: its newest answer is what it said, and with none it only stopped
                         let ended = match get(&format!("/api/session/{id}/message?limit=6")) {
-                            Some(messages) => Some(newest_answer(&messages).map(|text| Event::Said { text, kind: None }).unwrap_or(Event::Stopped { why: None })),
+                            Some(messages) => Some(newest_answer(&messages).map(|text| Event::Said { text, kind: None, turn: None }).unwrap_or(Event::Stopped { why: None })),
                             None => None,
                         };
                         if ended.is_some_and(|event| send(id, cwd, event)) {

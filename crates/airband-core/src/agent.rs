@@ -139,6 +139,10 @@ pub enum Event {
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         kind: Option<crate::radio::Kind>,
+        /// The tool's own id for the turn this ends, when it has one. A tool that can be heard from two ways
+        /// (its hooks and its server) says the same turn by both: the tower takes what a turn said once.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turn: Option<String>,
     },
     /// It needs him at the keyboard (a permission prompt, a login): something a spoken reply cannot do.
     Notice { text: String },
@@ -199,7 +203,7 @@ mod tests {
         let e: AgentEvent = serde_json::from_str(j).unwrap();
         assert_eq!(e.agent.deliver, Some(Deliver::Keys { tmux: "%3".into() }));
         assert_eq!(e.agent.meta["model"], "gpt-5");
-        assert_eq!(e.event, Event::Said { text: "Done.".into(), kind: Some(crate::radio::Kind::Report) });
+        assert_eq!(e.event, Event::Said { text: "Done.".into(), kind: Some(crate::radio::Kind::Report), turn: None });
 
         let newer = r#"{"schema":"airband.agent/1","agent":{"id":"a1","harness":"x","deliver":{"kind":"carrier-pigeon"}},"event":{"type":"molting"}}"#;
         let e: AgentEvent = serde_json::from_str(newer).unwrap();
@@ -208,6 +212,6 @@ mod tests {
         // a kind of message this tower has not heard of does not cost it the message
         let odd = r#"{"schema":"airband.agent/1","agent":{"id":"a1","harness":"x"},"event":{"type":"said","text":"Done.","kind":"celebration"}}"#;
         let e: AgentEvent = serde_json::from_str(odd).unwrap();
-        assert_eq!(e.event, Event::Said { text: "Done.".into(), kind: Some(crate::radio::Kind::Unknown) });
+        assert_eq!(e.event, Event::Said { text: "Done.".into(), kind: Some(crate::radio::Kind::Unknown), turn: None });
     }
 }
