@@ -2,9 +2,9 @@
 //! Notification, UserPromptSubmit, SessionEnd, and PostToolUse for the tools that touch pictures) with the
 //! hook's JSON on standard input.
 use super::env;
-use super::hooks::{On, on};
+use super::hooks::{On, on, text};
 use airband_core::agent::is_picture;
-use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk, SCHEMA};
+use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk};
 use serde_json::Value;
 
 /// The name he gave this session, if he gave one: with `/rename`, or as the name of its remote control
@@ -24,38 +24,45 @@ fn session_name(hook: &Value) -> Option<String> {
 /// megabytes, so the place reached and the name found are kept beside the tower's files and each call reads
 /// only what has been written since.
 fn remote_control_name(transcript: &str, session: &str) -> Option<String> {
-    use std::io::{BufRead, Seek, SeekFrom};
     if !session.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
         return None;
     }
     let note = crate::config::dir().join("claude-code").join(format!("{session}.json"));
-    let kept: Value = std::fs::read_to_string(&note).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
+    let kept: Value = airband_core::kept::load(&note).unwrap_or(Value::Null);
     let (mut at, mut name) = (kept["at"].as_u64().unwrap_or(0), kept["name"].as_str().map(String::from));
-    let mut file = std::fs::File::open(transcript).ok()?;
+    let file = std::fs::File::open(transcript).ok()?;
     let len = file.metadata().ok()?.len();
     if len < at {
         at = 0; // the transcript was replaced
     }
     if len > at {
-        file.seek(SeekFrom::Start(at)).ok()?;
-        let mut reader = std::io::BufReader::with_capacity(1 << 20, file);
-        let mut line = Vec::new();
-        loop {
-            line.clear();
-            let n = reader.read_until(b'\n', &mut line).unwrap_or(0);
-            // a line still being written is left for next time
-            if n == 0 || line.last() != Some(&b'\n') {
-                break;
-            }
-            at += n as u64;
-            if let Some(found) = remote_control_line(&line) {
+        at = whole_lines(file, at, |line| {
+            if let Some(found) = remote_control_line(line) {
                 name = Some(found);
             }
-        }
-        let _ = std::fs::create_dir_all(note.parent()?);
-        let _ = std::fs::write(&note, serde_json::json!({ "at": at, "name": name }).to_string());
+        })?;
+        let _ = airband_core::kept::save(&note, &serde_json::json!({ "at": at, "name": name }));
     }
     name
+}
+
+/// Read a transcript's lines from a place in it onward, handing each whole line to `each`, and say how far
+/// that got. A line still being written is left for next time, and so is whatever follows a part that could
+/// not be read. Nothing when the place could not be gone to.
+fn whole_lines(mut file: std::fs::File, from: u64, mut each: impl FnMut(&[u8])) -> Option<u64> {
+    use std::io::{BufRead, Seek, SeekFrom};
+    file.seek(SeekFrom::Start(from)).ok()?;
+    let mut lines = std::io::BufReader::with_capacity(64 * 1024, file);
+    let (mut at, mut line) = (from, Vec::new());
+    loop {
+        line.clear();
+        let n = lines.read_until(b'\n', &mut line).unwrap_or(0);
+        if n == 0 || line.last() != Some(&b'\n') {
+            return Some(at);
+        }
+        at += n as u64;
+        each(&line);
+    }
 }
 
 /// The name in one transcript line, if that line is him running `/remote-control <name>`. A line that only
@@ -76,11 +83,10 @@ fn remote_control_line(line: &[u8]) -> Option<String> {
 
 /// Who a notification is about: the session, where it works, how to reach it, and the name he gave it.
 fn agent_of(hook: &Value) -> Option<Agent> {
-    let text = |k: &str| hook[k].as_str().map(str::trim).filter(|t| !t.is_empty()).map(String::from);
     Some(Agent {
-        id: text("session_id")?,
+        id: text(hook, "session_id")?,
         harness: "claude-code".into(),
-        cwd: text("cwd"),
+        cwd: text(hook, "cwd"),
         name: env("AIRBAND_NAME"),
         // one the tower holds keeps the name it has: a session carried on in a new process comes with a name of
         // the harness's own making, which is not one he gave it
@@ -89,7 +95,7 @@ fn agent_of(hook: &Value) -> Option<Agent> {
         // one the tower started and holds is reached through the input it holds, and no other way
         deliver: if env("AIRBAND_HELD").is_some() { Some(Deliver::Held) } else { env("CLAUDE_CODE_MESSAGING_SOCKET").map(|s| Deliver::Socket { path: s.trim_start_matches("uds:").to_string(), token: env("CLAUDE_CODE_MESSAGING_TOKEN") }) },
         // where its transcript is, so the tower can ask what it is doing without a hook on every step
-        meta: text("transcript_path").map(|t| serde_json::Map::from_iter([("transcript".to_string(), Value::String(t))])).unwrap_or_default(),
+        meta: text(hook, "transcript_path").map(|t| serde_json::Map::from_iter([("transcript".to_string(), Value::String(t))])).unwrap_or_default(),
     })
 }
 
@@ -121,11 +127,11 @@ fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> bool) -> Opt
     let mut open = Vec::new();
     for path in files.iter().filter(|p| p.extension().is_some_and(|e| e == "json")) {
         let Some(v) = read(path) else { continue };
-        let text = |k: &str| v[k].as_str().map(str::trim).filter(|t| !t.is_empty()).map(String::from);
+        let field = |k: &str| text(&v, k);
         if v["kind"] != "interactive" || v["entrypoint"] != "cli" {
             continue;
         }
-        let (Some(pid), Some(id), Some(socket), Some(started)) = (v["pid"].as_u64().map(|p| p as u32), text("sessionId"), text("messagingSocketPath"), text("procStart")) else { continue };
+        let (Some(pid), Some(id), Some(socket), Some(started)) = (v["pid"].as_u64().map(|p| p as u32), field("sessionId"), field("messagingSocketPath"), field("procStart")) else { continue };
         if !running(pid, &started) {
             continue;
         }
@@ -136,10 +142,10 @@ fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> bool) -> Opt
         open.push(super::Open {
             agent: Agent {
                 harness: "claude-code".into(),
-                cwd: text("cwd"),
+                cwd: field("cwd"),
                 name: None,
                 // a name he gave it; one Claude Code made up is not used
-                title: text("name").filter(|_| v["nameSource"] == "user"),
+                title: field("name").filter(|_| v["nameSource"] == "user"),
                 pid: Some(pid),
                 deliver: Some(Deliver::Socket { path: socket, token }),
                 meta: transcript.map(|t| serde_json::Map::from_iter([("transcript".to_string(), Value::String(t))])).unwrap_or_default(),
@@ -202,34 +208,22 @@ fn tail_of(agent: &Agent, most: u64) -> Option<String> {
 /// memory of one line however much there is to go through. Whole lines only: one still being written is left
 /// for the next call.
 pub fn told(agent: &Agent, from: u64) -> (Vec<super::Told>, u64) {
-    use std::io::{BufRead, Seek, SeekFrom};
     let read = || {
-        let mut file = std::fs::File::open(agent.meta.get("transcript")?.as_str()?).ok()?;
+        let file = std::fs::File::open(agent.meta.get("transcript")?.as_str()?).ok()?;
         let size = file.metadata().ok()?.len();
         // the transcript was replaced by a shorter one: start over; what was already taken is known by its id
         let from = if from > size { 0 } else { from };
         let fresh = from == 0 && size > 24 * 1024 * 1024;
-        let mut at = if fresh { size - 24 * 1024 * 1024 } else { from };
-        if at >= size {
-            return Some((Vec::new(), size));
-        }
-        file.seek(SeekFrom::Start(at)).ok()?;
-        let mut lines = std::io::BufReader::with_capacity(64 * 1024, file);
-        let (mut told, mut line) = (Vec::new(), Vec::new());
+        let start = if fresh { size - 24 * 1024 * 1024 } else { from };
+        let mut told = Vec::new();
         // started in the middle of the file: what is left of the line it landed in is not a line
         let mut skip = fresh;
-        loop {
-            line.clear();
-            let n = lines.read_until(b'\n', &mut line).ok()?;
-            if n == 0 || line.last() != Some(&b'\n') {
-                break;
-            }
-            at += n as u64;
+        let at = whole_lines(file, start, |line| {
             let wanted = |mark: &[u8]| line.windows(mark.len()).any(|w| w == mark);
             if !std::mem::take(&mut skip) && (wanted(b"\"human\"") || wanted(b"\"peer\"") || wanted(b"\"sdk\"")) {
-                told.extend(told_in(&String::from_utf8_lossy(&line)));
+                told.extend(told_in(&String::from_utf8_lossy(line)));
             }
-        }
+        })?;
         Some((told, at))
     };
     read().unwrap_or((Vec::new(), from))
@@ -415,9 +409,9 @@ pub fn permission(hook: &Value) -> Option<PermissionAsk> {
     let tool = hook["tool_name"].as_str().unwrap_or("a tool");
     let input = &hook["tool_input"];
     // whole, never cut: what he reads is what will run
-    let field = |k: &str| input[k].as_str().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    let field = |k: &str| text(input, k);
     let what = match tool {
-        "Bash" => field("command").map(|c| format!("run `{c}`")),
+        "Bash" => super::hooks::command(input).map(|c| format!("run `{c}`")),
         "Write" => field("file_path").map(|f| format!("write the file {f}")),
         "Edit" | "MultiEdit" | "NotebookEdit" => field("file_path").or(field("notebook_path")).map(|f| format!("edit the file {f}")),
         "Read" => field("file_path").map(|f| format!("read the file {f}")),
@@ -470,32 +464,26 @@ pub fn events(hook: &Value) -> Vec<AgentEvent> {
     if env("CLAUDE_CODE_ENTRYPOINT").as_deref() == Some("sdk-cli") && env("AIRBAND_INCLUDE_HEADLESS").is_none() && env("AIRBAND_HELD").is_none() {
         return Vec::new();
     }
-    let text = |k: &str| hook[k].as_str().map(str::trim).filter(|t| !t.is_empty()).map(String::from);
-    let events = match hook["hook_event_name"].as_str().unwrap_or("") {
-        "SessionStart" => vec![Event::Checkin],
-        "UserPromptSubmit" => vec![Event::Working],
-        "Stop" => text("last_assistant_message").map(|text| Event::Said { text, kind: None, turn: None }).into_iter().collect(),
+    let events = super::hooks::session_events(hook).unwrap_or_else(|| match hook["hook_event_name"].as_str() {
         // the notice that it has been idle only repeats the Stop that came just before it. Claude Code says
         // which kind a notice is; none is told from its wording.
-        "Notification" => match text("message") {
+        Some("Notification") => match text(hook, "message") {
             Some(message) if hook["notification_type"].as_str() != Some("idle_prompt") => vec![Event::Notice { text: message }],
             _ => Vec::new(),
         },
         // it is handing part of the work to a subagent
-        "PreToolUse" if is_subagent(hook) => vec![Event::Subagent { done: false, what: hook["tool_input"]["description"].as_str().unwrap_or("").to_string() }],
-        "PostToolUse" if is_subagent(hook) => vec![Event::Subagent { done: true, what: hook["tool_input"]["description"].as_str().unwrap_or("").to_string() }],
+        Some("PreToolUse") if is_subagent(hook) => vec![Event::Subagent { done: false, what: hook["tool_input"]["description"].as_str().unwrap_or("").to_string() }],
+        Some("PostToolUse") if is_subagent(hook) => vec![Event::Subagent { done: true, what: hook["tool_input"]["description"].as_str().unwrap_or("").to_string() }],
         // it read a picture, took a screenshot, or sent him a file
-        "PostToolUse" => {
+        Some("PostToolUse") => {
             let mut paths = Vec::new();
             pictures_in(&hook["tool_input"], hook["cwd"].as_str(), &mut paths);
             let shown = hook["tool_name"].as_str() == Some("SendUserFile");
             paths.into_iter().map(|path| Event::Picture { path, shown }).collect()
         }
-        "SessionEnd" => vec![Event::Signoff],
         _ => Vec::new(),
-    };
-    let Some(agent) = agent_of(hook) else { return Vec::new() };
-    events.into_iter().map(|event| AgentEvent { schema: SCHEMA.into(), agent: agent.clone(), event }).collect()
+    });
+    super::hooks::from_agent(agent_of(hook), events)
 }
 
 // ---- setting Claude Code up to report: its hooks, in its own settings file ----

@@ -19,7 +19,7 @@
 //! One thing he has to do himself, once: Codex runs a hook only after he has looked at it and trusted it
 //! (`/hooks` inside Codex), and again whenever it changes. `airband install` writes the hooks and says so.
 use super::env;
-use super::hooks::{On, on};
+use super::hooks::{On, on, text};
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk, SCHEMA};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -27,10 +27,9 @@ use std::path::PathBuf;
 const NAME: &str = "codex";
 
 fn agent_of(hook: &Value) -> Option<Agent> {
-    let text = |k: &str| hook[k].as_str().map(str::trim).filter(|t| !t.is_empty()).map(String::from);
-    let id = text("session_id")?;
+    let id = text(hook, "session_id")?;
     let mut meta = serde_json::Map::new();
-    if let Some(model) = text("model") {
+    if let Some(model) = text(hook, "model") {
         meta.insert("model".into(), Value::String(model));
     }
     Some(Agent {
@@ -39,7 +38,7 @@ fn agent_of(hook: &Value) -> Option<Agent> {
         deliver: if env("AIRBAND_HELD").is_some() { Some(Deliver::Held) } else { Some(Deliver::Harness { name: NAME.into(), session: id.clone() }) },
         id,
         harness: NAME.into(),
-        cwd: text("cwd"),
+        cwd: text(hook, "cwd"),
         name: env("AIRBAND_NAME"),
         title: None,
         pid: None,
@@ -48,18 +47,12 @@ fn agent_of(hook: &Value) -> Option<Agent> {
 }
 
 pub fn events(hook: &Value) -> Vec<AgentEvent> {
-    let text = |k: &str| hook[k].as_str().map(str::trim).filter(|t| !t.is_empty()).map(String::from);
-    let events = match hook["hook_event_name"].as_str().unwrap_or("") {
-        "SessionStart" => vec![Event::Checkin],
-        "UserPromptSubmit" => vec![Event::Working],
-        "Stop" => text("last_assistant_message").map(|said| Event::Said { text: said, kind: None, turn: text("turn_id") }).into_iter().collect(),
-        "SubagentStart" => vec![Event::Subagent { done: false, what: text("agent_type").unwrap_or_default() }],
-        "SubagentStop" => vec![Event::Subagent { done: true, what: text("agent_type").unwrap_or_default() }],
-        "SessionEnd" => vec![Event::Signoff],
+    let events = super::hooks::session_events(hook).unwrap_or_else(|| match hook["hook_event_name"].as_str() {
+        Some("SubagentStart") => vec![Event::Subagent { done: false, what: text(hook, "agent_type").unwrap_or_default() }],
+        Some("SubagentStop") => vec![Event::Subagent { done: true, what: text(hook, "agent_type").unwrap_or_default() }],
         _ => Vec::new(),
-    };
-    let Some(agent) = agent_of(hook) else { return Vec::new() };
-    events.into_iter().map(|event| AgentEvent { schema: SCHEMA.into(), agent: agent.clone(), event }).collect()
+    });
+    super::hooks::from_agent(agent_of(hook), events)
 }
 
 /// What it runs on, which every event of its says. What it is doing is not known without reading its record.
@@ -74,11 +67,10 @@ pub fn permission(hook: &Value) -> Option<PermissionAsk> {
     }
     let tool = hook["tool_name"].as_str().unwrap_or("a tool");
     let input = &hook["tool_input"];
-    let field = |k: &str| input[k].as_str().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
     let what = match tool {
-        "Bash" | "shell" | "exec_command" => field("command").or_else(|| input["command"].as_array().map(|parts| parts.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(" "))).map(|c| format!("run `{c}`")),
-        "apply_patch" => Some(field("description").unwrap_or_else(|| "change files".into())),
-        _ => field("description"),
+        "Bash" | "shell" | "exec_command" => super::hooks::command(input).map(|c| format!("run `{c}`")),
+        "apply_patch" => Some(text(input, "description").unwrap_or_else(|| "change files".into())),
+        _ => text(input, "description"),
     }
     .unwrap_or_else(|| format!("use {tool}"));
     // one too long to put in front of him whole is not asked on the phone: Codex asks at its keyboard
@@ -161,17 +153,16 @@ fn open() -> Option<Vec<super::Open>> {
 /// parent's business, and one that keeps no record is a one-off run: neither is his to talk to. The name
 /// a thread has is one Codex made up from its first words, so it is not taken for a name he gave.
 fn open_of(thread: &Value) -> Option<super::Open> {
-    let text = |k: &str| thread[k].as_str().map(str::trim).filter(|t| !t.is_empty()).map(String::from);
     if !thread["parentThreadId"].is_null() || thread["ephemeral"] == true {
         return None;
     }
-    let id = text("id")?;
+    let id = text(thread, "id")?;
     let mut meta = serde_json::Map::new();
-    if let Some(model) = text("model") {
+    if let Some(model) = text(thread, "model") {
         meta.insert("model".into(), Value::String(model));
     }
     Some(super::Open {
-        agent: Agent { deliver: Some(Deliver::Harness { name: NAME.into(), session: id.clone() }), id, harness: NAME.into(), cwd: text("cwd"), name: None, title: None, pid: None, meta },
+        agent: Agent { deliver: Some(Deliver::Harness { name: NAME.into(), session: id.clone() }), id, harness: NAME.into(), cwd: text(thread, "cwd"), name: None, title: None, pid: None, meta },
         idle: thread["status"]["type"] == "idle",
     })
 }

@@ -2,9 +2,39 @@
 //! in which each event has a list of commands, each run with the event as JSON on its standard input, and for
 //! a permission request the decision read as JSON from its standard output. An adapter for such a tool says
 //! where the file is and which events it wants ([`File`]); putting them there and taking them out is here.
-use airband_core::agent::{Agent, PermissionAsk, SCHEMA};
+use airband_core::agent::{Agent, AgentEvent, Event, PermissionAsk, SCHEMA};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
+
+/// A field of an event as text: trimmed, and nothing when it is absent, not text, or empty.
+pub fn text(v: &Value, key: &str) -> Option<String> {
+    v[key].as_str().map(str::trim).filter(|t| !t.is_empty()).map(String::from)
+}
+
+/// What the events every tool of this kind sends alike come to: a session starting and ending, his prompt
+/// going in, a turn ending with what was said. Nothing for an event that is the tool's own to read. A tool
+/// that names its turns says which turn ended (`turn_id`).
+pub fn session_events(hook: &Value) -> Option<Vec<Event>> {
+    Some(match hook["hook_event_name"].as_str()? {
+        "SessionStart" => vec![Event::Checkin],
+        "UserPromptSubmit" => vec![Event::Working],
+        "Stop" => text(hook, "last_assistant_message").map(|said| Event::Said { text: said, kind: None, turn: text(hook, "turn_id") }).into_iter().collect(),
+        "SessionEnd" => vec![Event::Signoff],
+        _ => return None,
+    })
+}
+
+/// Events as the tower takes them, each from this agent. None of them when the hook did not say who it is.
+pub fn from_agent(agent: Option<Agent>, events: Vec<Event>) -> Vec<AgentEvent> {
+    let Some(agent) = agent else { return Vec::new() };
+    events.into_iter().map(|event| AgentEvent { schema: SCHEMA.into(), agent: agent.clone(), event }).collect()
+}
+
+/// The command a tool wants to run, as he is shown it: whole, whether the tool gives it as one line or as its
+/// words.
+pub fn command(input: &Value) -> Option<String> {
+    text(input, "command").or_else(|| input["command"].as_array().map(|parts| parts.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(" ")).filter(|c| !c.is_empty()))
+}
 
 /// One event a tool is asked to run `airband hook <name>` on.
 pub struct On {

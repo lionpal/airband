@@ -261,11 +261,7 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                 #[serde(default)]
                 new: Option<New>,
             }
-            let answer = ask_model(&app.cfg, prompt.clone()).await;
-            if std::env::var_os("AIRBAND_TRACE").is_some() {
-                log(format!("routing asked:\n{prompt}\nand was told: {answer:?}"));
-            }
-            let judged = answer.ok().and_then(|out| serde_json::from_str::<Out>(judge::json_in(&out)?).ok());
+            let judged = judge::ask_json::<Out>(&app.cfg, "routing", prompt, None).await.ok();
             let Some(mut judged) = judged else {
                 // No model answered. Nothing is read into his words: with one agent it is for that one, and
                 // with several he is asked.
@@ -279,7 +275,7 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                 // The model answers with the number a thing is listed under, and that is the thing. Something
                 // he named that is on no list comes as his own word, kept as he said it so that starting it is
                 // refused in words (`launch`): nothing is started on a guess at what he meant.
-                let at = |n: Option<usize>, names: &[String]| n.and_then(|n| n.checked_sub(1)).and_then(|i| names.get(i)).cloned();
+                let at = |n: Option<usize>, names: &[String]| judge::listed(n, names).cloned();
                 let own = |said: Option<String>| said.map(|x| x.trim().to_string()).filter(|x| !x.is_empty());
                 return Routed::New(Idea {
                     tool: at(new.tool, &tools).or(own(new.tool_said)),
@@ -296,7 +292,7 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                 return Routed::Ask(Vec::new());
             }
             // who the numbers are
-            let meant: Vec<&Listed> = judged.to.iter().filter_map(|n| n.checked_sub(1).and_then(|i| listed.get(i))).collect();
+            let meant: Vec<&Listed> = judged.to.iter().filter_map(|n| judge::listed(Some(*n), &listed)).collect();
             let here: Vec<Session> = meant.iter().filter_map(|l| if let Listed::Here(s) = l { Some((*s).clone()) } else { None }).collect();
             // one of the agents on another computer, and none here: the radio takes it there
             if let Some(o) = meant.iter().find_map(|l| if let Listed::Elsewhere(o) = l { Some(*o) } else { None }).filter(|_| judged.sure && here.is_empty()) {
@@ -324,6 +320,12 @@ pub(super) fn ago(ms: u64) -> String {
         s if s < 5400 => format!("{} minutes", s / 60),
         s => format!("{} hours", s / 3600),
     }
+}
+
+/// A model's answer that picks one project from a numbered list, or none.
+#[derive(Deserialize)]
+struct Picked {
+    project: Option<usize>,
 }
 
 /// Which project a new agent's task belongs in, when he gave the idea and no project. With one project there is
@@ -362,13 +364,8 @@ async fn place_idea(app: &Arc<App>, idea: &str, projects: &[String]) -> Result<S
         name = app.cfg.name,
         lines = lines.join("\n")
     );
-    #[derive(Deserialize)]
-    struct Out {
-        project: Option<usize>,
-    }
-    let raw = ask_model(&app.cfg, prompt).await;
-    let judged = raw.as_ref().ok().and_then(|out| serde_json::from_str::<Out>(judge::json_in(out)?).ok());
-    match judged.and_then(|o| o.project?.checked_sub(1)).and_then(|i| projects.get(i)).cloned() {
+    let picked = judge::ask_json::<Picked>(&app.cfg, "which project an idea is for", prompt, None).await.ok();
+    match picked.and_then(|p| judge::listed(p.project, projects).cloned()) {
         Some(project) => Ok(project),
         None => Err(say(format!("Which project is that for? {}.", projects.join(", ")), true)),
     }
@@ -389,13 +386,8 @@ async fn named_project(app: &Arc<App>, idea: &str, said: &str, projects: &[Strin
         name = app.cfg.name,
         list = projects.iter().enumerate().map(|(i, p)| format!("{}. {p}", i + 1)).collect::<Vec<_>>().join("\n"),
     );
-    #[derive(Deserialize)]
-    struct Out {
-        project: Option<usize>,
-    }
-    let out = ask_model(&app.cfg, prompt).await.ok()?;
-    let judged: Out = serde_json::from_str(judge::json_in(&out)?).ok()?;
-    judged.project?.checked_sub(1).and_then(|i| projects.get(i)).cloned()
+    let picked: Picked = judge::ask_json(&app.cfg, "which project he named", prompt, None).await.ok()?;
+    judge::listed(picked.project, projects).cloned()
 }
 
 /// He was asked who something he said was for, and has said something more. The agents his words name, or
@@ -424,9 +416,8 @@ async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope: Option<&st
         #[serde(default)]
         all: bool,
     }
-    let out = ask_model(&app.cfg, prompt).await.ok()?;
-    let judged: Out = serde_json::from_str(judge::json_in(&out)?).ok()?;
-    let meant: Vec<Session> = if judged.all { all } else { judged.to.iter().filter_map(|n| n.checked_sub(1).and_then(|i| all.get(i)).cloned()).collect() };
+    let judged: Out = judge::ask_json(&app.cfg, "who he meant", prompt, None).await.ok()?;
+    let meant: Vec<Session> = if judged.all { all } else { judged.to.iter().filter_map(|n| judge::listed(Some(*n), &all).cloned()).collect() };
     (!meant.is_empty()).then_some(meant)
 }
 

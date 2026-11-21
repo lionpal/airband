@@ -535,14 +535,21 @@ impl Radio {
         Ok(Arc::new(Radio { jobs: Mutex::new(tx), stop, calling, link, store, host, wake, senses, roster: std::sync::atomic::AtomicU64::new(0), reading: std::sync::atomic::AtomicU64::new(0) }))
     }
 
-    /// A request whose answer is nothing or a reason in words.
-    fn ask(&self, path: &str, body: Value) -> Result<(), RadioError> {
-        let (status, v) = self.link.request("POST", path, Some(body))?;
+    /// Ask this computer something and read its answer. A reason it gives in words (`error`) is told to him
+    /// as it is; anything else that is not the answer asked for is a refusal. Every request but his own words
+    /// goes through here.
+    fn asked<T: serde::de::DeserializeOwned>(&self, method: &str, path: &str, body: Option<Value>) -> Result<T, RadioError> {
+        let (status, v) = self.link.request(method, path, body)?;
         match (status, v["error"].as_str()) {
             (200, Some(why)) => Err(RadioError::Told { reason: why.into() }),
-            (200, None) => Ok(()),
+            (200, None) => serde_json::from_value(v).map_err(|_| RadioError::Refused),
             _ => Err(RadioError::Refused),
         }
+    }
+
+    /// A request whose answer is nothing or a reason in words.
+    fn ask(&self, path: &str, body: Value) -> Result<(), RadioError> {
+        self.asked::<serde::de::IgnoredAny>("POST", path, Some(body)).map(|_| ())
     }
 
     /// Is this computer being reached straight, on its own network, and not through the relay?
@@ -672,8 +679,7 @@ impl Radio {
         // with an address of the tower's still to try, this request does not wait for news: it only finds out
         // whether the tower is there, so the straight path is in use (and shown) within a moment
         let wait = if self.link.untried() { 0 } else { wait_seconds.min(25) };
-        let (status, v) = self.link.request("GET", &format!("/feed?scope=all&since={since}&roster={roster}&wait={wait}"), None)?;
-        let feed: Feed = (status == 200).then(|| serde_json::from_value(v).ok()).flatten().ok_or(RadioError::Refused)?;
+        let feed: Feed = self.asked("GET", &format!("/feed?scope=all&since={since}&roster={roster}&wait={wait}"), None)?;
         spoken_alike(&feed)?;
         self.roster.store(feed.roster_rev, Ordering::SeqCst);
         self.link.set_direct(feed.direct.clone());
@@ -726,8 +732,7 @@ impl Radio {
     /// the main thread.
     pub fn feed(&self, scope: String, after: u64, wait_seconds: u32) -> Result<ChatFeed, RadioError> {
         let scope: String = scope.bytes().map(|b| if b.is_ascii_alphanumeric() || b == b':' { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
-        let (status, v) = self.link.request("GET", &format!("/feed?scope={scope}&after={after}&wait={}", wait_seconds.min(25)), None)?;
-        let feed: Feed = (status == 200).then(|| serde_json::from_value(v).ok()).flatten().ok_or(RadioError::Refused)?;
+        let feed: Feed = self.asked("GET", &format!("/feed?scope={scope}&after={after}&wait={}", wait_seconds.min(25)), None)?;
         spoken_alike(&feed)?;
         self.link.set_direct(feed.direct.clone());
         Ok(chat_feed(feed))
@@ -742,40 +747,35 @@ impl Radio {
 
     /// The rest of a message: the fuller spoken version, or with `full` exactly what the agent wrote.
     pub fn more(&self, id: String, full: bool) -> Result<String, RadioError> {
-        let (status, v) = self.link.request("GET", &format!("/message/{id}?form={}", if full { "full" } else { "detail" }), None)?;
-        (status == 200).then(|| v["text"].as_str().map(String::from)).flatten().ok_or(RadioError::Refused)
+        #[derive(serde::Deserialize)]
+        struct Whole {
+            text: String,
+        }
+        Ok(self.asked::<Whole>("GET", &format!("/message/{id}?form={}", if full { "full" } else { "detail" }), None)?.text)
     }
 
     /// The accounts the agents on this computer can run under, and how much of each is used. `fresh` asks the
     /// tower to check again now. Blocks: call it off the main thread.
     pub fn accounts(&self, station: String, fresh: bool) -> Result<StationAccounts, RadioError> {
-        let (status, v) = self.link.request("GET", if fresh { "/accounts?fresh=1" } else { "/accounts" }, None)?;
-        match status {
-            200 => serde_json::from_value(v).map(|a| StationAccounts::from(&station, a)).map_err(|_| RadioError::Refused),
-            _ => Err(RadioError::Refused),
-        }
+        Ok(StationAccounts::from(&station, self.asked("GET", if fresh { "/accounts?fresh=1" } else { "/accounts" }, None)?))
     }
 
     /// Move this computer's sessions of one harness to another account. Returns how things stand afterwards.
     /// Blocks: call it off the main thread.
     pub fn use_account(&self, station: String, harness: String, id: String) -> Result<StationAccounts, RadioError> {
-        let (status, v) = self.link.request("POST", "/accounts/use", Some(serde_json::json!({ "harness": harness, "id": id })))?;
-        match (status, v["error"].as_str()) {
-            (200, Some(why)) => Err(RadioError::Told { reason: why.into() }),
-            (200, None) => serde_json::from_value(v).map(|a| StationAccounts::from(&station, a)).map_err(|_| RadioError::Refused),
-            _ => Err(RadioError::Refused),
-        }
+        Ok(StationAccounts::from(&station, self.asked("POST", "/accounts/use", Some(serde_json::json!({ "harness": harness, "id": id })))?))
     }
 
     /// Put an agent in another team: one that exists, or a new one of that name. Returns what the agent is
     /// called now and the team it is in. Blocks: call it off the main thread.
     pub fn move_agent(&self, agent: String, team: String) -> Result<Vec<String>, RadioError> {
-        let (status, v) = self.link.request("POST", "/team", Some(serde_json::json!({ "agent": agent, "team": team })))?;
-        match (status, v["error"].as_str(), v["callsign"].as_str(), v["team"].as_str()) {
-            (200, Some(why), _, _) => Err(RadioError::Told { reason: why.into() }),
-            (200, None, Some(callsign), Some(team)) => Ok(vec![callsign.to_string(), team.to_string()]),
-            _ => Err(RadioError::Refused),
+        #[derive(serde::Deserialize)]
+        struct Moved {
+            callsign: String,
+            team: String,
         }
+        let moved: Moved = self.asked("POST", "/team", Some(serde_json::json!({ "agent": agent, "team": team })))?;
+        Ok(vec![moved.callsign, moved.team])
     }
 
     /// Stop what an agent the tower runs is doing, now. Blocks: call it off the main thread.
@@ -803,37 +803,25 @@ impl Radio {
     /// What this computer can read with, and what it reads with now, by its own account. Nothing when it
     /// cannot be reached, or is a version from before it could say. Blocks.
     pub(crate) fn reads_offered(&self) -> Option<airband_core::radio::ReadsOffered> {
-        match self.link.request("GET", "/reads", None) {
-            Ok((200, v)) => serde_json::from_value(v).ok(),
-            _ => None,
-        }
+        self.asked("GET", "/reads", None).ok()
     }
 
     /// The folders inside one of his on this computer. Blocks.
     pub(crate) fn folders(&self, under: String) -> Result<airband_core::radio::Folders, RadioError> {
-        let (status, v) = self.link.request("POST", "/folders", Some(serde_json::json!({ "under": under })))?;
-        match (status, v["error"].as_str()) {
-            (200, Some(why)) => Err(RadioError::Told { reason: why.into() }),
-            (200, None) => serde_json::from_value(v).map_err(|_| RadioError::Refused),
-            _ => Err(RadioError::Refused),
-        }
+        self.asked("POST", "/folders", Some(serde_json::json!({ "under": under })))
     }
     /// The folders the coding tools on this computer have had sessions in, newest first. Blocks.
     pub(crate) fn recent(&self) -> Result<airband_core::radio::Recent, RadioError> {
-        match self.link.request("GET", "/recent", None)? {
-            (200, v) => serde_json::from_value(v).map_err(|_| RadioError::Refused),
-            _ => Err(RadioError::Refused),
-        }
+        self.asked("GET", "/recent", None)
     }
     /// Make a new team on this computer, or start another agent in one that is there. Blocks.
     /// Answers with the team's name as the computer writes it.
     pub(crate) fn new_project(&self, name: String, folder: String, make: bool, tool: Option<String>) -> Result<String, RadioError> {
-        let (status, v) = self.link.request("POST", "/project", Some(serde_json::to_value(airband_core::radio::NewProject { name, folder, make, tool }).unwrap()))?;
-        match (status, v["error"].as_str(), v["team"].as_str()) {
-            (200, Some(why), _) => Err(RadioError::Told { reason: why.into() }),
-            (200, None, Some(team)) => Ok(team.to_string()),
-            _ => Err(RadioError::Refused),
+        #[derive(serde::Deserialize)]
+        struct Made {
+            team: String,
         }
+        Ok(self.asked::<Made>("POST", "/project", Some(serde_json::to_value(airband_core::radio::NewProject { name, folder, make, tool }).unwrap()))?.team)
     }
 
     pub fn unsend(&self, message: String) -> Result<(), RadioError> {
@@ -843,12 +831,7 @@ impl Radio {
     /// Have the tower take over an agent he started in a terminal: that session ends there and carries on in a
     /// process the tower holds. Blocks: call it off the main thread.
     pub fn take_over(&self, agent: String) -> Result<(), RadioError> {
-        let (status, v) = self.link.request("POST", "/takeover", Some(serde_json::json!({ "agent": agent })))?;
-        match (status, v["error"].as_str()) {
-            (200, Some(why)) => Err(RadioError::Told { reason: why.into() }),
-            (200, None) => Ok(()),
-            _ => Err(RadioError::Refused),
-        }
+        self.ask("/takeover", serde_json::json!({ "agent": agent }))
     }
 
     /// A picture, as a JPEG file on the device: fetched from the tower the first time and kept, so it is there
@@ -863,8 +846,7 @@ impl Radio {
         }
         let (mut bytes, mut from) = (Vec::new(), 0u32);
         loop {
-            let (status, v) = self.link.request("GET", &format!("/picture/{id}?from={from}"), None)?;
-            let part: airband_core::radio::PicturePart = (status == 200).then(|| serde_json::from_value(v).ok()).flatten().ok_or(RadioError::Refused)?;
+            let part: airband_core::radio::PicturePart = self.asked("GET", &format!("/picture/{id}?from={from}"), None)?;
             bytes.extend(airband_core::audio::base64_decode(&part.data).ok_or(RadioError::Refused)?);
             // a part that moves nothing forward would loop for ever
             if part.done || part.next <= from {
@@ -872,8 +854,7 @@ impl Radio {
             }
             from = part.next;
         }
-        let tmp = file.with_extension(format!("{}.tmp", random_hex(4)));
-        std::fs::create_dir_all(file.parent().unwrap()).and_then(|_| std::fs::write(&tmp, &bytes)).and_then(|_| std::fs::rename(&tmp, &file)).map_err(|_| RadioError::Refused)?;
+        airband_core::kept::write_atomic(&file, &bytes).map_err(|_| RadioError::Refused)?;
         Ok(file.display().to_string())
     }
 

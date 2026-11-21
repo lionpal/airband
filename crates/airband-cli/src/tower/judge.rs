@@ -104,6 +104,22 @@ pub(super) fn failed() -> Option<Trouble> {
     *FAILED.lock().unwrap()
 }
 
+/// Ask the model and read its answer as JSON of one shape. `what` names the question for the trace: with
+/// `AIRBAND_TRACE` set, what was asked and what came back are logged. Err says why there is no answer.
+pub(super) async fn ask_json<T: serde::de::DeserializeOwned>(cfg: &Config, what: &str, prompt: String, shape: Option<Value>) -> Result<T, String> {
+    let traced = std::env::var_os("AIRBAND_TRACE").is_some().then(|| prompt.clone());
+    let answer = ask_shaped(cfg, prompt, shape).await;
+    if let Some(prompt) = traced {
+        log(format!("{what} asked:\n{prompt}\nand was told: {answer:?}"));
+    }
+    serde_json::from_str(json_in(&answer?).ok_or("no JSON in the answer")?).map_err(|e| e.to_string())
+}
+
+/// What a list holds under the number a model answered with. The lists it is shown are numbered from one.
+pub(super) fn listed<T>(n: Option<usize>, list: &[T]) -> Option<&T> {
+    list.get(n?.checked_sub(1)?)
+}
+
 /// Ask the model that reads for the tower. When it does not answer, that is the answer: he is told why on his
 /// phone and gets what the agent wrote, and no other model is asked.
 pub(super) async fn ask_model(cfg: &Config, prompt: String) -> Result<String, String> {
@@ -481,9 +497,7 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
         "required": ["say", "kind", "options", "recommended", "read", "background", "own_session", "as_written"],
         "additionalProperties": false
     });
-    let parsed = ask_shaped(cfg, prompt, Some(shape)).await.and_then(|out| {
-        serde_json::from_str::<Out>(json_in(&out).ok_or("no JSON in the answer")?).map_err(|e| e.to_string())
-    });
+    let parsed = ask_json::<Out>(cfg, "reading a message", prompt, Some(shape)).await;
     match parsed {
         Ok(o) if !o.say.trim().is_empty() => {
             let judged = match o.kind.as_str() {
@@ -549,8 +563,7 @@ pub(super) async fn progress(cfg: &Config, steps: &[String]) -> Option<String> {
         "required": ["tell", "say"],
         "additionalProperties": false
     });
-    let out = ask_shaped(cfg, prompt, Some(shape)).await.ok()?;
-    let out: Out = serde_json::from_str(json_in(&out)?).ok()?;
+    let out: Out = ask_json(cfg, "what to tell him of its progress", prompt, Some(shape)).await.ok()?;
     let said = out.say.trim();
     (out.tell && !said.is_empty() && said.chars().count() < 400).then(|| said.to_string())
 }

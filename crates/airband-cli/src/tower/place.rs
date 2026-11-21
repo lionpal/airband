@@ -80,16 +80,12 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
         #[serde(default)]
         sure: bool,
     }
-    let answer = ask_model(&app.cfg, prompt.clone()).await;
-    if std::env::var("AIRBAND_TRACE").is_ok() {
-        log(format!("placing asked:\n{prompt}\nand was told: {answer:?}"));
-    }
-    let Some(out) = answer.ok().and_then(|out| serde_json::from_str::<Out>(judge::json_in(&out)?).ok()) else { return };
+    let Ok(out) = judge::ask_json::<Out>(&app.cfg, "placing", prompt, None).await else { return };
     if !out.sure {
         return;
     }
     // one of his teams by the number it was listed under, or a new one by the name the model gave it
-    let Some(to) = out.team.and_then(|n| n.checked_sub(1)).and_then(|i| teams.get(i)).cloned().or(out.new_team.map(|t| t.trim().to_string()).filter(|t| !t.is_empty())) else { return };
+    let Some(to) = judge::listed(out.team, &teams).cloned().or(out.new_team.map(|t| t.trim().to_string()).filter(|t| !t.is_empty())) else { return };
     let mut inner = app.inner.lock().unwrap();
     // he may have moved it himself while the model was reading
     if inner.find(&agent_id).is_none_or(|s| s.moved == Some(Mover::Him) || s.callsign.project != team) {
