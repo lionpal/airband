@@ -109,7 +109,7 @@ pub(super) fn counts(inner: &Inner, radio: &str, since: u64) -> Counts {
 
 /// Is this radio looking after what he sees by itself now: is the app in front, or is he on a call?
 fn there(call: Option<&Call>) -> bool {
-    call.is_some_and(|c| c.presence.on_call() || c.presence.showing())
+    call.is_some_and(|c| c.presence.on_call() || c.presence.showing_chat())
 }
 
 /// Whether to change one radio's banner now, and how: put one up, change it, or take it down, and whether it

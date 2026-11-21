@@ -168,7 +168,7 @@ def check(name, ok, detail=""):
     print(("  ok    " if ok else "  FAIL  ") + name + (f"   [{detail}]" if detail and not ok else ""), flush=True)
 def http(method, path, body=None, token=RADIO):
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", method=method, data=None if body is None else json.dumps(body).encode(),
-                                 headers={"authorization": f"Bearer {token}", "content-type": "application/json", "x-airband-radio": "held"})
+                                 headers={"authorization": f"Bearer {token}", "content-type": "application/json", "x-airband-radio": "held", "x-airband-presence": '{"on_call":false,"showing_chat":true}'})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             raw = r.read()
@@ -177,7 +177,14 @@ def http(method, path, body=None, token=RADIO):
         return e.code, None
     except urllib.error.URLError:
         return 0, None
-say = lambda text: http("POST", "/v1/radio/utterance", {"text": text, "id": os.urandom(6).hex()})[1]["say"]
+def say(text, **more):
+    """Say something and wait for what came of it: the tower takes it at once, and asking again under the same
+    id says where it stands."""
+    body = {"text": text, "id": os.urandom(6).hex(), **more}
+    for _ in range(600):
+        took = http("POST", "/v1/radio/utterance", body)[1]
+        if took["state"] == "answered": return took["reply"]["say"]
+        time.sleep(0.1)
 feed = lambda: http("GET", "/v1/radio/feed?since=0")[1]
 arrived = lambda: [json.loads(l) for l in open(os.path.join(got, "said"))] if os.path.exists(os.path.join(got, "said")) else []
 def agent():
@@ -296,12 +303,12 @@ try:
     say(call + "ask")
     card = until(lambda: [m for m in feed()["messages"] if m.get("permission")], 8)
     check("its request for leave is put to him as the command itself", card and card[0]["text"] == "Wants to run `make deploy`. Allow?" and card[0]["options"] == ["Allow", "Deny"], card)
-    http("POST", "/v1/radio/utterance", {"text": "Allow", "id": os.urandom(6).hex(), "re": card[0]["id"]})
+    say("Allow", re=card[0]["id"])
     check("his yes picks the agent's own choice for this once, never the one for always", until(lambda: "answer this-once" in noted(), 8), noted())
     until(lambda: one()["state"] != "working")
     say(call + "ask")
     card = until(lambda: [m for m in feed()["messages"] if m.get("permission")], 8)
-    http("POST", "/v1/radio/utterance", {"text": "Deny", "id": os.urandom(6).hex(), "re": card[0]["id"]})
+    say("Deny", re=card[0]["id"])
     check("and his no picks its refusal", until(lambda: "answer not-now" in noted(), 8), noted())
     until(lambda: one()["state"] != "working")
     # its holder goes (the computer was restarted): the next thing he says carries the same session on
@@ -341,11 +348,11 @@ try:
     Fake.pending["ses_watched"] = [request(1, "make deploy")]
     card = until(leave, 8)
     check("its request for leave is put to him as the command itself", card and card[0]["text"] == "Wants to run `make deploy`. Allow?", card)
-    http("POST", "/v1/radio/utterance", {"text": "Allow", "id": os.urandom(6).hex(), "re": card[0]["id"]})
+    say("Allow", re=card[0]["id"])
     check("his yes is sent to the server as this once", until(lambda: ("per_1", {"decision": "once", "message": None}) in Fake.replies, 8), Fake.replies)
     Fake.pending["ses_watched"] = [request(2, "rm -rf build")]
     card = until(leave, 8)
-    http("POST", "/v1/radio/utterance", {"text": "Deny", "id": os.urandom(6).hex(), "re": card[0]["id"]})
+    say("Deny", re=card[0]["id"])
     check("his no is sent to the server as a refusal, and says it came from his phone", until(lambda: [b for i, b in Fake.replies if i == "per_2" and b["decision"] == "reject" and "phone" in (b["message"] or "")], 8), Fake.replies)
     Fake.pending["ses_watched"] = [request(3, "git push")]
     card = until(leave, 8)

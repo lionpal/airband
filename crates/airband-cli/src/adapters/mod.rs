@@ -367,10 +367,11 @@ fn send(event: &AgentEvent) -> bool {
     agent.post(format!("http://127.0.0.1:{}/v1/agent/events", cfg.port)).header("authorization", format!("Bearer {}", cfg.token)).send_json(event).is_ok()
 }
 
-/// Hand the tower what was kept for it, oldest first. Stops at the first it does not take, so order holds.
+/// The tower takes what was kept for it, oldest first, by `take`: it is the tower that calls this, and it
+/// takes each as it takes any event. Stops at the first it does not take, so order holds.
 /// Something kept for more than ten minutes, or that does not read, is thrown away: the tower was away for
 /// longer than an update takes, and what an agent said then is no longer news to act on.
-pub fn drain_spool() {
+pub fn drain_spool(take: impl Fn(AgentEvent) -> bool) {
     let Ok(dir) = std::fs::read_dir(config::dir().join("spool")) else { return };
     let mut kept: Vec<std::path::PathBuf> = dir.flatten().map(|f| f.path()).collect();
     kept.sort();
@@ -378,7 +379,7 @@ pub fn drain_spool() {
         let old = std::fs::metadata(&path).and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|age| age > Duration::from_secs(600)));
         match std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<AgentEvent>(&b).ok()).filter(|_| !old) {
             Some(event) => {
-                if !send(&event) {
+                if !take(event) {
                     return;
                 }
             }

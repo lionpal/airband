@@ -107,11 +107,11 @@ Call mode, one spoken transmission at a time:
 
 | Call | Body → answer | Meaning |
 |---|---|---|
-| `GET next` | → `Transmission`, or 204 | Held open up to 25 s. A radio that has not asked for 60 s is gone. With `?voice=own` the radio has a voice of its own: the tower makes no speech for it and sends words only. `joined=1` on the first request after he turns reading aloud on: what was said more than ten minutes before is left for the chat. `have=<id>` is the last transmission the radio got: if the tower handed it another since, in an answer that never arrived, it hands that one over again. |
+| `GET next` | → `Transmission`, or 204 | Held open up to 25 s. Answered only for a radio that says it is on a call (see `POST presence`). With `?voice=own` the radio has a voice of its own: the tower makes no speech for it and sends words only. `joined=1` on the first request after he turns reading aloud on: what was said more than ten minutes before is left for the chat. `have=<id>` is the last transmission the radio got: if the tower handed it another since, in an answer that never arrived, it hands that one over again. |
 | `POST heard` | `{ id }` | That transmission was spoken to the end. Only now is it off the queue. |
 | `POST unheard` | `{ id, why }` | It was handed over and no sound came of it. It goes back in the queue, and that radio is handed nothing for a minute. |
-| `POST busy` | | Still on the call while asking for nothing (the microphone is open). |
-| `POST utterance` | `Utterance` → `Reply` | What he said. Chat mode sends through it too. |
+| `POST presence` | `Presence` `{ on_call, showing_chat }` | Where the radio stands: reading aloud on or off, the chat in front of him or not. Sent when either changes, and every quarter of a minute while the radio has nothing else to ask (the microphone is open). Every other request says the same: in the sealed request's `presence`, or for a radio paired directly in the header `x-airband-presence`. The tower infers none of it from which requests a radio makes. A radio it has not heard from for 60 s is gone. |
+| `POST utterance` | `Utterance` → `Outcome` | What he said. Chat mode sends through it too. Answered at once: `{ state: "taken" }`. See "What he says". |
 | `POST ready` | | Free for the next transmission. Something it took and said nothing about goes back in the queue. |
 
 ```json
@@ -137,7 +137,7 @@ Chat mode and the rest:
 
 | Call | Body → answer | Meaning |
 |---|---|---|
-| `GET feed?scope=…&since=<rev>&wait=<s>` | → `Feed` | Every line new or changed after change count `since`, oldest change first; pass `rev` back next time. `since=0` gets the newest lines. `scope`: `all`, `group:<name>`, `agent:<callsign>`. Held open up to 25 s. `roster=<roster_rev>`: also answer when the roster changes. `away=1`: this radio is following the chat without showing it. `after=<seq>` is the older form (new lines only) and is still answered. |
+| `GET feed?scope=…&since=<rev>&wait=<s>` | → `Feed` | Every line new or changed after change count `since`, oldest change first; pass `rev` back next time. `since=0` gets the newest lines. `scope`: `all`, `group:<name>`, `agent:<callsign>`. Held open up to 25 s. `roster=<roster_rev>`: also answer when the roster changes. `answers` holds what came of things this radio said (see "What he says"); one arriving ends the wait too. `after=<seq>` is the older form (new lines only) and is still answered. |
 | `GET message/<id>?form=detail\|full\|speech\|spoken` | `{ text }`, or `{ speech }` | The fuller spoken version, exactly what the agent wrote, the id of a clip of the whole message read aloud, or (`spoken`) the words of that clip for a radio that reads them in a voice of its own. |
 | `GET speech/<id>?from=<block>` | `{ rate, data, samples, next, done, text, marks }` | The next part of a clip of the tower's voice: IMA ADPCM blocks, base64. `text` comes with the first part; `marks` are pairs of (where a word starts in `text`, milliseconds into the clip) when the voice gives timings. 404 when the tower has no voice. |
 | `GET ears` | `{ by: "live", dialect, token, set, phrases }`, `{ by: "tower" }` or `{ by: "none", phrases }` | What the phone should listen with. `live`: the phone speaks to the service itself in `dialect`, with `token` (a short-lived pass) and `set` (what that service has to be told: a region, a language, a model). `tower`: the phone records and sends the recording to `POST hear`. `none`: nothing is set to listen here. `phrases` are names he is likely to say. |
@@ -223,12 +223,25 @@ waiting on is not.
 
 ### What he says
 
-An `Utterance` carries an `id` that is the same on every retry: the tower writes a receipt for it before doing
-anything, and gives the same answer however often it arrives. A retry that arrives while the first is still
-being answered waits up to 30 seconds for that answer, and is then told 202, `{ "working": true }`. The radio
-asks again with the same id until there is an answer. The
-waits are in order: the tower's 30 seconds, the relay's 40 for the tower, the radio's 50 for anything, so
-whoever is asked last gives up first and each answer still has someone to go to.
+An `Utterance` carries an `id` that is the same on every retry, and one without is refused. The tower writes
+a receipt for it and answers at once, `{ "state": "taken" }`: it has it. No request waits while a model works
+out who the words are for. What came of it is told three ways, all the same `Outcome`:
+
+- in the feed of the radio that said it: `answers: [{ id, state: "answered", reply }]`, which also ends a
+  waiting `GET feed`;
+- to the same utterance sent again: `{ state: "taken" }` while it is being answered, then
+  `{ state: "answered", reply }` for good, from the receipt, across restarts;
+- for something the relay kept and the tower would not take when it came back: `{ id, state: "rejected", why }`
+  in the feed (`why`: `too_old`, left more than a week before).
+
+A radio keeps what he typed in its outbox until it has the outcome. It sends the next only then, so his words
+reach his agents in the order he said them. If no outcome comes by the feed it asks again every quarter of a
+minute. A receipt with no answer that this tower is not answering was left by a tower that stopped part way:
+the words are taken up again, unless the record of deliveries shows they already reached their agents.
+
+A message of an agent's that was to be read out while he had reading aloud on, and was not, says so in the feed
+(`not_read`: `superseded`, `answered`, `dismissed`, `agent_gone`, `permission_ended`). A radio marks the line
+and shows the reason when he asks.
 
 Nothing is decided by matching his words.
 
@@ -319,7 +332,7 @@ channel at once. No message is larger than 256 KB.
 A radio that has given the tower an address (`POST push`) is woken for a message judged `needs-you` or
 `report`, a permission card, or a question a harness puts to him. Once per message, and not on a radio that is
 on a call or showing the chat: such a radio asks for what follows a message within a moment of getting it, and
-one that follows without showing it adds `away=1`.
+one that follows without showing it says so (`showing_chat: false` in its `Presence`).
 
 The notification is `{ id, from, group, colour, station, text, kind, options, permission }` (`Notice` in
 `radio.rs`). The tower seals it with a third key from the pairing secret (direction `push`) and asks the relay
@@ -360,7 +373,9 @@ A relay that has not heard from a tower for 45 seconds answers a call with 503. 
 the relay: `POST …/queue`, the same sealed request, with the utterance's own id in `x-airband-id`. The relay
 keeps at most 200 per channel for a week, and one left twice under the same id is kept once. When the tower
 pulls again it is handed them oldest first, one at a time, each under a request id that starts with `held-`;
-its reply takes that one off the relay. The tower takes a kept request only if it is an utterance with an id.
+its reply takes that one off the relay. The tower takes a kept request only if it is an utterance with an id,
+and tells the radio in its feed when it will not take one (`rejected`). The radio shows a kept message as with
+the relay until the tower's outcome for it arrives.
 While some are still kept, the relay turns back a new utterance (409 to a call that carries
 `x-airband-ordered`) and the radio leaves that one with the relay too, so everything arrives in order. Files
 he attaches wait on the phone.
@@ -369,13 +384,13 @@ he attaches wait on the phone.
 
 Nothing is uploaded: no log, no trail and no diagnostic leaves the device it was made on.
 
-- **The phone** keeps, in memory, the last 300 requests that failed and every try at sending something he
-  said: the time, the kind of request (`POST /v1/radio/utterance`, with nothing after a `?`), the way it went
+- **The phone** keeps, in a file of the app's own beside the saved chat, the last 300 requests that failed and
+  every try at sending something he said: the time, the kind of request (`POST /v1/radio/utterance`, with nothing after a `?`), the way it went
   (relay, own network, kept at the relay), how it ended and how long it took. Each failure is one named cause
   (`LinkError` in `radio/link.rs`): no connection, timed out, the relay says the computer is not connected
   (503), earlier messages still on their way (409), the computer took it and has not answered (504), another
-  relay status, the relay would not keep it, an answer that cannot be read, the computer still working (202),
-  or the computer's own refusal with its explanation. A message that has not gone shows how its last try
+  relay status, the relay would not keep it, an answer that cannot be read, or the computer's own refusal with
+  its explanation. What the tower is told in passing (he heard this, he saw that) and did not get is counted. A message that has not gone shows how its last try
   went, each way, under its bubble; one that cannot go, or that half an hour did not send, stays in the chat
   with the reason and Send again. Settings, Connection shows how each computer was last reached and copies
   the record to the clipboard. Nothing he or an agent said is in it.

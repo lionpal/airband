@@ -24,7 +24,7 @@ env = dict(os.environ, HOME=home)
 
 def http(method, path, body=None, token=RADIO):
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", method=method, data=None if body is None else json.dumps(body).encode(),
-                                 headers={"authorization": f"Bearer {token}", "content-type": "application/json", "x-airband-radio": "soak"})
+                                 headers={"authorization": f"Bearer {token}", "content-type": "application/json", "x-airband-radio": "soak", "x-airband-presence": '{"on_call":false,"showing_chat":true}'})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             raw = r.read()
