@@ -93,10 +93,6 @@ pub struct Utterance {
     /// tower reads his words against everything he can see, and can answer that they are for one of these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub others: Vec<Other>,
-    /// This radio asks again when it is told the tower is still working on what he said (answer 202,
-    /// [`STILL_WORKING`]). A radio that does not say so is made to wait for the answer itself.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub again: bool,
 }
 
 /// The status the tower answers an utterance with while an earlier request with the same id is still being

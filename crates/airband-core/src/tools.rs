@@ -42,7 +42,7 @@ pub struct Launcher {
 }
 
 /// How a held agent is driven: the two things a holder knows how to do. A row says which, by name (`by`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "by", rename_all = "kebab-case")]
 pub enum Held {
     /// A program that reads one message a line on its standard input for as long as it runs, and reports by
@@ -72,50 +72,19 @@ pub enum Held {
     },
 }
 
-/// A row written before there were two kinds says none: it is the first.
-impl<'de> Deserialize<'de> for Held {
-    fn deserialize<D: serde::Deserializer<'de>>(from: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        #[serde(tag = "by", rename_all = "kebab-case")]
-        enum Said {
-            Lines {
-                #[serde(default)]
-                fresh: Vec<String>,
-                #[serde(default)]
-                resume: Vec<String>,
-                line: String,
-                #[serde(default)]
-                stop: Option<String>,
-            },
-            Acp {
-                program: Vec<String>,
-                #[serde(default)]
-                mode: Option<String>,
-            },
-        }
-        let mut row = serde_json::Value::deserialize(from)?;
-        if let Some(fields) = row.as_object_mut() {
-            fields.entry("by").or_insert_with(|| "lines".into());
-        }
-        Ok(match serde_json::from_value(row).map_err(serde::de::Error::custom)? {
-            Said::Lines { fresh, resume, line, stop } => Held::Lines { fresh, resume, line, stop },
-            Said::Acp { program, mode } => Held::Acp { program, mode },
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn a_held_row_says_how_it_is_driven_and_an_older_one_is_the_first_kind() {
-        let old: Held = serde_json::from_str(r#"{"fresh":[],"resume":[],"line":"{\"text\":{text}}"}"#).unwrap();
-        assert!(matches!(old, Held::Lines { ref line, stop: None, .. } if line.contains("{text}")));
+    fn a_held_row_says_how_it_is_driven() {
+        let lines: Held = serde_json::from_str(r#"{"by":"lines","line":"{\"text\":{text}}"}"#).unwrap();
+        assert!(matches!(lines, Held::Lines { ref line, stop: None, .. } if line.contains("{text}")));
+        assert!(serde_json::from_str::<Held>(r#"{"line":"{text}"}"#).is_err());
         let acp: Held = serde_json::from_str(r#"{"by":"acp","program":["opencode","acp"]}"#).unwrap();
         assert_eq!(acp, Held::Acp { program: vec!["opencode".into(), "acp".into()], mode: None });
         assert_eq!(serde_json::to_value(&acp).unwrap()["by"], "acp");
-        // a kind a newer build added does not read here, and says so
+        // a kind this build has no driver for does not read, and says so
         assert!(serde_json::from_str::<Held>(r#"{"by":"telepathy"}"#).is_err());
     }
 }

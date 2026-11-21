@@ -3,7 +3,7 @@
 //! kept copy and fetching a new one are the phone core's (`airband_radio::catalog_load`, `catalog_refresh`),
 //! the same code the app runs.
 use crate::config;
-use airband_core::{catalog, catalog_v1};
+use airband_core::catalog;
 use std::sync::Mutex;
 
 /// What loading the kept copy had to say, until there is a log to say it in.
@@ -45,22 +45,19 @@ fn plain(args: &[String]) -> Vec<&String> {
     out
 }
 
-const USAGE: &str = "  airband catalog export [--form 1] [--expires-in-days 180]\n  airband catalog sign <key file> <document>\n  airband catalog check <document> [<signature>] [--form 1] [--against <the copy published before>]\n  airband catalog stamp <catalog/rev>";
+const USAGE: &str = "  airband catalog export [--expires-in-days 180]\n  airband catalog sign <key file> <document>\n  airband catalog check <document> [<signature>] [--against <the copy published before>]\n  airband catalog stamp <catalog/rev>";
 
-/// `airband catalog export` prints the catalogue built into this program, as it is published: form 2, which
-/// this build reads, or with `--form 1` the older form for builds from before the interfaces were named.
+/// `airband catalog export` prints the catalogue built into this program, as it is published.
 /// `sign` prints a document's signature, made with the private key in a file (32 bytes, in hex). `check` says
-/// whether a document would be taken, by this build or (form 1) by those older ones. `stamp` gives the rows a
+/// whether a document would be taken by this build. `stamp` gives the rows a
 /// new number when they have changed. `scripts/publish-catalog.sh` and `scripts/catalog-stamp.sh` use them.
 pub fn command(args: &[String]) -> Result<(), String> {
-    let form_1 = option(args, "--form").as_deref() == Some("1");
     let words = plain(args.get(1..).unwrap_or_default());
     match args.first().map(String::as_str) {
         Some("export") => {
             let days: u64 = option(args, "--expires-in-days").map(|d| d.parse().map_err(|_| "--expires-in-days takes a number")).transpose()?.unwrap_or(180);
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-            let form_2 = catalog::built_in(now + days * 86400);
-            print!("{}", if form_1 { catalog_v1::export(&form_2)? } else { format!("{form_2}\n") });
+            println!("{}", catalog::built_in(now + days * 86400));
             Ok(())
         }
         Some("sign") => {
@@ -80,11 +77,6 @@ pub fn command(args: &[String]) -> Result<(), String> {
             if let Some(sig) = words.get(1) {
                 catalog::signed(&doc, &std::fs::read_to_string(sig).map_err(|e| e.to_string())?)?;
             }
-            if form_1 {
-                catalog_v1::check(text)?;
-                println!("Form 1: the builds that read it would take all of it.");
-                return Ok(());
-            }
             // every row of it is one this build can use: what it would leave out is a mistake in a row, or
             // an interface nobody has written yet
             let c = catalog::inspect(text)?;
@@ -97,7 +89,7 @@ pub fn command(args: &[String]) -> Result<(), String> {
                 catalog::would_take(text, &before)?;
                 println!("A build that has the copy published before would take it.");
             }
-            println!("Form 2, rev {}: {} providers, {} models for the phone, every row usable by this build.", c.rev, c.providers.len(), c.models.len());
+            println!("Rev {}: {} providers, {} models for the phone, every row usable by this build.", c.rev, c.providers.len(), c.models.len());
             Ok(())
         }
         Some("stamp") => {

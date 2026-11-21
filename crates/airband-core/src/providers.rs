@@ -221,9 +221,9 @@ impl Use {
     pub fn of(kind: &str) -> Use {
         Use { kind: kind.into(), key: String::new(), set: BTreeMap::new() }
     }
-    /// Nothing is set. `device` is what "nothing" was called when a phone's own voice was still an answer.
+    /// Nothing is set.
     pub fn is_none(&self) -> bool {
-        matches!(self.kind.as_str(), NONE | "device" | "")
+        matches!(self.kind.as_str(), NONE | "")
     }
     /// The row for this job, and how the job is done. Nothing when the settings name a provider this build
     /// does not have, or one that does not do this job.
@@ -263,8 +263,7 @@ mod tests {
         // what was not set is the row's usual
         let e: Use = serde_json::from_str(r#"{"kind":"azure","key":"k","region":"japaneast"}"#).unwrap();
         assert_eq!((e.get(Job::Ears, "region"), e.get(Job::Ears, "language")), ("japaneast".into(), "en-US".into()));
-        // nothing set, under either of its names
-        assert!(serde_json::from_str::<Use>(r#"{"kind":"device"}"#).unwrap().is_none());
+        // nothing set
         assert!(serde_json::from_str::<Use>(r#"{"kind":"none"}"#).unwrap().is_none());
         // a command of his own keeps its arguments, and round-trips as it was written
         let c: Use = serde_json::from_str(r#"{"kind":"command","argv":["mine","-x"]}"#).unwrap();

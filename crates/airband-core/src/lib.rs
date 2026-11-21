@@ -8,7 +8,6 @@
 pub mod agent;
 pub mod audio;
 pub mod catalog;
-pub mod catalog_v1;
 pub mod pairing;
 pub mod providers;
 pub mod radio;
