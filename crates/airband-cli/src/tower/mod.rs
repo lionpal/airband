@@ -111,6 +111,9 @@ pub struct App {
     clips: Mutex<HashMap<String, (Vec<i16>, Instant)>>,
     inner: Mutex<Inner>,
     kick: Notify,
+    /// What each radio has said and the tower has yet to answer, in the order it came: one is finished before
+    /// the next of the same radio is begun, so an agent gets what he said in the order he said it.
+    said: Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>>>,
     accounts: accounts::Kept,
     /// Where each paired phone can be woken with a notification.
     push: push::Wake,
@@ -405,7 +408,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         let port = cfg.port;
         let push = push::Wake::load(&store);
         let banner = banner::Banners::load(&store, inner.rev);
-        let app = Arc::new(App { push, banner, cfg, store, speech: speech::Speech::default(), ears_pass: Mutex::new(None), clips: Mutex::new(HashMap::new()), inner: Mutex::new(inner), kick: Notify::new(), accounts: accounts::Kept::default() });
+        let app = Arc::new(App { push, banner, cfg, store, speech: speech::Speech::default(), ears_pass: Mutex::new(None), clips: Mutex::new(HashMap::new()), inner: Mutex::new(inner), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default() });
         // what was changed while starting (a credential masked in a kept message) is written now, not at the
         // next thing an agent says
         {
