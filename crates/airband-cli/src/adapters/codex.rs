@@ -11,9 +11,9 @@
 //! One thing he has to do himself, once: Codex runs a hook only after he has looked at it and trusted it
 //! (`/hooks` inside Codex), and again whenever it changes. `airband install` writes the hooks and says so.
 use super::env;
+use super::hooks::{On, on};
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk, SCHEMA};
-use serde_json::{Value, json};
-use std::fs;
+use serde_json::Value;
 use std::path::PathBuf;
 
 const NAME: &str = "codex";
@@ -26,9 +26,9 @@ fn agent_of(hook: &Value) -> Option<Agent> {
         meta.insert("model".into(), Value::String(model));
     }
     Some(Agent {
-        // What he says is handed to this program (`airband deliver codex <session>`), which queues it for the
-        // session with Codex's own command. The session takes it as a turn of his.
-        deliver: if env("AIRBAND_HELD").is_some() { Some(Deliver::Held) } else { Some(Deliver::Command { argv: vec![std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "airband".into()), "deliver".into(), NAME.into(), id.clone()] }) },
+        // What he says is queued for the session with Codex's own command (`deliver` below). The session takes
+        // it as a turn of his.
+        deliver: if env("AIRBAND_HELD").is_some() { Some(Deliver::Held) } else { Some(Deliver::Harness { name: NAME.into(), session: id.clone() }) },
         id,
         harness: NAME.into(),
         cwd: text("cwd"),
@@ -73,114 +73,56 @@ pub fn permission(hook: &Value) -> Option<PermissionAsk> {
         _ => field("description"),
     }
     .unwrap_or_else(|| format!("use {tool}"));
-    // too long to put in front of him whole on a phone: it is not asked there, and Codex asks at its keyboard
-    if what.chars().count() > super::claude_code::SHOWN_WHOLE {
-        return None;
-    }
-    let whole = serde_json::to_string_pretty(input).unwrap_or_default();
-    let detail = match whole.chars().count() {
-        n if n > 6000 => format!("{}\n\n(The first 6,000 of {n} characters. The rest is at the keyboard.)", whole.chars().take(6000).collect::<String>()),
-        _ => whole,
-    };
-    Some(PermissionAsk { schema: SCHEMA.into(), agent: agent_of(hook)?, what, detail: format!("{tool}\n{detail}"), question: None })
+    // one too long to put in front of him whole is not asked on the phone: Codex asks at its keyboard
+    super::hooks::leave(agent_of(hook)?, tool, what, input, " The rest is at the keyboard.", None)
 }
 
-/// His answer, as Codex wants it printed: the same shape Claude Code takes.
-pub fn permission_answer(_ask: &PermissionAsk, allow: bool, reason: &str) -> String {
-    let decision = if allow {
-        json!({ "behavior": "allow" })
-    } else {
-        json!({ "behavior": "deny", "message": if reason.is_empty() { "He said no from his phone.".to_string() } else { format!("He said no from his phone: {reason}") } })
-    };
-    json!({ "hookSpecificOutput": { "hookEventName": "PermissionRequest", "decision": decision } }).to_string()
-}
-
-/// `airband deliver codex <session>`: his words, on standard input, into that session as a turn of his own.
-pub fn deliver(session: &str) -> Result<(), String> {
-    let mut words = String::new();
-    std::io::Read::read_to_string(&mut std::io::stdin(), &mut words).map_err(|e| e.to_string())?;
-    let done = std::process::Command::new("codex").args(["queue", "--thread", session, "--resume", "--message", words.trim()]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped()).output().map_err(|e| format!("Codex could not be started: {e}"))?;
+/// His words into that session as a turn of his own, by Codex's own queue.
+fn deliver(session: &str, words: &str) -> Result<(), String> {
+    let done = std::process::Command::new("codex").args(["queue", "--thread", session, "--resume", "--message", words]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped()).output().map_err(|e| format!("Codex could not be started: {e}"))?;
     if done.status.success() { Ok(()) } else { Err(format!("Codex did not take it: {}", String::from_utf8_lossy(&done.stderr).trim().chars().take(200).collect::<String>())) }
 }
 
 // ---- setting Codex up to report: its hooks, in its own hooks file ----
 
-const HOOK_EVENTS: [(&str, u32); 7] = [("SessionStart", 5), ("UserPromptSubmit", 5), ("Stop", 5), ("SubagentStart", 5), ("SubagentStop", 5), ("SessionEnd", 2), ("PermissionRequest", 900)];
+const HOOKS: &[On] = &[on("SessionStart", 5), on("UserPromptSubmit", 5), on("Stop", 5), on("SubagentStart", 5), on("SubagentStop", 5), on("SessionEnd", 2), on("PermissionRequest", 900)];
 
 fn home() -> PathBuf {
     std::env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|| crate::config::home().join(".codex"))
 }
-fn hooks_path() -> PathBuf {
-    home().join("hooks.json")
-}
-fn read() -> Result<Value, String> {
-    match fs::read_to_string(hooks_path()) {
-        Ok(t) => serde_json::from_str(&t).map_err(|e| format!("{} is not valid JSON; fix it first ({e})", hooks_path().display())),
-        Err(_) => Ok(json!({})),
-    }
-}
-fn write(v: &Value) -> Result<(), String> {
-    let (path, tmp) = (hooks_path(), hooks_path().with_extension("json.airband-tmp"));
-    fs::write(&tmp, format!("{}\n", serde_json::to_string_pretty(v).unwrap())).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, &path).map_err(|e| e.to_string())
-}
-/// A hook of ours: the `airband` binary, wherever it is installed, run as `hook codex`.
-fn is_ours(hook: &Value) -> bool {
-    hook["command"].as_str().and_then(|c| c.trim_end().strip_suffix(" hook codex")).is_some_and(|program| program.trim().trim_matches('"').rsplit(['/', '\\']).next() == Some("airband"))
-}
-/// Take our hooks out, leaving everyone else's exactly as they were.
-fn strip(file: &mut Value) {
-    let Some(hooks) = file.get_mut("hooks").and_then(Value::as_object_mut) else { return };
-    for groups in hooks.values_mut() {
-        if let Some(list) = groups.as_array_mut() {
-            for group in list.iter_mut() {
-                if let Some(inner) = group.get_mut("hooks").and_then(Value::as_array_mut) {
-                    inner.retain(|h| !is_ours(h));
-                }
-            }
-            list.retain(|g| g["hooks"].as_array().is_none_or(|h| !h.is_empty()));
-        }
-    }
-    hooks.retain(|_, groups| groups.as_array().is_none_or(|l| !l.is_empty()));
-}
 
-/// Write the hooks, when Codex is on this computer. Codex will not run them until he has trusted them.
-pub fn install(exe: &std::path::Path) -> Result<String, String> {
-    if !home().is_dir() {
-        return Ok("Codex is not on this computer: nothing to set up for it.".into());
-    }
-    let mut file = read()?;
-    let before = file.clone();
-    strip(&mut file);
-    if !file.is_object() {
-        return Err(format!("{} is not a JSON object", hooks_path().display()));
-    }
-    let command = format!("\"{}\" hook codex", exe.display());
-    let hooks = file.as_object_mut().unwrap().entry("hooks").or_insert_with(|| json!({}));
-    for (event, timeout) in HOOK_EVENTS {
-        let list = hooks.as_object_mut().ok_or("\"hooks\" in Codex's hooks file is not an object")?.entry(event).or_insert_with(|| json!([]));
-        list.as_array_mut().ok_or("a hooks entry in Codex's hooks file is not a list")?.push(json!({ "hooks": [{ "type": "command", "command": command, "timeout": timeout }] }));
-    }
-    // unchanged: Codex's trust in them still stands, and the file is left exactly as it is
-    if file == before {
-        return Ok(format!("Codex's hooks are in place ({}).", hooks_path().display()));
-    }
-    write(&file)?;
-    Ok(format!("Hooks added to {}. Codex runs them once you have trusted them: open Codex and type /hooks.", hooks_path().display()))
-}
+pub struct Codex;
 
-pub fn uninstall() -> Result<(), String> {
-    if !hooks_path().is_file() {
-        return Ok(());
+impl super::Harness for Codex {
+    fn name(&self) -> &'static str {
+        NAME
     }
-    let mut file = read()?;
-    strip(&mut file);
-    write(&file)
+    fn events(&self, hook: &Value) -> Vec<AgentEvent> {
+        events(hook)
+    }
+    /// Only when Codex is on this computer.
+    fn hooks(&self) -> Option<super::hooks::File> {
+        home().is_dir().then(|| super::hooks::File { name: NAME, path: home().join("hooks.json"), events: HOOKS })
+    }
+    /// Codex runs a hook only once he has trusted it, and asks again whenever the file changes.
+    fn installed(&self, file: &super::hooks::File, changed: bool) -> String {
+        if changed { format!("Hooks added to {}. Codex runs them once you have trusted them: open Codex and type /hooks.", file.path.display()) } else { format!("Codex's hooks are in place ({}).", file.path.display()) }
+    }
+    fn permission(&self, hook: &Value) -> Option<PermissionAsk> {
+        permission(hook)
+    }
+    fn glance(&self, agent: &Agent) -> super::Glance {
+        glance(agent)
+    }
+    fn deliver(&self, session: &str, words: &str) -> Result<(), String> {
+        deliver(session, words)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn a_codex_session_checks_in_speaks_and_is_reached_as_his_own_turn() {
@@ -191,7 +133,7 @@ mod tests {
         assert_eq!(glance(&e.agent).model.as_deref(), Some("gpt-6-luna"));
         // his words go to Codex's own queue for that session, whole, as one argument
         match e.agent.deliver {
-            Some(Deliver::Command { argv }) => assert_eq!(&argv[1..], ["deliver", "codex", "t1"]),
+            Some(Deliver::Harness { name, session }) => assert_eq!((name.as_str(), session.as_str()), ("codex", "t1")),
             other => panic!("{other:?}"),
         }
         assert_eq!(events(&json!({ "session_id": "t1", "hook_event_name": "SessionEnd" }))[0].event, Event::Signoff);
@@ -201,8 +143,8 @@ mod tests {
     fn a_codex_permission_request_is_put_to_him_whole() {
         let ask = permission(&json!({ "session_id": "t1", "cwd": "/x", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": { "command": "npm run deploy" } })).unwrap();
         assert_eq!(ask.what, "run `npm run deploy`");
-        assert!(permission_answer(&ask, true, "").contains("\"behavior\":\"allow\""));
-        assert!(permission_answer(&ask, false, "not now").contains("not now"));
+        assert!(super::super::Harness::permission_answer(&Codex, &ask, true, "").contains("\"behavior\":\"allow\""));
+        assert!(super::super::Harness::permission_answer(&Codex, &ask, false, "not now").contains("not now"));
         assert!(permission(&json!({ "session_id": "t1", "hook_event_name": "Stop" })).is_none());
     }
 }

@@ -28,9 +28,19 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
     if task.is_empty() && launcher.held.is_none() {
         return Reply { say: format!("What should it do? Say launch {project}, then the task."), listen: true, ..Reply::default() };
     }
-    // the model and effort he asked for, when this launcher offers them
-    let model = idea.model.as_ref().filter(|m| launcher.models.contains_key(*m));
-    let effort = idea.effort.as_ref().filter(|e| launcher.efforts.contains(*e));
+    // The model and effort he asked for. One this launcher does not offer is not left out and the agent
+    // started without it: he is told, and nothing is started.
+    let offers = |what: &str, names: Vec<&String>| match names.as_slice() {
+        [] => format!("Agents started this way cannot be given {what}."),
+        names => format!("It can be {}.", names.iter().map(|n| n.as_str()).collect::<Vec<_>>().join(", ")),
+    };
+    if let Some(m) = idea.model.as_ref().filter(|m| !launcher.models.contains_key(*m)) {
+        return say(format!("I cannot start one on {m}. {}", offers("a model", launcher.models.keys().collect())));
+    }
+    if let Some(e) = idea.effort.as_ref().filter(|e| !launcher.efforts.contains(*e)) {
+        return say(format!("I cannot start one at {e} effort. {}", offers("an effort", launcher.efforts.iter().collect())));
+    }
+    let (model, effort) = (idea.model.as_ref(), idea.effort.as_ref());
     let mut options: Vec<String> = Vec::new();
     if let Some(m) = model {
         options.extend(launcher.with_model.iter().map(|a| a.replace("{model}", &launcher.models[m])));

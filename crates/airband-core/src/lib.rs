@@ -16,3 +16,4 @@ pub mod redact;
 pub mod relay;
 pub mod routing;
 pub mod speech;
+pub mod tools;

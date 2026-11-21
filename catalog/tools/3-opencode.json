@@ -1,5 +1,17 @@
 {
   "id": "opencode",
   "name": "OpenCode",
-  "maker": "Open source, any model"
+  "maker": "Open source, any model",
+  "launchers": [
+    {
+      "name": "opencode",
+      "held": {
+        "by": "acp",
+        "program": [
+          "opencode",
+          "acp"
+        ]
+      }
+    }
+  ]
 }
