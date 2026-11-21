@@ -236,10 +236,25 @@ class AirbandSite extends Stack {
         referrerPolicy: { referrerPolicy: cloudfront.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN, override: true },
       },
     });
+    // Pages are files named <page>.html and are addressed without the ending: /privacy is privacy.html. The old
+    // address with the ending goes to the plain one. Anything with an ending of its own (a release, the
+    // catalogue, a model's file) is left as it is.
+    const pages = new cloudfront.Function(this, 'Pages2', {
+      runtime: cloudfront.FunctionRuntime.JS_2_0,
+      code: cloudfront.FunctionCode.fromInline(`function handler(event) {
+  var request = event.request, uri = request.uri;
+  if (uri.length > 1 && uri.endsWith('/')) return { statusCode: 301, headers: { location: { value: uri.slice(0, -1) } } };
+  if (uri.endsWith('.html') && uri !== '/index.html') return { statusCode: 301, headers: { location: { value: uri.slice(0, -5) } } };
+  var last = uri.slice(uri.lastIndexOf('/') + 1);
+  if (last && last.indexOf('.') < 0) request.uri = uri + '.html';
+  return request;
+}`),
+    });
     const cdn = new cloudfront.Distribution(this, 'Cdn', {
       comment: 'airband.dev homepage',
       defaultBehavior: { origin: origins.S3BucketOrigin.withOriginAccessControl(bucket), viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS, compress: true, responseHeadersPolicy: headers,
-        allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD },
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+        functionAssociations: [{ function: pages, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST }] },
       minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
       defaultRootObject: 'index.html', domainNames: names, certificate: cert,
       // North America and Europe only: the cheapest class, and where the people who will read this are
