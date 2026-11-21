@@ -65,32 +65,51 @@ pub(crate) fn live(offer: &Offer) -> Option<&'static Listener> {
     LISTENERS.iter().find(|l| offer.job == Job::Ears && l.is.fits(offer))
 }
 
-/// A listening service of his own, when he has given the app a key for one. With it the phone needs neither
-/// his computer nor the relay to listen. The host keeps the key (in the phone's keychain) and gives it here
-/// at launch; it is never sent anywhere but to the service it is for.
-static OWN: Mutex<Option<Use>> = Mutex::new(None);
+/// What he chose to listen with on the device itself, when he chose that. One thing at a time: which one is
+/// decided where he chooses (`choices.rs`) and only carried out here.
+#[derive(Clone)]
+pub(crate) enum Own {
+    /// A model on the device: nothing he says leaves it. `folder` is where its files are.
+    Model { name: String, folder: String },
+    /// A listening service reached straight from the device with a key of his own. The key is never sent
+    /// anywhere but to the service it is for.
+    Service(Use),
+    /// What he chose cannot be used as things are, and why. Nothing else listens in its place.
+    Cannot(String),
+}
+static USING: Mutex<Option<Own>> = Mutex::new(None);
+/// Why what he chose did not listen the last time it was tried. Cleared when it next does.
+static FAILED: Mutex<Option<String>> = Mutex::new(None);
+/// How long the model took over the last thing it heard, and how long that recording was, in seconds.
+static LAST: Mutex<Option<(f32, f32)>> = Mutex::new(None);
 /// The names the tower last said he is likely to say: used with a pass of his own, which comes with none.
 static PHRASES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-/// A listening model on the device, when he has chosen one: where its files are. It comes before everything
-/// else: nothing he says leaves the device.
-static LOCAL: Mutex<Option<(String, String)>> = Mutex::new(None);
-
-pub(crate) fn set_local(dir: &str, kind: &str) {
-    let chosen = crate::models::model(kind).filter(|m| m.job == Job::Ears && crate::models::fetched(dir, m)).map(|m| (kind.to_string(), crate::models::folder(dir, m).display().to_string()));
-    *LOCAL.lock().unwrap() = chosen;
+fn using() -> Option<Own> {
+    USING.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
-/// The model of this kind is being taken off the device: if it is the one listening, it is no longer.
-pub(crate) fn stop_using(kind: &str) {
-    let mut local = LOCAL.lock().unwrap();
-    if local.as_ref().is_some_and(|(k, _)| k == kind) {
-        *local = None;
-    }
+/// Listen with this from now on; nothing is his computer's choice.
+pub(crate) fn set(own: Option<Own>) {
+    *USING.lock().unwrap_or_else(|e| e.into_inner()) = own;
+    *FAILED.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
-pub(crate) fn set_own(with: Option<Use>) {
-    *OWN.lock().unwrap() = with.filter(|u| u.offer(Job::Ears).is_some_and(|(_, o)| crate::hears::listens(o)));
+/// Why what he chose did not listen the last time, if it did not.
+pub(crate) fn failed() -> Option<String> {
+    FAILED.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// What the model on the device last took: seconds of speech, and seconds to turn it into words.
+pub(crate) fn last_heard() -> Option<(f32, f32)> {
+    *LAST.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// What he chose could not listen. It stays chosen, and he is told: moving to something else is his to do.
+fn fail(host: &dyn RadioHost, why: String) -> Listened {
+    *FAILED.lock().unwrap_or_else(|e| e.into_inner()) = Some(why.clone());
+    host.told(why);
+    Listened::Cannot
 }
 
 /// A pass from a live service for a key. Err says why not, in words for him.
@@ -138,26 +157,39 @@ impl Ears {
                 return g;
             }
         }
-        // A model on the device comes first of all, then a key of his own: no computer and no relay is asked.
-        if LOCAL.lock().unwrap().is_some() {
-            return EarsGrant { kind: BY_MODEL.into(), token: String::new(), set: Default::default(), phrases: Vec::new() };
-        }
-        let own = OWN.lock().unwrap().clone();
-        if let Some(own) = own {
-            let set = own.settings(Job::Ears);
-            let made = match own.offer(Job::Ears).map(|(_, o)| (live(o), crate::hears::by_upload(&own))) {
-                Some((Some(l), _)) => (l.pass)(&set, &own.key).ok().map(|token| EarsGrant { kind: l.is.name.into(), token, set, phrases: PHRASES.lock().unwrap().clone() }),
-                // by upload, with the key that is already here: nothing to fetch
-                Some((None, true)) => Some(EarsGrant { kind: BY_OWN_KEY.into(), token: String::new(), set, phrases: PHRASES.lock().unwrap().clone() }),
-                _ => None,
-            };
-            if let Some(g) = made {
-                *self.grant.lock().unwrap() = Some((g.clone(), Instant::now()));
-                return g;
+        // What he chose on the device itself is what listens: no computer and no relay is asked. When it cannot
+        // (the service gives no pass), nothing else is asked in its place: the pass says nothing listens, and
+        // why is kept for him.
+        match using() {
+            Some(Own::Model { .. }) => return EarsGrant { kind: BY_MODEL.into(), token: String::new(), set: Default::default(), phrases: Vec::new() },
+            Some(Own::Service(own)) => {
+                let set = own.settings(Job::Ears);
+                let phrases = PHRASES.lock().unwrap().clone();
+                let made = match own.offer(Job::Ears).map(|(_, o)| (live(o), crate::hears::by_upload(&own))) {
+                    Some((Some(l), _)) => (l.pass)(&set, &own.key).map(|token| EarsGrant { kind: l.is.name.into(), token, set, phrases }),
+                    // by upload, with the key that is already here: nothing to fetch
+                    Some((None, true)) => Ok(EarsGrant { kind: BY_OWN_KEY.into(), token: String::new(), set, phrases }),
+                    _ => Err("This version of airband cannot listen with the service you chose.".to_string()),
+                };
+                return match made {
+                    Ok(g) => {
+                        *self.grant.lock().unwrap() = Some((g.clone(), Instant::now()));
+                        g
+                    }
+                    Err(why) => {
+                        *FAILED.lock().unwrap_or_else(|e| e.into_inner()) = Some(why);
+                        EarsGrant::default()
+                    }
+                };
             }
+            Some(Own::Cannot(why)) => {
+                *FAILED.lock().unwrap_or_else(|e| e.into_inner()) = Some(why);
+                return EarsGrant::default();
+            }
+            None => {}
         }
-        // His computer says what to listen with. When it cannot be reached there is nothing to listen with:
-        // a model or a key of the phone's own came first, above, and he types otherwise.
+        // His computer says what to listen with. When it cannot be reached there is nothing to listen with,
+        // and he types.
         let g: EarsGrant = match link.request("GET", "/ears", None) {
             Ok((200, v)) => serde_json::from_value(v).unwrap_or_default(),
             _ => EarsGrant::default(),
@@ -176,7 +208,7 @@ impl Ears {
     pub(crate) fn warm(&self, link: &Link) {
         let _ = self.grant(link);
         // with a key of his own the tower is still asked, when it is there, for the names he is likely to say
-        if OWN.lock().unwrap().is_some() {
+        if matches!(using(), Some(Own::Service(_))) {
             if let Ok((200, v)) = link.request("GET", "/ears", None) {
                 let phrases = serde_json::from_value::<EarsGrant>(v).map(|g| g.phrases).unwrap_or_default();
                 if !phrases.is_empty() {
@@ -207,18 +239,28 @@ impl Ears {
         // Which way: the pass says. By upload, the recording is made here and sent off whole, to the service
         // with his own key or to his computer, which has the key.
         let granted = self.grant(link);
+        let own = using();
+        // what he chose on the device cannot listen: say why, and stop there
+        if own.is_some() && !granted.listens() {
+            host.record_stop();
+            *self.grant.lock().unwrap() = None;
+            return fail(host, failed().unwrap_or_else(|| "What you chose to listen with did not answer.".into()));
+        }
+        let heard_well = || *FAILED.lock().unwrap_or_else(|e| e.into_inner()) = None;
         if granted.kind == BY_MODEL {
-            let folder = LOCAL.lock().unwrap().clone().map(|(_, folder)| folder);
-            let heard = folder.ok_or(()).and_then(|folder| by_model(host, folder, manual));
+            let Some(Own::Model { name, folder }) = own else {
+                host.record_stop();
+                return Listened::Cannot;
+            };
+            let heard = by_model(host, folder, manual);
             host.record_stop();
             return match heard {
-                Ok(text) => said(text),
-                // the model would not run: it is no longer the one listening, and the next try asks elsewhere
-                Err(()) => {
-                    *LOCAL.lock().unwrap() = None;
-                    *self.grant.lock().unwrap() = None;
-                    Listened::Cannot
+                Ok(text) => {
+                    heard_well();
+                    said(text)
                 }
+                // the model would not run: it stays the one he chose, and he is told
+                Err(()) => fail(host, format!("{name} did not run on this device. Nothing else listened in its place.")),
             };
         }
         if granted.kind == BY_OWN_KEY || granted.kind == BY_TOWER {
@@ -226,21 +268,25 @@ impl Ears {
             host.record_stop();
             let heard = match clip {
                 Ok(None) => return Listened::Nothing,
-                Err(()) => Err(()),
+                Err(()) => Err(String::new()),
                 Ok(Some(pcm)) => {
                     host.status(RadioStatus::Sending);
-                    match (granted.kind == BY_OWN_KEY, OWN.lock().unwrap().clone()) {
-                        (true, Some(own)) => crate::hears::transcribe(&own, &crate::hears::wav(RATE, &pcm), &granted.phrases).map_err(|_| ()),
-                        (true, None) => Err(()),
-                        (false, _) => by_tower(link, &pcm),
+                    match (granted.kind == BY_OWN_KEY, &own) {
+                        (true, Some(Own::Service(own))) => crate::hears::transcribe(own, &crate::hears::wav(RATE, &pcm), &granted.phrases),
+                        (true, _) => Err("The listening service you chose is no longer set.".to_string()),
+                        (false, _) => by_tower(link, &pcm).map_err(|_| String::new()),
                     }
                 }
             };
             return match heard {
-                Ok(text) => said(Some(text)),
-                Err(()) => {
+                Ok(text) => {
+                    heard_well();
+                    said(Some(text))
+                }
+                Err(why) => {
                     *self.grant.lock().unwrap() = None;
-                    Listened::Cannot
+                    // his own service said no: that is said. His computer's failing is the line's to say.
+                    if granted.kind == BY_OWN_KEY { fail(host, format!("The listening service you chose did not take that: {why}")) } else { Listened::Cannot }
                 }
             };
         }
@@ -263,10 +309,16 @@ impl Ears {
             (heard, _) => heard,
         };
         match heard {
-            Ok(text) => said(text),
+            Ok(text) => {
+                heard_well();
+                said(text)
+            }
             Err(_) => {
                 // the service or the line failed, or there is none: ask for a fresh pass next time
                 *self.grant.lock().unwrap() = None;
+                if own.is_some() {
+                    return fail(host, "The listening service you chose could not be reached. Nothing else listened in its place.".into());
+                }
                 if host.own_voice() { said(host.listen()) } else { Listened::Cannot }
             }
         }
@@ -367,7 +419,12 @@ fn by_model(host: &dyn RadioHost, folder: String, manual: bool) -> Result<Option
     })?;
     let Some(pcm) = clip else { return Ok(None) };
     host.status(RadioStatus::Sending);
-    host.transcribe(folder, bytes(&pcm)).map(|text| Some(text.trim().to_string()).filter(|t| !t.is_empty())).ok_or(())
+    let began = Instant::now();
+    let heard = host.transcribe(folder, bytes(&pcm));
+    if heard.is_some() {
+        *LAST.lock().unwrap_or_else(|e| e.into_inner()) = Some((pcm.len() as f32 / RATE as f32, began.elapsed().as_secs_f32()));
+    }
+    heard.map(|text| Some(text.trim().to_string()).filter(|t| !t.is_empty())).ok_or(())
 }
 
 /// Send a recording to the tower, which has the key for the listening service, and take back the words. It goes
