@@ -517,26 +517,40 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         fetch.async {
             var wrong: String?
             do {
-                let sample = try ownVoiceSample()
+                let sample = try self.desk.ownVoiceSample()
                 self.voice.play(rate: sample.rate, pcm: sample.pcm, last: true)
             } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "The voice did not speak." }
             DispatchQueue.main.async { done(wrong) }
         }
     }
 
+    /// The engines this app runs models with itself, by the name a model's row in the catalogue gives. The
+    /// core offers a model for one of these only on a system its row allows, and asks for it by this name.
+    private lazy var engines: [String: (String, ChoiceJob, Data) -> Data?] = ["phonon-coreml": { [unowned self] in self.phononCoreML(folder: $0, job: $1, input: $2) }]
+
+    func device() -> HostDevice {
+        HostDevice(engines: engines.keys.sorted(), os: "ios", osVersion: UInt32(ProcessInfo.processInfo.operatingSystemVersion.majorVersion))
+    }
+
+    /// The core asks for a model to be run by one of the engines above.
+    func runModel(engine: String, folder: String, job: ChoiceJob, input: Data) -> Data? {
+        engines[engine]?(folder, job, input)
+    }
+
     /// The models loaded so far, by the folder each is in. Loading one takes a moment, so it is kept.
     private var heardWith: [String: Transcriber] = [:]
     private let hearLock = NSLock()
 
-    /// The core asks for a recording to be turned into words by a model on this phone (16 kHz, 16-bit, mono).
-    func transcribe(folder: String, pcm: Data) -> String? {
+    /// Fermion's listening model on the Neural Engine: a recording (16 kHz, 16-bit, mono) turned into words.
+    private func phononCoreML(folder: String, job: ChoiceJob, input pcm: Data) -> Data? {
+        guard job == .ears else { return nil }
         hearLock.lock()
         defer { hearLock.unlock() }
         do {
             let model = try heardWith[folder] ?? Transcriber(bundle: URL(fileURLWithPath: folder))
             heardWith[folder] = model
             let samples: [Float] = pcm.withUnsafeBytes { raw in raw.bindMemory(to: Int16.self).map { Float($0) / 32768 } }
-            return try model.transcribe(samples).text
+            return Data(try model.transcribe(samples).text.utf8)
         } catch {
             NSLog("airband: the listening model failed: \(error.localizedDescription)")
             return nil

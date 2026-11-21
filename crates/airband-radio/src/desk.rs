@@ -36,10 +36,16 @@ pub trait DeskHost: Send + Sync {
     /// Is the chat on screen in front of him right now? What arrives while it is counts as read, so a call
     /// started later does not read it out.
     fn watching(&self) -> bool;
-    /// Turn a recording into words with a listening model the host runs on the device. `folder` is where the
-    /// model's files are; `pcm` is 16-bit little-endian mono at 16 kHz. Nothing when the host cannot. May
-    /// block for as long as it takes.
-    fn transcribe(&self, folder: String, pcm: Vec<u8>) -> Option<String>;
+    /// What this device can do: the engines the host itself runs models with, by the names the catalogue's
+    /// model rows give, and which operating system this is. A model is offered only when its engine is in the
+    /// core or named here, and the system is one its row allows. Asked once, when the desk is made.
+    fn device(&self) -> HostDevice;
+    /// Run a model with one of the engines `device` named. `folder` is where the model's files are. For
+    /// listening `input` is a recording (16-bit little-endian mono PCM at 16 kHz) and the answer is the
+    /// words, as UTF-8. For a voice it is the words, as UTF-8, then a line feed and the name of the voice, and
+    /// the answer is the sound (16-bit little-endian mono PCM at the rate the model's row gives). Nothing when
+    /// the host cannot. May block for as long as it takes.
+    fn run_model(&self, engine: String, folder: String, job: ChoiceJob, input: Vec<u8>) -> Option<Vec<u8>>;
     /// A key he gave for a service, by that service's provider id; nothing when none is kept. The host keeps
     /// keys where its system keeps secrets, on this device only. The core asks for one only to use it: it is
     /// never handed to a screen.
@@ -398,6 +404,9 @@ pub(crate) struct Shared {
     pub(crate) host: Arc<dyn DeskHost>,
     /// What he chose to read, listen and speak with.
     pub(crate) chooser: crate::choices::Chooser,
+    /// What listens and speaks on this device, with the models loaded for it: every radio of this desk's
+    /// uses the same.
+    pub(crate) senses: Arc<Senses>,
 }
 
 /// What one computer's radio calls back into: it knows which computer it is, and the desk does the rest.
@@ -480,8 +489,8 @@ impl RadioHost for StationHost {
     fn hearing(&self, text: String) {
         self.shared.host.hearing(text);
     }
-    fn transcribe(&self, folder: String, pcm: Vec<u8>) -> Option<String> {
-        self.shared.host.transcribe(folder, pcm)
+    fn run_model(&self, engine: String, folder: String, job: ChoiceJob, input: Vec<u8>) -> Option<Vec<u8>> {
+        self.shared.host.run_model(engine, folder, job, input)
     }
     fn words(&self, text: String, starts: Vec<u32>, at_ms: Vec<u32>) {
         // only the computer whose turn it is to speak says what is being said: another one's words wait with
@@ -548,7 +557,8 @@ pub struct Desk {
 impl Desk {
     /// A desk with no computers, keeping what it keeps in `data_dir`.
     pub(crate) fn alone(data_dir: &str, host: Arc<dyn DeskHost>) -> Desk {
-        Desk { shared: Arc::new(Shared { state: Mutex::new(State::default()), floor: Floor::default(), host, chooser: crate::choices::Chooser::open(data_dir) }), data_dir: data_dir.into() }
+        let chooser = crate::choices::Chooser::open(data_dir, host.device());
+        Desk { shared: Arc::new(Shared { state: Mutex::new(State::default()), floor: Floor::default(), host, chooser, senses: Arc::default() }), data_dir: data_dir.into() }
     }
 }
 
@@ -584,10 +594,11 @@ impl Desk {
     #[uniffi::constructor]
     pub fn open(data_dir: String, host: Arc<dyn DeskHost>) -> Arc<Self> {
         let state = State { read: ReadMarks::load(&data_dir), ..State::default() };
-        let chooser = crate::choices::Chooser::open(&data_dir);
+        let chooser = crate::choices::Chooser::open(&data_dir, host.device());
+        let senses: Arc<Senses> = Arc::default();
         // what he chose to listen and speak with is in use from the start
-        chooser.apply(&*host);
-        Arc::new(Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser }), data_dir })
+        chooser.apply(&*host, &senses);
+        Arc::new(Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser, senses }), data_dir })
     }
 
     /// The computers he is paired with, as the links `airband pair` printed, one each. Replaces whatever set
@@ -608,7 +619,7 @@ impl Desk {
             }
             let dir = if self.data_dir.is_empty() { String::new() } else { std::path::Path::new(&self.data_dir).join(folder(&link)).display().to_string() };
             let host = Arc::new(StationHost { shared: self.shared.clone(), index: made.len(), generation });
-            let Ok(radio) = Radio::start(link.clone(), dir, host) else { continue };
+            let Ok(radio) = Radio::start_with(link.clone(), dir, host, self.shared.senses.clone()) else { continue };
             radio.set_call_mode(calling);
             // a computer that was already there keeps what was last seen of it, so the screen does not empty while
             // it is asked again
@@ -1642,7 +1653,7 @@ mod tests {
         fn record_stop(&self) {}
         fn outbox(&self, _: Vec<Outgoing>, _: Option<String>) {}
         fn hearing(&self, _: String) {}
-        fn transcribe(&self, _: String, _: Vec<u8>) -> Option<String> {
+        fn run_model(&self, _: String, _: String, _: ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
             None
         }
     }
@@ -1706,7 +1717,10 @@ mod tests {
         fn watching(&self) -> bool {
             self.0.load(std::sync::atomic::Ordering::SeqCst)
         }
-        fn transcribe(&self, _: String, _: Vec<u8>) -> Option<String> {
+        fn device(&self) -> HostDevice {
+            HostDevice::default()
+        }
+        fn run_model(&self, _: String, _: String, _: ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
             None
         }
     }
@@ -1732,7 +1746,7 @@ mod tests {
         let mut state = State { stations: vec![station("mini", 1, &[], vec![msg("an agent's own words", 1, "shop two", "shop", false)])], ..State::default() };
         state.stations[0].radio = radio.clone();
         state.stations[0].link = link;
-        let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open("") }), data_dir: dir.display().to_string() };
+        let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default() }), data_dir: dir.display().to_string() };
         let record = desk.diagnostics();
         // what is in it: which computer, each try, the way it went and how it ended, and what was told in passing and lost
         assert!(record.starts_with("airband ") && record.contains("\nmini\n"), "{record}");
@@ -1753,7 +1767,7 @@ mod tests {
         let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
         let dir = std::env::temp_dir().join(format!("airband-read-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(two()), floor: Floor::default(), host: host.clone(), chooser: crate::choices::Chooser::open("") }), data_dir: dir.display().to_string() };
+        let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(two()), floor: Floor::default(), host: host.clone(), chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default() }), data_dir: dir.display().to_string() };
         let counts = |v: &DeskView| (v.unread, v.rooms.iter().map(|r| (r.name.clone(), r.unread)).collect::<Vec<_>>());
         // looking at one team: what it said is read, and the other two teams' one thing each is not
         let v = desk.view(Some("shop".into()), None);
