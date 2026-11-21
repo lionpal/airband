@@ -8,6 +8,28 @@
 use super::*;
 use airband_core::agent::{PermissionAsk, PermissionState};
 
+/// One request for permission.
+pub(super) struct Permit {
+    pub(super) agent_id: String,
+    /// The log line that puts it to him.
+    pub(super) entry: String,
+    /// His answer, once he has given it: allowed or not, and his reason if he refused with one.
+    pub(super) decided: Option<(bool, String)>,
+    pub(super) asked: Instant,
+    /// When the harness last asked where this stands. It asks every few seconds while it waits; one that has
+    /// stopped asking has stopped waiting.
+    pub(super) polled: Instant,
+    /// It is a question of the agent's, not a request for leave: whatever he says is the answer.
+    pub(super) question: bool,
+}
+impl Permit {
+    /// Is the harness still waiting on this? A decided one waits to be collected; an undecided one is over
+    /// when the harness has stopped asking after it, or an hour has gone by.
+    pub(super) fn live(&self) -> bool {
+        self.asked.elapsed() < Duration::from_secs(3600) && (self.decided.is_some() || self.polled.elapsed() < Duration::from_secs(60))
+    }
+}
+
 /// A harness asks. The question goes into the feed, and the id comes back for fetching the answer.
 pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
     let nobody = PermissionState { state: "nobody".into(), ..PermissionState::default() };
@@ -103,7 +125,6 @@ pub(super) enum Ended {
     Gone,
 }
 
-
 /// What the Allow and Deny buttons send: the two answers that need no reading.
 pub(super) use airband_core::radio::{ALLOW, DENY};
 /// How the line of a request for leave ends while it waits, and what takes its place once it is over.
@@ -171,4 +192,66 @@ pub(super) fn answer(app: &App, text: &str, re: Option<&str>, verdict: Option<bo
     app.save(&inner);
     // his answer was taken as he gave it, and is in the chat as his own line: the words only confirm it
     say(if question { "Sent to it." } else if allow { "Allowed." } else { "Refused." }).map(|r| Reply { done: true, ..r })
+}
+
+impl Inner {
+    /// A request ends: he answered it, the harness stopped waiting and asks at its keyboard, it asked
+    /// something newer, or it is gone. This is the one way any of those happens. The line stops offering an
+    /// answer (and, unanswered, says where the question went), it leaves the call queue, and the agent is
+    /// waiting on him from now only if it is asking at its keyboard.
+    pub(super) fn close_permit(&mut self, id: &str, ended: permit::Ended) {
+        let (agent_id, entry) = match &ended {
+            // his answer waits here for the harness to collect it
+            permit::Ended::Answered(allow, reason) => {
+                let Some(permit) = self.permits.get_mut(id) else { return };
+                permit.decided = Some((*allow, reason.clone()));
+                (permit.agent_id.clone(), permit.entry.clone())
+            }
+            _ => {
+                let Some(permit) = self.permits.remove(id) else { return };
+                (permit.agent_id, permit.entry)
+            }
+        };
+        match ended {
+            // answered: a request for leave offers nothing more
+            permit::Ended::Answered(..) => self.end_line(&entry, Dropped::Answered, |e| {
+                if e.leave {
+                    e.options.clear();
+                }
+            }),
+            _ => self.close_line(&entry),
+        }
+        if let Some(s) = self.session(&agent_id) {
+            s.waiting = matches!(ended, permit::Ended::AtKeyboard | permit::Ended::Replaced);
+        }
+    }
+    /// At start: no harness is waiting on anything asked before the tower stopped, so every request for leave
+    /// still offering an answer is over.
+    pub(super) fn close_requests_from_before(&mut self) {
+        let open: Vec<String> = self.log.iter().filter(|e| e.leave && !e.options.is_empty()).map(|e| e.id.clone()).collect();
+        for id in open {
+            self.close_line(&id);
+        }
+    }
+    /// The line of a request that is over.
+    pub(super) fn close_line(&mut self, entry: &str) {
+        self.end_line(entry, Dropped::PermissionEnded, |e| {
+            e.options.clear();
+            if e.leave {
+                e.short = e.short.as_ref().map(|s| s.strip_suffix(permit::ASKS).map(|line| format!("{line}{}", permit::MOVED)).unwrap_or_else(|| s.clone()));
+            }
+        });
+    }
+    /// A line that was waiting on a request stops waiting: it is changed as `change` says, it leaves the
+    /// call queue for the reason given if he had not heard it yet, and every radio sees it again.
+    fn end_line(&mut self, entry: &str, why: Dropped, change: impl FnOnce(&mut Entry)) {
+        if let Some(e) = self.log.iter_mut().find(|e| e.id == entry) {
+            e.permit = None;
+            change(e);
+        }
+        if self.log.iter().any(|e| e.id == entry && e.aloud.unheard()) {
+            self.set_aloud(entry, Aloud::dropped(why));
+        }
+        self.touch(entry);
+    }
 }

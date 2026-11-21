@@ -11,7 +11,11 @@
 //!
 //! Where things are:
 //! - this file: starting the tower up, and the pieces every module shares
-//! - `state`: what the tower remembers (agents, the chat log, each radio's call) and the rules about it
+//! - `state`: what the tower remembers, all of it in one place (`Inner`), and what is asked of the whole
+//! - `sessions`: the agents on the radio, what each is called and which team it is in
+//! - `entries`: the chat log's lines
+//! - `aloud`: where each thing said stands on its way to being heard on a call
+//! - `calls`: each radio's place in a call
 //! - `intake`: agents' events coming in
 //! - `judge`: what is worth his attention, and in how few words (asks the model)
 //! - `route`: who a reply is for, and the controls the tower answers itself
@@ -25,8 +29,11 @@
 //! - `relay_link`: the outbound connection to the relay, one per paired radio
 //! - `push`: waking his phone with a sealed notification when a message deserves it and he is not looking
 mod accounts;
+mod aloud;
 mod attachments;
+mod calls;
 mod deliver;
+mod entries;
 mod held;
 mod http;
 mod intake;
@@ -40,15 +47,21 @@ mod pump;
 mod push;
 mod relay_link;
 mod route;
+mod sessions;
 mod state;
 mod store;
 
+use aloud::*;
+use calls::*;
 use deliver::*;
+use entries::*;
 use intake::*;
 use judge::*;
 use launch::*;
+use permit::Permit;
 use pump::*;
 use route::*;
+use sessions::*;
 use state::*;
 use store::*;
 

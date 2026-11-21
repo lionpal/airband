@@ -6,6 +6,19 @@
 //! launcher is a command template, so another agent tool is another entry in `launchers`, not code here.
 use super::*;
 
+/// A new agent he asked for: where, on what, and to do what. The project is nothing until it is known; the
+/// model and effort are as he named them, by a name the launcher offers when it offers one like it
+/// (`held::offers`), or nothing for the tool's own defaults.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(super) struct Idea {
+    /// The harness he asked for by name ("a codex agent"), when he did and a launcher starts it.
+    pub(super) tool: Option<String>,
+    pub(super) project: Option<String>,
+    pub(super) model: Option<String>,
+    pub(super) effort: Option<String>,
+    pub(super) task: String,
+}
+
 pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply {
     let task = idea.task.as_str();
     let say = |s: String| Reply { say: s, listen: false, ..Reply::default() };

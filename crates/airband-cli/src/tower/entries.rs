@@ -1,0 +1,290 @@
+//! The chat log's lines: what a line holds, how one is written down and changed, and how a radio is shown it.
+use super::*;
+
+/// What the judge is given to read: one thing an agent said, as it stands in the log.
+#[derive(Clone)]
+pub(super) struct Item {
+    pub(super) id: String,
+    /// It needs him at the keyboard; a spoken reply cannot help.
+    pub(super) notice: bool,
+    pub(super) full: String,
+    pub(super) kind: Option<Kind>,
+    pub(super) say: Option<String>,
+    /// The last thing he told this agent, if anything: what the judge needs to tell "done what you asked" from
+    /// chatter along the way.
+    pub(super) asked: Option<String>,
+}
+/// One line of the chat log. For an agent's message, `aloud` says where it stands with being read out.
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub(super) struct Entry {
+    pub(super) seq: u64,
+    pub(super) id: String,
+    pub(super) at: u64,
+    /// What the sender was called when it said this, or "you". For showing a message whose agent has gone.
+    pub(super) from: String,
+    /// The project it belongs to.
+    pub(super) group: String,
+    /// For his messages: what the agents it went to were called.
+    pub(super) to: Vec<String>,
+    pub(super) kind: Option<Kind>,
+    /// The short version, once it has been made.
+    pub(super) short: Option<String>,
+    pub(super) full: String,
+    pub(super) detail: Option<String>,
+    /// Answers he can give with one tap, when the judge found some.
+    #[serde(default)]
+    pub(super) options: Vec<String>,
+    /// Which of them the agent itself recommended, if it did.
+    #[serde(default)]
+    pub(super) recommended: Option<u32>,
+    /// What it holds that he should be able to read whole, by name, if the judge found something.
+    #[serde(default)]
+    pub(super) read: Option<String>,
+    /// The agent said it takes this answer only from him in its own session (the judge read that in it).
+    #[serde(default)]
+    pub(super) own_session: bool,
+    /// The agent that said this had stopped only to wait for work of its own still running. While this is the
+    /// last thing it said, it counts as at work.
+    #[serde(default)]
+    pub(super) background: bool,
+    /// For his words: when the agent took them in, once its harness shows that.
+    #[serde(default)]
+    pub(super) seen: Option<u64>,
+    /// He let this question go without answering it.
+    #[serde(default)]
+    pub(super) dismissed: bool,
+    /// His words, waiting for the agent to stop what it is doing; and whether he took them back first.
+    #[serde(default)]
+    pub(super) queued: bool,
+    #[serde(default)]
+    pub(super) cancelled: bool,
+    /// Pictures that go with it.
+    #[serde(default)]
+    pub(super) pictures: Vec<airband_core::radio::Picture>,
+    /// The id of the agent that said it. Nothing for his own messages.
+    #[serde(default)]
+    pub(super) agent: Option<String>,
+    /// For his messages: the ids of the agents it went to.
+    #[serde(default)]
+    pub(super) to_agents: Vec<String>,
+    /// The permission request this line puts to him, while it is waiting for his answer.
+    #[serde(default, skip)]
+    pub(super) permit: Option<String>,
+    /// This line is, or was, a request for leave to do something on his computer. It stays true after the
+    /// request has ended, so a late answer to it is known for what it is and never goes to the agent as words.
+    #[serde(default)]
+    pub(super) leave: bool,
+    /// When this line last changed, as a count that only goes up across the whole log. A radio asks for
+    /// everything changed since the count it last saw.
+    #[serde(default)]
+    pub(super) rev: u64,
+    /// Where it stands with being read out on a call.
+    #[serde(default)]
+    pub(super) aloud: Aloud,
+    /// It is a notice from the harness that the agent needs him at the keyboard: read to him as it is.
+    #[serde(default)]
+    pub(super) notice: bool,
+}
+impl Entry {
+    /// Mask any credential in the words this line keeps. Returns whether there was one.
+    pub(super) fn scrub(&mut self) -> bool {
+        use airband_core::redact::redact;
+        let mut changed = false;
+        let mut clean = |t: &mut String| {
+            let r = redact(t);
+            if r != *t {
+                *t = r;
+                changed = true;
+            }
+        };
+        clean(&mut self.full);
+        if let Some(t) = self.short.as_mut() {
+            clean(t);
+        }
+        if let Some(t) = self.detail.as_mut() {
+            clean(t);
+        }
+        changed
+    }
+
+    /// Something an agent said.
+    pub(super) fn said(id: String, s: &Session, kind: Option<Kind>, full: String) -> Entry {
+        Entry { id, from: s.callsign.text(), group: s.callsign.project.clone(), kind, full, agent: Some(s.agent.id.clone()), ..Entry::default() }
+    }
+    /// Something he said, to these agents.
+    pub(super) fn his(id: String, to: &[Session], text: String) -> Entry {
+        let projects: HashSet<&String> = to.iter().map(|s| &s.callsign.project).collect();
+        let group = if projects.len() == 1 { to[0].callsign.project.clone() } else { String::new() };
+        Entry { id, from: "you".into(), group, to: to.iter().map(|s| s.callsign.text()).collect(), to_agents: to.iter().map(|s| s.agent.id.clone()).collect(), short: Some(text.clone()), full: text, ..Entry::default() }
+    }
+}
+/// How many log lines the tower keeps in memory. The database keeps them all.
+pub(super) const LOG_KEEP: usize = 1000;
+impl Inner {
+    /// What the judge reads of a line.
+    pub(super) fn item(&self, e: &Entry) -> Item {
+        Item { asked: e.agent.as_deref().and_then(|a| self.last_instruction(a)), id: e.id.clone(), notice: e.notice, full: e.full.clone(), kind: e.kind, say: e.short.clone() }
+    }
+    /// What he said to an agent at its own keyboard, as its harness kept it: added to the chat as his words to
+    /// it, each once, at the time he said it. `upto` is how far the harness's record has now been read.
+    /// `pictures` are the ones that came with each thing told, already kept, in the same order.
+    pub(super) fn told(&mut self, agent_id: &str, told: Vec<crate::adapters::Told>, pictures: Vec<Vec<airband_core::radio::Picture>>, upto: u64) {
+        let Some(to) = self.find(agent_id).cloned() else { return };
+        // nothing from before the chat he has; with no chat yet, the last day
+        let oldest = self.log.first().map(|e| e.at).unwrap_or_else(|| now_ms().saturating_sub(24 * 3600 * 1000));
+        // what the tower passed on, now taken in by the agent: his message is marked read, the oldest unread first
+        for t in told.iter().filter(|t| !t.his) {
+            let read = self.log.iter().position(|e| e.from == "you" && e.seen.is_none() && !e.queued && !e.cancelled && e.to_agents.iter().any(|a| a == agent_id) && e.at <= t.at + 5000 && t.text.contains(e.full.trim()));
+            if let Some(i) = read {
+                self.log[i].seen = Some(t.at);
+                let id = self.log[i].id.clone();
+                self.touch(&id);
+            }
+        }
+        for (t, pictures) in told.into_iter().zip(pictures.into_iter().chain(std::iter::repeat_with(Vec::new))).filter(|(t, _)| t.his && t.at >= oldest) {
+            // the harness's own id for it, so the same words are never added twice
+            let id: String = t.id.chars().filter(|c| c.is_ascii_alphanumeric()).take(40).collect();
+            if id.is_empty() || self.log.iter().any(|e| e.id == id) {
+                continue;
+            }
+            // his words as he typed them. Something very long (a pasted log) is shown by its opening and kept whole
+            let short: String = if t.text.chars().count() > 1500 { format!("{}…", t.text.chars().take(1500).collect::<String>().trim_end()) } else { t.text.clone() };
+            self.record_at(Entry { short: Some(short), pictures, ..Entry::his(id, std::slice::from_ref(&to), t.text) }, t.at);
+        }
+        if let Some(s) = self.session(agent_id) {
+            s.told_upto = upto;
+        }
+    }
+    /// Add a line to the log.
+    pub(super) fn record(&mut self, e: Entry) {
+        self.record_at(e, now_ms());
+    }
+    /// Add a line that was said at a time already past: it takes its place among the others by that time.
+    pub(super) fn record_at(&mut self, mut e: Entry, at: u64) {
+        self.seq += 1;
+        self.rev += 1;
+        e.seq = self.seq;
+        e.rev = self.rev;
+        e.at = at.min(now_ms());
+        // a key or a token in what was said is not kept in the chat (the agent it went to has it as he said it)
+        e.scrub();
+        self.unsaved.borrow_mut().insert(e.id.clone());
+        let place = self.log.partition_point(|have| have.at <= e.at);
+        self.log.insert(place, e);
+        if self.log.len() > LOG_KEEP {
+            let extra = self.log.len() - LOG_KEEP;
+            self.log.drain(..extra);
+        }
+    }
+    /// A logged line changed: every radio should see it again, and it should be written.
+    pub(super) fn touch(&mut self, id: &str) {
+        self.rev += 1;
+        let rev = self.rev;
+        if let Some(e) = self.log.iter_mut().find(|e| e.id == id) {
+            e.rev = rev;
+            self.unsaved.borrow_mut().insert(id.to_string());
+        }
+    }
+    /// The short version of a message is ready: for the call queue and for the chat alike.
+    pub(super) fn fill(&mut self, id: &str, j: &judge::Judged) {
+        self.judging.remove(id);
+        if let Some(e) = self.log.iter_mut().find(|e| e.id == id) {
+            e.kind = Some(j.kind);
+            e.short = Some(airband_core::redact::redact(&j.say));
+            e.options = j.options.clone();
+            e.recommended = j.recommended;
+            e.read = j.read.clone();
+            e.background = j.background;
+            e.own_session = j.own_session;
+            self.touch(id);
+        }
+        // not worth his ears: it stays in the chat, dimmed, and is not read out
+        if j.kind == Kind::Fyi && self.log.iter().any(|e| e.id == id && e.aloud.unheard()) {
+            self.set_aloud(id, Aloud::dropped(Dropped::Routine));
+        }
+    }
+    /// A logged line as a radio sees it. The sender's name is what it is called now, if it is still here.
+    pub(super) fn message(&self, e: &Entry) -> Message {
+        let text = e.short.clone().unwrap_or_else(|| opening(&e.full));
+        let sender = self.sender(e);
+        let to = if e.to_agents.is_empty() { e.to.clone() } else { e.to_agents.iter().zip(&e.to).map(|(id, was)| self.find(id).map(|s| s.callsign.text()).unwrap_or_else(|| was.clone())).collect() };
+        Message {
+            seq: e.seq,
+            id: e.id.clone(),
+            at: e.at,
+            from: sender.map(|s| s.callsign.text()).unwrap_or_else(|| e.from.clone()),
+            // the team it belongs to now: its sender's, or for something he said, the team of who it went to
+            group: sender.map(|s| s.callsign.project.clone()).unwrap_or_else(|| {
+                let teams: HashSet<&String> = e.to_agents.iter().filter_map(|id| self.find(id)).map(|s| &s.callsign.project).collect();
+                if teams.len() == 1 && e.to_agents.iter().all(|id| self.find(id).is_some()) { teams.into_iter().next().unwrap().clone() } else { e.group.clone() }
+            }),
+            to,
+            kind: e.kind,
+            long: spoken(&e.full) != text,
+            text,
+            options: e.options.clone(),
+            recommended: e.recommended,
+            read: e.read.clone(),
+            own_session: e.own_session,
+            seen: e.seen,
+            queued: e.queued,
+            cancelled: e.cancelled,
+            // a question put through the same door is an ordinary question to him: any answer will do
+            // only while the harness is still waiting on it
+            permission: e.leave && e.permit.as_ref().is_some_and(|id| self.permits.get(id).is_some_and(|p| p.decided.is_none())),
+            pictures: e.pictures.clone(),
+            links: if e.from == "you" { Vec::new() } else { airband_core::speech::links(&e.full) },
+            agent: e.agent.clone(),
+            rev: e.rev,
+            open: false,
+            not_read: e.aloud.not_read(),
+        }
+    }
+    /// The messages that need him and that nothing has answered yet. One at most per agent: its latest, while
+    /// it has said nothing since, he has sent it nothing since, and it is still on the radio.
+    pub(super) fn open_ids(&self) -> HashSet<String> {
+        // A question stays open until he says something to the agent that asked it, or it asks a newer one.
+        // What the agent goes on to report does not close it at once: he still has not answered. But one it
+        // has spoken past three times, or that is six hours old, is let go: by then it has decided for itself
+        // or asked again, and it should not keep calling for him.
+        const SPOKEN_PAST: u32 = 3;
+        const TOO_OLD_MS: u64 = 6 * 3600 * 1000;
+        let mut latest: HashMap<&str, (&str, u64, u32)> = HashMap::new();
+        for e in &self.log {
+            if let Some(agent) = e.agent.as_deref() {
+                if e.kind == Some(Kind::NeedsYou) {
+                    if e.dismissed {
+                        latest.remove(agent);
+                    } else {
+                        latest.insert(agent, (&e.id, e.at, 0));
+                    }
+                } else if e.kind != Some(Kind::Fyi) {
+                    if let Some(q) = latest.get_mut(agent) {
+                        q.2 += 1;
+                    }
+                }
+            } else {
+                for to in &e.to_agents {
+                    latest.remove(to.as_str());
+                }
+            }
+        }
+        let now = now_ms();
+        // a request for permission is open for as long as the harness is waiting on it, whatever its age
+        let permits: HashSet<&str> = self.permits.values().filter(|p| p.decided.is_none()).map(|p| p.entry.as_str()).collect();
+        latest
+            .into_iter()
+            .filter(|(agent, (id, at, past))| self.find(agent).is_some() && (permits.contains(id) || (*past < SPOKEN_PAST && now.saturating_sub(*at) < TOO_OLD_MS)))
+            .map(|(_, (id, _, _))| id.to_string())
+            .collect()
+    }
+    /// The last thing he said to an agent: a message addressed to it, or the task it was launched with.
+    pub(super) fn last_instruction(&self, agent_id: &str) -> Option<String> {
+        let launched = self.find(agent_id).map(|s| launch::launch_label(&s.callsign.project));
+        self.log.iter().rev().find(|e| e.from == "you" && (e.to_agents.iter().any(|a| a == agent_id) || (e.to_agents.is_empty() && e.to.first() == launched.as_ref()))).map(|e| e.full.clone())
+    }
+    /// The last thing an agent said that was worth his attention.
+    pub(super) fn last_said(&self, agent_id: &str) -> Option<&Entry> {
+        self.log.iter().rev().find(|e| e.agent.as_deref() == Some(agent_id) && e.kind != Some(Kind::Fyi))
+    }
+}
