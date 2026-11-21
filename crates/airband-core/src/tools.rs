@@ -63,7 +63,13 @@ pub enum Held {
     },
     /// A program that speaks the Agent Client Protocol (agentclientprotocol.com) on its standard input and
     /// output. The holder speaks it back, and reports for the agent.
-    Acp { program: Vec<String> },
+    Acp {
+        program: Vec<String>,
+        /// The mode to put a new session in, by the agent's own id for it ("read-only"), when not the one it
+        /// opens in: how much it does without asking.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mode: Option<String>,
+    },
 }
 
 /// A row written before there were two kinds says none: it is the first.
@@ -83,6 +89,8 @@ impl<'de> Deserialize<'de> for Held {
             },
             Acp {
                 program: Vec<String>,
+                #[serde(default)]
+                mode: Option<String>,
             },
         }
         let mut row = serde_json::Value::deserialize(from)?;
@@ -91,7 +99,7 @@ impl<'de> Deserialize<'de> for Held {
         }
         Ok(match serde_json::from_value(row).map_err(serde::de::Error::custom)? {
             Said::Lines { fresh, resume, line, stop } => Held::Lines { fresh, resume, line, stop },
-            Said::Acp { program } => Held::Acp { program },
+            Said::Acp { program, mode } => Held::Acp { program, mode },
         })
     }
 }
@@ -105,7 +113,7 @@ mod tests {
         let old: Held = serde_json::from_str(r#"{"fresh":[],"resume":[],"line":"{\"text\":{text}}"}"#).unwrap();
         assert!(matches!(old, Held::Lines { ref line, stop: None, .. } if line.contains("{text}")));
         let acp: Held = serde_json::from_str(r#"{"by":"acp","program":["opencode","acp"]}"#).unwrap();
-        assert_eq!(acp, Held::Acp { program: vec!["opencode".into(), "acp".into()] });
+        assert_eq!(acp, Held::Acp { program: vec!["opencode".into(), "acp".into()], mode: None });
         assert_eq!(serde_json::to_value(&acp).unwrap()["by"], "acp");
         // a kind a newer build added does not read here, and says so
         assert!(serde_json::from_str::<Held>(r#"{"by":"telepathy"}"#).is_err());

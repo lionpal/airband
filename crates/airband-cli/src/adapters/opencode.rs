@@ -186,8 +186,7 @@ fn watch(tower: Tower) {
         let here: Vec<&str> = sessions.iter().filter(ours).filter(|s| now.saturating_sub(s["time"]["updated"].as_u64().unwrap_or(0)) <= QUIET).filter_map(|s| s["id"].as_str()).collect();
         let gone: Vec<String> = seen.keys().filter(|id| !here.contains(&id.as_str())).cloned().collect();
         for id in gone {
-            // one the tower has taken to running itself has not left: its driver speaks for it now
-            if (tower.holds)(&id) || send(&id, None, Event::Signoff) {
+            if send(&id, None, Event::Signoff) {
                 seen.remove(&id);
             }
         }

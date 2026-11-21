@@ -23,7 +23,7 @@ const OPENING: Duration = Duration::from_secs(120);
 
 /// Open a session (a new one, or `session` carried on), say the agent is ready, and drive it until it ends.
 /// An error is the agent never having started.
-pub(crate) fn run(held: &Held, session: Option<String>) -> Result<(), String> {
+pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>) -> Result<(), String> {
     let send = |message: Value| held.write(&message.to_string());
     // an answer to one of this driver's own requests, waited for; what he says meanwhile is kept
     let mut early: VecDeque<Tell> = VecDeque::new();
@@ -65,6 +65,11 @@ pub(crate) fn run(held: &Held, session: Option<String>) -> Result<(), String> {
             (made["sessionId"].as_str().ok_or("the agent opened no session")?.to_string(), made)
         }
     };
+    // the mode its launcher asks for, when the agent does not open in it: refused, it is not an agent he asked for
+    if let Some(mode) = mode.filter(|m| made["modes"]["currentModeId"] != **m) {
+        send(json!({ "jsonrpc": "2.0", "id": 4, "method": "session/set_mode", "params": { "sessionId": session, "modeId": mode } }));
+        answer_to(4).map_err(|e| format!("it would not be put in its \"{mode}\" mode: {e}"))?;
+    }
     let me = Agent { id: held.id.clone(), harness: held.harness.clone(), cwd: Some(held.cwd.clone()), name: None, title: None, pid: None, deliver: Some(Deliver::Held), meta: Default::default() };
     let tell = |event: Event| {
         adapters::post(&AgentEvent { schema: SCHEMA.into(), agent: me.clone(), event });
@@ -108,6 +113,10 @@ pub(crate) fn run(held: &Held, session: Option<String>) -> Result<(), String> {
                             Some("agent_message_chunk") => said.push_str(update["content"]["text"].as_str().unwrap_or_default()),
                             // what it is doing right now, in the agent's own few words for the step
                             Some("tool_call") => {
+                                // what it writes after a step is a new paragraph of what it says
+                                if !said.trim_end().is_empty() && !said.ends_with("\n\n") {
+                                    said = format!("{}\n\n", said.trim_end());
+                                }
                                 if let Some(title) = update["title"].as_str().filter(|t| !t.trim().is_empty()) {
                                     tell(Event::Activity { text: title.chars().take(80).collect() });
                                 }
@@ -163,12 +172,22 @@ pub(crate) fn run(held: &Held, session: Option<String>) -> Result<(), String> {
     Ok(())
 }
 
-/// A request for leave of the agent's, as he is asked it: the agent's own title for what it wants to do, and
-/// everything it said about it. Nothing when it is too long to put in front of him whole.
+/// A request for leave of the agent's, as he is asked it. For a command (the protocol's `execute` kind, with
+/// the command in its input) what he reads is the command itself; for anything else, the agent's own title
+/// for what it wants to do. With it goes everything the agent said about the request. Nothing when it is too
+/// long to put in front of him whole.
 fn leave(params: &Value, agent: Agent) -> Option<airband_core::agent::PermissionAsk> {
     let call = &params["toolCall"];
     let title = call["title"].as_str().map(str::trim).filter(|t| !t.is_empty()).unwrap_or("use a tool");
-    let what = title.chars().next().map(|c| c.to_lowercase().collect::<String>() + &title[c.len_utf8()..]).unwrap_or_default();
+    let command = match &call["rawInput"]["command"] {
+        Value::String(line) => Some(line.trim().to_string()),
+        Value::Array(parts) => Some(parts.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(" ")),
+        _ => None,
+    };
+    let what = match command.filter(|c| !c.is_empty() && call["kind"] == "execute") {
+        Some(command) => format!("run `{command}`"),
+        None => title.chars().next().map(|c| c.to_lowercase().collect::<String>() + &title[c.len_utf8()..]).unwrap_or_default(),
+    };
     adapters::hooks::leave(agent, title, what, &call["rawInput"], "", None)
 }
 
@@ -193,6 +212,8 @@ mod tests {
         let me = Agent { id: "a".into(), harness: "codex".into(), cwd: None, name: None, title: None, pid: None, deliver: Some(Deliver::Held), meta: Default::default() };
         let ask = leave(&params, me.clone()).unwrap();
         assert_eq!(ask.what, "run echo hi");
+        let command = json!({ "toolCall": { "title": "echo hi", "kind": "execute", "rawInput": { "command": ["bash", "-lc", "echo hi"] } } });
+        assert_eq!(leave(&command, me.clone()).unwrap().what, "run `bash -lc echo hi`");
         assert!(ask.detail.contains("echo hi"));
         assert!(leave(&json!({ "toolCall": { "title": "x".repeat(5000) } }), me).is_none());
     }

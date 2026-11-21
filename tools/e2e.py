@@ -426,7 +426,7 @@ try:
     check("however he puts it: \"can you get opus to look into …\" (model)", say("can you get opus to look into why the supplier import got so slow") == "Launching in catalog with opus."
           and open(os.path.join(projects, "catalog", "launched.txt")).read().split("\n")[:2] == ["--model", "opus-id"])
     check("and \"have fable on medium compare …\" (model)", say("have fable on medium compare our two carriers on cost per parcel") == "Launching in logistics with fable, medium.")
-    check("a model the launcher does not offer is not passed on (model)", (lambda r: r.startswith("Launching in") and "gemini" not in r)(say("spin up a new agent on gemini to tidy the payout schedule docs")))
+    check("a model the launcher does not offer is refused in words, and nothing is started on another (model)", (lambda r: not r.startswith("Launching") and "gemini" in r.lower())(say("spin up a new agent on gemini to tidy the payout schedule docs")))
     check("a remark that opens with a model is not taken for one", not say("with opus it is too slow").startswith("Launching"))
     report("looker", "orders", "orders refund failures", "said", """I looked into why refunds for double-charged customers sometimes fail.
 
