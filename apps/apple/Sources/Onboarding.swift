@@ -16,6 +16,8 @@ struct OnboardingView: View {
     @State private var progress: Double?
     @State private var wrong: String?
     @State private var copied = false
+    /// The keyboard is up.
+    @State private var typing = false
     private let tick = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
 
     private static let command = "brew install lionpal/airband/airband && airband start"
@@ -28,6 +30,7 @@ struct OnboardingView: View {
                 ForEach(0..<steps, id: \.self) { i in Capsule().fill(i <= step ? Palette.ink : Palette.raised).frame(height: 4) }
             }
             .padding(.top, 18).padding(.bottom, 20)
+            ScrollViewReader { page in
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     switch step {
@@ -51,6 +54,8 @@ struct OnboardingView: View {
                 .padding(.bottom, 16)
             }
             .scrollIndicators(.hidden)
+            .environment(\.reveal) { id in withAnimation(.snappy(duration: 0.25)) { page.scrollTo(id, anchor: .top) } }
+            }
             if let working {
                 VStack(alignment: .leading, spacing: 6) {
                     if let progress { ProgressView(value: progress).tint(Palette.ink) } else { ProgressView().controlSize(.small) }
@@ -59,6 +64,7 @@ struct OnboardingView: View {
                 .padding(.bottom, 12)
             }
             if let wrong { Text(wrong).font(.footnote).foregroundStyle(.red).padding(.bottom, 10) }
+            if !typing {
             Button(action: next) {
                 HStack(spacing: 10) {
                     if step == 3 { Image(systemName: "qrcode.viewfinder").font(.system(size: 19, weight: .semibold)) }
@@ -79,7 +85,10 @@ struct OnboardingView: View {
                 }
             }
             .font(.system(size: 15, weight: .medium)).foregroundStyle(Palette.quiet).padding(.top, 12).frame(minHeight: 30)
+            }
         }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in typing = true }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in typing = false }
         .padding(.horizontal, 24).padding(.bottom, 16)
         .frame(maxWidth: 560).frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Palette.ground.ignoresSafeArea())

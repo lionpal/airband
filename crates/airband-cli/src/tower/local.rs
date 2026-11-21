@@ -18,8 +18,8 @@ use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 const BUILD: &str = "b12589";
 const ARCHIVES: &[(&str, &str, &str, &str)] = &[("macos", "aarch64", "llama-b12589-bin-macos-arm64.tar.gz", "711006321bbac464624da19f2333b49e8e0d5e6aa75c867b5323d88818abff2f")];
 
-/// Where the server listens: the port after the tower's own, on the loopback address only.
-static PORT: AtomicU16 = AtomicU16::new(7374);
+/// Where the server listens: ten ports up from the tower's own, on the loopback address only.
+static PORT: AtomicU16 = AtomicU16::new(7383);
 /// Set by a command a person is watching (`airband setup`, `airband model test`): wait through the first
 /// download. The tower itself never waits on it: a message that arrives meanwhile is given as written.
 static PATIENT: AtomicBool = AtomicBool::new(false);
@@ -27,7 +27,7 @@ static PATIENT: AtomicBool = AtomicBool::new(false);
 static RUNNING: Mutex<Option<(String, Child)>> = Mutex::new(None);
 
 pub(crate) fn listen_after(tower_port: u16) {
-    PORT.store(tower_port.saturating_add(1), Ordering::SeqCst);
+    PORT.store(tower_port.saturating_add(10), Ordering::SeqCst);
 }
 pub(crate) fn wait_for_it(patient: bool) {
     PATIENT.store(patient, Ordering::SeqCst);
@@ -93,11 +93,21 @@ fn end_the_last_one() {
     let _ = std::fs::remove_file(note);
 }
 
+/// Ask the server's keeper to end it, and wait until it has: asked, not killed, so the keeper can pass it on.
+fn end(keeper: &mut Child) {
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(keeper.id() as i32, libc::SIGTERM);
+    }
+    #[cfg(not(unix))]
+    let _ = keeper.kill();
+    let _ = keeper.wait();
+}
+
 /// Stop the server, when something else reads from now on.
 pub(crate) fn stop() {
     if let Some((_, mut child)) = RUNNING.lock().unwrap().take() {
-        let _ = child.kill();
-        let _ = child.wait();
+        end(&mut child);
     }
     let _ = std::fs::remove_file(dir().join("server.pid"));
 }
@@ -111,14 +121,20 @@ pub(crate) fn ensure(model: &str) -> Result<String, String> {
         let alive = running.as_mut().is_some_and(|(has, child)| has == model && child.try_wait().is_ok_and(|ended| ended.is_none()));
         if !alive {
             if let Some((_, mut old)) = running.take() {
-                let _ = old.kill();
-                let _ = old.wait();
+                end(&mut old);
             }
             end_the_last_one();
             let program = fetch()?;
             log(format!("local model: starting {model} (the model is fetched the first time)"));
             let out = std::fs::File::create(dir().join("server.log")).map_err(|e| e.to_string())?;
-            let child = Command::new(&program)
+            // The server is started under a small shell that ends it when this tower is gone, however the tower
+            // went: a model left running by itself would hold gigabytes of memory for nobody. The same shell
+            // ends it when it is told to stop.
+            const KEEPER: &str = "trap 'kill \"$c\" \"$w\" 2>/dev/null' TERM INT; \"$@\" & c=$!; ( while kill -0 \"$AIRBAND_TOWER_PID\" 2>/dev/null; do sleep 2; done; kill \"$c\" 2>/dev/null ) & w=$!; wait \"$c\"";
+            let child = Command::new("sh")
+                .args(["-c", KEEPER, "sh"])
+                .arg(&program)
+                .env("AIRBAND_TOWER_PID", std::process::id().to_string())
                 .args(["-hf", model, "--no-mmproj", "--reasoning", "off", "--chat-template-kwargs", "{\"enable_thinking\":false}", "--jinja", "-c", "24576", "-np", "3", "--host", "127.0.0.1", "--port", &PORT.load(Ordering::SeqCst).to_string()])
                 .env("LLAMA_CACHE", dir().join("models"))
                 .stdin(Stdio::null())
