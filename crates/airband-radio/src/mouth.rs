@@ -96,7 +96,7 @@ pub(crate) struct Service {
     pub asks: Vec<ServiceAsk>,
 }
 
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ServiceAsk {
     pub field: String,
     pub question: String,

@@ -77,18 +77,10 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         // the newest catalogue of services and models this phone has kept, before anything is listed from it
         loadCatalog(dir: dir.path)
         desk = Desk.open(dataDir: dir.path, host: self)
-        // A new install starts with the models that run on this phone chosen for listening and for the voice:
-        // they need nothing from him, and are fetched when he finishes the first run. Someone who was already
-        // using the app keeps what he had.
-        let defaults = UserDefaults.standard
-        if !defaults.bool(forKey: "airband.onboarded") && Keychain.read("airband.links") == nil && Keychain.read("airband.link") == nil {
-            if defaults.string(forKey: "airband.voice") == nil, let first = localVoices(dir: dir.path).first { defaults.set(first.kind, forKey: "airband.voice") }
-            if defaults.string(forKey: "airband.ears.local") == nil, let first = localListeners(dir: dir.path).first { defaults.set(first.kind, forKey: "airband.ears.local") }
-        }
-        setLocalVoice(dir: dir.path, kind: UserDefaults.standard.string(forKey: "airband.voice") ?? "", voice: UserDefaults.standard.string(forKey: "airband.voice.name") ?? "")
-        setLocalEars(dir: dir.path, kind: UserDefaults.standard.string(forKey: "airband.ears.local") ?? "")
-        if !serviceVoice.isEmpty { setServiceVoice(kind: serviceVoice, key: phoneKeys[serviceVoice] ?? "", settings: serviceSettings) }
-        if !ownEars.isEmpty { setOwnEars(kind: ownEars, key: phoneKeys[ownEars] ?? "", settings: ownEarsSettings) }
+        #if DEBUG
+        // development only: `-airband.devTools '("codex")'` opens as someone who uses those coding tools, for a screenshot
+        if let tools = UserDefaults.standard.stringArray(forKey: "airband.devTools") { desk.setTools(tools: tools) }
+        #endif
         var links = (try? JSONDecoder().decode([String].self, from: Data((Keychain.read("airband.links") ?? "[]").utf8))) ?? []
         if let old = Keychain.read("airband.link"), !old.isEmpty, !links.contains(old) { links.append(old) } // from the first builds
         #if DEBUG
@@ -173,7 +165,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         // a room that has gone (its last agent left) is not somewhere he can stay
         if let room, view.online, !view.rooms.contains(where: { $0.name == room }) { self.room = nil }
         if full.count > (showWhole ? 400 : 60) { full.removeAll() } // opened long ago: fetched again if he looks again
-        sendPendingReads()
+        refreshChoices()
         syncBanners()
     }
 
@@ -238,10 +230,15 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
     }
 
-    /// The coding tools he uses, by id, the one he uses most first. Someone who had the app before there was a
-    /// choice uses Claude Code.
-    @Published var tools: [String] = UserDefaults.standard.stringArray(forKey: "airband.tools") ?? ["claude-code"] {
-        didSet { UserDefaults.standard.set(tools, forKey: "airband.tools") }
+    /// The coding tools he uses, by id, the one he uses most first. The core keeps them: what can write his
+    /// summaries follows from them.
+    var tools: [String] {
+        get { desk.tools() }
+        set {
+            objectWillChange.send()
+            desk.setTools(tools: newValue)
+            refreshChoices()
+        }
     }
 
     /// The picture he chose for each of his computers, by its name: a system symbol's name.
@@ -287,76 +284,59 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
     }
 
-    /// What he chose to write his summaries before any computer was paired: its kind. Sent when one is.
-    @Published var pendingReads: String? = UserDefaults.standard.string(forKey: "airband.reads.pending")
-    private var sendingReads = false
+    /// What he can choose for each job (what writes his summaries, what listens, what speaks) and how each
+    /// choice stands, as the core last said. The core decides all of it; the screens draw this.
+    @Published var choices: [ChoiceJob: [Choice]] = [:]
 
-    /// Choose what reads the agents' messages. The work is done on his computer, so the choice goes there,
-    /// with its key sealed; the computer tries it and keeps the key encrypted. With no computer paired yet the
-    /// choice waits (its key in this phone's Keychain) and is sent when one is. Calls back with what is wrong.
-    func chooseReads(_ kind: String, key: String?, settings: [String: String], done: @escaping (String?) -> Void) {
-        if let key, !key.isEmpty { keepPhoneKey(kind, key) }
-        guard view.online else {
-            UserDefaults.standard.set(kind, forKey: "airband.reads.pending")
-            UserDefaults.standard.set(String(data: (try? JSONEncoder().encode(settings)) ?? Data("{}".utf8), encoding: .utf8), forKey: "airband.reads.pending.settings")
-            pendingReads = kind
-            return done(nil)
-        }
-        let key = key ?? phoneKeys[kind] ?? ""
+    /// Ask the core again. Cheap: nothing is asked of a network.
+    func refreshChoices() {
+        let now = Dictionary(uniqueKeysWithValues: desk.choiceJobs().map { ($0, desk.choices(job: $0)) })
+        if now != choices { choices = now }
+    }
+
+    /// The jobs he chooses something for, in the order the first run asks about them.
+    var jobs: [ChoiceJob] { desk.choiceJobs() }
+
+    /// What is chosen for a job, in a few words.
+    func chosenLabel(_ job: ChoiceJob) -> String { desk.chosenLabel(job: job) }
+
+    /// Choose something for a job. `key` is a key he has just typed; `later` only notes a model, to be fetched
+    /// by `finishChoices`. The core tries a service, or fetches a model, before it takes it. Calls back with
+    /// what is wrong, or nil.
+    func choose(_ job: ChoiceJob, _ id: String, key: String? = nil, settings: [String: String] = [:], later: Bool = false, done: @escaping (String?) -> Void = { _ in }) {
+        work(done) { try self.desk.chooseFor(job: job, id: id, key: key, settings: settings, later: later) }
+    }
+
+    /// Speak in this one of the chosen voice's voices.
+    func chooseVoice(_ name: String, done: @escaping (String?) -> Void = { _ in }) {
+        work(done) { try self.desk.chooseVoice(name: name) }
+    }
+
+    /// The end of the first run: fetch the models he chose that are not on this phone yet.
+    func finishChoices(done: @escaping (String?) -> Void) {
+        work(done) { try self.desk.finishChoices() }
+    }
+
+    /// What the core is doing about a choice right now, and how far along it is.
+    func choiceWork() -> (label: String, fraction: Double?)? {
+        if case .working(let label, let fraction)? = desk.choiceWork() { return (label, fraction) }
+        return nil
+    }
+
+    /// Run one of the core's blocking calls off the main thread and call back with what it said was wrong.
+    private func work(_ done: @escaping (String?) -> Void, _ call: @escaping () throws -> Void) {
         fetch.async {
             var wrong: String?
-            do { try self.desk.setReads(kind: kind, key: key, settings: settings) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "Your computer did not take that. Try again when it can be reached." }
+            do { try call() } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "Your computer could not be reached. Try again when it can." }
+            // a model can be fetched again, so it is left out of the phone's backups
+            var folder = URL(fileURLWithPath: self.voiceDir).appendingPathComponent("models")
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try? folder.setResourceValues(values)
             DispatchQueue.main.async {
-                if wrong == nil {
-                    UserDefaults.standard.removeObject(forKey: "airband.reads.pending")
-                    self.pendingReads = nil
-                    self.refresh()
-                }
+                self.refreshChoices()
                 done(wrong)
             }
-        }
-    }
-
-    /// A computer can be reached and a choice was waiting for one: send it now, once.
-    private func sendPendingReads() {
-        guard let kind = pendingReads, view.online, !sendingReads else { return }
-        sendingReads = true
-        let settings = (try? JSONDecoder().decode([String: String].self, from: Data((UserDefaults.standard.string(forKey: "airband.reads.pending.settings") ?? "{}").utf8))) ?? [:]
-        chooseReads(kind, key: nil, settings: settings) { problem in
-            self.sendingReads = false
-            // one it would not take is let go, and said: he can pick again in Settings
-            if let problem {
-                UserDefaults.standard.removeObject(forKey: "airband.reads.pending")
-                self.pendingReads = nil
-                self.problem = problem
-            }
-        }
-    }
-
-    /// Fetch the models he chose that run on this phone and are not here yet, one after another, and put each
-    /// to use. `step` is told what is happening and how far along it is (nil when that cannot be said).
-    func fetchChosen(step: @escaping (String?, Double?) -> Void, done: @escaping (String?) -> Void) {
-        let voice = localVoices(dir: voiceDir).first { $0.kind == localVoice && !$0.fetched && serviceVoice.isEmpty }
-        let ears = localListeners(dir: voiceDir).first { $0.kind == localEars && ownEars.isEmpty }
-        let listen = {
-            guard let ears else { return done(nil) }
-            let ready = {
-                step("Getting \(ears.name) ready for this phone. About a minute, once.", nil)
-                self.prepareLocalEars(ears.kind) { problem in
-                    if problem == nil { self.useLocalEars(ears.kind) }
-                    done(problem)
-                }
-            }
-            if ears.fetched { return ready() }
-            step("Downloading \(ears.name)", 0)
-            self.downloadVoice(ears.kind) { problem in if let problem { done(problem) } else { ready() } }
-        }
-        guard let voice else { return listen() }
-        step("Downloading \(voice.name)", 0)
-        downloadVoice(voice.kind) { problem in
-            if let problem { return done(problem) }
-            self.useVoice(voice.kind)
-            listen()
         }
     }
 
@@ -416,66 +396,26 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
     }
 
-    /// Where a voice made on this phone keeps its model.
+    /// The app's own folder: the core keeps what he chose there, and the models that run on this phone.
     let voiceDir: String
-    /// The voice made on this phone that he has chosen, or empty for the computer's.
-    @Published var localVoice = UserDefaults.standard.string(forKey: "airband.voice") ?? ""
 
-    /// The keys he has given this phone, by provider: one key serves everything its provider does here (its
-    /// voice and its listening). Kept in the Keychain, on this phone only, and never shown again.
-    var phoneKeys: [String: String] {
+    /// The keys he has given this phone, by provider. Kept in the Keychain, on this phone only. Only the core
+    /// asks for one, to use it: no screen is ever handed a key.
+    private var keys: [String: String] {
         (try? JSONDecoder().decode([String: String].self, from: Data((Keychain.read("airband.keys") ?? "{}").utf8))) ?? [:]
     }
-    func keepPhoneKey(_ provider: String, _ key: String?) {
-        var all = phoneKeys
-        all[provider] = key
+    private let keysLock = NSLock()
+    func secret(name: String) -> String? {
+        keysLock.lock()
+        defer { keysLock.unlock() }
+        return keys[name]
+    }
+    func keepSecret(name: String, value: String?) {
+        keysLock.lock()
+        defer { keysLock.unlock() }
+        var all = keys
+        all[name] = value
         Keychain.write("airband.keys", String(data: (try? JSONEncoder().encode(all)) ?? Data("{}".utf8), encoding: .utf8) ?? "{}")
-        objectWillChange.send()
-    }
-
-    /// The voice service this phone speaks through with his own key, or empty.
-    @Published var serviceVoice = UserDefaults.standard.string(forKey: "airband.voice.service") ?? ""
-    /// What that service was told beyond the key.
-    var serviceSettings: [String: String] {
-        (try? JSONDecoder().decode([String: String].self, from: Data((UserDefaults.standard.string(forKey: "airband.voice.settings") ?? "{}").utf8))) ?? [:]
-    }
-
-    /// Try a voice service with a key and, if it speaks, use it from now on. `key` nil uses the one already kept
-    /// for that provider. Calls back with what is wrong, or nil.
-    func useService(_ kind: String, key: String?, settings: [String: String], done: @escaping (String?) -> Void) {
-        let key = key?.trimmingCharacters(in: .whitespaces) ?? phoneKeys[kind] ?? ""
-        fetch.async {
-            var wrong: String?
-            do { try checkServiceVoice(kind: kind, key: key, settings: settings) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "Could not check the voice." }
-            DispatchQueue.main.async {
-                if wrong == nil {
-                    if !key.isEmpty { self.keepPhoneKey(kind, key) }
-                    UserDefaults.standard.set(kind, forKey: "airband.voice.service")
-                    UserDefaults.standard.set(String(data: (try? JSONEncoder().encode(settings)) ?? Data("{}".utf8), encoding: .utf8), forKey: "airband.voice.settings")
-                    self.serviceVoice = kind
-                    // one voice at a time: the one made on the phone steps aside
-                    self.useVoice("")
-                    setServiceVoice(kind: kind, key: key, settings: settings)
-                }
-                done(wrong)
-            }
-        }
-    }
-
-    func stopService() {
-        UserDefaults.standard.set("", forKey: "airband.voice.service")
-        serviceVoice = ""
-        setServiceVoice(kind: "", key: "", settings: [:])
-    }
-
-    /// Which of the phone's own voices speaks, by name. Empty is the usual one.
-    @Published var voiceName = UserDefaults.standard.string(forKey: "airband.voice.name") ?? ""
-
-    /// Speak in this one of the model's voices from now on. Takes effect at once when the model is in use.
-    func chooseVoice(_ name: String) {
-        UserDefaults.standard.set(name, forKey: "airband.voice.name")
-        voiceName = name
-        if !localVoice.isEmpty { setLocalVoice(dir: voiceDir, kind: localVoice, voice: name) }
     }
 
     /// The clip being played to let him hear a voice before choosing it, and which voice it is.
@@ -508,35 +448,6 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }.resume()
     }
 
-    /// Speak with a voice made on this phone from now on; empty goes back to the computer's.
-    func useVoice(_ kind: String) {
-        UserDefaults.standard.set(kind, forKey: "airband.voice")
-        localVoice = kind
-        setLocalVoice(dir: voiceDir, kind: kind, voice: voiceName)
-        if !kind.isEmpty { stopService() }
-    }
-
-    /// Fetch a voice's model. Calls back with what went wrong, or nil. The model can be fetched again, so it
-    /// is left out of the phone's backups.
-    func downloadVoice(_ kind: String, done: @escaping (String?) -> Void) {
-        fetch.async {
-            var wrong: String?
-            do { try fetchLocalModel(dir: self.voiceDir, kind: kind) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "The download did not finish." }
-            var folder = URL(fileURLWithPath: self.voiceDir).appendingPathComponent("models")
-            var values = URLResourceValues()
-            values.isExcludedFromBackup = true
-            try? folder.setResourceValues(values)
-            DispatchQueue.main.async { done(wrong) }
-        }
-    }
-
-    func removeVoice(_ kind: String) {
-        if localVoice == kind { useVoice("") }
-        if localEars == kind { useLocalEars("") }
-        heardWith.removeAll()
-        removeLocalModel(dir: voiceDir, kind: kind)
-    }
-
     /// Say a sentence in the chosen voice, so he hears what he picked.
     func sampleVoice(done: @escaping (String?) -> Void) {
         fetch.async {
@@ -546,28 +457,6 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
                 self.voice.play(rate: sample.rate, pcm: sample.pcm, last: true)
             } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "The voice did not speak." }
             DispatchQueue.main.async { done(wrong) }
-        }
-    }
-
-    /// The listening model on this phone that he has chosen, or empty.
-    @Published var localEars = UserDefaults.standard.string(forKey: "airband.ears.local") ?? ""
-    /// How long the model took over the last thing it heard, and how long that recording was, in seconds.
-    @Published var lastHeard: (took: Double, of: Double)?
-
-    /// Listen with a model on this phone from now on; empty goes back to a service or the computer.
-    func useLocalEars(_ kind: String) {
-        UserDefaults.standard.set(kind, forKey: "airband.ears.local")
-        localEars = kind
-        setLocalEars(dir: voiceDir, kind: kind)
-    }
-
-    /// Get a listening model ready on this phone: the first time, the phone spends about a minute fitting it to
-    /// its own chip. Calls back with what went wrong, or nil.
-    func prepareLocalEars(_ kind: String, done: @escaping (String?) -> Void) {
-        let folder = localModelFolder(dir: voiceDir, kind: kind)
-        fetch.async {
-            let heard = self.transcribe(folder: folder, pcm: Data(count: 32000))
-            DispatchQueue.main.async { done(heard == nil ? "The model did not load on this phone." : nil) }
         }
     }
 
@@ -583,48 +472,11 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
             let model = try heardWith[folder] ?? Transcriber(bundle: URL(fileURLWithPath: folder))
             heardWith[folder] = model
             let samples: [Float] = pcm.withUnsafeBytes { raw in raw.bindMemory(to: Int16.self).map { Float($0) / 32768 } }
-            let began = Date()
-            let heard = try model.transcribe(samples)
-            let took = Date().timeIntervalSince(began)
-            DispatchQueue.main.async { self.lastHeard = (took, heard.audioSeconds) }
-            return heard.text
+            return try model.transcribe(samples).text
         } catch {
             NSLog("airband: the listening model failed: \(error.localizedDescription)")
             return nil
         }
-    }
-
-    /// The listening service this phone reaches with his own key, or empty.
-    @Published var ownEars = UserDefaults.standard.string(forKey: "airband.ears.service") ?? ""
-    /// What that service was told beyond the key.
-    var ownEarsSettings: [String: String] {
-        (try? JSONDecoder().decode([String: String].self, from: Data((UserDefaults.standard.string(forKey: "airband.ears.settings") ?? "{}").utf8))) ?? [:]
-    }
-
-    /// Try a listening service with a key and, if it answers, listen with it from now on. `key` nil uses the one
-    /// already kept for that provider. Calls back with what is wrong, or nil.
-    func keepOwnEars(_ kind: String, key: String?, settings: [String: String], done: @escaping (String?) -> Void) {
-        let key = key?.trimmingCharacters(in: .whitespaces) ?? phoneKeys[kind] ?? ""
-        fetch.async {
-            var wrong: String?
-            do { try checkOwnEars(kind: kind, key: key, settings: settings) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "Could not check the key." }
-            DispatchQueue.main.async {
-                if wrong == nil {
-                    if !key.isEmpty { self.keepPhoneKey(kind, key) }
-                    UserDefaults.standard.set(kind, forKey: "airband.ears.service")
-                    UserDefaults.standard.set(String(data: (try? JSONEncoder().encode(settings)) ?? Data("{}".utf8), encoding: .utf8), forKey: "airband.ears.settings")
-                    self.ownEars = kind
-                    setOwnEars(kind: kind, key: key, settings: settings)
-                }
-                done(wrong)
-            }
-        }
-    }
-
-    func forgetOwnEars() {
-        UserDefaults.standard.set("", forKey: "airband.ears.service")
-        ownEars = ""
-        setOwnEars(kind: "", key: "", settings: [:])
     }
 
     /// The computers a new agent of this team can be started on, the usual one first.
