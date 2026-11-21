@@ -55,7 +55,7 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
     };
     inner.record(Entry { short: Some(line.clone()), options, permit: Some(id.clone()), leave: ask.question.is_none(), ..Entry::said(entry_id.clone(), &session, Some(Kind::NeedsYou), detail.clone()) });
     // on a call it is read out like any other question
-    inner.pending.push(Item { id: entry_id.clone(), agent_id: agent_id.clone(), notice: false, full: detail, kind: Some(Kind::NeedsYou), say: Some(line), detail: None, created: now(), asked: None });
+    inner.pending.push(Item { id: entry_id.clone(), agent_id: agent_id.clone(), notice: false, full: detail, kind: Some(Kind::NeedsYou), say: Some(line), detail: None, created: now(), asked: None, callsign: Some(session.callsign.clone()) });
     inner.permits.insert(id.clone(), Permit { agent_id, entry: entry_id.clone(), decided: None, asked: Instant::now(), polled: Instant::now(), question: ask.question.is_some() });
     // he had the chat open a moment ago and may have put the phone down since: it is woken if so
     push::consider(app, &mut inner, &entry_id);

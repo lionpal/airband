@@ -80,6 +80,9 @@ pub struct Service {
     pub more: bool,
     /// It costs him nothing to use: say so.
     pub free: bool,
+    /// The coding tool whose sign-in on his computer it uses, by that tool's id; empty when it uses none.
+    /// Offer it only to someone who uses that tool.
+    pub login: String,
     /// What it costs him, in a few words. Empty when free or not known.
     pub price: String,
     /// For a voice service: a few voices to choose from, the usual one first. The `name` of the one chosen
@@ -111,6 +114,7 @@ fn services(job: airband_core::providers::Job) -> Vec<Service> {
             kind: p.id.into(),
             more: !o.preferred,
             free: o.local(),
+            login: o.login.into(),
             price: o.price.into(),
             voices: o.voices.iter().map(|v| crate::models::VoiceChoice { name: v.id.into(), label: v.name.into(), about: v.about.into(), preview: v.sample.into() }).collect(),
             name: o.label.into(),
@@ -121,6 +125,21 @@ fn services(job: airband_core::providers::Job) -> Vec<Service> {
             asks: o.asks.iter().map(|a| ServiceAsk { field: a.field.into(), question: a.question.into(), usual: a.usual.into() }).collect(),
         })
         .collect()
+}
+
+/// A coding tool airband works with, for where he picks the ones he uses.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct CodingTool {
+    /// What its agents are known by (`DeskMember::harness`), and what a service's `login` names.
+    pub id: String,
+    pub name: String,
+    pub maker: String,
+}
+
+/// The coding tools airband works with, in the order to show them.
+#[uniffi::export]
+pub fn coding_tools() -> Vec<CodingTool> {
+    airband_core::catalog::current().tools.iter().map(|t| CodingTool { id: t.id.into(), name: t.name.into(), maker: t.maker.into() }).collect()
 }
 
 /// The voice services this build can reach, straight from the provider table. A screen offers these and names

@@ -1,0 +1,33 @@
+{
+  "id": "opencode",
+  "name": "OpenCode, with your OpenCode login",
+  "offers": [
+    {
+      "job": "summary",
+      "by": {
+        "command": {
+          "argv": [
+            "opencode",
+            "run",
+            "--archived",
+            "--agent",
+            "airband",
+            "-m",
+            "{model}"
+          ]
+        }
+      },
+      "label": "OpenCode Go GPT-6 Luna",
+      "about": "Uses your OpenCode login",
+      "preferred": true,
+      "login": "opencode",
+      "asks": [
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "opencode-go/gpt-6-luna#low"
+        }
+      ]
+    }
+  ]
+}

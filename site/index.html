@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>airband: squad comms for your Claudes</title>
-<meta name="description" content="Voice channels to manage all your agent teams. Your Claudes report and ask in one feed, and you answer with a tap or out loud.">
-<meta property="og:title" content="airband: squad comms for your Claudes">
+<title>airband: squad comms for your coding agents</title>
+<meta name="description" content="Voice channels to manage all your agent teams. Your Claude Code, Codex and OpenCode agents report and ask in one feed, and you answer with a tap or out loud.">
+<meta property="og:title" content="airband: squad comms for your coding agents">
 <meta property="og:description" content="Voice channels to manage all your agent teams.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://airband.dev/">
@@ -43,6 +43,11 @@ body { background: var(--ground); color: var(--ink); font-family: var(--sans); m
 .pitch { min-width: 0; }
 .lead { display: flex; flex-direction: column; align-items: flex-start; gap: 28px; }
 h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.04em; font-weight: 700; margin: 0; text-wrap: balance; min-width: 0; }
+.turn { display: inline-grid; vertical-align: bottom; overflow: hidden; }
+.turn b { grid-area: 1 / 1; font-weight: inherit; white-space: nowrap; transform: translateY(105%); opacity: 0; transition: transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s ease; }
+.turn b.in { transform: none; opacity: 1; }
+.turn b.out { transform: translateY(-105%); opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .turn b { transition: none; } }
 .words { min-width: 0; }
 .sub { margin: 16px 0 0; max-width: 34em; font-size: clamp(18px, 2vw, 22px); line-height: 1.4; color: var(--quiet); }
 .get { display: flex; align-items: center; gap: 10px; max-width: 100%; height: 54px; padding: 0 8px 0 18px; border-radius: 16px; background: var(--ink); color: var(--ground); }
@@ -399,7 +404,7 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
   <div class="pitch">
   <div class="lead">
     <div class="words">
-      <h1>Squad comms for your Claudes.</h1>
+      <h1 aria-label="Squad comms for your Claudes, Codexes and OpenCodes.">Squad comms<br>for your <span class="turn" id="turn" aria-hidden="true"><b class="in">Claudes.</b></span></h1>
       <p class="sub">Voice channels to manage all your agent teams.</p>
     </div>
     <div class="get">
@@ -421,7 +426,7 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
     <li><b>Your agent is waiting on you.</b><span>It asked a question at 4pm. You answer at 4:01.</span></li>
     <li><b>It wrote you a wall of text.</b><span>airband shows you the one question in it.</span></li>
     <li><b>Say your answer out loud.</b><span>It goes to the agent it's for.</span></li>
-    <li><b>Keep using Claude Code.</b><span>airband runs next to it.</span></li>
+    <li><b>Works with Claude Code, Codex and OpenCode.</b><span>Keep using them as you do. airband runs next to them.</span></li>
   </ul>
   </div>
   <div class="stage" id="stage" role="img" aria-label="Five terminals, each with a Claude working on a project, around a phone, and one empty place. He starts a new Claude in the empty place by saying what he wants. When one of them needs a decision, its long message arrives on the phone as one sentence with the answers as buttons. A tap or a spoken reply goes back to the terminal that asked, and it carries on.">
@@ -550,7 +555,7 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
   <section class="more perf">
     <div class="morewords">
       <h2>It runs in 6 MB.</h2>
-      <p class="sub2">One small Rust program on your computer to control all your Claude Codes.</p>
+      <p class="sub2">One small Rust program on your computer for all your coding agents.</p>
     </div>
     <div class="mem" id="mem" role="img" aria-label="Memory in use, two bars on one scale. airband: 6 megabytes. The Claude desktop app with Remote Control on: 1,670 megabytes.">
       <div class="us"><div class="lab"><span>airband</span><b>6 MB</b></div><div class="track"><div class="mbar" style="--w:0.36%"></div></div></div>
@@ -578,7 +583,7 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
     </div>
   </section>
 
-  <p class="foot">airband is not affiliated with Anthropic. Claude is a trademark of Anthropic.</p>
+  <p class="foot">airband is not affiliated with Anthropic, OpenAI or OpenCode. Claude is a trademark of Anthropic; Codex is a trademark of OpenAI.</p>
 </div>
 
 <script>
@@ -1256,6 +1261,24 @@ h1 { font-size: clamp(38px, 4.7vw, 62px); line-height: 1.03; letter-spacing: -0.
       await wait(900);
     }
   })();
+})();
+
+// The headline's last word turns over: whose agents these are.
+(() => {
+  const turn = document.getElementById("turn");
+  if (!turn) return;
+  const words = ["Claudes.", "Codexes.", "OpenCodes."];
+  // with no motion wanted it says them all, once
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) { turn.innerHTML = '<b class="in" style="white-space: normal">Claudes, Codexes and OpenCodes.</b>'; return; }
+  let at = 0;
+  setInterval(() => {
+    if (document.hidden) return;
+    const was = turn.querySelector("b.in"), next = document.createElement("b");
+    at = (at + 1) % words.length;
+    next.textContent = words[at];
+    turn.appendChild(next);
+    requestAnimationFrame(() => requestAnimationFrame(() => { next.classList.add("in"); if (was) { was.classList.remove("in"); was.classList.add("out"); setTimeout(() => was.remove(), 500); } }));
+  }, 2400);
 })();
 </script>
 </body>

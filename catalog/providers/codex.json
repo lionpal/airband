@@ -1,0 +1,62 @@
+{
+  "id": "codex",
+  "name": "OpenAI, with your Codex login",
+  "offers": [
+    {
+      "job": "summary",
+      "by": {
+        "command": {
+          "argv": [
+            "codex",
+            "exec",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "-s",
+            "read-only",
+            "--ignore-rules",
+            "--ignore-user-config",
+            "-m",
+            "gpt-6-luna",
+            "-c",
+            "model_reasoning_effort=medium",
+            "-c",
+            "model_instructions_file=\"{brief}\"",
+            "-c",
+            "web_search=\"disabled\"",
+            "--disable",
+            "apps",
+            "--disable",
+            "plugins",
+            "--disable",
+            "goals",
+            "--disable",
+            "image_generation",
+            "--disable",
+            "shell_tool",
+            "--disable",
+            "tool_suggest",
+            "--disable",
+            "view_image",
+            "--disable",
+            "multi_agent",
+            "--disable",
+            "browser_use",
+            "--disable",
+            "computer_use",
+            "--disable",
+            "skill_search",
+            "--disable",
+            "unified_exec",
+            "--output-schema",
+            "{shape}",
+            "-"
+          ]
+        }
+      },
+      "label": "OpenAI GPT-6 Luna",
+      "about": "Uses your Codex login",
+      "preferred": true,
+      "login": "codex"
+    }
+  ]
+}

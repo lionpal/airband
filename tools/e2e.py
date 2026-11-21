@@ -576,6 +576,34 @@ Send it as written, or do you want changes?""")
     say("Yes", re=q2["id"])
     late = received("late1")[before:]
     check("an answer to a question the agent has since spoken past takes the question with it", "Yes" in late and "asked earlier" in late and ("delete" in late.lower() or "archive" in late.lower() or "exports" in late.lower()), late[-400:])
+
+    print("Reading aloud")
+    # a second radio turns reading aloud on; everything it is handed here it says it heard, until told otherwise
+    def read_next(joined=False):
+        return http("GET", "/v1/radio/next" + ("?joined=1" if joined else ""), radio="reader", timeout=40)
+    def heard(t):
+        http("POST", "/v1/radio/heard", {"id": t["id"]}, radio="reader")
+        http("POST", "/v1/radio/ready", {}, radio="reader")
+    def read_until(callsign, joined=False):
+        for n in range(12):
+            status, t = read_next(joined and n == 0)
+            if status != 200: return None
+            if t["callsign"] == callsign: return t
+            heard(t)
+    os.makedirs(os.path.join(projects, "solo"), exist_ok=True)
+    report("solo", "solo", "solo run", "said", "The nightly export finished. 412 rows are in the warehouse table and the old file is archived.")
+    report("solo", "solo", "solo run", "signoff")
+    gone = read_until("solo run", joined=True)
+    check("a report is read out even though its agent has since gone (model)", gone and "412" in gone["say"], gone)
+    if gone: heard(gone)
+    report("solo2", "solo", "solo second", "said", "The price list is rebuilt: 88 parts changed price and none failed.")
+    silent = read_until("solo second")
+    check("the next report is handed over in its turn (model)", silent and "88" in silent["say"], silent)
+    if silent:
+        http("POST", "/v1/radio/unheard", {"id": silent["id"], "why": "the test made no sound"}, radio="reader")
+        waiting = http("GET", "/v1/status", token=OWN)[1]["pending"]
+        check("a report that made no sound stays waiting to be read", any(p["callsign"] == "solo second" for p in waiting), waiting)
+        check("and the tower writes down why", "could not read solo second aloud (the test made no sound)" in open(os.path.join(work, "tower.log")).read())
 finally:
     tower.terminate()
     tower.wait(10)

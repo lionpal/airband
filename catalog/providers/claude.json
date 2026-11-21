@@ -21,8 +21,9 @@
         }
       },
       "label": "Anthropic Claude Haiku 5.5",
-      "about": "Uses the Claude login on your computer",
-      "preferred": true
+      "about": "Uses your Claude Code login",
+      "preferred": true,
+      "login": "claude-code"
     }
   ]
 }

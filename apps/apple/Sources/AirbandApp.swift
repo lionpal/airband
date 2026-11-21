@@ -1557,6 +1557,20 @@ struct SetupView: View {
                     NavigationLink { ChoicePage(title: "Voice", headline: Headline.voice) { VoicePicker(mode: .settings) }.environmentObject(model) } label: { row("Voice", speaksWith) }
                 }
                 Section {
+                    NavigationLink {
+                        ChoicePage(title: "Coding agents", headline: Headline.tools) {
+                            VStack(alignment: .leading, spacing: 14) {
+                                Text("Tick the ones you use. What can write your summaries follows from them.").font(.system(size: 15)).foregroundStyle(Palette.soft)
+                                ToolsPicker(single: false)
+                                Text("Codex runs airband\u{2019}s hooks once you have trusted them: open Codex on your computer and type /hooks.").font(.system(size: 13)).foregroundStyle(Palette.quiet)
+                            }
+                        }
+                        .environmentObject(model)
+                    } label: {
+                        row("Coding agents", codingTools().filter { model.tools.contains($0.id) }.map(\.name).joined(separator: ", "))
+                    }
+                }
+                Section {
                     Toggle("Show whole messages", isOn: $model.showWhole)
                 } footer: {
                     Text("Off, you see the short version of what each agent wrote and can open any one. On, you see all of it. What is read aloud is the short version either way.")

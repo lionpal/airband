@@ -27,7 +27,8 @@
           "question": "Model",
           "usual": "claude-haiku-5-5"
         }
-      ]
+      ],
+      "preferred": true
     }
   ]
 }

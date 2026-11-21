@@ -204,9 +204,15 @@ impl Link {
     }
 
     /// The next transmission, or None when the tower had nothing for 25 seconds.
-    pub(crate) fn next(&self) -> Result<Option<Transmission>, LinkError> {
+    pub(crate) fn next(&self, joined: bool) -> Result<Option<Transmission>, LinkError> {
         // a radio that makes its own speech says so, and the tower makes none for it
-        match self.request("GET", &format!("/next{}", crate::mouth::asking()), None)? {
+        let asking = crate::mouth::asking();
+        let joined = match (joined, asking.is_empty()) {
+            (false, _) => "",
+            (true, true) => "?joined=1",
+            (true, false) => "&joined=1",
+        };
+        match self.request("GET", &format!("/next{asking}{joined}"), None)? {
             (200, v) => serde_json::from_value(v).map(Some).map_err(|_| LinkError::Refused),
             (204, _) => Ok(None),
             _ => Err(LinkError::Refused),

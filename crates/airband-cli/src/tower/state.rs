@@ -67,6 +67,10 @@ pub(super) struct Item {
     /// chatter along the way.
     #[serde(default)]
     pub(super) asked: Option<String>,
+    /// What its agent was called when it said this: it is read out under that name even after the agent has
+    /// gone, because a report is his news whether or not its agent is still there.
+    #[serde(default)]
+    pub(super) callsign: Option<Callsign>,
 }
 
 /// One line of the chat log. An agent's message shares its id with the pending [`Item`] it came from.
@@ -208,6 +212,9 @@ pub(super) struct Call {
     pub(super) began: u64,
     /// This radio makes the speech itself, from the words: the tower makes none for it.
     pub(super) speaks: bool,
+    /// It was handed something and no sound came out of it: nothing more is handed to it before this moment,
+    /// so a voice that is not answering does not run the whole queue past him in silence.
+    pub(super) quiet_until: Option<Instant>,
 }
 
 impl Call {
@@ -215,7 +222,7 @@ impl Call {
         self.last_poll.is_some_and(|t| t.elapsed() < RADIO_GONE)
     }
     pub(super) fn can_send(&self) -> bool {
-        self.connected() && self.ready && !self.held && self.outbox.is_none()
+        self.connected() && self.ready && !self.held && self.outbox.is_none() && self.quiet_until.is_none_or(|t| Instant::now() >= t)
     }
 }
 
@@ -355,7 +362,8 @@ impl Inner {
         }
     }
     pub(super) fn remove(&mut self, agent_id: &str) {
-        self.drop_pending(agent_id, None);
+        // it has gone: what it was waiting on him for goes with it, and what it reported is still to be heard
+        self.no_longer_waiting(agent_id);
         self.sessions.retain(|s| s.agent.id != agent_id);
         for call in self.calls.values_mut() {
             if call.focus.as_deref() == Some(agent_id) {
@@ -964,7 +972,7 @@ mod tests {
         inner.call("desk").held = true;
         assert_eq!(inner.free_radio().as_deref(), Some("phone"));
         inner.check_in(&agent("a", "/x/shop", None));
-        inner.pending.push(Item { id: "t".into(), agent_id: "a".into(), notice: false, full: String::new(), kind: None, say: None, detail: None, created: 0, asked: None });
+        inner.pending.push(Item { id: "t".into(), agent_id: "a".into(), notice: false, full: String::new(), kind: None, say: None, detail: None, created: 0, asked: None, callsign: None });
         inner.call("phone").outbox = Some(Transmission { id: "t".into(), callsign: "shop one".into(), kind: Kind::Report, say: String::new(), waiting: 0, speech: None });
         inner.call("phone").ready = false;
         // the agent goes back to work: what the phone was about to say is withdrawn, and only there
@@ -976,7 +984,7 @@ mod tests {
     fn a_report_he_has_not_heard_is_kept_when_he_speaks_to_its_agent_and_its_question_is_not() {
         let mut inner = Inner::default();
         inner.check_in(&agent("a", "/x/shop", None));
-        let item = |id: &str, kind| Item { id: id.into(), agent_id: "a".into(), notice: false, full: String::new(), kind: Some(kind), say: Some("said".into()), detail: None, created: 0, asked: None };
+        let item = |id: &str, kind| Item { id: id.into(), agent_id: "a".into(), notice: false, full: String::new(), kind: Some(kind), say: Some("said".into()), detail: None, created: 0, asked: None, callsign: None };
         inner.pending.push(item("report", Kind::Report));
         inner.pending.push(item("question", Kind::NeedsYou));
         inner.no_longer_waiting("a");
