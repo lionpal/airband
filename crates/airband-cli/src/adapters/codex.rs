@@ -79,8 +79,8 @@ pub fn permission(hook: &Value) -> Option<PermissionAsk> {
 
 /// His words into that session as a turn of his own, by Codex's own queue.
 fn deliver(session: &str, words: &str) -> Result<(), String> {
-    let done = std::process::Command::new("codex").args(["queue", "--thread", session, "--resume", "--message", words]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped()).output().map_err(|e| format!("Codex could not be started: {e}"))?;
-    if done.status.success() { Ok(()) } else { Err(format!("Codex did not take it: {}", String::from_utf8_lossy(&done.stderr).trim().chars().take(200).collect::<String>())) }
+    let done = std::process::Command::new(super::row_says(NAME, "program")).args(["queue", "--thread", session, "--resume", "--message", words]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped()).output().map_err(|e| format!("Codex could not be started: {e}"))?;
+    if done.status.success() { Ok(()) } else { Err(format!("{} did not take it: {}", super::called(NAME).0, String::from_utf8_lossy(&done.stderr).trim().chars().take(200).collect::<String>())) }
 }
 
 // ---- setting Codex up to report: its hooks, in its own hooks file ----
@@ -106,7 +106,8 @@ impl super::Harness for Codex {
     }
     /// Codex runs a hook only once he has trusted it, and asks again whenever the file changes.
     fn installed(&self, file: &super::hooks::File, changed: bool) -> String {
-        if changed { format!("Hooks added to {}. Codex runs them once you have trusted them: open Codex and type /hooks.", file.path.display()) } else { format!("Codex's hooks are in place ({}).", file.path.display()) }
+        let name = super::called(NAME).0;
+        if changed { format!("{name} reports to airband once you allow it: open {name} and type /hooks. (Set in {}.)", file.path.display()) } else { format!("{name} reports to airband (set in {}).", file.path.display()) }
     }
     fn permission(&self, hook: &Value) -> Option<PermissionAsk> {
         permission(hook)

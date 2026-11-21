@@ -140,7 +140,7 @@ Chat mode and the rest:
 | `GET feed?scope=…&since=<rev>&wait=<s>` | → `Feed` | Every line new or changed after change count `since`, oldest change first; pass `rev` back next time. `since=0` gets the newest lines. `scope`: `all`, `group:<name>`, `agent:<callsign>`. Held open up to 25 s. `roster=<roster_rev>`: also answer when the roster changes. `answers` holds what came of things this radio said (see "What he says"); one arriving ends the wait too. `after=<seq>` is the older form (new lines only) and is still answered. |
 | `GET message/<id>?form=detail\|full\|spoken` | `{ text }` | The fuller spoken version, exactly what the agent wrote, or (`spoken`) the whole message as it is read aloud, for the radio to say in the voice he chose on it. |
 | `GET picture/<id>?from=<byte>` | `{ data, next, done }` | One part (120 KB at most, base64) of a picture's kept copy. |
-| `POST attachment` | `{ id, name, from, data, done, total }` → `{ next, any }`, or `{ error }` | One part of a file he is attaching, 120 KB at most. With `total` the parts may come in any order. |
+| `POST attachment` | `{ id, name, from, data, total }` → `{ next }`, or `{ error }` | One part of a file he is attaching, 120 KB at most. `total` is how long the whole file is; the parts may come in any order, several at once, and `next` says how much of the file is whole from its start. |
 | `POST dismiss` | `{ message }` → `{}`, or `{ error }` | He does not mean to answer this question. It stops being open. The agent is told nothing. |
 | `POST unsend` | `{ message }` → `{}`, or `{ error }` | Take back something he said that is still `queued`. |
 | `POST taken` | `{ callsigns }` → `{}` | The names agents go by on his other computers, as his radio shows them ("shop 1"). The tower moves any of its own agents with one of those numbered names to the next free number. A radio tells only the later of two computers. |
@@ -155,6 +155,7 @@ Chat mode and the rest:
 | `GET accounts?fresh=1` | → `{ schema, accounts, note, checked_at }` | Every account of every harness whose sessions can be moved between logins. Kept for five minutes; `fresh` checks again. |
 | `POST accounts/use` | `{ harness, id }` → the same, or `{ error }` | Move that harness's sessions to that account. |
 | `POST push` | `{ provider, token }` → `{}` | Where this radio can be woken: its address at a push service (`apns` is Apple's). An empty `token` takes it away. |
+| `POST tools` | `{ tools }` → `{}` | The coding tools he uses, by the ids their rows give, the one he uses most first. A new agent asked for without naming a tool is started with the first; with none said and no usual launcher set, he is asked. |
 | `POST banner` | `{ provider, which, token }` → `{}` | Where this radio's banner can be changed while the app is asleep. `which` is `start` (the address that puts one up) or `update` (the address of the one that is up). An empty `token` takes it away. |
 
 ### The feed
@@ -437,8 +438,8 @@ kept, and he is told whether the service did not know it, would not serve it, or
 
 `command` is any program that reads a prompt on standard input and writes the answer to standard output.
 `openai` is any service that speaks OpenAI's chat API, a model on his own computer included. `key` is written
-as the name of a kept key (`airband keys`). `summarizer_fallback` takes the same shapes and is asked when the
-first does not answer.
+as the name of a kept key (`airband keys`).
 
-When neither answers, or the kind is `none`, nothing is worked out from the words: he gets each message as
+When it does not answer he is told why on his phone (`reads_failed` in the feed, `failed` in `GET reads`), and
+no other model is asked. Then, or when the kind is `none`, nothing is worked out from the words: he gets each message as
 written, marked a report unless its harness said what it is, and his words go to whoever he names.

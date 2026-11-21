@@ -148,9 +148,8 @@ pub struct Call {
     #[serde(default)]
     pub body: serde_json::Value,
     /// The radio protocol the request is in (`airband.radio/1`). A tower that does not speak it says so, in
-    /// place of guessing. Empty from a radio older than this field. (The relay protocol's own version needs no
-    /// field: it is part of how the keys are derived, so two versions cannot read each other at all.)
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    /// place of guessing. (The relay protocol's own version needs no field: it is part of how the keys are
+    /// derived, so two versions cannot read each other at all.)
     pub schema: String,
     /// Where the radio stands as it makes this request: on a call or not, showing the chat or not.
     #[serde(default)]

@@ -81,11 +81,10 @@ pub(super) fn take_event(app: &Arc<App>, ev: AgentEvent) -> Result<(), String> {
     Ok(())
 }
 
-/// One part of a file he is attaching. Answers with where the next part starts.
+/// One part of a file he is attaching. Answers with how much of the file is whole from its start.
 async fn attachment(Json(part): Json<airband_core::radio::AttachmentPart>) -> Response {
     match tokio::task::spawn_blocking(move || attachments::take(part)).await {
-        // `any`: this tower takes a file's parts in any order when it is told how long the file is
-        Ok(Ok(next)) => Json(json!({ "next": next, "any": true })).into_response(),
+        Ok(Ok(next)) => Json(json!({ "next": next })).into_response(),
         Ok(Err(why)) => Json(json!({ "error": why })).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
@@ -184,7 +183,7 @@ async fn project(State(app): State<Arc<App>>, Json(new): Json<airband_core::radi
     }
     log(format!("a radio made the team {name}, in {folder}"));
     // its first agent, with nothing to do yet, when the tower runs agents itself: the team is then there to see
-    let held = app.cfg.launcher_for(new.tool.as_deref()).is_some_and(|(_, l)| l.held.is_some());
+    let held = held::launcher_for(&app, new.tool.as_deref()).is_some_and(|(_, l)| l.held.is_some());
     if !held {
         return Json(json!({ "say": format!("{name} is ready. Say launch {name}, then what it should do.") }));
     }
@@ -258,6 +257,19 @@ async fn held_end(State(app): State<Arc<App>>, Path(id): Path<String>) -> Status
 /// A radio says where it can be woken when it is not listening (its address at a push service), or takes that back.
 async fn push_target(State(app): State<Arc<App>>, headers: HeaderMap, Json(target): Json<airband_core::radio::PushTarget>) -> Json<Value> {
     push::register(&app, &radio_of(&headers), target);
+    Json(json!({}))
+}
+
+/// A radio says which coding tools he uses, the one he uses most first. Only tools this computer can start
+/// are kept.
+async fn uses_tools(State(app): State<Arc<App>>, Json(said): Json<airband_core::radio::UsesTools>) -> Json<Value> {
+    let known = app.cfg.tools();
+    let tools: Vec<String> = said.tools.into_iter().filter(|t| known.contains(t)).collect();
+    let mut inner = app.inner.lock().unwrap();
+    if inner.tools != tools {
+        inner.tools = tools;
+        app.save(&inner);
+    }
     Json(json!({}))
 }
 
@@ -601,7 +613,7 @@ async fn feed(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
                 m
             })
             .collect();
-        return Json(Feed { schema: airband_core::radio::SCHEMA.into(), rev: upto, messages, roster: inner.roster_entries(), roster_rev: inner.roster_rev(), reads: { let r = judge::reader(&app.cfg); r.offer(crate::providers::Job::Summary).map(|(_, o)| o.label.clone()).unwrap_or_default() }, direct: config::lan_addrs().into_iter().filter(|_| app.cfg.lan).chain(config::tailscale_addrs()).map(|a| format!("http://{a}:{}", app.cfg.port)).collect(), colours: inner.colours.clone(), seq: inner.seq, projects: inner.launchable(&app.cfg).into_keys().collect(), open: open.into_iter().collect(), quick: airband_core::radio::quick_defaults().into_iter().chain(app.cfg.quick.iter().cloned()).collect(), station: config::station(&app.cfg), answers: inner.settled_for(&radio, since) });
+        return Json(Feed { schema: airband_core::radio::SCHEMA.into(), rev: upto, messages, roster: inner.roster_entries(), roster_rev: inner.roster_rev(), reads: { let r = judge::reader(&app.cfg); r.offer(crate::providers::Job::Summary).map(|(_, o)| o.label.clone()).unwrap_or_default() }, direct: config::lan_addrs().into_iter().filter(|_| app.cfg.lan).chain(config::tailscale_addrs()).map(|a| format!("http://{a}:{}", app.cfg.port)).collect(), colours: inner.colours.clone(), seq: inner.seq, projects: inner.launchable(&app.cfg).into_keys().collect(), open: open.into_iter().collect(), quick: airband_core::radio::quick_defaults().into_iter().chain(app.cfg.quick.iter().cloned()).collect(), station: config::station(&app.cfg), reads_failed: judge::failed(), answers: inner.settled_for(&radio, since) });
     }
 }
 
@@ -718,6 +730,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/radio/taken", post(taken))
         .route("/v1/radio/end", post(end_agent))
         .route("/v1/radio/push", post(push_target))
+        .route("/v1/radio/tools", post(uses_tools))
         .route("/v1/radio/banner", post(banner_target))
         .route("/v1/status", get(status))
         .layer(middleware::from_fn_with_state(app.clone(), presence_said))

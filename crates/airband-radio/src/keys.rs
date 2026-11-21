@@ -34,16 +34,10 @@ pub(crate) fn check(check: &Check, key: &str, settings: &BTreeMap<String, String
     }
 }
 
-/// What he is told when a key did not pass, for each way it can go. Nothing for one that did.
+/// What he is told when a key did not pass, for each way it can go, in the words every failure of a service
+/// is told in (`Trouble`). Nothing for one that did.
 pub(crate) fn said(outcome: KeyCheck, p: &Provider) -> Option<String> {
-    let key = if p.key_name.is_empty() { "key" } else { p.key_name.as_str() };
-    match outcome {
-        KeyCheck::Good { .. } => None,
-        KeyCheck::WrongKey => Some(format!("That {key} was not accepted. Check it and paste it again.")),
-        KeyCheck::Refused => Some(format!("{} knows that key and would not serve it. The account may be out of credit, or not allowed to use this.", p.name)),
-        KeyCheck::Unreachable => Some(format!("{} could not be reached to test the key. Check your connection and try again.", p.name)),
-        KeyCheck::Unexpected { status } => Some(format!("{} gave an answer airband did not expect when the key was tested (status {status}). The key was not kept.", p.name)),
-    }
+    outcome.trouble().map(|trouble| trouble.said_of_key(&p.name))
 }
 
 /// What he is told after a key passed a test the service charges for.

@@ -11,7 +11,7 @@ pub(super) fn by_him(app: &App, agent: &str, team: &str) -> Result<(String, Stri
     if inner.find(agent).is_none() {
         return Err("That agent is no longer running.".into());
     }
-    if airband_core::routing::Callsign::next_for(team, &[]).project == "session" && team.trim().to_lowercase() != "session" {
+    if airband_core::routing::team_name(team).is_none() {
         return Err("Give the team a name.".into());
     }
     inner.move_to(agent, team, Mover::Him);
@@ -31,7 +31,7 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
     if judge::reader(&app.cfg).is_none() {
         return;
     }
-    let (session, said, teams) = {
+    let (session, said, teams, folders) = {
         let inner = app.inner.lock().unwrap();
         // one he placed himself is where he wants it
         let Some(s) = inner.find(&agent_id).filter(|s| s.moved != Some(Mover::Him)).cloned() else { return };
@@ -41,8 +41,7 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
         let mut teams: Vec<String> = inner.sessions.iter().map(|s| s.callsign.project.clone()).chain(folders.keys().cloned()).collect();
         teams.sort();
         teams.dedup();
-        let teams: Vec<String> = teams.into_iter().map(|t| match folders.get(&t) { Some(folder) => format!("- {t} (in {folder})"), None => format!("- {t}") }).collect();
-        (s, said, teams)
+        (s, said, teams, folders)
     };
     let agent = session.agent.clone();
     let touched = tokio::task::spawn_blocking(move || crate::adapters::touched(&agent)).await.unwrap_or_default();
@@ -63,19 +62,21 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
          files, or using its data, is not working on it. If its work belongs in the team it is in, or you cannot \
          tell, answer with that team. If it is plainly working on a different project, answer with that project's \
          team when he has one, and otherwise with a short lowercase name for the project, as its folder is called.\n\
-         Reply with one line of JSON and nothing else: {{\"team\":\"<name>\",\"sure\":true or false}}\n\
+         Reply with one line of JSON and nothing else: {{\"team\":<the number that team is listed under, or null>,\"new_team\":<a name for a project that is none of his teams, or null>,\"sure\":true or false}}\n\
          \"sure\": true only when its steps leave no doubt.",
         name = app.cfg.name,
         callsign = session.callsign.text(),
         folder = session.agent.cwd.as_deref().unwrap_or("a folder the tower does not know"),
         said = if said.is_empty() { "- nothing yet".to_string() } else { said.iter().map(|s| format!("- {s}")).collect::<Vec<_>>().join("\n") },
         touched = touched.iter().map(|t| format!("- {t}")).collect::<Vec<_>>().join("\n"),
-        teams = teams.join("\n"),
+        teams = teams.iter().enumerate().map(|(i, t)| match folders.get(t) { Some(folder) => format!("{}. {t} (in {folder})", i + 1), None => format!("{}. {t}", i + 1) }).collect::<Vec<_>>().join("\n"),
     );
     #[derive(Deserialize)]
     struct Out {
         #[serde(default)]
-        team: String,
+        team: Option<usize>,
+        #[serde(default)]
+        new_team: Option<String>,
         #[serde(default)]
         sure: bool,
     }
@@ -87,12 +88,14 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
     if !out.sure {
         return;
     }
+    // one of his teams by the number it was listed under, or a new one by the name the model gave it
+    let Some(to) = out.team.and_then(|n| n.checked_sub(1)).and_then(|i| teams.get(i)).cloned().or(out.new_team.map(|t| t.trim().to_string()).filter(|t| !t.is_empty())) else { return };
     let mut inner = app.inner.lock().unwrap();
     // he may have moved it himself while the model was reading
     if inner.find(&agent_id).is_none_or(|s| s.moved == Some(Mover::Him) || s.callsign.project != team) {
         return;
     }
-    let Some((was, now)) = inner.move_to(&agent_id, &out.team, Mover::Tower) else { return };
+    let Some((was, now)) = inner.move_to(&agent_id, &to, Mover::Tower) else { return };
     // said in the chat and not aloud: the name he knew it by has changed
     if let Some(s) = inner.find(&agent_id).cloned() {
         let line = format!("{} is now {}: it is working on {}.", was.spoken(), now.text(), now.project);

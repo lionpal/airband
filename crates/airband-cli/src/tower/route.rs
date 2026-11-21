@@ -29,7 +29,7 @@ pub(super) enum Routed {
 fn new_by_command(app: &App, text: &str, projects: &[String]) -> Option<Idea> {
     let l = airband_core::routing::parse_launch(text, projects)?;
     // the models and efforts that can be named are the ones of the tool the command names, or of the usual one
-    let menu = app.cfg.launcher_for(l.tool.as_deref()).map(|(name, l)| held::offers(&app.inner.lock().unwrap(), name, l)).unwrap_or_default();
+    let menu = held::launcher_for(app, l.tool.as_deref()).map(|(name, l)| held::offers(&app.inner.lock().unwrap(), &name, &l)).unwrap_or_default();
     let (models, efforts) = (menu.model_words(), menu.effort_words());
     Some(match airband_core::routing::parse_with(&l.task, &models, &efforts).filter(|w| !w.rest.is_empty()) {
         Some(w) => Idea { tool: l.tool, project: l.project, model: Some(w.model), effort: w.effort, task: w.rest },
@@ -77,7 +77,8 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
         (seen, focus.map(|f| (f, before)), all, quiet)
     };
     // what a new agent could be started in and on, if anything
-    let launcher = app.cfg.launchers.get(&app.cfg.launcher);
+    // any tool this computer can start will do for knowing that one can be: which one is settled when it starts
+    let launcher = app.cfg.launchers.values().next();
     let projects: Vec<String> = app.inner.lock().unwrap().launchable(&app.cfg).into_keys().collect();
     // with agents of another computer on his screen there is always more than one it could be for
     let can_start = (launcher.is_some() && !projects.is_empty()) || !others.is_empty();
@@ -92,23 +93,57 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
             let now = now();
             // each with the two letters the app shows for it: he may say those and not the name
             let letters = |s: &Session| airband_core::routing::badge(&s.callsign.project, &s.callsign.text());
-            let line = |s: &Session, e: &Entry, since: bool| {
-                format!("- {} (letters {}; {} ago{}{}): {}", s.callsign.text(), letters(s), ago(now.saturating_sub(e.at)), if since { "" } else { ", before he last spoke" }, if e.kind == Some(Kind::NeedsYou) { ", waiting on him" } else { "" }, e.short.clone().unwrap_or_else(|| opening(&e.full)))
+            // Everyone he could mean, in the order the model is shown them. Each is listed under a number, and
+            // the model answers with numbers: nothing it writes is matched against a name.
+            enum Listed<'a> {
+                Here(&'a Session),
+                Elsewhere(&'a airband_core::radio::Other),
+            }
+            let line = |n: usize, s: &Session, e: &Entry, since: bool| {
+                format!("{n}. {} (letters {}; {} ago{}{}): {}", s.callsign.text(), letters(s), ago(now.saturating_sub(e.at)), if since { "" } else { ", before he last spoke" }, if e.kind == Some(Kind::NeedsYou) { ", waiting on him" } else { "" }, e.short.clone().unwrap_or_else(|| opening(&e.full)))
             };
-            let mut lines: Vec<String> = several.iter().take(6).map(|(s, e)| line(s, e, true)).collect();
-            lines.extend(quiet.iter().take(12usize.saturating_sub(lines.len())).map(|(s, e)| match e {
-                Some(e) => line(s, e, false),
-                None => format!("- {} (letters {}; has said nothing yet)", s.callsign.text(), letters(s)),
-            }));
+            // past the first dozen an agent is listed by its name alone: he can still name it
+            let bare = |n: usize, s: &Session| format!("{n}. {} (letters {})", s.callsign.text(), letters(s));
+            let mut listed: Vec<Listed> = Vec::new();
+            let mut lines: Vec<String> = Vec::new();
+            for (i, (s, e)) in several.iter().enumerate() {
+                listed.push(Listed::Here(s));
+                lines.push(if i < 6 { line(listed.len(), s, e, true) } else { bare(listed.len(), s) });
+            }
+            let room_left = 12usize.saturating_sub(several.len().min(6));
+            for (i, (s, e)) in quiet.iter().enumerate() {
+                listed.push(Listed::Here(s));
+                lines.push(match e {
+                    Some(e) if i < room_left => line(listed.len(), s, e, false),
+                    None if i < room_left => format!("{}. {} (letters {}; has said nothing yet)", listed.len(), s.callsign.text(), letters(s)),
+                    _ => bare(listed.len(), s),
+                });
+            }
             // the agents he can see that another of his computers has: his words may be for one of them
-            lines.extend(others.iter().take(8).map(|o| {
-                let letters = airband_core::routing::badge(&o.group, &o.callsign);
-                if o.said.is_empty() { format!("- {} (letters {letters}; on another of his computers; has said nothing yet)", o.callsign) } else { format!("- {} (letters {letters}; on another of his computers; {} ago): {}", o.callsign, ago(o.ago * 1000), o.said) }
-            }));
+            for o in others.iter().take(8) {
+                listed.push(Listed::Elsewhere(o));
+                let (n, letters) = (listed.len(), airband_core::routing::badge(&o.group, &o.callsign));
+                lines.push(if o.said.is_empty() { format!("{n}. {} (letters {letters}; on another of his computers; has said nothing yet)", o.callsign) } else { format!("{n}. {} (letters {letters}; on another of his computers; {} ago): {}", o.callsign, ago(o.ago * 1000), o.said) });
+            }
             let last = match &focus {
                 Some((_, Some((at, to, said)))) => format!("The last thing he said, {} ago, was to {}: \"{said}\"\n", ago(now.saturating_sub(*at)), list(to)),
                 Some((s, None)) => format!("The agent he last spoke with is {}.\n", s.callsign.text()),
                 None => String::new(),
+            };
+            // What a new agent could be started with. Each list is numbered, and the model answers with a number
+            // from it, or with his own word for something he named that is on none of them.
+            let numbered = |names: &[String]| names.iter().enumerate().map(|(i, n)| format!("{}. {n}", i + 1)).collect::<Vec<_>>().join(", ");
+            let tools = app.cfg.tools();
+            let (models, efforts): (Vec<String>, Vec<String>) = {
+                // every model and effort any of the tools offers: which tool he means is settled after
+                let inner = app.inner.lock().unwrap();
+                let menus: Vec<airband_core::tools::Offers> = app.cfg.launchers.iter().map(|(name, l)| held::offers(&inner, name, l)).collect();
+                let across = |of: fn(&airband_core::tools::Offers) -> &Vec<airband_core::tools::Choice>| {
+                    let mut all: Vec<String> = Vec::new();
+                    menus.iter().flat_map(of).for_each(|c| if !all.contains(&c.name) { all.push(c.name.clone()) });
+                    all
+                };
+                (across(|m| &m.models), across(|m| &m.efforts))
             };
             // the other thing his words can be: a request for a new agent, on a model and at an effort he may name
             let starting = match launcher {
@@ -118,50 +153,57 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                         let inner = app.inner.lock().unwrap();
                         projects
                             .iter()
-                            .map(|p| {
+                            .enumerate()
+                            .map(|(i, p)| {
                                 let said: Vec<String> = inner.log.iter().rev().filter(|e| e.group == *p && e.from != "you" && e.kind != Some(Kind::Fyi)).take(2).map(|e| e.short.clone().unwrap_or_else(|| opening(&e.full))).collect();
-                                format!("- {p}{}", if said.is_empty() { String::new() } else { format!(": lately, {}", said.join(" / ")) })
+                                format!("{}. {p}{}", i + 1, if said.is_empty() { String::new() } else { format!(": lately, {}", said.join(" / ")) })
                             })
                             .collect()
                     };
-                    // every model and effort any of the tools offers: which tool he means is settled after
-                    let menus: Vec<airband_core::tools::Offers> = {
-                        let inner = app.inner.lock().unwrap();
-                        app.cfg.launchers.get_key_value(&app.cfg.launcher).into_iter().chain(app.cfg.launchers.iter()).map(|(name, l)| held::offers(&inner, name, l)).collect()
+                    // the example is written with a tool he has, by the name its row gives it
+                    let tool = match tools.last().filter(|_| tools.len() > 1) {
+                        Some(eg) => format!("\"tool\" is the number of the coding tool he asked for by name (\"start a {eg} agent\", \"have {eg} look into…\"), of {}; else null. \"tool_said\" is his own word for a tool he named that is not listed, else null. ", numbered(&tools)),
+                        None => "\"tool\" is null and so is \"tool_said\". ".to_string(),
                     };
-                    let across = |of: fn(&airband_core::tools::Offers) -> &Vec<airband_core::tools::Choice>| {
-                        let mut all: Vec<String> = Vec::new();
-                        menus.iter().flat_map(of).for_each(|c| if !all.contains(&c.name) { all.push(c.name.clone()) });
-                        all
-                    };
-                    let tools = app.cfg.tools();
-                    let tool = if tools.len() > 1 { format!("\"tool\" is one of {} when he asked for that tool by name (\"start a codex agent\", \"have codex look into…\"), else null. ", tools.join(", ")) } else { "\"tool\" is null. ".to_string() };
                     // what he named is passed on as he named it: one that cannot be had is refused in words,
                     // never quietly swapped for another
-                    let offered = |what: &str, names: Vec<String>| if names.is_empty() { format!("\"{what}\" is null. ") } else { format!("\"{what}\" is the one he named when he named one: one of {} when it is one of those, else his own word for it; null when he named none. ", names.join(", ")) };
+                    let offered = |what: &str, names: &[String]| {
+                        if names.is_empty() {
+                            format!("\"{what}\" is null; \"{what}_said\" is his own word for the {what} when he named one, else null. ")
+                        } else {
+                            format!("\"{what}\" is the number of the {what} he named, of {}; null when he named none or one that is not listed. \"{what}_said\" is his own word for it when he named one that is not listed, else null. ", numbered(names))
+                        }
+                    };
+                    // the examples are written with a model and an effort he can ask for, by the names their rows give
+                    let by_model = match (models.first(), efforts.last()) {
+                        (Some(m), Some(e)) => format!(
+                            ", or he asks for work to be done by a model he names (\"with {m}, look into…\", \"with {m} {e}, investigate…\", \"have {m} investigate…\", \"get {m} on {e} to review…\"). \
+                             A remark about a model (\"with {m} it was too slow\") is not a request for one"
+                        ),
+                        (Some(m), None) => format!(", or he asks for work to be done by a model he names (\"with {m}, look into…\", \"have {m} investigate…\"). A remark about a model (\"with {m} it was too slow\") is not a request for one"),
+                        (None, _) => String::new(),
+                    };
                     format!(
                         "\n\nOr he is not talking to any of them: he wants a NEW agent started. Decide this first. He says so \
                          outright (\"new idea: …\", \"start an agent to…\", \"launch…\", \"spin up…\": words like these always \
-                         mean a new agent, whatever the work is and whoever is already working on something like it), or he \
-                         asks for work to be done by a model he names (\"with fable, look into…\", \"with opus high, \
-                         investigate…\", \"have opus investigate…\", \"get sonnet on high to review…\"). Work he simply asks \
-                         for, with no such sign, is for an agent already running. A remark about a model (\"with opus it was \
-                         too slow\") is not a request for one. When he wants a new agent, \"to\" is empty and \"new\" says \
-                         what to start: \"project\" is the one he named, else the one the work would be done in{room}, going by \
+                         mean a new agent, whatever the work is and whoever is already working on something like it){by_model}. Work he simply asks \
+                         for, with no such sign, is for an agent already running. When he wants a new agent, \"to\" is empty and \"new\" says \
+                         what to start: \"project\" is the number of the one he named, else of the one the work would be done in{room}, going by \
                          who the work is for and what it changes more than by what data it happens to read (a fair \
                          choice beats asking him: he is told where it started), else null when nothing points to \
-                         any of them; {tool}{models}{efforts}\"task\" is the work in his own words, without the words \
+                         any of them or he named one that is not listed (then \"project_said\" is his own word for it, else null); {tool}{models}{efforts}\"task\" is the work in his own words, without the words \
                          about starting an agent, the tool, the model or the effort. Otherwise \"new\" is null. The projects:\n{projects}",
                         room = room.as_ref().map(|r| format!(" (he is looking at {r})")).unwrap_or_default(),
                         tool = tool,
-                        models = offered("model", across(|m| &m.models)),
-                        efforts = offered("effort", across(|m| &m.efforts)),
+                        by_model = by_model,
+                        models = offered("model", &models),
+                        efforts = offered("effort", &efforts),
                         projects = lately.join("\n")
                     )
                 }
             };
             let prompt = format!(
-                "{name} runs several coding agents. Each is listed by its callsign, with the last thing it said, the ones that have spoken since he last did first, newest first:\n{lines}\n{last}\n\
+                "{name} runs several coding agents. Each is listed under a number, by its callsign, with the last thing it said, the ones that have spoken since he last did first, newest first:\n{lines}\n{last}\n\
                  He now says: \"{rest}\"\n\n\
                  Who is it for? Each agent's letters are the label his phone shows for it. If he names one by its \
                  letters (\"to SR\", \"tell M3\", \"S R, go ahead\"; speech may write them apart, or as words that sound \
@@ -176,31 +218,44 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                  A callsign he says in full (\"catalog two, leave it\"; speech may write its number as a figure, or as a word \
                  that sounds like it) is that agent, and you can be sure of it. \
                  Name more than one only if his words plainly address several: every agent of one team (\"all of catalog, \
-                 pull main\") is each of that team's callsigns, and every agent there is (\"everyone, stop\", \"all of you, \
-                 commit what you have\") is \"to\":[\"*\"]. A sentence that only mentions them all (\"everyone is waiting on \
+                 pull main\") is each of that team's agents, and every agent there is (\"everyone, stop\", \"all of you, \
+                 commit what you have\") is \"all\":true. A sentence that only mentions them all (\"everyone is waiting on \
                  the deploy\") addresses whoever its words are for, not all of them.{starting}\n\
-                 Reply with one line of JSON and nothing else: {{\"to\":[\"<callsign in full, not its letters>\"],\"sure\":true or false{shape}}}\n\
+                 Reply with one line of JSON and nothing else: {{\"to\":[the number each agent it is for is listed under, at the start of its line],\"all\":true or false,\"sure\":true or false{shape}}}\n\
                  \"sure\": false if a careful assistant would check with him before passing this on.",
                 name = app.cfg.name,
                 lines = if lines.is_empty() { "(none are running)".to_string() } else { lines.join("\n") },
                 starting = starting,
-                shape = if can_start { ",\"new\":null or {\"tool\":…,\"project\":…,\"model\":…,\"effort\":…,\"task\":\"…\"}" } else { "" }
+                shape = if can_start { ",\"new\":null or {\"tool\":…,\"tool_said\":…,\"project\":…,\"project_said\":…,\"model\":…,\"model_said\":…,\"effort\":…,\"effort_said\":…,\"task\":\"…\"}" } else { "" }
             );
             let everyone: Vec<&Session> = several.iter().map(|(s, _)| s).chain(quiet.iter().map(|(s, _)| s)).collect();
             #[derive(Deserialize)]
             struct New {
                 #[serde(default)]
-                tool: Option<String>,
-                project: Option<String>,
-                model: Option<String>,
-                effort: Option<String>,
+                tool: Option<usize>,
+                #[serde(default)]
+                tool_said: Option<String>,
+                #[serde(default)]
+                project: Option<usize>,
+                #[serde(default)]
+                project_said: Option<String>,
+                #[serde(default)]
+                model: Option<usize>,
+                #[serde(default)]
+                model_said: Option<String>,
+                #[serde(default)]
+                effort: Option<usize>,
+                #[serde(default)]
+                effort_said: Option<String>,
                 #[serde(default)]
                 task: String,
             }
             #[derive(Deserialize)]
             struct Out {
                 #[serde(default)]
-                to: Vec<String>,
+                to: Vec<usize>,
+                #[serde(default)]
+                all: bool,
                 #[serde(default)]
                 sure: bool,
                 #[serde(default)]
@@ -221,33 +276,18 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                 };
             };
             if let Some(new) = judged.new.take().filter(|_| can_start) {
-                // What he named is matched to what exists, by name. Something he named that does not exist is
-                // kept as he named it, so that starting it is refused in words (`launch`): nothing is started on a
-                // guess at what he meant, and nothing the model wrote reaches a command line unmatched.
-                let same = |a: &str, b: &str| a.replace(' ', "").eq_ignore_ascii_case(&b.replace(' ', ""));
-                let named = |said: Option<String>| said.map(|x| x.trim().to_string()).filter(|x| !x.is_empty());
-                let known = |said: Option<String>, names: Vec<String>| named(said).map(|x| names.into_iter().find(|n| same(n, &x)).unwrap_or(x));
-                // the tool he named; its models and efforts are then the ones that count
-                let tool = known(new.tool, app.cfg.tools());
-                let menu = match &tool {
-                    Some(t) => app.cfg.launcher_for(Some(t)),
-                    None => app.cfg.launchers.get_key_value(&app.cfg.launcher),
-                }
-                .map(|(name, l)| held::offers(&app.inner.lock().unwrap(), name, l))
-                .unwrap_or_default();
-                // by the name the tool's launcher offers it under, when it offers one he named
-                let offered = |said: Option<String>, choices: &[airband_core::tools::Choice]| named(said).map(|x| airband_core::tools::named(choices, &x).map(|c| c.name.clone()).unwrap_or(x));
-                let project = match named(new.project) {
-                    // one he named that the tower does not know is not swapped for another: he is asked which
-                    Some(said) => projects.iter().find(|p| same(p, &said)).cloned(),
-                    // he named none, and there is one place it could be
-                    None => (projects.len() == 1).then(|| projects[0].clone()),
-                };
+                // The model answers with the number a thing is listed under, and that is the thing. Something
+                // he named that is on no list comes as his own word, kept as he said it so that starting it is
+                // refused in words (`launch`): nothing is started on a guess at what he meant.
+                let at = |n: Option<usize>, names: &[String]| n.and_then(|n| n.checked_sub(1)).and_then(|i| names.get(i)).cloned();
+                let own = |said: Option<String>| said.map(|x| x.trim().to_string()).filter(|x| !x.is_empty());
                 return Routed::New(Idea {
-                    tool,
-                    project,
-                    model: offered(new.model, &menu.models),
-                    effort: offered(new.effort, &menu.efforts),
+                    tool: at(new.tool, &tools).or(own(new.tool_said)),
+                    // one he named that the tower does not know is not swapped for another: he is asked which.
+                    // He named none, and there is one place it could be: that one.
+                    project: at(new.project, &projects).or_else(|| (own(new.project_said).is_none() && projects.len() == 1).then(|| projects[0].clone())),
+                    model: at(new.model, &models).or(own(new.model_said)),
+                    effort: at(new.effort, &efforts).or(own(new.effort_said)),
                     // with no work named it is started with nothing to do yet, or he is asked what it should do
                     task: new.task.trim().to_string(),
                 });
@@ -255,26 +295,22 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
             if all.is_empty() {
                 return Routed::Ask(Vec::new());
             }
+            // who the numbers are
+            let meant: Vec<&Listed> = judged.to.iter().filter_map(|n| n.checked_sub(1).and_then(|i| listed.get(i))).collect();
+            let here: Vec<Session> = meant.iter().filter_map(|l| if let Listed::Here(s) = l { Some((*s).clone()) } else { None }).collect();
             // one of the agents on another computer, and none here: the radio takes it there
-            if let Some(o) = others.iter().find(|o| judged.to.iter().any(|c| c.trim().eq_ignore_ascii_case(&o.callsign))).filter(|_| judged.sure && !everyone.iter().any(|s| judged.to.iter().any(|c| c.trim().eq_ignore_ascii_case(&s.callsign.text())))) {
+            if let Some(o) = meant.iter().find_map(|l| if let Listed::Elsewhere(o) = l { Some(*o) } else { None }).filter(|_| judged.sure && here.is_empty()) {
                 return Routed::Elsewhere(o.callsign.clone());
             }
             // all of them, said outright
-            if judged.sure && judged.to.iter().any(|c| c.trim() == "*") {
+            if judged.sure && judged.all {
                 return Routed::Sure(all.clone());
             }
-            let judged = Some(judged);
-            // the model names an agent by its callsign; its letters are taken too when they are one agent's alone
-            let answers = |c: &str, s: &Session| {
-                let c = c.trim();
-                c.eq_ignore_ascii_case(&s.callsign.text()) || (c.eq_ignore_ascii_case(&letters(s)) && everyone.iter().filter(|o| letters(o).eq_ignore_ascii_case(c)).count() == 1)
-            };
-            let picked: Vec<Session> = judged.as_ref().map(|o| everyone.iter().filter(|s| o.to.iter().any(|c| answers(c, s))).map(|s| (*s).clone()).collect()).unwrap_or_default();
-            if judged.is_some_and(|o| o.sure) && !picked.is_empty() {
-                Routed::Sure(picked)
+            if judged.sure && !here.is_empty() {
+                Routed::Sure(here)
             } else {
                 // the likeliest first, so "the first one" or a bare callsign settles it
-                let mut names: Vec<String> = picked.iter().map(|s| s.callsign.text()).collect();
+                let mut names: Vec<String> = here.iter().map(|s| s.callsign.text()).collect();
                 everyone.iter().take(3).for_each(|s| if !names.contains(&s.callsign.text()) { names.push(s.callsign.text()) });
                 Routed::Ask(names)
             }
@@ -309,9 +345,10 @@ async fn place_idea(app: &Arc<App>, idea: &str, projects: &[String]) -> Result<S
         let folders = inner.launchable(&app.cfg);
         projects
             .iter()
-            .map(|p| {
+            .enumerate()
+            .map(|(i, p)| {
                 let lately: Vec<String> = inner.log.iter().rev().filter(|e| e.group == *p && e.from != "you" && e.kind != Some(Kind::Fyi)).take(2).map(|e| e.short.clone().unwrap_or_else(|| opening(&e.full))).collect();
-                format!("- {p} (folder {}){}", folders.get(p).map(String::as_str).unwrap_or("?"), if lately.is_empty() { String::new() } else { format!(": lately, {}", lately.join(" / ")) })
+                format!("{}. {p} (folder {}){}", i + 1, folders.get(p).map(String::as_str).unwrap_or("?"), if lately.is_empty() { String::new() } else { format!(": lately, {}", lately.join(" / ")) })
             })
             .collect()
     };
@@ -320,18 +357,18 @@ async fn place_idea(app: &Arc<App>, idea: &str, projects: &[String]) -> Result<S
          Which project would this work be done in? Go by who the work is for and what it changes, more than by \
          what data it happens to read. Pick the best fit. He is told which project it started in and can stop \
          it, so a reasonable choice is better than asking him.\n\
-         Reply with one line of JSON and nothing else: {{\"project\":\"<name exactly as listed>\"}}\n\
-         Leave the name empty only if nothing in the idea points to any of these projects.",
+         Reply with one line of JSON and nothing else: {{\"project\":<the number it is listed under, or null>}}\n\
+         Null only if nothing in the idea points to any of these projects.",
         name = app.cfg.name,
         lines = lines.join("\n")
     );
     #[derive(Deserialize)]
     struct Out {
-        project: String,
+        project: Option<usize>,
     }
     let raw = ask_model(&app.cfg, prompt).await;
     let judged = raw.as_ref().ok().and_then(|out| serde_json::from_str::<Out>(judge::json_in(out)?).ok());
-    match judged.and_then(|o| projects.iter().find(|p| p.eq_ignore_ascii_case(o.project.trim())).cloned()) {
+    match judged.and_then(|o| o.project?.checked_sub(1)).and_then(|i| projects.get(i)).cloned() {
         Some(project) => Ok(project),
         None => Err(say(format!("Which project is that for? {}.", projects.join(", ")), true)),
     }
@@ -346,19 +383,19 @@ async fn named_project(app: &Arc<App>, idea: &str, said: &str, projects: &[Strin
          Does that answer the question, and if so with which project? An answer does little more than name one \
          (speech may write a name apart or misspell it). Anything that asks for other work or says something of \
          its own is a new message and not an answer, even when it mentions a project.\n\
-         Reply with one line of JSON and nothing else: {{\"project\":\"<name exactly as listed>\"}}\n\
-         Leave the name empty if he names none of them, rules one out without choosing another, or has gone on to \
+         Reply with one line of JSON and nothing else: {{\"project\":<the number it is listed under, or null>}}\n\
+         Null if he names none of them, rules one out without choosing another, or has gone on to \
          say something else.",
         name = app.cfg.name,
-        list = projects.iter().map(|p| format!("- {p}")).collect::<Vec<_>>().join("\n"),
+        list = projects.iter().enumerate().map(|(i, p)| format!("{}. {p}", i + 1)).collect::<Vec<_>>().join("\n"),
     );
     #[derive(Deserialize)]
     struct Out {
-        project: String,
+        project: Option<usize>,
     }
     let out = ask_model(&app.cfg, prompt).await.ok()?;
     let judged: Out = serde_json::from_str(judge::json_in(&out)?).ok()?;
-    projects.iter().find(|p| p.eq_ignore_ascii_case(judged.project.trim())).cloned()
+    judged.project?.checked_sub(1).and_then(|i| projects.get(i)).cloned()
 }
 
 /// He was asked who something he said was for, and has said something more. The agents his words name, or
@@ -375,18 +412,21 @@ async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope: Option<&st
          \"the first one\", \"both\", all of them, perhaps with a word or two around it. Anything that asks for \
          work, gives an instruction or says something of its own is a new message and not an answer, even when it \
          is about what one of the agents is working on.\n\
-         Reply with one line of JSON and nothing else: {{\"to\":[\"<callsign in full>\"]}}, with [\"*\"] for all of them.\n\
-         \"to\" is empty if he names nobody listed, or has gone on to say something else.",
+         Reply with one line of JSON and nothing else: {{\"to\":[the number each agent he means is listed under],\"all\":true or false}}\n\
+         \"all\" is true when he means all of them. \"to\" is empty if he names nobody listed, or has gone on to say something else.",
         name = app.cfg.name,
-        list = all.iter().map(|s| format!("- {} (letters {})", s.callsign.text(), letters(s))).collect::<Vec<_>>().join("\n"),
+        list = all.iter().enumerate().map(|(i, s)| format!("{}. {} (letters {})", i + 1, s.callsign.text(), letters(s))).collect::<Vec<_>>().join("\n"),
     );
     #[derive(Deserialize)]
     struct Out {
-        to: Vec<String>,
+        #[serde(default)]
+        to: Vec<usize>,
+        #[serde(default)]
+        all: bool,
     }
     let out = ask_model(&app.cfg, prompt).await.ok()?;
     let judged: Out = serde_json::from_str(judge::json_in(&out)?).ok()?;
-    let meant: Vec<Session> = if judged.to.iter().any(|c| c.trim() == "*") { all } else { all.into_iter().filter(|s| judged.to.iter().any(|c| c.trim().eq_ignore_ascii_case(&s.callsign.text()))).collect() };
+    let meant: Vec<Session> = if judged.all { all } else { judged.to.iter().filter_map(|n| n.checked_sub(1).and_then(|i| all.get(i)).cloned()).collect() };
     (!meant.is_empty()).then_some(meant)
 }
 
@@ -619,7 +659,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
             Some(how @ Deliver::Harness { .. }) => deliver(app, how, &t.agent.id, &format!("{about}{}{files}", parsed.rest)).await,
             // Anything else gets them from outside, as a message: one line in front says who they are from.
             Some(how) => deliver(app, how, &t.agent.id, &content).await,
-            None => Err("its harness gave no way to reach it".into()),
+            None => Err("it was started in a way that gives airband nowhere to send it messages".into()),
         };
         app.store.delivery(&message_id, uid, &t.callsign.text(), &outcome);
         match outcome {

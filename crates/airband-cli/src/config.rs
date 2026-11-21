@@ -26,16 +26,14 @@ pub struct Config {
     /// sealed requests only. `airband lan off` turns it off.
     #[serde(default = "yes")]
     pub lan: bool,
-    /// What cuts a long message down to a spoken sentence or two. Any model, through any command.
-    #[serde(default = "default_summarizer")]
+    /// What cuts a long message down to a sentence or two: the one he chose, on his phone or in `airband
+    /// setup`. Until he has chosen, nothing does, and he gets each message as it was written. When it does not
+    /// answer he is told so; no other model is asked in its place, and nothing is ever worked out from the
+    /// words themselves in place of a model.
+    #[serde(default)]
     pub summarizer: Summarizer,
-    /// A second model, asked when the first does not answer (it is logged out, over its limit, or down). Nothing
-    /// is ever worked out from the words themselves in place of a model.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub summarizer_fallback: Option<Summarizer>,
-    /// The keys he has given, each under a name with the provider it is for. What uses a key (summaries)
-    /// holds its value here in memory; the settings file writes that as `key:<name>`, so a key is stored once
-    /// however many things use it.
+    /// The keys he has given, each under the id of the provider it is for. What uses a key (summaries) holds
+    /// its value here in memory; the settings file writes that as `key:<name>`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub keys: BTreeMap<String, StoredKey>,
     /// The relay radios reach this tower through: airband's own unless he names another (`airband relay <url>`)
@@ -53,8 +51,9 @@ pub struct Config {
     /// `launcher`.
     #[serde(default, serialize_with = "his_own", skip_serializing_if = "none_his_own")]
     pub launchers: BTreeMap<String, Launcher>,
-    /// Which launcher `launch` uses.
-    #[serde(default = "default_launcher")]
+    /// The launcher he has made the usual one, when he has: a new agent is started with it unless he asks for
+    /// another tool. Empty until he sets it; the coding tool he uses most (which his phone says) decides then.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub launcher: String,
     /// Projects a new agent may be launched in, by spoken name, beyond the ones the tower has seen agents work
     /// in. Name to folder.
@@ -100,11 +99,6 @@ fn his_own<S: serde::Serializer>(all: &BTreeMap<String, Launcher>, to: S) -> Res
     to.collect_map(all.iter().filter(|(name, _)| !built_in().any(|b| b.name == **name)).map(|(name, l)| (name, Launcher { name: String::new(), ..l.clone() })))
 }
 
-/// The launcher a new agent is started with until he sets another: the first that the tower holds itself.
-fn default_launcher() -> String {
-    built_in().find(|l| l.held.is_some()).or_else(|| built_in().next()).map(|l| l.name.clone()).unwrap_or_default()
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredKey {
     /// The provider it is for, by the name its settings use ("gemini", "azure").
@@ -113,17 +107,29 @@ pub struct StoredKey {
 }
 
 impl Config {
-    /// The launcher for a new agent, or to carry one on. With no tool asked for, the one set as usual. For a
-    /// tool: the usual one if it starts that tool; else the first of his own that does; else the first in
-    /// that tool's own row. Nothing when no launcher starts that tool.
+    /// The launcher for a new agent, or to carry one on. With no tool asked for, the one he set as usual, and
+    /// nothing when he has set none. For a tool: the usual one when that is the tool it starts; otherwise the
+    /// one that tool's own row lists first; and for a tool airband has no row for, the one launcher of his own
+    /// that starts it. Where he has written several for such a tool and made none the usual, none is picked.
     pub fn launcher_for(&self, harness: Option<&str>) -> Option<(&String, &Launcher)> {
         let usual = self.launchers.get_key_value(&self.launcher);
         let Some(h) = harness else { return usual };
-        let named = |name: &String| self.launchers.get_key_value(name);
-        usual
-            .filter(|(_, l)| l.harness == h)
-            .or_else(|| self.launchers.iter().find(|(name, l)| l.harness == h && !built_in().any(|b| b.name == **name)))
-            .or_else(|| built_in().find(|l| l.harness == h).and_then(|l| named(&l.name)))
+        usual.filter(|(_, l)| l.harness == h).or_else(|| built_in().find(|l| l.harness == h).and_then(|l| self.launchers.get_key_value(&l.name))).or_else(|| {
+            let mut own = self.launchers.iter().filter(|(_, l)| l.harness == h);
+            own.next().filter(|_| own.next().is_none())
+        })
+    }
+    /// The key he gave for a provider. A provider has one key here, kept under the provider's own id.
+    pub fn key_of(&self, provider: &str) -> Option<String> {
+        self.keys.get(provider).filter(|k| k.provider == provider).map(|k| k.secret.clone())
+    }
+    /// Keep a provider's key. A new one takes the place of the one before, wherever that one was in use.
+    pub fn keep_key(&mut self, provider: &str, secret: String) {
+        let was = self.key_of(provider);
+        if self.summarizer.kind == provider && Some(&self.summarizer.key) == was.as_ref() {
+            self.summarizer.key = secret.clone();
+        }
+        self.keys.insert(provider.to_string(), StoredKey { provider: provider.to_string(), secret });
     }
     /// The harnesses a new agent can be started with, the usual one first.
     pub fn tools(&self) -> Vec<String> {
@@ -135,7 +141,7 @@ impl Config {
 }
 
 /// The places in the settings that use a key.
-const USERS: [&str; 2] = ["summarizer", "summarizer_fallback"];
+const USERS: [&str; 1] = ["summarizer"];
 const BY_NAME: &str = "key:";
 
 /// In the settings as they are written: each use of a kept key becomes the key's name.
@@ -166,10 +172,6 @@ pub struct PairedRadio {
     pub secret: String,
 }
 
-/// What reads when nothing else was chosen: Claude Code on this computer, as a command.
-fn default_summarizer() -> Summarizer {
-    Use::of("claude", "haiku")
-}
 /// airband's own relay. It is open to anyone, sees only sealed messages, and limits how much each may ask.
 pub const RELAY: &str = "https://relay.airband.dev";
 fn default_relay() -> Option<String> {
@@ -178,8 +180,24 @@ fn default_relay() -> Option<String> {
 fn default_port() -> u16 {
     7373
 }
+/// What his agents are told his name is, until he gives another in `airband setup`: the name this computer's
+/// own account has for him.
 fn default_name() -> String {
-    "Charles".into()
+    #[cfg(unix)]
+    {
+        // the account's full name when it has one, and its login name when it has none
+        let text = |p: *const libc::c_char| if p.is_null() { String::new() } else { unsafe { std::ffi::CStr::from_ptr(p) }.to_string_lossy().split(',').next().unwrap_or_default().trim().to_string() };
+        let pw = unsafe { libc::getpwuid(libc::getuid()) };
+        if pw.is_null() {
+            return String::new();
+        }
+        let (full, login) = unsafe { (text((*pw).pw_gecos), text((*pw).pw_name)) };
+        if full.is_empty() { login } else { full }
+    }
+    #[cfg(not(unix))]
+    {
+        std::env::var("USERNAME").unwrap_or_default()
+    }
 }
 pub fn random_hex(bytes: usize) -> String {
     let mut buf = vec![0u8; bytes];
@@ -274,18 +292,15 @@ fn parse(text: &str) -> Result<Config, String> {
     Ok(cfg)
 }
 
-/// The file's text for these settings. When the keys are kept in the keychain (`lock`, or the file as it is
-/// now already has them there) they go there and the text has a mark in their places.
-fn render(cfg: &Config, lock: bool) -> Result<String, String> {
+/// The file's text for these settings. The keys are never in it: they are kept encrypted (`vault`) and the
+/// text has a mark in each of their places, from the first time the file is written.
+fn render(cfg: &Config) -> Result<String, String> {
     if let Some(why) = keyless() {
         return Err(format!("the settings cannot be changed from here: {why}"));
     }
     let existing = fs::read_to_string(dir().join("config.json")).unwrap_or_default();
     let mut doc = serde_json::to_value(cfg).unwrap();
     name_keys(&mut doc);
-    if !lock && !crate::vault::sealed(&existing) {
-        return Ok(format!("{}\n", serde_json::to_string_pretty(&doc).unwrap()));
-    }
     let before = if crate::vault::sealed(&existing) { kept()? } else { Default::default() };
     let now = crate::vault::seal(&mut doc, &before);
     if now != before {
@@ -296,26 +311,7 @@ fn render(cfg: &Config, lock: bool) -> Result<String, String> {
 
 /// Write the settings. The keys never go in the file: they are kept encrypted (`vault`), from the first save.
 pub fn save(cfg: &Config) -> Result<(), String> {
-    let text = render(cfg, true)?;
-    write_private(&dir().join("config.json"), &text).map_err(|e| format!("cannot write ~/.airband/config.json: {e}"))
-}
-
-/// Are the keys in the keychain?
-pub fn locked() -> bool {
-    fs::read_to_string(dir().join("config.json")).is_ok_and(|t| crate::vault::sealed(&t))
-}
-
-/// Move the keys into the keychain. The file is only rewritten once the keychain has them and gives them back.
-pub fn lock() -> Result<(), String> {
-    let cfg = read().ok_or("there is no configuration to lock yet")?;
-    let text = render(&cfg, true)?;
-    let back = crate::vault::get()?;
-    let mut doc: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    crate::vault::open(&mut doc, &back)?;
-    fill_keys(&mut doc)?;
-    if serde_json::to_value(&cfg).unwrap() != doc {
-        return Err("the keychain did not give back what was put in it; nothing was changed".into());
-    }
+    let text = render(cfg)?;
     write_private(&dir().join("config.json"), &text).map_err(|e| format!("cannot write ~/.airband/config.json: {e}"))
 }
 
@@ -335,7 +331,7 @@ pub fn load() -> Config {
         }
     };
     // without the keys nothing is rewritten: the file is left exactly as it is
-    let text = match render(&cfg, false) {
+    let text = match render(&cfg) {
         Ok(text) => text,
         Err(_) if keyless().is_some() => return cfg,
         Err(e) => {
@@ -389,4 +385,46 @@ pub fn station(cfg: &Config) -> String {
     // "someones-mac-mini" says more than it needs to: keep what kind of machine it is
     let short = short.rsplit("s-").next().unwrap_or(&short).to_string();
     if short.is_empty() { "computer".into() } else { short }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nothing_is_chosen_until_he_chooses_it() {
+        let cfg = parse("{}").unwrap();
+        // no model writes summaries and no launcher is the usual one
+        assert!(cfg.summarizer.is_none() && cfg.launcher.is_empty());
+        assert!(cfg.launcher_for(None).is_none());
+        // a tool he names is started the way its own row lists first, and a tool there is no row for is not started
+        let first = airband_core::catalog::built().tools.first().unwrap();
+        assert_eq!(cfg.launcher_for(Some(&first.id)).map(|(name, _)| name.clone()), first.launchers.first().map(|l| l.name.clone()));
+        assert!(cfg.launcher_for(Some("no-such-tool")).is_none());
+        // one of his own is used only by being made the usual one
+        let mut cfg = cfg;
+        cfg.launchers.insert("mine".into(), Launcher { name: "mine".into(), harness: first.id.clone(), ..Launcher::default() });
+        assert_eq!(cfg.launcher_for(Some(&first.id)).map(|(name, _)| name.clone()), first.launchers.first().map(|l| l.name.clone()));
+        // a tool airband has no row for is started by the one launcher he wrote for it, and by none of two
+        cfg.launchers.insert("other".into(), Launcher { name: "other".into(), harness: "his-own-tool".into(), ..Launcher::default() });
+        assert_eq!(cfg.launcher_for(Some("his-own-tool")).map(|(name, _)| name.as_str()), Some("other"));
+        cfg.launchers.insert("other-two".into(), Launcher { name: "other-two".into(), harness: "his-own-tool".into(), ..Launcher::default() });
+        assert!(cfg.launcher_for(Some("his-own-tool")).is_none());
+        cfg.launcher = "mine".into();
+        assert_eq!(cfg.launcher_for(Some(&first.id)).map(|(name, _)| name.as_str()), Some("mine"));
+        assert_eq!(cfg.launcher_for(None).map(|(name, _)| name.as_str()), Some("mine"));
+    }
+
+    #[test]
+    fn a_provider_has_one_key_and_a_new_one_takes_its_place() {
+        let mut cfg = parse("{}").unwrap();
+        assert_eq!(cfg.key_of("maker"), None);
+        cfg.keep_key("maker", "first".into());
+        cfg.summarizer = Use { kind: "maker".into(), offer: "small".into(), key: "first".into(), set: Default::default() };
+        cfg.keep_key("maker", "second".into());
+        assert_eq!((cfg.key_of("maker").as_deref(), cfg.keys.len(), cfg.summarizer.key.as_str()), (Some("second"), 1, "second"));
+        // another provider's key is its own
+        cfg.keep_key("other", "third".into());
+        assert_eq!((cfg.key_of("maker").as_deref(), cfg.key_of("other").as_deref()), (Some("second"), Some("third")));
+    }
 }

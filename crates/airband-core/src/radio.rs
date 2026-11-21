@@ -183,14 +183,9 @@ pub struct AttachmentPart {
     pub from: u64,
     /// The bytes, base64: 120 KB of them at most, to fit one sealed message.
     pub data: String,
-    /// This is the last part.
-    #[serde(default)]
-    pub done: bool,
-    /// How long the whole file is, when the radio says. With it the parts may arrive in any order and several at
-    /// once, and the file is whole when every byte of it has come; without it they must come in order and the
-    /// one marked `done` ends it. A tower that takes parts in any order says so in its answer (`any: true`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub total: Option<u64>,
+    /// How long the whole file is. The parts may arrive in any order and several at once, and the file is
+    /// whole when every byte of it has come.
+    pub total: u64,
 }
 
 /// A quick message: something he says all the time, sent with one tap. The label is what the button says; the
@@ -416,6 +411,9 @@ pub struct OfferName {
 pub struct ReadsOffered {
     #[serde(default)]
     pub now: Option<OfferName>,
+    /// Why what reads now could not, the last time it was asked. Nothing while it works.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed: Option<crate::providers::Trouble>,
     #[serde(default)]
     pub offers: Vec<ReadsOffer>,
 }
@@ -487,6 +485,13 @@ pub struct PicturePart {
 /// `POST push`: where this radio can be woken when it is not listening: its address at a push service. The tower
 /// keeps it with the pairing it came through and uses it only for what deserves a notification. An empty
 /// `token` takes the address away.
+/// `POST tools`: the coding tools he uses, by the ids their rows give them, the one he uses most first. He
+/// chooses them on his phone. A new agent he asks for without naming a tool is started with the first.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsesTools {
+    pub tools: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PushTarget {
     /// The push service ("apns" for Apple's).
@@ -638,6 +643,9 @@ pub struct RosterEntry {
     pub id: String,
     pub callsign: String,
     pub group: String,
+    /// What tells it from the others of its team: the part of its callsign after the team's name.
+    #[serde(default)]
+    pub number: String,
     pub harness: String,
     /// Finished a turn and waiting on him.
     pub waiting: bool,
@@ -697,6 +705,10 @@ pub struct Feed {
     /// showing. Empty when nothing does.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub reads: String,
+    /// Why what reads could not, the last time it was asked. Nothing while it works. Until it does again he
+    /// gets each message as it was written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reads_failed: Option<crate::providers::Trouble>,
     /// The ids of every message that needs him and is still unanswered, whether or not it is in `messages`:
     /// the whole inbox, current as of this answer.
     #[serde(default)]

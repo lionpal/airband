@@ -15,5 +15,8 @@
         ]
       }
     }
-  ]
+  ],
+  "with": {
+    "program": "codex"
+  }
 }

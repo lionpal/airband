@@ -198,6 +198,67 @@ pub struct Check {
     pub paid: bool,
 }
 
+/// Why a service did not do what it was asked: the same whether a key of his was being tested or a model was
+/// being asked to read. What he is told about each is written here and nowhere else.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(tag = "why", rename_all = "snake_case")]
+pub enum Trouble {
+    /// It could not be reached.
+    Unreachable,
+    /// It does not know the key, or will not take it (401, 403).
+    WrongKey,
+    /// It knows the key and will not serve it: out of credit, over a limit, not allowed (402, 429).
+    Refused,
+    /// It does not know the model, or is not at the address it was asked at (404).
+    NotFound,
+    /// It answered with a status nothing here accounts for.
+    Unexpected { status: u16 },
+    /// It answered, with nothing that can be used.
+    NoAnswer,
+    /// It is a program on his computer, and did not start or stopped with an error.
+    Program,
+    /// It took longer than it is given.
+    TooSlow,
+    /// Nothing is chosen, or what is chosen is not something this version can use.
+    NotSet,
+}
+
+impl Trouble {
+    /// What a status says went wrong, for a service whose row does not say how its statuses read.
+    pub fn of_status(status: u16) -> Trouble {
+        match status {
+            401 | 403 => Trouble::WrongKey,
+            402 | 429 => Trouble::Refused,
+            404 => Trouble::NotFound,
+            _ => Trouble::Unexpected { status },
+        }
+    }
+    /// What happened, for him. `service` is what the service is called where he chose it.
+    pub fn said(self, service: &str) -> String {
+        let service = if service.is_empty() { "The service" } else { service };
+        match self {
+            Trouble::Unreachable => format!("{service} could not be reached."),
+            Trouble::WrongKey => format!("{service} did not accept the key."),
+            Trouble::Refused => format!("{service} knows the key and would not serve it. The account may be out of credit, or not allowed to use this."),
+            Trouble::NotFound => format!("{service} does not have that model at that address."),
+            Trouble::Unexpected { status } => format!("{service} gave an answer airband did not expect (status {status})."),
+            Trouble::NoAnswer => format!("{service} answered with nothing that could be used."),
+            Trouble::Program => format!("{service} did not run on your computer."),
+            Trouble::TooSlow => format!("{service} took too long to answer."),
+            Trouble::NotSet => "Nothing that this version of airband can use is chosen.".to_string(),
+        }
+    }
+    /// The same when it was a key of his being tested: what happened, and what to do about the key.
+    pub fn said_of_key(self, service: &str) -> String {
+        let then = match self {
+            Trouble::WrongKey => "Check it and paste it again.",
+            Trouble::Unreachable => "Check your connection and try again.",
+            _ => "The key was not kept.",
+        };
+        format!("{} {then}", self.said(service))
+    }
+}
+
 /// What testing a key came to.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum KeyCheck {
@@ -211,6 +272,19 @@ pub enum KeyCheck {
     Unreachable,
     /// The service answered with a status the row does not account for.
     Unexpected { status: u16 },
+}
+
+impl KeyCheck {
+    /// What went wrong, when the key did not pass.
+    pub fn trouble(self) -> Option<Trouble> {
+        match self {
+            KeyCheck::Good { .. } => None,
+            KeyCheck::WrongKey => Some(Trouble::WrongKey),
+            KeyCheck::Refused => Some(Trouble::Refused),
+            KeyCheck::Unreachable => Some(Trouble::Unreachable),
+            KeyCheck::Unexpected { status } => Some(Trouble::Unexpected { status }),
+        }
+    }
 }
 
 impl Check {
