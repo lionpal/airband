@@ -146,7 +146,7 @@ impl Serve {
                 }
                 continue;
             }
-            match agent.get(format!("{base}/pull")).header("authorization", &auth).header("x-airband-radio-hash", airband_core::relay::token_hash(&self.keys.radio_token)).call() {
+            match agent.get(format!("{base}/pull")).header("authorization", &auth).call() {
                 Ok(mut res) => match res.status().as_u16() {
                     200 => {
                         wait = 1;

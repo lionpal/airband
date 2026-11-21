@@ -27,7 +27,7 @@ pairing link carries, opens `/v1/radio/` only.
     "name": "shop",             // …unless a spoken name is given
     "title": "shop 2",          // the name he gave this session in the harness, if he did: it becomes the callsign
     "pid": 5302,                // when this process dies the agent is dropped
-    "deliver": { "kind": "claude-code-inbox", "socket": "/tmp/cc-socks/5302.sock", "token": "…" }
+    "deliver": { "kind": "socket", "path": "/tmp/cc-socks/5302.sock", "token": "…" }
   },
   "event": { "type": "said", "text": "…the agent's whole last message…" }
 }
@@ -48,9 +48,9 @@ pairing link carries, opens `/v1/radio/` only.
 
 | `deliver.kind` | How the tower gets his reply to the agent |
 |---|---|
-| `claude-code-inbox` | Claude Code's per-session inbox socket. |
+| `socket` | A socket at `path` on the tower's machine that takes a turn as one line of JSON, after a line showing `token` when it asks for one. Claude Code's per-session inbox is one. |
 | `command` | Runs `argv` with the message on standard input and `AIRBAND_AGENT_ID` in the environment. |
-| `tmux` | Types the message into pane `target` and presses Enter. Works for anything in a terminal. |
+| `keys` | Types the message into the terminal pane `tmux` and presses Enter. Works for anything in a terminal. |
 | `held` | The tower runs this agent and holds its input: his words are written there as his own turn. |
 | `harness` | Through the agent's own tool, by `name`, into its `session`: whatever way that tool takes a turn of his into a session already open (Codex's queue, OpenCode's server). The tower's adapter for the tool knows how. |
 | none | The agent can be heard but not answered. |
@@ -224,8 +224,8 @@ waiting on is not.
 
 An `Utterance` carries an `id` that is the same on every retry: the tower writes a receipt for it before doing
 anything, and gives the same answer however often it arrives. A retry that arrives while the first is still
-being answered waits up to 30 seconds for that answer, and is then told 202, `{ "working": true }`, when the
-radio said it asks again (`again: true`). The radio asks again with the same id until there is an answer. The
+being answered waits up to 30 seconds for that answer, and is then told 202, `{ "working": true }`. The radio
+asks again with the same id until there is an answer. The
 waits are in order: the tower's 30 seconds, the relay's 40 for the tower, the radio's 50 for anything, so
 whoever is asked last gives up first and each answer still has someone to go to.
 
@@ -303,12 +303,8 @@ with the hash it holds, in constant time.
 | The tower | `PUT /v1/channels/<channel>` (open), `GET …/pull` (held 25 s), `POST …/reply/<id>`, `POST …/push`, `DELETE` (close; `airband unpair` sends it) | The pull token. Opening a channel the relay does not know also takes the relay's admission key (`x-airband-admission`), if it has one. 403 with another channel's token. |
 | The radio | `POST …/call`, `POST …/queue` | The radio token. 401 without it, with a wrong one, or on a channel that does not exist: the same answer for all three. |
 
-The tower gives the relay the radio token's hash in `x-airband-radio-hash` when it opens the channel and with
-every pull.
-
-For phones from before radios sent their token, a channel starts unproven: `call` and `queue` are taken without
-a token (never with a wrong one). The first that carries the right token proves the channel for good, and from
-then on both are refused without it.
+The tower gives the relay the radio token's hash in `x-airband-radio-hash` when it opens the channel; a channel
+is not opened without it, and nobody changes it afterwards.
 
 The relay has no speech service and lends none: what speaks and what listens is a model on the phone, a key
 of his own on the phone, or a service set on his computer.

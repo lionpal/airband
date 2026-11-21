@@ -31,7 +31,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
                 let (k, v) = pair.split_once('=').ok_or("--meta takes key=value")?;
                 agent.meta.insert(k.to_string(), v.into());
             }
-            "--tmux" => agent.deliver = Some(Deliver::Tmux { target: value("--tmux")? }),
+            "--tmux" => agent.deliver = Some(Deliver::Keys { tmux: value("--tmux")? }),
             // the tower started this agent and holds its input
             "--held" => agent.deliver = Some(Deliver::Held),
             "--deliver-command" => agent.deliver = Some(Deliver::Command { argv: value("--deliver-command")?.split_whitespace().map(String::from).collect() }),

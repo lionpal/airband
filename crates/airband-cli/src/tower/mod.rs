@@ -257,7 +257,7 @@ impl App {
         let touched: HashSet<String> = inner.unsaved.borrow_mut().drain().collect();
         let entries: Vec<Entry> = inner.log.iter().filter(|e| touched.contains(&e.id)).cloned().collect();
         self.store.put_messages(&entries);
-        self.store.save_state(&Saved { sessions: inner.sessions.clone(), pending: Vec::new(), projects: inner.projects.clone(), colours: inner.colours.clone(), held: inner.held.clone(), placed: inner.placed.clone() });
+        self.store.save_state(&Saved { sessions: inner.sessions.clone(), projects: inner.projects.clone(), colours: inner.colours.clone(), held: inner.held.clone(), placed: inner.placed.clone() });
     }
 }
 
@@ -328,8 +328,9 @@ pub fn run(cfg: Config) -> Result<(), String> {
     if let Some(why) = config::keyless() {
         return Err(format!("The tower's keys could not be read: {why}"));
     }
-    // The keys are kept encrypted and never in the settings file. Settings from before that are moved now, and
-    // keys a run without the keychain had to seal in a file go into the keychain when this one can use it.
+    // The keys are kept encrypted and never in the settings file: any that are there (a first run, a file he
+    // edited) are moved now, and keys a run without the keychain had to seal in a file go into the keychain
+    // when this one can use it.
     if !config::locked() {
         match config::lock() {
             Ok(()) => log(format!("the keys are now {}; the settings file holds none", crate::vault::place())),
@@ -389,9 +390,6 @@ pub fn run(cfg: Config) -> Result<(), String> {
         let mut inner = Inner { sessions: saved.sessions, projects: saved.projects, colours: saved.colours, held: saved.held, placed: saved.placed, seq, rev, log: entries, ..Inner::default() };
         inner.reap();
         inner.close_requests_from_before();
-        // a team from before teams had colours gets one now, not at its agents' next word
-        inner.colour_teams();
-        inner.adopt_old_lines();
         // credentials said before the chat masked them: masked now, and sent to every radio again as they are
         let leaked: Vec<String> = inner.log.iter_mut().filter_map(|e| e.scrub().then(|| e.id.clone())).collect();
         if !leaked.is_empty() {
@@ -401,7 +399,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         store.scrub_events();
         pictures::prune();
         attachments::prune();
-        inner.settle_reading(&saved.pending);
+        inner.settle_reading();
         let port = cfg.port;
         let push = push::Wake::load(&store);
         let app = Arc::new(App { push, cfg, store, speech: speech::Speech::default(), ears_pass: Mutex::new(None), clips: Mutex::new(HashMap::new()), inner: Mutex::new(inner), kick: Notify::new(), accounts: accounts::Kept::default() });
