@@ -395,7 +395,7 @@ struct FeedView: View {
                     }
                     .buttonStyle(.plain).id("team:" + team.name).accessibilityLabel(team.unread > 0 && model.only != nil ? "\(team.name), \(team.unread) unread" : team.name)
                     ForEach(team.members, id: \.id) { agent in
-                        let short = agent.callsign.hasPrefix(team.name + " ") ? String(agent.callsign.dropFirst(team.name.count + 1)) : agent.callsign
+                        let short = agent.number.isEmpty ? agent.callsign : agent.number
                         Button { model.room = team.name; model.only = model.only == agent.callsign ? nil : agent.callsign; model.replyingTo = nil } label: {
                             chip(short, on: model.only == agent.callsign, dot: agent.state, badge: (agent.badge, team.colour), unread: agent.unread)
                         }
@@ -614,6 +614,12 @@ struct FeedView: View {
         return "say anything"
     }
     private var listeningNow: Bool { model.listening }
+    /// Who the line above the buttons says his words will go to, when it says so: the message he picked or the
+    /// agent he is looking at, while the microphone is open or a message is picked.
+    private var aimed: String? {
+        guard model.micOpen || model.replyingTo != nil else { return nil }
+        return model.replyingTo.map { name(of: $0) } ?? model.only
+    }
     /// One quiet line above the buttons: who he is answering, or what the radio is doing.
     private var statusLine: String? {
         // who it will go to, whenever that is already settled: the message he picked, or the agent he is looking at
@@ -684,7 +690,7 @@ struct FeedView: View {
                 } else if model.hearing.isEmpty {
                     HStack(spacing: 6) {
                         // whoever it will go to, with its badge, when that is settled
-                        if statusLine?.hasPrefix("to ") == true, let aim = model.replyingTo.map({ name(of: $0) }) ?? model.only, let badge = badge(of: aim) {
+                        if let aim = aimed, let badge = badge(of: aim) {
                             Badge(text: badge.0, colour: badge.1, size: 16)
                         }
                         Text(statusLine ?? " ").font(.system(size: 14, weight: .medium)).foregroundStyle(statusLine == nil ? Palette.quiet : Palette.soft)
@@ -1199,7 +1205,7 @@ struct Answers: View {
     /// In place of the answers: why one from here will not do, and the way to make it do.
     private func takeOver(_ agent: DeskMember) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("It wants this answer in its own session. It was started in a terminal, so what you send from here reaches it as a passed-on message.")
+            Text("It wants this answer at its own keyboard. It was started in a terminal on your computer, so anything you send from your phone reaches it as a note left for it.")
                 .font(.system(size: 14)).foregroundStyle(Palette.soft).fixedSize(horizontal: false, vertical: true)
             Button { taking = true } label: {
                 Text("Take over, then answer").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.ground)
@@ -1678,18 +1684,11 @@ struct AgentsMenu: View {
         return twins && !agent.station.isEmpty ? "\(agent.callsign) (\(agent.station))" : agent.callsign
     }
 
-    /// Does the line under a name start with a model? It does unless the model is not known, when it starts with
-    /// the computer or "terminal".
-    private func agentHasModel(_ parts: [String]) -> Bool {
-        guard let first = parts.first else { return false }
-        return first != "terminal" && !model.view.stations.contains(first)
-    }
-
-    /// The small line under an agent's name: what it runs on, and the computer it is on when there are several.
+    /// The small line under an agent's name, after its model: how hard it thinks, and "terminal" for one he
+    /// started in a terminal (it only gets messages from outside until it is taken over). The computer is a
+    /// small picture at the end of the row, not more words.
     private func under(_ agent: DeskMember) -> String {
-        // one he started in a terminal says so: it only gets messages from outside until it is taken over
-        // the computer is a small picture at the end of the row, not more words
-        [agent.engine, agent.held ? "" : "terminal"].filter { !$0.isEmpty }.joined(separator: " \u{b7} ")
+        [agent.effort, agent.held ? "" : "terminal"].filter { !$0.isEmpty }.joined(separator: " \u{b7} ")
     }
 
     /// An agent dropped on a team, or on one of its agents, joins that team.
@@ -1719,7 +1718,7 @@ struct AgentsMenu: View {
                     .dropDestination(for: String.self) { ids, _ in drop(ids, on: room.name) } isTargeted: { over = $0 ? room.name : (over == room.name ? nil : over) }
                     .padding(.top, 4)
                     ForEach(room.members, id: \.id) { agent in
-                        row(dot: agent.state, title: titled(agent, in: room), detail: nil, strong: false, on: model.only == agent.callsign, inset: 22, colour: room.colour, badge: agent.badge, engine: under(agent), doing: agent.doing) {
+                        row(dot: agent.state, title: titled(agent, in: room), detail: nil, strong: false, on: model.only == agent.callsign, inset: 22, colour: room.colour, badge: agent.badge, lead: agent.model, engine: under(agent), doing: agent.doing) {
                             let was = model.only == agent.callsign
                             model.room = nil
                             model.only = was ? nil : agent.callsign
@@ -1805,7 +1804,7 @@ struct AgentsMenu: View {
         }
     }
 
-    private func row(dot: String?, title: String, detail: String?, strong: Bool, on: Bool, inset: CGFloat, colour: UInt8? = nil, badge: String? = nil, engine: String = "", doing: String? = nil, pick: @escaping () -> Void) -> some View {
+    private func row(dot: String?, title: String, detail: String?, strong: Bool, on: Bool, inset: CGFloat, colour: UInt8? = nil, badge: String? = nil, lead: String = "", engine: String = "", doing: String? = nil, pick: @escaping () -> Void) -> some View {
         Button {
             pick()
             model.replyingTo = nil
@@ -1819,12 +1818,10 @@ struct AgentsMenu: View {
                 // when there are several; then what it is doing in what room is left
                 VStack(alignment: .leading, spacing: 0) {
                     Text(title).font(.system(size: 17, weight: strong ? .semibold : .regular)).lineLimit(1)
-                    if !engine.isEmpty || doing != nil {
+                    if !lead.isEmpty || !engine.isEmpty || doing != nil {
                         // one line, always: the model stays, and while it works what follows gives way to what it
                         // is doing, in green, and comes back when it stops. The row never changes height.
-                        let parts = engine.components(separatedBy: " \u{b7} ")
-                        let lead = agentHasModel(parts) ? parts[0] : ""
-                        let rest = (agentHasModel(parts) ? Array(parts.dropFirst()) : parts).joined(separator: " \u{b7} ")
+                        let rest = engine
                         HStack(spacing: 0) {
                             if !lead.isEmpty { Text(lead + " \u{b7} ").foregroundStyle(Palette.quiet) }
                             ZStack(alignment: .leading) {

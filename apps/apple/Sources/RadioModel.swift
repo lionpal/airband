@@ -82,7 +82,6 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         if let tools = UserDefaults.standard.stringArray(forKey: "airband.devTools") { desk.setTools(tools: tools) }
         #endif
         var links = (try? JSONDecoder().decode([String].self, from: Data((Keychain.read("airband.links") ?? "[]").utf8))) ?? []
-        if let old = Keychain.read("airband.link"), !old.isEmpty, !links.contains(old) { links.append(old) } // from the first builds
         #if DEBUG
         // development only: `xcrun simctl launch <sim> dev.airband.app -airband.devLink <pairing link>` pairs without the
         // system's "Open in airband?" prompt, which a script cannot tap

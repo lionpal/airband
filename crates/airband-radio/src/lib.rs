@@ -3,7 +3,7 @@
 //! Where things are:
 //! - this file: the API a host sees (what it implements, what it can call) and the types that cross to Swift and Kotlin
 //! - `link`: reaching the tower, directly or sealed through a relay
-//! - `net`: the HTTP agent, which can find a host the local network's DNS has wrong
+//! - `net`: the HTTP agent
 //! - `desk`: every paired computer as one: the merged chat, what is waiting, where his messages go
 //! - `call`: the call-mode loop
 //! - `voice`: outbound, words said aloud by the voice he chose on this device
@@ -221,11 +221,12 @@ fn chat_feed(feed: Feed) -> ChatFeed {
     ChatFeed {
         seq: feed.seq,
         messages: feed.messages.into_iter().map(chat).collect(),
-        agents: feed.roster.into_iter().map(|r| ChatAgent { id: r.id, callsign: airband_core::routing::shown(&r.callsign), group: r.group, harness: r.harness, waiting: r.waiting, reachable: r.reachable, state: r.state, subagents: r.subagents, doing: r.doing, held: r.held, model: r.model, effort: r.effort }).collect(),
+        agents: feed.roster.into_iter().map(|r| ChatAgent { id: r.id, callsign: airband_core::routing::shown(&r.callsign), group: r.group, number: airband_core::routing::shown_number(&r.number), harness: r.harness, waiting: r.waiting, reachable: r.reachable, state: r.state, subagents: r.subagents, doing: r.doing, held: r.held, model: r.model, effort: r.effort }).collect(),
         quick: feed.quick.into_iter().map(|q| QuickMessage { label: q.label, text: q.text }).collect(),
         projects: feed.projects,
         colours: feed.colours.into_iter().collect(),
         open: feed.open,
+        reads_failed: feed.reads_failed.map(|trouble| trouble.said(&feed.reads)).unwrap_or_default(),
         reads: feed.reads,
         station: feed.station,
     }
@@ -255,8 +256,8 @@ impl std::fmt::Display for RadioError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RadioError::BadLink { reason } => write!(f, "{reason}"),
-            RadioError::Offline => write!(f, "cannot reach the tower"),
-            RadioError::Refused => write!(f, "the tower refused that"),
+            RadioError::Offline => write!(f, "cannot reach your computer"),
+            RadioError::Refused => write!(f, "your computer refused that"),
             RadioError::Told { reason } => write!(f, "{reason}"),
         }
     }
@@ -345,6 +346,8 @@ pub struct ChatAgent {
     pub id: String,
     pub callsign: String,
     pub group: String,
+    /// What tells it from the others of its team: the part of its callsign after the team's name.
+    pub number: String,
     pub harness: String,
     pub waiting: bool,
     pub reachable: bool,
@@ -431,6 +434,8 @@ pub struct ChatFeed {
     pub station: String,
     /// What reads the agents' messages on that computer, by name. Empty when nothing does.
     pub reads: String,
+    /// Why what reads there could not, the last time it was asked, in words for him. Empty while it works.
+    pub reads_failed: String,
 }
 
 /// What the radio's waiting threads sleep on: they are woken when there is something to do (a message to send,
@@ -901,6 +906,11 @@ impl Radio {
         }
     }
 
+    /// Tell the tower which coding tools he uses, the one he uses most first.
+    pub(crate) fn uses_tools(&self, tools: &[String]) -> Result<(), RadioError> {
+        self.ask("/tools", serde_json::to_value(airband_core::radio::UsesTools { tools: tools.to_vec() }).unwrap())
+    }
+
     /// Tell the tower where this radio can be woken with a notification (its address at a push service), or
     /// with an empty token that it no longer can.
     pub(crate) fn push_target(&self, provider: &str, token: &str) -> Result<(), RadioError> {
@@ -949,20 +959,18 @@ impl Radio {
         // 90 KB of file is 120 KB of text, which fits one sealed message through a relay
         const PART: u64 = 90_000;
         // Every part is a round trip to his computer and back, so they go several at once: a video is hundreds
-        // of them. The first goes alone, to learn whether the tower takes parts in any order; an older one
-        // does not, and gets them one after another.
+        // of them. The first goes alone: a file his computer will not take is refused before the rest is sent.
         const AT_ONCE: usize = 6;
         let total = std::fs::metadata(path).map_err(|_| RadioError::Refused)?.len();
-        let part_at = |from: u64, with_total: bool| -> Result<airband_core::radio::AttachmentPart, RadioError> {
+        let part_at = |from: u64| -> Result<airband_core::radio::AttachmentPart, RadioError> {
             let mut file = std::fs::File::open(path).map_err(|_| RadioError::Refused)?;
             file.seek(SeekFrom::Start(from)).map_err(|_| RadioError::Refused)?;
             let mut buf = Vec::with_capacity(PART as usize);
             file.take(PART).read_to_end(&mut buf).map_err(|_| RadioError::Refused)?;
-            let done = from + buf.len() as u64 >= total;
-            Ok(airband_core::radio::AttachmentPart { id: id.into(), name: name.into(), from, data: airband_core::audio::base64_encode(&buf), done, total: with_total.then_some(total) })
+            Ok(airband_core::radio::AttachmentPart { id: id.into(), name: name.into(), from, data: airband_core::audio::base64_encode(&buf), total })
         };
         // a part lost on a bad connection is sent again, to the same place, a few times before giving up
-        let send = |part: &airband_core::radio::AttachmentPart| -> Result<(u64, bool), RadioError> {
+        let send = |part: &airband_core::radio::AttachmentPart| -> Result<u64, RadioError> {
             let mut tries = 0;
             loop {
                 match self.link.attachment_part(part) {
@@ -977,28 +985,13 @@ impl Radio {
                 }
             }
         };
-        let (_, any) = send(&part_at(0, true)?)?;
+        send(&part_at(0)?)?;
         let mut arrived = PART.min(total);
         if !sent(arrived, total) {
             return Err(RadioError::Refused);
         }
         if arrived >= total {
             return Ok(());
-        }
-        if !any {
-            // one after another, each from where the tower says it has got to
-            let mut from = arrived;
-            loop {
-                let part = part_at(from, false)?;
-                let done = part.done;
-                from = send(&part)?.0;
-                if !sent(from, total) {
-                    return Err(RadioError::Refused);
-                }
-                if done {
-                    return Ok(());
-                }
-            }
         }
         let starts: Vec<u64> = (1..total.div_ceil(PART)).map(|k| k * PART).collect();
         let next = std::sync::atomic::AtomicUsize::new(0);
@@ -1011,7 +1004,7 @@ impl Radio {
                 scope.spawn(move || {
                     while failed.lock().unwrap().is_none() {
                         let Some(from) = starts.get(next.fetch_add(1, Ordering::SeqCst)).copied() else { break };
-                        match part_at(from, true).and_then(|part| send(&part).map(|_| part.data.len() as u64 * 3 / 4)) {
+                        match part_at(from).and_then(|part| send(&part).map(|_| part.data.len() as u64 * 3 / 4)) {
                             Ok(bytes) => {
                                 let _ = tx.send(bytes);
                             }

@@ -86,5 +86,10 @@
         "{effort}"
       ]
     }
-  ]
+  ],
+  "with": {
+    "program": "claude",
+    "accounts_api": "https://api.anthropic.com",
+    "accounts_token": "https://platform.claude.com/v1/oauth/token"
+  }
 }

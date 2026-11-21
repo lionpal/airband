@@ -6,22 +6,36 @@ use crate::providers::{By, Interface, Job, Offer};
 /// One question to a model behind an API key, off the async threads. `read` finds the answer in what came back.
 /// One call to a service that speaks OpenAI's chat interface. `auth` is the header its key goes in and the
 /// value there, as its row says; a service with no key (one on his own computer) is sent none.
-async fn ask_api(url: String, auth: Option<(String, String)>, body: Value) -> Result<String, String> {
+async fn ask_api(url: String, auth: Option<(String, String)>, body: Value) -> Result<String, Trouble> {
     tokio::task::spawn_blocking(move || {
         let mut req = airband_radio::net::agent(Duration::from_secs(60)).post(&url);
         if let Some((header, value)) = auth {
             req = req.header(header, value);
         }
-        let mut res = req.send_json(&body).map_err(|e| format!("the model could not be reached: {e}"))?;
+        // What a service writes back when it refuses is never passed on or written down: some quote part of
+        // the key they were sent. The status says enough.
+        let mut res = req.send_json(&body).map_err(|_| Trouble::Unreachable)?;
         let status = res.status().as_u16();
-        let v: Value = res.body_mut().read_json().map_err(|e| e.to_string())?;
         if status != 200 {
-            return Err(format!("the model refused ({status}): {}", v["error"]["message"].as_str().unwrap_or("no reason given").chars().take(160).collect::<String>()));
+            return Err(Trouble::of_status(status));
         }
-        v["choices"][0]["message"]["content"].as_str().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).ok_or_else(|| "the model answered with nothing".to_string())
+        let v: Value = res.body_mut().read_json().map_err(|_| Trouble::NoAnswer)?;
+        v["choices"][0]["message"]["content"].as_str().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).ok_or(Trouble::NoAnswer)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|_| Trouble::Program)?
+}
+
+pub(crate) use airband_core::providers::Trouble;
+
+/// A model that did not answer: why, and anything more for this computer's own log. The second part is never
+/// sent to a phone.
+pub(crate) struct Failed(pub Trouble, pub String);
+
+impl From<Trouble> for Failed {
+    fn from(trouble: Trouble) -> Failed {
+        Failed(trouble, String::new())
+    }
 }
 
 /// The JSON object in what a model wrote, which may have words or a code fence around it. None when there is
@@ -50,7 +64,7 @@ pub(super) async fn set_reader(wanted: airband_core::radio::SetReads) -> Result<
     let mut cfg = config::read().filter(|_| config::keyless().is_none()).ok_or("This computer's settings cannot be read right now.")?;
     let key = match (p.key, wanted.key.trim()) {
         (false, _) => String::new(),
-        (true, "") => cfg.keys.values().find(|k| k.provider == p.id).map(|k| k.secret.clone()).ok_or_else(|| format!("{} needs a key.", p.name))?,
+        (true, "") => cfg.key_of(&p.id).ok_or_else(|| format!("{} needs a key.", p.name))?,
         (true, given) => given.to_string(),
     };
     // only the settings its row asks for
@@ -60,10 +74,15 @@ pub(super) async fn set_reader(wanted: airband_core::radio::SetReads) -> Result<
     super::local::wait_for_it(true);
     let tried = ask(&using, "Reply with the one word: ready".into(), None).await;
     super::local::wait_for_it(false);
-    tried.map_err(|why| format!("{} did not answer: {}", p.name, why.chars().take(160).collect::<String>()))?;
-    if p.key && !cfg.keys.values().any(|k| k.secret == key) {
-        let name = (1..).map(|n| if n == 1 { p.id.to_string() } else { format!("{}-{n}", p.id) }).find(|n| !cfg.keys.contains_key(n)).unwrap();
-        cfg.keys.insert(name, config::StoredKey { provider: p.id.clone(), secret: key });
+    tried.map_err(|Failed(trouble, more)| {
+        if !more.is_empty() {
+            log(format!("trying {} to read: {more}", p.name));
+        }
+        trouble.said(&offer.label)
+    })?;
+    if p.key {
+        // a provider has one key here: a new one takes the place of the one before
+        cfg.keep_key(&p.id, key);
     }
     cfg.summarizer = using.clone();
     config::save(&cfg)?;
@@ -76,7 +95,17 @@ pub(super) async fn set_reader(wanted: airband_core::radio::SetReads) -> Result<
     Ok(offer.label.to_string())
 }
 
-/// Ask the model that reads for the tower. If it does not answer, the second one is asked, when there is one.
+/// Why what reads could not, the last time it was asked: said to him on his phone, and gone when it next
+/// answers. Nothing else is asked in its place.
+static FAILED: Mutex<Option<Trouble>> = Mutex::new(None);
+
+/// Why what reads could not, the last time it was asked. Nothing while it works.
+pub(super) fn failed() -> Option<Trouble> {
+    *FAILED.lock().unwrap()
+}
+
+/// Ask the model that reads for the tower. When it does not answer, that is the answer: he is told why on his
+/// phone and gets what the agent wrote, and no other model is asked.
 pub(super) async fn ask_model(cfg: &Config, prompt: String) -> Result<String, String> {
     ask_shaped(cfg, prompt, None).await
 }
@@ -84,20 +113,17 @@ pub(super) async fn ask_model(cfg: &Config, prompt: String) -> Result<String, St
 /// The same, for a call that wants JSON of a known shape. A service that can be held to a schema is, so its
 /// answer always parses; the others are asked in words, as before.
 pub(super) async fn ask_shaped(cfg: &Config, prompt: String, shape: Option<Value>) -> Result<String, String> {
-    match ask(&reader(cfg), prompt.clone(), shape.clone()).await {
-        Ok(text) => Ok(text),
-        Err(first) => match &cfg.summarizer_fallback {
-            Some(second) => {
-                log(format!("the model did not answer ({first}); asking the second"));
-                ask(second, prompt, shape).await.map_err(|e| format!("{first}; and the second: {e}"))
-            }
-            None => Err(first),
-        },
+    let model = reader(cfg);
+    let asked = ask(&model, prompt, shape).await;
+    // with nothing chosen there is nothing that failed
+    if !model.is_none() {
+        *FAILED.lock().unwrap() = asked.as_ref().err().map(|failed| failed.0);
     }
+    asked.map_err(|Failed(trouble, more)| if more.is_empty() { format!("{trouble:?}") } else { format!("{trouble:?} ({more})") })
 }
 
 /// What comes back from asking: the model's answer, or why there is none.
-type Asked<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>>;
+type Asked<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, Failed>> + Send + 'a>>;
 
 /// One way of reaching a model that reads: its name in a provider's row (`by.interface`), what it can do
 /// that a row may say it needs, and what a row has to tell it.
@@ -140,22 +166,22 @@ pub(crate) fn local_model(model: &Summarizer) -> Option<(String, String)> {
 }
 
 /// Ask one model, through whichever interface its row names.
-async fn ask(model: &Summarizer, prompt: String, shape: Option<Value>) -> Result<String, String> {
+async fn ask(model: &Summarizer, prompt: String, shape: Option<Value>) -> Result<String, Failed> {
     if model.is_none() {
-        return Err("no summarizer is configured".into());
+        return Err(Trouble::NotSet.into());
     }
-    let (_, offer) = model.offer(Job::Summary).ok_or_else(|| format!("this version of airband has nothing called \"{} {}\" that reads", model.kind, model.offer))?;
-    let reader = READERS.iter().find(|r| r.is.fits(&offer)).ok_or_else(|| format!("this version of airband cannot read through \"{}\" yet", model.kind))?;
+    let (_, offer) = model.offer(Job::Summary).ok_or_else(|| Failed(Trouble::NotSet, format!("this version of airband has nothing called \"{} {}\" that reads", model.kind, model.offer)))?;
+    let reader = READERS.iter().find(|r| r.is.fits(&offer)).ok_or_else(|| Failed(Trouble::NotSet, format!("this version of airband cannot read through \"{}\" yet", model.kind)))?;
     // What starts a program on this computer is run only as this build has it compiled in, whatever a
     // catalogue taken since may say (taking one already refuses such a change; this is the same rule where
     // the program is started).
     if reader.runs && !airband_core::catalog::built().providers.iter().any(|p| p.id == model.kind && p.offers.iter().any(|o| o.id == offer.id && o.job == Job::Summary && o.by == offer.by)) {
-        return Err(format!("\"{}\" would run a program this version of airband does not come with", model.kind));
+        return Err(Failed(Trouble::NotSet, format!("\"{}\" would run a program this version of airband does not come with", model.kind)));
     }
     (reader.ask)(model, &offer.by, prompt, shape).await
 }
 
-async fn chat(model: &Summarizer, by: &By, prompt: String, shape: Option<Value>) -> Result<String, String> {
+async fn chat(model: &Summarizer, by: &By, prompt: String, shape: Option<Value>) -> Result<String, Failed> {
     let mut body = json!({ "model": model.get(Job::Summary, "model"), "messages": [{ "role": "user", "content": prompt }] });
     if by.flag("cold") {
         body["temperature"] = json!(0);
@@ -167,32 +193,33 @@ async fn chat(model: &Summarizer, by: &By, prompt: String, shape: Option<Value>)
     // how this service takes a key is its row's to say; one sent no key needs nothing said
     let auth = match model.key.is_empty() {
         true => None,
-        false => Some(by.auth().map(|a| (a.header.clone(), a.value(&model.key))).ok_or("this version of airband was not told how that service takes its key")?),
+        false => Some(by.auth().map(|a| (a.header.clone(), a.value(&model.key))).ok_or_else(|| Failed(Trouble::NotSet, "this version of airband was not told how that service takes its key".into()))?),
     };
-    ask_api(url, auth, body).await
+    Ok(ask_api(url, auth, body).await?)
 }
 
-async fn on_this_computer(_model: &Summarizer, by: &By, prompt: String, shape: Option<Value>) -> Result<String, String> {
+async fn on_this_computer(_model: &Summarizer, by: &By, prompt: String, shape: Option<Value>) -> Result<String, Failed> {
     let (name, server) = (by.text("model").to_string(), by.text("server").to_string());
     let url = {
         let name = name.clone();
-        tokio::task::spawn_blocking(move || super::local::ensure(&name, &server)).await.map_err(|e| e.to_string())??
+        tokio::task::spawn_blocking(move || super::local::ensure(&name, &server)).await.map_err(|e| Failed(Trouble::Program, e.to_string()))?.map_err(|e| Failed(Trouble::Program, e))?
     };
     let mut body = json!({ "model": name, "messages": [{ "role": "user", "content": prompt }], "temperature": 0, "max_tokens": 400 });
     if let Some(shape) = shape {
         body["response_format"] = json!({ "type": "json_schema", "json_schema": { "name": "answer", "strict": true, "schema": shape } });
     }
-    ask_api(format!("{url}/chat/completions"), None, body).await
+    Ok(ask_api(format!("{url}/chat/completions"), None, body).await?)
 }
 
-async fn command(model: &Summarizer, by: &By, prompt: String, shape: Option<Value>) -> Result<String, String> {
+async fn command(model: &Summarizer, by: &By, prompt: String, shape: Option<Value>) -> Result<String, Failed> {
+    let program_failed = |more: String| Failed(Trouble::Program, more);
     let argv: Vec<String> = match model.set.get("argv").and_then(|a| a.as_array()) {
         Some(own) => own.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
         None => by.list("argv"),
     };
     let mut shape_file: Option<std::path::PathBuf> = None;
     // `{brief}` in an argument is the file that tells a coding tool it is only rewriting a message here
-    let folder = brief_folder()?;
+    let folder = brief_folder(by).map_err(program_failed)?;
     // and `{model}`, or any other setting the row asks for, is what he set or the row's usual
     let asked: Vec<(String, String)> = model.offer(Job::Summary).map(|(_, o)| o.asks.iter().map(|a| (format!("{{{}}}", a.field), model.get(Job::Summary, &a.field))).collect()).unwrap_or_default();
     let mut argv: Vec<String> = argv.into_iter().map(|a| asked.iter().fold(a.replace("{brief}", &folder.join("brief.md").display().to_string()), |a, (name, value)| a.replace(name, value))).collect();
@@ -202,7 +229,7 @@ async fn command(model: &Summarizer, by: &By, prompt: String, shape: Option<Valu
         match &shape {
             Some(shape) => {
                 let file = folder.join(format!("shape-{}.json", config::random_hex(6)));
-                std::fs::write(&file, shape.to_string()).map_err(|e| e.to_string())?;
+                std::fs::write(&file, shape.to_string()).map_err(|e| program_failed(e.to_string()))?;
                 argv[at] = argv[at].replace("{shape}", &file.display().to_string());
                 shape_file = Some(file);
             }
@@ -214,7 +241,7 @@ async fn command(model: &Summarizer, by: &By, prompt: String, shape: Option<Valu
             }
         }
     }
-    let (program, args) = argv.split_first().ok_or("the summarizer command is empty")?;
+    let (program, args) = argv.split_first().ok_or_else(|| Failed(Trouble::NotSet, "the command that reads is empty".into()))?;
     // on Windows a command like `claude` is a .cmd shim, which only the shell can start
     let mut cmd = if cfg!(windows) {
         let mut c = tokio::process::Command::new("cmd");
@@ -235,7 +262,7 @@ async fn command(model: &Summarizer, by: &By, prompt: String, shape: Option<Valu
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .map_err(|e| format!("cannot start {program}: {e}"))?;
+        .map_err(|e| program_failed(format!("cannot start {program}: {e}")))?;
     let mut stdin = child.stdin.take().unwrap();
     tokio::spawn(async move {
         let _ = stdin.write_all(prompt.as_bytes()).await;
@@ -244,27 +271,32 @@ async fn command(model: &Summarizer, by: &By, prompt: String, shape: Option<Valu
     if let Some(file) = shape_file {
         let _ = std::fs::remove_file(file);
     }
-    let out = out.map_err(|_| format!("{program} took over 90 seconds"))?.map_err(|e| e.to_string())?;
+    let out = out.map_err(|_| Failed(Trouble::TooSlow, format!("{program} took over 90 seconds")))?.map_err(|e| program_failed(e.to_string()))?;
     let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if !out.status.success() || text.is_empty() {
-        return Err(format!("{program} failed: {}", String::from_utf8_lossy(&out.stderr).chars().take(200).collect::<String>()));
+        return Err(program_failed(format!("{program} stopped with {}", out.status)));
     }
     Ok(text)
 }
 
 /// What a coding tool is told when it is used only to rewrite a message: one line, and no tools. Kept in a
-/// folder of its own, in the two forms the tools take it: a plain file (Codex is pointed at it), and an agent
-/// named `airband` where OpenCode looks for agents. A general coding agent brings thousands of words of its
+/// folder of its own: as a plain file a tool can be pointed at, and in whatever other form a tool's row says
+/// it looks for one (`brief` in the row). A general coding agent brings thousands of words of its
 /// own instructions to every call; this is what keeps a summary small and quick.
 const BRIEF: &str = "You rewrite messages. Reply with the JSON asked for and nothing else.";
 
-fn brief_folder() -> Result<std::path::PathBuf, String> {
+fn brief_folder(by: &By) -> Result<std::path::PathBuf, String> {
     let folder = config::dir().join("brief");
-    let agent = folder.join(".opencode").join("agent");
-    let files = [(folder.join("brief.md"), format!("{BRIEF}\n")), (agent.join("airband.md"), format!("---\ndescription: Rewrites a message as asked\nmode: primary\ntools:\n  \"*\": false\n---\n{BRIEF}\n"))];
+    let mut files = vec![(folder.join("brief.md"), format!("{BRIEF}\n"))];
+    // a tool that takes its brief as a file of its own kind, somewhere of its own inside the folder it runs
+    // in: its row says where (`brief.path`) and what stands before the brief there (`brief.head`)
+    if let Some(own) = by.with.get("brief") {
+        let path = own["path"].as_str().map(std::path::Path::new).filter(|p| p.is_relative() && !p.components().any(|c| matches!(c, std::path::Component::ParentDir))).ok_or("the brief's place in this row is not inside the folder it runs in")?;
+        files.push((folder.join(path), format!("{}{BRIEF}\n", own["head"].as_str().unwrap_or_default())));
+    }
     if files.iter().any(|(path, text)| std::fs::read_to_string(path).ok().as_deref() != Some(text.as_str())) {
-        std::fs::create_dir_all(&agent).map_err(|e| e.to_string())?;
         for (path, text) in &files {
+            std::fs::create_dir_all(path.parent().unwrap_or(&folder)).map_err(|e| e.to_string())?;
             std::fs::write(path, text).map_err(|e| e.to_string())?;
         }
     }
@@ -295,7 +327,7 @@ pub(super) fn offered(cfg: &Config) -> airband_core::radio::ReadsOffered {
             asks: o.asks.iter().map(|a| ReadsAsk { field: a.field.clone(), question: a.question.clone(), usual: a.usual.clone() }).collect(),
         })
         .collect();
-    ReadsOffered { now: (!now.is_none()).then(|| airband_core::radio::OfferName { provider: now.kind.clone(), offer: now.offer.clone() }), offers }
+    ReadsOffered { now: (!now.is_none()).then(|| airband_core::radio::OfferName { provider: now.kind.clone(), offer: now.offer.clone() }), failed: failed(), offers }
 }
 
 pub(super) fn tail(text: &str, max_chars: usize) -> String {
@@ -497,16 +529,30 @@ pub(super) async fn progress(cfg: &Config, steps: &[String]) -> Option<String> {
          a pull request or ticket, a message sent to someone, something installed or restarted on a machine, something deleted \
          or moved for good), or a sign the work has hit trouble (the same thing tried again and again, something undone, \
          a hunt for why something failed). Reading, searching, editing and running tests along the way are not.\n\n\
-         If nothing is, answer with the single word: none\n\
-         Otherwise answer with one sentence of at most 24 words, in the first person as the agent, saying what it is doing or \
+         Reply with one line of JSON and nothing else: {{\"tell\":true or false,\"say\":\"…\"}}\n\
+         \"tell\" is false when nothing in them is, and \"say\" is then empty. Otherwise \"say\" is one sentence of at most 24 words, \
+         in the first person as the agent, saying what it is doing or \
          has set going, with any number or name from the labels that finds it (a build number, a commit id, where a deploy goes). \
          Do not say that anything succeeded, finished or failed: the labels do not tell. No file paths, no markdown.\n\n<steps>\n{steps}\n</steps>",
         name = cfg.name,
         steps = steps.join("\n")
     );
-    let said = ask_model(cfg, prompt).await.ok()?;
-    let said = said.trim().trim_matches('"').trim();
-    (!said.is_empty() && !said.trim_end_matches('.').eq_ignore_ascii_case("none") && said.chars().count() < 400).then(|| said.to_string())
+    #[derive(Deserialize)]
+    struct Out {
+        tell: bool,
+        #[serde(default)]
+        say: String,
+    }
+    let shape = json!({
+        "type": "object",
+        "properties": { "tell": { "type": "boolean" }, "say": { "type": "string" } },
+        "required": ["tell", "say"],
+        "additionalProperties": false
+    });
+    let out = ask_shaped(cfg, prompt, Some(shape)).await.ok()?;
+    let out: Out = serde_json::from_str(json_in(&out)?).ok()?;
+    let said = out.say.trim();
+    (out.tell && !said.is_empty() && said.chars().count() < 400).then(|| said.to_string())
 }
 
 /// He answered a request for permission in his own words. Did he say yes? `Some(true)` only for a plain yes;
@@ -582,6 +628,21 @@ pub(super) async fn detail_of(app: &Arc<App>, id: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn why_a_model_did_not_answer_is_told_from_the_status_and_never_in_the_services_words() {
+        assert_eq!((Trouble::of_status(401), Trouble::of_status(403)), (Trouble::WrongKey, Trouble::WrongKey));
+        assert_eq!((Trouble::of_status(402), Trouble::of_status(429)), (Trouble::Refused, Trouble::Refused));
+        assert_eq!((Trouble::of_status(404), Trouble::of_status(503)), (Trouble::NotFound, Trouble::Unexpected { status: 503 }));
+        // one sentence each, all different, each whole, and the same ones a key that failed its test is told in
+        let all = [Trouble::Unreachable, Trouble::WrongKey, Trouble::Refused, Trouble::NotFound, Trouble::Unexpected { status: 500 }, Trouble::NoAnswer, Trouble::Program, Trouble::TooSlow, Trouble::NotSet];
+        let said: std::collections::HashSet<String> = all.iter().map(|t| t.said("Maker")).collect();
+        assert!(said.len() == all.len() && said.iter().all(|s| s.ends_with('.')));
+        assert!(all.iter().all(|t| t.said_of_key("Maker").starts_with(&t.said("Maker"))));
+        // what goes to a phone is the kind of trouble alone; what is for this computer's log stays here
+        let failed = Failed(Trouble::Program, "the program printed sk-not-for-a-phone".into());
+        assert!(!serde_json::to_string(&failed.0).unwrap().contains("sk-"));
+    }
+
     use super::*;
 
     #[test]

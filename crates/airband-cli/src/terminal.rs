@@ -52,7 +52,7 @@ impl RadioHost for Terminal {
     }
     fn status(&self, status: RadioStatus) {
         match status {
-            RadioStatus::Offline => println!("· no tower"),
+            RadioStatus::Offline => println!("· airband is not answering"),
             RadioStatus::Listening => println!("🎙  (type a reply, or Enter for none)"),
             _ => {}
         }
@@ -65,7 +65,7 @@ pub fn run(cfg: &Config, args: &[String]) -> Result<(), String> {
     let link = flag("--link").unwrap_or_else(|| Pairing::Direct { url: format!("http://127.0.0.1:{}", cfg.port), token: cfg.radio_token.clone() }.link());
     let route = match Pairing::parse(&link)? {
         Pairing::Relay { relay, .. } => format!("through the relay at {relay}"),
-        Pairing::Near { at, .. } => format!("straight to {}, sealed", at.join(" or ")),
+        Pairing::Near { at, .. } => format!("directly to {}, encrypted", at.join(" or ")),
         Pairing::Direct { url, .. } => format!("straight to {url}"),
     };
     let window = flag("--window").and_then(|s| s.parse().ok()).unwrap_or(20);
@@ -76,7 +76,7 @@ pub fn run(cfg: &Config, args: &[String]) -> Result<(), String> {
         listening: listening.clone(),
         window: Duration::from_secs(window),
     });
-    println!("Radio on, {route}. Type a line to talk; start it with a callsign to pick who hears it.");
+    println!("Connected, {route}. Type a line to talk; start it with an agent's name to pick who gets it.");
     let radio = Radio::start(link, String::new(), host).map_err(|e| e.to_string())?;
     radio.set_call_mode(true);
     for line in std::io::stdin().lock().lines() {
@@ -132,7 +132,7 @@ impl RadioHost for Silent {
 
 fn link_from(cfg: &Config, args: &[String]) -> String {
     if let Some(why) = crate::config::keyless().filter(|_| !args.iter().any(|a| a == "--link")) {
-        eprintln!("airband: this needs the tower's keys, which are in the keychain and could not be read here: {why}");
+        eprintln!("airband: this needs airband's keys, which are in the keychain and could not be read here: {why}");
         std::process::exit(2);
     }
     args.iter().position(|a| a == "--link").and_then(|i| args.get(i + 1)).cloned().unwrap_or_else(|| Pairing::Direct { url: format!("http://127.0.0.1:{}", cfg.port), token: cfg.radio_token.clone() }.link())
@@ -153,7 +153,7 @@ pub fn feed(cfg: &Config, args: &[String]) -> Result<(), String> {
         let f = radio.feed(scope.clone(), after, if once { 0 } else { 25 }).map_err(|e| e.to_string())?;
         if after == 0 {
             let who: Vec<String> = f.agents.iter().map(|a| format!("{}{}", a.callsign, if a.waiting { " (waiting)" } else { "" })).collect();
-            println!("On the radio: {}", if who.is_empty() { "nobody".into() } else { who.join(", ") });
+            println!("Your agents: {}", if who.is_empty() { "nobody".into() } else { who.join(", ") });
         }
         for m in &f.messages {
             let to = if m.to.is_empty() { String::new() } else { format!(" → {}", m.to.join(", ")) };

@@ -38,7 +38,7 @@ pub fn install() -> Result<(), String> {
     let brewed = homebrew_exe(&real).filter(|lasting| fs::canonicalize(lasting).is_ok_and(|to| to == real));
     let exe = match brewed {
         Some(lasting) => {
-            println!("Using Homebrew's copy at {}. After `brew upgrade airband`, run `airband install` again to restart the tower.", lasting.display());
+            println!("Using Homebrew's copy at {}. After `brew upgrade airband`, run `airband install` again to restart airband.", lasting.display());
             lasting
         }
         None => {
@@ -95,15 +95,15 @@ fn start_at_login(exe: &std::path::Path) -> Result<(), String> {
         out = start()?;
     }
     if !out.status.success() {
-        return Err(format!("launchctl could not start the tower: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        return Err(format!("airband could not be started. launchctl said: {}", String::from_utf8_lossy(&out.stderr).trim()));
     }
-    println!("The tower started; it will start at login. Log: {}", log.display());
+    println!("airband is running, and starts again when you log in. Its log: {}", log.display());
     Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
 fn start_at_login(exe: &std::path::Path) -> Result<(), String> {
-    println!("Starting at login is only set up on macOS so far. Start the tower yourself:  \"{}\" run", exe.display());
+    println!("Starting at login is only set up on macOS so far. Start airband yourself:  \"{}\" run", exe.display());
     Ok(())
 }
 
@@ -115,14 +115,14 @@ pub fn uninstall() -> Result<(), String> {
         let _ = std::process::Command::new("launchctl").args(["bootout", &format!("gui/{uid}/{LABEL}")]).output();
         let _ = fs::remove_file(plist_path());
     }
-    println!("Hooks removed and tower stopped.");
+    println!("airband is stopped and will not start at login. Your coding tools no longer report to it.");
     Ok(())
 }
 
 /// `airband relay <url> [--admission <key>]` / `airband relay off`
 pub fn relay(mut cfg: Config, args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
-        None => println!("{}", cfg.relay.as_deref().map(|r| format!("Radios reach this tower through {r}.")).unwrap_or("No relay: a radio reaches this computer at its own addresses, on its network or over Tailscale.".into())),
+        None => println!("{}", cfg.relay.as_deref().map(|r| format!("Your phone reaches this computer through {r}.")).unwrap_or("No relay: your phone reaches this computer at its own addresses, on the same network or over Tailscale.".into())),
         Some("off") => {
             cfg.relay = None;
             cfg.relay_admission = None;
@@ -142,7 +142,7 @@ pub fn relay(mut cfg: Config, args: &[String]) -> Result<(), String> {
             cfg.relay = Some(url.trim_end_matches('/').to_string());
             cfg.relay_admission = args.iter().position(|a| a == "--admission").and_then(|i| args.get(i + 1)).cloned();
             config::save(&cfg)?;
-            println!("Relay set to {url}. A running tower picks this up within ten seconds. Next: airband pair");
+            println!("Relay set to {url}. If airband is running it picks this up within ten seconds. Next: airband pair");
         }
     }
     Ok(())
@@ -216,7 +216,7 @@ pub fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
     };
     cfg.summarizer = chosen;
     config::save(&cfg)?;
-    println!("Saved. A running tower uses it from its next start: airband install");
+    println!("Saved. If airband is running it uses this from its next start: airband install");
     Ok(())
 }
 
@@ -224,7 +224,7 @@ pub fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
 pub fn lan(mut cfg: Config, args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         None => {
-            println!("{}", if cfg.lan { "On: a paired phone on the same network reaches this computer straight, sealed with its pairing key. Away from it, through the relay." } else { "Off: a paired phone always goes through the relay." });
+            println!("{}", if cfg.lan { "On: a paired phone on the same network reaches this computer directly, encrypted. Away from that network it goes through the relay." } else { "Off: a paired phone always goes through the relay." });
             println!("Change it:  airband lan on  |  airband lan off");
             return Ok(());
         }
@@ -233,14 +233,14 @@ pub fn lan(mut cfg: Config, args: &[String]) -> Result<(), String> {
         Some(other) => return Err(format!("airband lan takes on or off, not \"{other}\"")),
     }
     config::save(&cfg)?;
-    println!("Saved. A running tower uses it from its next start: airband install");
+    println!("Saved. If airband is running it uses this from its next start: airband install");
     Ok(())
 }
 
 pub fn pair(mut cfg: Config, name: &str) -> Result<(), String> {
     // a slip like `airband pair --help` must not make a pairing called "--help"
     if name.starts_with('-') {
-        return Err(format!("\"{name}\" is not a name for a radio. Use:  airband pair [name]"));
+        return Err(format!("\"{name}\" is not a name for a phone. Use:  airband pair [name]"));
     }
     // one secret for a radio, whichever way it reaches the tower
     let secret = match cfg.pairings.iter().find(|p| p.name == name) {
@@ -277,14 +277,14 @@ pub fn pair(mut cfg: Config, name: &str) -> Result<(), String> {
             println!("\nPoint the phone's camera at this:\n\n{}", lines.join("\n"));
         }
     }
-    println!("\nOr open this on the radio's device, or paste it into the app. It is the key to your agents: treat it like a password.\n\n{link}");
+    println!("\nOr open this on your phone, or paste it into the app. It is the key to your agents: treat it like a password.\n\n{link}");
     Ok(())
 }
 
 pub fn unpair(mut cfg: Config, name: Option<&str>) -> Result<(), String> {
     let name = name.ok_or_else(|| format!("which one? paired: {}", cfg.pairings.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")))?;
     let Some(gone) = cfg.pairings.iter().find(|p| p.name == name).cloned() else {
-        return Err(format!("no radio is paired as \"{name}\""));
+        return Err(format!("no phone is paired as \"{name}\""));
     };
     cfg.pairings.retain(|p| p.name != name);
     config::save(&cfg)?;
@@ -293,7 +293,7 @@ pub fn unpair(mut cfg: Config, name: Option<&str>) -> Result<(), String> {
     if let (Some(relay), Ok(keys)) = (&cfg.relay, airband_core::relay::Keys::derive(&gone.secret)) {
         let _ = airband_radio::net::agent(std::time::Duration::from_secs(8)).delete(format!("{relay}/v1/channels/{}", keys.channel)).header("authorization", format!("Bearer {}", keys.pull_token)).call();
     }
-    println!("\"{name}\" is cut off. A running tower stops answering it within ten seconds.");
+    println!("\"{name}\" is cut off. airband stops answering it within ten seconds.");
     Ok(())
 }
 
@@ -325,17 +325,17 @@ pub fn quick(mut cfg: Config, args: &[String]) -> Result<(), String> {
         _ => return Err("airband quick  |  airband quick add \"<label>\" [\"<what to send>\"]  |  airband quick remove \"<label>\"".into()),
     }
     config::save(&cfg)?;
-    println!("Saved. The tower reads it when it next starts:  airband install");
+    println!("Saved. airband reads it when it next starts:  airband install");
     Ok(())
 }
 
 pub fn status(cfg: &Config) {
     let res = ureq::get(format!("http://127.0.0.1:{}/v1/status", cfg.port)).header("authorization", format!("Bearer {}", cfg.token)).call();
     let Ok(j) = res.and_then(|mut r| r.body_mut().read_json::<Value>()) else {
-        println!("The tower is not running.");
+        println!("airband is not running.");
         return;
     };
-    println!("The tower is running. Phone {}{}.", if j["phone"].as_bool() == Some(true) { "connected" } else { "not connected" }, if j["held"].as_bool() == Some(true) { " (standing by)" } else { "" });
+    println!("airband is running. Phone {}{}.", if j["phone"].as_bool() == Some(true) { "connected" } else { "not connected" }, if j["held"].as_bool() == Some(true) { " (standing by)" } else { "" });
     let sessions = j["sessions"].as_array().cloned().unwrap_or_default();
     for s in &sessions {
         println!("  {:<26} {:<8} {}", s["callsign"].as_str().unwrap_or(""), s["state"].as_str().unwrap_or(""), s["cwd"].as_str().unwrap_or(""));

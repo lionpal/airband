@@ -49,7 +49,7 @@ impl Pairing {
             (Some(relay), Some(secret), _, _) => Ok(Pairing::Relay { relay: tidy(relay), secret }),
             (None, Some(secret), _, _) if at.is_some() => Ok(Pairing::Near { at: at.unwrap_or_default(), secret }),
             (_, _, Some(url), Some(token)) => Ok(Pairing::Direct { url: tidy(url), token }),
-            _ => Err("a pairing link carries a secret with a relay or addresses, or url and token".into()),
+            _ => Err("that is not a whole pairing link: copy it again from your computer, or scan its code".into()),
         }
     }
     pub fn link(&self) -> String {

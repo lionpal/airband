@@ -16,7 +16,11 @@
             "airband",
             "-m",
             "{model}"
-          ]
+          ],
+          "brief": {
+            "path": ".opencode/agent/airband.md",
+            "head": "---\ndescription: Rewrites a message as asked\nmode: primary\ntools:\n  \"*\": false\n---\n"
+          }
         }
       },
       "label": "OpenCode Go GPT-6 Luna",

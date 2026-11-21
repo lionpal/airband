@@ -36,15 +36,15 @@
 
 ## How it works
 
-A small program, the tower, runs on your computer next to your agents. It hears from them through
-their own hooks and servers, decides what is worth your attention, and cuts it to a line. Your phone pairs
-with the tower.
+A small program, airband, runs on your computer next to your agents. It hears from them through
+the ways each coding tool already has of reporting, decides what is worth your attention, and cuts it to a
+line. Your phone pairs with it.
 
 Messages between the two are end-to-end encrypted. On the same network the phone talks to your computer
 directly. Anywhere else it goes through airband's relay, which cannot read them. You can turn the relay off
 and pair the phone straight to your computer.
 
-The tower is one Rust program and uses about 6 MB of memory.
+It is one Rust program and uses about 6 MB of memory.
 
 ## Install
 
@@ -54,14 +54,14 @@ You need a Mac or Linux computer with Claude Code, Codex or OpenCode, and an iPh
 brew install lionpal/airband/airband && airband start
 ```
 
-`airband start` hooks up the coding tools it finds, starts the tower at login (macOS) and shows a QR code for your phone's
+`airband start` connects the coding tools it finds, starts airband at login (macOS) and shows a QR code for your phone's
 camera. What writes the summaries, what speaks and what listens are chosen in the app, on first run and later
 under Settings.
 
 Listening and the voice are the phone's: a model that runs on it, or a service it reaches with a key you
 enter in the app. Nothing about either is set on the computer. What writes the summaries can also be chosen
 at the computer, with `airband setup`, which tries the choice with a real call. One of the choices for
-summaries is Alibaba Qwen 3.5 4B, which the tower downloads (2.7 GB) and runs on the computer itself, so no
+summaries is Alibaba Qwen 3.5 4B, which airband downloads (2.7 GB) and runs on the computer itself, so no
 message leaves it. Run `airband setup` again to change it.
 
 Then start your coding agent the way you always do. Each session shows up in the app under its project.
@@ -72,7 +72,7 @@ airband pair [name]     # pair another phone
 airband relay off       # no relay: the phone reaches this computer on its network or over Tailscale
 airband relay on        # airband's relay again (or `airband relay <url>` for your own)
 airband lan off         # never answer the phone on the local network
-airband install         # restart the tower; run it after `brew upgrade airband`
+airband install         # restart airband; run it after `brew upgrade airband`
 airband uninstall       # run it before `brew uninstall airband`
 ```
 
