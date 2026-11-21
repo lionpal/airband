@@ -66,7 +66,7 @@ pub fn run(cfg: &Config, args: &[String]) -> Result<(), String> {
     let route = match Pairing::parse(&link)? {
         Pairing::Relay { relay, .. } => format!("through the relay at {relay}"),
         Pairing::Near { at, .. } => format!("directly to {}, encrypted", at.join(" or ")),
-        Pairing::Direct { url, .. } => format!("straight to {url}"),
+        Pairing::Direct { url, .. } => format!("directly to {url}"),
     };
     let window = flag("--window").and_then(|s| s.parse().ok()).unwrap_or(20);
     let (tx, rx) = channel();
