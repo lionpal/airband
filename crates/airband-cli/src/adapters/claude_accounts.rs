@@ -85,23 +85,6 @@ fn read_json(p: &Path) -> Res<Value> {
     let s = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
     serde_json::from_str(&s).map_err(|e| format!("{}: {e}", p.display()))
 }
-/// Replace a file in one step, keeping its permissions: a temporary file beside it, then a rename.
-fn write_atomic(p: &Path, body: &str) -> Res<()> {
-    let tmp = p.with_file_name(format!(".{}.airband-{}", p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), std::process::id()));
-    {
-        let mut f = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
-        f.write_all(body.as_bytes()).map_err(|e| e.to_string())?;
-        f.sync_all().map_err(|e| e.to_string())?;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(p).map(|m| m.permissions().mode()).unwrap_or(0o600);
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode)).map_err(|e| e.to_string())?;
-    }
-    std::fs::rename(&tmp, p).map_err(|e| e.to_string())
-}
-
 /// One thing at a time across every airband process on this computer: a saved login must never be refreshed
 /// twice at once, or switched while it is being refreshed.
 fn locked<T>(work: impl FnOnce() -> T) -> T {
@@ -244,7 +227,8 @@ fn set_oauth_account(acct: &Value) -> Res<()> {
     let p = claude_json_path();
     let mut d = read_json(&p)?;
     d.as_object_mut().ok_or("~/.claude.json is not in the form expected")?.insert("oauthAccount".into(), acct.clone());
-    write_atomic(&p, &serde_json::to_string_pretty(&d).map_err(|e| e.to_string())?)
+    // his own file, which holds his login: whole or not at all, and as private as it was
+    airband_core::kept::write_keeping(&p, serde_json::to_string_pretty(&d).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
 }
 /// Ask whose token this is. Nothing when the server cannot say (expired, offline).
 fn profile_email(token: &str) -> Option<String> {

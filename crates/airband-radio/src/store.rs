@@ -33,7 +33,7 @@ pub(crate) struct Store {
 impl Store {
     pub(crate) fn open(data_dir: &str) -> Store {
         let file = (!data_dir.is_empty()).then(|| std::path::Path::new(data_dir).join("radio.json"));
-        let saved = file.as_ref().and_then(|f| std::fs::read(f).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        let saved = file.as_deref().and_then(airband_core::kept::load).unwrap_or_default();
         Store { file, saved: Mutex::new(saved) }
     }
     /// Where fetched pictures are kept: beside the saved chat, or in the system's temporary folder when the
@@ -54,10 +54,7 @@ impl Store {
         let mut saved = self.saved.lock().unwrap();
         let out = f(&mut saved);
         if let Some(file) = &self.file {
-            let tmp = file.with_extension("json.tmp");
-            if std::fs::create_dir_all(file.parent().unwrap()).and_then(|_| std::fs::write(&tmp, serde_json::to_vec(&*saved).unwrap())).is_ok() {
-                let _ = std::fs::rename(&tmp, file);
-            }
+            let _ = airband_core::kept::save(file, &*saved);
         }
         out
     }

@@ -248,12 +248,12 @@ struct ReadMarks {
 
 impl ReadMarks {
     fn load(dir: &str) -> Self {
-        let kept = if dir.is_empty() { None } else { std::fs::read(std::path::Path::new(dir).join("read.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()) };
-        kept.unwrap_or_else(|| ReadMarks { since: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0), upto: HashMap::new() })
+        let kept = if dir.is_empty() { None } else { airband_core::kept::load(&std::path::Path::new(dir).join("read.json")) };
+        kept.unwrap_or_else(|| ReadMarks { since: airband_core::clock::now_ms(), upto: HashMap::new() })
     }
     fn keep(&self, dir: &str) {
         if !dir.is_empty() {
-            let _ = std::fs::write(std::path::Path::new(dir).join("read.json"), serde_json::to_vec(self).unwrap_or_default());
+            let _ = airband_core::kept::save(&std::path::Path::new(dir).join("read.json"), self);
         }
     }
     fn unread(&self, m: &ChatMessage) -> bool {

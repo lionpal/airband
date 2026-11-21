@@ -38,44 +38,32 @@ pub(super) fn keep(path: &Path) -> Option<Picture> {
     let meta = std::fs::metadata(path).ok().filter(|m| m.is_file() && m.len() <= TOO_LARGE)?;
     let modified = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis()).unwrap_or(0);
     let digest = Sha256::digest(format!("{}\n{}\n{modified}", path.display(), meta.len()));
-    let id: String = digest[..12].iter().map(|b| format!("{b:02x}")).collect();
+    keep_as(airband_core::relay::hex(&digest[..12]), || image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.decode().ok())
+}
+
+/// Keep a copy of a picture he pasted in, given as its bytes.
+pub(super) fn keep_bytes(bytes: &[u8]) -> Option<Picture> {
+    if bytes.len() as u64 > TOO_LARGE {
+        return None;
+    }
+    keep_as(airband_core::relay::hex(&Sha256::digest(bytes)[..12]), || image::load_from_memory(bytes).ok())
+}
+
+/// The small copy kept under `id`: the one already there, or one made now from the picture `decode` gives.
+fn keep_as(id: String, decode: impl FnOnce() -> Option<image::DynamicImage>) -> Option<Picture> {
     let out = file(&id)?;
     // seen before: read its size from the copy's header and not the whole picture
     if let Ok(kept) = std::fs::metadata(&out) {
         let (width, height) = image::image_dimensions(&out).ok()?;
         return Some(Picture { id, width, height, bytes: kept.len() as u32 });
     }
-    let img = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.decode().ok()?;
+    let img = decode()?;
     let img = if img.width().max(img.height()) > LONG_SIDE { img.resize(LONG_SIDE, LONG_SIDE, image::imageops::FilterType::Triangle) } else { img };
     let rgb = img.to_rgb8();
     let mut bytes = Vec::new();
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 75).encode_image(&rgb).ok()?;
-    std::fs::create_dir_all(folder()).ok()?;
-    let tmp = out.with_extension("tmp");
-    std::fs::write(&tmp, &bytes).and_then(|_| std::fs::rename(&tmp, &out)).ok()?;
+    airband_core::kept::write_atomic(&out, &bytes).ok()?;
     Some(Picture { id, width: rgb.width(), height: rgb.height(), bytes: bytes.len() as u32 })
-}
-
-/// The same for a picture that came as bytes and not as a file (one he pasted into an agent's own window).
-pub(super) fn keep_bytes(bytes: &[u8]) -> Option<Picture> {
-    if bytes.len() as u64 > TOO_LARGE {
-        return None;
-    }
-    let id: String = Sha256::digest(bytes)[..12].iter().map(|b| format!("{b:02x}")).collect();
-    let out = file(&id)?;
-    if let Ok(kept) = std::fs::metadata(&out) {
-        let (width, height) = image::image_dimensions(&out).ok()?;
-        return Some(Picture { id, width, height, bytes: kept.len() as u32 });
-    }
-    let img = image::load_from_memory(bytes).ok()?;
-    let img = if img.width().max(img.height()) > LONG_SIDE { img.resize(LONG_SIDE, LONG_SIDE, image::imageops::FilterType::Triangle) } else { img };
-    let rgb = img.to_rgb8();
-    let mut small = Vec::new();
-    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut small, 75).encode_image(&rgb).ok()?;
-    std::fs::create_dir_all(folder()).ok()?;
-    let tmp = out.with_extension("tmp");
-    std::fs::write(&tmp, &small).and_then(|_| std::fs::rename(&tmp, &out)).ok()?;
-    Some(Picture { id, width: rgb.width(), height: rgb.height(), bytes: small.len() as u32 })
 }
 
 /// May a picture that is only named in an agent's text be copied for the phone? Only from where an agent makes

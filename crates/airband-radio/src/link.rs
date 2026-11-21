@@ -233,7 +233,7 @@ impl Link {
     /// `trail_file` is where the trail is kept between launches; nothing keeps it in memory only.
     pub(crate) fn new(pairing: Pairing, radio: &str, trail_file: Option<std::path::PathBuf>) -> Result<Self, String> {
         let agent = crate::net::agent(POLL_TIMEOUT);
-        let trail = trail_file.as_ref().and_then(|f| std::fs::read(f).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        let trail = trail_file.as_deref().and_then(airband_core::kept::load).unwrap_or_default();
         let mut at = Vec::new();
         let route = match pairing {
             Pairing::Near { at: given, secret } => {
@@ -285,10 +285,7 @@ impl Link {
             trail.pop_front();
         }
         if let Some(file) = &self.trail_file {
-            let tmp = file.with_extension("json.tmp");
-            if std::fs::write(&tmp, serde_json::to_vec(&*trail).unwrap()).is_ok() {
-                let _ = std::fs::rename(&tmp, file);
-            }
+            let _ = airband_core::kept::save(file, &*trail);
         }
     }
     /// Something worth a line in the trail that is not a step. Never anything he or an agent said.

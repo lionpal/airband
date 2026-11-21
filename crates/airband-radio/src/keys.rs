@@ -111,7 +111,8 @@ mod tests {
             assert!(matches!(c.method.as_str(), "GET" | "POST") && !c.good.is_empty() && !c.wrong_key.is_empty(), "{}", p.id);
             // every setting its address names is one each of its offers asks for
             for o in &p.offers {
-                let asked: BTreeMap<String, String> = o.asks.iter().map(|a| (a.field.clone(), "x".to_string())).collect();
+                // each filled as it usually is, or with a word where the row has no usual (a region)
+                let asked: BTreeMap<String, String> = o.asks.iter().map(|a| (a.field.clone(), if a.usual.is_empty() { "x".to_string() } else { a.usual.clone() })).collect();
                 assert!(c.address(&asked).is_some(), "{} {}: the check names a setting this offer does not have", p.id, o.id);
             }
             let all = [KeyCheck::WrongKey, KeyCheck::Refused, KeyCheck::Unreachable, KeyCheck::Unexpected { status: 500 }].map(|o| said(o, p).unwrap());

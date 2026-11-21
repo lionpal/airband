@@ -67,11 +67,11 @@ fn now_secs() -> u64 {
 
 /// channels.json: each channel's [`Saved`].
 fn read_channels(dir: &std::path::Path) -> HashMap<String, Saved> {
-    std::fs::read_to_string(dir.join("channels.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    airband_core::kept::load(&dir.join("channels.json")).unwrap_or_default()
 }
 fn write_channels(dir: &std::path::Path, all: &HashMap<String, Saved>) -> Result<(), String> {
-    let (tmp, file) = (dir.join("channels.json.tmp"), dir.join("channels.json"));
-    std::fs::write(&tmp, serde_json::to_string(all).unwrap()).and_then(|_| std::fs::rename(&tmp, &file)).map_err(|e| format!("cannot save {}: {e}", file.display()))
+    let file = dir.join("channels.json");
+    airband_core::kept::save(&file, all).map_err(|e| format!("cannot save {}: {e}", file.display()))
 }
 
 pub struct Pg {
@@ -405,8 +405,7 @@ impl Store {
                 }
                 // in the order they came: a number that only goes up, then the id
                 let next = names.iter().filter_map(|n| n.split_once('-')?.0.parse::<u64>().ok()).max().map_or(1, |n| n + 1);
-                let (tmp, file) = (held.join(format!(".{id}.tmp")), held.join(format!("{next:012}-{id}")));
-                std::fs::write(&tmp, sealed).and_then(|_| std::fs::rename(&tmp, &file)).map(|_| true).map_err(|e| e.to_string())
+                airband_core::kept::write_atomic(&held.join(format!("{next:012}-{id}")), sealed).map(|_| true).map_err(|e| e.to_string())
             }
             Store::Dynamo(d) => d.hold(channel, id, sealed, most).await,
             Store::Postgres(pg) => {

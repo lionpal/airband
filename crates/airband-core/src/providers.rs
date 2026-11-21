@@ -287,14 +287,48 @@ impl KeyCheck {
     }
 }
 
-impl Check {
-    /// The address to ask, with the settings filled in. Nothing when it names one that is not set.
-    pub fn address(&self, settings: &BTreeMap<String, String>) -> Option<String> {
-        let mut url = self.url.clone();
-        for (field, value) in settings {
-            url = url.replace(&format!("{{{field}}}"), value.trim_end_matches('/'));
+/// An address from a row, with the settings it names in braces filled in (`https://{region}.example/v1`,
+/// `…/models/{model}:generate`, `{url}/models`). This is the one place a setting becomes part of an address
+/// a key is sent to, so what may go in is narrow:
+///
+/// - A setting inside an address is letters, digits, `.`, `-`, `_` or `:`: nothing that could end a host
+///   name or a path and lead a key somewhere else.
+/// - A setting the address starts with is the whole address of a service (`{url}/models`): an `http://` or
+///   `https://` address with a host and a path and nothing else, no login, question mark or fragment.
+///
+/// Err says which setting is not that, in words for him.
+pub fn fill(template: &str, setting: &dyn Fn(&str) -> String) -> Result<String, String> {
+    let part = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b':');
+    let mut out = String::new();
+    let mut rest = template;
+    while let Some((before, after)) = rest.split_once('{') {
+        let (field, after) = after.split_once('}').ok_or("An address in the catalogue is not well formed.")?;
+        let value = setting(field).trim().to_string();
+        if out.is_empty() && before.is_empty() {
+            let value = value.trim_end_matches('/');
+            let whole = value.strip_prefix("https://").or_else(|| value.strip_prefix("http://")).filter(|at| !at.is_empty() && !at.starts_with('/') && at.bytes().all(|b| part(b) || matches!(b, b'/' | b'[' | b']')));
+            if whole.is_none() {
+                return Err(format!("\"{value}\" is not something the setting {field} can be. It is the address of a service, like the usual one."));
+            }
+            out.push_str(value);
+        } else {
+            if value.is_empty() || !value.bytes().all(part) {
+                return Err(format!("\"{value}\" is not something the setting {field} can be. It is letters and digits, like the usual one."));
+            }
+            out.push_str(before);
+            out.push_str(&value);
         }
-        (!url.contains('{')).then_some(url)
+        rest = after;
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+impl Check {
+    /// The address to ask, with the settings filled in ([`fill`]). Nothing when it names one that is not set,
+    /// or one whose value cannot go in an address.
+    pub fn address(&self, settings: &BTreeMap<String, String>) -> Option<String> {
+        fill(&self.url, &|field| settings.get(field).cloned().unwrap_or_default()).ok()
     }
 
     /// What a status means.
@@ -428,6 +462,29 @@ impl Use {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_setting_goes_into_an_address_only_if_it_cannot_lead_a_key_elsewhere() {
+        let set = |pairs: &'static [(&'static str, &'static str)]| move |field: &str| pairs.iter().find(|(k, _)| *k == field).map(|(_, v)| v.to_string()).unwrap_or_default();
+        assert_eq!(fill("https://{region}.example/v1", &set(&[("region", "eastus")])).unwrap(), "https://eastus.example/v1");
+        assert_eq!(fill("https://x.example/models/{model}:generate", &set(&[("model", "flash-2.5")])).unwrap(), "https://x.example/models/flash-2.5:generate");
+        // a setting that would end the host and start another, or is not set at all
+        for bad in ["evil.example/", "a@b", "a b", "a?b", "a#b", ""] {
+            assert!(fill("https://{region}.example/v1", &move |_| bad.to_string()).is_err(), "{bad}");
+        }
+        // a setting the address starts with is a whole address, and nothing but one
+        assert_eq!(fill("{url}/models", &set(&[("url", "https://api.example/v1/")])).unwrap(), "https://api.example/v1/models");
+        assert_eq!(fill("{url}/models", &set(&[("url", "http://127.0.0.1:8080")])).unwrap(), "http://127.0.0.1:8080/models");
+        for bad in ["api.example/v1", "ftp://api.example", "https://", "https://user@api.example", "https://api.example/v1?x=", "https://api.example/#", "https://a b", ""] {
+            assert!(fill("{url}/models", &move |_| bad.to_string()).is_err(), "{bad}");
+        }
+        assert!(fill("https://{region.example", &set(&[])).is_err());
+        // the key check asks only an address that passes
+        let check = |url: &str| serde_json::from_value::<Check>(serde_json::json!({ "method": "GET", "url": url, "auth": { "header": "authorization", "scheme": "Bearer" }, "good": [200], "wrong_key": [401] })).unwrap();
+        assert_eq!(check("{url}/models").address(&BTreeMap::from([("url".to_string(), "https://api.example/v1".to_string())])).as_deref(), Some("https://api.example/v1/models"));
+        assert_eq!(check("{url}/models").address(&BTreeMap::from([("url".to_string(), "https://api.example@evil.example".to_string())])), None);
+        assert_eq!(check("{url}/models").address(&BTreeMap::new()), None);
+    }
 
     #[test]
     fn a_setting_names_an_offer_and_reads_what_was_set_or_the_usual() {

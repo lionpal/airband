@@ -45,7 +45,7 @@ pub(crate) struct Reach {
 
 impl Reach {
     fn of(voice: &Use, by: &By, name: &str) -> Result<Reach, String> {
-        let url = crate::net::fill(by.text("url"), &|field| voice.get(Job::Voice, field))?;
+        let url = airband_core::providers::fill(by.text("url"), &|field| voice.get(Job::Voice, field))?;
         let auth = by.auth().map(|a| (a.header.clone(), a.value(&voice.key))).ok_or("This version of airband was not told how that voice service takes its key.")?;
         let rate = by.with.get("rate").and_then(serde_json::Value::as_u64).filter(|r| (8000..=48000).contains(r)).ok_or("That voice service's row does not say the rate of its sound.")? as u32;
         let headers = by.with.get("headers").and_then(serde_json::Value::as_object).map(|h| h.iter().filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string()))).collect()).unwrap_or_default();

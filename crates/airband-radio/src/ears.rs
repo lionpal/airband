@@ -49,7 +49,7 @@ impl Pass {
     /// Where the live connection is made, as the row says (`stream`, with his settings filled in where it
     /// names them), and the host in it.
     pub fn stream(&self) -> Result<(String, String), ()> {
-        let url = crate::net::fill(self.by.text("stream"), &|field| self.get(field).to_string()).map_err(|_| ())?;
+        let url = airband_core::providers::fill(self.by.text("stream"), &|field| self.get(field).to_string()).map_err(|_| ())?;
         let host = url.split_once("://").map(|(_, rest)| rest.split(['/', '?', ':']).next().unwrap_or_default().to_string()).filter(|h| !h.is_empty()).ok_or(())?;
         Ok((url, host))
     }
@@ -60,7 +60,7 @@ impl Pass {
 /// answer comes back for the dialect to take its pass from. Err says why not, in words for him, naming the
 /// service as its row does.
 fn ask_pass(by: &By, name: &str, set: &BTreeMap<String, String>, key: &str, body: Option<Value>) -> Result<ureq::http::Response<ureq::Body>, String> {
-    let url = crate::net::fill(by.text("pass"), &|field| set.get(field).cloned().unwrap_or_default())?;
+    let url = airband_core::providers::fill(by.text("pass"), &|field| set.get(field).cloned().unwrap_or_default())?;
     let auth = by.auth().ok_or("This version of airband was not told how that listening service takes its key.")?;
     let req = crate::net::agent(Duration::from_secs(8)).post(&url).header(auth.header.as_str(), auth.value(key.trim()).as_str());
     let res = match body {

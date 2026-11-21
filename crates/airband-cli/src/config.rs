@@ -218,25 +218,7 @@ pub fn dir() -> PathBuf {
     home().join(".airband")
 }
 
-/// Write a file only its owner can read (it holds the token, or sessions' inbox tokens). It is made that way
-/// from the start, under another name, and takes its own name once it is whole: nobody else can read it at
-/// any moment, and a write that is cut short leaves the old one as it was.
-pub fn write_private(path: &PathBuf, bytes: impl AsRef<[u8]>) -> std::io::Result<()> {
-    use std::io::Write;
-    let part = path.with_extension(format!("part-{}", random_hex(4)));
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let written = options.open(&part).and_then(|mut f| f.write_all(bytes.as_ref()).and_then(|_| f.sync_all())).and_then(|_| fs::rename(&part, path));
-    if written.is_err() {
-        let _ = fs::remove_file(&part);
-    }
-    written
-}
+pub use airband_core::kept::write_private;
 
 /// The config as it is on disk now, or None if there is none yet.
 pub fn read() -> Option<Config> {

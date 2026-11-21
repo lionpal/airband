@@ -33,18 +33,10 @@ impl File {
             Err(_) => Ok(json!({})),
         }
     }
-    /// Through a file beside it, so the tool never reads half of one, and with the permissions the file had:
-    /// it is his file, and may hold more than hooks.
+    /// Whole or not at all, so the tool never reads half of one, and with the permissions the file had: it is
+    /// his file, and may hold more than hooks.
     fn write(&self, v: &Value) -> Result<(), String> {
-        let tmp = self.path.with_extension("json.airband-tmp");
-        if let Some(dir) = self.path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        }
-        std::fs::write(&tmp, format!("{}\n", serde_json::to_string_pretty(v).unwrap())).map_err(|e| e.to_string())?;
-        if let Ok(was) = std::fs::metadata(&self.path) {
-            let _ = std::fs::set_permissions(&tmp, was.permissions());
-        }
-        std::fs::rename(&tmp, &self.path).map_err(|e| e.to_string())
+        airband_core::kept::write_atomic(&self.path, format!("{}\n", serde_json::to_string_pretty(v).unwrap())).map_err(|e| e.to_string())
     }
     /// A hook of ours: the `airband` binary, wherever it is installed (~/.airband/bin, or Homebrew's folder), run
     /// as `hook <name>`.

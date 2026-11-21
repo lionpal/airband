@@ -374,7 +374,7 @@ fn told(reason: impl Into<String>) -> RadioError {
 impl Chooser {
     /// What was kept in `dir`, or a new install's choices. With no folder (a test), nothing is kept.
     pub(crate) fn open(dir: &str, device: HostDevice) -> Chooser {
-        let kept: Option<Saved> = if dir.is_empty() { None } else { std::fs::read(Path::new(dir).join("choices.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()) };
+        let kept: Option<Saved> = if dir.is_empty() { None } else { airband_core::kept::load(&Path::new(dir).join("choices.json")) };
         let saved = Mutex::new(kept.unwrap_or_else(|| Saved::fresh(&device)));
         Chooser { dir: dir.into(), device, saved, working: Mutex::new(None) }
     }
@@ -393,8 +393,7 @@ impl Chooser {
         let mut saved = self.saved.lock().unwrap_or_else(|e| e.into_inner());
         with(&mut saved);
         if !self.dir.is_empty() {
-            let _ = std::fs::create_dir_all(&self.dir);
-            let _ = std::fs::write(Path::new(&self.dir).join("choices.json"), serde_json::to_vec(&*saved).unwrap_or_default());
+            let _ = airband_core::kept::save(&Path::new(&self.dir).join("choices.json"), &*saved);
         }
     }
 
