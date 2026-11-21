@@ -56,6 +56,7 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, store: Arc<Store>, host: Arc<dyn R
             }
             _ => {}
         }
+        link.keeps_at_relay(outbox.iter().any(|o| o.stage == Stage::Left && o.failed.is_none() && o.id != next.id));
         let (got, steps) = link.utterance_once(&next.id, &next.text, next.re.clone(), next.scope.clone(), next.label.clone(), next.attachments.clone(), &next.others);
         // It went straight to his computer while the relay still keeps earlier words of his for it: these
         // arrive first. Worth a line, for whoever wonders about the order.
