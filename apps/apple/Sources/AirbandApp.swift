@@ -185,6 +185,9 @@ struct FeedView: View {
     @State private var showScan = false
     @StateObject private var ticker = Ticker()
     @State private var showQuick = false
+    #if DEBUG
+    @State private var showProse = false
+    #endif
     @State private var typingOpen = false
     /// Is the end of the chat on screen, and a count that goes up each time he asks to be taken there.
     @State private var atEnd = true
@@ -279,7 +282,10 @@ struct FeedView: View {
             if UserDefaults.standard.bool(forKey: "airband.devQuick") { showQuick = true }
             if UserDefaults.standard.bool(forKey: "airband.devAccounts") || UserDefaults.standard.string(forKey: "airband.devPage") != nil { showSetup = true }
             if UserDefaults.standard.bool(forKey: "airband.devAgents") { showAgents = true }
+            // `-airband.devProse YES` opens a message with every kind of formatting in it
+            if UserDefaults.standard.bool(forKey: "airband.devProse") { showProse = true }
         }
+        .sheet(isPresented: $showProse) { ProseSample() }
         #endif
     }
 
@@ -871,7 +877,7 @@ struct Report: View {
             // finger. Seeing all of what it wrote is the small button beside it.
             HStack(alignment: .bottom, spacing: 6) {
                 Button { model.replyingTo = picked ? nil : m } label: {
-                    Prose(text: whole ? (model.full[m.id] ?? m.text) : m.text)
+                    Prose(text: whole ? (model.full[m.id] ?? m.text) : m.text, plain: !whole)
                 }
                 .buttonStyle(.plain)
                 .accessibilityHint(picked ? "Stop answering this one" : "Answer this agent: what you say or type next goes to it")
@@ -1114,54 +1120,6 @@ struct AskCard: View {
     }
 }
 
-/// Text an agent wrote, with what it fenced in triple backticks set as it was written: smaller, in a fixed-width
-/// face, each line on its own line and never wrapped. A wide block scrolls sideways.
-struct Prose: View {
-    let text: String
-    var size: CGFloat = 16
-    var colour: Color = Palette.soft
-    /// Read bold, links and inline code in the prose (the reader does; a chat line shows it plain).
-    var marked = false
-
-    /// The text in pieces: prose, and fenced blocks without their fences.
-    private var pieces: [(code: Bool, text: String)] {
-        var out: [(Bool, String)] = []
-        for (i, part) in text.components(separatedBy: "```").enumerated() {
-            if i % 2 == 0 {
-                let prose = part.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !prose.isEmpty { out.append((false, prose)) }
-            } else {
-                // the first line of a block may only name its language
-                var lines = part.components(separatedBy: "\n")
-                if let first = lines.first, !first.contains(" "), first.count < 16 { lines.removeFirst() }
-                let code = lines.joined(separator: "\n").trimmingCharacters(in: .newlines)
-                if !code.isEmpty { out.append((true, code)) }
-            }
-        }
-        return out.map { (code: $0.0, text: $0.1) }
-    }
-
-    var body: some View {
-        let pieces = pieces
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(pieces.indices, id: \.self) { i in
-                if pieces[i].code {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        Text(pieces[i].text).font(.system(size: size - 3.5, design: .monospaced)).foregroundStyle(colour)
-                            .lineSpacing(2).fixedSize(horizontal: true, vertical: true).padding(10)
-                    }
-                    .background(Palette.field, in: RoundedRectangle(cornerRadius: 10))
-                } else if marked, let rich = try? AttributedString(markdown: pieces[i].text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-                    Text(rich).font(.system(size: size)).lineSpacing(marked ? 5 : 3).foregroundStyle(colour).frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    Text(pieces[i].text).font(.system(size: size)).lineSpacing(3).foregroundStyle(colour)
-                        .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-        }
-    }
-}
-
 /// The answer row under a question: the agent's choices, then a small one that hands the decision back to the agent.
 struct Answers: View {
     @EnvironmentObject var model: RadioModel
@@ -1290,10 +1248,6 @@ struct ContextView: View {
     private var before: [ChatMessage] {
         model.thread(before: m)
     }
-    private var whole: AttributedString {
-        let raw = model.full[m.id] ?? m.text
-        return (try? AttributedString(markdown: raw, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(raw)
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1318,8 +1272,7 @@ struct ContextView: View {
                         }
                         if !m.pictures.isEmpty { PictureStrip(m: m, height: 200) }
                         if !m.links.isEmpty { LinkRow(m: m) }
-                        Text(whole).font(.system(size: 17)).lineSpacing(4).textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Prose(text: model.full[m.id] ?? m.text, size: 17, colour: Palette.ink).textSelection(.enabled)
                             .padding(16).background(Palette.card, in: RoundedRectangle(cornerRadius: 22)).id("question")
                     }
                     .padding(.horizontal, 16).padding(.bottom, 12)
@@ -1465,12 +1418,6 @@ struct ReaderView: View {
     private var listening: Bool { model.listening }
     private var reading: Bool { model.reading == m.id }
 
-    /// What the agent wrote, with its bold, links and code kept and its line breaks as written.
-    private var text: AttributedString {
-        let raw = model.full[m.id] ?? m.text
-        return (try? AttributedString(markdown: raw, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(raw)
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
@@ -1494,7 +1441,7 @@ struct ReaderView: View {
             }
             .padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 12)
             ScrollView {
-                Prose(text: model.full[m.id] ?? m.text, size: 17, marked: true)
+                Prose(text: model.full[m.id] ?? m.text, size: 17)
                     .padding(.horizontal, 20).padding(.bottom, 150)
                     .textSelection(.enabled)
             }
