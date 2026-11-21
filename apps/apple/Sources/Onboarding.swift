@@ -1,10 +1,11 @@
 import SwiftUI
 
-/// The first run. A screen for each thing airband does for him, each saying what it is for and then letting him
-/// choose what does it, with a choice already made that needs nothing from him. The last screen puts airband on
-/// his computer and pairs the two. Nothing is downloaded until he has been through them.
+/// The first run. First the coding agent he uses most; then a screen for each job the core lists (what writes
+/// his summaries, what listens, what speaks), each saying what it is for and letting him choose what does it,
+/// with a choice already made that needs nothing from him. The last screen puts airband on his computer and
+/// pairs the two. Nothing is downloaded until he has been through them.
 ///
-/// The same pickers are the Settings pages (`Choices.swift`), so what he sees here is what he changes later.
+/// The same picker is each job's Settings page (`Choices.swift`), so what he sees here is what he changes later.
 struct OnboardingView: View {
     @EnvironmentObject var model: RadioModel
     @Environment(\.dismiss) private var dismiss
@@ -12,8 +13,7 @@ struct OnboardingView: View {
     @State private var step = UserDefaults.standard.integer(forKey: "airband.devStep")
     @State private var scanning = false
     @State private var finishing = false
-    @State private var working: String?
-    @State private var progress: Double?
+    @State private var working: (label: String, fraction: Double?)?
     @State private var wrong: String?
     @State private var copied = false
     /// The keyboard is up.
@@ -21,8 +21,11 @@ struct OnboardingView: View {
     private let tick = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
 
     private static let command = "brew install lionpal/airband/airband && airband start"
+    /// The steps: the coding agent, each job, then the computer.
+    private var jobs: [ChoiceJob] { model.jobs }
+    private var last: Int { jobs.count + 1 }
     /// The computer step is skipped by someone who is paired already and is only being shown the choices.
-    private var steps: Int { model.paired && step < 4 ? 4 : 5 }
+    private var steps: Int { model.paired && step < last ? last : last + 1 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -33,25 +36,17 @@ struct OnboardingView: View {
             ScrollViewReader { page in
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    switch step {
-                    case 0:
+                    if step == 0 {
                         headline(Headline.tools)
                         Text("Choose the one you use most. You can add more later.").font(.system(size: 16)).foregroundStyle(Palette.soft)
                         ToolsPicker(single: true)
-                    case 1:
-                        headline(Headline.reads)
-                        label("Model that writes the summaries")
-                        ReadsPicker(mode: .onboarding)
-                    case 2:
-                        headline(Headline.ears)
-                        label("Model that writes down what you say")
-                        EarsPicker(mode: .onboarding)
-                    case 3:
-                        headline(Headline.voice)
-                        Text("Hear each agent\u{2019}s news read out, even with the screen off.").font(.system(size: 16)).foregroundStyle(Palette.soft)
-                        label("Model that speaks")
-                        VoicePicker(mode: .onboarding)
-                    default:
+                    } else if step <= jobs.count {
+                        let job = jobs[step - 1]
+                        headline(job.headline)
+                        if let aside = job.aside { Text(aside).font(.system(size: 16)).foregroundStyle(Palette.soft) }
+                        label(job.label)
+                        ChoicePicker(job: job, mode: .onboarding).id(step)
+                    } else {
                         computer
                     }
                 }
@@ -62,8 +57,8 @@ struct OnboardingView: View {
             }
             if let working {
                 VStack(alignment: .leading, spacing: 6) {
-                    if let progress { ProgressView(value: progress).tint(Palette.ink) } else { ProgressView().controlSize(.small) }
-                    Text(working).font(.system(size: 14)).foregroundStyle(Palette.soft)
+                    if let fraction = working.fraction { ProgressView(value: fraction).tint(Palette.ink) } else { ProgressView().controlSize(.small) }
+                    Text(working.label).font(.system(size: 14)).foregroundStyle(Palette.soft)
                 }
                 .padding(.bottom, 12)
             }
@@ -71,8 +66,8 @@ struct OnboardingView: View {
             if !typing {
             Button(action: next) {
                 HStack(spacing: 10) {
-                    if step == 4 { Image(systemName: "qrcode.viewfinder").font(.system(size: 19, weight: .semibold)) }
-                    Text(step == 4 ? "Scan the code" : "Continue").font(.system(size: 18, weight: .semibold))
+                    if step == last { Image(systemName: "qrcode.viewfinder").font(.system(size: 19, weight: .semibold)) }
+                    Text(step == last ? "Scan the code" : "Continue").font(.system(size: 18, weight: .semibold))
                 }
                 .foregroundStyle(Palette.ground).frame(maxWidth: .infinity, minHeight: 56)
                 .background(finishing ? Palette.dim : Palette.ink, in: RoundedRectangle(cornerRadius: 18))
@@ -81,7 +76,7 @@ struct OnboardingView: View {
             HStack {
                 if step > 0 && !finishing { Button("Back") { withAnimation(.snappy(duration: 0.2)) { step -= 1 } } }
                 Spacer()
-                if step == 4 && !finishing {
+                if step == last && !finishing {
                     Button("Paste a link instead") {
                         model.pair(with: UIPasteboard.general.string ?? "")
                         wrong = model.problem
@@ -100,8 +95,8 @@ struct OnboardingView: View {
         .interactiveDismissDisabled()
         .fullScreenCover(isPresented: $scanning) { ScanSheet().environmentObject(model) }
         // paired, by the scan or by a link: fetch what he chose and finish
-        .onChange(of: model.paired) { _, paired in if paired && step == 4 { finish() } }
-        .onReceive(tick) { _ in if finishing, progress != nil { progress = Double(localModelProgress()) / 100 } }
+        .onChange(of: model.paired) { _, paired in if paired && step == last { finish() } }
+        .onReceive(tick) { _ in if finishing { working = model.choiceWork() } }
     }
 
     private func headline(_ text: String) -> some View {
@@ -138,14 +133,9 @@ struct OnboardingView: View {
 
     private func next() {
         wrong = nil
-        // Leaving the summaries step with nothing picked: what is shown as chosen there, the sign-in of the
-        // coding tool he uses most, is what his computer is asked to use once it is paired.
-        if step == 1, model.pendingReads == nil, model.view.reads.isEmpty, let usual = readingServices().first(where: { $0.login == model.tools.first }) {
-            model.chooseReads(usual.kind, key: nil, settings: [:]) { _ in }
-        }
-        if step < 3 || (step == 3 && !model.paired) {
+        if step < last - 1 || (step == last - 1 && !model.paired) {
             withAnimation(.snappy(duration: 0.2)) { step += 1 }
-        } else if step == 3 {
+        } else if step == last - 1 {
             finish()
         } else {
             scanning = true
@@ -155,11 +145,10 @@ struct OnboardingView: View {
     /// Fetch the models he chose that run on this phone, one after another, then close.
     private func finish() {
         finishing = true
-        model.fetchChosen { label, fraction in
-            (working, progress) = (label, fraction)
-        } done: { problem in
-            (finishing, working, progress, wrong) = (false, nil, nil, problem)
-            // a download that failed does not keep him out: it can be tried again in Settings
+        model.finishChoices { problem in
+            (finishing, working, wrong) = (false, nil, problem)
+            // a download that failed does not keep him out: what he chose stays chosen and says so, and it
+            // can be fetched again in Settings
             UserDefaults.standard.set(true, forKey: "airband.onboarded")
             dismiss()
         }

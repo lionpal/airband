@@ -529,6 +529,14 @@ pub struct Desk {
     data_dir: String,
 }
 
+#[cfg(test)]
+impl Desk {
+    /// A desk with no computers, keeping what it keeps in `data_dir`.
+    pub(crate) fn alone(data_dir: &str, host: Arc<dyn DeskHost>) -> Desk {
+        Desk { shared: Arc::new(Shared { state: Mutex::new(State::default()), floor: Floor::default(), host, chooser: crate::choices::Chooser::open(data_dir) }), data_dir: data_dir.into() }
+    }
+}
+
 /// A folder name that is the same every launch for the same link.
 fn folder(link: &str) -> String {
     let mut h: u64 = 1469598103934665603;

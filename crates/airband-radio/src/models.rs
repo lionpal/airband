@@ -153,7 +153,7 @@ pub(crate) fn fetched(dir: &str, m: &Model) -> bool {
 }
 
 /// One of the voices a voice model can speak in.
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct VoiceChoice {
     /// What to pass back as the voice.
     pub name: String,

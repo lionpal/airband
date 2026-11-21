@@ -76,7 +76,7 @@ pub enum ChoiceState {
 }
 
 /// One thing he can choose for a job.
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct Choice {
     /// What to pass back to [`Desk::choose_for`].
     pub id: String,
@@ -308,7 +308,7 @@ fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> {
             id: m.kind.clone(),
             place: ChoicePlace::Phone,
             title: m.name.clone(),
-            line: if fetched { "Runs on this phone".into() } else { format!("Runs on this phone. {size} MB download") },
+            line: if fetched { "Runs on this phone".into() } else { format!("Runs on this phone. {size}\u{a0}MB download") },
             free: true,
             more: false,
             chosen,
@@ -539,8 +539,6 @@ impl Desk {
         let pick = match choice.place {
             ChoicePlace::Computer => Pick::computer(),
             ChoicePlace::Service => {
-                chooser.work(job, &id, "Trying it", false);
-                host.changed();
                 let with = crate::mouth::service_of(&id, &key.clone().or_else(|| host.secret(id.clone())).unwrap_or_default(), set.clone().into_iter().collect());
                 let tried = match job {
                     ChoiceJob::Voice => crate::mouth::check(&with),
@@ -790,6 +788,98 @@ mod tests {
         assert_eq!(again.saved(), chooser.saved());
         // and no key is in it
         assert!(!std::fs::read_to_string(dir.join("choices.json")).unwrap().contains("key"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A host that keeps keys in memory and has no microphone, speaker or model.
+    #[derive(Default)]
+    struct Host {
+        keys: Mutex<HashMap<String, String>>,
+        notes: Mutex<Vec<String>>,
+    }
+    impl DeskHost for Host {
+        fn play(&self, _: u32, _: Vec<u8>, _: bool) {}
+        fn record_start(&self, _: u32) -> bool {
+            false
+        }
+        fn record_read(&self) -> Vec<u8> {
+            Vec::new()
+        }
+        fn record_stop(&self) {}
+        fn changed(&self) {}
+        fn status(&self, _: RadioStatus, _: String) {}
+        fn note(&self, text: String) {
+            self.notes.lock().unwrap().push(text);
+        }
+        fn hearing(&self, _: String) {}
+        fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
+        fn watching(&self) -> bool {
+            false
+        }
+        fn transcribe(&self, _: String, _: Vec<u8>) -> Option<String> {
+            None
+        }
+        fn secret(&self, name: String) -> Option<String> {
+            self.keys.lock().unwrap().get(&name).cloned()
+        }
+        fn keep_secret(&self, name: String, value: Option<String>) {
+            let mut keys = self.keys.lock().unwrap();
+            match value {
+                Some(v) => keys.insert(name, v),
+                None => keys.remove(&name),
+            };
+        }
+    }
+
+    #[test]
+    fn choosing_keeps_one_thing_and_what_cannot_work_says_so_and_is_not_replaced() {
+        let dir = std::env::temp_dir().join(format!("airband-choices-{}", random_hex(4)));
+        let host = Arc::new(Host::default());
+        let desk = Desk::alone(&dir.display().to_string(), host.clone());
+        let none = HashMap::new;
+        let state = |job, id: &str| desk.choices(job).into_iter().find(|c| c.id == id).map(|c| (c.chosen, c.state)).unwrap();
+        // something not on the list is refused, and nothing changes
+        assert!(matches!(desk.choose_for(ChoiceJob::Ears, "nothing-like-it".into(), None, none(), false), Err(RadioError::Told { .. })));
+        // his computer's choice, then a model noted for later: one at a time each time
+        desk.choose_for(ChoiceJob::Voice, BY_TOWER.into(), None, none(), false).unwrap();
+        assert_eq!(chosen(&desk.choices(ChoiceJob::Voice)), vec![BY_TOWER]);
+        assert!(!crate::mouth::ready());
+        if let Some(m) = crate::models::models().find(|m| m.job == Job::Voice) {
+            desk.choose_for(ChoiceJob::Voice, m.kind.clone(), None, none(), true).unwrap();
+            assert_eq!(chosen(&desk.choices(ChoiceJob::Voice)), vec![m.kind.as_str()]);
+            assert!(matches!(state(ChoiceJob::Voice, &m.kind), (true, ChoiceState::NeedsDownload { .. })));
+            // one of its voices, by name
+            desk.choose_voice(m.voices[1].0.clone()).unwrap();
+            assert_eq!(desk.choices(ChoiceJob::Voice).into_iter().find(|c| c.chosen).unwrap().voice, m.voices[1].0);
+            // It is chosen and is not on this device: it is still the one that is to speak. Asked to, it says
+            // why it cannot; his computer's voice is not used in its place, and the card says the same.
+            assert!(crate::mouth::ready());
+            let tape = crate::ears_stream::Tape::of(&[], false);
+            let why = crate::mouth::say(&tape, "Shop two is waiting.", &|| false).unwrap_err();
+            assert!(why.contains("is not on this phone yet"), "{why}");
+            assert_eq!(state(ChoiceJob::Voice, &m.kind), (true, ChoiceState::Failed { why }));
+        }
+        // a service whose key is wrong is not taken: the one before it stays, and the key is not kept
+        // (his own voice server, at an address where nothing answers: no call leaves this machine)
+        let service = crate::mouth::services(Job::Voice).into_iter().find(|s| s.kind == "local").map(|s| s.kind);
+        if let Some(service) = service {
+            let before = chosen(&desk.choices(ChoiceJob::Voice)).iter().map(|s| s.to_string()).collect::<Vec<_>>();
+            let refused = desk.choose_for(ChoiceJob::Voice, service.clone(), Some("k".into()), HashMap::from([("url".to_string(), "http://127.0.0.1:9/v1".to_string())]), false);
+            assert!(refused.is_err());
+            assert_eq!(chosen(&desk.choices(ChoiceJob::Voice)), before.iter().map(String::as_str).collect::<Vec<_>>());
+            assert!(host.secret(service).is_none());
+        }
+        // summaries, with no computer to ask: it waits, with its key kept by the host and not by the core
+        let reads = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.key).unwrap().id;
+        desk.choose_for(ChoiceJob::Reads, reads.clone(), Some(" sk-test ".into()), none(), false).unwrap();
+        assert_eq!(state(ChoiceJob::Reads, &reads), (true, ChoiceState::Waiting));
+        assert_eq!(desk.chosen_label(ChoiceJob::Reads), "Waiting for your computer");
+        assert_eq!(host.secret(reads).as_deref(), Some("sk-test"));
+        assert!(!std::fs::read_to_string(dir.join("choices.json")).unwrap().contains("sk-test"));
+        // opened again, it is all as he left it
+        let again = Desk::alone(&dir.display().to_string(), host);
+        assert_eq!(again.choices(ChoiceJob::Reads), desk.choices(ChoiceJob::Reads));
+        again.choose_for(ChoiceJob::Voice, BY_TOWER.into(), None, none(), false).unwrap();
         let _ = std::fs::remove_dir_all(dir);
     }
 }
