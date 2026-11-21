@@ -60,10 +60,14 @@
       "id": "flash-lite-tts",
       "job": "voice",
       "by": {
-        "interface": "gemini",
+        "interface": "generate-content",
         "with": {
-          "url": "https://generativelanguage.googleapis.com/v1beta",
-          "style": "Calm and clear, at a brisk pace, like a radio dispatcher. Say the words exactly as written and nothing else."
+          "url": "https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse",
+          "style": "Calm and clear, at a brisk pace, like a radio dispatcher. Say the words exactly as written and nothing else.",
+          "auth": {
+            "header": "x-goog-api-key"
+          },
+          "rate": 24000
         }
       },
       "label": "Google Gemini 3.8 Flash-Lite TTS",
@@ -113,7 +117,14 @@
       "id": "transcribe",
       "job": "ears",
       "by": {
-        "interface": "gemini"
+        "interface": "bidi",
+        "with": {
+          "pass": "https://generativelanguage.googleapis.com/v1beta/auth_tokens",
+          "stream": "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained",
+          "auth": {
+            "header": "x-goog-api-key"
+          }
+        }
       },
       "label": "Google Gemini 3.5 Transcribe",
       "preferred": true,

@@ -1,43 +1,42 @@
-//! Google's own speech route: the words in, sound back a piece at a time as server-sent events. The row says
-//! where (`url`) and how the words are to be said (`style`).
-use super::{Made, Synth, Voicing};
-use airband_core::providers::{By, Interface, Job, Use};
+//! Speech as generated content: the words go up as a content request that asks for audio, and the sound comes
+//! back a piece at a time as server-sent events. The row says where it is reached (`url`, which names his
+//! model in braces), how the key is presented (`auth`), how the words are to be said (`style`) and the rate of
+//! what comes back (`rate`).
+use super::{Made, Reach, Synth, Voicing};
 use airband_core::audio::base64_decode;
+use airband_core::providers::{By, Interface, Job, Use};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
 use std::time::Duration;
 
-pub(super) const VOICING: Voicing = Voicing { is: Interface { name: "gemini", can: &[], told: &["url", "style"] }, make };
+pub(super) const VOICING: Voicing = Voicing { is: Interface { name: "generate-content", can: &[], told: &["url", "style", "auth", "rate"] }, make };
 
-fn make(voice: &Use, by: &By) -> Made {
-    Ok(Box::new(Gemini { url: by.text("url").into(), style: by.text("style").into(), key: voice.key.clone(), model: voice.get(Job::Voice, "model"), voice: voice.get(Job::Voice, "voice") }))
+fn make(voice: &Use, by: &By, name: &str) -> Made {
+    Ok(Box::new(Generated { reach: Reach::of(voice, by, name)?, style: by.text("style").into(), voice: voice.get(Job::Voice, "voice") }))
 }
 
-struct Gemini {
-    url: String,
+struct Generated {
+    reach: Reach,
     /// How to say the words, which goes beside them and is never spoken.
     style: String,
-    key: String,
-    model: String,
     voice: String,
 }
 
-impl Synth for Gemini {
+impl Synth for Generated {
     fn rate(&self) -> u32 {
-        24000
+        self.reach.rate
     }
     fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8]), _mark: &mut dyn FnMut(u32, u32)) -> Result<(), String> {
         // The words go in bare, and how to say them goes beside them in `speech_metadata`. Put the direction in the
-        // text and this generation of model reads it aloud: the first version here opened every message with
-        // "Read this aloud exactly as written", found by transcribing its own output. (Backoffice hit the same thing.)
+        // text and the model reads it aloud: the first version here opened every message with "Read this aloud
+        // exactly as written", found by transcribing its own output.
         let body = json!({
             "contents": [{ "parts": [{ "text": text, "speech_metadata": { "style": self.style } }] }],
             "generationConfig": { "responseModalities": ["AUDIO"], "speechConfig": { "voiceConfig": { "prebuiltVoiceConfig": { "voiceName": self.voice } } } },
         });
-        let url = format!("{}/models/{}:streamGenerateContent?alt=sse", self.url.trim_end_matches('/'), self.model);
-        let res = crate::net::agent(Duration::from_secs(30)).post(&url).header("x-goog-api-key", &self.key).send_json(&body).map_err(|e| e.to_string())?;
+        let res = self.reach.post(Duration::from_secs(30)).send_json(&body).map_err(|e| e.to_string())?;
         if res.status().as_u16() != 200 {
-            return Err(format!("Gemini answered {}", res.status()));
+            return Err(self.reach.answered(res.status().as_u16()));
         }
         // server-sent events: one JSON document per "data:" line, each with a piece of audio in base64
         for line in BufReader::new(res.into_body().into_reader()).lines() {

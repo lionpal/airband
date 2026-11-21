@@ -218,9 +218,6 @@ mod tests {
             self.0.lock().unwrap().push((waiting, note));
         }
         fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
-        fn own_voice(&self) -> bool {
-            false
-        }
         fn unplaced(&self, message: Outgoing, _: Option<String>, ask: Vec<String>) {
             self.0.lock().unwrap().push((vec![message], Some(format!("unplaced: {}", ask.join(", ")))));
         }

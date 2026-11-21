@@ -1,33 +1,32 @@
-//! Google's Live API, with its model that only transcribes.
+//! Listening over a two-way content stream, with a model that only transcribes: the model, the language and
+//! the names to expect go in the first message, audio goes up as base64 in JSON, and finished and unfinished
+//! stretches come back as JSON. Where the service is, where its pass is asked for and how the key is presented
+//! are its row's to say (`stream`, `pass`, `auth`).
 use super::*;
 use crate::ears_stream::{Socket, Wire, dial, read_briefly};
 use serde_json::json;
 use tungstenite::Message;
 use tungstenite::client::IntoClientRequest;
 
-pub(super) const LISTENER: Listener = Listener { is: Interface { name: "gemini", can: &[], told: &[] }, wire: &WIRE, upload: None, pass, once: false };
+pub(super) const LISTENER: Listener = Listener { is: Interface { name: "bidi", can: &[], told: &["stream", "pass", "auth"] }, wire: &WIRE, pass, once: false };
 
 const WIRE: Wire = Wire { connect, audio, end: |_| Message::text(json!({ "realtimeInput": { "audioStreamEnd": true } }).to_string()), read, header: false, reopens: false };
 
-/// Google's short-lived token for its Live API: good for twenty minutes and for any number of connections in
-/// that time, so one fetched ahead is still good when he opens the microphone, and again if a connection drops.
-fn pass(_set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
+/// The service's short-lived token: asked for with how long it is to last, good for twenty minutes and for
+/// any number of connections in that time, so one fetched ahead is still good when he opens the microphone,
+/// and again if a connection drops.
+fn pass(by: &By, name: &str, set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
     let until = crate::ears_stream::stamp_at(now_ms() + 20 * 60 * 1000);
     let body = serde_json::json!({ "uses": 0, "expireTime": until, "newSessionExpireTime": until });
-    let mut res = crate::net::agent(Duration::from_secs(8)).post("https://generativelanguage.googleapis.com/v1beta/auth_tokens").header("x-goog-api-key", key.trim()).send_json(&body).map_err(|_| "Could not reach Google's speech service.".to_string())?;
-    match res.status().as_u16() {
-        200 => res.body_mut().read_json::<Value>().ok().and_then(|v| v["name"].as_str().map(String::from)).ok_or_else(|| "Google's speech service gave no pass.".to_string()),
-        400 | 401 | 403 => Err("Google's speech service did not accept that key.".into()),
-        code => Err(format!("Google's speech service said no ({code}).")),
-    }
+    let mut res = ask_pass(by, name, set, key, Some(body))?;
+    res.body_mut().read_json::<Value>().ok().and_then(|v| v["name"].as_str().map(String::from)).ok_or_else(|| format!("{name} gave no pass to listen with."))
 }
 
-/// Google's Live API, with its model that only transcribes. The pass is a short-lived token made for the Live
-/// API; the model, the language and the names to expect go in the first message.
+/// The pass goes in the address; the model, the language and the names to expect go in the first message.
 fn connect(grant: &Pass, _request: &str) -> Result<Socket, ()> {
-    const HOST: &str = "generativelanguage.googleapis.com";
-    let url = format!("wss://{HOST}/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token={}", grant.token);
-    let mut socket = dial(HOST, url.into_client_request().map_err(|_| ())?)?;
+    let (url, host) = grant.stream()?;
+    let url = format!("{url}?access_token={}", grant.token);
+    let mut socket = dial(&host, url.into_client_request().map_err(|_| ())?)?;
     let mut hearing = json!({ "mode": "VERBATIM" });
     if !grant.get("language").is_empty() {
         hearing["languageCodes"] = json!([grant.get("language")]);

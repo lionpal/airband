@@ -13,19 +13,18 @@
 //! choose. Nothing here or in the app names a service.
 use super::*;
 use airband_core::audio::{Endpointer, Heard, samples};
-use airband_core::providers::{Interface, Job, Offer, Use};
+use airband_core::providers::{By, Interface, Job, Offer, Use};
 use std::collections::BTreeMap;
-use std::io::Read;
-use std::sync::mpsc::{Receiver as Rx, sync_channel};
+use std::sync::mpsc::sync_channel;
 use std::time::Instant;
 
 const RATE: u32 = 16000;
 /// A pass is asked for again after this long (the shortest-lived of them lasts ten minutes).
 const PASS_LIFE: Duration = Duration::from_secs(300);
 
-mod azure;
-mod elevenlabs;
-mod gemini;
+mod bidi;
+mod chunks;
+mod usp;
 
 /// What the phone needs to listen live with a service: which dialect to speak, a pass from the service that
 /// expires in minutes (made here, with his key), and whatever that service has to be told (a region, a
@@ -37,12 +36,41 @@ pub(crate) struct Pass {
     pub set: BTreeMap<String, String>,
     /// Names he is likely to say (callsigns, projects), for a recogniser that can be told what to expect.
     pub phrases: Vec<String>,
+    /// What the service's row tells its dialect: where its stream is, among the rest.
+    pub by: By,
 }
 
 impl Pass {
     /// One of the settings, or empty.
     pub fn get(&self, field: &str) -> &str {
         self.set.get(field).map(String::as_str).unwrap_or_default()
+    }
+
+    /// Where the live connection is made, as the row says (`stream`, with his settings filled in where it
+    /// names them), and the host in it.
+    pub fn stream(&self) -> Result<(String, String), ()> {
+        let url = crate::net::fill(self.by.text("stream"), &|field| self.get(field).to_string()).map_err(|_| ())?;
+        let host = url.split_once("://").map(|(_, rest)| rest.split(['/', '?', ':']).next().unwrap_or_default().to_string()).filter(|h| !h.is_empty()).ok_or(())?;
+        Ok((url, host))
+    }
+}
+
+/// Ask a live service for a pass, the way every dialect here does: one request to where its row says
+/// (`pass`), with the key presented as its row says (`auth`), and `body` when the dialect sends one. The
+/// answer comes back for the dialect to take its pass from. Err says why not, in words for him, naming the
+/// service as its row does.
+fn ask_pass(by: &By, name: &str, set: &BTreeMap<String, String>, key: &str, body: Option<Value>) -> Result<ureq::http::Response<ureq::Body>, String> {
+    let url = crate::net::fill(by.text("pass"), &|field| set.get(field).cloned().unwrap_or_default())?;
+    let auth = by.auth().ok_or("This version of airband was not told how that listening service takes its key.")?;
+    let req = crate::net::agent(Duration::from_secs(8)).post(&url).header(auth.header.as_str(), auth.value(key.trim()).as_str());
+    let res = match body {
+        Some(body) => req.send_json(&body),
+        None => req.header("Content-Length", "0").send_empty(),
+    }
+    .map_err(|_| format!("{name} could not be reached. Check your connection."))?;
+    match res.status().as_u16() {
+        200 => Ok(res),
+        code => Err(format!("{name} would not give a pass to listen with (status {code}). Check its key and settings, in Settings, under Listening.")),
     }
 }
 
@@ -56,16 +84,15 @@ pub(crate) struct Listener {
     pub is: Interface,
     /// How its live connection is spoken to.
     pub wire: &'static crate::ears_stream::Wire,
-    /// The same microphone in one upload to the same service, for when the live connection cannot be made.
-    upload: Option<fn(&Pass, &dyn RadioHost, bool) -> Result<Option<String>, ()>>,
-    /// A short-lived pass for a key: the service's settings, and the key. Err says why not, in words for him.
-    pass: fn(&BTreeMap<String, String>, &str) -> Result<String, String>,
+    /// A short-lived pass for a key: what the service's row tells the dialect, what the service is called, his
+    /// settings, and the key. Err says why not, in words for him.
+    pass: fn(&By, &str, &BTreeMap<String, String>, &str) -> Result<String, String>,
     /// Its pass is good for one connection only: a new one is asked for each time, and none is kept.
     once: bool,
 }
 
 /// Every live dialect this build speaks.
-pub(crate) const LISTENERS: &[Listener] = &[azure::LISTENER, gemini::LISTENER, elevenlabs::LISTENER];
+pub(crate) const LISTENERS: &[Listener] = &[usp::LISTENER, bidi::LISTENER, chunks::LISTENER];
 
 /// A pass for this dialect is used up by one connection, so it is never kept for the next.
 pub(crate) fn once(kind: &str) -> bool {
@@ -92,6 +119,9 @@ pub(crate) enum Own {
     Service(Use),
     /// What he chose cannot be used as things are, and why. Nothing else listens in its place.
     Cannot(String),
+    /// The host takes a line he types: a radio in a terminal. This is what such a radio is started with
+    /// ([`Radio::start`]); it is never put in the place of something else.
+    Host,
 }
 
 /// What listens on this device: one for everything that shares what he chose (a desk and its radios).
@@ -164,16 +194,18 @@ impl Chosen {
 
 /// A pass from a live service for a key. Err says why not, in words for him.
 #[cfg(test)]
-pub(crate) fn pass_for(kind: &str, set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
-    let l = listener(kind).ok_or("This version of airband does not know that listening service.")?;
-    (l.pass)(set, key)
+pub(crate) fn pass_for(with: &Use) -> Result<Pass, String> {
+    let (provider, offer) = with.offer(Job::Ears).ok_or("This version of airband does not know that listening service.")?;
+    let l = live(&offer).ok_or("That service does not listen live.")?;
+    let set = with.settings(Job::Ears);
+    Ok(Pass { dialect: l.is.name.into(), token: (l.pass)(&offer.by, &provider.name, &set, &with.key)?, set, phrases: Vec::new(), by: offer.by.clone() })
 }
 
 /// Does this service listen with this key and these settings? One real call to it.
 pub(crate) fn check(with: &Use) -> Result<(), String> {
-    let (_, offer) = with.offer(Job::Ears).ok_or("This version of airband does not know that listening service.")?;
+    let (provider, offer) = with.offer(Job::Ears).ok_or("This version of airband does not know that listening service.")?;
     match live(&offer) {
-        Some(l) => (l.pass)(&with.settings(Job::Ears), &with.key).map(|_| ()),
+        Some(l) => (l.pass)(&offer.by, &provider.name, &with.settings(Job::Ears), &with.key).map(|_| ()),
         None => crate::hears::check(with),
     }
 }
@@ -188,6 +220,8 @@ enum Way {
     OwnUpload { with: Use, phrases: Vec<String> },
     /// Live, as he speaks, in a dialect this build has, with a pass made for his key.
     Live { pass: Pass, with: &'static Listener },
+    /// A line he types, taken by the host: a radio in a terminal.
+    Host,
     /// Nothing can listen, and why: nothing is chosen, or what he chose cannot. Nothing else is asked.
     Nothing(String),
 }
@@ -220,26 +254,27 @@ impl Ears {
             None => Way::Nothing(NOTHING_CHOSEN.into()),
             Some(Own::Model(held)) => Way::Model(held),
             Some(Own::Cannot(why)) => Way::Nothing(why),
+            Some(Own::Host) => Way::Host,
             Some(Own::Service(with)) => {
                 let phrases = self.chosen.ears.phrases.lock().unwrap().clone();
-                match with.offer(Job::Ears).map(|(_, o)| (live(&o), crate::hears::by_upload(&with))) {
-                    Some((Some(l), _)) => {
+                match with.offer(Job::Ears).map(|(p, o)| (p, live(&o), crate::hears::by_upload(&with), o)) {
+                    Some((provider, Some(l), _, offer)) => {
                         // a pass that is kept is used only for the service and settings it was made for: he
                         // may have chosen another since
                         let set = with.settings(Job::Ears);
                         if let Some(pass) = self.kept().filter(|p| p.dialect == l.is.name && p.set == set) {
                             return Way::Live { pass: Pass { phrases, ..pass }, with: l };
                         }
-                        match (l.pass)(&set, &with.key) {
+                        match (l.pass)(&offer.by, &provider.name, &set, &with.key) {
                             Ok(token) => {
-                                let pass = Pass { dialect: l.is.name.into(), token, set, phrases };
+                                let pass = Pass { dialect: l.is.name.into(), token, set, phrases, by: offer.by.clone() };
                                 self.keep(&pass);
                                 Way::Live { pass, with: l }
                             }
                             Err(why) => Way::Nothing(why),
                         }
                     }
-                    Some((None, true)) => Way::OwnUpload { with, phrases },
+                    Some((_, None, true, _)) => Way::OwnUpload { with, phrases },
                     _ => Way::Nothing("This version of airband cannot listen with the service you chose.".into()),
                 }
             }
@@ -261,18 +296,19 @@ impl Ears {
     /// when he stops talking.
     pub(crate) fn hear(&self, host: &dyn RadioHost, manual: bool) -> Listened {
         let said = |t: Option<String>| t.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).map(Listened::Said).unwrap_or(Listened::Nothing);
+        let way = self.way();
+        // a radio in a terminal: there is no microphone, and what he says is the line he types
+        if matches!(way, Way::Host) {
+            return said(host.listen());
+        }
         if !host.record_start(RATE) {
-            // a host with no microphone to read listens its own way (a terminal takes a typed line). A phone
-            // whose microphone did not open is told so.
-            if host.own_voice() {
-                return said(host.listen());
-            }
             host.told("The microphone could not be opened. Check that airband may use it, in Settings.".into());
             return Listened::Cannot;
         }
         let heard_well = || *self.chosen.ears.failed.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let fail = |host: &dyn RadioHost, why: String| self.chosen.ears.fail(host, why);
-        match self.way() {
+        match way {
+            Way::Host => Listened::Cannot,
             Way::Model(held) => {
                 let name = held.m.name.clone();
                 let heard = by_model(host, &held, &self.chosen.ears, manual);
@@ -314,19 +350,10 @@ impl Ears {
                         _ => None,
                     })
                 };
-                // As he speaks, with the words coming back while he talks. If that connection cannot be made, the
-                // same microphone is listened to again the plain way (one upload, the words at the end), by the
-                // same service when it has one.
-                let heard = crate::ears_stream::live(with.wire, again.clone(), host, RATE, wav_header(), manual);
+                // As he speaks, with the words coming back while he talks. When that connection cannot be made
+                // he is told, and nothing listens another way in its place.
+                let heard = crate::ears_stream::live(with.wire, again, host, RATE, wav_header(), manual);
                 host.record_stop();
-                let heard = match (heard, with.upload) {
-                    (Err(()), Some(upload)) if !manual && host.record_start(RATE) => {
-                        let plain = again().ok_or(()).and_then(|pass| upload(&pass, host, manual));
-                        host.record_stop();
-                        plain
-                    }
-                    (heard, _) => heard,
-                };
                 match heard {
                     Ok(text) => {
                         heard_well();
@@ -346,23 +373,6 @@ impl Ears {
                 fail(host, why)
             }
         }
-    }
-}
-
-/// Lets an HTTP upload read microphone audio as it is captured.
-struct Feed(Rx<Vec<u8>>, Vec<u8>);
-impl Read for Feed {
-    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
-        while self.1.is_empty() {
-            match self.0.recv() {
-                Ok(more) => self.1 = more,
-                Err(_) => return Ok(0), // the microphone side hung up: end of the recording
-            }
-        }
-        let n = out.len().min(self.1.len());
-        out[..n].copy_from_slice(&self.1[..n]);
-        self.1.drain(..n);
-        Ok(n)
     }
 }
 

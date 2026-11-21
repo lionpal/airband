@@ -266,9 +266,6 @@ impl RadioHost for Tape {
     fn record_stop(&self) {}
     fn outbox(&self, _: Vec<Outgoing>, _: Option<String>) {}
     fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
-    fn own_voice(&self) -> bool {
-        false
-    }
     fn unplaced(&self, _: Outgoing, _: Option<String>, _: Vec<String>) {}
     fn run_model(&self, _: String, _: String, _: ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
         None
@@ -286,26 +283,29 @@ impl RadioHost for Tape {
 mod tests {
     use super::*;
 
-    /// Against the real service, with a recording in place of the microphone:
-    ///   AZURE_TOKEN=… AZURE_REGION=… SPEECH_WAV=said.wav cargo test -p airband-radio -- --ignored --nocapture streams
-    ///   LISTEN_WITH=gemini GEMINI_KEY=… SPEECH_WAV=said.wav cargo test -p airband-radio -- --ignored --nocapture streams
+    /// Against a real service, with a recording in place of the microphone. LISTEN_WITH is a provider's id in
+    /// the catalogue, LISTEN_KEY its key, and LISTEN_SET any of its settings as `field=value,field=value`:
+    ///   LISTEN_WITH=… LISTEN_KEY=… LISTEN_SET=region=… SPEECH_WAV=said.wav cargo test -p airband-radio -- --ignored --nocapture streams
     #[test]
     #[ignore]
     fn streams_to_the_real_service() {
+        use airband_core::providers::{Job, Use};
         let wav = std::fs::read(std::env::var("SPEECH_WAV").unwrap()).unwrap();
         let pcm = &wav[44..];
         let tape = Tape::of(pcm, true);
-        // LISTEN_WITH names the dialect (azure when left out); the key is turned into a pass the way a tower does it
-        let kind = std::env::var("LISTEN_WITH").unwrap_or("azure".into());
-        let l = crate::ears::listener(&kind).unwrap();
-        let (token, set): (String, std::collections::BTreeMap<String, String>) = match kind.as_str() {
-            "gemini" => (crate::ears::pass_for("gemini", &Default::default(), &std::env::var("GEMINI_KEY").unwrap()).unwrap(), [("model".to_string(), std::env::var("GEMINI_MODEL").unwrap_or("gemini-3.5-transcribe-live".into())), ("language".to_string(), "en-US".to_string())].into()),
-            "elevenlabs" => (crate::ears::pass_for("elevenlabs", &Default::default(), &std::env::var("ELEVENLABS_KEY").unwrap()).unwrap(), [("model".to_string(), "scribe_v3_live".to_string()), ("language".to_string(), "en".to_string())].into()),
-            _ => (std::env::var("AZURE_TOKEN").unwrap(), [("region".to_string(), std::env::var("AZURE_REGION").unwrap()), ("language".to_string(), "en-US".to_string())].into()),
-        };
-        // WITHOUT_NAMES leaves out the names he is likely to say
-        let phrases = if std::env::var("WITHOUT_NAMES").is_ok() { Vec::new() } else { vec!["airband".into(), "shop two".into()] };
-        let grant = Pass { dialect: kind, token, set, phrases };
+        let provider = airband_core::providers::provider(&std::env::var("LISTEN_WITH").unwrap()).expect("a provider in the catalogue");
+        let offer = provider.offers.iter().find(|o| o.job == Job::Ears && crate::ears::live(o).is_some()).expect("an offer of its that listens live");
+        let mut with = Use::of(&provider.id, &offer.id);
+        with.key = std::env::var("LISTEN_KEY").unwrap();
+        for (field, value) in std::env::var("LISTEN_SET").unwrap_or_default().split(',').filter_map(|s| s.split_once('=')) {
+            with.set.insert(field.into(), serde_json::json!(value));
+        }
+        let l = crate::ears::live(offer).unwrap();
+        // the key is turned into a pass the way the phone does it; WITHOUT_NAMES leaves out the names he is likely to say
+        let mut grant = crate::ears::pass_for(&with).unwrap();
+        if std::env::var("WITHOUT_NAMES").is_err() {
+            grant.phrases = vec!["airband".into(), "shop two".into()];
+        }
         let said = live(l.wire, Arc::new(move || Some(grant.clone())), &tape, 16000, crate::ears::wav_header(), std::env::var("MANUAL").is_ok())
         .unwrap();
         println!("{:>5} ms  FINAL: {said:?} (the recording is {} ms long)", tape.began.elapsed().as_millis(), pcm.len() / 32);

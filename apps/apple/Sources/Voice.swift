@@ -294,7 +294,9 @@ final class Voice: NSObject, @unchecked Sendable {
         do { try recEngine.start() } catch {
             NSLog("airband: microphone did not start: \(error.localizedDescription)")
             input.removeTap(onBus: 0)
-            recLock.lock(); recording = false; recLock.unlock()
+            recEngine.stop()
+            try? input.setVoiceProcessingEnabled(false)
+            recLock.lock(); recording = false; recLock.broadcast(); recLock.unlock()
             set(.idle)
             return false
         }
