@@ -33,6 +33,7 @@ mod ears;
 mod ears_stream;
 mod engines;
 mod hears;
+mod keys;
 mod link;
 mod models;
 mod mouth;

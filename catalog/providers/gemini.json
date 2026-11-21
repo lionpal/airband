@@ -3,7 +3,25 @@
   "name": "Google Gemini",
   "key": {
     "name": "Gemini API key",
-    "at": "aistudio.google.com/apikey"
+    "at": "aistudio.google.com/apikey",
+    "check": {
+      "method": "GET",
+      "url": "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1",
+      "auth": {
+        "header": "x-goog-api-key"
+      },
+      "good": [
+        200
+      ],
+      "wrong_key": [
+        400,
+        401,
+        403
+      ],
+      "refused": [
+        429
+      ]
+    }
   },
   "offers": [
     {

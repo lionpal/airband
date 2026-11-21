@@ -404,6 +404,8 @@ pub(crate) struct Shared {
     /// What listens and speaks on this device, with the models loaded for it: every radio of this desk's
     /// uses the same.
     pub(crate) senses: Arc<Senses>,
+    /// How a key he gives is tested before it is kept: one request to its service (`keys::check`).
+    pub(crate) key_test: crate::keys::Test,
 }
 
 /// What one computer's radio calls back into: it knows which computer it is, and the desk does the rest.
@@ -555,7 +557,7 @@ impl Desk {
     /// A desk with no computers, keeping what it keeps in `data_dir`.
     pub(crate) fn alone(data_dir: &str, host: Arc<dyn DeskHost>) -> Desk {
         let chooser = crate::choices::Chooser::open(data_dir, host.device());
-        Desk { shared: Arc::new(Shared { state: Mutex::new(State::default()), floor: Floor::default(), host, chooser, senses: Arc::default() }), data_dir: data_dir.into() }
+        Desk { shared: Arc::new(Shared { state: Mutex::new(State::default()), floor: Floor::default(), host, chooser, senses: Arc::default(), key_test: crate::keys::pretend }), data_dir: data_dir.into() }
     }
 }
 
@@ -595,7 +597,7 @@ impl Desk {
         let senses: Arc<Senses> = Arc::default();
         // what he chose to listen and speak with is in use from the start
         chooser.apply(&*host, &senses);
-        Arc::new(Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser, senses }), data_dir })
+        Arc::new(Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser, senses, key_test: crate::keys::check }), data_dir })
     }
 
     /// The computers he is paired with, as the links `airband pair` printed, one each. Replaces whatever set
@@ -1008,9 +1010,18 @@ impl Desk {
             match heard {
                 Listened::Said(text) => deliver(&shared, text, None, re, room, agent),
                 Listened::Nothing => {}
-                Listened::Cannot => shared.host.note("Can\u{2019}t listen right now. Type it instead.".into()),
+                // why was said where it was found out (`ears.rs`): nothing chosen, what he chose could not, or
+                // the microphone did not open
+                Listened::Cannot => {}
             }
         }));
+    }
+
+    /// Why the microphone would be opened for nothing as things are, in words for him: nothing is chosen to
+    /// listen with, or what he chose cannot be used. A host asks before it opens the microphone, and says
+    /// this in its place. Nothing when something can listen.
+    pub fn cannot_listen(&self) -> Option<String> {
+        self.shared.senses.ears.cannot()
     }
 
     /// He took back what he was saying. The host closes the microphone next; nothing is sent.
@@ -1737,7 +1748,7 @@ mod tests {
         let mut state = State { stations: vec![station("mini", 1, &[], vec![msg("an agent's own words", 1, "shop two", "shop", false)])], ..State::default() };
         state.stations[0].radio = radio.clone();
         state.stations[0].link = link;
-        let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default() }), data_dir: dir.display().to_string() };
+        let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend }), data_dir: dir.display().to_string() };
         let record = desk.diagnostics();
         // what is in it: which computer, each try, the way it went and how it ended, and what was told in passing and lost
         assert!(record.starts_with("airband ") && record.contains("\nmini\n"), "{record}");
@@ -1758,7 +1769,7 @@ mod tests {
         let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
         let dir = std::env::temp_dir().join(format!("airband-read-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(two()), floor: Floor::default(), host: host.clone(), chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default() }), data_dir: dir.display().to_string() };
+        let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(two()), floor: Floor::default(), host: host.clone(), chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend }), data_dir: dir.display().to_string() };
         let counts = |v: &DeskView| (v.unread, v.rooms.iter().map(|r| (r.name.clone(), r.unread)).collect::<Vec<_>>());
         // looking at one team: what it said is read, and the other two teams' one thing each is not
         let v = desk.view(Some("shop".into()), None);

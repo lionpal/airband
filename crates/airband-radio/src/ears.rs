@@ -134,6 +134,16 @@ impl Chosen {
         *self.phrases.lock().unwrap_or_else(|e| e.into_inner()) = all;
     }
 
+    /// Why nothing can listen as things are, before the microphone is opened for it: nothing is chosen, or
+    /// what he chose cannot be used. Nothing when something can.
+    pub(crate) fn cannot(&self) -> Option<String> {
+        match self.using() {
+            None => Some(NOTHING_CHOSEN.into()),
+            Some(Own::Cannot(why)) => Some(why),
+            Some(_) => None,
+        }
+    }
+
     /// Why what he chose did not listen the last time, if it did not.
     pub(crate) fn failed(&self) -> Option<String> {
         self.failed.lock().unwrap_or_else(|e| e.into_inner()).clone()
@@ -252,9 +262,13 @@ impl Ears {
     pub(crate) fn hear(&self, host: &dyn RadioHost, manual: bool) -> Listened {
         let said = |t: Option<String>| t.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).map(Listened::Said).unwrap_or(Listened::Nothing);
         if !host.record_start(RATE) {
-            // a host with no microphone to read listens its own way (a terminal takes a typed line); one
-            // that has none cannot
-            return if host.own_voice() { said(host.listen()) } else { Listened::Cannot };
+            // a host with no microphone to read listens its own way (a terminal takes a typed line). A phone
+            // whose microphone did not open is told so.
+            if host.own_voice() {
+                return said(host.listen());
+            }
+            host.told("The microphone could not be opened. Check that airband may use it, in Settings.".into());
+            return Listened::Cannot;
         }
         let heard_well = || *self.chosen.ears.failed.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let fail = |host: &dyn RadioHost, why: String| self.chosen.ears.fail(host, why);

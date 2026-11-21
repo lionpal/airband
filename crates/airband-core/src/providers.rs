@@ -168,6 +168,75 @@ pub struct Voice {
     pub sample: String,
 }
 
+/// How a key is tested when he gives it, before it is kept: one request to the service that costs nothing
+/// and that a wrong key fails. Part of the provider's row, beside what its key is called.
+///
+/// `url` may name settings of the offer he is choosing in braces (`{url}/models`, `https://{region}.…`): they
+/// are filled with what he set, or the row's usual. What the answer means is said by its status alone, in the
+/// lists here. Nothing the service writes in its answer is read.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct Check {
+    /// `GET` or `POST` (sent with an empty body).
+    pub method: String,
+    pub url: String,
+    /// How the key is presented for this request.
+    pub auth: Auth,
+    /// Anything else the service must be sent with it (a version header).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+    /// The statuses that mean the key is good.
+    pub good: Vec<u16>,
+    /// Those that mean it is not a key the service knows.
+    pub wrong_key: Vec<u16>,
+    /// Those that mean the service knows the key and will not serve it: no credit, not allowed, too many
+    /// requests.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refused: Vec<u16>,
+    /// This request is one the service charges for: it has none that is free and needs the key. He is told
+    /// one was made.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub paid: bool,
+}
+
+/// What testing a key came to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum KeyCheck {
+    /// The service took it. `paid`: the request was one it charges for.
+    Good { paid: bool },
+    /// The service does not know this key.
+    WrongKey,
+    /// The service knows the key and will not serve it.
+    Refused,
+    /// The service could not be reached, so nothing is known about the key.
+    Unreachable,
+    /// The service answered with a status the row does not account for.
+    Unexpected { status: u16 },
+}
+
+impl Check {
+    /// The address to ask, with the settings filled in. Nothing when it names one that is not set.
+    pub fn address(&self, settings: &BTreeMap<String, String>) -> Option<String> {
+        let mut url = self.url.clone();
+        for (field, value) in settings {
+            url = url.replace(&format!("{{{field}}}"), value.trim_end_matches('/'));
+        }
+        (!url.contains('{')).then_some(url)
+    }
+
+    /// What a status means.
+    pub fn read(&self, status: u16) -> KeyCheck {
+        if self.good.contains(&status) {
+            KeyCheck::Good { paid: self.paid }
+        } else if self.wrong_key.contains(&status) {
+            KeyCheck::WrongKey
+        } else if self.refused.contains(&status) {
+            KeyCheck::Refused
+        } else {
+            KeyCheck::Unexpected { status }
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub struct Provider {
     /// Its name in the settings (`"kind"`), on the command line, and the usual name for its key.
@@ -178,6 +247,8 @@ pub struct Provider {
     pub key_name: String,
     /// Where its keys are made.
     pub keys_at: String,
+    /// How its key is tested when he gives it. Every provider that takes a key has one.
+    pub check: Option<Check>,
     pub offers: Vec<Arc<Offer>>,
     /// Offered when he chooses. Not so for what the tower sets for itself.
     pub offered: bool,

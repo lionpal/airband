@@ -3,7 +3,28 @@
   "name": "Anthropic, with an API key",
   "key": {
     "name": "Anthropic API key",
-    "at": "console.anthropic.com/settings/keys"
+    "at": "console.anthropic.com/settings/keys",
+    "check": {
+      "method": "GET",
+      "url": "{url}/models",
+      "auth": {
+        "header": "x-api-key"
+      },
+      "headers": {
+        "anthropic-version": "2023-06-01"
+      },
+      "good": [
+        200
+      ],
+      "wrong_key": [
+        401
+      ],
+      "refused": [
+        402,
+        403,
+        429
+      ]
+    }
   },
   "offers": [
     {

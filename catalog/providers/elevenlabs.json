@@ -3,7 +3,25 @@
   "name": "ElevenLabs",
   "key": {
     "name": "ElevenLabs API key",
-    "at": "elevenlabs.io/app/settings/api-keys"
+    "at": "elevenlabs.io/app/settings/api-keys",
+    "check": {
+      "method": "GET",
+      "url": "https://api.elevenlabs.io/v1/models",
+      "auth": {
+        "header": "xi-api-key"
+      },
+      "good": [
+        200
+      ],
+      "wrong_key": [
+        401
+      ],
+      "refused": [
+        402,
+        403,
+        429
+      ]
+    }
   },
   "offers": [
     {
