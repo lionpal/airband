@@ -30,32 +30,52 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
     }
     // The model and effort he asked for. One this launcher does not offer is not left out and the agent
     // started without it: he is told, and nothing is started.
-    let offers = |what: &str, names: Vec<&String>| match names.as_slice() {
+    let menu = held::offers(&app.inner.lock().unwrap(), &named, launcher);
+    // An agent that lists its own models and efforts is the one that knows them: which efforts there are can
+    // turn on the model, and the tower has only what one last said. So what he asked for goes to its holder
+    // as he named it, by the tool's own word where the tower knows it, and an agent that has no such one does
+    // not start and says so.
+    let agent_says = matches!(launcher.held, Some(config::Held::Acp { .. }));
+    let offers = |what: &str, choices: &[airband_core::tools::Choice]| match choices {
         [] => format!("Agents started this way cannot be given {what}."),
-        names => format!("It can be {}.", names.iter().map(|n| n.as_str()).collect::<Vec<_>>().join(", ")),
+        choices => format!("It can be {}.", choices.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", ")),
     };
-    if let Some(m) = idea.model.as_ref().filter(|m| !launcher.models.contains_key(*m)) {
-        return say(format!("I cannot start one on {m}. {}", offers("a model", launcher.models.keys().collect())));
-    }
-    if let Some(e) = idea.effort.as_ref().filter(|e| !launcher.efforts.contains(*e)) {
-        return say(format!("I cannot start one at {e} effort. {}", offers("an effort", launcher.efforts.iter().collect())));
-    }
-    let (model, effort) = (idea.model.as_ref(), idea.effort.as_ref());
+    let chosen = |said: Option<&String>, choices: &[airband_core::tools::Choice]| -> Result<Option<airband_core::tools::Choice>, String> {
+        match said {
+            None => Ok(None),
+            Some(said) => match airband_core::tools::named(choices, said) {
+                Some(choice) => Ok(Some(choice.clone())),
+                None if agent_says => Ok(Some(airband_core::tools::Choice { id: said.clone(), name: said.clone() })),
+                None => Err(said.clone()),
+            },
+        }
+    };
+    let model = match chosen(idea.model.as_ref(), &menu.models) {
+        Ok(model) => model,
+        Err(m) => return say(format!("I cannot start one on {m}. {}", offers("a model", &menu.models))),
+    };
+    let effort = match chosen(idea.effort.as_ref(), &menu.efforts) {
+        Ok(effort) => effort,
+        Err(e) => return say(format!("I cannot start one at {e} effort. {}", offers("an effort", &menu.efforts))),
+    };
+    // as its tool takes them
+    let (model_id, effort_id) = (model.as_ref().map(|c| c.id.clone()), effort.as_ref().map(|c| c.id.clone()));
     let mut options: Vec<String> = Vec::new();
-    if let Some(m) = model {
-        options.extend(launcher.with_model.iter().map(|a| a.replace("{model}", &launcher.models[m])));
+    if let Some(m) = &model_id {
+        options.extend(launcher.with_model.iter().map(|a| a.replace("{model}", m)));
     }
-    if let Some(e) = effort {
+    if let Some(e) = &effort_id {
         options.extend(launcher.with_effort.iter().map(|a| a.replace("{effort}", e)));
     }
-    let with = match (model, effort) {
+    let (model, effort) = (model.map(|c| c.name), effort.map(|c| c.name));
+    let with = match (&model, &effort) {
         (Some(m), Some(e)) => format!(" with {m}, {e}"),
         (Some(m), None) => format!(" with {m}"),
         (None, Some(e)) => format!(" at {e} effort"),
         (None, None) => String::new(),
     };
     if launcher.held.is_some() {
-        return match held::start(app, &named, &cwd, options, task).await {
+        return match held::start(app, &named, &cwd, model_id, effort_id, task).await {
             Ok(_) if task.is_empty() => {
                 log(format!("started {named}{with} in {project}, held by the tower, with nothing to do yet"));
                 say(format!("A new agent is ready in {project}{with}."))

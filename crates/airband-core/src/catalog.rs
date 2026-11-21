@@ -19,7 +19,7 @@ use crate::providers::{Job, Offer, Provider};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 /// Where the signed copy is kept.
 pub const ADDRESS: &str = "https://airband.dev/catalog/catalog.json";
@@ -40,10 +40,10 @@ pub struct Catalog {
     pub rev: u64,
     /// What the rows hash to: two documents with the same `rev` and different rows are told apart by it.
     pub hash: String,
-    pub providers: Vec<Provider>,
+    pub providers: Vec<Arc<Provider>>,
     /// The coding tools airband works with.
-    pub tools: &'static [Tool],
-    pub models: Vec<PhoneModel>,
+    pub tools: Vec<Tool>,
+    pub models: Vec<Arc<PhoneModel>>,
     /// Programs the tower fetches to run a model on his computer. Always the ones compiled in.
     pub servers: Vec<Server>,
     /// Words of the trade that a recogniser otherwise hears as everyday ones ("sync" as "sink").
@@ -57,17 +57,18 @@ pub struct Catalog {
 
 /// A coding tool: what its agents are known by (`Agent::harness`), and what to call it where he picks the
 /// tools he uses.
+#[derive(Clone, PartialEq, Debug)]
 pub struct Tool {
-    pub id: &'static str,
-    pub name: &'static str,
-    pub maker: &'static str,
+    pub id: String,
+    pub name: String,
+    pub maker: String,
     /// What he has to do once before this tool's agents are heard, when there is anything; shown where he
     /// picks the tool and where the app waits for its first agent.
-    pub first: &'static str,
+    pub first: String,
     /// How the tower starts its agents, the one to prefer first. Each names a program that is run, so these
     /// are always the ones this build came with: a copy fetched later can change what a tool is called, and
     /// never what is run for it.
-    pub launchers: &'static [crate::tools::Launcher],
+    pub launchers: Vec<crate::tools::Launcher>,
 }
 
 /// A model that runs on the phone itself.
@@ -140,20 +141,26 @@ pub struct Archive {
     pub sha256: String,
 }
 
-static CURRENT: RwLock<Option<&'static Catalog>> = RwLock::new(None);
+/// The catalogue in use. One is held at a time and shared by whoever is reading it; taking a newer copy
+/// puts that one here, and the one before is dropped when its last reader lets go.
+static CURRENT: RwLock<Option<Arc<Catalog>>> = RwLock::new(None);
+
+fn built_shared() -> &'static Arc<Catalog> {
+    static BUILT: std::sync::OnceLock<Arc<Catalog>> = std::sync::OnceLock::new();
+    BUILT.get_or_init(|| Arc::new(read(BUILT_IN).expect("the catalogue built into this program does not read")))
+}
 
 /// The catalogue compiled into this program.
 pub fn built() -> &'static Catalog {
-    static BUILT: std::sync::OnceLock<Catalog> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| read(BUILT_IN).expect("the catalogue built into this program does not read"))
+    built_shared()
 }
 
 /// The catalogue in use: the newest one accepted, or the one built in.
-pub fn current() -> &'static Catalog {
-    if let Some(c) = *CURRENT.read().unwrap() {
-        return c;
+pub fn current() -> Arc<Catalog> {
+    if let Some(c) = CURRENT.read().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        return c.clone();
     }
-    *CURRENT.write().unwrap().get_or_insert(built())
+    CURRENT.write().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(|| built_shared().clone()).clone()
 }
 
 /// The document built into this program, as it would be published. `expires` is when a copy of it stops
@@ -183,14 +190,14 @@ fn now() -> u64 {
 /// An error when it is not signed by airband's key, does not read, has run out, or would do something a
 /// later copy may not; then nothing changes.
 ///
-/// A copy is kept for as long as the program runs once it is taken (there is one at the start and perhaps
-/// one or two a day after), so that everything read from the catalogue can be borrowed for good.
+/// The copy taken replaces the one in use ([`current`]); whoever is part way through reading the one
+/// before finishes with that.
 pub fn accept(document: &[u8], signature: &str) -> Result<Taken, String> {
     signed(document, signature)?;
     let text = std::str::from_utf8(document).map_err(|e| e.to_string())?;
-    let (newer, taken) = weigh(text, now(), current())?;
+    let (newer, taken) = weigh(text, now(), &current())?;
     if let Some(newer) = newer {
-        *CURRENT.write().unwrap() = Some(Box::leak(Box::new(newer)));
+        *CURRENT.write().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(newer));
     }
     Ok(taken)
 }
@@ -252,15 +259,30 @@ fn weigh_against(text: &str, now: u64, have: &Catalog, built: &Catalog) -> Resul
     // the rest of the copy can still be taken.
     for p in newer.providers.iter_mut().filter(|p| !built.providers.iter().any(|b| b.id == p.id)) {
         let before = p.offers.len();
-        p.offers.retain(|o| !BUILT_IN_ONLY.contains(&o.by.interface.as_str()));
+        Arc::make_mut(p).offers.retain(|o| !BUILT_IN_ONLY.contains(&o.by.interface.as_str()));
         if p.offers.len() < before {
             newer.left_out.push(format!("{}: an offer that would run a program", p.id));
+        }
+    }
+    // An offer new to a provider this build knows is kept only when it is reached exactly as one of that
+    // provider's compiled-in offers is: the same interface told the same things, at the same address. That
+    // is a new model of a service he may already have given a key for. Anything else would send that key
+    // somewhere this build was never told about, and is left out. So is any new offer that runs a program,
+    // even one worded exactly as a compiled-in offer is.
+    for p in newer.providers.iter_mut() {
+        let Some(known) = built.providers.iter().find(|b| b.id == p.id) else { continue };
+        let before = p.offers.len();
+        Arc::make_mut(p).offers.retain(|o| known.offers.iter().any(|was| was.id == o.id) || (!BUILT_IN_ONLY.contains(&o.by.interface.as_str()) && known.offers.iter().any(|was| was.by == o.by && reach(was) == reach(o))));
+        if p.offers.len() < before {
+            newer.left_out.push(format!("{}: a new offer reached another way than this build knows it by", p.id));
         }
     }
     newer.servers = built.servers.clone();
     // How a coding tool is started is a program to run, and is this build's own for every tool it knows. What
     // a later copy says about that is not kept: a tool new to this build comes with no way to start it.
-    newer.tools = keep_all(newer.tools.iter().map(|t| Tool { id: t.id, name: t.name, maker: t.maker, first: t.first, launchers: built.tools.iter().find(|b| b.id == t.id).map(|b| b.launchers).unwrap_or_default() }).collect());
+    for t in newer.tools.iter_mut() {
+        t.launchers = built.tools.iter().find(|b| b.id == t.id).map(|b| b.launchers.clone()).unwrap_or_default();
+    }
     if newer.providers.is_empty() {
         return Err("the catalogue has no providers in it".into());
     }
@@ -283,11 +305,14 @@ fn weigh_against(text: &str, now: u64, have: &Catalog, built: &Catalog) -> Resul
 /// that even airband's own key cannot, through a catalogue, run a different program on his computer or send
 /// a key he has already entered somewhere new. Those take a new build, which he installs himself.
 ///
-/// - A provider this build knows keeps, for each job it does, the interface it is reached through and
-///   everything that interface is told (`by`), and the usual of every setting that says where it is reached
-///   (`reach`). So a row that changes how a known service is called is refused, not read as the old call.
-/// - Nothing that runs a program ([`BUILT_IN_ONLY`]) is added to a provider this build knows, and one this
-///   build does not know cannot bring any ([`weigh`] leaves those out).
+/// - An offer this build knows (by its provider and its own id) keeps the job it does, the interface it is
+///   reached through and everything that interface is told (`by`, which includes how a key is presented),
+///   and the usual of every setting that says where it is reached (`reach`). So a row that changes how a
+///   known service is called is refused, not read as the old call.
+/// - An offer new to a provider this build knows is reached exactly as one of its known offers is, or it is
+///   not there ([`weigh`] leaves the others out). So nothing that runs a program ([`BUILT_IN_ONLY`]) is
+///   added to a known provider, and a key he gave is sent nowhere new. A provider this build does not know
+///   cannot bring a program either.
 /// - Whether a known provider takes a key does not change.
 /// - A version of a model this build knows keeps its files. New files are a new version.
 /// - A model's files come from airband's address.
@@ -295,17 +320,16 @@ fn allowed(newer: &Catalog, built: &Catalog) -> Result<(), String> {
     for p in &newer.providers {
         let Some(known) = built.providers.iter().find(|b| b.id == p.id) else { continue };
         for o in &p.offers {
-            match known.offers.iter().find(|x| x.job == o.job) {
+            match known.offers.iter().find(|x| x.id == o.id) {
                 Some(was) => {
-                    if o.by != was.by {
+                    if o.by != was.by || o.job != was.job {
                         return Err(format!("the catalogue would change how {} is reached", p.id));
                     }
-                    let reach = |x: &Offer| x.asks.iter().filter(|a| a.reach).map(|a| (a.field.clone(), a.usual.clone())).collect::<Vec<_>>();
                     if reach(o) != reach(was) {
                         return Err(format!("the catalogue would change where {} is reached", p.id));
                     }
                 }
-                None if BUILT_IN_ONLY.contains(&o.by.interface.as_str()) => return Err(format!("the catalogue would have {} run a program", p.id)),
+                None if BUILT_IN_ONLY.contains(&o.by.interface.as_str()) || !known.offers.iter().any(|was| was.by == o.by && reach(was) == reach(o)) => return Err(format!("the catalogue would have {} reached a new way", p.id)),
                 None => {}
             }
         }
@@ -314,8 +338,8 @@ fn allowed(newer: &Catalog, built: &Catalog) -> Result<(), String> {
         }
     }
     // the same for how a coding tool is started: only what this build came with
-    for t in newer.tools {
-        if t.launchers != built.tools.iter().find(|b| b.id == t.id).map(|b| b.launchers).unwrap_or_default() {
+    for t in &newer.tools {
+        if t.launchers != built.tools.iter().find(|b| b.id == t.id).map(|b| b.launchers.clone()).unwrap_or_default() {
             return Err(format!("the catalogue would change the program run to start {}", t.id));
         }
     }
@@ -328,6 +352,11 @@ fn allowed(newer: &Catalog, built: &Catalog) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Where an offer is reached: the usual of each of its settings that says so.
+fn reach(o: &Offer) -> Vec<(String, String)> {
+    o.asks.iter().filter(|a| a.reach).map(|a| (a.field.clone(), a.usual.clone())).collect()
 }
 
 /// A name that is safe as a setting, a folder and a part of an address: lower-case letters, digits, `.`, `-`
@@ -350,14 +379,15 @@ pub fn check(c: &Catalog) -> Result<(), String> {
             return Err(format!("{} is listed twice", p.id));
         }
         for o in &p.offers {
-            if p.offers.iter().filter(|x| x.job == o.job).count() != 1 {
-                return Err(format!("{} does one job two ways", p.id));
+            // an offer's id sits beside the provider's where a choice is written down
+            if !plain(&o.id) || crate::providers::NOT_AN_ID.contains(&o.id.as_str()) || p.offers.iter().filter(|x| x.id == o.id).count() != 1 {
+                return Err(format!("{}: \"{}\" cannot be an offer's id, or is there twice", p.id, o.id));
             }
             if !plain(&o.by.interface) {
                 return Err(format!("{}: \"{}\" cannot be an interface's name", p.id, o.by.interface));
             }
             for a in &o.asks {
-                // a setting sits beside `kind` and `key` where it is written down
+                // a setting sits beside `kind`, `offer` and `key` where it is written down
                 if !plain(&a.field) || crate::providers::NOT_AN_ID.contains(&a.field.as_str()) || o.asks.iter().filter(|x| x.field == a.field).count() != 1 {
                     return Err(format!("{}: \"{}\" cannot be a setting's name, or is there twice", p.id, a.field));
                 }
@@ -449,14 +479,6 @@ struct KeyRow {
     at: String,
 }
 
-/// Kept for as long as the program runs: a catalogue is read once at the start and perhaps once more later.
-fn keep(s: String) -> &'static str {
-    Box::leak(s.into_boxed_str())
-}
-fn keep_all<T>(v: Vec<T>) -> &'static [T] {
-    Box::leak(v.into_boxed_slice())
-}
-
 /// What the rows of a document hash to (`build.rs` writes it into the document; see `catalog_hash.rs`).
 pub fn hash_of(document: &str) -> Result<String, String> {
     serde_json::from_str::<Value>(document).map(|doc| content_hash(&doc)).map_err(|e| e.to_string())
@@ -479,7 +501,7 @@ fn read(text: &str) -> Result<Catalog, String> {
         let mut offers = Vec::new();
         for o in head.offers {
             match serde_json::from_value::<Offer>(o) {
-                Ok(o) => offers.push(o),
+                Ok(o) => offers.push(Arc::new(o)),
                 Err(e) => left_out.push(format!("{}: an offer ({e})", head.id)),
             }
         }
@@ -487,13 +509,13 @@ fn read(text: &str) -> Result<Catalog, String> {
             Some(k) => (true, k.name, k.at),
             None => (false, String::new(), String::new()),
         };
-        providers.push(Provider { id: head.id, name: head.name, key, key_name, keys_at, offered: head.offered, offers });
+        providers.push(Arc::new(Provider { id: head.id, name: head.name, key, key_name, keys_at, offered: head.offered, offers }));
     }
     let mut models = Vec::new();
     for row in doc.models {
         let named = row["kind"].as_str().unwrap_or("a model with no name").to_string();
         match serde_json::from_value::<PhoneModel>(row) {
-            Ok(m) => models.push(m),
+            Ok(m) => models.push(Arc::new(m)),
             Err(e) => left_out.push(format!("{named}: {e}")),
         }
     }
@@ -504,10 +526,10 @@ fn read(text: &str) -> Result<Catalog, String> {
         .map(|t| {
             // a launcher in a tool's row starts that tool
             let launchers = t.launchers.into_iter().map(|l| crate::tools::Launcher { harness: t.id.clone(), ..l }).collect();
-            Tool { id: keep(t.id), name: keep(t.name), maker: keep(t.maker), first: keep(t.first), launchers: keep_all(launchers) }
+            Tool { id: t.id, name: t.name, maker: t.maker, first: t.first, launchers }
         })
         .collect();
-    Ok(Catalog { rev: doc.rev, hash: doc.hash, providers, tools: keep_all(tools), models, servers, phrases: doc.phrases, retired: doc.retired, left_out })
+    Ok(Catalog { rev: doc.rev, hash: doc.hash, providers, tools, models, servers, phrases: doc.phrases, retired: doc.retired, left_out })
 }
 
 #[cfg(test)]
@@ -556,17 +578,17 @@ mod tests {
     fn a_row_this_build_cannot_read_is_left_out_and_said_so_and_the_rest_is_kept() {
         let c = read(
             r#"{"rev":9,"providers":[
-            {"id":"x","name":"X","offers":[{"job":"voice","by":{"interface":"something-new"},"label":"New"},{"job":"voice","by":"speech","label":"No interface named"},{"job":"ears","by":{"interface":"transcribe"},"label":"Known","preferred":"yes"}]},
+            {"id":"x","name":"X","offers":[{"id":"a","job":"voice","by":{"interface":"something-new"},"label":"New"},{"id":"b","job":"voice","by":"speech","label":"No interface named"},{"id":"c","job":"ears","by":{"interface":"transcribe"},"label":"Known","preferred":"yes"},{"job":"ears","by":{"interface":"transcribe"},"label":"No id"}]},
             {"id":"y","name":"Y","key":"a new shape of key","offers":[]},
-            {"id":"z","name":"Z","offers":[{"job":"summary","by":{"interface":"chat"},"label":"Reads"}]}],
+            {"id":"z","name":"Z","offers":[{"id":"r","job":"summary","by":{"interface":"chat"},"label":"Reads"}]}],
             "models":[{"kind":"m","name":"M"}]}"#,
         )
         .unwrap();
         // an interface nobody has code for still reads: whoever lists or calls leaves it out
         assert_eq!(c.providers.iter().map(|p| (p.id.as_str(), p.offers.iter().map(|o| o.label.as_str()).collect::<Vec<_>>())).collect::<Vec<_>>(), [("x", vec!["New"]), ("z", vec!["Reads"])]);
-        // two offers and one provider and one model did not read, and each is named
-        assert_eq!(c.left_out.len(), 4, "{:?}", c.left_out);
-        assert!(c.left_out[0].starts_with("x: an offer") && c.left_out[2].starts_with("y:") && c.left_out[3].starts_with("m:"));
+        // three offers and one provider and one model did not read, and each is named
+        assert_eq!(c.left_out.len(), 5, "{:?}", c.left_out);
+        assert!(c.left_out[0].starts_with("x: an offer") && c.left_out[3].starts_with("y:") && c.left_out[4].starts_with("m:"));
     }
 
     #[test]
@@ -575,7 +597,7 @@ mod tests {
         assert!(offered(&|_| {}).unwrap().1.newer);
         assert!(offered(&|d| row(d, "gemini")["offers"][0]["price"] = "About $1".into()).unwrap().1.newer);
         assert!(offered(&|d| row(d, "openai")["offers"][0]["asks"][1]["usual"] = "gpt-7".into()).unwrap().1.newer);
-        assert!(offered(&|d| d["providers"].as_array_mut().unwrap().push(serde_json::json!({ "id": "new", "name": "New", "key": { "name": "New key" }, "offers": [{ "job": "summary", "by": { "interface": "chat" }, "label": "New", "asks": [{ "field": "url", "question": "Address", "usual": "https://new.example/v1", "reach": true }] }] }))).unwrap().1.newer);
+        assert!(offered(&|d| d["providers"].as_array_mut().unwrap().push(serde_json::json!({ "id": "new", "name": "New", "key": { "name": "New key" }, "offers": [{ "id": "new", "job": "summary", "by": { "interface": "chat" }, "label": "New", "asks": [{ "field": "url", "question": "Address", "usual": "https://new.example/v1", "reach": true }] }] }))).unwrap().1.newer);
         // the program the tower runs for summaries
         assert!(offered(&|d| row(d, "claude")["offers"][0]["by"]["with"]["argv"] = serde_json::json!(["sh", "-c", "anything"])).is_err());
         // where a key he has entered is sent: by a setting, or by what the interface is told
@@ -584,9 +606,28 @@ mod tests {
         assert!(offered(&|d| row(d, "elevenlabs")["offers"][0]["by"]["with"]["url"] = "https://elsewhere.example".into()).is_err());
         // how a known service is called (the old call is not made in its place)
         assert!(offered(&|d| row(d, "gemini")["offers"][0]["by"]["with"]["shaped"] = false.into()).is_err());
-        assert!(offered(&|d| row(d, "openrouter")["offers"].as_array_mut().unwrap().push(serde_json::json!({ "job": "voice", "by": { "interface": "command", "with": { "argv": ["x"] } }, "label": "Runs" }))).is_err());
+        // an offer new to a known provider that would run a program, or be reached somewhere else, is left
+        // out and said so; the rest of the copy is taken
+        for odd in [serde_json::json!({ "id": "runs", "job": "voice", "by": { "interface": "command", "with": { "argv": ["x"] } }, "label": "Runs" }), serde_json::json!({ "id": "moved", "job": "voice", "by": { "interface": "speech" }, "label": "Moved", "asks": [{ "field": "url", "question": "Address", "usual": "https://elsewhere.example/v1", "reach": true }] })] {
+            let (taken, said) = offered(&|d| row(d, "openrouter")["offers"].as_array_mut().unwrap().push(odd.clone())).unwrap();
+            assert_eq!(taken.unwrap().providers.iter().find(|p| p.id == "openrouter"), built().providers.iter().find(|p| p.id == "openrouter"));
+            assert!(said.left_out.iter().any(|l| l.starts_with("openrouter:")));
+        }
+        // a second offer that runs the very program a compiled-in one does is still not taken from a copy
+        let (taken, said) = offered(&|d| {
+            let offers = row(d, "claude")["offers"].as_array_mut().unwrap();
+            let mut again = offers[0].clone();
+            again["id"] = "again".into();
+            offers.push(again);
+        })
+        .unwrap();
+        assert!(taken.unwrap().providers.iter().find(|p| p.id == "claude").unwrap().offers.len() == 1 && said.left_out.len() == 1);
+        // what an offer this build knows is for does not change
+        assert!(offered(&|d| row(d, "openai")["offers"][0]["job"] = "voice".into()).is_err());
+        // how a key is presented is part of how a service is reached
+        assert!(offered(&|d| row(d, "openai")["offers"][0]["by"]["with"]["auth"]["header"] = "x-other".into()).is_err());
         // a provider nobody has seen may not run a program: that offer is left out, and said so
-        let (taken, said) = offered(&|d| d["providers"].as_array_mut().unwrap().push(serde_json::json!({ "id": "new", "name": "New", "offers": [{ "job": "summary", "by": { "interface": "command", "with": { "argv": ["x"] } }, "label": "New" }] }))).unwrap();
+        let (taken, said) = offered(&|d| d["providers"].as_array_mut().unwrap().push(serde_json::json!({ "id": "new", "name": "New", "offers": [{ "id": "new", "job": "summary", "by": { "interface": "command", "with": { "argv": ["x"] } }, "label": "New" }] }))).unwrap();
         assert!(taken.unwrap().providers.iter().find(|p| p.id == "new").unwrap().offers.is_empty() && said.left_out.len() == 1);
         // the program fetched to run a model is always the one compiled in
         let (taken, _) = offered(&|d| d["servers"][0]["base"] = "https://elsewhere.example".into()).unwrap();
@@ -607,6 +648,7 @@ mod tests {
         assert!(offered(&|d| d["providers"] = serde_json::json!([])).is_err());
         assert!(offered(&|d| row(d, "groq")["id"] = "none".into()).is_err());
         assert!(offered(&|d| row(d, "groq")["offers"][0]["asks"][0]["field"] = "key".into()).is_err());
+        assert!(offered(&|d| row(d, "groq")["offers"][0]["asks"][0]["field"] = "offer".into()).is_err());
         // a model whose files would land outside its folder, or come from somewhere else, or change under
         // the same version
         assert!(offered(&|d| d["models"][0]["kind"] = "..".into()).is_err());
@@ -620,6 +662,39 @@ mod tests {
         .unwrap()
         .1
         .newer);
+    }
+
+    #[test]
+    fn a_provider_can_do_one_job_more_than_one_way_under_one_key() {
+        // the built-in voice offer of a provider, again under another id with another model: a second way to
+        // do the same job, reached the same way
+        let second = |d: &mut Value| {
+            let offers = row(d, "openai")["offers"].as_array_mut().unwrap();
+            let mut more = offers.iter().find(|o| o["job"] == "voice").unwrap().clone();
+            more["id"] = "big-tts".into();
+            more["label"] = "OpenAI Big TTS".into();
+            more["asks"].as_array_mut().unwrap().iter_mut().find(|a| a["field"] == "model").unwrap()["usual"] = "big-tts-1".into();
+            offers.push(more);
+        };
+        let (taken, said) = offered(&second).unwrap();
+        let taken = taken.unwrap();
+        let openai = taken.providers.iter().find(|p| p.id == "openai").unwrap();
+        let voices: Vec<&str> = openai.offers.iter().filter(|o| o.job == Job::Voice).map(|o| o.id.as_str()).collect();
+        assert_eq!(voices, ["mini-tts", "big-tts"]);
+        assert!(said.left_out.is_empty() && openai.key);
+        // each is used by its own id, and what one is set to says nothing of the other
+        let model = |offer: &str| openai.offers.iter().find(|o| o.id == offer).unwrap().asks.iter().find(|a| a.field == "model").unwrap().usual.clone();
+        assert_eq!((model("mini-tts"), model("big-tts")), ("gpt-4o-mini-tts".to_string(), "big-tts-1".to_string()));
+        // two offers may not share an id
+        assert!(offered(&|d| {
+            second(d);
+            let offers = row(d, "openai")["offers"].as_array_mut().unwrap();
+            offers.last_mut().unwrap()["id"] = "mini-tts".into();
+        })
+        .is_err());
+        // and an offer's id is a plain name that is not one of the words a setting is written with
+        assert!(offered(&|d| row(d, "groq")["offers"][0]["id"] = "Not Plain".into()).is_err());
+        assert!(offered(&|d| row(d, "groq")["offers"][0]["id"] = "key".into()).is_err());
     }
 
     #[test]
@@ -650,6 +725,8 @@ mod tests {
         };
         // every tool this build knows can be started, each launcher starting its own tool
         assert!(built.tools.iter().all(|t| !t.launchers.is_empty() && t.launchers.iter().all(|l| l.harness == t.id && !l.name.is_empty())));
+        // and every keyed offer says its own id and no two of a provider's share one
+        check(&built).unwrap();
         // what it is called may change; the program may not, and a tool new to this build brings none
         assert!(with(&|d| d["tools"][0]["name"] = "Claude".into()).is_ok());
         assert!(with(&|d| d["tools"][1]["launchers"][0]["held"]["program"] = serde_json::json!(["sh", "-c", "anything"])).is_err());

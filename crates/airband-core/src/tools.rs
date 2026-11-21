@@ -41,6 +41,59 @@ pub struct Launcher {
     pub held: Option<Held>,
 }
 
+/// One thing a new agent can be set to: a model, or an effort.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Choice {
+    /// What the tool calls it, and takes.
+    pub id: String,
+    /// What it is called to him.
+    pub name: String,
+}
+
+/// What a new agent of one launcher can be started on. For a program started with arguments it is what the
+/// launcher's row lists. An agent that speaks the Agent Client Protocol lists its own when a session opens,
+/// and its holder passes that on (`airband hold`), so the tower offers what the tool itself last offered.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Offers {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<Choice>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub efforts: Vec<Choice>,
+}
+
+/// The one of `choices` he named, by its name or by the tool's own id for it, written in any case and with or
+/// without spaces. Nothing else is taken for it.
+pub fn named<'a>(choices: &'a [Choice], said: &str) -> Option<&'a Choice> {
+    let key = |s: &str| s.chars().filter(|c| !c.is_whitespace()).flat_map(char::to_lowercase).collect::<String>();
+    let said = key(said);
+    choices.iter().find(|c| key(&c.id) == said).or_else(|| choices.iter().find(|c| key(&c.name) == said))
+}
+
+impl Offers {
+    /// Every word a model here answers to: each one's name and its id.
+    pub fn model_words(&self) -> Vec<String> {
+        words(&self.models)
+    }
+    pub fn effort_words(&self) -> Vec<String> {
+        words(&self.efforts)
+    }
+}
+fn words(choices: &[Choice]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    choices.iter().flat_map(|c| [&c.name, &c.id]).for_each(|w| if !out.contains(w) { out.push(w.clone()) });
+    out
+}
+
+impl Launcher {
+    /// What this launcher's own row says its agents can be started on.
+    pub fn offers(&self) -> Offers {
+        Offers {
+            models: self.models.iter().map(|(name, id)| Choice { id: id.clone(), name: name.clone() }).collect(),
+            efforts: self.efforts.iter().map(|e| Choice { id: e.clone(), name: e.clone() }).collect(),
+        }
+    }
+}
+
 /// How a held agent is driven: the two things a holder knows how to do. A row says which, by name (`by`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "by", rename_all = "kebab-case")]
@@ -86,5 +139,17 @@ mod tests {
         assert_eq!(serde_json::to_value(&acp).unwrap()["by"], "acp");
         // a kind this build has no driver for does not read, and says so
         assert!(serde_json::from_str::<Held>(r#"{"by":"telepathy"}"#).is_err());
+    }
+
+    #[test]
+    fn a_model_is_named_by_its_name_or_its_id_and_by_nothing_else() {
+        let models = vec![Choice { id: "gpt-6.2-sol".into(), name: "6.2 Sol".into() }, Choice { id: "gpt-6-luna".into(), name: "6 Luna".into() }];
+        assert_eq!(named(&models, "6.2 sol").map(|c| c.id.as_str()), Some("gpt-6.2-sol"));
+        assert_eq!(named(&models, "GPT-6-Luna").map(|c| c.id.as_str()), Some("gpt-6-luna"));
+        assert_eq!(named(&models, "luna"), None);
+        assert_eq!(named(&models, ""), None);
+        let row = Launcher { models: [("opus".to_string(), "claude-opus".to_string())].into(), efforts: vec!["high".into()], ..Launcher::default() };
+        assert_eq!(row.offers(), Offers { models: vec![Choice { id: "claude-opus".into(), name: "opus".into() }], efforts: vec![Choice { id: "high".into(), name: "high".into() }] });
+        assert_eq!(row.offers().model_words(), ["opus", "claude-opus"]);
     }
 }

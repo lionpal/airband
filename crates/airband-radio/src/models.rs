@@ -18,8 +18,8 @@ pub(crate) use airband_core::catalog::PhoneModel as Model;
 
 /// The models in the catalogue that this build can run on this device (`engines::runs`). Each says which
 /// version of its files it is: that is the folder they are kept in.
-pub(crate) fn models(device: &HostDevice) -> impl Iterator<Item = &'static Model> + '_ {
-    airband_core::catalog::current().models.iter().filter(move |m| crate::engines::runs(m, device) && !m.version.is_empty())
+pub(crate) fn models(device: &HostDevice) -> impl Iterator<Item = Arc<Model>> + '_ {
+    airband_core::catalog::current().models.clone().into_iter().filter(move |m| crate::engines::runs(m, device) && !m.version.is_empty())
 }
 
 /// The name a copy of the catalogue is kept under, by the form of the document.
@@ -103,7 +103,7 @@ pub fn refresh_catalog(dir: String) -> bool {
     changed
 }
 
-pub(crate) fn model(kind: &str, device: &HostDevice) -> Option<&'static Model> {
+pub(crate) fn model(kind: &str, device: &HostDevice) -> Option<Arc<Model>> {
     models(device).find(|m| m.kind == kind)
 }
 
@@ -176,7 +176,7 @@ pub(crate) fn local_model_progress() -> u32 {
 pub(crate) fn fetch_local_model(dir: String, m: &Model) -> Result<(), RadioError> {
     let told = |reason: &str| RadioError::Told { reason: reason.into() };
     let _one = FETCHING.lock().unwrap_or_else(|e| e.into_inner());
-    let folder = version_folder(&dir, m);
+    let folder = version_folder(&dir, &m);
     GOT.store(0, Ordering::SeqCst);
     OF.store(m.files.iter().map(|f| f.1).sum(), Ordering::SeqCst);
     // no limit on the whole of it (a model is tens or hundreds of megabytes on whatever connection he has),
@@ -227,7 +227,7 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model) -> Result<(), RadioError
     // This version is whole: say so, and only now let go of the one that was here before it, which was in use
     // until this moment.
     let _ = std::fs::write(folder.join(WHOLE), "");
-    for other in std::fs::read_dir(home(&dir, m)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| *p != folder) {
+    for other in std::fs::read_dir(home(&dir, &m)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| *p != folder) {
         let _ = if other.is_dir() { std::fs::remove_dir_all(&other) } else { std::fs::remove_file(&other) };
     }
     Ok(())
@@ -240,7 +240,7 @@ mod tests {
     #[test]
     fn every_model_says_what_to_fetch_and_who_made_it() {
         // every model in the catalogue, whoever can run it
-        let models = || airband_core::catalog::current().models.iter();
+        let models = || airband_core::catalog::current().models.clone().into_iter();
         for m in models() {
             assert!(!m.files.is_empty() && !m.credit.is_empty() && m.base.starts_with("https://"), "{}", m.kind);
             assert!(m.files.iter().all(|(to, size, sha)| !to.starts_with('/') && *size > 0 && sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_hexdigit())), "{}", m.kind);
@@ -248,7 +248,7 @@ mod tests {
         }
         // nothing is here until it is fetched
         let dir = std::env::temp_dir().join(format!("airband-models-{}", random_hex(4))).display().to_string();
-        assert!(models().all(|m| !fetched(&dir, m)));
+        assert!(models().all(|m| !fetched(&dir, &m)));
     }
 
     #[test]
@@ -308,8 +308,8 @@ mod tests {
         // a phone that has every engine the catalogue names
         let device = HostDevice { engines: airband_core::catalog::current().models.iter().map(|m| m.engine.clone()).collect(), os: "ios".into(), os_version: u32::MAX };
         let m = model(&kind, &device).unwrap();
-        fetch_local_model(dir.clone(), m).unwrap();
-        assert!(fetched(&dir, m) && local_model_progress() == 100);
-        println!("{kind}: fetched to {} in {:.0} s", folder(&dir, m).display(), began.elapsed().as_secs_f32());
+        fetch_local_model(dir.clone(), &m).unwrap();
+        assert!(fetched(&dir, &m) && local_model_progress() == 100);
+        println!("{kind}: fetched to {} in {:.0} s", folder(&dir, &m).display(), began.elapsed().as_secs_f32());
     }
 }

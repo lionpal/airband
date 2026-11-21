@@ -6,7 +6,7 @@
 //! each has a file of its own under `ears/`.
 use super::*;
 use airband_core::audio::{Endpointer, Heard, samples};
-use airband_core::radio::EarsGrant;
+use airband_core::radio::Pass;
 use std::collections::VecDeque;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{Receiver, channel};
@@ -57,7 +57,7 @@ pub(crate) fn read_briefly(socket: &Socket) {
 /// finished, what is shown as he talks, carrying on after the service ends a turn) is the same for all.
 pub(crate) struct Wire {
     /// Open the connection and say what is coming.
-    pub connect: fn(&EarsGrant, &str) -> Result<Socket, ()>,
+    pub connect: fn(&Pass, &str) -> Result<Socket, ()>,
     /// One piece of the microphone's sound.
     pub audio: fn(&str, &[u8]) -> Message,
     /// No more sound is coming: say what you have.
@@ -96,7 +96,7 @@ fn drain(wire: &Wire, socket: &mut Socket, kept: &mut Vec<String>, ended: &mut b
 /// (a long silence) a new one is opened and what he said so far is kept.
 /// Ok(None) is silence. Err is a failure of the service or the line before anything was heard: nothing was lost
 /// that the caller cannot get by listening again another way.
-pub(crate) fn live(wire: &'static Wire, pass: Arc<dyn Fn() -> EarsGrant + Send + Sync>, host: &dyn RadioHost, rate: u32, header: Vec<u8>, manual: bool) -> Result<Option<String>, ()> {
+pub(crate) fn live(wire: &'static Wire, pass: Arc<dyn Fn() -> Option<Pass> + Send + Sync>, host: &dyn RadioHost, rate: u32, header: Vec<u8>, manual: bool) -> Result<Option<String>, ()> {
     // what goes first on every connection: a recording's header, for a service that wants one
     let header: Vec<Vec<u8>> = if wire.header { vec![header] } else { Vec::new() };
     let lead = header.len();
@@ -106,8 +106,8 @@ pub(crate) fn live(wire: &'static Wire, pass: Arc<dyn Fn() -> EarsGrant + Send +
         let (tx, rx) = channel();
         let (pass, request) = (pass.clone(), request.to_string());
         thread::spawn(move || {
-            let grant = pass();
-            let _ = tx.send((wire.connect)(&grant, &request));
+            // with no pass to be had there is nothing to connect with
+            let _ = tx.send(pass().ok_or(()).and_then(|grant| (wire.connect)(&grant, &request)));
         });
         rx
     };
@@ -302,8 +302,8 @@ mod tests {
         };
         // WITHOUT_NAMES leaves out the names he is likely to say
         let phrases = if std::env::var("WITHOUT_NAMES").is_ok() { Vec::new() } else { vec!["airband".into(), "shop two".into()] };
-        let grant = EarsGrant { kind, token, set, phrases };
-        let said = live(l.wire, Arc::new(move || grant.clone()), &tape, 16000, crate::ears::wav_header(), std::env::var("MANUAL").is_ok())
+        let grant = Pass { dialect: kind, token, set, phrases };
+        let said = live(l.wire, Arc::new(move || Some(grant.clone())), &tape, 16000, crate::ears::wav_header(), std::env::var("MANUAL").is_ok())
         .unwrap();
         println!("{:>5} ms  FINAL: {said:?} (the recording is {} ms long)", tape.began.elapsed().as_millis(), pcm.len() / 32);
         assert!(said.is_some_and(|s| !s.is_empty()));
