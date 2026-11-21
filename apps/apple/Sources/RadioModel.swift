@@ -93,8 +93,15 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         #if DEBUG
         // development only: `-airband.devMic YES` opens the microphone a few seconds after launch, as a tap on
         // the big button would, for a run nobody is there to tap
+        // the models he chose are fetched first, the microphone is open for eight seconds, and what it heard is sent
         if UserDefaults.standard.bool(forKey: "airband.devMic") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in Task { await self?.talk() } }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                self?.finishChoices { problem in
+                    NSLog("airband dev: models fetched: \(problem ?? "ok")")
+                    Task { await self?.talk() }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 8) { Task { NSLog("airband dev: closing the microphone"); await self?.talk() } }
+                }
+            }
         }
         #endif
         let center = NotificationCenter.default
