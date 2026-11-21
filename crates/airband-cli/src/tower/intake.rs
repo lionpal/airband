@@ -45,7 +45,7 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
             let s = inner.session(&id).unwrap();
             s.waiting = false;
             s.doing = None;
-            inner.drop_pending(&id, None);
+            inner.no_longer_waiting(&id);
         }
         Event::Activity { text } => {
             let text: String = text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(80).collect();

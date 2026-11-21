@@ -261,10 +261,12 @@ async fn next(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
         if !inner.call(&radio).connected() {
             log(format!("{radio} connected"));
             inner.call(&radio).began = super::now();
-            // He has just turned reading aloud on. What was said before this is in the chat for him to read: it is
-            // not read out now, hours late. Only what comes from here on is.
+            // He has just turned reading aloud on. What was said long before this is in the chat for him to
+            // read: it is not read out now, hours late. What came in the last few minutes still is, because a
+            // radio also goes quiet for a while when he is only dictating something long.
             if !inner.connected() {
-                inner.pending.clear();
+                let recent = super::now().saturating_sub(STILL_NEWS.as_millis() as u64);
+                inner.pending.retain(|p| p.created >= recent);
             }
             // whatever it was in the middle of last time, it is free now
             let call = inner.call(&radio);
@@ -288,6 +290,17 @@ async fn next(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// A radio on a call that is busy with something else (he has the microphone open) says it is still there,
+/// so the tower does not take it for gone. Nothing is handed to it for that.
+async fn busy(State(app): State<Arc<App>>, headers: HeaderMap) -> Json<Value> {
+    let mut inner = app.inner.lock().unwrap();
+    let call = inner.call(&radio_of(&headers));
+    if call.last_poll.is_some() {
+        call.last_poll = Some(Instant::now());
+    }
+    Json(json!({}))
 }
 
 async fn heard(State(app): State<Arc<App>>, headers: HeaderMap, Json(h): Json<Heard>) -> Json<Value> {
@@ -630,6 +643,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/agent/permission/{id}", get(permission_state).delete(permission_withdraw))
         .route("/v1/radio/next", get(next))
         .route("/v1/radio/heard", post(heard))
+        .route("/v1/radio/busy", post(busy))
         .route("/v1/radio/ready", post(ready))
         .route("/v1/radio/utterance", post(utterance))
         .route("/v1/radio/feed", get(feed))
