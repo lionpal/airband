@@ -1,107 +1,5 @@
-//! Speech on the wire. The tower turns 16-bit PCM from a voice service into IMA ADPCM, four bits a sample, in
-//! small blocks that each decode on their own; the radio turns them back. About a quarter of the size of the
-//! PCM (12 KB a second at 24 kHz), no codec library on either side, and a block lost or late spoils a tenth of
-//! a second and nothing after it.
-//!
-//! A block is: the first sample (i16, little-endian), the step index (u8), a zero byte, then the remaining
-//! samples as 4-bit codes, low nibble first.
-
-/// Samples in one block: a tenth of a second at 24 kHz.
-pub const BLOCK_SAMPLES: usize = 2400;
-/// Bytes in one full block.
-pub const BLOCK_BYTES: usize = 4 + (BLOCK_SAMPLES - 1).div_ceil(2);
-
-const INDEX: [i32; 16] = [-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8];
-const STEP: [i32; 89] = [
-    7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209, 230, 253,
-    279, 307, 337, 371, 408, 449, 494, 544, 598, 658, 724, 796, 876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066, 2272, 2499, 2749, 3024, 3327, 3660, 4026,
-    4428, 4871, 5358, 5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767,
-];
-
-/// Carries the encoder's step size from one block to the next, so quality does not dip at each block's start.
-#[derive(Default, Clone, Copy)]
-pub struct Encoder {
-    index: i32,
-}
-
-fn step(predicted: &mut i32, index: &mut i32, code: u8) {
-    let s = STEP[*index as usize];
-    let mut diff = s >> 3;
-    if code & 4 != 0 {
-        diff += s;
-    }
-    if code & 2 != 0 {
-        diff += s >> 1;
-    }
-    if code & 1 != 0 {
-        diff += s >> 2;
-    }
-    *predicted = if code & 8 != 0 { *predicted - diff } else { *predicted + diff }.clamp(-32768, 32767);
-    *index = (*index + INDEX[code as usize]).clamp(0, 88);
-}
-
-impl Encoder {
-    /// One block from up to [`BLOCK_SAMPLES`] samples. A short last block is fine.
-    pub fn block(&mut self, samples: &[i16]) -> Vec<u8> {
-        let Some((&first, rest)) = samples.split_first() else { return Vec::new() };
-        let mut out = Vec::with_capacity(4 + rest.len().div_ceil(2));
-        out.extend_from_slice(&first.to_le_bytes());
-        out.push(self.index as u8);
-        out.push(0);
-        let mut predicted = first as i32;
-        let mut pending: Option<u8> = None;
-        for &sample in rest {
-            let s = STEP[self.index as usize];
-            let mut diff = sample as i32 - predicted;
-            let mut code = 0u8;
-            if diff < 0 {
-                code = 8;
-                diff = -diff;
-            }
-            if diff >= s {
-                code |= 4;
-                diff -= s;
-            }
-            if diff >= s >> 1 {
-                code |= 2;
-                diff -= s >> 1;
-            }
-            if diff >= s >> 2 {
-                code |= 1;
-            }
-            step(&mut predicted, &mut self.index, code);
-            match pending.take() {
-                None => pending = Some(code),
-                Some(low) => out.push(low | (code << 4)),
-            }
-        }
-        if let Some(low) = pending {
-            out.push(low);
-        }
-        out
-    }
-}
-
-/// One block back to samples. `samples` is how many the block holds (the last block of a clip may be short).
-pub fn decode_block(block: &[u8], samples: usize) -> Vec<i16> {
-    if block.len() < 4 || samples == 0 {
-        return Vec::new();
-    }
-    let mut predicted = i16::from_le_bytes([block[0], block[1]]) as i32;
-    let mut index = (block[2] as i32).clamp(0, 88);
-    let mut out = Vec::with_capacity(samples);
-    out.push(predicted as i16);
-    'bytes: for &byte in &block[4..] {
-        for code in [byte & 15, byte >> 4] {
-            if out.len() == samples {
-                break 'bytes;
-            }
-            step(&mut predicted, &mut index, code);
-            out.push(predicted as i16);
-        }
-    }
-    out
-}
+//! Sound and bytes shared by every host: when he has finished speaking ([`Endpointer`]), microphone bytes as
+//! samples, and base64. The sound itself is made and heard on the phone; none crosses to his computer.
 
 pub fn base64_encode(bytes: &[u8]) -> String {
     use base64::Engine;
@@ -199,28 +97,6 @@ pub fn samples(bytes: &[u8]) -> Vec<i16> {
 mod tests {
     use super::*;
 
-    fn tone(n: usize) -> Vec<i16> {
-        (0..n).map(|i| ((i as f32 * 0.05).sin() * 9000.0 + (i as f32 * 0.31).sin() * 3000.0) as i16).collect()
-    }
-
-    #[test]
-    fn a_block_is_a_quarter_the_size_and_decodes_close_to_what_went_in() {
-        let input = tone(BLOCK_SAMPLES * 3);
-        let mut enc = Encoder::default();
-        let mut worst = 0i32;
-        for chunk in input.chunks(BLOCK_SAMPLES) {
-            let block = enc.block(chunk);
-            assert_eq!(block.len(), BLOCK_BYTES);
-            assert!(block.len() * 4 <= chunk.len() * 2 + 16);
-            let back = decode_block(&block, chunk.len());
-            assert_eq!(back.len(), chunk.len());
-            assert_eq!(back[0], chunk[0]);
-            // skip the first few samples of the very first block, while the step size is still finding its level
-            worst = worst.max(chunk.iter().zip(&back).skip(40).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap());
-        }
-        assert!(worst < 1500, "worst error {worst}");
-    }
-
     #[test]
     fn endpointer_hears_speech_start_and_stop_and_plain_silence() {
         let rate = 16000;
@@ -247,26 +123,5 @@ mod tests {
         assert_eq!(run(&[(900.0, 0.6), (7000.0, 1.0), (900.0, 2.0)]), Heard::Finished);
         // a recording that opens on speech, with no quiet lead-in to learn the room from
         assert_eq!(run(&[(6000.0, 1.0), (40.0, 2.0)]), Heard::Finished);
-    }
-
-    #[test]
-    fn a_short_last_block_and_an_empty_one() {
-        let mut enc = Encoder::default();
-        let input = tone(777);
-        let block = enc.block(&input);
-        assert_eq!(decode_block(&block, 777).len(), 777);
-        assert!(enc.block(&[]).is_empty());
-        assert!(decode_block(&[], 5).is_empty());
-    }
-
-    #[test]
-    fn each_block_decodes_without_the_one_before() {
-        let input = tone(BLOCK_SAMPLES * 2);
-        let mut enc = Encoder::default();
-        let _first = enc.block(&input[..BLOCK_SAMPLES]);
-        let second = enc.block(&input[BLOCK_SAMPLES..]);
-        let back = decode_block(&second, BLOCK_SAMPLES);
-        let worst = input[BLOCK_SAMPLES..].iter().zip(&back).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap();
-        assert!(worst < 1500, "worst error {worst}");
     }
 }

@@ -58,9 +58,11 @@ brew install lionpal/airband/airband && airband start
 camera. What writes the summaries, what speaks and what listens are chosen in the app, on first run and later
 under Settings.
 
-To choose them at the computer, run `airband setup`. It asks about each and tries every choice with a real
-call. One of the choices for summaries is Alibaba Qwen 3.5 4B, which airband downloads (2.7 GB) and runs on
-the computer itself, so no message leaves it. Run `airband setup` again to change a choice.
+Listening and the voice are the phone's: a model that runs on it, or a service it reaches with a key you
+enter in the app. Nothing about either is set on the computer. What writes the summaries can also be chosen
+at the computer, with `airband setup`, which tries the choice with a real call. One of the choices for
+summaries is Alibaba Qwen 3.5 4B, which airband downloads (2.7 GB) and runs on the computer itself, so no
+message leaves it. Run `airband setup` again to change it.
 
 Then start your coding agent the way you always do. Each session shows up in the app under its project.
 In Codex, type `/hooks` once and trust airband's hooks.

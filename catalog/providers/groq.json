@@ -3,7 +3,25 @@
   "name": "Groq",
   "key": {
     "name": "Groq API key",
-    "at": "console.groq.com/keys"
+    "at": "console.groq.com/keys",
+    "check": {
+      "method": "GET",
+      "url": "{url}/models",
+      "auth": {
+        "header": "authorization",
+        "prefix": "Bearer "
+      },
+      "good": [
+        200
+      ],
+      "wrong_key": [
+        401
+      ],
+      "refused": [
+        403,
+        429
+      ]
+    }
   },
   "offers": [
     {

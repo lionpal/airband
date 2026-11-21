@@ -1,6 +1,6 @@
 //! The provider table, which the phone core shares (see `airband_core::providers`), as this program sees
-//! it: the offers it has the code for. Reading is done here in the tower (`tower/judge.rs`); speaking and
-//! listening by the phone core, which the tower uses too.
+//! it: the offers it has the code for. Reading is done here in the tower (`tower/judge.rs`). Speaking and
+//! listening are the phone's, so nothing is offered for them on this computer.
 pub use airband_core::providers::*;
 use std::sync::Arc;
 
@@ -8,8 +8,7 @@ use std::sync::Arc;
 pub fn speaks(offer: &Offer) -> bool {
     match offer.job {
         Job::Summary => crate::tower::judge::reads(offer),
-        Job::Voice => airband_radio::voices::speaks(offer),
-        Job::Ears => airband_radio::hears::listens(offer),
+        Job::Voice | Job::Ears => false,
     }
 }
 

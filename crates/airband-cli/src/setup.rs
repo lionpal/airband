@@ -1,34 +1,15 @@
-//! `airband setup`: choose what reads, what speaks and what listens, in the terminal, and pair a phone.
-//! `airband keys`: the keys those use.
+//! `airband setup`: choose what reads his agents' messages, in the terminal, and pair a phone. What listens
+//! and what speaks are chosen on the phone and run there: nothing of either is set on this computer.
+//! `airband keys`: the keys reading uses.
 //!
 //! What can be chosen is what `providers::offering` lists; nothing in the questions below names a provider.
 //!
-//! A key is kept once, under a name, with the provider it is for (`Config::keys`). The summaries, the voice
-//! and the listening each use a key by its value, and the settings file writes that as the key's name, so
-//! one key serves as many of them as its provider can do and a provider can have several keys.
+//! A key is kept once, under a name, with the provider it is for (`Config::keys`). What reads uses a key by
+//! its value, and the settings file writes that as the key's name, so a provider can have several keys.
 use crate::config::{self, Config, StoredKey};
 use crate::providers::{self, Job, Provider, Use};
 use serde_json::json;
 use std::io::{BufRead, IsTerminal, Write};
-
-/// Where a job's choice is kept in the settings.
-pub(crate) fn slot(cfg: &mut Config, job: Job) -> &mut Use {
-    match job {
-        Job::Summary => &mut cfg.summarizer,
-        Job::Voice => &mut cfg.voice,
-        Job::Ears => &mut cfg.ears,
-    }
-}
-
-/// Try a job's choice for real: one call to the service. `sample` is a recording to play to a listening
-/// service, when he gave one.
-pub(crate) fn works(cfg: &Config, job: Job, sample: Option<&str>) -> Result<String, String> {
-    match job {
-        Job::Summary => crate::tower::try_model(cfg),
-        Job::Voice => crate::tower::try_voice(cfg),
-        Job::Ears => crate::tower::try_ears(cfg, sample),
-    }
-}
 
 fn line(ask: &str) -> String {
     print!("{ask}");
@@ -84,10 +65,10 @@ fn key_for(cfg: &mut Config, p: &Provider) -> Option<String> {
     Some(pasted)
 }
 
-/// One of the three choices: which provider does this job, with what key, and does it answer?
-/// `set` puts the choice in the settings, or says why it cannot; `works` tries it for real.
-fn choose(cfg: &mut Config, job: Job, title: &str, about: &str, none: &str) {
-    println!("\n{title}\n  {about}\n  Now: {}", slot(cfg, job).describe(job));
+/// The one choice made here: which provider reads, with what key, and does it answer?
+fn choose(cfg: &mut Config, title: &str, about: &str, none: &str) {
+    let job = Job::Summary;
+    println!("\n{title}\n  {about}\n  Now: {}", cfg.summarizer.describe(job));
     // every offer for the job: a provider that does it more than one way is listed once for each
     let offered = providers::in_order(job);
     loop {
@@ -124,8 +105,8 @@ fn choose(cfg: &mut Config, job: Job, title: &str, about: &str, none: &str) {
             }
         };
         let none_chosen = chosen.is_none();
-        *slot(cfg, job) = chosen;
-        match if none_chosen { Ok("Set to none.".into()) } else { works(cfg, job, None) } {
+        cfg.summarizer = chosen;
+        match if none_chosen { Ok("Set to none.".into()) } else { crate::tower::try_model(cfg) } {
             Ok(said) => {
                 println!("  {said}");
                 return;
@@ -152,10 +133,8 @@ pub fn setup(mut cfg: Config, start: bool) -> Result<(), String> {
     if !name.is_empty() {
         cfg.name = name;
     }
-    println!("Three choices, then your phone. Keys you give stay on this computer{}.\nThey go to the service they are for and nowhere else: never to airband's servers.", format!(", {}", crate::vault::place()));
-    choose(&mut cfg, Job::Summary, "1 of 3. Summaries", "What reads your agents' messages and tells you the short of them.", "None: you get every message in full");
-    choose(&mut cfg, Job::Voice, "2 of 3. Voice", "What reads to you when you turn reading aloud on.", "None: nothing is read aloud");
-    choose(&mut cfg, Job::Ears, "3 of 3. Listening", "What turns what you say into words. Your phone reaches it with a pass from this computer.", "None: you type");
+    println!("One choice, then your phone. What listens to you and what speaks are chosen in the app. A key you give stays on this computer{}.\nIt goes to the service it is for and nowhere else: never to airband's servers.", format!(", {}", crate::vault::place()));
+    choose(&mut cfg, "Summaries", "What reads your agents' messages and tells you the short of them.", "None: you get every message in full");
     config::save(&cfg)?;
     if !start {
         println!("\nSaved.");
@@ -178,12 +157,6 @@ fn used_for(cfg: &Config, secret: &str) -> Vec<&'static str> {
     let mut out = Vec::new();
     if has(&cfg.summarizer) {
         out.push("summaries");
-    }
-    if has(&cfg.voice) {
-        out.push("voice");
-    }
-    if has(&cfg.ears) {
-        out.push("listening");
     }
     out
 }

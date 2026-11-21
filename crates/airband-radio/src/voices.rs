@@ -1,5 +1,5 @@
-//! The voice services: a sentence in, 16-bit mono PCM out, a piece at a time. The tower uses these to make speech
-//! for a phone, and a phone uses them itself when he has given it a key of his own (`mouth.rs`).
+//! The voice services: a sentence in, 16-bit mono PCM out, a piece at a time. The phone uses these itself,
+//! with the key of his that is kept on it (`mouth.rs`). His computer makes no speech.
 //!
 //! Each way of reaching a voice service is an interface: a file under `voices/` with an `impl Synth` and a
 //! [`Voicing`] that names it, and a line of [`VOICES`]. A provider's row names the interface it speaks
@@ -7,9 +7,9 @@
 //! is a row and no code; one with a route of its own is one file here and its row.
 use airband_core::providers::{By, Interface, Job, Offer, Use};
 
-mod azure;
-mod elevenlabs;
-mod gemini;
+mod generate_content;
+mod ssml;
+mod timed_stream;
 mod speech;
 
 /// A voice service.
@@ -28,12 +28,43 @@ type Made = Result<Box<dyn Synth>, String>;
 /// One way of reaching a voice service.
 struct Voicing {
     is: Interface,
-    /// The voice a setting names, with what the row tells this interface.
-    make: fn(&Use, &By) -> Made,
+    /// The voice a setting names, with what the row tells this interface and what the service is called.
+    make: fn(&Use, &By, &str) -> Made,
+}
+
+/// Where a voice service with a route of its own is reached and how, all of it from its row: the address
+/// (with his settings filled in where it names them), the header its key goes in, whatever else it must be
+/// sent, the rate of the sound it gives back, and its name for when it has to be named to him.
+pub(crate) struct Reach {
+    url: String,
+    auth: (String, String),
+    headers: Vec<(String, String)>,
+    pub rate: u32,
+    name: String,
+}
+
+impl Reach {
+    fn of(voice: &Use, by: &By, name: &str) -> Result<Reach, String> {
+        let url = crate::net::fill(by.text("url"), &|field| voice.get(Job::Voice, field))?;
+        let auth = by.auth().map(|a| (a.header.clone(), a.value(&voice.key))).ok_or("This version of airband was not told how that voice service takes its key.")?;
+        let rate = by.with.get("rate").and_then(serde_json::Value::as_u64).filter(|r| (8000..=48000).contains(r)).ok_or("That voice service's row does not say the rate of its sound.")? as u32;
+        let headers = by.with.get("headers").and_then(serde_json::Value::as_object).map(|h| h.iter().filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string()))).collect()).unwrap_or_default();
+        Ok(Reach { url, auth, headers, rate, name: name.into() })
+    }
+
+    /// A request to it, with the key and what else the row says to send.
+    fn post(&self, timeout: std::time::Duration) -> ureq::RequestBuilder<ureq::typestate::WithBody> {
+        self.headers.iter().fold(crate::net::agent(timeout).post(&self.url).header(self.auth.0.as_str(), self.auth.1.as_str()), |r, (k, v)| r.header(k.as_str(), v.as_str()))
+    }
+
+    /// What is said when it answers with anything but the sound.
+    fn answered(&self, status: u16) -> String {
+        format!("{} answered {status}", self.name)
+    }
 }
 
 /// Every voice interface this build speaks.
-const VOICES: &[Voicing] = &[speech::VOICING, gemini::VOICING, azure::VOICING, elevenlabs::VOICING];
+const VOICES: &[Voicing] = &[speech::VOICING, generate_content::VOICING, ssml::VOICING, timed_stream::VOICING];
 
 /// Does this build have the code to speak through what this offer names?
 pub fn speaks(offer: &Offer) -> bool {
@@ -45,9 +76,9 @@ pub fn synth(voice: &Use) -> Made {
     if voice.is_none() {
         return Err("No voice is set.".into());
     }
-    let (_, offer) = voice.offer(Job::Voice).ok_or("This version of airband has no such voice service.")?;
+    let (provider, offer) = voice.offer(Job::Voice).ok_or("This version of airband has no such voice service.")?;
     let voicing = VOICES.iter().find(|v| v.is.fits(&offer)).ok_or("This version of airband cannot speak through that voice service yet. Update airband.")?;
-    (voicing.make)(voice, &offer.by)
+    (voicing.make)(voice, &offer.by, &provider.name)
 }
 
 /// The same, for a caller with nothing to say about why not.
@@ -73,13 +104,38 @@ mod tests {
         }
     }
 
+    /// Against a real service. VOICE_WITH is a provider's id in the catalogue, VOICE_KEY its key, and VOICE_SET
+    /// any of its settings as `field=value,field=value`:
+    ///   VOICE_WITH=… VOICE_KEY=… VOICE_SET=region=… cargo test -p airband-radio -- --ignored --nocapture speaks_with
+    #[test]
+    #[ignore]
+    fn speaks_with_a_real_service() {
+        let provider = airband_core::providers::provider(&std::env::var("VOICE_WITH").unwrap()).expect("a provider in the catalogue");
+        let offer = provider.offers.iter().find(|o| o.job == Job::Voice).expect("an offer of its that speaks");
+        let mut with = Use::of(&provider.id, &offer.id);
+        with.key = std::env::var("VOICE_KEY").unwrap();
+        for (field, value) in std::env::var("VOICE_SET").unwrap_or_default().split(',').filter_map(|s| s.split_once('=')) {
+            with.set.insert(field.into(), serde_json::json!(value));
+        }
+        let synth = synth(&with).unwrap();
+        let (mut bytes, mut marks) = (0usize, 0usize);
+        synth.speak("Shop two is waiting.", &mut |pcm| bytes += pcm.len(), &mut |_, _| marks += 1).unwrap();
+        println!("{}: {:.1} s of sound at {} Hz, {marks} word timings", provider.name, bytes as f32 / 2.0 / synth.rate() as f32, synth.rate());
+        assert!(bytes > synth.rate() as usize);
+        // and a key it does not know is said by the service's own name, from its row
+        with.key = "airband-not-a-key".into();
+        let why = super::synth(&with).unwrap().speak("Shop two.", &mut |_| {}, &mut |_, _| {}).unwrap_err();
+        println!("  with a broken key: {why}");
+        assert!(why.starts_with(&provider.name));
+    }
+
     #[test]
     fn a_voice_this_build_cannot_speak_is_not_offered_and_says_why() {
         let offer: Offer = serde_json::from_value(serde_json::json!({ "id": "new", "job": "voice", "by": { "interface": "something-new" }, "label": "New" })).unwrap();
         assert!(!speaks(&offer));
         // an interface it has, asked for something it cannot do yet, or not told what it needs
         let needs: Offer = serde_json::from_value(serde_json::json!({ "id": "new", "job": "voice", "by": { "interface": "speech" }, "label": "New", "needs": ["word-timings"] })).unwrap();
-        let untold: Offer = serde_json::from_value(serde_json::json!({ "id": "new", "job": "voice", "by": { "interface": "gemini" }, "label": "New" })).unwrap();
+        let untold: Offer = serde_json::from_value(serde_json::json!({ "id": "new", "job": "voice", "by": { "interface": "generate-content" }, "label": "New" })).unwrap();
         assert!(!speaks(&needs) && !speaks(&untold));
         // a rate that is not one is said, not replaced with a guess
         let odd = Use { kind: "local".into(), offer: "voice-server".into(), key: String::new(), set: [("rate".to_string(), serde_json::json!("fast"))].into_iter().collect() };

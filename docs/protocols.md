@@ -107,7 +107,7 @@ Call mode, one spoken transmission at a time:
 
 | Call | Body → answer | Meaning |
 |---|---|---|
-| `GET next` | → `Transmission`, or 204 | Held open up to 25 s. Answered only for a radio that says it is on a call (see `POST presence`). With `?voice=own` the radio has a voice of its own: the tower makes no speech for it and sends words only. `joined=1` on the first request after he turns reading aloud on: what was said more than ten minutes before is left for the chat. `have=<id>` is the last transmission the radio got: if the tower handed it another since, in an answer that never arrived, it hands that one over again. |
+| `GET next` | → `Transmission`, or 204 | Held open up to 25 s. Answered only for a radio that says it is on a call (see `POST presence`). A transmission is words: the radio says them with the voice he chose on it, and the tower makes no sound. `joined=1` on the first request after he turns reading aloud on: what was said more than ten minutes before is left for the chat. `have=<id>` is the last transmission the radio got: if the tower handed it another since, in an answer that never arrived, it hands that one over again. |
 | `POST heard` | `{ id }` | That transmission was spoken to the end. Only now is it off the queue. |
 | `POST unheard` | `{ id, why }` | It was handed over and no sound came of it. It goes back in the queue, and that radio is handed nothing for a minute. |
 | `POST presence` | `Presence` `{ on_call, showing_chat }` | Where the radio stands: reading aloud on or off, the chat in front of him or not. Sent when either changes, and every quarter of a minute while the radio has nothing else to ask (the microphone is open). Every other request says the same: in the sealed request's `presence`, or for a radio paired directly in the header `x-airband-presence`. The tower infers none of it from which requests a radio makes. A radio it has not heard from for 60 s is gone. |
@@ -115,7 +115,7 @@ Call mode, one spoken transmission at a time:
 | `POST ready` | | Free for the next transmission. Something it took and said nothing about goes back in the queue. |
 
 ```json
-{ "id": "9a41…", "callsign": "shop two", "kind": "needs-you", "say": "Shop two. The checker passes…", "waiting": 2, "speech": "…" }
+{ "id": "9a41…", "callsign": "shop two", "kind": "needs-you", "say": "Shop two. The checker passes…", "waiting": 2 }
 ```
 
 One transmission is out at a time; questions go before reports; each agent has at most one message waiting
@@ -127,7 +127,7 @@ room he was in (`group:<name>`). `label` is the button's words when it is a quic
 ids of files sent with `POST attachment`. `others` are the agents on his screen that another of his computers
 has, each `{ callsign, group, said, ago }`.
 
-A `Reply` is `{ say, done, listen, speech, ask, elsewhere }`. `done` says that what he asked was done whole and
+A `Reply` is `{ say, done, listen, ask, elsewhere }`. `done` says that what he asked was done whole and
 `say` only confirms it: a radio with a screen already shows his words in the chat, so it shows `say` only when
 `done` is not set. `say` is spoken back and `listen` asks for the
 microphone again. `ask` lists the agents his words could be for, likeliest first, when the tower could not
@@ -138,10 +138,7 @@ Chat mode and the rest:
 | Call | Body → answer | Meaning |
 |---|---|---|
 | `GET feed?scope=…&since=<rev>&wait=<s>` | → `Feed` | Every line new or changed after change count `since`, oldest change first; pass `rev` back next time. `since=0` gets the newest lines. `scope`: `all`, `group:<name>`, `agent:<callsign>`. Held open up to 25 s. `roster=<roster_rev>`: also answer when the roster changes. `answers` holds what came of things this radio said (see "What he says"); one arriving ends the wait too. `after=<seq>` is the older form (new lines only) and is still answered. |
-| `GET message/<id>?form=detail\|full\|speech\|spoken` | `{ text }`, or `{ speech }` | The fuller spoken version, exactly what the agent wrote, the id of a clip of the whole message read aloud, or (`spoken`) the words of that clip for a radio that reads them in a voice of its own. |
-| `GET speech/<id>?from=<block>` | `{ rate, data, samples, next, done, text, marks }` | The next part of a clip of the tower's voice: IMA ADPCM blocks, base64. `text` comes with the first part; `marks` are pairs of (where a word starts in `text`, milliseconds into the clip) when the voice gives timings. 404 when the tower has no voice. |
-| `GET ears` | `{ by: "live", dialect, token, set, phrases }`, `{ by: "tower" }` or `{ by: "none", phrases }` | What the phone should listen with. `live`: the phone speaks to the service itself in `dialect`, with `token` (a short-lived pass) and `set` (what that service has to be told: a region, a language, a model). `tower`: the phone records and sends the recording to `POST hear`. `none`: nothing is set to listen here. `phrases` are names he is likely to say. |
-| `POST hear` | `{ clip, data, samples, last }` → `{ text }` | Part of a recording, for a tower whose listening service takes a finished clip: 16 kHz mono in the same compressed blocks speech comes in, ten seconds a part. The last part is answered with the words. |
+| `GET message/<id>?form=detail\|full\|spoken` | `{ text }` | The fuller spoken version, exactly what the agent wrote, or (`spoken`) the whole message as it is read aloud, for the radio to say in the voice he chose on it. |
 | `GET picture/<id>?from=<byte>` | `{ data, next, done }` | One part (120 KB at most, base64) of a picture's kept copy. |
 | `POST attachment` | `{ id, name, from, data, total }` → `{ next }`, or `{ error }` | One part of a file he is attaching, 120 KB at most. `total` is how long the whole file is; the parts may come in any order, several at once, and `next` says how much of the file is whole from its start. |
 | `POST dismiss` | `{ message }` → `{}`, or `{ error }` | He does not mean to answer this question. It stops being open. The agent is told nothing. |
@@ -163,7 +160,7 @@ Chat mode and the rest:
 
 ### The feed
 
-A `Feed` is `{ schema, rev, messages, roster, roster_rev, seq, open, projects, quick, colours, station, direct, listens }`.
+A `Feed` is `{ schema, rev, messages, roster, roster_rev, seq, open, projects, quick, colours, station, direct }`.
 
 - `open`: the id of every message that needs him and is unanswered, whether or not it is in `messages`.
 - `projects`: the names a new agent can be launched in.
@@ -173,7 +170,6 @@ A `Feed` is `{ schema, rev, messages, roster, roster_rev, seq, open, projects, q
 - `station`: what this computer is called.
 - `direct`: addresses where a paired radio may reach this tower without the relay, `http://<address>:<port>`:
   its local network addresses when `airband lan` is on, and its Tailscale addresses (see The sealed route).
-- `listens`: this tower has a key of its own for a listening service. Never the key.
 
 A message is `{ seq, id, at, from, group, to, kind, text, long, options, recommended, read, own_session, queued,
 seen, cancelled, permission, pictures, links, agent, rev, open }`.
@@ -271,12 +267,11 @@ email); `live` marks the one in use. Each of `limits` is `{ name, used, resets_a
 "5 hours"), from 0 to 1, and milliseconds since 1970. `problem` says why the account could not be checked.
 Nothing that could sign in as an account is ever sent.
 
-### Listening
+### Listening and speaking
 
-`dialect` in the answer to `GET ears` names a live dialect: a line of `LISTENERS` in `crates/airband-radio/src/ears.rs`, which is also the `by.interface` of the provider's row. The radio
-streams the microphone to that service as he speaks, and falls back to one upload if the connection cannot be
-made. With a key of his own in the phone, the radio gets its pass from the service itself and asks neither the
-tower nor the relay.
+Neither is part of this protocol. What listens and what speaks are chosen on the radio and run by it: a model
+on the phone, or a service the phone reaches itself with a key of his kept on it. The tower is sent words and
+sends words. It has no voice, hears no recording, hands out no pass and holds no key for either.
 
 ## `airband.relay/1`: sealed requests
 
@@ -321,8 +316,8 @@ with the hash it holds, in constant time.
 The tower gives the relay the radio token's hash in `x-airband-radio-hash` when it opens the channel; a channel
 is not opened without it, and nobody changes it afterwards.
 
-The relay has no speech service and lends none: what speaks and what listens is a model on the phone, a key
-of his own on the phone, or a service set on his computer.
+The relay has no speech service and lends none: what speaks and what listens is a model on the phone or a
+service the phone reaches with a key of his own.
 
 Limits, each answered with 429. Per channel in a minute: 3000 calls and 60 messages left in `queue`;
 from one internet address, twice that across all channels. At most 16 calls wait for an answer on a
@@ -432,6 +427,14 @@ It is given no tools. `airband setup` or `airband model` chooses it; it is `summ
 
 `kind` is a provider's id and `offer` is which of its offers (a provider can do one job more than one way).
 The key is the provider's: one key serves all its offers.
+
+A provider's row says how its key is tested, under `key.check`: `{ method, url, auth: { header, prefix },
+headers, good, wrong_key, refused, paid }`. It is one request that costs nothing and that a wrong key fails
+(listing models, asking for a token). `url` may name settings of the offer being chosen in braces
+(`{url}/models`). `good`, `wrong_key` and `refused` are lists of statuses, and the answer is read by its
+status alone. `paid` marks a row whose service has no free request that needs the key. When he gives a key in
+the app, the phone makes this request itself before the key is kept anywhere; a key that does not pass is not
+kept, and he is told whether the service did not know it, would not serve it, or could not be reached.
 
 `command` is any program that reads a prompt on standard input and writes the answer to standard output.
 `openai` is any service that speaks OpenAI's chat API, a model on his own computer included. `key` is written

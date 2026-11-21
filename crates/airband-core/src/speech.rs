@@ -10,7 +10,6 @@ static PATH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\w.@~-]*(?:/[\w.@-
 static EXT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\.\w{1,5}$").unwrap());
 static LEAD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^\s*[#>*-]+\s*").unwrap());
 static SPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
-static BLOCKY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"```|\n\s*[-*|#]|\n.*\n.*\n").unwrap());
 
 /// Strip what cannot be said aloud: code blocks, markdown marks, links, and all of a path but its last name.
 pub fn spoken(text: &str) -> String {
@@ -30,11 +29,6 @@ pub fn spoken(text: &str) -> String {
     let t = LEAD.replace_all(&t, "");
     let t = t.replace(['*', '~', '|'], "").replace('_', " ");
     SPACE.replace_all(&t, " ").trim().to_string()
-}
-
-/// True when a message is short plain prose that can be read out as written, with no model in between.
-pub fn reads_as_written(text: &str, max_chars: usize) -> bool {
-    text.chars().count() <= max_chars && !BLOCKY.is_match(text) && !PATH.find_iter(text).any(|m| m.as_str().matches('/').count() >= 2)
 }
 
 static WEB_LINK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"https?://[^\s<>"'`\]\)]+"#).unwrap());
@@ -88,12 +82,6 @@ mod tests {
     #[test]
     fn drops_code_blocks() {
         assert_eq!(spoken("Ran it:\n```\nnpm test\n```\nAll green."), "Ran it: All green.");
-    }
-    #[test]
-    fn short_prose_reads_as_written() {
-        assert!(reads_as_written("Both questions are rewritten. Want me to commit?", 220));
-        assert!(!reads_as_written("Done:\n- one\n- two", 220));
-        assert!(!reads_as_written("See /Users/c/shop/x.json", 220));
     }
     #[test]
     fn links_are_found_once_without_their_punctuation() {

@@ -1,11 +1,10 @@
 // The phone's half of the radio: make sound, capture sound. Every decision about when to do either, which
 // service speaks or listens, and when he has finished talking is in the Rust core; this file only carries them out.
 //
-// Four jobs, each small:
-//   play(rate, pcm, last)   audio the tower's voice made, arriving in parts, played as it arrives
-//   record…                 the microphone as plain PCM, for a listening service the core talks to
-//   speak(text)             Apple's own voice, when the tower is set to it or its audio is late
-//   listen()                Apple's own recognition, when the tower is set to it or a service fails
+// Two jobs, each small:
+//   play(rate, pcm, last)   sound the voice he chose on this phone made, arriving in parts, played as it arrives
+//   record…                 the microphone as plain PCM, for what he chose on this phone to listen with
+// His computer makes no sound and hears none. Apple's own voice and recognition are never used.
 //
 // Microphone settings follow what Backoffice learned on real phones (apps/mobile/ios/App/App/MicAecPlugin.swift):
 // voice processing on the input gives echo cancellation and noise suppression, and is only held while listening,
@@ -99,7 +98,7 @@ final class Voice: NSObject, @unchecked Sendable {
         if keepAlive != nil { set(.idle) }
     }
 
-    // MARK: playing the tower's voice, as it arrives
+    // MARK: playing what the chosen voice made, as it arrives
 
     private let playEngine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
@@ -256,15 +255,24 @@ final class Voice: NSObject, @unchecked Sendable {
         if !inCar { try? input.setVoiceProcessingEnabled(true) }
         let from = input.outputFormat(forBus: 0)
         guard from.sampleRate > 0, from.channelCount > 0,
-              let to = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Voice.micRate, channels: 1, interleaved: true),
-              let converter = AVAudioConverter(from: from, to: to) else {
+              let to = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Voice.micRate, channels: 1, interleaved: true) else {
             NSLog("airband: no microphone input")
             set(.idle)
             return false
         }
         recLock.lock(); recording = true; recLock.unlock()
-        input.installTap(onBus: 0, bufferSize: 2048, format: from) { [weak self] buffer, _ in
+        // The tap takes whatever format the input has when it is installed (`format: nil`), and the converter
+        // is made from the format of what actually arrives. Naming a format here crashes the app when the
+        // input's has changed since it was read a line ago, which turning voice processing on or off, or a
+        // change of route, does a moment later on a real phone.
+        input.removeTap(onBus: 0)
+        var converter: AVAudioConverter?
+        input.installTap(onBus: 0, bufferSize: 2048, format: nil) { [weak self] buffer, _ in
             guard let self else { return }
+            let from = buffer.format
+            guard from.sampleRate > 0, from.channelCount > 0 else { return }
+            if converter?.inputFormat != from { converter = AVAudioConverter(from: from, to: to) }
+            guard let converter else { return }
             let capacity = AVAudioFrameCount(Double(buffer.frameLength) * to.sampleRate / from.sampleRate) + 32
             guard let out = AVAudioPCMBuffer(pcmFormat: to, frameCapacity: capacity) else { return }
             var given = false
@@ -286,7 +294,9 @@ final class Voice: NSObject, @unchecked Sendable {
         do { try recEngine.start() } catch {
             NSLog("airband: microphone did not start: \(error.localizedDescription)")
             input.removeTap(onBus: 0)
-            recLock.lock(); recording = false; recLock.unlock()
+            recEngine.stop()
+            try? input.setVoiceProcessingEnabled(false)
+            recLock.lock(); recording = false; recLock.broadcast(); recLock.unlock()
             set(.idle)
             return false
         }

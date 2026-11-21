@@ -1,38 +1,33 @@
-//! ElevenLabs' own route, which says when each word is spoken. The row says where (`url`).
-use super::{Made, Synth, Voicing};
-use airband_core::providers::{By, Interface, Job, Use};
+//! Speech as a stream that says when each word is spoken: a line of JSON at a time, each with a piece of the
+//! sound and when each character of it is said, counted from the start of the clip. The row says where it is
+//! reached (`url`, which names his voice in braces), how the key is presented (`auth`) and the rate of what
+//! comes back (`rate`).
+use super::{Made, Reach, Synth, Voicing};
 use airband_core::audio::base64_decode;
+use airband_core::providers::{By, Interface, Job, Use};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
 use std::time::Duration;
 
-pub(super) const VOICING: Voicing = Voicing { is: Interface { name: "elevenlabs", can: &[], told: &["url"] }, make };
+pub(super) const VOICING: Voicing = Voicing { is: Interface { name: "timed-stream", can: &[], told: &["url", "auth", "rate"] }, make };
 
-fn make(voice: &Use, by: &By) -> Made {
-    Ok(Box::new(Elevenlabs { url: by.text("url").into(), key: voice.key.clone(), voice: voice.get(Job::Voice, "voice"), model: voice.get(Job::Voice, "model") }))
+fn make(voice: &Use, by: &By, name: &str) -> Made {
+    Ok(Box::new(Timed { reach: Reach::of(voice, by, name)?, model: voice.get(Job::Voice, "model") }))
 }
 
-struct Elevenlabs {
-    url: String,
-    key: String,
-    voice: String,
+struct Timed {
+    reach: Reach,
     model: String,
 }
 
-impl Synth for Elevenlabs {
+impl Synth for Timed {
     fn rate(&self) -> u32 {
-        24000
+        self.reach.rate
     }
     fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8]), mark: &mut dyn FnMut(u32, u32)) -> Result<(), String> {
-        // the streaming endpoint with timings: a line of JSON at a time, each with a piece of the sound and
-        // when each character of it is spoken, counted from the start of the clip
-        let res = crate::net::agent(Duration::from_secs(60))
-            .post(format!("{}/text-to-speech/{}/stream/with-timestamps?output_format=pcm_24000", self.url.trim_end_matches('/'), self.voice))
-            .header("xi-api-key", &self.key)
-            .send_json(json!({ "text": text, "model_id": self.model }))
-            .map_err(|e| e.to_string())?;
+        let res = self.reach.post(Duration::from_secs(60)).send_json(json!({ "text": text, "model_id": self.model })).map_err(|e| e.to_string())?;
         if res.status().as_u16() != 200 {
-            return Err(format!("ElevenLabs answered {}", res.status()));
+            return Err(self.reach.answered(res.status().as_u16()));
         }
         // where in the text the service has got to, and whether the character before was a gap between words
         let (mut at, mut gap) = (0u32, true);

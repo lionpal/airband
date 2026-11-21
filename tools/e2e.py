@@ -24,12 +24,12 @@ home, projects, got = os.path.join(work, "home"), os.path.join(work, "code"), os
 for d in (os.path.join(home, ".airband"), got, *(os.path.join(projects, p) for p in ("catalog", "logistics", "orders", "payouts"))):
     os.makedirs(d)
 OWN, RADIO = "e2e-own-token", "e2e-radio-token"
-# the model that reads everything: Claude Code as a command, or with --gemini the Gemini key this computer's own
-# tower already has for its voice
+# the model that reads everything: Claude Code as a command, or with --gemini a Gemini key given in the
+# environment (GEMINI_API_KEY)
 MODEL = {"kind": "command", "offer": "own", "argv": ["env", f"HOME={REAL_HOME}", "claude", "-p", "--model", "haiku", "--no-session-persistence", "--strict-mcp-config",
                                      "--system-prompt", "You rewrite messages. Reply with the JSON asked for and nothing else.", "--tools", ""]}
 if "--gemini" in sys.argv:
-    MODEL = {"kind": "gemini", "offer": "flash-lite", "key": json.load(open(os.path.join(REAL_HOME, ".airband", "config.json")))["voice"]["key"]}
+    MODEL = {"kind": "gemini", "offer": "flash-lite", "key": os.environ["GEMINI_API_KEY"]}
     if os.environ.get("GEMINI_MODEL"):
         MODEL["model"] = os.environ["GEMINI_MODEL"]
 # --local runs everything through the model the tower fetches and runs itself (catalog/providers/qwen.json).
@@ -384,7 +384,7 @@ try:
     unsure = said("hm, what about the other thing", others=there)
     check("when it cannot tell, it says who it might be for, to tap, and delivers nothing (model)", len(unsure.get("ask", [])) >= 2 and unsure["say"].startswith("Who is that for?"), unsure)
     say("@catalogpartpage never mind")  # so the words it was holding are not waiting for a name
-    check("with no voice set and no relay to lend one, there is nothing to read a message aloud with", http("GET", f"/v1/radio/message/{p['id']}?form=speech")[0] == 404)
+    check("the computer has no voice and no ears: it makes no speech, hands out no listening pass and takes no recording", http("GET", "/v1/radio/speech/x")[0] == 404 and http("GET", "/v1/radio/ears")[0] == 404 and http("POST", "/v1/radio/hear", {"clip": "c", "data": "", "samples": 0, "last": True})[0] in (404, 405) and "listens" not in feed())
     asked = http("GET", f"/v1/radio/message/{q['id']}?form=spoken&part=asked")[1] or {}
     check("a question can be read out as it was asked: who asks, its short form, and its answers", asked.get("text", "").startswith("orders refunds. ") and all(o in asked["text"] for o in q["options"]) and "in your own words" in asked["text"], asked)
     check("a tag for a team reaches every agent in it", say("@catalog commit what you have") in ("Sent to catalog part page and catalog import.", "Sent to catalog import and catalog part page."))

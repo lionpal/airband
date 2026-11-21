@@ -151,23 +151,24 @@ pub fn relay(mut cfg: Config, args: &[String]) -> Result<(), String> {
 fn option(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
 }
-/// `airband model`, `airband voice`, `airband ears`: show or change which provider does a job. Everything it
-/// knows about providers comes from the catalogue (`providers::offering`).
+/// `airband model`: show or change what reads. Everything it knows about providers comes from the catalogue
+/// (`providers::offering`). What listens and what speaks are chosen on the phone, not here.
 ///
-///   airband voice                      what is set, and what can be
-///   airband voice none                 nothing does this job
-///   airband voice <provider> [<offer>] [--key-env VARIABLE] [--<setting> <value> …]
-///   airband voice test                 one real call to what is set
-///   airband ears test <recording.wav>  play a recording to what is set, the way a phone would send it
+///   airband model                      what is set, and what can be
+///   airband model none                 nothing reads
+///   airband model <provider> [<offer>] [--key-env VARIABLE] [--<setting> <value> …]
+///   airband model test                 one real call to what is set
 ///
 /// A key is never given on the command line, where the shell and other programs can see it: it comes from an
 /// environment variable, or is one already kept for that provider (`airband keys`).
-fn provider_for(mut cfg: Config, job: crate::providers::Job, cmd: &str, what: &str, without: &str, args: &[String]) -> Result<(), String> {
+/// What reads each agent's message and decides what is worth showing, and who his words are for.
+pub fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
     use crate::providers::{self, Use};
+    let (job, cmd, what, without) = (providers::Job::Summary, "model", "Model", "You get every message in full, and with several agents you are asked who yours is for.");
     let offered = || providers::offering(job).iter().map(|p| p.id.clone()).collect::<Vec<_>>().join(", ");
     let chosen = match args.first().map(String::as_str) {
         None => {
-            let now = crate::setup::slot(&mut cfg, job).clone();
+            let now = cfg.summarizer.clone();
             println!("{what}: {}.{}", now.describe(job), if now.is_none() { format!(" {without}") } else { String::new() });
             println!("Change it:  airband {cmd} <provider> [<offer>] [--key-env VARIABLE] [--setting value]  |  airband {cmd} none  |  airband {cmd} test");
             for (p, o) in providers::in_order(job) {
@@ -178,7 +179,7 @@ fn provider_for(mut cfg: Config, job: crate::providers::Job, cmd: &str, what: &s
         }
         // one real call to what is set
         Some("test") => {
-            println!("{}", crate::setup::works(&cfg, job, args.get(1).map(String::as_str))?);
+            println!("{}", crate::tower::try_model(&cfg)?);
             return Ok(());
         }
         Some("none") => Use::default(),
@@ -213,15 +214,10 @@ fn provider_for(mut cfg: Config, job: crate::providers::Job, cmd: &str, what: &s
             u
         }
     };
-    *crate::setup::slot(&mut cfg, job) = chosen;
+    cfg.summarizer = chosen;
     config::save(&cfg)?;
-    println!("Saved. A running tower uses it from its next start: airband install");
+    println!("Saved. If airband is running it uses this from its next start: airband install");
     Ok(())
-}
-
-/// What reads each agent's message and decides what is worth showing, and who his words are for.
-pub fn model(cfg: Config, args: &[String]) -> Result<(), String> {
-    provider_for(cfg, crate::providers::Job::Summary, "model", "Model", "You get every message in full, and with several agents you are asked who yours is for.", args)
 }
 
 /// `airband lan [on | off]`: whether a paired phone on the same network may reach this computer straight.
@@ -237,24 +233,14 @@ pub fn lan(mut cfg: Config, args: &[String]) -> Result<(), String> {
         Some(other) => return Err(format!("airband lan takes on or off, not \"{other}\"")),
     }
     config::save(&cfg)?;
-    println!("Saved. A running tower uses it from its next start: airband install");
+    println!("Saved. If airband is running it uses this from its next start: airband install");
     Ok(())
-}
-
-/// What speaks to him on a call. Separate from `ears`.
-pub fn voice(cfg: Config, args: &[String]) -> Result<(), String> {
-    provider_for(cfg, crate::providers::Job::Voice, "voice", "Voice", "Without one the tower speaks nothing; a phone can speak with a voice of its own.", args)
-}
-
-/// What turns his speech into text on a call. Separate from `voice`.
-pub fn ears(cfg: Config, args: &[String]) -> Result<(), String> {
-    provider_for(cfg, crate::providers::Job::Ears, "ears", "Ears", "Without them the tower hears nothing; a phone can listen with a model or a key of its own.", args)
 }
 
 pub fn pair(mut cfg: Config, name: &str) -> Result<(), String> {
     // a slip like `airband pair --help` must not make a pairing called "--help"
     if name.starts_with('-') {
-        return Err(format!("\"{name}\" is not a name for a radio. Use:  airband pair [name]"));
+        return Err(format!("\"{name}\" is not a name for a phone. Use:  airband pair [name]"));
     }
     // one secret for a radio, whichever way it reaches the tower
     let secret = match cfg.pairings.iter().find(|p| p.name == name) {
@@ -291,14 +277,14 @@ pub fn pair(mut cfg: Config, name: &str) -> Result<(), String> {
             println!("\nPoint the phone's camera at this:\n\n{}", lines.join("\n"));
         }
     }
-    println!("\nOr open this on the radio's device, or paste it into the app. It is the key to your agents: treat it like a password.\n\n{link}");
+    println!("\nOr open this on your phone, or paste it into the app. It is the key to your agents: treat it like a password.\n\n{link}");
     Ok(())
 }
 
 pub fn unpair(mut cfg: Config, name: Option<&str>) -> Result<(), String> {
     let name = name.ok_or_else(|| format!("which one? paired: {}", cfg.pairings.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")))?;
     let Some(gone) = cfg.pairings.iter().find(|p| p.name == name).cloned() else {
-        return Err(format!("no radio is paired as \"{name}\""));
+        return Err(format!("no phone is paired as \"{name}\""));
     };
     cfg.pairings.retain(|p| p.name != name);
     config::save(&cfg)?;
