@@ -265,10 +265,10 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     }
 
     /// Make a new team on a computer. Calls back with what is wrong, or nil.
-    func newTeam(_ name: String, on computer: String, folder: String, make: Bool, done: @escaping (String?) -> Void) {
+    func newTeam(_ name: String, on computer: String, folder: String, make: Bool, tool: String?, done: @escaping (String?) -> Void) {
         fetch.async {
             var wrong: String?
-            do { try self.desk.newTeam(computer: computer, name: name, folder: folder, make: make) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "Cannot reach that computer." }
+            do { try self.desk.newTeam(computer: computer, name: name, folder: folder, make: make, tool: tool) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "Cannot reach that computer." }
             DispatchQueue.main.async { done(wrong) }
         }
     }
@@ -631,7 +631,16 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     func computers(for room: String) -> [String] { desk.computersFor(room: room) }
 
     /// Start a new agent in a team. It appears in the list at once, with nothing to do until he speaks to it.
-    func newAgent(in room: String, on computer: String?) { desk.newAgent(room: room, computer: computer) }
+    /// `tool` is one of the coding tools he uses; nothing is the first of them.
+    func newAgent(in room: String, on computer: String?, tool: CodingTool? = nil) {
+        desk.newAgent(room: room, computer: computer, tool: tool ?? usedTools.first)
+    }
+
+    /// The coding tools he uses, as the catalogue describes them, the one he uses most first.
+    var usedTools: [CodingTool] {
+        let all = codingTools()
+        return tools.compactMap { id in all.first { $0.id == id } }
+    }
 
     /// Let a question go without answering it.
     func dismiss(_ m: ChatMessage) {

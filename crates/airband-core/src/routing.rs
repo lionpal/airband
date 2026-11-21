@@ -231,6 +231,8 @@ pub struct Launch {
     pub project: Option<String>,
     /// His words for the task, untouched. Empty when he named a project and nothing else.
     pub task: String,
+    /// The coding tool to start it with, when the command names one (`tool:codex`, right after the project).
+    pub tool: Option<String>,
 }
 
 /// The typed command that starts a new agent: `/launch shop write the unit 5 questions` (also `/new` and
@@ -252,8 +254,10 @@ pub fn parse_launch(text: &str, projects: &[String]) -> Option<Launch> {
         }
     }
     let (n, project) = found.map(|(n, p)| (n, Some(p.clone()))).unwrap_or((0, None));
-    let task = words[1 + n..].join(" ");
-    Some(Launch { project, task: task.trim_start_matches([' ', ',', '.', ':', ';', '-']).trim().to_string() })
+    // then, in the command's own words and nobody's speech: which tool
+    let tool = words.get(1 + n).and_then(|w| w.strip_prefix("tool:")).filter(|t| !t.is_empty()).map(str::to_string);
+    let task = words[1 + n + usize::from(tool.is_some())..].join(" ");
+    Some(Launch { project, task: task.trim_start_matches([' ', ',', '.', ':', ';', '-']).trim().to_string(), tool })
 }
 
 #[cfg(test)]
@@ -328,6 +332,10 @@ mod tests {
     fn launching() {
         let projects = vec!["shop".to_string(), "backoffice".to_string(), "ware house".to_string()];
         let l = |t: &str| parse_launch(t, &projects).map(|l| (l.project.unwrap_or_default(), l.task));
+        // the command can name the tool, right after the project; said anywhere else it is his task's words
+        let with = parse_launch("/launch shop tool:codex fix the cart", &projects).unwrap();
+        assert_eq!((with.project.as_deref(), with.tool.as_deref(), with.task.as_str()), (Some("shop"), Some("codex"), "fix the cart"));
+        assert_eq!(parse_launch("/launch shop fix tool:codex", &projects).unwrap().tool, None);
         assert_eq!(l("/launch shop write the unit 5 questions"), Some(("shop".into(), "write the unit 5 questions".into())));
         assert_eq!(l("/new back office: fix the login bug"), Some(("backoffice".into(), "fix the login bug".into())));
         assert_eq!(l("/launch ware house check today's fakes"), Some(("ware house".into(), "check today's fakes".into())));

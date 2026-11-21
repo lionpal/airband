@@ -30,8 +30,8 @@ fn new_by_command(app: &App, text: &str, projects: &[String]) -> Option<Idea> {
     let (models, efforts) = app.cfg.launchers.get(&app.cfg.launcher).map(|l| (l.models.keys().cloned().collect::<Vec<_>>(), l.efforts.clone())).unwrap_or_default();
     let l = airband_core::routing::parse_launch(text, projects)?;
     Some(match airband_core::routing::parse_with(&l.task, &models, &efforts).filter(|w| !w.rest.is_empty()) {
-        Some(w) => Idea { tool: None, project: l.project, model: Some(w.model), effort: w.effort, task: w.rest },
-        None => Idea { tool: None, project: l.project, model: None, effort: None, task: l.task },
+        Some(w) => Idea { tool: l.tool, project: l.project, model: Some(w.model), effort: w.effort, task: w.rest },
+        None => Idea { tool: l.tool, project: l.project, model: None, effort: None, task: l.task },
     })
 }
 

@@ -166,11 +166,11 @@ async fn project(State(app): State<Arc<App>>, Json(new): Json<airband_core::radi
     }
     log(format!("a radio made the team {name}, in {folder}"));
     // its first agent, with nothing to do yet, when the tower runs agents itself: the team is then there to see
-    let held = app.cfg.launcher_for(None).is_some_and(|(_, l)| l.held.is_some());
+    let held = app.cfg.launcher_for(new.tool.as_deref()).is_some_and(|(_, l)| l.held.is_some());
     if !held {
         return Json(json!({ "say": format!("{name} is ready. Say launch {name}, then what it should do.") }));
     }
-    let reply = launch::launch(&app, &name, &Idea { tool: None, project: Some(name.clone()), model: None, effort: None, task: String::new() }).await;
+    let reply = launch::launch(&app, &name, &Idea { tool: new.tool.clone(), project: Some(name.clone()), model: None, effort: None, task: String::new() }).await;
     Json(json!({ "say": reply.say }))
 }
 

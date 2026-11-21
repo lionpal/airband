@@ -5,6 +5,7 @@
 //! the [`DeskView`], make and capture sound, and keep the pairing links somewhere safe.
 use super::*;
 use airband_core::routing::{Callsign, parse_utterance};
+use crate::mouth::CodingTool;
 use std::collections::{HashMap, HashSet};
 use std::sync::Condvar;
 
@@ -812,14 +813,16 @@ impl Desk {
 
     /// Make a new team on a computer: its name, and the folder its agents work in (made first with `make`).
     /// Its first agent is started there with nothing to do yet. Blocks: call it off the main thread.
-    pub fn new_team(&self, computer: String, name: String, folder: String, make: bool) -> Result<(), RadioError> {
-        self.station_radio(&computer).ok_or(RadioError::Offline)?.new_project(name, folder, make)
+    /// `tool` is the coding tool its first agent is, by id; nothing is the computer's usual one.
+    pub fn new_team(&self, computer: String, name: String, folder: String, make: bool, tool: Option<String>) -> Result<(), RadioError> {
+        self.station_radio(&computer).ok_or(RadioError::Offline)?.new_project(name, folder, make, tool.filter(|t| !t.is_empty()))
     }
 
     /// Start a new agent in a team, on the computer named, or where most of that team's agents already run. It
     /// is started with nothing to do yet and shows up at once, waiting for his first word. Nothing happens for
     /// a team no computer has.
-    pub fn new_agent(&self, room: String, computer: Option<String>) {
+    /// `tool` is the coding tool it is, by id, with what to call that tool; nothing is the computer's usual one.
+    pub fn new_agent(&self, room: String, computer: Option<String>, tool: Option<CodingTool>) {
         let radio = {
             let state = self.shared.state.lock().unwrap();
             let has = |s: &&Station| s.agents.iter().any(|a| a.group == room);
@@ -829,7 +832,10 @@ impl Desk {
         };
         if let Some(radio) = radio {
             // the typed command, which the tower takes as it is; the chat shows the words beside it
-            radio.queue(format!("/launch {room}"), None, None, Some(format!("New agent in {room}")));
+            match tool {
+                Some(tool) => radio.queue(format!("/launch {room} tool:{}", tool.id), None, None, Some(format!("New {} agent in {room}", tool.name))),
+                None => radio.queue(format!("/launch {room}"), None, None, Some(format!("New agent in {room}"))),
+            }
         }
     }
 

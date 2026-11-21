@@ -521,6 +521,7 @@ struct NewTeamSheet: View {
     @State private var computer = ""
     @State private var here: DeskFolders?
     @State private var makeNew = false
+    @State private var tool = ""
     @State private var loading = false
     @State private var making = false
     @State private var wrong: String?
@@ -540,6 +541,14 @@ struct NewTeamSheet: View {
                             ForEach(model.view.stations, id: \.self) { Text($0).tag($0) }
                         }
                         .pickerStyle(.segmented).onChange(of: computer) { _, _ in open("") }
+                    }
+                }
+                if model.usedTools.count > 1 {
+                    Section("First agent") {
+                        Picker("First agent", selection: $tool) {
+                            ForEach(model.usedTools, id: \.id) { Text($0.name).tag($0.id) }
+                        }
+                        .pickerStyle(.segmented)
                     }
                 }
                 Section {
@@ -580,6 +589,7 @@ struct NewTeamSheet: View {
         .preferredColorScheme(.dark)
         .onAppear {
             computer = model.view.stations.first ?? ""
+            tool = model.tools.first ?? ""
             open("")
         }
     }
@@ -595,7 +605,7 @@ struct NewTeamSheet: View {
     private func create() {
         guard let here else { return }
         (making, wrong) = (true, nil)
-        model.newTeam(team, on: computer, folder: makeNew ? here.path + "/" + team : here.path, make: makeNew) { problem in
+        model.newTeam(team, on: computer, folder: makeNew ? here.path + "/" + team : here.path, make: makeNew, tool: tool.isEmpty ? nil : tool) { problem in
             making = false
             if let problem { wrong = problem } else {
                 model.only = nil

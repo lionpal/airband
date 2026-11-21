@@ -676,8 +676,8 @@ impl Radio {
         }
     }
     /// Make a new team on this computer. Blocks.
-    pub(crate) fn new_project(&self, name: String, folder: String, make: bool) -> Result<(), RadioError> {
-        self.ask("/project", serde_json::to_value(airband_core::radio::NewProject { name, folder, make }).unwrap())
+    pub(crate) fn new_project(&self, name: String, folder: String, make: bool, tool: Option<String>) -> Result<(), RadioError> {
+        self.ask("/project", serde_json::to_value(airband_core::radio::NewProject { name, folder, make, tool }).unwrap())
     }
 
     pub fn unsend(&self, message: String) -> Result<(), RadioError> {
