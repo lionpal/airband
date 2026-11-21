@@ -238,7 +238,7 @@ struct ChoicePicker: View {
         .onChange(of: model.catalogRev) { _, _ in model.refreshChoices() }
         // while something is being fetched, how far along it is
         .onReceive(tick) { _ in if working { model.refreshChoices() } }
-        .confirmationDialog(asking.map { job.asks($0.title, download: $0.megabytesToFetch) } ?? "", isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } }), titleVisibility: .visible) {
+        .confirmationDialog(asking.map { job.asks($0.title, download: $0.megabytesToFetch) } ?? "", isPresented: $asking.isSet(), titleVisibility: .visible) {
             Button(asking?.megabytesToFetch == nil ? "Switch" : "Download") { if let c = asking { choose(c) } }
             Button("Cancel", role: .cancel) {}
         }

@@ -69,7 +69,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             done()
         }
         var sections = [CPListSection(items: [everyone])]
-        let agents = model.view.rooms.flatMap(\.members)
+        let agents = model.agents
         // Who is waiting on him: choosing one has its question read out, then opens the microphone for the
         // answer. What it asked is heard, not shown.
         let waiting = agents.filter { $0.state == "asking" }.map { agent -> CPListItem in
@@ -193,13 +193,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     /// An agent's badge as a picture: its two letters on its team's colour, as the phone shows it.
     private func avatar(of callsign: String, side: CGFloat) -> UIImage? {
         guard let team = model.view.rooms.first(where: { $0.members.contains { $0.callsign == callsign } }), let agent = team.members.first(where: { $0.callsign == callsign }) else { return nil }
-        return UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { _ in
-            UIColor(Palette.team(team.colour)).setFill()
-            UIBezierPath(roundedRect: CGRect(x: 0, y: 0, width: side, height: side), cornerRadius: side * 0.28).fill()
-            let letters = NSAttributedString(string: agent.badge, attributes: [.font: UIFont.systemFont(ofSize: side * 0.44, weight: .bold), .foregroundColor: UIColor(Palette.ground)])
-            let size = letters.size()
-            letters.draw(at: CGPoint(x: (side - size.width) / 2, y: (side - size.height) / 2))
-        }.withRenderingMode(.alwaysOriginal)
+        return badgePicture(agent.badge, fill: UIColor(Palette.team(team.colour)), side: side).withRenderingMode(.alwaysOriginal)
     }
 
     /// Show the state the conversation is in. The screen may drop a change that comes too soon after another,

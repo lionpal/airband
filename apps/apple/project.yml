@@ -44,6 +44,7 @@ targets:
       - Sources
       - Shared
       - Live
+      - Common
       - Resources
       - path: Generated/airband_radio.swift
     dependencies:
@@ -110,6 +111,7 @@ targets:
       - path: Widgets
         excludes: ["Info.plist", "*.entitlements"]
       - Live
+      - Common
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.airband.app.widgets
@@ -133,6 +135,7 @@ targets:
       - path: Notify
         excludes: ["Info.plist", "*.entitlements"]
       - Shared
+      - Common
       - path: Generated/airband_radio.swift
     settings:
       base:

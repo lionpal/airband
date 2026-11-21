@@ -23,14 +23,12 @@ struct AirbandApp: App {
 
 /// The colours. Dark first. Flat: no gradients or shadows. Each of the three accents means one thing.
 enum Palette {
-    static let ground = Color(red: 0.043, green: 0.043, blue: 0.047)
-    static let ink = Color(red: 0.957, green: 0.957, blue: 0.941)
+    static let ground = Colours.ground
+    static let ink = Colours.ink
     /// Green: someone is working; and the answer an agent itself recommends.
     static let signal = Color(red: 0.24, green: 0.86, blue: 0.59)
     /// Amber: someone is waiting on him.
-    static let ask = Color(red: 0.96, green: 0.77, blue: 0.32)
-    /// Purple: an artifact to open.
-    static let art = Color(red: 0.48, green: 0.38, blue: 1.0)
+    static let ask = Colours.ask
     static let card = Color(red: 0.078, green: 0.090, blue: 0.086)
     static let raised = Color(red: 0.149, green: 0.161, blue: 0.165)
     static let field = Color(red: 0.102, green: 0.106, blue: 0.110)
@@ -60,6 +58,56 @@ extension View {
     func frosted<S: Shape>(_ shape: S, strength: Double = 0.5, shown: Bool = true) -> some View { modifier(Frost(shape: shape, strength: strength, shown: shown)) }
 }
 
+/// A small round button's face: one symbol on a raised circle. How big each is stays its caller's to say.
+struct RoundIcon: View {
+    let symbol: String
+    let side: CGFloat
+    let glyph: CGFloat
+    let weight: Font.Weight
+    init(_ symbol: String, side: CGFloat, glyph: CGFloat, weight: Font.Weight) {
+        (self.symbol, self.side, self.glyph, self.weight) = (symbol, side, glyph, weight)
+    }
+    var body: some View {
+        Image(systemName: symbol).font(.system(size: glyph, weight: weight)).frame(width: side, height: side).background(Palette.raised, in: Circle())
+    }
+}
+
+extension View {
+    /// A page of the app's own: the dark ground, the light ink, and dark whatever the phone is set to.
+    func darkPage() -> some View {
+        background(Palette.ground.ignoresSafeArea()).foregroundStyle(Palette.ink).preferredColorScheme(.dark)
+    }
+    /// Asks before an agent he started in a terminal is taken over, and takes it over when he says so.
+    func takeOverAlert(_ agent: Binding<DeskMember?>) -> some View {
+        modifier(TakeOverAlert(agent: agent))
+    }
+}
+
+extension Binding {
+    /// Whether an optional holds something, for an alert or a sheet shown while it does. Set to false, it
+    /// lets go of what it held.
+    func isSet<T>() -> Binding<Bool> where Value == T? {
+        Binding<Bool>(get: { wrappedValue != nil }, set: { if !$0 { wrappedValue = nil } })
+    }
+}
+
+/// The question put before a take-over, in one place: what it means, and the two answers.
+struct TakeOverAlert: ViewModifier {
+    @EnvironmentObject var model: RadioModel
+    @Binding var agent: DeskMember?
+    func body(content: Content) -> some View {
+        content.alert("Take over \(agent?.callsign ?? "")?", isPresented: $agent.isSet()) {
+            Button("Take over") {
+                if let agent { model.takeOver(agent) }
+                agent = nil
+            }
+            Button("Cancel", role: .cancel) { agent = nil }
+        } message: {
+            Text("Its terminal session ends, and the same conversation carries on run by airband. What you say then reaches it as your own words.")
+        }
+    }
+}
+
 /// Who an agent is, at a glance: two characters on its team's colour.
 /// How tall the buttons over the bottom of the chat are, told upward by the buttons themselves.
 struct BarHeight: PreferenceKey {
@@ -73,10 +121,7 @@ struct Badge: View {
     var size: CGFloat = 22
 
     var body: some View {
-        Text(text).font(.system(size: size * 0.5, weight: .bold, design: .rounded)).foregroundStyle(Palette.ground)
-            .minimumScaleFactor(0.7).lineLimit(1).padding(.horizontal, 2)
-            .frame(width: size, height: size).background(Palette.team(colour), in: RoundedRectangle(cornerRadius: size * 0.3))
-            .accessibilityHidden(true)
+        SquareBadge(text: text, fill: Palette.team(colour), size: size)
     }
 }
 
@@ -171,7 +216,7 @@ struct HomeMark: View {
             ctx.fill(house, with: .color(Palette.ink))
             ctx.stroke(house, with: .color(Palette.ink), style: StrokeStyle(lineWidth: 8 * k, lineJoin: .round))
         }
-        .background(Color(red: 0.043, green: 0.043, blue: 0.047))
+        .background(Palette.ground)
     }
 }
 
@@ -251,7 +296,7 @@ struct FeedView: View {
                                 // a tap tries again at once. With several computers it says which
                                 Button { model.reconnect() } label: {
                                     HStack(spacing: 6) {
-                                        Text(model.view.away.isEmpty ? "Can\u{2019}t reach your computer" : "Can\u{2019}t reach " + model.view.away.joined(separator: ", ")).foregroundStyle(Palette.ask)
+                                        Text(model.cannotReach).foregroundStyle(Palette.ask)
                                         Image(systemName: "arrow.clockwise").font(.system(size: 11, weight: .bold)).foregroundStyle(Palette.soft)
                                     }
                                     .font(.system(size: 13, weight: .medium)).padding(.horizontal, 12).frame(minHeight: 30).frosted(Capsule())
@@ -301,8 +346,7 @@ struct FeedView: View {
             if model.paired && !wide {
                 // everyone, each team and each agent in it, to pick one to look at and talk to
                 Button { showAgents = true } label: {
-                    Image(systemName: "line.3.horizontal").font(.system(size: 17, weight: .semibold))
-                        .frame(width: 40, height: 40).background(Palette.raised, in: Circle())
+                    RoundIcon("line.3.horizontal", side: 40, glyph: 17, weight: .semibold)
                 }
                 .buttonStyle(.plain).accessibilityLabel("Agents")
             }
@@ -383,7 +427,7 @@ struct FeedView: View {
         HStack(spacing: 6) {
         if team != nil {
             // back to all the teams: it stays where it is while the chips beside it scroll
-            Button { model.only = nil; model.room = nil; model.replyingTo = nil } label: {
+            Button { model.look() } label: {
                 Image(systemName: "chevron.left").font(.system(size: 14, weight: .bold)).frame(width: 40, height: 40).background(Palette.field, in: Circle())
             }
             // what the other teams have said since he last looked at them
@@ -395,27 +439,25 @@ struct FeedView: View {
             HStack(spacing: 6) {
                 if let team {
                     // inside a team: the team itself, then its agents
-                    Button { model.room = team.name; model.only = nil; model.replyingTo = nil } label: {
+                    Button { model.look(room: team.name) } label: {
                         chip(team.name, on: model.only == nil, dot: team.state, working: team.members.contains { $0.state == "working" }, colour: team.colour, unread: team.unread)
                     }
                     .buttonStyle(.plain).id("team:" + team.name).accessibilityLabel(team.unread > 0 && model.only != nil ? "\(team.name), \(team.unread) unread" : team.name)
                     ForEach(team.members, id: \.id) { agent in
                         let short = agent.number.isEmpty ? agent.callsign : agent.number
-                        Button { model.room = team.name; model.only = model.only == agent.callsign ? nil : agent.callsign; model.replyingTo = nil } label: {
+                        Button { model.look(room: team.name, agent: model.only == agent.callsign ? nil : agent.callsign) } label: {
                             chip(short, on: model.only == agent.callsign, dot: agent.state, badge: (agent.badge, team.colour), unread: agent.unread)
                         }
                         .buttonStyle(.plain).id("agent:" + agent.callsign).accessibilityLabel(agent.unread > 0 ? "\(agent.callsign), \(agent.unread) unread" : agent.callsign)
                     }
                 } else {
-                    Button { model.only = nil; model.room = nil } label: { chip("all", on: true) }
+                    Button { model.look() } label: { chip("all", on: true) }
                         .buttonStyle(.plain).id("all").accessibilityLabel("all agents").accessibilityAddTraits(.isSelected)
                 }
                 ForEach(team == nil ? model.view.rooms : [], id: \.name) { room in
                     let on = model.room == room.name
                     Button {
-                        model.only = nil
-                        model.room = on ? nil : room.name
-                        model.replyingTo = nil
+                        model.look(room: on ? nil : room.name)
                     } label: {
                         HStack(spacing: 7) {
                             StateDot(state: room.state, working: room.members.contains { $0.state == "working" }).id(room.state + (room.members.contains { $0.state == "working" } ? "+" : ""))
@@ -429,7 +471,7 @@ struct FeedView: View {
                         .background(on ? Palette.ink : Palette.field, in: Capsule()).foregroundStyle(on ? Palette.ground : Palette.ink)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("\(room.name), \(room.state == "asking" ? "waiting on you" : room.state == "stalled" ? "stopped" : room.state)\(room.subagents > 0 ? ", \(room.subagents) subagents" : "")")
+                    .accessibilityLabel("\(room.name), \(RadioModel.spoken(state: room.state))\(room.subagents > 0 ? ", \(room.subagents) subagents" : "")")
                     .accessibilityAddTraits(on ? .isSelected : [])
                     // what this team is doing right now: a small bubble out of its chip, typed out, one team at a time
                     // It hangs from whichever end of the chip keeps it on the screen.
@@ -523,7 +565,7 @@ struct FeedView: View {
                 }
             } else {
                 Image(systemName: "wifi.slash").font(.system(size: 26, weight: .medium)).foregroundStyle(Palette.dim).padding(.bottom, 4)
-                Text(model.view.away.isEmpty ? "Can\u{2019}t reach your computer" : "Can\u{2019}t reach " + model.view.away.joined(separator: ", ")).font(.system(size: 19, weight: .semibold))
+                Text(model.cannotReach).font(.system(size: 19, weight: .semibold))
                 (Text("Check it\u{2019}s awake and online.\nThen run ") + Text("airband status").font(.system(size: 15, weight: .medium, design: .monospaced)).foregroundColor(Palette.ink) + Text(" on it."))
                     .font(.system(size: 16)).foregroundStyle(Palette.quiet).multilineTextAlignment(.center).lineSpacing(3)
                 Button { model.reconnect() } label: {
@@ -538,8 +580,7 @@ struct FeedView: View {
     }
 
     private var stopLabel: some View {
-        Image(systemName: "stop.fill").font(.system(size: 14, weight: .bold)).foregroundStyle(Palette.ink)
-            .frame(width: 40, height: 40).background(Palette.raised, in: Circle())
+        RoundIcon("stop.fill", side: 40, glyph: 14, weight: .bold).foregroundStyle(Palette.ink)
     }
 
     // MARK: the feed
@@ -577,7 +618,7 @@ struct FeedView: View {
             .simultaneousGesture(DragGesture(minimumDistance: 20).onEnded { g in
                 let (dx, dy) = (g.translation.width, g.translation.height)
                 guard team != nil, g.startLocation.x < 28, dx > 60, dx > abs(dy) * 2 else { return }
-                withAnimation(.snappy(duration: 0.2)) { model.only = nil; model.room = nil; model.replyingTo = nil }
+                withAnimation(.snappy(duration: 0.2)) { model.look() }
             })
             .onChange(of: model.view.feed.last?.id) { _, _ in withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("end", anchor: .bottom) } }
             .onChange(of: model.view.sending.count) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
@@ -624,7 +665,6 @@ struct FeedView: View {
         if let room = model.room { return "message \(room)" }
         return "say anything"
     }
-    private var listeningNow: Bool { model.listening }
     /// Who the line above the buttons says his words will go to, when it says so: the message he picked or the
     /// agent he is looking at, while the microphone is open or a message is picked.
     private var aimed: String? {
@@ -652,7 +692,7 @@ struct FeedView: View {
                     .buttonStyle(.plain).padding(.horizontal, 8)
             }
             if let ask = model.view.asking { AskCard(ask: ask) }
-            if !model.tray.isEmpty { Tray(sends: !listeningNow && !typingOpen) }
+            if !model.tray.isEmpty { Tray(sends: !model.listening && !typingOpen) }
             if showQuick { quickGrid }
             if typingOpen {
                 HStack(spacing: 10) {
@@ -738,9 +778,9 @@ struct FeedView: View {
                     // +: attach a photo or a video, or send one of the things he says all the time
                     // while he is talking it is the way out: a cross that closes the microphone and sends nothing
                     Button {
-                        if listeningNow { model.cancelTalk() } else { withAnimation(.snappy(duration: 0.2)) { showQuick.toggle() } }
-                    } label: { PlusButtonLabel(open: showQuick || listeningNow) }
-                        .buttonStyle(.plain).accessibilityLabel(listeningNow ? "Cancel" : "Attach, or quick messages").accessibilityAddTraits(showQuick ? .isSelected : [])
+                        if model.listening { model.cancelTalk() } else { withAnimation(.snappy(duration: 0.2)) { showQuick.toggle() } }
+                    } label: { PlusButtonLabel(open: showQuick || model.listening) }
+                        .buttonStyle(.plain).accessibilityLabel(model.listening ? "Cancel" : "Attach, or quick messages").accessibilityAddTraits(showQuick ? .isSelected : [])
                     Spacer(minLength: 0)
                     // Join the channel: what arrives is read aloud, hands free. As large as the microphone beside
                     // it, since talking and listening are the two things this is for. Green while it is on. It
@@ -758,23 +798,23 @@ struct FeedView: View {
                         }
                         .frame(width: 96, height: 112)
                     }
-                    .buttonStyle(.plain).disabled(listeningNow).opacity(listeningNow ? 0.35 : 1)
+                    .buttonStyle(.plain).disabled(model.listening).opacity(model.listening ? 0.35 : 1)
                     .accessibilityLabel(model.calling ? "Stop reading aloud" : "Read aloud")
                     .accessibilityAddTraits(model.calling ? .isSelected : [])
                     Spacer(minLength: 0)
                     Button { showQuick = false; Task { await model.talk() } } label: {
                         ZStack {
-                            Circle().fill(Palette.signal.opacity(listeningNow ? 0.25 : 0)).frame(width: 104, height: 104)
-                            Circle().fill(listeningNow ? Palette.signal : Palette.ink).frame(width: 88, height: 88)
+                            Circle().fill(Palette.signal.opacity(model.listening ? 0.25 : 0)).frame(width: 104, height: 104)
+                            Circle().fill(model.listening ? Palette.signal : Palette.ink).frame(width: 88, height: 88)
                             // open, it is the send button: nothing goes until he taps it
-                            Image(systemName: listeningNow ? "arrow.up" : "mic.fill").font(.system(size: 34, weight: .semibold)).foregroundStyle(Palette.ground)
+                            Image(systemName: model.listening ? "arrow.up" : "mic.fill").font(.system(size: 34, weight: .semibold)).foregroundStyle(Palette.ground)
                         }
                         .frame(width: 96, height: 112)
                     }
-                    .buttonStyle(.plain).accessibilityLabel(listeningNow ? "Send what you said" : "Talk")
+                    .buttonStyle(.plain).accessibilityLabel(model.listening ? "Send what you said" : "Talk")
                                         Spacer(minLength: 0)
                     HStack(spacing: 8) {
-                    if listeningNow {
+                    if model.listening {
                         // while he talks, this adds a photo or a video to what he is saying
                         AttachButton()
                     } else {
@@ -856,7 +896,7 @@ private struct Speaker: View {
     let m: ChatMessage
 
     var body: some View {
-        Button { model.room = nil; model.only = m.from } label: {
+        Button { model.look(agent: m.from) } label: {
             HStack(spacing: 7) {
                 if !m.badge.isEmpty { Badge(text: m.badge, colour: m.colour, size: 20) }
                 Text(m.station.isEmpty ? m.from : "\(m.from) · \(m.station)").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.quiet)
@@ -894,7 +934,7 @@ struct Report: View {
             // finger. Seeing all of what it wrote is the small button beside it.
             HStack(alignment: .bottom, spacing: 6) {
                 Button { model.replyingTo = picked ? nil : m } label: {
-                    Prose(text: whole ? (model.full[m.id] ?? m.text) : m.text, plain: !whole)
+                    Prose(text: whole ? model.whole(m) : m.text, plain: !whole)
                 }
                 .buttonStyle(.plain)
                 .accessibilityHint(picked ? "Stop answering this one" : "Answer this agent: what you say or type next goes to it")
@@ -936,7 +976,7 @@ private struct LineMenu: View {
         }
     }
     private var copy: some View {
-        Button { UIPasteboard.general.string = model.full[m.id] ?? m.text } label: { Label("Copy", systemImage: "doc.on.doc") }
+        Button { UIPasteboard.general.string = model.whole(m) } label: { Label("Copy", systemImage: "doc.on.doc") }
     }
 }
 
@@ -979,14 +1019,12 @@ struct Question: View {
                 // with a gap between, so one is not hit for the other
                 HStack(spacing: 6) {
                     Button { showContext = true } label: {
-                        Image(systemName: "info").font(.system(size: 13, weight: .bold)).foregroundStyle(Palette.soft)
-                            .frame(width: 28, height: 28).background(Palette.raised, in: Circle())
+                        RoundIcon("info", side: 28, glyph: 13, weight: .bold).foregroundStyle(Palette.soft)
                             .frame(width: 38, height: 44)
                     }
                     .buttonStyle(.plain).accessibilityLabel("More about this question")
                     Button { model.dismiss(m) } label: {
-                        Image(systemName: "xmark").font(.system(size: 12, weight: .bold)).foregroundStyle(Palette.soft)
-                            .frame(width: 28, height: 28).background(Palette.raised, in: Circle())
+                        RoundIcon("xmark", side: 28, glyph: 12, weight: .bold).foregroundStyle(Palette.soft)
                             .frame(width: 38, height: 44)
                     }
                     .buttonStyle(.plain).accessibilityLabel("Ignore this question")
@@ -1022,7 +1060,7 @@ struct Mine: View {
             if !m.to.isEmpty {
                 // who it went to, with that agent's badge when it went to one. A tap shows only that agent, so
                 // what he says next goes to it
-                Button { if m.to.count == 1 { model.room = nil; model.only = m.to[0] } } label: {
+                Button { if m.to.count == 1 { model.look(agent: m.to[0]) } } label: {
                     HStack(spacing: 5) {
                         Text("to").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.quiet)
                         if !m.badge.isEmpty { Badge(text: m.badge, colour: m.colour, size: 16) }
@@ -1051,7 +1089,7 @@ struct Mine: View {
             VStack(alignment: .leading, spacing: 6) {
             if !m.pictures.isEmpty, !beside { PictureStrip(m: m, height: 120, still: true) }
             VStack(alignment: .trailing, spacing: 4) {
-                Text(whole ? (model.full[m.id] ?? m.text) : m.text).font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.ground)
+                Text(whole ? model.whole(m) : m.text).font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.ground)
                     .lineLimit(whole ? nil : 5)
                 if long {
                     Image(systemName: whole ? "chevron.up" : "chevron.down").font(.system(size: 11, weight: .bold)).foregroundStyle(Palette.ground.opacity(0.45))
@@ -1063,9 +1101,9 @@ struct Mine: View {
             .contentShape(Rectangle())
             // hold it: copy it, or send the same words to someone else
             .contextMenu {
-                Button { UIPasteboard.general.string = model.full[m.id] ?? m.text } label: { Label("Copy", systemImage: "doc.on.doc") }
+                Button { UIPasteboard.general.string = model.whole(m) } label: { Label("Copy", systemImage: "doc.on.doc") }
                 Menu {
-                    ForEach(model.view.rooms.flatMap(\.members), id: \.id) { agent in
+                    ForEach(model.agents, id: \.id) { agent in
                         Button(agent.callsign) { model.resend(m, to: agent) }
                     }
                 } label: { Label("Send to someone else", systemImage: "arrowshape.turn.up.right") }
@@ -1110,7 +1148,7 @@ struct AskCard: View {
                 }
                 Spacer(minLength: 8)
                 Button { model.choose(nil) } label: {
-                    Image(systemName: "xmark").font(.system(size: 12, weight: .bold)).frame(width: 32, height: 32).background(Palette.raised, in: Circle())
+                    RoundIcon("xmark", side: 32, glyph: 12, weight: .bold)
                 }
                 .buttonStyle(.plain).accessibilityLabel("Send it to nobody")
             }
@@ -1209,27 +1247,22 @@ struct Answers: View {
     /// does not run it: an answer from here would reach it as a passed-on message, and it would ask again.
     private var apart: DeskMember? {
         guard m.ownSession else { return nil }
-        return model.view.rooms.flatMap(\.members).first { $0.callsign == m.from && !$0.held }
+        return model.agents.first { $0.callsign == m.from && !$0.held }
     }
-    @State private var taking = false
+    @State private var taking: DeskMember?
 
     /// In place of the answers: why one from here will not do, and the way to make it do.
     private func takeOver(_ agent: DeskMember) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("It wants this answer at its own keyboard. It was started in a terminal on your computer, so anything you send from your phone reaches it as a note left for it.")
                 .font(.system(size: 14)).foregroundStyle(Palette.soft).fixedSize(horizontal: false, vertical: true)
-            Button { taking = true } label: {
+            Button { taking = agent } label: {
                 Text("Take over, then answer").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.ground)
                     .frame(maxWidth: .infinity, minHeight: 52).background(Palette.ink, in: RoundedRectangle(cornerRadius: 16))
             }
             .buttonStyle(.plain)
         }
-        .alert("Take over \(agent.callsign)?", isPresented: $taking) {
-            Button("Take over") { model.takeOver(agent) }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Its terminal session ends, and the same conversation carries on run by airband. What you say then reaches it as your own words.")
-        }
+        .takeOverAlert($taking)
     }
 
     var body: some View {
@@ -1259,7 +1292,6 @@ struct ContextView: View {
     @EnvironmentObject var model: RadioModel
     @Environment(\.dismiss) private var dismiss
     let m: ChatMessage
-    @State private var draft = ""
 
     /// The last few things between him and this agent before the question.
     private var before: [ChatMessage] {
@@ -1272,8 +1304,7 @@ struct ContextView: View {
                 Text((m.station.isEmpty ? m.from : "\(m.from) · \(m.station)")).font(.system(size: 20, weight: .bold))
                 Spacer()
                 Button { dismiss() } label: {
-                    Image(systemName: "xmark").font(.system(size: 14, weight: .bold))
-                        .frame(width: 34, height: 34).background(Palette.raised, in: Circle())
+                    RoundIcon("xmark", side: 34, glyph: 14, weight: .bold)
                 }
                 .buttonStyle(.plain).accessibilityLabel("Close")
             }
@@ -1289,7 +1320,7 @@ struct ContextView: View {
                         }
                         if !m.pictures.isEmpty { PictureStrip(m: m, height: 200) }
                         if !m.links.isEmpty { LinkRow(m: m) }
-                        Prose(text: model.full[m.id] ?? m.text, size: 17, colour: Palette.ink).textSelection(.enabled)
+                        Prose(text: model.whole(m), size: 17, colour: Palette.ink).textSelection(.enabled)
                             .padding(16).background(Palette.card, in: RoundedRectangle(cornerRadius: 22)).id("question")
                     }
                     .padding(.horizontal, 16).padding(.bottom, 12)
@@ -1303,9 +1334,7 @@ struct ContextView: View {
             }
             .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 12)
         }
-        .background(Palette.ground.ignoresSafeArea())
-        .foregroundStyle(Palette.ink)
-        .preferredColorScheme(.dark)
+        .darkPage()
         .onAppear { model.loadFull(m) }
     }
 }
@@ -1357,7 +1386,7 @@ struct SetupView: View {
                 }
                 if !model.view.stations.filter({ !$0.isEmpty }).isEmpty {
                     Section("Computers") {
-                        ForEach(model.view.stations.filter { !$0.isEmpty }, id: \.self) { name in
+                        ForEach(model.computers, id: \.self) { name in
                             Picker(selection: Binding(get: { model.icon(of: name) }, set: { model.setIcon($0, of: name) })) {
                                 ForEach(RadioModel.computerSymbols, id: \.self) { symbol in Image(systemName: symbol).tag(symbol) }
                             } label: {
@@ -1384,7 +1413,7 @@ struct SetupView: View {
                     }
                     .font(.footnote).foregroundStyle(.secondary)
                     if model.paired {
-                        Text(model.view.stations.filter { !$0.isEmpty }.isEmpty ? "Paired" : "Paired: " + model.view.stations.filter { !$0.isEmpty }.joined(separator: ", ")).foregroundStyle(.secondary)
+                        Text(model.computers.isEmpty ? "Paired" : "Paired: " + model.computers.joined(separator: ", ")).foregroundStyle(.secondary)
                         Button("Forget all", role: .destructive) { model.forgetAll() }
                     }
                     if let problem = model.problem { Text(problem).foregroundStyle(.red) }
@@ -1401,95 +1430,6 @@ extension SetupView {
     /// One row of the settings list: what it is, and what is chosen for it now.
     func row(_ title: String, _ now: String) -> some View {
         HStack { Text(title); Spacer(); Text(now).foregroundStyle(.secondary).lineLimit(1) }
-    }
-}
-
-/// The message holds something to read whole (the judge said so, and what to call it): a button with that name,
-/// which opens exactly what the agent wrote, full screen, the way a picture opens.
-struct ReadButton: View {
-    @EnvironmentObject var model: RadioModel
-    let m: ChatMessage
-    @State private var open = false
-
-    var body: some View {
-        Button {
-            model.loadFull(m)
-            open = true
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: "doc.text").font(.system(size: 13, weight: .bold))
-                Text(m.read ?? "").font(.system(size: 15, weight: .semibold)).lineLimit(1)
-            }
-            .foregroundStyle(Palette.ground).padding(.horizontal, 14).frame(minHeight: 44)
-            .background(Palette.read, in: Capsule())
-        }
-        .buttonStyle(.plain).accessibilityLabel("Read \(m.read ?? "it")")
-        .fullScreenCover(isPresented: $open) { ReaderView(m: m).environmentObject(model) }
-    }
-}
-
-struct ReaderView: View {
-    @EnvironmentObject var model: RadioModel
-    @Environment(\.dismiss) private var dismiss
-    let m: ChatMessage
-    private var listening: Bool { model.listening }
-    private var reading: Bool { model.reading == m.id }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                if !m.badge.isEmpty { Badge(text: m.badge, colour: m.colour) }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(m.read ?? "").font(.system(size: 17, weight: .semibold)).lineLimit(1)
-                    Text(m.from).font(.system(size: 13)).foregroundStyle(Palette.quiet).lineLimit(1)
-                }
-                Spacer()
-                // read it to him: the whole thing, in the voice he chose on this phone. Tap again to stop.
-                Button { model.readAloud(m) } label: {
-                    Image(systemName: reading ? "stop.fill" : "speaker.wave.2.fill").font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(reading ? Palette.ground : Palette.ink)
-                        .frame(width: 40, height: 40).background(reading ? Palette.ink : Palette.raised, in: Circle())
-                }
-                .buttonStyle(.plain).accessibilityLabel(reading ? "Stop reading" : "Read it aloud")
-                Button { dismiss() } label: {
-                    Image(systemName: "xmark").font(.system(size: 14, weight: .bold)).frame(width: 40, height: 40).background(Palette.raised, in: Circle())
-                }
-                .buttonStyle(.plain).accessibilityLabel("Close")
-            }
-            .padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 12)
-            ScrollView {
-                Prose(text: model.full[m.id] ?? m.text, size: 17)
-                    .padding(.horizontal, 20).padding(.bottom, 150)
-                    .textSelection(.enabled)
-            }
-        }
-        // the talk button is here as it is on a picture: he reads it and says what he thinks, and it goes to the
-        // agent that wrote it
-        .overlay(alignment: .bottom) {
-            VStack(spacing: 8) {
-                Text(listening ? (model.hearing.isEmpty ? "listening" : model.hearing) : "tell \(m.from)").font(.system(size: 14, weight: .medium)).foregroundStyle(Palette.quiet)
-                    .lineLimit(2).truncationMode(.head).multilineTextAlignment(.center).padding(.horizontal, 24)
-                Button {
-                    model.stopReading()
-                    Task { await model.talk(about: m) }
-                } label: {
-                    Image(systemName: listening ? "arrow.up" : "mic.fill").font(.system(size: 28, weight: .semibold)).foregroundStyle(Palette.ground)
-                        .frame(width: 76, height: 76).background(listening ? Palette.signal : Palette.ink, in: Circle())
-                }
-                .buttonStyle(.plain).accessibilityLabel(listening ? "Send what you said" : "Talk to \(m.from) about this")
-            }
-            .padding(.top, 26).padding(.bottom, 26).frame(maxWidth: .infinity)
-            .background(LinearGradient(colors: [Palette.ground.opacity(0), Palette.ground], startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.35)).allowsHitTesting(false))
-        }
-        .background(Palette.ground.ignoresSafeArea())
-        .foregroundStyle(Palette.ink)
-        .preferredColorScheme(.dark)
-        // with read-aloud on, it starts reading as it opens
-        .task {
-            guard model.calling, !reading else { return }
-            model.readAloud(m)
-        }
-        .onDisappear { if reading { model.stopReading() } }
     }
 }
 
@@ -1669,8 +1609,7 @@ struct NewAgentButton: View {
     }
 
     private var plus: some View {
-        Image(systemName: "plus").font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink)
-            .frame(width: 34, height: 34).background(Palette.raised, in: Circle())
+        RoundIcon("plus", side: 34, glyph: 15, weight: .bold).foregroundStyle(Palette.ink)
     }
 }
 
@@ -1704,7 +1643,7 @@ struct AgentsMenu: View {
 
     /// An agent dropped on a team, or on one of its agents, joins that team.
     private func drop(_ ids: [String], on team: String) -> Bool {
-        guard let agent = model.view.rooms.flatMap(\.members).first(where: { $0.id == ids.first }) else { return false }
+        guard let agent = model.agents.first(where: { $0.id == ids.first }) else { return false }
         model.moveAgent(agent, to: team)
         return true
     }
@@ -1713,15 +1652,13 @@ struct AgentsMenu: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 row(dot: nil, title: "all agents", detail: nil, strong: true, on: model.room == nil && model.only == nil, inset: 0) {
-                    model.only = nil
-                    model.room = nil
+                    model.look()
                 }
                 ForEach(model.view.rooms, id: \.name) { room in
                     row(dot: room.state, title: room.name, detail: room.subagents > 0 ? "+\(room.subagents) subagents" : nil, strong: true, on: model.room == room.name && model.only == nil, inset: 0, colour: room.colour) {
                         // a second tap on the one he is looking at goes back to everyone
                         let was = model.room == room.name && model.only == nil
-                        model.only = nil
-                        model.room = was ? nil : room.name
+                        model.look(room: was ? nil : room.name)
                     }
                     .overlay { if over == room.name { RoundedRectangle(cornerRadius: 14).strokeBorder(Palette.team(room.colour), lineWidth: 2) } }
                     // a new agent for this team: one tap starts it where the team's others run
@@ -1731,8 +1668,7 @@ struct AgentsMenu: View {
                     ForEach(room.members, id: \.id) { agent in
                         row(dot: agent.state, title: titled(agent, in: room), detail: nil, strong: false, on: model.only == agent.callsign, inset: 22, colour: room.colour, badge: agent.badge, lead: agent.model, engine: under(agent), doing: agent.doing) {
                             let was = model.only == agent.callsign
-                            model.room = nil
-                            model.only = was ? nil : agent.callsign
+                            model.look(agent: was ? nil : agent.callsign)
                         }
                         // which tool it is, and which computer it is on when there are several
                         .overlay(alignment: .trailing) { AgentMarks(agent: agent).padding(.trailing, 12).allowsHitTesting(false) }
@@ -1791,22 +1727,15 @@ struct AgentsMenu: View {
             }
             .buttonStyle(.plain)
         }
-        .background(Palette.ground.ignoresSafeArea())
-        .foregroundStyle(Palette.ink)
-        .preferredColorScheme(.dark)
-        .alert("Take over \(taking?.callsign ?? "")?", isPresented: Binding(get: { taking != nil }, set: { if !$0 { taking = nil } })) {
-            Button("Take over") { if let agent = taking { model.takeOver(agent) }; taking = nil }
-            Button("Cancel", role: .cancel) { taking = nil }
-        } message: {
-            Text("Its terminal session ends, and the same conversation carries on run by airband. What you say then reaches it as your own words.")
-        }
-        .alert("End \(ending?.callsign ?? "")?", isPresented: Binding(get: { ending != nil }, set: { if !$0 { ending = nil } })) {
+        .darkPage()
+        .takeOverAlert($taking)
+        .alert("End \(ending?.callsign ?? "")?", isPresented: $ending.isSet()) {
             Button("End", role: .destructive) { if let agent = ending { model.end(agent) }; ending = nil }
             Button("Cancel", role: .cancel) { ending = nil }
         } message: {
             Text("It finishes and leaves. What it has done stays done.")
         }
-        .alert("New team", isPresented: Binding(get: { founding != nil }, set: { if !$0 { founding = nil } })) {
+        .alert("New team", isPresented: $founding.isSet()) {
             TextField("Name", text: $newTeam).textInputAutocapitalization(.never).autocorrectionDisabled()
             Button("Move") { if let agent = founding { model.moveAgent(agent, to: newTeam) }; founding = nil }
             Button("Cancel", role: .cancel) { founding = nil }
@@ -1832,11 +1761,10 @@ struct AgentsMenu: View {
                     if !lead.isEmpty || !engine.isEmpty || doing != nil {
                         // one line, always: the model stays, and while it works what follows gives way to what it
                         // is doing, in green, and comes back when it stops. The row never changes height.
-                        let rest = engine
                         HStack(spacing: 0) {
                             if !lead.isEmpty { Text(lead + " \u{b7} ").foregroundStyle(Palette.quiet) }
                             ZStack(alignment: .leading) {
-                                Text(rest).foregroundStyle(Palette.quiet).opacity(doing == nil ? 1 : 0)
+                                Text(engine).foregroundStyle(Palette.quiet).opacity(doing == nil ? 1 : 0)
                                 Text(doing ?? "").foregroundStyle(Palette.signal.opacity(0.9)).opacity(doing == nil ? 0 : 1)
                             }
                         }
@@ -1855,7 +1783,7 @@ struct AgentsMenu: View {
             .contentShape(RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(title + (engine.isEmpty ? "" : ", " + engine.replacingOccurrences(of: " \u{b7} ", with: ", ")) + (dot.map { ", " + ($0 == "asking" ? "waiting on you" : $0 == "stalled" ? "stopped" : $0) } ?? ""))
+        .accessibilityLabel(title + (engine.isEmpty ? "" : ", " + engine.replacingOccurrences(of: " \u{b7} ", with: ", ")) + (dot.map { ", " + RadioModel.spoken(state: $0) } ?? ""))
         .accessibilityAddTraits(on ? .isSelected : [])
     }
 }

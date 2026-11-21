@@ -60,7 +60,7 @@ struct PictureImage: View {
 struct PictureStrip: View {
     @EnvironmentObject var model: RadioModel
     let m: ChatMessage
-    var height: CGFloat = 132
+    let height: CGFloat
     /// Laid out as wide as its pictures and no wider, without scrolling: for a few pictures that must line up
     /// with something else.
     var still = false
@@ -191,7 +191,7 @@ private struct Zoomable: View {
     }
 }
 
-/// The web links an agent wrote, as buttons: an artifact, a pull request, a preview. They open in the browser.
+/// The web links an agent wrote, as buttons, each called by the site it goes to. They open in the browser.
 struct LinkRow: View {
     @Environment(\.openURL) private var openURL
     let m: ChatMessage
@@ -207,16 +207,12 @@ struct LinkRow: View {
             HStack(spacing: 8) {
                 ForEach(m.links.compactMap { URL(string: $0) }, id: \.absoluteString) { url in
                     Button { openURL(url) } label: {
-                        let kind = LinkRow.label(url)
                         HStack(spacing: 6) {
-                            // a pull request carries its number and the mark people know it by
-                            if kind == "pull request" { Image(systemName: "arrow.triangle.pull").font(.system(size: 13, weight: .bold)) }
-                            Text(kind == "pull request" ? "pull request #" + url.lastPathComponent : kind).font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                            Text(LinkRow.label(url)).font(.system(size: 15, weight: .semibold)).lineLimit(1)
                             Image(systemName: "arrow.up.right").font(.system(size: 12, weight: .bold))
                         }
-                        // an artifact is purple and a pull request green, so each is found at a glance in the feed
-                        .foregroundStyle(kind == "artifact" || kind == "pull request" ? Color.white : Palette.ink).padding(.horizontal, 14).frame(minHeight: 44)
-                        .background(kind == "artifact" ? Palette.art : kind == "pull request" ? Color(red: 0.14, green: 0.53, blue: 0.21) : Palette.raised, in: Capsule())
+                        .foregroundStyle(Palette.ink).padding(.horizontal, 14).frame(minHeight: 44)
+                        .background(Palette.raised, in: Capsule())
                     }
                     .buttonStyle(.plain).accessibilityLabel("Open \(LinkRow.label(url))")
                 }

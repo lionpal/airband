@@ -6,7 +6,6 @@
 import AVFoundation
 import PhononCoreML
 import Foundation
-import Security
 import ActivityKit
 import SwiftUI
 import UIKit
@@ -35,7 +34,6 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     // call mode
     @Published var calling = false
     @Published var status: RadioStatus = .idle
-    @Published var said = "" // what the device's own voice is saying on a call
     @Published var hearing = "" // what he has said so far, while he is still speaking
     /// What the voice is saying now, when the voice service says when each word is spoken: the text, where each
     /// word starts in it, when each is said (seconds into the clip), and when the clip began to sound.
@@ -149,12 +147,30 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// An answer given on a notification. Blocks until the computer has it, or says why it does not.
     func answerNow(station: String, message: String, text: String) throws { try desk.answerNow(station: station, messageId: message, text: text) }
 
+    /// Look at everyone, at one team, or at one agent. Whatever he was answering is let go: it may no longer be
+    /// in view. Every place that changes who he is looking at goes through here.
+    func look(room: String? = nil, agent: String? = nil) {
+        replyingTo = nil
+        self.room = room
+        only = agent
+    }
+
     /// He tapped a notification: show that agent.
     func show(room: String, agent: String) {
-        replyingTo = nil
-        self.room = room.isEmpty ? nil : room
-        only = agent.isEmpty ? nil : agent
+        look(room: room.isEmpty ? nil : room, agent: agent.isEmpty ? nil : agent)
     }
+
+    /// Every agent on the radio, in the order the teams are shown.
+    var agents: [DeskMember] { view.rooms.flatMap(\.members) }
+    /// His computers that gave themselves a name.
+    var computers: [String] { view.stations.filter { !$0.isEmpty } }
+    /// What he is told when a computer cannot be reached: which, when more than one could be meant.
+    var cannotReach: String { view.away.isEmpty ? "Can\u{2019}t reach your computer" : "Can\u{2019}t reach " + view.away.joined(separator: ", ") }
+    /// A state as it is read out for someone who cannot see its dot.
+    static func spoken(state: String) -> String { state == "asking" ? "waiting on you" : state == "stalled" ? "stopped" : state }
+
+    /// A message's words whole, once they have been fetched; as it came until then.
+    func whole(_ m: ChatMessage) -> String { full[m.id] ?? m.text }
 
     private func connect(_ wanted: [String]) {
         links = desk.setLinks(links: wanted)
@@ -228,7 +244,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// While he is on a call, each agent that is waiting on him has a banner: on the lock screen, and on a
     /// car's screen when another app is in front. It comes down when the agent has its answer or the call ends.
     private func syncBanners() {
-        let waiting = calling ? view.rooms.flatMap(\.members).filter { $0.state == "asking" } : []
+        let waiting = calling ? agents.filter { $0.state == "asking" } : []
         for (callsign, banner) in banners where !waiting.contains(where: { $0.callsign == callsign }) {
             banners[callsign] = nil
             Task { await banner.end(nil, dismissalPolicy: .immediate) }
@@ -267,31 +283,19 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// The folders inside one of his on a computer. Calls back with them, or with what is wrong.
     func folders(on computer: String, under: String, done: @escaping (DeskFolders?, String?) -> Void) {
-        fetch.async {
-            var (found, wrong): (DeskFolders?, String?) = (nil, nil)
-            do { found = try self.desk.folders(computer: computer, under: under) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "Cannot reach that computer." }
-            DispatchQueue.main.async { done(found, wrong) }
-        }
+        ask(Self.unreached, { try self.desk.folders(computer: computer, under: under) }, then: done)
     }
 
     /// The folders the coding tools on a computer have had sessions in, newest first. Calls back with them, or
     /// with what is wrong.
     func recentFolders(on computer: String, done: @escaping ([DeskRecent]?, String?) -> Void) {
-        fetch.async {
-            var (found, wrong): ([DeskRecent]?, String?) = (nil, nil)
-            do { found = try self.desk.recentFolders(computer: computer) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "Cannot reach that computer." }
-            DispatchQueue.main.async { done(found, wrong) }
-        }
+        ask(Self.unreached, { try self.desk.recentFolders(computer: computer) }, then: done)
     }
 
     /// Start an agent in a folder on a computer: in the team that works there, or a new one of this name.
     /// Calls back with the team's name as the computer writes it, or with what is wrong.
     func newTeam(_ name: String, on computer: String, folder: String, make: Bool, tool: String?, done: @escaping (String?, String?) -> Void) {
-        fetch.async {
-            var (team, wrong): (String?, String?) = (nil, nil)
-            do { team = try self.desk.newTeam(computer: computer, name: name, folder: folder, make: make, tool: tool) } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "Cannot reach that computer." }
-            DispatchQueue.main.async { done(team, wrong) }
-        }
+        ask(Self.unreached, { try self.desk.newTeam(computer: computer, name: name, folder: folder, make: make, tool: tool) }, then: done)
     }
 
     /// Goes up when a newer catalogue of services and models has been taken: what the choosers list is read again.
@@ -347,20 +351,51 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         return nil
     }
 
-    /// Run one of the core's blocking calls off the main thread and call back with what it said was wrong.
-    private func work(_ done: @escaping (String?) -> Void, _ call: @escaping () throws -> Void) {
+    /// What he is told when a computer could not be asked.
+    static let unreached = "Cannot reach that computer."
+
+    /// What went wrong, in words for him: the reason the computer gave when it gave one, that it cannot be
+    /// reached when it cannot, and otherwise `fallback`, which says what did not happen.
+    static func words(for error: Error, else fallback: String) -> String {
+        switch error {
+        case RadioError.Told(let reason): return reason
+        case RadioError.Offline: return unreached
+        default: return fallback
+        }
+    }
+
+    /// Run one of the core's blocking calls off the main thread and come back on it: with what the call gave,
+    /// or with what went wrong in words. Every call that can fail goes through here.
+    private func ask<T>(_ fallback: String, _ call: @escaping () throws -> T, then: @escaping (T?, String?) -> Void) {
         fetch.async {
-            var wrong: String?
-            do { try call() } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "Your computer could not be reached. Try again when it can." }
+            let result = Result { try call() }
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let got): then(got, nil)
+                case .failure(let error): then(nil, Self.words(for: error, else: fallback))
+                }
+            }
+        }
+    }
+
+    /// The same, for something done to an agent or a message: what went wrong is shown to him, and `done`
+    /// runs when nothing did.
+    private func tell(_ fallback: String, _ call: @escaping () throws -> Void, done: @escaping () -> Void = {}) {
+        ask(fallback, call) { _, wrong in
+            if let wrong { self.problem = wrong } else { done() }
+        }
+    }
+
+    /// One of the core's calls that changes what is chosen. Calls back with what it said was wrong.
+    private func work(_ done: @escaping (String?) -> Void, _ call: @escaping () throws -> Void) {
+        ask("Your computer could not be reached. Try again when it can.", call) { _, wrong in
             // a model can be fetched again, so it is left out of the phone's backups
             var folder = URL(fileURLWithPath: self.voiceDir).appendingPathComponent("models")
             var values = URLResourceValues()
             values.isExcludedFromBackup = true
             try? folder.setResourceValues(values)
-            DispatchQueue.main.async {
-                self.refreshChoices()
-                done(wrong)
-            }
+            self.refreshChoices()
+            done(wrong)
         }
     }
 
@@ -392,32 +427,12 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// Stop what an agent is doing, now. What he said to it meanwhile it then reads together.
     func stop(_ agent: DeskMember) {
-        fetch.async {
-            let result = Result { try self.desk.stopAgent(agent: agent.id) }
-            DispatchQueue.main.async {
-                switch result {
-                case .success: break
-                case .failure(RadioError.Told(let reason)): self.problem = reason
-                case .failure(RadioError.Offline): self.problem = "Cannot reach that computer."
-                case .failure: self.problem = "It did not stop."
-                }
-            }
-        }
+        tell("It did not stop.") { try self.desk.stopAgent(agent: agent.id) }
     }
 
     /// End an agent its computer runs: it finishes and leaves the radio.
     func end(_ agent: DeskMember) {
-        fetch.async {
-            let result = Result { try self.desk.endAgent(agent: agent.id) }
-            DispatchQueue.main.async {
-                switch result {
-                case .success: if self.only == agent.callsign { self.only = nil }
-                case .failure(RadioError.Told(let reason)): self.problem = reason
-                case .failure(RadioError.Offline): self.problem = "Cannot reach that computer."
-                case .failure: self.problem = "It did not end."
-                }
-            }
-        }
+        tell("It did not end.", { try self.desk.endAgent(agent: agent.id) }) { if self.only == agent.callsign { self.only = nil } }
     }
 
     /// The app's own folder: the core keeps what he chose there, and the models that run on this phone.
@@ -474,14 +489,10 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// Say a sentence in the chosen voice, so he hears what he picked.
     func sampleVoice(done: @escaping (String?) -> Void) {
-        fetch.async {
-            var wrong: String?
-            do {
-                let sample = try self.desk.ownVoiceSample()
-                self.voice.play(rate: sample.rate, pcm: sample.pcm, last: true)
-            } catch RadioError.Told(let reason) { wrong = reason } catch { wrong = "The voice did not speak." }
-            DispatchQueue.main.async { done(wrong) }
-        }
+        ask("The voice did not speak.", {
+            let sample = try self.desk.ownVoiceSample()
+            self.voice.play(rate: sample.rate, pcm: sample.pcm, last: true)
+        }) { _, wrong in done(wrong) }
     }
 
     /// The engines this app runs models with itself, by the name a model's row in the catalogue gives. The
@@ -535,12 +546,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// Let a question go without answering it.
     func dismiss(_ m: ChatMessage) {
         if replyingTo?.id == m.id { replyingTo = nil }
-        fetch.async {
-            let result = Result { try self.desk.dismiss(messageId: m.id) }
-            DispatchQueue.main.async {
-                if case .failure(RadioError.Told(let reason)) = result { self.problem = reason }
-            }
-        }
+        tell("It was not let go.") { try self.desk.dismiss(messageId: m.id) }
     }
 
     /// Try again a message that was not sent.
@@ -554,27 +560,12 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// Take back something he said that is still waiting its turn.
     func unsend(_ m: ChatMessage) {
-        fetch.async {
-            let result = Result { try self.desk.unsend(messageId: m.id) }
-            DispatchQueue.main.async {
-                if case .failure(RadioError.Told(let reason)) = result { self.problem = reason }
-            }
-        }
+        tell("It was not taken back.") { try self.desk.unsend(messageId: m.id) }
     }
 
     /// Have its computer take over an agent he started in a terminal, so his words reach it as his own.
     func takeOver(_ agent: DeskMember) {
-        fetch.async {
-            let result = Result { try self.desk.takeOver(agent: agent.id) }
-            DispatchQueue.main.async {
-                switch result {
-                case .success: break
-                case .failure(RadioError.Told(let reason)): self.problem = reason
-                case .failure(RadioError.Offline): self.problem = "Cannot reach that computer."
-                case .failure: self.problem = "It was not taken over."
-                }
-            }
-        }
+        tell("It was not taken over.") { try self.desk.takeOver(agent: agent.id) }
     }
 
     /// Send the words of one of his messages again, to another agent.
@@ -634,25 +625,6 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
     }
 
-    /// Read a whole message aloud, in the voice of the computer it came from, or stop if it is the one being read.
-    func readAloud(_ m: ChatMessage) {
-        if reading == m.id {
-            stopReading()
-            return
-        }
-        stopReading()
-        reading = m.id
-        DispatchQueue.global(qos: .userInitiated).async {
-            let read = self.desk.readAloud(messageId: m.id)
-            DispatchQueue.main.async {
-                guard self.reading == m.id else { return }
-                self.reading = nil
-                // the core says why when it is the voice (none chosen, or the one chosen could not speak)
-                if !read && self.problem == nil { self.problem = "That was not read aloud." }
-            }
-        }
-    }
-
     func stopReading() {
         guard reading != nil else { return }
         reading = nil
@@ -678,18 +650,10 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         guard switching == nil, !a.live else { return }
         switching = station + "|" + a.id
         accountsProblem = nil
-        fetch.async {
-            let result = Result { try self.desk.useAccount(station: station, harness: a.harness, id: a.id) }
-            DispatchQueue.main.async {
-                self.switching = nil
-                switch result {
-                case .success(let now):
-                    if let i = self.accounts.firstIndex(where: { $0.station == station }) { self.accounts[i] = now }
-                case .failure(RadioError.Told(let reason)): self.accountsProblem = reason
-                case .failure(RadioError.Offline): self.accountsProblem = "Cannot reach that computer."
-                case .failure: self.accountsProblem = "It did not switch."
-                }
-            }
+        ask("It did not switch.", { try self.desk.useAccount(station: station, harness: a.harness, id: a.id) }) { now, wrong in
+            self.switching = nil
+            self.accountsProblem = wrong
+            if let now, let i = self.accounts.firstIndex(where: { $0.station == station }) { self.accounts[i] = now }
         }
     }
 
@@ -699,17 +663,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         let team = team.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !team.isEmpty else { return }
         let watched = only == agent.callsign
-        fetch.async {
-            let result = Result { try self.desk.moveAgent(agent: agent.id, team: team) }
-            DispatchQueue.main.async {
-                switch result {
-                case .success:
-                    if watched { self.only = self.view.rooms.flatMap(\.members).first { $0.id == agent.id }?.callsign }
-                case .failure(RadioError.Told(let reason)): self.problem = reason
-                case .failure(RadioError.Offline): self.problem = "Cannot reach that computer."
-                case .failure: self.problem = "It did not move."
-                }
-            }
+        tell("It did not move.", { try self.desk.moveAgent(agent: agent.id, team: team) }) {
+            if watched { self.only = self.agents.first { $0.id == agent.id }?.callsign }
         }
     }
 
@@ -796,10 +751,9 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     func recordRead() -> Data { voice.recordRead() }
     func recordStop() { voice.recordStop() }
     func changed() { DispatchQueue.main.async { self.refresh() } }
-    func status(status: RadioStatus, saying: String) {
+    func status(status: RadioStatus) {
         DispatchQueue.main.async {
             self.status = status
-            if !saying.isEmpty { self.said = saying }
             if case .speaking = status {} else { self.caption = nil }
             // the core has dealt with what he said (and not merely finished something else while he talks)
             if case .listening = status {} else if case .sending = status {} else if !self.voice.micBusy { self.dictating = false; self.micOpen = false }

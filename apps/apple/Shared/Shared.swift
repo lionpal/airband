@@ -103,16 +103,5 @@ enum NoticeButtons {
 /// An agent's badge as a picture: its two characters on its team's colour. The system shows it in a circle, so
 /// the colour fills the square and the characters keep to the middle.
 func badgeImage(_ text: String, colour: UInt8, side: CGFloat = 160) -> Data? {
-    let format = UIGraphicsImageRendererFormat()
-    format.scale = 1
-    let image = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format).image { context in
-        TeamColours.ui(colour).setFill()
-        context.fill(CGRect(x: 0, y: 0, width: side, height: side))
-        let base = UIFont.systemFont(ofSize: side * 0.4, weight: .bold)
-        let font = base.fontDescriptor.withDesign(.rounded).map { UIFont(descriptor: $0, size: base.pointSize) } ?? base
-        let words = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: UIColor(red: 0.043, green: 0.043, blue: 0.047, alpha: 1)])
-        let size = words.size()
-        words.draw(at: CGPoint(x: (side - size.width) / 2, y: (side - size.height) / 2))
-    }
-    return image.pngData()
+    badgePicture(text, fill: TeamColours.ui(colour), side: side, corner: 0, letters: 0.4, scale: 1).pngData()
 }

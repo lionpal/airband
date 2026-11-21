@@ -12,9 +12,9 @@ struct AirbandWidgets: WidgetBundle {
     }
 }
 
-private let ground = Color(red: 0.043, green: 0.043, blue: 0.047)
-private let ink = Color(red: 0.957, green: 0.957, blue: 0.941)
-private let ask = Color(red: 0.898, green: 0.725, blue: 0.306)
+private let ground = Colours.ground
+private let ink = Colours.ink
+private let ask = Colours.ask
 
 // MARK: the tile
 
@@ -48,20 +48,11 @@ struct TalkTile: Widget {
 
 // MARK: the banner
 
-private struct AgentBadge: View {
-    let text: String
-    var size: CGFloat = 36
-    var body: some View {
-        Text(text).font(.system(size: size * 0.42, weight: .bold, design: .rounded)).foregroundStyle(ground)
-            .frame(width: size, height: size).background(ask, in: RoundedRectangle(cornerRadius: size * 0.28))
-    }
-}
-
 struct NeedsYouBanner: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: NeedsYouAttributes.self) { context in
             HStack(spacing: 12) {
-                AgentBadge(text: context.attributes.badge, size: 40)
+                SquareBadge(text: context.attributes.badge, fill: ask, size: 40)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(context.state.waiting > 1 ? "\(context.attributes.callsign) needs you, and \(context.state.waiting - 1) more" : "\(context.attributes.callsign) needs you")
                         .font(.system(size: 15, weight: .bold)).foregroundStyle(ink).lineLimit(1)
@@ -78,7 +69,7 @@ struct NeedsYouBanner: Widget {
             .widgetURL(OpenWith.answer(context.attributes.callsign))
         } dynamicIsland: { context in
             DynamicIsland {
-                DynamicIslandExpandedRegion(.leading) { AgentBadge(text: context.attributes.badge) }
+                DynamicIslandExpandedRegion(.leading) { SquareBadge(text: context.attributes.badge, fill: ask, size: 36) }
                 DynamicIslandExpandedRegion(.center) {
                     Text("\(context.attributes.callsign) needs you").font(.system(size: 15, weight: .semibold)).lineLimit(1)
                 }
@@ -87,7 +78,7 @@ struct NeedsYouBanner: Widget {
                     Text(context.state.question).font(.system(size: 13)).foregroundStyle(ink.opacity(0.8)).lineLimit(2)
                 }
             } compactLeading: {
-                AgentBadge(text: context.attributes.badge, size: 22)
+                SquareBadge(text: context.attributes.badge, fill: ask, size: 22)
             } compactTrailing: {
                 Image(systemName: "mic.fill").foregroundStyle(ask)
             } minimal: {

@@ -170,8 +170,7 @@ private struct TrayThumb: View {
         .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
         .overlay(alignment: .topTrailing) {
             Button { model.detach(item) } label: {
-                Image(systemName: "xmark").font(.system(size: 10, weight: .heavy)).foregroundStyle(Palette.ink)
-                    .frame(width: 22, height: 22).background(Palette.raised, in: Circle())
+                RoundIcon("xmark", side: 22, glyph: 10, weight: .heavy).foregroundStyle(Palette.ink)
                     .overlay(Circle().strokeBorder(Palette.ground, lineWidth: 2))
                     .frame(width: 36, height: 36) // a finger's worth to hit
             }
@@ -269,12 +268,10 @@ private struct RecentThumb: View {
 
 /// The tile in the + panel that opens his photos.
 struct AttachTile: View {
-    @EnvironmentObject var model: RadioModel
-    @State private var picked: [PhotosPickerItem] = []
     let done: () -> Void
 
     var body: some View {
-        PhotosPicker(selection: $picked, maxSelectionCount: 6, matching: .any(of: [.images, .videos])) {
+        AttachPicker(done: done) {
             HStack(spacing: 10) {
                 Image(systemName: "photo.on.rectangle.angled").font(.system(size: 18, weight: .semibold))
                 Text("Photo or video").font(.system(size: 16, weight: .semibold))
@@ -285,13 +282,26 @@ struct AttachTile: View {
             .background(Palette.raised, in: RoundedRectangle(cornerRadius: 16))
             .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Palette.read.opacity(0.55), lineWidth: 1))
         }
-        .buttonStyle(.plain)
-        .onChange(of: picked) { _, items in
-            guard !items.isEmpty else { return }
-            model.attach(items)
-            picked = []
-            done()
-        }
+    }
+}
+
+/// Opens the photo picker from whatever it is given to look like, and adds what he picks to what he is
+/// about to say. `done` runs once something has been added.
+struct AttachPicker<Label: View>: View {
+    @EnvironmentObject var model: RadioModel
+    @State private var picked: [PhotosPickerItem] = []
+    var done: () -> Void = {}
+    @ViewBuilder var label: () -> Label
+
+    var body: some View {
+        PhotosPicker(selection: $picked, maxSelectionCount: 6, matching: .any(of: [.images, .videos]), label: label)
+            .buttonStyle(.plain)
+            .onChange(of: picked) { _, items in
+                guard !items.isEmpty else { return }
+                model.attach(items)
+                picked = []
+                done()
+            }
     }
 }
 
@@ -373,20 +383,12 @@ extension RadioModel {
 /// A round button that opens the photo picker and nothing else: for adding to what he is saying while the
 /// microphone is open.
 struct AttachButton: View {
-    @EnvironmentObject var model: RadioModel
-    @State private var picked: [PhotosPickerItem] = []
-
     var body: some View {
-        PhotosPicker(selection: $picked, maxSelectionCount: 6, matching: .any(of: [.images, .videos])) {
+        AttachPicker {
             Image(systemName: "photo.on.rectangle.angled").font(.system(size: 19, weight: .semibold)).foregroundStyle(Palette.ink)
                 .frame(width: 56, height: 56).frosted(Circle())
         }
-        .buttonStyle(.plain).accessibilityLabel("Attach a photo or a video")
-        .onChange(of: picked) { _, items in
-            guard !items.isEmpty else { return }
-            model.attach(items)
-            picked = []
-        }
+        .accessibilityLabel("Attach a photo or a video")
     }
 }
 
@@ -444,7 +446,7 @@ struct TrimView: View {
         VStack(spacing: 0) {
             HStack {
                 Button { dismiss() } label: {
-                    Image(systemName: "xmark").font(.system(size: 15, weight: .bold)).frame(width: 40, height: 40).background(Palette.raised, in: Circle())
+                    RoundIcon("xmark", side: 40, glyph: 15, weight: .bold)
                 }
                 .buttonStyle(.plain).accessibilityLabel("Cancel")
                 Spacer()
