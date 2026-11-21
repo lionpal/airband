@@ -1,7 +1,6 @@
 //! The tower's HTTP surface: `airband.agent/1` in, `airband.radio/1` both ways, and a status page for the
 //! command line. Handlers are thin: they lock, call into the other modules, and answer.
 use super::*;
-use airband_core::radio::EarsGrant;
 
 /// Which radio is asking.
 fn radio_of(headers: &HeaderMap) -> String {
@@ -283,8 +282,6 @@ async fn next(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
     let radio = radio_of(&headers);
     {
         let mut inner = app.inner.lock().unwrap();
-        // a radio with a voice of its own says so each time it asks, and is sent words only
-        inner.call(&radio).speaks = q.get("voice").map(String::as_str) == Some("own");
         // He has just turned reading aloud on, and the radio says so (`joined`). What was said long before is
         // in the chat for him to read: it is not read out now, hours late. A radio that only went quiet for a
         // while and is back says no such thing, and nothing is taken from the queue for it.
@@ -369,14 +366,12 @@ async fn heard(State(app): State<Arc<App>>, headers: HeaderMap, Json(h): Json<He
     Json(json!({}))
 }
 
-async fn ready(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>) -> Json<Value> {
+async fn ready(State(app): State<Arc<App>>, headers: HeaderMap) -> Json<Value> {
     let waiting = {
         let mut inner = app.inner.lock().unwrap();
         let radio = radio_of(&headers);
         let call = inner.call(&radio);
         call.ready = true;
-        // said here too, so what is handed over next is made for the voice this radio has now
-        call.speaks = q.get("voice").map(String::as_str) == Some("own");
         // ready for the next with no word about the last (he turned reading off part way, or its own voice
         // failed): the last is still to be heard
         inner.give_back(&radio);
@@ -440,19 +435,10 @@ async fn utterance(State(app): State<Arc<App>>, headers: HeaderMap, Json(u): Jso
             ("", false) => Some("Look at what I attached."),
             (said, _) => Some(said),
         };
-        let mut reply = match text {
+        let reply = match text {
             Some(text) => on_utterance(&app, &radio, Some(&u.id), text, u.re.as_deref(), u.scope.as_deref(), u.label.as_deref(), &u.attachments, &u.others).await,
             None => Reply::default(),
         };
-        // on a call the tower's answer is spoken too: start its voice now, and the radio fetches it as it is made
-        let on_call = {
-            let mut inner = app.inner.lock().unwrap();
-            let call = inner.call(&radio);
-            call.connected().then_some(call.speaks)
-        };
-        if let (false, Some(speaks)) = (reply.say.is_empty(), on_call) {
-            reply.speech = app.speech.start(&app.voice_to(speaks), &u.id, &reply.say);
-        }
         app.store.finish_receipt(&u.id, &reply);
         // one line for everything he says: its id (the same on the phone and at the relay), how it came, what
         // became of it and how long that took
@@ -615,16 +601,14 @@ async fn feed(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
                 m
             })
             .collect();
-        return Json(Feed { schema: airband_core::radio::SCHEMA.into(), rev: upto, messages, roster: inner.roster_entries(), roster_rev: inner.roster_rev(), listens: !app.cfg.ears.is_none(), reads: { let r = judge::reader(&app.cfg); r.offer(crate::providers::Job::Summary).map(|(_, o)| o.label.clone()).unwrap_or_default() }, direct: config::lan_addrs().into_iter().filter(|_| app.cfg.lan).chain(config::tailscale_addrs()).map(|a| format!("http://{a}:{}", app.cfg.port)).collect(), colours: inner.colours.clone(), seq: inner.seq, projects: inner.launchable(&app.cfg).into_keys().collect(), open: open.into_iter().collect(), quick: airband_core::radio::quick_defaults().into_iter().chain(app.cfg.quick.iter().cloned()).collect(), station: config::station(&app.cfg), answers: inner.settled_for(&radio, since) });
+        return Json(Feed { schema: airband_core::radio::SCHEMA.into(), rev: upto, messages, roster: inner.roster_entries(), roster_rev: inner.roster_rev(), reads: { let r = judge::reader(&app.cfg); r.offer(crate::providers::Job::Summary).map(|(_, o)| o.label.clone()).unwrap_or_default() }, direct: config::lan_addrs().into_iter().filter(|_| app.cfg.lan).chain(config::tailscale_addrs()).map(|a| format!("http://{a}:{}", app.cfg.port)).collect(), colours: inner.colours.clone(), seq: inner.seq, projects: inner.launchable(&app.cfg).into_keys().collect(), open: open.into_iter().collect(), quick: airband_core::radio::quick_defaults().into_iter().chain(app.cfg.quick.iter().cloned()).collect(), station: config::station(&app.cfg), answers: inner.settled_for(&radio, since) });
     }
 }
 
 async fn message(State(app): State<Arc<App>>, Path(id): Path<String>, Query(q): Query<HashMap<String, String>>) -> Response {
-    // the whole message, read aloud in the tower's voice: the id of its speech. A very long one is read as far
-    // as a few minutes go
-    // `spoken` is the same words with no sound, for a radio that reads them in a voice of its own
-    let form = q.get("form").map(String::as_str);
-    if matches!(form, Some("speech" | "spoken")) {
+    // `spoken` is the whole message as it is read aloud, for the radio to read in its own voice. A very long
+    // one is read as far as a few minutes go
+    if q.get("form").map(String::as_str) == Some("spoken") {
         // `part=asked` is the question as he would be asked it on a call: who is asking, its short form, and
         // the answers it offers, for a radio that reads it to him before he answers
         let text: Option<String> = app.inner.lock().unwrap().log.iter().find(|e| e.id == id).map(|e| match q.get("part").map(String::as_str) {
@@ -639,14 +623,8 @@ async fn message(State(app): State<Arc<App>>, Path(id): Path<String>, Query(q): 
             }
             _ => spoken(&e.full).chars().take(3000).collect(),
         });
-        if form == Some("spoken") {
-            return match text {
-                Some(text) => Json(json!({ "text": text })).into_response(),
-                None => StatusCode::NOT_FOUND.into_response(),
-            };
-        }
-        return match text.and_then(|text| app.speech.start(&app.voice(), &id, &text)) {
-            Some(speech) => Json(json!({ "speech": speech })).into_response(),
+        return match text {
+            Some(text) => Json(json!({ "text": text })).into_response(),
             None => StatusCode::NOT_FOUND.into_response(),
         };
     }
@@ -662,15 +640,6 @@ async fn message(State(app): State<Arc<App>>, Path(id): Path<String>, Query(q): 
     }
 }
 
-/// The next part of a clip, as far as the voice has got.
-async fn speech_part(State(app): State<Arc<App>>, Path(id): Path<String>, Query(q): Query<HashMap<String, String>>) -> Response {
-    let from = q.get("from").and_then(|v| v.parse().ok()).unwrap_or(0);
-    match app.speech.part(&id, from).await {
-        Some(part) => Json(part).into_response(),
-        None => StatusCode::NOT_FOUND.into_response(),
-    }
-}
-
 /// The next part of a picture's kept copy.
 async fn picture_part(Path(id): Path<String>, Query(q): Query<HashMap<String, String>>) -> Response {
     let from = q.get("from").and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -678,11 +647,6 @@ async fn picture_part(Path(id): Path<String>, Query(q): Query<HashMap<String, St
         Some(part) => Json(part).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
-}
-
-/// What should listen on the phone: its own recognition, or a service it reaches with a short-lived pass.
-async fn ears(State(app): State<Arc<App>>) -> Json<EarsGrant> {
-    Json(ears::grant(&app).await)
 }
 
 /// What can read for this tower, and what does now: the tower's own list, for a radio that offers the choice.
@@ -696,17 +660,6 @@ async fn reads(Json(wanted): Json<airband_core::radio::SetReads>) -> Json<Value>
         Ok(name) => json!({ "reads": name }),
         Err(why) => json!({ "error": why }),
     })
-}
-
-/// Part of a recording, for a listening service whose key is here. The last part is answered with the words.
-async fn hear(State(app): State<Arc<App>>, Json(part): Json<airband_core::radio::HearPart>) -> Response {
-    match ears::hear(&app, part).await {
-        Ok(text) => Json(airband_core::radio::HeardText { text }).into_response(),
-        Err(why) => {
-            log(format!("ears: a recording was not turned into words ({why})"));
-            StatusCode::BAD_GATEWAY.into_response()
-        }
-    }
 }
 
 async fn status(State(app): State<Arc<App>>) -> Json<Value> {
@@ -748,10 +701,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/radio/ready", post(ready))
         .route("/v1/radio/utterance", post(utterance))
         .route("/v1/radio/feed", get(feed))
-        .route("/v1/radio/speech/{id}", get(speech_part))
         .route("/v1/radio/picture/{id}", get(picture_part))
-        .route("/v1/radio/ears", get(ears))
-        .route("/v1/radio/hear", post(hear))
         .route("/v1/radio/reads", get(reads_offered).post(reads))
         .route("/v1/radio/message/{id}", get(message))
         .route("/v1/radio/attachment", post(attachment))

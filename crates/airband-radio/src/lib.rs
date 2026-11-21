@@ -6,8 +6,8 @@
 //! - `net`: the HTTP agent, which can find a host the local network's DNS has wrong
 //! - `desk`: every paired computer as one: the merged chat, what is waiting, where his messages go
 //! - `call`: the call-mode loop
-//! - `voice`: outbound, the tower's speech fetched in parts and handed to the host as PCM
-//! - `ears`: inbound, his speech to text, by the host's own recognition or a service (the tower says which)
+//! - `voice`: outbound, words said aloud by the voice he chose on this device
+//! - `ears`: inbound, his speech to text, by the model or the service he chose on this device
 //! - `outbox`: delivering typed messages over a bad connection
 //! - `store`: what is kept on the device
 //!
@@ -32,7 +32,7 @@ mod desk;
 mod ears;
 mod ears_stream;
 mod engines;
-pub mod hears;
+mod hears;
 mod link;
 mod models;
 mod mouth;
@@ -40,12 +40,11 @@ pub mod net;
 mod outbox;
 mod store;
 mod voice;
-pub mod voices;
+mod voices;
 
 use call::*;
 pub use choices::{Choice, ChoiceJob, ChoicePlace, ChoiceState};
 pub use desk::*;
-pub use ears::try_listening;
 pub use models::{catalog_load, catalog_refresh};
 pub use models::VoiceChoice;
 pub use mouth::{CodingTool, ServiceAsk, VoiceSample, coding_tools};
@@ -81,11 +80,12 @@ pub enum RadioStatus {
 /// What the host app provides. Calls arrive on the radio's own thread, one at a time, and may block.
 #[uniffi::export(with_foreign)]
 pub trait RadioHost: Send + Sync {
-    /// Say this aloud with the device's own voice; return when it has finished. Used when the tower is set to
-    /// the device's voice, and whenever the tower's audio does not arrive in time.
+    /// Say this the host's own way; return when it has finished. Only asked of a host that says its own way
+    /// is worth using (`own_voice`): a terminal, which prints.
     fn speak(&self, text: String);
-    /// Open the microphone and return what he said, by the device's own recognition, or nothing if he stayed
-    /// silent. Used when the tower is set to the device's ears, and when a listening service fails.
+    /// Take what he says the host's own way, or nothing if he stayed silent. Only asked of a host that says
+    /// its own way is worth using (`own_voice`) and has no microphone to read: a terminal, which takes a
+    /// typed line.
     fn listen(&self) -> Option<String>;
     /// For the screen.
     fn status(&self, status: RadioStatus);
@@ -119,8 +119,8 @@ pub trait RadioHost: Send + Sync {
     /// it works.
     fn run_model(&self, engine: String, folder: String, job: ChoiceJob, input: Vec<u8>) -> Option<Vec<u8>>;
     /// Are this host's own `speak` and `listen` worth using? A terminal's are (it prints, and a typed line is
-    /// what he "said"). A phone's are not: its own recognition and voice are too poor to hand him, so with no
-    /// listening service there is no listening, and with no audio from the tower nothing is spoken.
+    /// what he "said"). A phone's are not: what listens and what speaks there are what he chose in the app
+    /// (a model on the phone, or a service with his key), and with nothing chosen there is neither.
     fn own_voice(&self) -> bool;
     /// Something he chose on this device (what listens, what speaks) could not do its job just now, and why.
     /// It stays chosen. A host with a screen says so; one without need not.
@@ -229,7 +229,6 @@ fn chat_feed(feed: Feed) -> ChatFeed {
         projects: feed.projects,
         colours: feed.colours.into_iter().collect(),
         open: feed.open,
-        listens: feed.listens,
         reads: feed.reads,
         station: feed.station,
     }
@@ -433,8 +432,6 @@ pub struct ChatFeed {
     pub open: Vec<String>,
     /// What the tower's computer is called, for an app paired with more than one.
     pub station: String,
-    /// That computer has a key of its own for the listening service.
-    pub listens: bool,
     /// What reads the agents' messages on that computer, by name. Empty when nothing does.
     pub reads: String,
 }
@@ -484,7 +481,7 @@ impl Radio {
     /// unsent messages and the recent chat are kept across restarts; empty keeps nothing.
     #[uniffi::constructor]
     pub fn start(link: String, data_dir: String, host: Arc<dyn RadioHost>) -> Result<Arc<Self>, RadioError> {
-        // on its own, with nothing chosen on the device: his computer listens and speaks
+        // on its own, with nothing chosen on the device: nothing listens and nothing speaks but the host itself
         Self::start_with(link, data_dir, host, Arc::default())
     }
 
@@ -547,8 +544,8 @@ impl Radio {
         self.link.is_direct()
     }
 
-    /// Read a whole message aloud in the tower's voice. Blocks until it has been heard or [`Radio::hush`] is
-    /// called. False when the tower has no voice to read it with.
+    /// Read a whole message aloud in the voice he chose on this device. Blocks until it has been heard or
+    /// [`Radio::hush`] is called. False when it was not read: he is told why.
     pub(crate) fn read_aloud(&self, id: &str) -> bool {
         self.read(id, "")
     }
@@ -559,24 +556,17 @@ impl Radio {
     }
     fn read(&self, id: &str, part: &str) -> bool {
         let mine = self.reading.fetch_add(1, Ordering::SeqCst) + 1;
-        // With a voice of the device's own, the tower is asked for the words and they are said here. When that
-        // voice cannot speak he is told why, and nothing else reads it in its place.
-        if self.senses.mouth.ready() {
-            let Ok((200, v)) = self.link.request("GET", &format!("/message/{id}?form=spoken{part}"), None) else { return false };
-            let Some(text) = v["text"].as_str() else { return false };
-            return match self.senses.mouth.say(&*self.host, text, &|| self.reading.load(Ordering::SeqCst) != mine) {
-                Ok(()) => true,
-                Err(why) => {
-                    self.host.told(why);
-                    false
-                }
-            };
+        // With no voice chosen nothing can read it: he is told where to choose one, before anything is asked
+        // of his computer.
+        if !voice::can_speak(&*self.host, &self.senses.mouth) {
+            self.host.told(voice::NOTHING_CHOSEN.into());
+            return false;
         }
-        let speech = match self.link.request("GET", &format!("/message/{id}?form=speech{part}"), None) {
-            Ok((200, v)) => v["speech"].as_str().map(String::from),
-            _ => None,
-        };
-        speech.is_some_and(|speech| voice::play(&self.link, &*self.host, &speech, &|| self.reading.load(Ordering::SeqCst) != mine))
+        // His computer is asked for the words as they are read, and they are said here. When the voice he chose
+        // cannot speak he is told why (`say_until` does), and nothing else reads it in its place.
+        let Ok((200, v)) = self.link.request("GET", &format!("/message/{id}?form=spoken{part}"), None) else { return false };
+        let Some(text) = v["text"].as_str() else { return false };
+        matches!(voice::say_until(&*self.host, &self.senses.mouth, text, &|| self.reading.load(Ordering::SeqCst) != mine), voice::Said::Aloud)
     }
     /// Leave off reading aloud.
     pub(crate) fn hush(&self) {

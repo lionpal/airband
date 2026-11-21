@@ -1,11 +1,10 @@
-//! The device's own voice, in place of the tower's. One of two kinds, whichever he chose:
+//! The voice: what speaks on this device. One of two kinds, whichever he chose:
 //!
 //! - made on the device itself by a model: no key, no computer, no relay, nothing sent anywhere;
-//! - a voice service reached straight from the device with a key of his own, kept on the device. The services
-//!   are the tower's own (`voices.rs`, by the rows of `airband_core::providers`), so the phone can use any the
-//!   tower can, and his computer is not needed for it.
+//! - a voice service reached straight from the device with a key of his own, kept on the device (`voices.rs`,
+//!   by the rows of `airband_core::providers`).
 //!
-//! Either way the radio tells the tower it speaks for itself, and the tower sends it words only.
+//! His computer sends words only and has no voice: nothing about speaking is set or done there.
 //!
 //! A model is fetched and kept by `models.rs` and run by its engine (`engines.rs`). While one is chosen it
 //! stays loaded, so a sentence starts at once.
@@ -38,7 +37,7 @@ impl Mouth {
         self.using.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    /// Speak with this from now on; nothing is the tower's voice. A model is loaded in the background and
+    /// Speak with this from now on; nothing is nothing. A model is loaded in the background and
     /// stays loaded, so a sentence starts at once. The model that was chosen before is let go of, unless it is
     /// this one again (see [`Mouth::held`]).
     pub(crate) fn set(&self, own: Option<Own>) {
@@ -68,14 +67,7 @@ impl Mouth {
         self.failed.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    /// What a radio adds when it asks the tower for the next thing to say, or says it is ready for one:
-    /// whether it makes the speech itself.
-    pub(crate) fn asking(&self) -> &'static str {
-        if self.ready() { "?voice=own" } else { "" }
-    }
-
-    /// Has he chosen a voice of the device's own? Then the device says everything, and when that voice
-    /// cannot, nothing is said in its place.
+    /// Has he chosen a voice? When the one he chose cannot speak, nothing is said in its place.
     pub(crate) fn ready(&self) -> bool {
         self.using().is_some()
     }

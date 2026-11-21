@@ -1,5 +1,5 @@
-//! The voice services: a sentence in, 16-bit mono PCM out, a piece at a time. The tower uses these to make speech
-//! for a phone, and a phone uses them itself when he has given it a key of his own (`mouth.rs`).
+//! The voice services: a sentence in, 16-bit mono PCM out, a piece at a time. The phone uses these itself,
+//! with the key of his that is kept on it (`mouth.rs`). His computer makes no speech.
 //!
 //! Each way of reaching a voice service is an interface: a file under `voices/` with an `impl Synth` and a
 //! [`Voicing`] that names it, and a line of [`VOICES`]. A provider's row names the interface it speaks

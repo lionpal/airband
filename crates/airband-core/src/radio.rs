@@ -3,18 +3,16 @@
 //! The radio asks; the tower answers. All under `/v1/radio/`. Sent straight to the tower with
 //! `Authorization: Bearer <token>`, or sealed and passed through a relay (`airband.relay/1`):
 //! - `GET next`: held open up to 25 seconds. 200 with a [`Transmission`], or 204 when nothing is waiting.
-//!   With `?voice=own` the radio makes the speech itself and the transmission carries words only.
+//!   A transmission is words: the radio speaks them with the voice he chose on it. The tower makes no sound
+//!   and hears none; what listens and what speaks are the radio's alone.
 //! - `POST heard` [`Heard`]: that transmission was spoken to the end.
 //! - `POST utterance` [`Utterance`] → [`Outcome`]: what he said. Answered at once: the tower has it. What came
 //!   of it arrives in the feed ([`Feed::answers`]), and asking again under the same id says the same.
 //! - `POST ready`: the radio is free for the next transmission.
 //! - `POST presence` [`Presence`]: whether the radio is on a call and whether the chat is in front of him.
 //!   Said when either changes; every other request carries it too.
-//! - `GET ears` → [`EarsGrant`]: what should listen: the phone's own recognition, or a service and a pass for it.
-//! - `GET speech/<id>?from=<block>` → [`SpeechPart`]: a transmission's or a reply's speech, in parts, as the
-//!   tower's voice produces it. 404 when the tower has no voice set up: the radio then speaks the text itself.
 //!
-//! Those four are call mode: one transmission at a time, spoken. Chat mode reads the same messages as a feed:
+//! Those are call mode: one transmission at a time, spoken. Chat mode reads the same messages as a feed:
 //! - `GET feed?scope=…&after=<seq>&wait=<seconds>` → [`Feed`]: everything said since `after`, each cut to a
 //!   line or two. `scope` is `all`, `group:<name>` or `agent:<callsign>`.
 //! - `GET message/<id>?form=detail|full` → [`More`]: the fuller spoken version, or exactly what the agent wrote.
@@ -59,10 +57,6 @@ pub struct Transmission {
     /// How many more are waiting behind this one.
     #[serde(default)]
     pub waiting: u32,
-    /// The id of this transmission's speech, when the tower is making it (`GET speech/<id>`). Without one, or if
-    /// it does not arrive in time, the radio reads `say` with its own voice.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub speech: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -383,9 +377,6 @@ pub struct Reply {
     /// Open the microphone again after speaking.
     #[serde(default)]
     pub listen: bool,
-    /// The id of `say` as speech, when the tower is making it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub speech: Option<String>,
     /// The tower could not tell who his words are for: the agents it could be, likeliest first. A radio with a
     /// screen offers them to tap; `say` asks the same thing in words for one without.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -394,63 +385,6 @@ pub struct Reply {
     /// Nothing was delivered: the radio sends them there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub elsewhere: Option<String>,
-}
-
-/// `GET ears`: what should turn his speech into text, and what the phone needs for it. One of three things,
-/// said by `by`: nothing listens here; the phone records and sends the recording to the tower (`POST hear`),
-/// which holds the key; or the phone speaks to a service itself, live, with a pass.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "by", rename_all = "snake_case")]
-pub enum EarsGrant {
-    /// Nothing is set to listen on this computer. `phrases` are still the names he is likely to say, for
-    /// whatever the phone listens with by itself.
-    None {
-        #[serde(default)]
-        phrases: Vec<String>,
-    },
-    Tower,
-    Live(Pass),
-}
-
-/// What the phone needs to listen live with a service: which dialect to speak (a name the phone core has
-/// the code for), a pass that expires in minutes, and whatever that service has to be told (a region, a
-/// language, a model).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Pass {
-    pub dialect: String,
-    pub token: String,
-    #[serde(default)]
-    pub set: std::collections::BTreeMap<String, String>,
-    /// Names he is likely to say (callsigns, projects), for a recogniser that can be told what to expect.
-    #[serde(default)]
-    pub phrases: Vec<String>,
-}
-
-impl Default for EarsGrant {
-    fn default() -> Self {
-        EarsGrant::None { phrases: Vec::new() }
-    }
-}
-
-impl EarsGrant {
-    pub fn listens(&self) -> bool {
-        !matches!(self, EarsGrant::None { .. })
-    }
-    /// The names he is likely to say that came with it.
-    pub fn phrases(&self) -> &[String] {
-        match self {
-            EarsGrant::None { phrases } => phrases,
-            EarsGrant::Live(pass) => &pass.phrases,
-            EarsGrant::Tower => &[],
-        }
-    }
-}
-
-impl Pass {
-    /// One of the settings, or empty.
-    pub fn get(&self, field: &str) -> &str {
-        self.set.get(field).map(String::as_str).unwrap_or_default()
-    }
 }
 
 /// `POST reads`: choose what reads for this tower, from a radio. `kind` and `offer` name one of the tower's
@@ -527,48 +461,6 @@ pub struct ReadsAsk {
     pub question: String,
     #[serde(default)]
     pub usual: String,
-}
-
-/// `POST hear`: part of a recording, for a tower whose listening service takes a finished clip. `data` is
-/// 16 kHz mono in the same compressed blocks speech comes in, base64. With `last`, the answer is [`HeardText`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HearPart {
-    /// The same for every part of one recording.
-    pub clip: String,
-    pub data: String,
-    pub samples: u32,
-    #[serde(default)]
-    pub last: bool,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct HeardText {
-    #[serde(default)]
-    pub text: String,
-}
-
-/// `GET speech/<id>?from=<block>`: the next part of a clip, as far as the tower has it. The radio asks again
-/// from `next` until `done`. Each request is held a moment while the voice service is still producing.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct SpeechPart {
-    /// Samples a second.
-    pub rate: u32,
-    /// Blocks of IMA ADPCM (`airband_core::audio`), base64, one after another.
-    pub data: String,
-    /// How many samples `data` holds.
-    pub samples: u32,
-    /// The block to ask for next.
-    pub next: u32,
-    /// Nothing follows.
-    pub done: bool,
-    /// With the first part: the words being spoken, exactly as the voice was given them.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
-    /// When the voice service says when each word is spoken: pairs of (where the word starts in `text`, counted
-    /// in characters; milliseconds from the start of the clip), for the words that start within this part. A
-    /// radio can show the words as they are said. Empty when the service gives no timings.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub marks: Vec<(u32, u32)>,
 }
 
 /// A picture that goes with a message: one the agent looked at or made for him. The tower holds a compressed
@@ -801,9 +693,6 @@ pub struct Feed {
     /// can read it or stand in for the tower. Empty when the tower offers none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub direct: Vec<String>,
-    /// This tower has a key of its own for the listening service. Only that it has one: never the key.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub listens: bool,
     /// What reads the agents' messages on this tower and makes the short of them, by its provider's name for
     /// showing. Empty when nothing does.
     #[serde(default, skip_serializing_if = "String::is_empty")]

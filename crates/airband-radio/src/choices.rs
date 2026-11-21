@@ -1,9 +1,10 @@
 //! What he chooses, in one place: what writes his summaries, what listens and what speaks.
 //!
-//! Each job has one list ([`Desk::choices`]) and one way to pick from it ([`Desk::choose_for`]). A choice is on
-//! this device (a model fetched to it), a service reached with a key of his own, or whatever his computer is
-//! set up with. Exactly one is chosen for a job at a time, and that rule is here and nowhere else: the
-//! modules that do the listening and the speaking (`ears.rs`, `mouth.rs`) are handed the one thing to use.
+//! Each job has one list ([`Desk::choices`]) and one way to pick from it ([`Desk::choose_for`]). What listens
+//! and what speaks are this device's alone: a model fetched to it, or a service reached from it with a key of
+//! his own. His computer has no part in either. At most one is chosen for a job at a time, and that rule is
+//! here and nowhere else: the modules that do the listening and the speaking (`ears.rs`, `mouth.rs`) are
+//! handed the one thing to use, or nothing.
 //!
 //! What he chose is kept by the core, in `choices.json` in the app's folder. Keys are not: the host keeps
 //! them where its system keeps secrets ([`DeskHost::secret`]) and they are never handed back to a screen.
@@ -18,7 +19,7 @@ use super::*;
 use crate::engines::HostDevice;
 use crate::models::{Model, VoiceChoice};
 use crate::mouth::{Service, ServiceAsk};
-use airband_core::providers::{BY_TOWER, Job};
+use airband_core::providers::Job;
 use airband_core::radio::{OfferName, ReadsOffered, SetReads};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -53,8 +54,6 @@ pub enum ChoicePlace {
     Phone,
     /// A service, with a key or a sign-in of his own.
     Service,
-    /// Whatever his computer is set up with.
-    Computer,
 }
 
 /// How a choice stands.
@@ -137,12 +136,6 @@ struct Pick {
     voice: String,
 }
 
-impl Pick {
-    fn computer() -> Pick {
-        Pick { place: ChoicePlace::Computer, id: String::new(), offer: String::new(), set: BTreeMap::new(), voice: String::new() }
-    }
-}
-
 /// What is to write his summaries, chosen while no computer could be reached. It is sent to the first one
 /// that can.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -179,21 +172,22 @@ struct Saved {
 impl Saved {
     /// A new install: the models that run on this device are chosen for listening and for the voice, because
     /// they need nothing from him (they are fetched when he finishes the first run), and the first coding tool
-    /// in the catalogue is the one he is taken to use until he says.
+    /// in the catalogue is the one he is taken to use until he says. Where no model for a job runs on this
+    /// device, nothing is chosen for it.
     fn fresh(device: &HostDevice) -> Saved {
-        let first = |job: Job| crate::models::models(device).find(|m| m.job == job).map(|m| Pick { place: ChoicePlace::Phone, id: m.kind.clone(), offer: String::new(), set: BTreeMap::new(), voice: String::new() }).unwrap_or_else(Pick::computer);
-        let mut saved = Saved { ears: Some(first(Job::Ears)), voice: Some(first(Job::Voice)), ..Saved::default() };
+        let first = |job: Job| crate::models::models(device).find(|m| m.job == job).map(|m| Pick { place: ChoicePlace::Phone, id: m.kind.clone(), offer: String::new(), set: BTreeMap::new(), voice: String::new() });
+        let mut saved = Saved { ears: first(Job::Ears), voice: first(Job::Voice), ..Saved::default() };
         saved.use_tools(airband_core::catalog::current().tools.first().map(|t| vec![t.id.to_string()]).unwrap_or_default());
         saved
     }
 
-    fn pick(&self, job: ChoiceJob) -> Pick {
+    /// What is chosen on this device for a job, if anything is.
+    fn pick(&self, job: ChoiceJob) -> Option<Pick> {
         match job {
             ChoiceJob::Ears => self.ears.clone(),
             ChoiceJob::Voice => self.voice.clone(),
             ChoiceJob::Reads => None,
         }
-        .unwrap_or_else(Pick::computer)
     }
 
     /// The coding tools he uses are these. While no computer has said what it reads with and he has not
@@ -323,7 +317,7 @@ fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> {
     for m in facts.models.iter().filter(|m| m.job == job.job()) {
         let m = &**m;
         let (fetched, current) = (facts.here)(m);
-        let chosen = pick.place == ChoicePlace::Phone && pick.id == m.kind;
+        let chosen = pick.as_ref().is_some_and(|p| p.place == ChoicePlace::Phone && p.id == m.kind);
         let size = megabytes(m);
         let state = working(&m.kind).or(failed(chosen)).unwrap_or(match (fetched, current) {
             (false, _) => ChoiceState::NeedsDownload { megabytes: size },
@@ -348,44 +342,19 @@ fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> {
             asks: Vec::new(),
             voices: m.voices.iter().map(|(name, about)| VoiceChoice { name: name.clone(), label: name.clone(), about: about.clone(), preview: format!("{}/previews/{name}.m4a", m.base) }).collect(),
             // with none named, its usual voice: the first the row lists
-            voice: if chosen && !pick.voice.is_empty() { pick.voice.clone() } else { m.voices.first().map(|v| v.0.clone()).unwrap_or_default() },
+            voice: pick.as_ref().filter(|p| chosen && !p.voice.is_empty()).map(|p| p.voice.clone()).unwrap_or_else(|| m.voices.first().map(|v| v.0.clone()).unwrap_or_default()),
             credit: m.credit.clone(),
             note: if chosen { facts.note.clone() } else { String::new() },
         });
     }
     for s in crate::mouth::services(job.job()) {
-        let chosen = pick.place == ChoicePlace::Service && pick.id == s.kind && pick.offer == s.offer;
+        let chosen = pick.as_ref().is_some_and(|p| p.place == ChoicePlace::Service && p.id == s.kind && p.offer == s.offer);
         let has_key = (facts.has_key)(&s.kind);
         let state = working(&service_id(&s.kind, &s.offer)).or(failed(chosen)).unwrap_or(if s.key && !has_key { ChoiceState::NeedsKey } else { ChoiceState::Ready });
-        let voice = if chosen { pick.set.get("voice").cloned().unwrap_or_default() } else { String::new() };
+        let voice = pick.as_ref().filter(|_| chosen).and_then(|p| p.set.get("voice").cloned()).unwrap_or_default();
         let usual = s.voices.first().map(|v| v.name.clone()).unwrap_or_default();
         out.push(of_service(s, chosen, has_key, if voice.is_empty() { usual } else { voice }, state));
     }
-    let chosen = pick.place == ChoicePlace::Computer;
-    out.push(Choice {
-        id: BY_TOWER.into(),
-        place: ChoicePlace::Computer,
-        provider: String::new(),
-        offer: String::new(),
-        title: "Your computer\u{2019}s choice".into(),
-        line: match job {
-            ChoiceJob::Voice => "Whatever your computer is set up to speak with".into(),
-            _ => "Whatever your computer is set up to listen with".into(),
-        },
-        free: false,
-        more: true,
-        chosen,
-        state: ChoiceState::Ready,
-        key: false,
-        has_key: false,
-        key_name: String::new(),
-        keys_at: String::new(),
-        asks: Vec::new(),
-        voices: Vec::new(),
-        voice: String::new(),
-        credit: String::new(),
-        note: String::new(),
-    });
     out
 }
 
@@ -425,23 +394,19 @@ impl Chooser {
     pub(crate) fn apply(&self, host: &dyn DeskHost, senses: &Senses) {
         let saved = self.saved();
         let key = |id: &str| host.secret(id.to_string()).unwrap_or_default();
-        let ears = saved.pick(ChoiceJob::Ears);
-        senses.ears.set(match ears.place {
-            ChoicePlace::Computer => None,
-            ChoicePlace::Phone => Some(match self.model(&ears.id).filter(|m| m.job == Job::Ears) {
+        senses.ears.set(saved.pick(ChoiceJob::Ears).map(|ears| match ears.place {
+            ChoicePlace::Phone => match self.model(&ears.id).filter(|m| m.job == Job::Ears) {
                 None => crate::ears::Own::Cannot("This version of airband cannot run the listening model you chose. Choose another in Settings, under Listening.".into()),
                 Some(m) if !crate::models::fetched(&self.dir, &m) => crate::ears::Own::Cannot(format!("{} is not on this phone yet. Download it in Settings, under Listening.", m.name)),
                 Some(m) => crate::ears::Own::Model(senses.ears.held(&m, crate::models::folder(&self.dir, &m))),
-            }),
+            },
             ChoicePlace::Service => {
                 let with = crate::mouth::service_of(&ears.id, &ears.offer, &key(&ears.id), ears.set.clone().into_iter().collect());
-                Some(if with.offer(Job::Ears).is_some_and(|(_, o)| crate::hears::listens(&o)) { crate::ears::Own::Service(with) } else { crate::ears::Own::Cannot("This version of airband cannot listen with the service you chose. Choose another in Settings, under Listening.".into()) })
+                if with.offer(Job::Ears).is_some_and(|(_, o)| crate::hears::listens(&o)) { crate::ears::Own::Service(with) } else { crate::ears::Own::Cannot("This version of airband cannot listen with the service you chose. Choose another in Settings, under Listening.".into()) }
             }
-        });
-        let voice = saved.pick(ChoiceJob::Voice);
-        senses.mouth.set(match voice.place {
-            ChoicePlace::Computer => None,
-            ChoicePlace::Phone => Some(match self.model(&voice.id).filter(|m| m.job == Job::Voice) {
+        }));
+        senses.mouth.set(saved.pick(ChoiceJob::Voice).map(|voice| match voice.place {
+            ChoicePlace::Phone => match self.model(&voice.id).filter(|m| m.job == Job::Voice) {
                 None => crate::mouth::Own::Cannot("This version of airband cannot run the voice you chose. Choose another in Settings, under Voice.".into()),
                 Some(m) if !crate::models::fetched(&self.dir, &m) => crate::mouth::Own::Cannot(format!("{} is not on this phone yet. Download it in Settings, under Voice.", m.name)),
                 Some(m) => match m.voices.iter().map(|v| &v.0).find(|name| voice.voice.is_empty() || **name == voice.voice) {
@@ -449,12 +414,12 @@ impl Chooser {
                     // a voice the model no longer has is not swapped for another of its voices
                     None => crate::mouth::Own::Cannot(format!("{} no longer has the voice {}. Choose another in Settings, under Voice.", m.name, voice.voice)),
                 },
-            }),
+            },
             ChoicePlace::Service => {
                 let with = crate::mouth::service_of(&voice.id, &voice.offer, &key(&voice.id), voice.set.clone().into_iter().collect());
-                Some(if crate::voices::synth_for(&with).is_some() { crate::mouth::Own::Service(with) } else { crate::mouth::Own::Cannot("This version of airband cannot speak with the service you chose. Choose another in Settings, under Voice.".into()) })
+                if crate::voices::synth_for(&with).is_some() { crate::mouth::Own::Service(with) } else { crate::mouth::Own::Cannot("This version of airband cannot speak with the service you chose. Choose another in Settings, under Voice.".into()) }
             }
-        });
+        }));
     }
 
     fn work(&self, job: ChoiceJob, id: &str, label: impl Into<String>, fetching: bool) {
@@ -582,7 +547,6 @@ impl Desk {
             return done(sent);
         }
         let pick = match choice.place {
-            ChoicePlace::Computer => Pick::computer(),
             ChoicePlace::Service => {
                 let with = crate::mouth::service_of(&provider, &offer, &key.clone().or_else(|| host.secret(provider.clone())).unwrap_or_default(), set.clone().into_iter().collect());
                 let tried = match job {
@@ -606,7 +570,7 @@ impl Desk {
                 }
                 // the same model again keeps the voice he had picked for it
                 let before = chooser.saved().pick(job);
-                Pick { place: ChoicePlace::Phone, voice: if before.place == ChoicePlace::Phone && before.id == id { before.voice } else { String::new() }, id, offer: String::new(), set: BTreeMap::new() }
+                Pick { place: ChoicePlace::Phone, voice: before.filter(|b| b.place == ChoicePlace::Phone && b.id == id).map(|b| b.voice).unwrap_or_default(), id, offer: String::new(), set: BTreeMap::new() }
             }
         };
         chooser.change(|s| match job {
@@ -626,7 +590,7 @@ impl Desk {
     /// model it takes effect at once; a service is tried with it first. Blocks.
     pub fn choose_voice(&self, name: String) -> Result<(), RadioError> {
         let chooser = &self.shared.chooser;
-        let pick = chooser.saved().pick(ChoiceJob::Voice);
+        let Some(pick) = chooser.saved().pick(ChoiceJob::Voice) else { return Err(told(crate::voice::NOTHING_CHOSEN)) };
         match pick.place {
             ChoicePlace::Phone => {
                 chooser.change(|s| {
@@ -643,7 +607,6 @@ impl Desk {
                 set.insert("voice".into(), name);
                 self.choose_for(ChoiceJob::Voice, service_id(&pick.id, &pick.offer), None, set, false)
             }
-            ChoicePlace::Computer => Err(told("Your computer\u{2019}s voice is chosen on your computer.")),
         }
     }
 
@@ -655,8 +618,8 @@ impl Desk {
         let host = &*self.shared.host;
         let mut went = Ok(());
         for job in [ChoiceJob::Voice, ChoiceJob::Ears] {
-            let pick = chooser.saved().pick(job);
-            let Some(m) = chooser.model(&pick.id).filter(|_| pick.place == ChoicePlace::Phone) else { continue };
+            let Some(pick) = chooser.saved().pick(job).filter(|p| p.place == ChoicePlace::Phone) else { continue };
+            let Some(m) = chooser.model(&pick.id) else { continue };
             went = chooser.make_ready(job, &m, host);
             if went.is_err() {
                 break;
@@ -736,23 +699,24 @@ mod tests {
     fn one_thing_is_chosen_for_a_job_whatever_was_picked() {
         let service = crate::mouth::services(Job::Ears).into_iter().find(|s| s.key).expect("a listening service that takes a key");
         let model = crate::models::models(&phone()).find(|m| m.job == Job::Ears).map(|m| m.kind.clone());
-        let mut picks = vec![Pick::computer(), Pick { place: ChoicePlace::Service, id: service.kind.clone(), offer: service.offer.clone(), set: BTreeMap::new(), voice: String::new() }];
+        let mut picks = vec![Pick { place: ChoicePlace::Service, id: service.kind.clone(), offer: service.offer.clone(), set: BTreeMap::new(), voice: String::new() }];
         picks.extend(model.clone().map(|id| Pick { place: ChoicePlace::Phone, id, offer: String::new(), set: BTreeMap::new(), voice: String::new() }));
         for pick in picks {
             let saved = Saved { ears: Some(pick.clone()), ..Saved::default() };
             let all = list(ChoiceJob::Ears, &saved, &facts(HERE, &|_| true));
             let want = match pick.place {
-                ChoicePlace::Computer => BY_TOWER.to_string(),
                 ChoicePlace::Service => service_id(&pick.id, &pick.offer),
                 ChoicePlace::Phone => pick.id.clone(),
             };
             assert_eq!(chosen(&all), vec![want.as_str()], "{pick:?}");
-            // every id is offered once, and his computer's choice is always there to go back to
+            // every id is offered once, and all of it is this device's: a model here or a service with his key
             assert!(all.iter().all(|c| all.iter().filter(|o| o.id == c.id).count() == 1));
-            assert_eq!(all.last().map(|c| c.place), Some(ChoicePlace::Computer));
+            assert!(all.iter().all(|c| matches!(c.place, ChoicePlace::Phone | ChoicePlace::Service)));
         }
-        // nothing kept at all is his computer's choice
-        assert_eq!(chosen(&list(ChoiceJob::Voice, &Saved::default(), &facts(HERE, NO_KEYS))), vec![BY_TOWER]);
+        // nothing kept is nothing chosen: his computer is not offered for listening or for the voice
+        for job in [ChoiceJob::Ears, ChoiceJob::Voice] {
+            assert!(chosen(&list(job, &Saved::default(), &facts(HERE, NO_KEYS))).is_empty());
+        }
     }
 
     #[test]
@@ -871,12 +835,16 @@ mod tests {
     #[test]
     fn a_new_install_starts_with_what_needs_nothing_from_him() {
         let saved = Saved::fresh(&phone());
-        for (job, pick) in [(Job::Ears, saved.ears.clone().unwrap()), (Job::Voice, saved.voice.clone().unwrap())] {
+        for (job, pick) in [(Job::Ears, saved.ears.clone()), (Job::Voice, saved.voice.clone())] {
             match crate::models::models(&phone()).find(|m| m.job == job) {
-                Some(m) => assert!(pick.place == ChoicePlace::Phone && pick.id == m.kind),
-                None => assert_eq!(pick, Pick::computer()),
+                Some(m) => assert!(pick.is_some_and(|p| p.place == ChoicePlace::Phone && p.id == m.kind)),
+                // with no model that runs here, nothing is chosen: nothing else is put in its place
+                None => assert_eq!(pick, None),
             }
         }
+        // a device no model runs on starts with nothing chosen for either
+        let bare = Saved::fresh(&HostDevice::default());
+        assert!(bare.ears.is_none() || crate::models::models(&HostDevice::default()).any(|m| m.job == Job::Ears));
         assert_eq!(saved.tools.len(), 1);
         // what is kept comes back as it was
         let dir = std::env::temp_dir().join(format!("airband-choices-{}", random_hex(4)));
@@ -942,10 +910,9 @@ mod tests {
         let state = |job, id: &str| desk.choices(job).into_iter().find(|c| c.id == id).map(|c| (c.chosen, c.state)).unwrap();
         // something not on the list is refused, and nothing changes
         assert!(matches!(desk.choose_for(ChoiceJob::Ears, "nothing-like-it".into(), None, none(), false), Err(RadioError::Told { .. })));
-        // his computer's choice, then a model noted for later: one at a time each time
-        desk.choose_for(ChoiceJob::Voice, BY_TOWER.into(), None, none(), false).unwrap();
-        assert_eq!(chosen(&desk.choices(ChoiceJob::Voice)), vec![BY_TOWER]);
-        assert!(!desk.shared.senses.mouth.ready());
+        // his computer is not something to listen or speak with
+        assert!(matches!(desk.choose_for(ChoiceJob::Voice, "tower".into(), None, none(), false), Err(RadioError::Told { .. })));
+        // a model noted for later: one at a time each time
         if let Some(m) = crate::models::models(&phone()).find(|m| m.job == Job::Voice) {
             desk.choose_for(ChoiceJob::Voice, m.kind.clone(), None, none(), true).unwrap();
             assert_eq!(chosen(&desk.choices(ChoiceJob::Voice)), vec![m.kind.as_str()]);
@@ -954,7 +921,7 @@ mod tests {
             desk.choose_voice(m.voices[1].0.clone()).unwrap();
             assert_eq!(desk.choices(ChoiceJob::Voice).into_iter().find(|c| c.chosen).unwrap().voice, m.voices[1].0);
             // It is chosen and is not on this device: it is still the one that is to speak. Asked to, it says
-            // why it cannot; his computer's voice is not used in its place, and the card says the same.
+            // why it cannot; nothing else speaks in its place, and the card says the same.
             assert!(desk.shared.senses.mouth.ready());
             let tape = crate::ears_stream::Tape::of(&[], false);
             let why = desk.shared.senses.mouth.say(&tape, "Shop two is waiting.", &|| false).unwrap_err();
@@ -982,7 +949,6 @@ mod tests {
         // opened again, it is all as he left it
         let again = Desk::alone(&dir.display().to_string(), host);
         assert_eq!(again.choices(ChoiceJob::Reads), desk.choices(ChoiceJob::Reads));
-        again.choose_for(ChoiceJob::Voice, BY_TOWER.into(), None, none(), false).unwrap();
         let _ = std::fs::remove_dir_all(dir);
     }
 }

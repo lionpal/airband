@@ -602,10 +602,11 @@ mod tests {
         let odd: Offer = serde_json::from_value(json!({ "id": "new", "job": "summary", "by": { "interface": "chat" }, "label": "New", "needs": ["auth-header"] })).unwrap();
         let new: Offer = serde_json::from_value(json!({ "id": "new", "job": "summary", "by": { "interface": "something-new" }, "label": "New" })).unwrap();
         assert!(!reads(&odd) && !reads(&new));
-        // every job's offers, as this program lists them, are ones it can do
-        for job in [Job::Summary, Job::Voice, Job::Ears] {
-            assert!(crate::providers::in_order(job).len() >= 3 && crate::providers::in_order(job).iter().all(|(_, o)| crate::providers::speaks(o)));
-            assert_eq!(crate::providers::in_order(job).len(), airband_core::providers::in_order(job).len(), "an offer compiled in is one this build cannot do");
-        }
+        // every offer for reading, as this program lists them, is one it can do; listening and speaking are
+        // the phone's, and nothing is offered for them here
+        let job = Job::Summary;
+        assert!(crate::providers::in_order(job).len() >= 3 && crate::providers::in_order(job).iter().all(|(_, o)| crate::providers::speaks(o)));
+        assert_eq!(crate::providers::in_order(job).len(), airband_core::providers::in_order(job).len(), "an offer compiled in is one this build cannot do");
+        assert!(crate::providers::in_order(Job::Voice).is_empty() && crate::providers::in_order(Job::Ears).is_empty());
     }
 }
