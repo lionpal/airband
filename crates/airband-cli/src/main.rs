@@ -36,7 +36,7 @@ fn main() {
     // The catalogue: the newest signed copy this computer has kept, for everything but the small commands a
     // harness runs many times a minute. Where he is about to choose from it, a newer one is fetched first.
     match args.first().map(String::as_str) {
-        Some("hook" | "report" | "hold" | "catalog") => {}
+        Some("hook" | "report" | "hold" | "catalog" | "deliver") => {}
         Some("setup" | "model" | "voice" | "ears") => {
             catalog::load();
             catalog::refresh();
@@ -73,6 +73,11 @@ fn main() {
         Some("lan") => install::lan(config::load(), &args[1..]),
         Some("keys") => setup::keys(&args[1..]),
         Some("catalog") => catalog::command(&args[1..]),
+        // what the tower runs to hand his words to a tool that takes them through a server of its own
+        Some("deliver") => match (args.get(1).map(String::as_str), args.get(2)) {
+            (Some("opencode"), Some(session)) => adapters::opencode::deliver(session),
+            _ => Err("usage: airband deliver opencode <session>".into()),
+        },
         Some("setup") => setup::setup(config::load(), !args.iter().any(|a| a == "--no-start")),
         Some("model") => install::model(config::load(), &args[1..]),
         Some("voice") => install::voice(config::load(), &args[1..]),

@@ -10,6 +10,7 @@
 pub mod claude_accounts;
 pub mod claude_code;
 pub mod codex;
+pub mod opencode;
 pub mod report;
 
 use crate::config;
@@ -116,7 +117,9 @@ Adapter {
     touched: None,
     told: None,
     steps: None,
-}];
+},
+// OpenCode has no hooks: the tower watches its server (`opencode::watch`). It is listed so that it has a name.
+Adapter { name: "opencode", events: |_| Vec::new(), install: None, uninstall: None, permission: None, accounts: None, glance: None, touched: None, told: None, steps: None }];
 
 /// `airband install`: set up every harness that can be. One line to say for each.
 pub fn install(exe: &std::path::Path) -> Result<Vec<String>, String> {
