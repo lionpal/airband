@@ -672,6 +672,9 @@ pub struct RosterEntry {
     /// he started in a terminal of his own is reached as a message from outside, which it treats with more care.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub held: bool,
+    /// He can end it from a phone: the tower runs it, or its tool has a way to put a session away.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ends: bool,
     /// The model it runs on, as a person would say it ("Opus 4.7"), when its harness can tell.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,

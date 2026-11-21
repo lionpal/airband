@@ -228,12 +228,18 @@ async fn stop_agent(State(app): State<Arc<App>>, Json(to): Json<airband_core::ra
 }
 /// He ended an agent the tower runs.
 async fn end_agent(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::EndAgent>) -> Json<Value> {
-    let held = app.inner.lock().unwrap().find(&to.agent).map(|s| s.agent.deliver == Some(Deliver::Held));
-    Json(match held {
+    let reached = app.inner.lock().unwrap().find(&to.agent).map(|s| s.agent.deliver.clone());
+    Json(match reached {
         None => json!({ "error": "That agent is no longer running." }),
-        Some(false) => json!({ "error": "Only an agent airband runs can be ended from here." }),
-        Some(true) if held::end(&app, &to.agent).await => json!({}),
-        Some(true) => json!({ "error": "It had already ended." }),
+        Some(Some(Deliver::Held)) if held::end(&app, &to.agent).await => json!({}),
+        Some(Some(Deliver::Held)) => json!({ "error": "It had already ended." }),
+        // a session of a tool's own is put away by that tool; the tower then sees it is no longer open
+        Some(Some(Deliver::Harness { name, session })) => match tokio::task::spawn_blocking(move || crate::adapters::put_away(&name, &session)).await {
+            Ok(Ok(())) => json!({}),
+            Ok(Err(why)) => json!({ "error": why }),
+            Err(_) => json!({ "error": "That could not be done." }),
+        },
+        Some(_) => json!({ "error": "Only an agent airband runs can be ended from here." }),
     })
 }
 /// A radio says which names his other computers use.

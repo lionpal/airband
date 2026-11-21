@@ -86,6 +86,15 @@ pub(crate) trait Harness: Sync {
     fn deliver(&self, _session: &str, _words: &str) -> Result<(), String> {
         Err(format!("{} sessions cannot be reached this way.", self.name()))
     }
+    /// Put one of this tool's sessions away, where the tool has such a thing: it is then no longer one of the
+    /// open ones (`open`), and what it did is kept. Nothing for a tool that has no way to.
+    fn put_away(&self, _session: &str) -> Option<Result<(), String>> {
+        None
+    }
+    /// Whether this tool has a way to put a session away.
+    fn puts_away(&self) -> bool {
+        false
+    }
     /// The sessions of this tool's that are open on this computer right now, by the tool's own record of
     /// them, each as an agent the tower can put on the radio and reach. Nothing when the tool cannot say
     /// (it is not on this computer, it is not running, it keeps no such record): then the tower learns of
@@ -305,6 +314,15 @@ pub(crate) fn written(path: &std::path::Path) -> u64 {
 /// His words into a session of a tool's own, by that tool's way in. Blocks.
 pub fn deliver(name: &str, session: &str, words: &str) -> Result<(), String> {
     harness(name).ok_or_else(|| format!("there is no adapter for \"{name}\""))?.deliver(session, words)
+}
+
+/// Put a session of a tool's own away, by that tool's way. Blocks.
+pub fn put_away(name: &str, session: &str) -> Result<(), String> {
+    harness(name).and_then(|h| h.put_away(session)).unwrap_or_else(|| Err("Only an agent airband runs can be ended from here.".into()))
+}
+/// Whether a tool's sessions can be put away from here.
+pub fn puts_away(name: &str) -> bool {
+    harness(name).is_some_and(|h| h.puts_away())
 }
 
 /// Every account of every harness that has them.

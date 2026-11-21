@@ -116,7 +116,7 @@ struct AgentsMenu: View {
                             if agent.held, agent.state == "working" {
                                 Button { model.stop(agent) } label: { Label("Stop what it is doing", systemImage: "stop.fill") }
                             }
-                            if agent.held {
+                            if agent.ends {
                                 Button(role: .destructive) { ending = agent } label: { Label("End this agent", systemImage: "xmark.circle") }
                             }
                         }

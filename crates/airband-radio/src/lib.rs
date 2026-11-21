@@ -220,7 +220,7 @@ fn chat_feed(feed: Feed) -> ChatFeed {
     ChatFeed {
         seq: feed.seq,
         messages: feed.messages.into_iter().map(chat).collect(),
-        agents: feed.roster.into_iter().map(|r| ChatAgent { id: r.id, callsign: airband_core::routing::shown(&r.callsign), group: r.group, number: airband_core::routing::shown_number(&r.number), harness: r.harness, waiting: r.waiting, reachable: r.reachable, state: r.state, subagents: r.subagents, doing: r.doing, held: r.held, model: r.model, effort: r.effort }).collect(),
+        agents: feed.roster.into_iter().map(|r| ChatAgent { id: r.id, callsign: airband_core::routing::shown(&r.callsign), group: r.group, number: airband_core::routing::shown_number(&r.number), harness: r.harness, waiting: r.waiting, reachable: r.reachable, state: r.state, subagents: r.subagents, doing: r.doing, held: r.held, ends: r.ends, model: r.model, effort: r.effort }).collect(),
         quick: feed.quick.into_iter().map(|q| QuickMessage { label: q.label, text: q.text }).collect(),
         projects: feed.projects,
         colours: feed.colours.into_iter().collect(),
@@ -358,6 +358,8 @@ pub struct ChatAgent {
     pub doing: Option<String>,
     /// The tower runs it itself, so his words reach it as his own.
     pub held: bool,
+    /// He can end it from here.
+    pub ends: bool,
     /// The model it runs on ("Opus 4.7") and how hard it is set to think ("high"), when its harness can say.
     pub model: Option<String>,
     pub effort: Option<String>,

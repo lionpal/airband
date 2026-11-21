@@ -42,6 +42,8 @@ pub struct DeskMember {
     /// The tower runs it itself, so his words reach it as his own. One that is not was started in a terminal
     /// and is only left messages from outside; the tower can take it over.
     pub held: bool,
+    /// He can end it from here: the computer runs it, or its tool can put a session away.
+    pub ends: bool,
     /// How many things it has said that he has not had in front of him.
     pub unread: u32,
     /// What it is waiting on him for: the short form of its newest question still open. Empty when it is

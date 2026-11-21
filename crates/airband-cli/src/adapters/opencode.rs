@@ -19,7 +19,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const NAME: &str = "opencode";
-/// A session that has not changed for this long is not on the radio.
+/// A session that has not changed for this long is not on the radio. OpenCode's server keeps every session
+/// there has been and does not say which have a window open (it runs a session's turns itself, window or no
+/// window), so there is no fact to go by but this and whether one was put away.
 const QUIET: u64 = 2 * 3600 * 1000;
 
 /// Where OpenCode's server is and the password for it, when it is running.
@@ -117,8 +119,7 @@ fn put_to_him(session: String, request: Value, cwd: Option<String>, asked: Arc<M
 
 /// The sessions on the radio, of those the server lists: not the ones put away (a one-off run, a summary
 /// being made), nor the ones quiet for hours.
-fn current(sessions: &[Value]) -> Vec<&Value> {
-    let now = sessions.iter().filter_map(|s| s["time"]["updated"].as_u64()).max().unwrap_or(0);
+fn current(sessions: &[Value], now: u64) -> Vec<&Value> {
     let put_away = |s: &Value| s["time"]["archived"].as_u64().is_some_and(|at| at > 0) || s["time"]["archived"] == true;
     sessions.iter().filter(|s| s["id"].is_string() && !put_away(s) && now.saturating_sub(s["time"]["updated"].as_u64().unwrap_or(0)) <= QUIET).collect()
 }
@@ -126,7 +127,7 @@ fn current(sessions: &[Value]) -> Vec<&Value> {
 /// The sessions open now, as the server lists them. Nothing when OpenCode is not running.
 fn open() -> Option<Vec<super::Open>> {
     let list = get("/api/session?limit=40")?;
-    Some(current(list["data"].as_array()?).into_iter().filter_map(|s| Some(super::Open { agent: agent(s["id"].as_str()?, s["location"]["directory"].as_str()), idle: s["time"]["idle"].as_u64().unwrap_or(0) >= s["time"]["busy"].as_u64().unwrap_or(0) })).collect())
+    Some(current(list["data"].as_array()?, airband_core::clock::now_ms()).into_iter().filter_map(|s| Some(super::Open { agent: agent(s["id"].as_str()?, s["location"]["directory"].as_str()), idle: s["time"]["idle"].as_u64().unwrap_or(0) >= s["time"]["busy"].as_u64().unwrap_or(0) })).collect())
 }
 
 /// The folders OpenCode has had sessions in, as its server lists them. Nothing when it is not running.
@@ -153,7 +154,7 @@ fn watch(tower: Tower) {
         let Some(sessions) = list["data"].as_array() else { continue };
         let send = |id: &str, cwd: Option<&str>, event: Event| (tower.event)(AgentEvent { schema: SCHEMA.into(), agent: agent(id, cwd), event });
         // not the ones the tower runs itself: their driver reports for them
-        let here: Vec<&Value> = current(sessions).into_iter().filter(|s| s["id"].as_str().is_some_and(|id| !(tower.holds)(id))).collect();
+        let here: Vec<&Value> = current(sessions, airband_core::clock::now_ms()).into_iter().filter(|s| s["id"].as_str().is_some_and(|id| !(tower.holds)(id))).collect();
         for s in &here {
             let (Some(id), time) = (s["id"].as_str(), &s["time"]) else { continue };
             let (busy, idle) = (time["busy"].as_u64().unwrap_or(0), time["idle"].as_u64().unwrap_or(0));
@@ -213,6 +214,16 @@ fn deliver(session: &str, words: &str) -> Result<(), String> {
     }
 }
 
+/// Put a session away in OpenCode (its own "archive"): it keeps what was done and stops listing it as current.
+fn put_away(session: &str) -> Result<(), String> {
+    let (url, password) = service().ok_or("OpenCode is not running on this computer.")?;
+    match client().patch(format!("{url}/api/session/{session}")).header("authorization", auth(&password)).send_json(json!({ "archived": true })) {
+        Ok(res) if (200..300).contains(&res.status().as_u16()) => Ok(()),
+        Ok(res) => Err(format!("OpenCode did not put it away ({}).", res.status().as_u16())),
+        Err(_) => Err("OpenCode could not be reached.".into()),
+    }
+}
+
 pub struct OpenCode;
 
 impl super::Harness for OpenCode {
@@ -227,6 +238,12 @@ impl super::Harness for OpenCode {
     }
     fn open(&self) -> Option<Vec<super::Open>> {
         open()
+    }
+    fn put_away(&self, session: &str) -> Option<Result<(), String>> {
+        Some(put_away(session))
+    }
+    fn puts_away(&self) -> bool {
+        true
     }
     fn worked(&self) -> Vec<super::Worked> {
         worked()
@@ -261,7 +278,7 @@ mod tests {
             { "id": "ses_quiet", "time": { "updated": 7 * hour }, "location": { "directory": "/x/garden" } },
             { "id": "ses_away", "time": { "updated": 10 * hour, "archived": 10 * hour }, "location": { "directory": "/x/once" } },
         ] });
-        let ids: Vec<&str> = current(sessions["data"].as_array().unwrap()).iter().filter_map(|s| s["id"].as_str()).collect();
+        let ids: Vec<&str> = current(sessions["data"].as_array().unwrap(), 10 * hour + 60_000).iter().filter_map(|s| s["id"].as_str()).collect();
         assert_eq!(ids, ["ses_new", "ses_older"]);
         // where it has worked: every folder, by its latest session, whether or not that one is still on the radio
         let mut worked = worked_of(&sessions);
