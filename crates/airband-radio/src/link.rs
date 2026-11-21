@@ -45,6 +45,15 @@ pub(crate) struct Link {
     direct: Mutex<Direct>,
     /// Files he has attached and that have reached the tower: the next thing he says takes them with it.
     armed: Mutex<Vec<String>>,
+    /// Why the last thing he said did not get through, in a few words, for telling him if it never does.
+    trouble: Mutex<String>,
+}
+
+impl Link {
+    /// Why the last thing he said did not get through, if it is known.
+    pub(crate) fn trouble(&self) -> String {
+        self.trouble.lock().unwrap().clone()
+    }
 }
 
 pub(crate) fn now_ms() -> u64 {
@@ -60,7 +69,7 @@ impl Link {
             Pairing::Direct { url, token } => Route::Direct { url, auth: format!("Bearer {token}"), radio: radio.to_string() },
             Pairing::Relay { relay, secret } => Route::Relay { relay, keys: Keys::derive(&secret)? },
         };
-        Ok(Link { route, agent, near: crate::net::agent_quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct::default()), armed: Mutex::new(Vec::new()) })
+        Ok(Link { route, agent, near: crate::net::agent_quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct::default()), trouble: Mutex::new(String::new()), armed: Mutex::new(Vec::new()) })
     }
 
     /// The tower said where it can be reached without the relay. Anything new is tried at the next request.
@@ -152,14 +161,36 @@ impl Link {
                 }
                 let mut res = match req.send(&sealed[..]) {
                     Ok(res) => res,
-                    Err(_) => return if ordered { self.straight(keys, method, &path, &body).ok_or(LinkError::Offline) } else { Err(LinkError::Offline) },
+                    Err(_) => {
+                        if ordered {
+                            *self.trouble.lock().unwrap() = "the relay could not be reached, and neither could the computer on this network".into();
+                        }
+                        return if ordered { self.straight(keys, method, &path, &body).ok_or(LinkError::Offline) } else { Err(LinkError::Offline) };
+                    }
                 };
                 // anything but 200 is the relay speaking (tower offline, timed out, unknown channel), not the tower
+                // Whatever the relay makes of it, a tower that is on this network can be handed what he said
+                // straight: the relay taking his computer for away, or not taking the request at all, must not
+                // keep his words on the phone while the computer is in the same room.
                 match res.status().as_u16() {
                     200 => {}
-                    503 => return Err(LinkError::Away),
                     409 => return Err(LinkError::Behind),
-                    _ => return Err(LinkError::Offline),
+                    status => {
+                        if ordered {
+                            if let Some(answer) = self.straight(keys, method, &path, &body) {
+                                return Ok(answer);
+                            }
+                        }
+                        if ordered {
+                            *self.trouble.lock().unwrap() = match status {
+                                504 => "the computer took what you said from the relay and did not answer".into(),
+                                429 => "the relay was being asked too often".into(),
+                                503 => "the relay says the computer is not connected".into(),
+                                other => format!("the relay answered {other}"),
+                            };
+                        }
+                        return Err(if status == 503 { LinkError::Away } else { LinkError::Offline });
+                    }
                 }
                 let bytes = res.body_mut().read_to_vec().map_err(|_| LinkError::Offline)?;
                 let answer: Answer = keys.open(Direction::ToRadio, &bytes).ok().and_then(|p| serde_json::from_slice(&p).ok()).ok_or(LinkError::Offline)?;
@@ -279,5 +310,23 @@ impl Link {
         // it never got there: what was attached is still his to send
         attachments.into_iter().for_each(|id| self.arm(id));
         Err(last)
+    }
+}
+
+#[cfg(test)]
+mod probe {
+    use super::*;
+
+    /// Against a real pairing, the way a phone asks: `AIRBAND_LINK=… cargo test -p airband-radio -- --ignored
+    /// --nocapture asks_a_real_tower`. Says how each kind of request went, and nothing of the pairing.
+    #[test]
+    #[ignore]
+    fn asks_a_real_tower() {
+        let link = Link::new(Pairing::parse(std::env::var("AIRBAND_LINK").unwrap().trim()).unwrap(), "probe").unwrap();
+        for (what, ordered) in [("as a question (by the relay or straight)", false), ("as something he said (by the relay first)", true)] {
+            let began = std::time::Instant::now();
+            let got = link.request_as("GET", "/feed?since=0&limit=1&away=1", None, ordered);
+            println!("{what}: {} in {:.1} s", match &got { Ok((status, body)) => format!("{} answered {status}", body["station"].as_str().unwrap_or("?")), Err(LinkError::Offline) => "offline".into(), Err(LinkError::Away) => "away".into(), Err(LinkError::Behind) => "behind".into(), Err(LinkError::Refused) => "refused".into() }, began.elapsed().as_secs_f32());
+        }
     }
 }

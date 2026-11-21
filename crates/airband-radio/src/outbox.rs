@@ -20,7 +20,9 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, store: Arc<Store>, host: Arc<dyn R
             host.outbox(waiting, note);
         };
         if now_ms().saturating_sub(next.at) > OUTBOX_EXPIRY_MS {
-            done(Some(format!("Not sent, no connection for half an hour: “{}”", next.text)));
+            // with what went wrong each time it was tried, when that is known: "no connection" alone tells him nothing
+            let why = link.trouble();
+            done(Some(if why.is_empty() { format!("Not sent after half an hour of trying: “{}”", next.text) } else { format!("Not sent after half an hour of trying ({why}): “{}”", next.text) }));
             continue;
         }
         match link.utterance_once(&next.id, &next.text, next.re.clone(), next.scope.clone(), next.label.clone(), next.attachments.clone(), &next.others) {
