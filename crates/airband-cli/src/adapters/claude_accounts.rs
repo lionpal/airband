@@ -154,14 +154,18 @@ fn key_read(service: &str, account: &str) -> Res<Option<String>> {
 fn key_write(service: &str, account: &str, data: &str) -> Res<()> {
     let hex: String = data.bytes().map(|b| format!("{b:02x}")).collect();
     let line = format!("add-generic-password -U -a \"{account}\" -s \"{service}\" -X \"{hex}\"\n");
-    // on standard input, so the login is never in the process list; `security -i` takes a line of about 4 KB
-    // at most, and a longer item has to go as an argument, the same fallback Claude Code uses
-    let status = if line.len() <= 4032 {
+    // On standard input, so the login is never in the process list. `security -i` takes a line of about 4 KB
+    // at most. A longer one could only go as an argument, where any program on this computer can read it
+    // while the command runs, so it is not handed over at all. (Writing the item another way, through the
+    // system's own keychain calls, would make it this program's item, and Claude Code would then have to
+    // ask him before reading its own login.)
+    if line.len() > 4032 {
+        return Err("This login is too long for airband to put in the keychain without other programs on this computer being able to see it for a moment, so nothing was changed.".into());
+    }
+    let status = {
         let mut child = security().arg("-i").stdin(Stdio::piped()).stdout(Stdio::null()).spawn().map_err(|e| e.to_string())?;
         child.stdin.take().expect("piped").write_all(line.as_bytes()).map_err(|e| e.to_string())?;
         child.wait().map_err(|e| e.to_string())?
-    } else {
-        security().args(["add-generic-password", "-U", "-a", account, "-s", service, "-X", &hex]).stdout(Stdio::null()).status().map_err(|e| e.to_string())?
     };
     if !status.success() {
         return Err(format!("the keychain would not keep {service} ({status})"));

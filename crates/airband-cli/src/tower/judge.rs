@@ -14,10 +14,10 @@ async fn ask_api(url: String, auth: Option<(String, String)>, body: Value) -> Re
         }
         // What a service writes back when it refuses is never passed on or written down: some quote part of
         // the key they were sent. The status says enough.
-        let mut res = req.send_json(&body).map_err(|_| Trouble::NotReached)?;
+        let mut res = req.send_json(&body).map_err(|_| Trouble::Unreachable)?;
         let status = res.status().as_u16();
         if status != 200 {
-            return Err(Trouble::refused(status));
+            return Err(Trouble::of_status(status));
         }
         let v: Value = res.body_mut().read_json().map_err(|_| Trouble::NoAnswer)?;
         v["choices"][0]["message"]["content"].as_str().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).ok_or(Trouble::NoAnswer)
@@ -26,57 +26,7 @@ async fn ask_api(url: String, auth: Option<(String, String)>, body: Value) -> Re
     .map_err(|_| Trouble::Program)?
 }
 
-/// Why a model did not answer. Each has one sentence for him, written here and nowhere else.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Trouble {
-    /// The service did not answer the connection.
-    NotReached,
-    /// It would not take the key (401, 403).
-    KeyRefused,
-    /// The account has run out, or has asked too much too fast (402, 429).
-    OverLimit,
-    /// It does not know the model or the address it was asked at (404).
-    NotFound,
-    /// It did not like what it was sent (another 4xx).
-    Refused(u16),
-    /// A fault of the service's own (5xx).
-    Broken(u16),
-    /// It answered, with nothing that can be used.
-    NoAnswer,
-    /// The program that reads could not be started, or stopped with an error.
-    Program,
-    /// It took longer than it is given.
-    TooSlow,
-    /// Nothing is chosen, or what is chosen is not something this computer can read with.
-    NotSet,
-}
-
-impl Trouble {
-    fn refused(status: u16) -> Trouble {
-        match status {
-            401 | 403 => Trouble::KeyRefused,
-            402 | 429 => Trouble::OverLimit,
-            404 => Trouble::NotFound,
-            500.. => Trouble::Broken(status),
-            _ => Trouble::Refused(status),
-        }
-    }
-    /// For him.
-    pub(crate) fn sentence(self) -> String {
-        match self {
-            Trouble::NotReached => "The service could not be reached.".into(),
-            Trouble::KeyRefused => "The service did not accept the key.".into(),
-            Trouble::OverLimit => "The service says the account is out of credit or over its limit.".into(),
-            Trouble::NotFound => "The service does not have that model at that address.".into(),
-            Trouble::Refused(status) => format!("The service refused the request (it answered {status})."),
-            Trouble::Broken(status) => format!("The service had a fault of its own (it answered {status})."),
-            Trouble::NoAnswer => "It answered with nothing that could be used.".into(),
-            Trouble::Program => "The program that writes them did not run.".into(),
-            Trouble::TooSlow => "It took too long to answer.".into(),
-            Trouble::NotSet => "Nothing is chosen to write them.".into(),
-        }
-    }
-}
+pub(crate) use airband_core::providers::Trouble;
 
 /// A model that did not answer: why, and anything more for this computer's own log. The second part is never
 /// sent to a phone.
@@ -85,12 +35,6 @@ pub(crate) struct Failed(pub Trouble, pub String);
 impl From<Trouble> for Failed {
     fn from(trouble: Trouble) -> Failed {
         Failed(trouble, String::new())
-    }
-}
-
-impl std::fmt::Display for Trouble {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.sentence())
     }
 }
 
@@ -134,7 +78,7 @@ pub(super) async fn set_reader(wanted: airband_core::radio::SetReads) -> Result<
         if !more.is_empty() {
             log(format!("trying {} to read: {more}", p.name));
         }
-        format!("{} did not answer. {}", p.name, trouble.sentence())
+        trouble.said(&offer.label)
     })?;
     if p.key {
         // a provider has one key here: a new one takes the place of the one before
@@ -153,11 +97,11 @@ pub(super) async fn set_reader(wanted: airband_core::radio::SetReads) -> Result<
 
 /// Why what reads could not, the last time it was asked: said to him on his phone, and gone when it next
 /// answers. Nothing else is asked in its place.
-static FAILED: Mutex<Option<String>> = Mutex::new(None);
+static FAILED: Mutex<Option<Trouble>> = Mutex::new(None);
 
 /// Why what reads could not, the last time it was asked. Nothing while it works.
-pub(super) fn failed() -> Option<String> {
-    FAILED.lock().unwrap().clone()
+pub(super) fn failed() -> Option<Trouble> {
+    *FAILED.lock().unwrap()
 }
 
 /// Ask the model that reads for the tower. When it does not answer, that is the answer: he is told why on his
@@ -173,9 +117,9 @@ pub(super) async fn ask_shaped(cfg: &Config, prompt: String, shape: Option<Value
     let asked = ask(&model, prompt, shape).await;
     // with nothing chosen there is nothing that failed
     if !model.is_none() {
-        *FAILED.lock().unwrap() = asked.as_ref().err().map(|failed| failed.0.sentence());
+        *FAILED.lock().unwrap() = asked.as_ref().err().map(|failed| failed.0);
     }
-    asked.map_err(|Failed(trouble, more)| if more.is_empty() { trouble.to_string() } else { format!("{trouble} ({more})") })
+    asked.map_err(|Failed(trouble, more)| if more.is_empty() { format!("{trouble:?}") } else { format!("{trouble:?} ({more})") })
 }
 
 /// What comes back from asking: the model's answer, or why there is none.
@@ -491,8 +435,11 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
          to it (relayed by another session, or sent through Airband) and that he must give it himself in the \
          agent\'s own session or terminal. Then give no choices, and say in \"say\" what it is waiting to be \
          told, without telling him to reply \"here\". Otherwise false.\n\n\
+         And \"as_written\": true only when the whole message is already one or two short plain sentences that \
+         can be shown to him exactly as the agent wrote them, with nothing lost and nothing to cut: no list, no \
+         code, no file path, no table. Then \"say\" is those words. Otherwise false.\n\n\
          Reply with one line of JSON and nothing else: \
-         {{\"kind\":\"needs-you\" or \"report\" or \"stalled\" or \"fyi\",\"say\":\"...\",\"options\":[],\"recommended\":null,\"read\":null,\"background\":false,\"own_session\":false}}\n\
+         {{\"kind\":\"needs-you\" or \"report\" or \"stalled\" or \"fyi\",\"say\":\"...\",\"options\":[],\"recommended\":null,\"read\":null,\"background\":false,\"own_session\":false,\"as_written\":false}}\n\
          \"background\": true when it has stopped only to wait for work of its own that is still running and will \
          bring it back by itself (a build, a test run, a background agent or task it started): it is still at work.\n\n\
          {asked}<message>\n{msg}\n</message>",
@@ -514,6 +461,8 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
         background: bool,
         #[serde(default)]
         own_session: bool,
+        #[serde(default)]
+        as_written: bool,
     }
     // The shape of the answer, for a service that can be held to one. The words come before the verdict: a
     // small model that has just written what the message says judges it better than one that judges first.
@@ -526,9 +475,10 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
             "recommended": { "type": ["integer", "null"] },
             "read": { "type": ["string", "null"] },
             "background": { "type": "boolean" },
-            "own_session": { "type": "boolean" }
+            "own_session": { "type": "boolean" },
+            "as_written": { "type": "boolean" }
         },
-        "required": ["say", "kind", "options", "recommended", "read", "background", "own_session"],
+        "required": ["say", "kind", "options", "recommended", "read", "background", "own_session", "as_written"],
         "additionalProperties": false
     });
     let parsed = ask_shaped(cfg, prompt, Some(shape)).await.and_then(|out| {
@@ -542,9 +492,11 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
                 "stalled" => Kind::Stalled,
                 _ => Kind::Report,
             };
-            // already one short plain line: his agent's own words beat a rewording of them. Anything longer is
-            // cut down, because a card he has to read through is the thing this exists to spare him
-            let say = if reads_as_written(&item.full, 110) { spoken(&item.full) } else { spoken(&o.say) };
+            // His agent's own words beat a rewording of them, when the model that read the message says they
+            // are already short and plain enough to show as they are. That is its verdict, never a guess made
+            // here from the look of the text. Anything longer is cut down, because a card he has to read
+            // through is the thing this exists to spare him.
+            let say = if o.as_written { spoken(&item.full) } else { spoken(&o.say) };
             // a harness that knows its agent is blocked outranks the judge
             let kind = item.kind.unwrap_or(judged);
             let own_session = o.own_session && kind == Kind::NeedsYou;
@@ -638,9 +590,6 @@ pub(super) async fn consent(cfg: &Config, said: &str) -> Option<bool> {
 }
 
 pub(super) async fn detail(cfg: &Config, item: &Item) -> String {
-    if reads_as_written(&item.full, 500) {
-        return spoken(&item.full);
-    }
     let prompt = format!(
         "Below is a message a coding agent wrote to {name}, who is driving. He heard this short version: \"{say}\" and asked for more.\n\
          Give the fuller spoken version: four to six sentences of plain spoken English covering what was done, what was found, and any open decision. \
@@ -681,16 +630,17 @@ pub(super) async fn detail_of(app: &Arc<App>, id: &str) -> Option<String> {
 mod tests {
     #[test]
     fn why_a_model_did_not_answer_is_told_from_the_status_and_never_in_the_services_words() {
-        assert_eq!((Trouble::refused(401), Trouble::refused(403)), (Trouble::KeyRefused, Trouble::KeyRefused));
-        assert_eq!((Trouble::refused(402), Trouble::refused(429)), (Trouble::OverLimit, Trouble::OverLimit));
-        assert_eq!((Trouble::refused(404), Trouble::refused(400), Trouble::refused(503)), (Trouble::NotFound, Trouble::Refused(400), Trouble::Broken(503)));
-        // one sentence each, all different, each whole
-        let all = [Trouble::NotReached, Trouble::KeyRefused, Trouble::OverLimit, Trouble::NotFound, Trouble::Refused(400), Trouble::Broken(500), Trouble::NoAnswer, Trouble::Program, Trouble::TooSlow, Trouble::NotSet];
-        let said: std::collections::HashSet<String> = all.iter().map(|t| t.sentence()).collect();
+        assert_eq!((Trouble::of_status(401), Trouble::of_status(403)), (Trouble::WrongKey, Trouble::WrongKey));
+        assert_eq!((Trouble::of_status(402), Trouble::of_status(429)), (Trouble::Refused, Trouble::Refused));
+        assert_eq!((Trouble::of_status(404), Trouble::of_status(503)), (Trouble::NotFound, Trouble::Unexpected { status: 503 }));
+        // one sentence each, all different, each whole, and the same ones a key that failed its test is told in
+        let all = [Trouble::Unreachable, Trouble::WrongKey, Trouble::Refused, Trouble::NotFound, Trouble::Unexpected { status: 500 }, Trouble::NoAnswer, Trouble::Program, Trouble::TooSlow, Trouble::NotSet];
+        let said: std::collections::HashSet<String> = all.iter().map(|t| t.said("Maker")).collect();
         assert!(said.len() == all.len() && said.iter().all(|s| s.ends_with('.')));
-        // what goes to a phone is the sentence alone; what is for this computer's log stays here
+        assert!(all.iter().all(|t| t.said_of_key("Maker").starts_with(&t.said("Maker"))));
+        // what goes to a phone is the kind of trouble alone; what is for this computer's log stays here
         let failed = Failed(Trouble::Program, "the program printed sk-not-for-a-phone".into());
-        assert!(!failed.0.sentence().contains("sk-"));
+        assert!(!serde_json::to_string(&failed.0).unwrap().contains("sk-"));
     }
 
     use super::*;
@@ -718,10 +668,11 @@ mod tests {
         let odd: Offer = serde_json::from_value(json!({ "id": "new", "job": "summary", "by": { "interface": "chat" }, "label": "New", "needs": ["auth-header"] })).unwrap();
         let new: Offer = serde_json::from_value(json!({ "id": "new", "job": "summary", "by": { "interface": "something-new" }, "label": "New" })).unwrap();
         assert!(!reads(&odd) && !reads(&new));
-        // every job's offers, as this program lists them, are ones it can do
-        for job in [Job::Summary, Job::Voice, Job::Ears] {
-            assert!(crate::providers::in_order(job).len() >= 3 && crate::providers::in_order(job).iter().all(|(_, o)| crate::providers::speaks(o)));
-            assert_eq!(crate::providers::in_order(job).len(), airband_core::providers::in_order(job).len(), "an offer compiled in is one this build cannot do");
-        }
+        // every offer for reading, as this program lists them, is one it can do; listening and speaking are
+        // the phone's, and nothing is offered for them here
+        let job = Job::Summary;
+        assert!(crate::providers::in_order(job).len() >= 3 && crate::providers::in_order(job).iter().all(|(_, o)| crate::providers::speaks(o)));
+        assert_eq!(crate::providers::in_order(job).len(), airband_core::providers::in_order(job).len(), "an offer compiled in is one this build cannot do");
+        assert!(crate::providers::in_order(Job::Voice).is_empty() && crate::providers::in_order(Job::Ears).is_empty());
     }
 }

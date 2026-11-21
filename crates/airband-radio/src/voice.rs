@@ -1,15 +1,11 @@
-//! Outbound: getting the tower's speech to the host's speaker. The tower makes the audio and hands it over in
-//! parts while it is still being made; each part is decoded here and given to the host as plain PCM, so playback
-//! starts on the first part. A host whose own voice is worth using (a terminal) reads the text itself when there
-//! is no audio; a phone says nothing then, and he reads it. A device with a voice of its own chosen ([`crate::mouth`])
-//! makes the sound itself from the words and asks the tower for none.
+//! Outbound: saying something aloud. The words come from his computer; the sound is made on this device, by the
+//! voice he chose on it ([`crate::mouth`]): a model here, or a service reached with a key of his kept here. His
+//! computer makes no sound. With no voice chosen nothing is said, and the reason goes back so what was not
+//! heard is not counted as heard. Nothing ever speaks in place of what he chose.
 use super::*;
-use airband_core::audio::{BLOCK_BYTES, BLOCK_SAMPLES, base64_decode, decode_block};
-use airband_core::radio::SpeechPart;
-use std::time::Instant;
 
-/// How long to wait for the first sound before giving the clip up.
-const FIRST_SOUND: Duration = Duration::from_millis(8000);
+/// Why nothing was said, when no voice is chosen. Also what he is told where he turns reading aloud on.
+pub(crate) const NOTHING_CHOSEN: &str = "No voice is chosen on this device. Choose one in Settings, under Voice.";
 
 /// How saying something went.
 pub(crate) enum Said {
@@ -19,20 +15,24 @@ pub(crate) enum Said {
     Nothing(String),
 }
 
-/// Say `text`: with the tower's voice when it has one for this (`speech`), otherwise with the host's if that is
-/// worth hearing.
-pub(crate) fn say(link: &Link, host: &dyn RadioHost, mouth: &crate::mouth::Mouth, text: &str, speech: Option<&str>) {
-    say_until(link, host, mouth, text, speech, &|| false);
+/// Is there anything to speak with?
+pub(crate) fn can_speak(mouth: &crate::mouth::Mouth) -> bool {
+    mouth.ready()
+}
+
+/// Say `text` with the voice he chose on this device.
+pub(crate) fn say(host: &dyn RadioHost, mouth: &crate::mouth::Mouth, text: &str) {
+    say_until(host, mouth, text, &|| false);
 }
 
 /// The same, leaving off as soon as `stop` says so, and saying how it went: only what made a sound counts as
 /// heard.
-pub(crate) fn say_until(link: &Link, host: &dyn RadioHost, mouth: &crate::mouth::Mouth, text: &str, speech: Option<&str>, stop: &dyn Fn() -> bool) -> Said {
+pub(crate) fn say_until(host: &dyn RadioHost, mouth: &crate::mouth::Mouth, text: &str, stop: &dyn Fn() -> bool) -> Said {
     if text.trim().is_empty() || stop() {
         return Said::Aloud;
     }
-    // A voice of the device's own, when he has chosen one, says everything. When it cannot, it stays the one
-    // he chose and he is told: nothing else speaks in its place.
+    // When the voice he chose cannot speak, it stays the one he chose and he is told: nothing else speaks in
+    // its place.
     if mouth.ready() {
         return match mouth.say(host, text, stop) {
             Ok(()) => Said::Aloud,
@@ -42,68 +42,5 @@ pub(crate) fn say_until(link: &Link, host: &dyn RadioHost, mouth: &crate::mouth:
             }
         };
     }
-    match speech {
-        Some(id) if play(link, host, id, stop) => Said::Aloud,
-        _ if host.own_voice() => {
-            host.speak(text.to_string());
-            Said::Aloud
-        }
-        Some(_) => Said::Nothing("the computer's voice gave no sound".into()),
-        None => Said::Nothing("there is no voice to read it with".into()),
-    }
-}
-
-/// Fetch and play one clip, until it is over or `stop` says to leave off. False if not a sound was played, so
-/// the caller can fall back.
-pub(crate) fn play(link: &Link, host: &dyn RadioHost, id: &str, stop: &dyn Fn() -> bool) -> bool {
-    let began = Instant::now();
-    let (mut from, mut started, mut rate) = (0u32, false, 24000u32);
-    loop {
-        if stop() {
-            return true;
-        }
-        let part: Option<SpeechPart> = match link.request("GET", &format!("/speech/{id}?from={from}"), None) {
-            Ok((200, v)) => serde_json::from_value(v).ok(),
-            _ => None,
-        };
-        let Some(part) = part else {
-            // the line dropped or the clip is gone: finish what is already queued, or give up before starting
-            if started {
-                host.play(rate, Vec::new(), true);
-            }
-            return started;
-        };
-        rate = part.rate;
-        if part.data.is_empty() && !part.done {
-            if !started && began.elapsed() > FIRST_SOUND {
-                return false;
-            }
-            continue;
-        }
-        if !part.marks.is_empty() {
-            host.words(part.text.clone().unwrap_or_default(), part.marks.iter().map(|m| m.0).collect(), part.marks.iter().map(|m| m.1).collect());
-        }
-        let bytes = base64_decode(&part.data).unwrap_or_default();
-        let mut left = part.samples as usize;
-        let mut pcm = Vec::with_capacity(left * 2);
-        for block in bytes.chunks(BLOCK_BYTES) {
-            let n = left.min(BLOCK_SAMPLES);
-            for s in decode_block(block, n) {
-                pcm.extend_from_slice(&s.to_le_bytes());
-            }
-            left -= n;
-        }
-        // asked again here: he may have said stop while this part was being fetched
-        if stop() {
-            return true;
-        }
-        if !pcm.is_empty() || part.done {
-            host.play(rate, pcm, part.done);
-            started = true;
-        }
-        if part.done {
-            return true;
-        }
-        from = part.next;
-    }
+    Said::Nothing(NOTHING_CHOSEN.into())
 }

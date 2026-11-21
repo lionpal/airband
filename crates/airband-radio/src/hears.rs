@@ -1,6 +1,5 @@
 //! Listening by upload: a finished recording in, the words out. The services here take a whole clip, where a
-//! live one (`ears_stream.rs`) is fed while he talks. Both the phone and the tower call this: the phone when he
-//! has given it a key of his own, the tower when the key is on the computer and the phone sends it the clip.
+//! live one (`ears_stream.rs`) is fed while he talks. The phone calls this, with the key of his that is kept on it.
 //!
 //! Each way of sending a recording is an interface: a function here and a line of [`UPLOADS`]. A service that
 //! speaks OpenAI's transcription interface (`POST {url}/audio/transcriptions`) is a row of the catalogue and
@@ -37,7 +36,7 @@ struct Upload {
 }
 
 /// Every upload interface this build speaks.
-const UPLOADS: &[Upload] = &[Upload { is: Interface { name: "transcribe", can: &[], told: &[] }, hear: openai_transcribe }];
+const UPLOADS: &[Upload] = &[Upload { is: Interface { name: "transcribe", can: &[], told: &[] }, hear: transcriptions }];
 
 fn upload(offer: &Offer) -> Option<&'static Upload> {
     UPLOADS.iter().find(|u| offer.job == Job::Ears && u.is.fits(offer))
@@ -53,12 +52,6 @@ pub fn by_upload(with: &Use) -> bool {
     with.offer(Job::Ears).is_some_and(|(_, o)| upload(&o).is_some())
 }
 
-/// The live dialect this setting listens with, by the name a pass calls it. Nothing for one that listens by
-/// upload, or that this build has no code for.
-pub fn live(with: &Use) -> Option<&'static str> {
-    with.offer(Job::Ears).and_then(|(_, o)| crate::ears::live(&o)).map(|l| l.is.name)
-}
-
 /// What was said in a recording, by the service `with` names. `phrases` are names he is likely to say. Empty
 /// when nothing was said. Blocks. Err says why not, in words for him.
 pub fn transcribe(with: &Use, wav: &[u8], phrases: &[String]) -> Result<String, String> {
@@ -68,7 +61,7 @@ pub fn transcribe(with: &Use, wav: &[u8], phrases: &[String]) -> Result<String, 
 }
 
 /// OpenAI's transcription interface: one multipart form with the file and the model.
-fn openai_transcribe(with: &Use, by: &By, wav: &[u8], phrases: &[String]) -> Result<String, String> {
+fn transcriptions(with: &Use, by: &By, wav: &[u8], phrases: &[String]) -> Result<String, String> {
     let set = |field: &str| with.get(Job::Ears, field);
     let agent = crate::net::agent(Duration::from_secs(60));
     let edge = format!("airband{}", airband_core::relay::random_hex(12));
@@ -114,7 +107,7 @@ mod tests {
             for o in p.offers.iter().filter(|o| o.job == Job::Ears) {
                 assert!(listens(o), "{}: nothing here listens by \"{}\"", p.id, o.by.interface);
                 // one way or the other, never both
-                assert!(by_upload(&Use::of(&p.id, &o.id)) != live(&Use::of(&p.id, &o.id)).is_some(), "{}", p.id);
+                assert!(by_upload(&Use::of(&p.id, &o.id)) != crate::ears::live(o).is_some(), "{}", p.id);
                 // one that takes a key by upload says how the key is presented
                 assert!(!p.key || upload(o).is_none() || o.by.auth().is_some(), "{}: its row does not say how its key is presented", p.id);
             }

@@ -30,7 +30,7 @@ callsigns that name an agent, and the shape of a credential.
 | Adapters | `crates/airband-cli/src/adapters/` | Turning one harness's notifications into `airband.agent/1` events, and setting that harness up to send them (`airband install` asks each adapter) | Hold a harness up, or decide anything |
 | The radio | `crates/airband-radio` | The whole client side. `desk`: every paired computer as one, what is waiting and done, where his messages go, who has the floor on a call. Under it, per computer: reaching the tower (`link`), the call loop (`call`), sending over bad connections (`outbox`), what is kept on the device (`store`), sound in and out (`voice`, `ears`) | Draw, make sound or capture it |
 | Hosts | `apps/apple`, `crates/airband-cli/src/terminal.rs` | Drawing the view the desk gives, playing and capturing audio, keeping pairing links and a speech key of his own safe | Decide order, routing, retries, or what counts as waiting or done |
-| The relay | `crates/airband-relay` | Passing sealed bytes between a radio and its tower; remembering which channels exist; handing a sealed notification to a push service; lending a speech pass; the homepage's waiting list | Hold a pairing key or read a message |
+| The relay | `crates/airband-relay` | Passing sealed bytes between a radio and its tower; remembering which channels exist; handing a sealed notification to a push service; the homepage's waiting list | Hold a pairing key or read a message |
 | Deployment | `infra/`, `.github/workflows/` | Running the relay: one small server in us-east-2 with DynamoDB behind it (`AirbandRelayUs` in `infra/cdk.mjs`, what runs on the server in `infra/host/`), deployed by `deploy-relay.yml` on a push that changes the relay | |
 
 ## Where a new thing goes
@@ -64,7 +64,8 @@ old peers keep working.
 
 ## Settings and keys
 
-`airband setup` asks what makes summaries, what speaks and what listens, and tries each choice with a real call.
+`airband setup` asks what makes summaries and tries the choice with a real call. What listens and what speaks
+are chosen in the app and run on the phone: nothing of either is set or done on the computer.
 A provider is one file under `catalog/providers/`: what it can do, whether it needs a key, and what else it
 has to be told.
 
@@ -95,29 +96,37 @@ delivery on every event (`adapters/mod.rs`), unless the launcher already starts 
 
 ## Sound
 
-Outbound and inbound are set separately (`airband setup`, or `airband voice …` and `airband ears …`).
+The phone owns sound. What listens to him and what speaks to him are chosen on the phone and run by the
+phone: a model on it, or a service it reaches itself with a key of his kept in its Keychain. His computer
+sends words and receives words. It makes no speech, hears no recording and holds no key for either, and the
+relay lends nothing.
 
 | | Interface | Where | Providers |
 |---|---|---|---|
-| Outbound: text to audio | `Synth` (text in, PCM out a piece at a time), one file for each under `airband-radio/src/voices/` | `tower/speech.rs` makes the calls | Any service that speaks OpenAI's `/audio/speech` (a row); Gemini, Microsoft and ElevenLabs by their own routes |
+| Outbound: text to audio | `Synth` (text in, PCM out a piece at a time), one file for each under `airband-radio/src/voices/` | `airband-radio/src/mouth.rs` makes the calls, on the phone | Any service that speaks OpenAI's `/audio/speech` (a row); services with a route of their own by the protocol's name (`generate-content`, `ssml`, `timed-stream`), every address and header from the row |
 | Outbound, made on the phone | a file in `catalog/models/` | `airband-radio/src/models.rs`, run by its engine (`engines/ptts.rs`) | Phonon (Gradium, open weights, no key) |
 | Inbound, on the phone | a file in `catalog/models/` | `airband-radio/src/models.rs`, run by the host's engine `phonon-coreml` (`run_model`) | Phonon 2.5 English (Fermion Research, open weights, no key) |
-| Inbound, live as he speaks | a dialect: a file under `airband-radio/src/ears/` and a line of `LISTENERS` | `airband-radio/src/ears.rs` | Microsoft, Google, ElevenLabs |
+| Inbound, live as he speaks | a dialect: a file under `airband-radio/src/ears/` and a line of `LISTENERS` | `airband-radio/src/ears.rs` | by the protocol's name (`usp`, `bidi`, `chunks`); which company speaks it is the row's to say |
 | Inbound, a finished recording | `transcribe` (a WAV in, words out), a line of `UPLOADS` | `airband-radio/src/hears.rs` | Any service that speaks OpenAI's `/audio/transcriptions` (a row) |
 
-The tower makes speech the moment a sentence exists and hands it over in parts (`GET speech/<id>`), compressed
-four to one (`airband-core/src/audio.rs`); the radio decodes each part and gives the host plain PCM, so a host
-needs no codec. For listening the phone goes straight to the service with a short-lived pass from the tower,
-and the rule for when he has finished speaking (`Endpointer`) is in the core. The tower's keys never leave it.
+A transmission is words (`Transmission.say`); the radio says them with the voice he chose (`voice.rs`,
+`mouth.rs`) and tells the tower when they were heard. For listening the phone goes straight to the service: a
+live one gives a short-lived pass for his key (`ears.rs` asks for it), and one that takes a finished recording
+is sent the recording (`hears.rs`). The rule for when he has finished speaking (`Endpointer`) is in the core.
+The names he is likely to say (his agents and their teams, from the roster the phone already has, and the
+words of the trade the catalogue lists) go to a recogniser that can be told what to expect.
 
-With nothing set (`device`), a terminal prints and takes a typed line. A phone has no voice or recognition
-worth using: nothing is spoken and he types.
+With nothing chosen for a job, nothing does it: he is told where to choose (Settings, under Listening or
+Voice) at the moment he opens the microphone or turns reading aloud on, and nothing is used in its place. A
+terminal radio (`airband radio`) prints what is said and takes a typed line; it makes no sound.
 
 What he chooses is one mechanism in the phone's core (`airband-radio/src/choices.rs`). For each job (what
-writes his summaries, what listens, what speaks) `Desk::choices(job)` is the one list: a model on the phone,
-a service with a key of his own, or his computer's choice, each with how it stands (ready, needs a key,
-needs a download, being fetched, failed and why). `Desk::choose_for` picks one: a service is tried with a
-real call and a model is fetched first. One thing is chosen for a job at a time; that rule is in that file
+writes his summaries, what listens, what speaks) `Desk::choices(job)` is the one list: for listening and for the voice, a model on the phone or
+a service with a key of his own; each with how it stands (ready, needs a key,
+needs a download, being fetched, failed and why). `Desk::choose_for` picks one: a key is tested first and a model is fetched first. The test is the
+phone's own: one request the provider's row names (`key.check`: a method, an address, how the key is
+presented, and which statuses mean good, wrong key, or refused), chosen to cost nothing, read by its status
+alone (`keys.rs`). A key that does not pass is not kept, and he is told which of those it was. One thing is chosen for a job at a time; that rule is in that file
 and `ears.rs` and `mouth.rs` are handed the one thing to use. The choice is kept by the core
 (`choices.json`); a key is kept by the host where its system keeps secrets (`DeskHost::secret`), goes only
 to its service, and is never handed to a screen. A choice that stops working stays chosen and says why:
@@ -132,8 +141,7 @@ through `run_model`; a model is listed only where its engine is and on a system 
 and loaded belongs to the desk (`Senses`), not to the process. The model is fetched late: he chooses it on the Voice or Listening page and only then is it fetched, once, from
 `airband.dev/models/<name>/<version>/`, already in the form the phone runs, each file checked against its
 hash. `scripts/host-model.sh` puts a model there. The voice (Gradium's Phonon, 65 MB) runs in the core and
-stays loaded while it is chosen; the radio asks for `next?voice=own` and the tower sends words and makes no
-speech. The listening model (Fermion Research's Phonon 2.5 English, 345 MB, iOS 18) runs on the Neural Engine
+stays loaded while it is chosen. The listening model (Fermion Research's Phonon 2.5 English, 345 MB, iOS 18) runs on the Neural Engine
 through the host (`run_model`): the core records, has the recording so far read again about twice a second
 to show his words as he talks, and has all of it read once more when he stops.
 
@@ -183,7 +191,8 @@ A provider's row says which jobs
 the service does (reading, speaking, listening), through which interface, and what it has to be told, and what
 to show where he chooses it: its maker and model, its price and the day that price was read, whether it is one
 of the few shown first, and for a voice a few voices with their makers' sample clips. `airband
-setup`, `airband model`, `airband voice` and `airband ears` are driven by the table, and so are the calls. A
+setup` and `airband model` are driven by the table for reading, the phone's pickers for listening and the
+voice, and so are the calls. A
 setting in use is `{"kind": <row id>, "offer": <offer id>, "key": …, <what differs from the offer>}`. A
 provider can do one job more than one way (two voice models): each is an offer with an id of its own, and
 the key is the provider's, asked for once. How a key is presented to a service on a common interface is in
@@ -202,19 +211,17 @@ The interfaces, and what adding one touches:
 | Reading | `chat`: OpenAI Chat Completions (`POST {url}/chat/completions`), which nearly every model service and local model server accepts | a row | a function and a line of `READERS` in `tower/judge.rs`; a tower release |
 | Reading | `command`: a program on his computer, prompt on standard input, answer on standard output | a row with its arguments, compiled in | |
 | Reading | `on-this-computer`: a model the tower fetches and runs itself | a row naming the model and the program that runs it, compiled in | |
-| Speaking | `speech`: OpenAI's speech endpoint (`POST {url}/audio/speech`, raw PCM) | a row | a file under `airband-radio/src/voices/` and a line of `VOICES`; an app and a tower release |
-| Speaking | `gemini`, `azure`, `elevenlabs`: a route of its own, for what the common one lacks (ElevenLabs' word timings, Microsoft's own route). The row says where it is reached | a row | |
+| Speaking | `speech`: OpenAI's speech endpoint (`POST {url}/audio/speech`, raw PCM) | a row | a file under `airband-radio/src/voices/` and a line of `VOICES`; an app release |
+| Speaking | `generate-content`, `ssml`, `timed-stream`: a wire protocol that is one service's own, named for the protocol, for what the common one lacks (word timings, SSML). The row says where it is reached (`url`, which may name his settings in braces), how the key is presented (`auth`), what else is sent (`headers`) and the rate of the sound (`rate`) | a row | |
 | Speaking or listening, on the phone | a file in `catalog/models/` | the row, with what its engine is told (`with`: rate, language, form, device, the system it needs, what to say while it is made ready), and the files under `airband.dev/models/<name>/<version>/` | a new engine: one module and one row of `HERE` in `airband-radio/src/engines.rs`, or one entry in the host's own table (`RadioModel.engines`), and an app release |
 | Listening, a finished recording | `transcribe`: OpenAI's transcription endpoint (`POST {url}/audio/transcriptions`) | a row | a function and a line of `UPLOADS` in `airband-radio/src/hears.rs` |
-| Listening, live as he speaks | `azure`, `gemini`, `elevenlabs`: no common interface exists, so each is a dialect the phone speaks | a row naming it | a file under `airband-radio/src/ears/` and a line of `LISTENERS`; an app release, because the phone talks to the service itself |
+| Listening, live as he speaks | `usp`, `bidi`, `chunks`: no common interface exists, so each is a dialect the phone speaks, named for its wire protocol. The row says where the stream is (`stream`), where its pass is asked for (`pass`) and how the key is presented (`auth`) | a row naming it | a file under `airband-radio/src/ears/` and a line of `LISTENERS`; an app release, because the phone talks to the service itself |
 
-What the phone listens with comes as one message, `{ kind, token, set, phrases }`, whoever sends it: the phone
-itself from a key of his own, or the tower. `set` is whatever the service
-has to be told, so a service that needs a model or an address fits without a new field. A live service gives a
-short-lived pass for a key, and the key stays where it is. A service that only takes a finished recording has
-no such pass: with the key on the phone the recording goes straight to it, and with the key on the computer the
-phone sends the recording to the tower (`POST hear`), which makes the call. The phone's own keys are kept by
-provider in its Keychain, so one key serves a provider's voice and its listening.
+What the phone listens live with is one thing it makes for itself, `Pass { dialect, token, set, phrases }`
+(`ears.rs`): `set` is whatever the service has to be told, so a service that needs a model or an address fits
+without a new field. A live service gives a short-lived pass for his key; a service that only takes a
+finished recording is sent it with the key. The phone's keys are kept by provider in its Keychain, so one key
+serves a provider's voice and its listening.
 
 ## Reaching the tower
 

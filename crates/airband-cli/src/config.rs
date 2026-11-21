@@ -32,9 +32,8 @@ pub struct Config {
     /// words themselves in place of a model.
     #[serde(default)]
     pub summarizer: Summarizer,
-    /// The keys he has given, each under a name with the provider it is for. What uses a key (summaries,
-    /// voice, listening) holds its value here in memory; the settings file writes that as `key:<name>`, so a
-    /// key is stored once however many things use it.
+    /// The keys he has given, each under the id of the provider it is for. What uses a key (summaries) holds
+    /// its value here in memory; the settings file writes that as `key:<name>`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub keys: BTreeMap<String, StoredKey>,
     /// The relay radios reach this tower through: airband's own unless he names another (`airband relay <url>`)
@@ -45,12 +44,6 @@ pub struct Config {
     /// The key the relay asks for before it opens a channel, if it asks for one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relay_admission: Option<String>,
-    /// Outbound: what speaks to him on a call. Set separately from `ears`.
-    #[serde(default)]
-    pub voice: Voice,
-    /// Inbound: what turns his speech into text on a call. Set separately from `voice`.
-    #[serde(default)]
-    pub ears: Ears,
     /// How to start a new agent, by name. The ones for the coding tools airband knows come with it (a tool's
     /// row, `catalog/tools/`), are here whenever the settings are read, and are never written to the file: a
     /// later version's correction to one reaches every computer. The file holds only the ones he added, under
@@ -79,12 +72,10 @@ pub struct Config {
     pub pairings: Vec<PairedRadio>,
 }
 
-/// What reads, what speaks and what listens are each a provider in use: a row of the catalogue, a
-/// key, and what is set differently from the row.
+/// What reads is a provider in use: a row of the catalogue, a key, and what is set differently from the row.
+/// (What listens and what speaks are the phone's, chosen and run there.)
 pub use crate::providers::Use;
 pub type Summarizer = Use;
-pub type Voice = Use;
-pub type Ears = Use;
 
 pub use airband_core::tools::{Held, Launcher};
 
@@ -117,12 +108,16 @@ pub struct StoredKey {
 
 impl Config {
     /// The launcher for a new agent, or to carry one on. With no tool asked for, the one he set as usual, and
-    /// nothing when he has set none. For a tool: the usual one when that is the tool it starts, and otherwise
-    /// the one that tool's own row lists first. One of his own is used only by being made the usual one.
+    /// nothing when he has set none. For a tool: the usual one when that is the tool it starts; otherwise the
+    /// one that tool's own row lists first; and for a tool airband has no row for, the one launcher of his own
+    /// that starts it. Where he has written several for such a tool and made none the usual, none is picked.
     pub fn launcher_for(&self, harness: Option<&str>) -> Option<(&String, &Launcher)> {
         let usual = self.launchers.get_key_value(&self.launcher);
         let Some(h) = harness else { return usual };
-        usual.filter(|(_, l)| l.harness == h).or_else(|| built_in().find(|l| l.harness == h).and_then(|l| self.launchers.get_key_value(&l.name)))
+        usual.filter(|(_, l)| l.harness == h).or_else(|| built_in().find(|l| l.harness == h).and_then(|l| self.launchers.get_key_value(&l.name))).or_else(|| {
+            let mut own = self.launchers.iter().filter(|(_, l)| l.harness == h);
+            own.next().filter(|_| own.next().is_none())
+        })
     }
     /// The key he gave for a provider. A provider has one key here, kept under the provider's own id.
     pub fn key_of(&self, provider: &str) -> Option<String> {
@@ -131,10 +126,8 @@ impl Config {
     /// Keep a provider's key. A new one takes the place of the one before, wherever that one was in use.
     pub fn keep_key(&mut self, provider: &str, secret: String) {
         let was = self.key_of(provider);
-        for user in [&mut self.summarizer, &mut self.voice, &mut self.ears] {
-            if user.kind == provider && Some(&user.key) == was.as_ref() {
-                user.key = secret.clone();
-            }
+        if self.summarizer.kind == provider && Some(&self.summarizer.key) == was.as_ref() {
+            self.summarizer.key = secret.clone();
         }
         self.keys.insert(provider.to_string(), StoredKey { provider: provider.to_string(), secret });
     }
@@ -148,7 +141,7 @@ impl Config {
 }
 
 /// The places in the settings that use a key.
-const USERS: [&str; 3] = ["summarizer", "voice", "ears"];
+const USERS: [&str; 1] = ["summarizer"];
 const BY_NAME: &str = "key:";
 
 /// In the settings as they are written: each use of a kept key becomes the key's name.
@@ -412,6 +405,11 @@ mod tests {
         let mut cfg = cfg;
         cfg.launchers.insert("mine".into(), Launcher { name: "mine".into(), harness: first.id.clone(), ..Launcher::default() });
         assert_eq!(cfg.launcher_for(Some(&first.id)).map(|(name, _)| name.clone()), first.launchers.first().map(|l| l.name.clone()));
+        // a tool airband has no row for is started by the one launcher he wrote for it, and by none of two
+        cfg.launchers.insert("other".into(), Launcher { name: "other".into(), harness: "his-own-tool".into(), ..Launcher::default() });
+        assert_eq!(cfg.launcher_for(Some("his-own-tool")).map(|(name, _)| name.as_str()), Some("other"));
+        cfg.launchers.insert("other-two".into(), Launcher { name: "other-two".into(), harness: "his-own-tool".into(), ..Launcher::default() });
+        assert!(cfg.launcher_for(Some("his-own-tool")).is_none());
         cfg.launcher = "mine".into();
         assert_eq!(cfg.launcher_for(Some(&first.id)).map(|(name, _)| name.as_str()), Some("mine"));
         assert_eq!(cfg.launcher_for(None).map(|(name, _)| name.as_str()), Some("mine"));

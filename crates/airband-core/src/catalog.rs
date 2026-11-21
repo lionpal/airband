@@ -332,7 +332,7 @@ fn weigh_against(text: &str, now: u64, have: &Catalog, built: &Catalog) -> Resul
 ///   not there ([`weigh`] leaves the others out). So nothing that runs a program ([`BUILT_IN_ONLY`]) is
 ///   added to a known provider, and a key he gave is sent nowhere new. A provider this build does not know
 ///   cannot bring a program either.
-/// - Whether a known provider takes a key does not change.
+/// - Whether a known provider takes a key does not change, nor where and how its key is sent to be tested.
 /// - A version of a model this build knows keeps its files. New files are a new version.
 /// - A model's files come from airband's address.
 fn allowed(newer: &Catalog, built: &Catalog) -> Result<(), String> {
@@ -354,6 +354,10 @@ fn allowed(newer: &Catalog, built: &Catalog) -> Result<(), String> {
         }
         if known.key != p.key {
             return Err(format!("the catalogue would change whether {} takes a key", p.id));
+        }
+        // testing a key sends it: where and how is this build's own for every provider it knows
+        if known.check != p.check {
+            return Err(format!("the catalogue would change where a key for {} is sent to be tested", p.id));
         }
     }
     // the same for how a coding tool is started: only what this build came with
@@ -499,6 +503,8 @@ struct KeyRow {
     name: String,
     #[serde(default)]
     at: String,
+    /// How the key is tested when he gives it (`providers::Check`).
+    check: crate::providers::Check,
 }
 
 /// What the rows of a document hash to (`build.rs` writes it into the document; see `catalog_hash.rs`).
@@ -527,11 +533,11 @@ fn read(text: &str) -> Result<Catalog, String> {
                 Err(e) => left_out.push(format!("{}: an offer ({e})", head.id)),
             }
         }
-        let (key, key_name, keys_at) = match head.key {
-            Some(k) => (true, k.name, k.at),
-            None => (false, String::new(), String::new()),
+        let (key, key_name, keys_at, check) = match head.key {
+            Some(k) => (true, k.name, k.at, Some(k.check)),
+            None => (false, String::new(), String::new(), None),
         };
-        providers.push(Arc::new(Provider { id: head.id, name: head.name, key, key_name, keys_at, offered: head.offered, offers }));
+        providers.push(Arc::new(Provider { id: head.id, name: head.name, key, key_name, keys_at, check, offered: head.offered, offers }));
     }
     let mut models = Vec::new();
     for row in doc.models {
@@ -648,6 +654,10 @@ mod tests {
         assert!(offered(&|d| row(d, "openai")["offers"][0]["job"] = "voice".into()).is_err());
         // how a key is presented is part of how a service is reached
         assert!(offered(&|d| row(d, "openai")["offers"][0]["by"]["with"]["auth"]["header"] = "x-other".into()).is_err());
+        // nor is where and how a key he gives is sent to be tested
+        assert!(offered(&|d| row(d, "openai")["key"]["check"]["url"] = "https://elsewhere.example/models".into()).is_err());
+        assert!(offered(&|d| row(d, "gemini")["key"]["check"]["auth"]["header"] = "x-other".into()).is_err());
+        assert!(offered(&|d| row(d, "elevenlabs")["key"]["check"]["wrong_key"] = serde_json::json!([])).is_err());
         // a provider nobody has seen may not run a program: that offer is left out, and said so
         let (taken, said) = offered(&|d| d["providers"].as_array_mut().unwrap().push(serde_json::json!({ "id": "new", "name": "New", "offers": [{ "id": "new", "job": "summary", "by": { "interface": "command", "with": { "argv": ["x"] } }, "label": "New" }] }))).unwrap();
         assert!(taken.unwrap().providers.iter().find(|p| p.id == "new").unwrap().offers.is_empty() && said.left_out.len() == 1);
