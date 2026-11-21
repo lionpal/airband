@@ -11,35 +11,46 @@ use std::time::Instant;
 /// How long to wait for the first sound before giving the clip up.
 const FIRST_SOUND: Duration = Duration::from_millis(8000);
 
+/// How saying something went.
+pub(crate) enum Said {
+    /// He heard it, or stopped it himself.
+    Aloud,
+    /// The phone's own voice was to say it and could not. That voice has been given up: the tower offers the
+    /// words again, this time with its own.
+    OwnVoiceFailed,
+    /// No sound came out, and why. It has not been heard.
+    Nothing(&'static str),
+}
+
 /// Say `text`: with the tower's voice when it has one for this (`speech`), otherwise with the host's if that is
 /// worth hearing.
 pub(crate) fn say(link: &Link, host: &dyn RadioHost, text: &str, speech: Option<&str>) {
     say_until(link, host, text, speech, &|| false);
 }
 
-/// The same, leaving off as soon as `stop` says so.
-///
-/// False only when the device's own voice was to say it and could not. That voice is then given up, and the
-/// caller leaves the words unheard so the tower offers them again, this time with its own voice.
-pub(crate) fn say_until(link: &Link, host: &dyn RadioHost, text: &str, speech: Option<&str>, stop: &dyn Fn() -> bool) -> bool {
+/// The same, leaving off as soon as `stop` says so, and saying how it went: only what made a sound counts as
+/// heard.
+pub(crate) fn say_until(link: &Link, host: &dyn RadioHost, text: &str, speech: Option<&str>, stop: &dyn Fn() -> bool) -> Said {
     if text.trim().is_empty() || stop() {
-        return true;
+        return Said::Aloud;
     }
     // a voice of the device's own, when he has chosen one, says everything
     if crate::mouth::ready() {
         if crate::mouth::say(host, text, stop) {
-            return true;
+            return Said::Aloud;
         }
         crate::mouth::give_up();
-        return false;
+        return Said::OwnVoiceFailed;
     }
-    if speech.is_some_and(|id| play(link, host, id, stop)) {
-        return true;
+    match speech {
+        Some(id) if play(link, host, id, stop) => Said::Aloud,
+        _ if host.own_voice() => {
+            host.speak(text.to_string());
+            Said::Aloud
+        }
+        Some(_) => Said::Nothing("the computer's voice gave no sound"),
+        None => Said::Nothing("there is no voice to read it with"),
     }
-    if host.own_voice() {
-        host.speak(text.to_string());
-    }
-    true
 }
 
 /// Fetch and play one clip, until it is over or `stop` says to leave off. False if not a sound was played, so

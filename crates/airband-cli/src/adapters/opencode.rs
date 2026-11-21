@@ -78,7 +78,8 @@ pub fn watch() {
         let send = |id: &str, cwd: Option<&str>, event: Event| super::post(&AgentEvent { schema: SCHEMA.into(), agent: agent(id, cwd), event });
         for s in sessions {
             let (Some(id), time) = (s["id"].as_str(), &s["time"]) else { continue };
-            if ours.iter().any(|o| o == id) {
+            // not the ones the tower started itself, nor the ones put away (a one-off run, a summary being made)
+            if ours.iter().any(|o| o == id) || time["archived"].as_u64().is_some_and(|at| at > 0) || time["archived"] == true {
                 continue;
             }
             let (busy, idle, updated) = (time["busy"].as_u64().unwrap_or(0), time["idle"].as_u64().unwrap_or(0), time["updated"].as_u64().unwrap_or(0));

@@ -41,7 +41,7 @@ pub(super) async fn pump(app: &Arc<App>) {
     inner.pending.retain(|p| p.kind != Some(Kind::Fyi) || p.say.is_none());
     // start the voice on everything that will be spoken, now, so each clip exists before its turn comes
     for p in inner.pending.iter().filter(|p| p.say.is_some() && inner.wants_voice()) {
-        if let Some(callsign) = inner.find(&p.agent_id).map(|s| s.callsign.spoken()) {
+        if let Some(callsign) = inner.find(&p.agent_id).map(|s| s.callsign.clone()).or(p.callsign.clone()).map(|c| c.spoken()) {
             app.speech.start(&app.voice(), &format!("{callsign}. {}", p.say.as_deref().unwrap_or_default()));
         }
     }
@@ -50,7 +50,7 @@ pub(super) async fn pump(app: &Arc<App>) {
     let Some(next) = inner.pending.iter().filter(|p| p.say.is_some()).min_by_key(|p| (p.kind != Some(Kind::NeedsYou), p.created)).cloned() else {
         return remind(app, &mut inner, &radio);
     };
-    let Some(callsign) = inner.find(&next.agent_id).map(|s| s.callsign.clone()) else {
+    let Some(callsign) = inner.find(&next.agent_id).map(|s| s.callsign.clone()).or(next.callsign.clone()) else {
         inner.pending.retain(|p| p.id != next.id);
         return;
     };

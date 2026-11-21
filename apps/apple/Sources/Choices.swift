@@ -18,6 +18,8 @@ struct ChoiceCard<Extra: View>: View {
     var open = false
     /// It costs nothing to use: a small tag says so.
     var free = false
+    /// A small picture after the tick, by its name among the app's images: a coding tool's mark.
+    var mark: String?
     let tap: () -> Void
     @ViewBuilder var extra: () -> Extra
 
@@ -27,6 +29,9 @@ struct ChoiceCard<Extra: View>: View {
                 HStack(spacing: 12) {
                     Image(systemName: chosen ? "checkmark.circle.fill" : "circle").font(.system(size: 22))
                         .foregroundStyle(chosen ? Palette.ink : Palette.dim)
+                    if let mark, UIImage(named: mark) != nil {
+                        Image(mark).resizable().scaledToFit().frame(width: 24, height: 24).foregroundStyle(Palette.ink)
+                    }
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title).font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.ink)
                         if !subtitle.isEmpty { Text(subtitle).font(.system(size: 14)).foregroundStyle(Palette.soft) }
@@ -49,8 +54,8 @@ struct ChoiceCard<Extra: View>: View {
 }
 
 extension ChoiceCard where Extra == EmptyView {
-    init(title: String, subtitle: String, chosen: Bool, tap: @escaping () -> Void) {
-        self.init(title: title, subtitle: subtitle, chosen: chosen, open: false, free: false, tap: tap) { EmptyView() }
+    init(title: String, subtitle: String, chosen: Bool, mark: String? = nil, tap: @escaping () -> Void) {
+        self.init(title: title, subtitle: subtitle, chosen: chosen, open: false, free: false, mark: mark, tap: tap) { EmptyView() }
     }
 }
 
@@ -167,7 +172,12 @@ private struct Fetching: View {
 struct ReadsPicker: View {
     @EnvironmentObject var model: RadioModel
     let mode: ChoiceMode
-    private var services: [Service] { readingServices() }
+    /// What can write the summaries for him: everything that needs no coding tool's sign-in, and what uses the
+    /// sign-in of a tool he uses, those first.
+    private var services: [Service] {
+        let all = readingServices().filter { $0.login.isEmpty || model.tools.contains($0.login) }
+        return all.filter { !$0.login.isEmpty } + all.filter { $0.login.isEmpty }
+    }
     @State private var open: String?
     @State private var asking: Service?
     @State private var busy: String?
@@ -177,7 +187,8 @@ struct ReadsPicker: View {
     private var current: String? {
         if let waiting = model.pendingReads { return waiting }
         // with no computer heard from yet, the one a new computer starts with
-        return services.first { $0.name == model.view.reads }?.kind ?? (model.view.reads.isEmpty ? services.first { !$0.key && !$0.free }?.kind : nil)
+        // with no computer heard from yet: the sign-in of the coding tool he uses most
+        return services.first { $0.name == model.view.reads }?.kind ?? (model.view.reads.isEmpty ? services.first { $0.login == model.tools.first }?.kind : nil)
     }
     @State private var more = false
 
@@ -468,8 +479,34 @@ struct ChoicePage<Picker: View>: View {
     }
 }
 
+/// The coding tools he uses: one is chosen on first run (`single`), and more are added in Settings. The first
+/// in his list is the one he uses most.
+struct ToolsPicker: View {
+    @EnvironmentObject var model: RadioModel
+    /// First run: choosing one replaces the choice. Settings: each is added or taken away, and one always stays.
+    let single: Bool
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ForEach(codingTools(), id: \.id) { tool in
+                let on = model.tools.contains(tool.id)
+                ChoiceCard(title: tool.name, subtitle: tool.maker, chosen: on, mark: "harness-\(tool.id)") {
+                    if single {
+                        model.tools = [tool.id]
+                    } else if on {
+                        if model.tools.count > 1 { model.tools.removeAll { $0 == tool.id } }
+                    } else {
+                        model.tools.append(tool.id)
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// The words each of the three is introduced with, in onboarding and in Settings alike.
 enum Headline {
+    static let tools = "All your coding agents on one channel."
     static let reads = "Long messages, cut down to what you need to read."
     static let ears = "Talk to your agents."
     static let voice = "Your agents talk back."

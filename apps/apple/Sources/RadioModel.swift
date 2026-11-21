@@ -238,6 +238,12 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
     }
 
+    /// The coding tools he uses, by id, the one he uses most first. Someone who had the app before there was a
+    /// choice uses Claude Code.
+    @Published var tools: [String] = UserDefaults.standard.stringArray(forKey: "airband.tools") ?? ["claude-code"] {
+        didSet { UserDefaults.standard.set(tools, forKey: "airband.tools") }
+    }
+
     /// The picture he chose for each of his computers, by its name: a system symbol's name.
     @Published var computerIcons: [String: String] = (try? JSONDecoder().decode([String: String].self, from: Data((UserDefaults.standard.string(forKey: "airband.computers.icons") ?? "{}").utf8))) ?? [:]
     /// The pictures a computer can have.

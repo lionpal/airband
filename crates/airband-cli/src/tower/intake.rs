@@ -110,5 +110,5 @@ pub(super) fn enqueue(inner: &mut Inner, agent_id: &str, notice: bool, full: Str
     inner.record(Entry { pictures, short, ..Entry::said(id.clone(), &session, kind, full.clone()) });
     // the copy a model reads to shorten it has no key in it either
     let full = airband_core::redact::redact(&full);
-    inner.pending.push(Item { id, agent_id: agent_id.into(), notice, full, kind, say: None, detail: None, created: now(), asked: None });
+    inner.pending.push(Item { id, agent_id: agent_id.into(), notice, full, kind, say: None, detail: None, created: now(), asked: None, callsign: Some(session.callsign.clone()) });
 }

@@ -10,10 +10,10 @@ fn rows(dir: &Path) -> String {
 fn main() {
     let catalog = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../catalog");
     println!("cargo:rerun-if-changed={}", catalog.display());
-    for part in ["rev", "providers", "models"] {
+    for part in ["rev", "providers", "models", "tools"] {
         println!("cargo:rerun-if-changed={}", catalog.join(part).display());
     }
     let rev = std::fs::read_to_string(catalog.join("rev")).expect("catalog/rev");
-    let document = format!("{{\"rev\":{},\"providers\":[\n{}\n],\"models\":[\n{}\n]}}\n", rev.trim(), rows(&catalog.join("providers")), rows(&catalog.join("models")));
+    let document = format!("{{\"rev\":{},\"providers\":[\n{}\n],\"models\":[\n{}\n],\"tools\":[\n{}\n]}}\n", rev.trim(), rows(&catalog.join("providers")), rows(&catalog.join("models")), rows(&catalog.join("tools")));
     std::fs::write(Path::new(&std::env::var("OUT_DIR").unwrap()).join("catalog.json"), document).unwrap();
 }

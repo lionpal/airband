@@ -255,7 +255,7 @@ pub fn triage(cfg: Config) -> Result<(), String> {
     let mut full = String::new();
     std::io::Read::read_to_string(&mut std::io::stdin(), &mut full).map_err(|e| e.to_string())?;
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
-    let item = Item { id: String::new(), agent_id: String::new(), notice: false, full: full.trim().to_string(), kind: None, say: None, detail: None, created: 0, asked: None };
+    let item = Item { id: String::new(), agent_id: String::new(), notice: false, full: full.trim().to_string(), kind: None, say: None, detail: None, created: 0, asked: None, callsign: None };
     let j = rt.block_on(prepare(&cfg, &item));
     println!("{}\t{}\t{}", serde_json::to_value(j.kind).unwrap().as_str().unwrap_or(""), j.say, j.options.iter().enumerate().map(|(i, o)| if j.recommended == Some(i as u32) { format!("[{o}]") } else { o.clone() }).collect::<Vec<_>>().join(" | "));
     Ok(())
@@ -336,6 +336,19 @@ pub fn run(cfg: Config) -> Result<(), String> {
     } else if crate::vault::settle() {
         log("the keys are now in the keychain");
     }
+    // A tower with one part dead answers nothing and looks alive. Anything that goes wrong badly enough to
+    // stop a thread stops the tower, which is then started again (launchd, systemd), whole.
+    let usual = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        usual(info);
+        log(format!("the tower stopped itself after an internal failure: {info}"));
+        std::process::exit(101);
+    }));
+    // what an agent's tool could not hand over while the tower was away is taken now, and whenever more is left
+    std::thread::spawn(|| loop {
+        crate::adapters::drain_spool();
+        std::thread::sleep(Duration::from_secs(5));
+    });
     // tools that have no hooks and are watched: OpenCode's server, when it is running on this computer
     std::thread::spawn(crate::adapters::opencode::watch);
     // a newer catalogue, now and twice a day: what a phone is offered for this computer comes from it
@@ -379,7 +392,9 @@ pub fn run(cfg: Config) -> Result<(), String> {
         pictures::prune();
         attachments::prune();
         let live: HashSet<String> = inner.sessions.iter().map(|s| s.agent.id.clone()).collect();
-        inner.pending.retain(|p| live.contains(&p.agent_id));
+        // what an agent that is gone was waiting on him for goes; what it reported in the last while is still his news
+        let recent = now().saturating_sub(STILL_NEWS.as_millis() as u64);
+        inner.pending.retain(|p| live.contains(&p.agent_id) || (p.callsign.is_some() && p.kind == Some(Kind::Report) && p.created >= recent));
         let port = cfg.port;
         let push = push::Wake::load(&store);
         let app = Arc::new(App { push, cfg, store, speech: speech::Speech::default(), ears_pass: Mutex::new(None), clips: Mutex::new(HashMap::new()), inner: Mutex::new(inner), kick: Notify::new(), accounts: accounts::Kept::default() });

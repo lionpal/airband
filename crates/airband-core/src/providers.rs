@@ -74,6 +74,9 @@ pub struct Offer {
     pub about: &'static str,
     /// One of the few shown before the rest where he chooses. The others sit behind "More services".
     pub preferred: bool,
+    /// The coding tool whose sign-in on his computer this uses (`claude-code`, `codex`, `opencode`), when it
+    /// uses one and so needs no key. It is offered to someone who uses that tool. Empty otherwise.
+    pub login: &'static str,
     /// What it costs him, in a few words, as its maker published it on 2026-11-20 and worked out for this
     /// use (a summary is about 650 tokens in and 80 out; speech is about 900 characters a minute). Empty
     /// when it costs nothing, or when the maker's price could not be confirmed.

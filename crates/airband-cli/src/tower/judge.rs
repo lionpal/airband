@@ -130,6 +130,30 @@ async fn ask(model: &Summarizer, prompt: String, shape: Option<Value>) -> Result
         },
         _ => return Err(format!("\"{}\" does not read", model.kind)),
     };
+    let mut shape_file: Option<std::path::PathBuf> = None;
+    // `{brief}` in an argument is the file that tells a coding tool it is only rewriting a message here
+    let folder = brief_folder()?;
+    // and `{model}`, or any other setting the row asks for, is what he set or the row's usual
+    let asked: Vec<(String, String)> = model.offer(Job::Summary).map(|(_, o)| o.asks.iter().map(|a| (format!("{{{}}}", a.field), model.get(Job::Summary, a.field))).collect()).unwrap_or_default();
+    let mut argv: Vec<String> = argv.into_iter().map(|a| asked.iter().fold(a.replace("{brief}", &folder.join("brief.md").display().to_string()), |a, (name, value)| a.replace(name, value))).collect();
+    // `{shape}` is a file holding the shape the answer must take, for a tool that can be held to one. A call
+    // that wants no shape leaves that argument out, and the flag before it.
+    if let Some(at) = argv.iter().position(|a| a.contains("{shape}")) {
+        match &shape {
+            Some(shape) => {
+                let file = folder.join(format!("shape-{}.json", config::random_hex(6)));
+                std::fs::write(&file, shape.to_string()).map_err(|e| e.to_string())?;
+                argv[at] = argv[at].replace("{shape}", &file.display().to_string());
+                shape_file = Some(file);
+            }
+            None => {
+                argv.remove(at);
+                if at > 0 && argv[at - 1].starts_with('-') {
+                    argv.remove(at - 1);
+                }
+            }
+        }
+    }
     let (program, args) = argv.split_first().ok_or("the summarizer command is empty")?;
     // on Windows a command like `claude` is a .cmd shim, which only the shell can start
     let mut cmd = if cfg!(windows) {
@@ -141,7 +165,10 @@ async fn ask(model: &Summarizer, prompt: String, shape: Option<Value>) -> Result
     };
     let mut child = cmd
         .args(args)
-        .current_dir(config::dir())
+        // run in the brief's folder: a tool that looks for an agent of its own to be finds the brief there
+        .current_dir(&folder)
+        // some tools take the folder they are in from this, not from where they were started
+        .env("PWD", &folder)
         .env("AIRBAND_INTERNAL", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -153,12 +180,35 @@ async fn ask(model: &Summarizer, prompt: String, shape: Option<Value>) -> Result
     tokio::spawn(async move {
         let _ = stdin.write_all(prompt.as_bytes()).await;
     });
-    let out = tokio::time::timeout(Duration::from_secs(90), child.wait_with_output()).await.map_err(|_| format!("{program} took over 90 seconds"))?.map_err(|e| e.to_string())?;
+    let out = tokio::time::timeout(Duration::from_secs(90), child.wait_with_output()).await;
+    if let Some(file) = shape_file {
+        let _ = std::fs::remove_file(file);
+    }
+    let out = out.map_err(|_| format!("{program} took over 90 seconds"))?.map_err(|e| e.to_string())?;
     let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if !out.status.success() || text.is_empty() {
         return Err(format!("{program} failed: {}", String::from_utf8_lossy(&out.stderr).chars().take(200).collect::<String>()));
     }
     Ok(text)
+}
+
+/// What a coding tool is told when it is used only to rewrite a message: one line, and no tools. Kept in a
+/// folder of its own, in the two forms the tools take it: a plain file (Codex is pointed at it), and an agent
+/// named `airband` where OpenCode looks for agents. A general coding agent brings thousands of words of its
+/// own instructions to every call; this is what keeps a summary small and quick.
+const BRIEF: &str = "You rewrite messages. Reply with the JSON asked for and nothing else.";
+
+fn brief_folder() -> Result<std::path::PathBuf, String> {
+    let folder = config::dir().join("brief");
+    let agent = folder.join(".opencode").join("agent");
+    let files = [(folder.join("brief.md"), format!("{BRIEF}\n")), (agent.join("airband.md"), format!("---\ndescription: Rewrites a message as asked\nmode: primary\ntools:\n  \"*\": false\n---\n{BRIEF}\n"))];
+    if files.iter().any(|(path, text)| std::fs::read_to_string(path).ok().as_deref() != Some(text.as_str())) {
+        std::fs::create_dir_all(&agent).map_err(|e| e.to_string())?;
+        for (path, text) in &files {
+            std::fs::write(path, text).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(folder)
 }
 
 pub(super) fn tail(text: &str, max_chars: usize) -> String {
@@ -426,7 +476,7 @@ pub(super) async fn detail_of(app: &Arc<App>, id: &str) -> Option<String> {
     if let Some(d) = entry.detail {
         return Some(d);
     }
-    let item = Item { id: entry.id.clone(), agent_id: String::new(), notice: false, full: entry.full.clone(), kind: entry.kind, say: entry.short.clone(), detail: None, created: entry.at, asked: None };
+    let item = Item { id: entry.id.clone(), agent_id: String::new(), notice: false, full: entry.full.clone(), kind: entry.kind, say: entry.short.clone(), detail: None, created: entry.at, asked: None, callsign: None };
     let d = detail(&app.cfg, &item).await;
     let mut inner = app.inner.lock().unwrap();
     if let Some(e) = inner.log.iter_mut().find(|e| e.id == id) {

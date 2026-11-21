@@ -261,18 +261,23 @@ async fn next(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
         if !inner.call(&radio).connected() {
             log(format!("{radio} connected"));
             inner.call(&radio).began = super::now();
-            // He has just turned reading aloud on. What was said long before this is in the chat for him to
-            // read: it is not read out now, hours late. What came in the last few minutes still is, because a
-            // radio also goes quiet for a while when he is only dictating something long.
-            if !inner.connected() {
-                let recent = super::now().saturating_sub(STILL_NEWS.as_millis() as u64);
-                inner.pending.retain(|p| p.created >= recent);
-            }
             // whatever it was in the middle of last time, it is free now
             let call = inner.call(&radio);
             call.ready = true;
             call.outbox = None;
             inner.reap();
+        }
+        // He has just turned reading aloud on, and the radio says so (`joined`). What was said long before is
+        // in the chat for him to read: it is not read out now, hours late. A radio that only went quiet for a
+        // while and is back says no such thing, and nothing is taken from the queue for it.
+        if q.contains_key("joined") {
+            let recent = super::now().saturating_sub(STILL_NEWS.as_millis() as u64);
+            let before = inner.pending.len();
+            inner.pending.retain(|p| p.created >= recent);
+            if inner.pending.len() != before {
+                log(format!("{radio} turned reading aloud on: {} older than ten minutes left for the chat", before - inner.pending.len()));
+            }
+            inner.call(&radio).began = super::now();
         }
         inner.call(&radio).last_poll = Some(Instant::now());
     }
@@ -290,6 +295,20 @@ async fn next(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// A radio was handed something to read out and no sound came of it. It stays in the queue, the reason is
+/// written down, and that radio is handed nothing more for a minute.
+async fn unheard(State(app): State<Arc<App>>, headers: HeaderMap, Json(u): Json<Value>) -> Json<Value> {
+    let radio = radio_of(&headers);
+    let mut inner = app.inner.lock().unwrap();
+    let who = inner.pending.iter().find(|p| Some(p.id.as_str()) == u["id"].as_str()).and_then(|p| p.callsign.as_ref().map(|c| c.text())).unwrap_or_default();
+    log(format!("{radio} could not read {who} aloud ({}); it stays queued, and nothing more goes to that radio for a minute", u["why"].as_str().unwrap_or("no reason given")));
+    let call = inner.call(&radio);
+    call.quiet_until = Some(Instant::now() + Duration::from_secs(60));
+    call.ready = true;
+    call.outbox = None;
+    Json(json!({}))
 }
 
 /// A radio on a call that is busy with something else (he has the microphone open) says it is still there,
@@ -411,7 +430,7 @@ fn judge_later(app: &Arc<App>, entries: Vec<Entry>) {
 
 async fn judge_entry(app: &Arc<App>, e: Entry) -> Judged {
     let asked = e.agent.as_deref().and_then(|a| app.inner.lock().unwrap().last_instruction(a));
-    prepare(&app.cfg, &Item { id: e.id, agent_id: e.agent.unwrap_or_default(), notice: false, full: e.full, kind: e.kind, say: None, detail: None, created: e.at, asked }).await
+    prepare(&app.cfg, &Item { id: e.id, agent_id: e.agent.unwrap_or_default(), notice: false, full: e.full, kind: e.kind, say: None, detail: None, created: e.at, asked, callsign: None }).await
 }
 
 /// One request for the whole chat, for as long as it is open.
@@ -626,7 +645,7 @@ async fn status(State(app): State<Arc<App>>) -> Json<Value> {
             "callsign": s.callsign.text(), "harness": s.agent.harness, "cwd": s.agent.cwd,
             "state": if s.waiting { "waiting" } else { "working" }, "reachable": s.agent.deliver.is_some(), "meta": s.agent.meta,
         })).collect::<Vec<_>>(),
-        "pending": inner.pending.iter().map(|p| json!({ "callsign": callsign_of(&p.agent_id), "kind": p.kind, "say": p.say })).collect::<Vec<_>>(),
+        "pending": inner.pending.iter().map(|p| json!({ "callsign": p.callsign.as_ref().map(|c| c.text()).or_else(|| callsign_of(&p.agent_id)), "kind": p.kind, "say": p.say })).collect::<Vec<_>>(),
     }))
 }
 
@@ -644,6 +663,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/radio/next", get(next))
         .route("/v1/radio/heard", post(heard))
         .route("/v1/radio/busy", post(busy))
+        .route("/v1/radio/unheard", post(unheard))
         .route("/v1/radio/ready", post(ready))
         .route("/v1/radio/utterance", post(utterance))
         .route("/v1/radio/feed", get(feed))

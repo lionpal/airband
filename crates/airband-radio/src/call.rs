@@ -19,15 +19,20 @@ pub(crate) enum Job {
 pub(crate) fn poll(jobs: Sender<Job>, link: Arc<Link>, host: Arc<dyn RadioHost>, stop: Arc<AtomicBool>, busy: Arc<AtomicBool>, calling: Arc<AtomicBool>, wake: Arc<Wake>) {
     let mut online = false;
     let mut wait = 1;
+    let mut joined = true;
     while !stop.load(Ordering::SeqCst) {
         if !calling.load(Ordering::SeqCst) {
             // not in call mode: ask for nothing, so the tower keeps transmissions for the chat or for later
             online = false;
+            joined = true;
             wake.wait(Duration::from_secs(30));
             continue;
         }
-        match link.next() {
+        // the first request after he turned reading aloud on says so, and only that one: the tower leaves old
+        // news for the chat when he joins, and never because a radio was quiet for a while
+        match link.next(joined) {
             Ok(next) => {
+                joined = false;
                 if !online && !busy.load(Ordering::SeqCst) {
                     host.status(RadioStatus::Idle);
                 }
@@ -79,9 +84,15 @@ pub(crate) fn work(jobs: Receiver<Job>, link: Arc<Link>, host: Arc<dyn RadioHost
                 host.status(RadioStatus::Speaking { callsign: t.callsign.clone() });
                 let heard = voice::say_until(&link, &*host, &t.say, t.speech.as_deref(), &|| !calling.load(Ordering::SeqCst));
                 // "heard" is what takes it off the tower's list: if this is lost, he hears it once more, never zero
-                // times. What the device's own voice failed to say was not heard, and comes round again.
-                if heard {
-                    let _ = link.post("/heard", &Heard { id: t.id.clone() });
+                // times. What made no sound was not heard: the tower is told why and keeps it.
+                match heard {
+                    voice::Said::Aloud => {
+                        let _ = link.post("/heard", &Heard { id: t.id.clone() });
+                    }
+                    voice::Said::OwnVoiceFailed => {}
+                    voice::Said::Nothing(why) => {
+                        let _ = link.post("/unheard", &serde_json::json!({ "id": t.id, "why": why }));
+                    }
                 }
                 // A question is read to him and then waits in the chat, where he answers it when he chooses, by
                 // its own buttons or its microphone. The microphone never opens by itself: he may be in the

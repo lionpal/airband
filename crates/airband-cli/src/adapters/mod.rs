@@ -298,9 +298,44 @@ pub(crate) fn ask_him(request: &PermissionAsk) -> Option<(bool, String)> {
     None
 }
 
-/// Post one event to the tower on this machine. Silent on failure.
+/// Post one event to the tower on this machine. One the tower did not take (it is being restarted or
+/// updated) is kept in a folder and handed over when the tower is back: a report is not lost because it was
+/// made in those few seconds.
 pub fn post(event: &AgentEvent) -> bool {
+    if send(event) {
+        return true;
+    }
+    let dir = config::dir().join("spool");
+    if std::fs::create_dir_all(&dir).is_ok() && std::fs::read_dir(&dir).map(|d| d.count()).unwrap_or(0) < 500 {
+        let name = format!("{:020}-{}.json", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0), config::random_hex(4));
+        let _ = config::write_private(&dir.join(name), serde_json::to_vec(event).unwrap_or_default());
+    }
+    false
+}
+
+fn send(event: &AgentEvent) -> bool {
     let Some(cfg) = config::read() else { return false };
     let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_millis(1500))).build().into();
     agent.post(format!("http://127.0.0.1:{}/v1/agent/events", cfg.port)).header("authorization", format!("Bearer {}", cfg.token)).send_json(event).is_ok()
+}
+
+/// Hand the tower what was kept for it, oldest first. Stops at the first it does not take, so order holds.
+/// Something kept for more than ten minutes, or that does not read, is thrown away: the tower was away for
+/// longer than an update takes, and what an agent said then is no longer news to act on.
+pub fn drain_spool() {
+    let Ok(dir) = std::fs::read_dir(config::dir().join("spool")) else { return };
+    let mut kept: Vec<std::path::PathBuf> = dir.flatten().map(|f| f.path()).collect();
+    kept.sort();
+    for path in kept {
+        let old = std::fs::metadata(&path).and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|age| age > Duration::from_secs(600)));
+        match std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<AgentEvent>(&b).ok()).filter(|_| !old) {
+            Some(event) => {
+                if !send(&event) {
+                    return;
+                }
+            }
+            None => {}
+        }
+        let _ = std::fs::remove_file(&path);
+    }
 }

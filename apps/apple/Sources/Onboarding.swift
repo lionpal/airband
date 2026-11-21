@@ -22,7 +22,7 @@ struct OnboardingView: View {
 
     private static let command = "brew install lionpal/airband/airband && airband start"
     /// The computer step is skipped by someone who is paired already and is only being shown the choices.
-    private var steps: Int { model.paired && step < 3 ? 3 : 4 }
+    private var steps: Int { model.paired && step < 4 ? 4 : 5 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -35,14 +35,18 @@ struct OnboardingView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     switch step {
                     case 0:
+                        headline(Headline.tools)
+                        Text("Choose the one you use most. You can add more later.").font(.system(size: 16)).foregroundStyle(Palette.soft)
+                        ToolsPicker(single: true)
+                    case 1:
                         headline(Headline.reads)
                         label("Model that writes the summaries")
                         ReadsPicker(mode: .onboarding)
-                    case 1:
+                    case 2:
                         headline(Headline.ears)
                         label("Model that writes down what you say")
                         EarsPicker(mode: .onboarding)
-                    case 2:
+                    case 3:
                         headline(Headline.voice)
                         Text("Hear each agent\u{2019}s news read out, even with the screen off.").font(.system(size: 16)).foregroundStyle(Palette.soft)
                         label("Model that speaks")
@@ -67,8 +71,8 @@ struct OnboardingView: View {
             if !typing {
             Button(action: next) {
                 HStack(spacing: 10) {
-                    if step == 3 { Image(systemName: "qrcode.viewfinder").font(.system(size: 19, weight: .semibold)) }
-                    Text(step == 3 ? "Scan the code" : "Continue").font(.system(size: 18, weight: .semibold))
+                    if step == 4 { Image(systemName: "qrcode.viewfinder").font(.system(size: 19, weight: .semibold)) }
+                    Text(step == 4 ? "Scan the code" : "Continue").font(.system(size: 18, weight: .semibold))
                 }
                 .foregroundStyle(Palette.ground).frame(maxWidth: .infinity, minHeight: 56)
                 .background(finishing ? Palette.dim : Palette.ink, in: RoundedRectangle(cornerRadius: 18))
@@ -77,7 +81,7 @@ struct OnboardingView: View {
             HStack {
                 if step > 0 && !finishing { Button("Back") { withAnimation(.snappy(duration: 0.2)) { step -= 1 } } }
                 Spacer()
-                if step == 3 && !finishing {
+                if step == 4 && !finishing {
                     Button("Paste a link instead") {
                         model.pair(with: UIPasteboard.general.string ?? "")
                         wrong = model.problem
@@ -96,7 +100,7 @@ struct OnboardingView: View {
         .interactiveDismissDisabled()
         .fullScreenCover(isPresented: $scanning) { ScanSheet().environmentObject(model) }
         // paired, by the scan or by a link: fetch what he chose and finish
-        .onChange(of: model.paired) { _, paired in if paired && step == 3 { finish() } }
+        .onChange(of: model.paired) { _, paired in if paired && step == 4 { finish() } }
         .onReceive(tick) { _ in if finishing, progress != nil { progress = Double(localModelProgress()) / 100 } }
     }
 
@@ -134,9 +138,14 @@ struct OnboardingView: View {
 
     private func next() {
         wrong = nil
-        if step < 2 || (step == 2 && !model.paired) {
+        // Leaving the summaries step with nothing picked: what is shown as chosen there, the sign-in of the
+        // coding tool he uses most, is what his computer is asked to use once it is paired.
+        if step == 1, model.pendingReads == nil, model.view.reads.isEmpty, let usual = readingServices().first(where: { $0.login == model.tools.first }) {
+            model.chooseReads(usual.kind, key: nil, settings: [:]) { _ in }
+        }
+        if step < 3 || (step == 3 && !model.paired) {
             withAnimation(.snappy(duration: 0.2)) { step += 1 }
-        } else if step == 2 {
+        } else if step == 3 {
             finish()
         } else {
             scanning = true

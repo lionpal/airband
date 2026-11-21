@@ -32,7 +32,17 @@ pub struct Catalog {
     /// Goes up with every change that is published.
     pub rev: u64,
     pub providers: &'static [Provider],
+    /// The coding tools airband works with.
+    pub tools: &'static [Tool],
     pub models: &'static [PhoneModel],
+}
+
+/// A coding tool: what its agents are known by (`Agent::harness`), and what to call it where he picks the
+/// tools he uses.
+pub struct Tool {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub maker: &'static str,
 }
 
 /// A model that runs on the phone itself.
@@ -81,11 +91,20 @@ pub fn accept(document: &[u8], signature: &str) -> Result<bool, String> {
     let sig = Signature::from_slice(&sig).map_err(|_| "the catalogue's signature does not read")?;
     key.verify(document, &sig).map_err(|_| "the catalogue is not signed by airband")?;
     let text = std::str::from_utf8(document).map_err(|e| e.to_string())?;
-    let newer = read(text)?;
+    let built: Catalog = read(BUILT_IN)?;
+    // A provider this build has never heard of may not bring a program to run: such an offer is for a newer
+    // build, and is left out here so the rest of the copy can still be taken.
+    let mut doc: Value = serde_json::from_str(text).map_err(|e| format!("the catalogue does not read: {e}"))?;
+    for p in doc["providers"].as_array_mut().into_iter().flatten() {
+        let known = built.providers.iter().any(|b| Some(b.id) == p["id"].as_str());
+        if let (false, Some(offers)) = (known, p["offers"].as_array_mut()) {
+            offers.retain(|o| o["by"].get("command").is_none());
+        }
+    }
+    let newer = read(&doc.to_string())?;
     if newer.rev <= current().rev {
         return Ok(false);
     }
-    let built: Catalog = read(BUILT_IN)?;
     allowed(&newer, &built)?;
     *CURRENT.write().unwrap() = Some(Box::leak(Box::new(newer)));
     Ok(true)
@@ -143,6 +162,8 @@ struct Document {
     providers: Vec<ProviderRow>,
     #[serde(default)]
     models: Vec<Value>,
+    #[serde(default)]
+    tools: Vec<ToolRow>,
 }
 
 fn yes() -> bool {
@@ -169,6 +190,14 @@ struct ProviderRow {
 }
 
 #[derive(Serialize, Deserialize)]
+struct ToolRow {
+    id: String,
+    name: String,
+    #[serde(default)]
+    maker: String,
+}
+
+#[derive(Serialize, Deserialize)]
 struct KeyRow {
     name: String,
     #[serde(default)]
@@ -186,6 +215,8 @@ struct OfferRow {
     preferred: bool,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     price: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    login: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     voices: Vec<VoiceRow>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -304,6 +335,7 @@ fn read(text: &str) -> Result<Catalog, String> {
                     about: keep(o.about),
                     preferred: o.preferred,
                     price: keep(o.price),
+                    login: keep(o.login),
                     voices: keep_all(o.voices.into_iter().map(|v| Voice { id: keep(v.id), name: keep(v.name), about: keep(v.about), sample: keep(v.sample) }).collect()),
                     asks: keep_all(o.asks.into_iter().map(|a| Ask { field: keep(a.field), question: keep(a.question), usual: keep(a.usual) }).collect()),
                 })
@@ -330,7 +362,8 @@ fn read(text: &str) -> Result<Catalog, String> {
             credit: keep(m.credit),
         })
         .collect();
-    Ok(Catalog { rev: doc.rev, providers: keep_all(providers), models: keep_all(models) })
+    let tools = doc.tools.into_iter().map(|t| Tool { id: keep(t.id), name: keep(t.name), maker: keep(t.maker) }).collect();
+    Ok(Catalog { rev: doc.rev, providers: keep_all(providers), tools: keep_all(tools), models: keep_all(models) })
 }
 
 #[cfg(test)]
@@ -381,7 +414,8 @@ mod tests {
         assert!(with(&|d| d["providers"].as_array_mut().unwrap().iter_mut().find(|p| p["id"] == "claude").unwrap()["offers"][0]["by"]["command"]["argv"] = serde_json::json!(["sh", "-c", "anything"])).is_err());
         // where a key he has entered is sent
         assert!(with(&|d| d["providers"].as_array_mut().unwrap().iter_mut().find(|p| p["id"] == "openai").unwrap()["offers"][0]["asks"][0]["usual"] = "https://elsewhere.example/v1".into()).is_err());
-        // a provider nobody has seen may not be a command, and the list may not be emptied
+        // a provider nobody has seen may not be a command (taking a copy leaves such an offer out), and the
+        // list may not be emptied
         assert!(with(&|d| d["providers"].as_array_mut().unwrap().push(serde_json::json!({ "id": "new", "name": "New", "offers": [{ "job": "summary", "by": { "command": { "argv": ["x"] } }, "label": "New" }] }))).is_err());
         assert!(with(&|d| d["providers"] = serde_json::json!([])).is_err());
         // a model whose files would land outside its folder, or come from somewhere else
