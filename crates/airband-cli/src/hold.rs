@@ -150,7 +150,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     while let Some(a) = it.next() {
         match a.as_str() {
             "--" => argv = it.by_ref().cloned().collect(),
-            flag @ ("--sock" | "--cwd" | "--id" | "--harness" | "--by" | "--line" | "--stop" | "--session") => {
+            flag @ ("--sock" | "--cwd" | "--id" | "--harness" | "--by" | "--line" | "--stop" | "--session" | "--mode") => {
                 named.insert(&flag[2..], it.next().cloned().ok_or_else(|| format!("airband hold: {flag} needs a value"))?);
             }
             other => return Err(format!("airband hold does not take \"{other}\"")),
@@ -232,16 +232,16 @@ pub fn run(args: &[String]) -> Result<(), String> {
             let held = Held { id: named.get("id").cloned().unwrap_or_default(), harness: named.get("harness").cloned().unwrap_or_default(), cwd, rx, to_program: Arc::new(Mutex::new(child.stdin.take())), state: state.clone(), errors };
             let done = match by {
                 "lines" => lines(&held, named.get("line").ok_or("airband hold --by lines needs --line")?, named.get("stop").map(String::as_str)),
-                "acp" => crate::acp::run(&held, named.get("session").cloned()),
+                "acp" => crate::acp::run(&held, named.get("session").cloned(), named.get("mode").map(String::as_str)),
                 other => Err(format!("this version of airband does not drive a program by \"{other}\"")),
             };
             held.close_input();
             // asked to finish, it is given a moment to; then it is ended
-            for _ in 0..30 {
+            for _ in 0..150 {
                 if child.try_wait().is_ok_and(|ended| ended.is_some()) {
                     break;
                 }
-                std::thread::sleep(Duration::from_millis(100));
+                std::thread::sleep(Duration::from_millis(20));
             }
             let _ = child.kill();
             let _ = child.wait();
@@ -254,5 +254,14 @@ pub fn run(args: &[String]) -> Result<(), String> {
         std::thread::sleep(Duration::from_secs(15));
     }
     let _ = std::fs::remove_file(&sock);
+    // Whatever the program started and left behind (a package runner's child, a server of the tool's own) goes
+    // with it. The tower starts each holder as the leader of a group of its own; one that is not, is not
+    // the keeper of the group it is in, and ends nothing but its own program.
+    unsafe {
+        if libc::getpgrp() == libc::getpid() {
+            libc::signal(libc::SIGTERM, libc::SIG_IGN);
+            libc::kill(0, libc::SIGTERM);
+        }
+    }
     outcome
 }

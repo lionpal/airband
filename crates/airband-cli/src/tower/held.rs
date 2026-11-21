@@ -32,9 +32,10 @@ pub(crate) struct Kept {
     pub(super) session: Option<String>,
 }
 
-/// The sessions of held agents, as their own tools call them.
+/// Is this session, as its own tool calls it, an agent the tower holds? Asked by a watcher that sees every
+/// session of its tool, so that one the tower runs is reported by its driver and by nothing else.
 pub(super) fn holds(inner: &Inner, session: &str) -> bool {
-    inner.held.iter().any(|k| k.session.as_deref() == Some(session) || k.id == session)
+    inner.held.iter().any(|k| k.session.as_deref() == Some(session))
 }
 
 /// Where a held agent's holder listens: a short path (a socket's may not be long), of this user's own, that is
@@ -60,10 +61,6 @@ async fn say(id: &str, line: &[u8]) -> Result<String, String> {
     tokio::time::timeout(Duration::from_secs(5), to.read_to_string(&mut answer)).await.map_err(|_| "its holder did not answer".to_string())?.map_err(|e| e.to_string())?;
     Ok(answer)
 }
-#[cfg(not(unix))]
-async fn say(_: &str, _: &[u8]) -> Result<String, String> {
-    Err("the tower cannot run agents itself on this system yet".into())
-}
 
 /// Where a held agent's holder has got to. `Ok(None)` is a holder started by a version before this one: it
 /// answers nothing, and takes raw input for its program instead of what `hold::Tell` says.
@@ -88,10 +85,6 @@ async fn tell_holder(app: &Arc<App>, kept: &Kept, tell: crate::hold::Tell) -> Re
     };
     say(&kept.id, &line).await.map(|_| ())
 }
-#[cfg(not(unix))]
-async fn tell_holder(_: &Arc<App>, _: &Kept, _: ()) -> Result<(), String> {
-    Err("the tower cannot run agents itself on this system yet".into())
-}
 
 /// A session id of the usual shape, made here so the agent is known by it before it has said a word.
 pub(super) fn new_id() -> String {
@@ -101,6 +94,7 @@ pub(super) fn new_id() -> String {
 
 /// How long a new agent is given to be there. One that speaks the Agent Client Protocol through a program
 /// fetched on first use takes a while the first time.
+#[cfg(unix)]
 const STARTS_WITHIN: Duration = Duration::from_secs(150);
 
 /// Start the program for `kept`, new or carried on, in a holder of its own (`airband hold`): a process apart
@@ -135,8 +129,11 @@ async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Option<String
             let session: Vec<String> = if fresh { new } else { resume }.iter().map(&mut fill).collect();
             argv.into_iter().chain(session).collect()
         }
-        config::Held::Acp { program } => {
+        config::Held::Acp { program, mode } => {
             holder.arg("--by").arg("acp");
+            if let Some(mode) = mode {
+                holder.arg("--mode").arg(mode);
+            }
             if !fresh {
                 // carried on by what the agent's own tool calls its session, or not at all
                 holder.arg("--session").arg(kept.session.as_ref().ok_or("the tower does not know what its session was called")?);

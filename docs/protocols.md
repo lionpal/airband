@@ -43,6 +43,7 @@ pairing link carries, opens `/v1/radio/` only.
 | `subagent` | It started a subagent (`done: false`) or one finished (`done: true`); `what` says what it is for. Only counted. |
 | `activity` | What it is doing right now, in a few words (`text`). Shown small while it works, never kept, never read aloud. |
 | `model` | The model it runs on and how hard it is set to think (`name`, `effort`), as a person would say them: "Opus 4.7", "high". |
+| `stopped` | Its turn is over and it wrote nothing: it was stopped, or had nothing to say. It is waiting from now, as after a `said`. With `why`, the turn failed, and he is told in those words. |
 | `signoff` | It is gone. |
 
 | `deliver.kind` | How the tower gets his reply to the agent |
@@ -51,6 +52,7 @@ pairing link carries, opens `/v1/radio/` only.
 | `command` | Runs `argv` with the message on standard input and `AIRBAND_AGENT_ID` in the environment. |
 | `tmux` | Types the message into pane `target` and presses Enter. Works for anything in a terminal. |
 | `held` | The tower runs this agent and holds its input: his words are written there as his own turn. |
+| `harness` | Through the agent's own tool, by `name`, into its `session`: whatever way that tool takes a turn of his into a session already open (Codex's queue, OpenCode's server). The tower's adapter for the tool knows how. |
 | none | The agent can be heard but not answered. |
 
 `DELETE /v1/agent/held/<id>` ends an agent the tower runs.

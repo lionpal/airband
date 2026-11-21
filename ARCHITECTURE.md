@@ -37,10 +37,13 @@ callsigns that name an agent, and the shape of a credential.
 
 | You want to add | Do this | Touches |
 |---|---|---|
-| Another agent tool (Codex, a CI bot, anything that does work and stops) | No code: call `airband report` from whatever it can run. Or one file in `adapters/` and one line in `ADAPTERS`. | `adapters/` only |
-| Another agent tool that can be launched from the phone | An entry in `launchers` in `~/.airband/config.json`: the `harness` it starts, and a command with `{cwd}`, `{task}`, `{project}`, `{session}` filled in. He can then ask for the tool by name ("have codex look into…"). With `held`, the tower runs it itself. | Config only |
-| The models and efforts he can ask a new agent for ("with fable high, …") | `models`, `efforts`, `with_model` and `with_effort` on that launcher. The routing model reads his words against what the launchers list. | Config only |
-| Another way to reach an agent (an HTTP callback, a queue) | A variant of `Deliver` in `airband-core/src/agent.rs`; its arm in `tower/deliver.rs` | Two files |
+| Another agent tool (a CI bot, anything that does work and stops) | No code: call `airband report` from whatever it can run. | Nothing |
+| Another coding tool with an adapter of its own | One file in `adapters/` that implements `Harness` and one line in `HARNESSES`. It says only what the tool has: its hook events (the shared installer in `adapters/hooks.rs` puts them in the tool's file), or how to watch its server, and how his words get into one of its sessions. A request for leave goes through `hooks::leave`, which owns the length rules for every tool. Its row in `catalog/tools/` says what it is called and how it is started. | `adapters/`, one row |
+| A coding tool that speaks the Agent Client Protocol, started from the phone | One row in `catalog/tools/`: `{ id, name, maker, launchers: [{ name, held: { by: "acp", program: […] } }] }`. No code: the holder's ACP driver (`acp.rs`) runs it and reports for it. The rows are compiled in; a catalogue fetched later can rename a tool and never change or add a program. | One row |
+| A launcher of his own (another way to start a tool, or a tool airband has no row for) | An entry in `launchers` in `~/.airband/config.json`, under a name of its own: the `harness` it starts, and either a command (`argv`, with `{cwd}`, `{task}`, `{project}`, `{session}` filled in) or `held` (`by: lines` with the line templates, or `by: acp` with the program). The file holds only his own; the ones that come with airband are never written there. | Config only |
+| The models and efforts he can ask a new agent for ("with fable high, …") | `models`, `efforts`, `with_model` and `with_effort` on the launcher. One he names that the launcher does not offer is refused in words. | The row |
+| Another way to drive a held program | A kind of `Held` in `airband-core/src/tools.rs` and its driver in `hold.rs`. The tower says the same typed lines to every holder (`hold::Tell`) and asks it where it has got to (`hold::State`). | Two files |
+| Another way to reach an agent (an HTTP callback, a queue) | A variant of `Deliver` in `airband-core/src/agent.rs`; its arm in `tower/deliver.rs`. A tool that takes his words in a way of its own needs neither: `Deliver::Harness` and the adapter's `deliver`. | Two files |
 | Something else an agent can report (a file, a cost) | A variant of `Event`. Old towers skip what they do not know. | `agent.rs`, `tower/intake.rs` |
 | Permission prompts from another agent tool | No code: `airband report … permission "<what>"` and act on its exit code. Or two functions in its adapter: its prompt to a `PermissionAsk`, and yes or no to whatever the tool reads back. | `adapters/` only |
 | Accounts for another agent tool (several logins, switched while sessions run) | Five functions in its adapter (`AccountBook`: list with allowances, switch, save, add, forget). `adapters/claude_accounts.rs` is the model. | `adapters/` only |
@@ -266,7 +269,7 @@ in the same folder. Rooms and callsigns make themselves from where agents run an
 
 - A rule goes in `airband-core` if it needs no I/O, and gets a test there.
 - A host that finds itself deciding something has found a missing function in the radio core.
-- The tower has no `if harness == …` anywhere. Keep it that way.
+- The tower has no `if harness == …` anywhere, and starts no tool's watcher by name: it starts every adapter's (`adapters::watch_all`). Keep it that way.
 - Messages from agents are untrusted input to the model that judges them. That model is given no tools.
 - CI runs on every push to main that changes code: build and tests on Linux, Windows and macOS, the radio core
   for Android, the iPhone app, and two end-to-end suites that need no model (`tools/e2e-relay.py`,

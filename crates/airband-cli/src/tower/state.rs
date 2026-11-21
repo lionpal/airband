@@ -380,7 +380,7 @@ impl Inner {
         // a permission request nobody is waiting on any more: its line stops offering an answer
         let over: Vec<String> = self.permits.iter().filter(|(_, p)| !p.live()).map(|(id, _)| id.clone()).collect();
         for id in over {
-            self.close_permit(&id);
+            self.close_permit(&id, permit::Ended::Gone);
         }
         // a radio not heard from in a day has nothing worth keeping
         self.calls.retain(|_, c| c.seen.is_some_and(|t| t.elapsed() < Duration::from_secs(86_400)));
@@ -551,12 +551,40 @@ impl Inner {
         }
     }
     /// A logged line changed: every radio should see it again, and it should be written.
-    /// A request ends without an answer from him: the harness stopped waiting, asked something newer, or is
-    /// gone. This is the one way that happens. The line stops offering Allow and Deny and says where the
-    /// question went, and it leaves the call queue.
-    pub(super) fn close_permit(&mut self, id: &str) {
-        let Some(permit) = self.permits.remove(id) else { return };
-        self.close_line(&permit.entry);
+    /// A request ends: he answered it, the harness stopped waiting and asks at its keyboard, it asked
+    /// something newer, or it is gone. This is the one way any of those happens. The line stops offering an
+    /// answer (and, unanswered, says where the question went), it leaves the call queue, and the agent is
+    /// waiting on him from now only if it is asking at its keyboard.
+    pub(super) fn close_permit(&mut self, id: &str, ended: permit::Ended) {
+        let (agent_id, entry) = match &ended {
+            // his answer waits here for the harness to collect it
+            permit::Ended::Answered(allow, reason) => {
+                let Some(permit) = self.permits.get_mut(id) else { return };
+                permit.decided = Some((*allow, reason.clone()));
+                (permit.agent_id.clone(), permit.entry.clone())
+            }
+            _ => {
+                let Some(permit) = self.permits.remove(id) else { return };
+                (permit.agent_id, permit.entry)
+            }
+        };
+        match ended {
+            permit::Ended::Answered(..) => {
+                if let Some(e) = self.log.iter_mut().find(|e| e.id == entry) {
+                    e.permit = None;
+                    // answered: a request for leave offers nothing more
+                    if e.leave {
+                        e.options.clear();
+                    }
+                }
+                self.pending.retain(|p| p.id != entry);
+                self.touch(&entry);
+            }
+            _ => self.close_line(&entry),
+        }
+        if let Some(s) = self.session(&agent_id) {
+            s.waiting = matches!(ended, permit::Ended::AtKeyboard | permit::Ended::Replaced);
+        }
     }
     /// At start: no harness is waiting on anything asked before the tower stopped, so every request for leave
     /// still offering an answer is over. Lines from before requests were marked are known by their two buttons;
@@ -848,6 +876,41 @@ mod tests {
         assert_eq!(over.text, format!("Wants to run `make`.{}", permit::MOVED));
         // it is still known as a request for leave, so a late answer is not taken for words to the agent
         assert!(inner.log.iter().any(|e| e.id == line && e.leave));
+    }
+
+    #[test]
+    fn every_way_a_request_ends_closes_its_line_and_says_whether_the_agent_waits() {
+        let mut inner = Inner::default();
+        inner.check_in(&agent("a", "/x/shop", None));
+        let waits = |inner: &mut Inner| inner.session("a").unwrap().waiting;
+        let open = |inner: &mut Inner, permit: &str| {
+            let line = asks_leave(inner, "a", permit, "run `make`");
+            inner.pending.push(Item { id: line.clone(), agent_id: "a".into(), notice: false, full: String::new(), kind: Some(Kind::NeedsYou), say: None, detail: None, created: 0, asked: None, callsign: None });
+            inner.session("a").unwrap().waiting = true;
+            line
+        };
+        // he answered: his answer waits to be collected, the line offers nothing more, and the agent goes on
+        let line = open(&mut inner, "p1");
+        inner.close_permit("p1", permit::Ended::Answered(true, String::new()));
+        assert_eq!(inner.permits["p1"].decided, Some((true, String::new())));
+        assert!(card(&inner, &line).options.is_empty() && !card(&inner, &line).permission && inner.pending.is_empty() && !waits(&mut inner));
+        assert_eq!(card(&inner, &line).text, format!("Wants to run `make`.{}", permit::ASKS));
+        // the harness gave up waiting and asks at its keyboard: the line says so, and the agent still waits
+        let line = open(&mut inner, "p2");
+        inner.close_permit("p2", permit::Ended::AtKeyboard);
+        assert!(card(&inner, &line).options.is_empty() && !inner.permits.contains_key("p2") && inner.pending.is_empty() && waits(&mut inner));
+        assert_eq!(card(&inner, &line).text, format!("Wants to run `make`.{}", permit::MOVED));
+        // it asked something newer: the older line is closed
+        let line = open(&mut inner, "p3");
+        inner.close_permit("p3", permit::Ended::Replaced);
+        assert!(card(&inner, &line).options.is_empty() && !inner.permits.contains_key("p3") && inner.pending.is_empty());
+        // nobody asks after it any more: it was answered at the keyboard, or the agent has gone
+        let line = open(&mut inner, "p4");
+        inner.close_permit("p4", permit::Ended::Gone);
+        assert!(card(&inner, &line).options.is_empty() && !inner.permits.contains_key("p4") && inner.pending.is_empty() && !waits(&mut inner));
+        // a request that is already over is not ended twice
+        inner.close_permit("p4", permit::Ended::Answered(true, String::new()));
+        assert!(!inner.permits.contains_key("p4"));
     }
 
     #[test]
