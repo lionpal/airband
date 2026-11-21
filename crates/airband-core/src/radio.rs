@@ -373,6 +373,57 @@ pub struct SetReads {
     pub set: std::collections::BTreeMap<String, String>,
 }
 
+/// `GET reads`: what can read for this tower, from the tower's own catalogue and in the order to show it,
+/// and which of them reads now (`now`, a provider's id; empty when nothing does). A radio offers these and
+/// sends one back by its id (`SetReads::kind`): it never has to match a name of its own against the tower's.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ReadsOffered {
+    #[serde(default)]
+    pub now: String,
+    #[serde(default)]
+    pub offers: Vec<ReadsOffer>,
+}
+
+/// One thing that can read for a tower.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ReadsOffer {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub about: String,
+    #[serde(default)]
+    pub price: String,
+    /// One of the few shown before the rest.
+    #[serde(default)]
+    pub preferred: bool,
+    /// It runs on that computer and costs him nothing.
+    #[serde(default)]
+    pub free: bool,
+    /// The coding tool whose sign-in on that computer it uses, by that tool's id. Empty when it uses none.
+    #[serde(default)]
+    pub login: String,
+    /// It takes a key.
+    #[serde(default)]
+    pub key: bool,
+    /// The tower already keeps a key for it. Only that it has one: never the key.
+    #[serde(default)]
+    pub has_key: bool,
+    #[serde(default)]
+    pub key_name: String,
+    #[serde(default)]
+    pub keys_at: String,
+    #[serde(default)]
+    pub asks: Vec<ReadsAsk>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ReadsAsk {
+    pub field: String,
+    pub question: String,
+    #[serde(default)]
+    pub usual: String,
+}
+
 /// `POST hear`: part of a recording, for a tower whose listening service takes a finished clip. `data` is
 /// 16 kHz mono in the same compressed blocks speech comes in, base64. With `last`, the answer is [`HeardText`].
 #[derive(Debug, Clone, Serialize, Deserialize)]

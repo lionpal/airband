@@ -1,10 +1,10 @@
 //! Inbound: turning what he says into text. The host only hands over raw microphone audio; deciding when he has
 //! finished (airband_core::audio::Endpointer) and talking to the service are done once, for every platform.
 //!
-//! Which service is a row of `airband_core::providers::PROVIDERS`, and there are two ways to listen with one:
+//! Which service is a row of the catalogue, and there are two ways to listen with one:
 //!
-//! - live, while he talks, by a dialect here (a row of [`LISTENERS`]): the phone talks to the service itself,
-//!   with a short-lived pass. The words come back as he speaks.
+//! - live, while he talks, by a dialect (a file under `ears/` and a line of [`LISTENERS`]): the phone talks to
+//!   the service itself, with a short-lived pass. The words come back as he speaks.
 //! - by upload (`hears.rs`): the phone records until he stops and the recording is sent off whole. With a key
 //!   of his own on the phone it goes straight to the service; with the key on his computer it goes to the
 //!   tower, which makes the call.
@@ -14,7 +14,7 @@
 //! service.
 use super::*;
 use airband_core::audio::{BLOCK_SAMPLES, Encoder, Endpointer, Heard, base64_encode, samples};
-use airband_core::providers::{BY_TOWER, By, Job, Use};
+use airband_core::providers::{BY_TOWER, Interface, Job, Offer, Use};
 use airband_core::radio::{EarsGrant, HearPart, HeardText};
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -29,15 +29,17 @@ const BY_OWN_KEY: &str = "own-key";
 /// And when a model on the device does the listening.
 const BY_MODEL: &str = "on-device";
 
-/// A pass for the service, live as he speaks: the pass, the microphone, its rate, the header of a recording,
-/// and whether he opened the microphone himself. Ok(None) is silence.
-type Stream = fn(Arc<dyn Fn() -> EarsGrant + Send + Sync>, &dyn RadioHost, u32, Vec<u8>, bool) -> Result<Option<String>, ()>;
+mod azure;
+mod elevenlabs;
+mod gemini;
 
-/// A live listening dialect.
+/// A live listening dialect: how one service is listened with while he talks. Each is a file under `ears/`
+/// and a line of [`LISTENERS`].
 pub(crate) struct Listener {
-    /// What a pass calls it (`EarsGrant::kind`), and what a provider's row names (`By::Listener`).
-    pub kind: &'static str,
-    stream: Stream,
+    /// Its name: what a provider's row names (`by.interface`), and what a pass calls it (`EarsGrant::kind`).
+    pub is: Interface,
+    /// How its live connection is spoken to.
+    pub wire: &'static crate::ears_stream::Wire,
     /// The same microphone in one upload to the same service, for when the live connection cannot be made.
     upload: Option<fn(&EarsGrant, &dyn RadioHost, bool) -> Result<Option<String>, ()>>,
     /// A short-lived pass for a key: the service's settings, and the key. Err says why not, in words for him.
@@ -46,19 +48,21 @@ pub(crate) struct Listener {
     once: bool,
 }
 
-pub(crate) const LISTENERS: &[Listener] = &[
-    Listener { kind: "azure", stream: crate::ears_stream::azure, upload: Some(azure), pass: azure_pass, once: false },
-    Listener { kind: "gemini", stream: crate::ears_stream::gemini, upload: None, pass: gemini_pass, once: false },
-    Listener { kind: "elevenlabs", stream: crate::ears_stream::elevenlabs, upload: None, pass: elevenlabs_pass, once: true },
-];
+/// Every live dialect this build speaks.
+pub(crate) const LISTENERS: &[Listener] = &[azure::LISTENER, gemini::LISTENER, elevenlabs::LISTENER];
 
 /// A pass for this dialect is used up by one connection, so it is never kept for the next.
 pub(crate) fn once(kind: &str) -> bool {
     listener(kind).is_some_and(|l| l.once)
 }
 
-fn listener(kind: &str) -> Option<&'static Listener> {
-    LISTENERS.iter().find(|l| l.kind == kind)
+pub(crate) fn listener(kind: &str) -> Option<&'static Listener> {
+    LISTENERS.iter().find(|l| l.is.name == kind)
+}
+
+/// The live dialect an offer names, when this build speaks it and can do what the offer needs.
+pub(crate) fn live(offer: &Offer) -> Option<&'static Listener> {
+    LISTENERS.iter().find(|l| offer.job == Job::Ears && l.is.fits(offer))
 }
 
 /// A listening service of his own, when he has given the app a key for one. With it the phone needs neither
@@ -86,7 +90,7 @@ pub(crate) fn stop_using(kind: &str) {
 }
 
 pub(crate) fn set_own(with: Option<Use>) {
-    *OWN.lock().unwrap() = with.filter(|u| u.offer(Job::Ears).is_some());
+    *OWN.lock().unwrap() = with.filter(|u| u.offer(Job::Ears).is_some_and(|(_, o)| crate::hears::listens(o)));
 }
 
 /// A pass from a live service for a key. Err says why not, in words for him.
@@ -99,64 +103,26 @@ pub(crate) fn pass_for(kind: &str, set: &BTreeMap<String, String>, key: &str) ->
 /// service (with how many times the words on screen changed while it played), in one upload for the others.
 /// `pcm` is 16 kHz 16-bit mono. Blocks for as long as the recording is. For trying a service by hand.
 pub fn try_listening(with: &Use, pcm: &[u8]) -> Result<(String, usize), String> {
-    match with.offer(Job::Ears).map(|(_, o)| o.by) {
-        Some(By::Listener(kind)) => {
-            let l = listener(kind).ok_or("This version of airband does not know that listening service.")?;
+    let (_, offer) = with.offer(Job::Ears).ok_or("This version of airband does not know that listening service.")?;
+    match live(offer) {
+        Some(l) => {
             let set = with.settings(Job::Ears);
-            let grant = EarsGrant { kind: kind.into(), token: (l.pass)(&set, &with.key)?, set, phrases: Vec::new() };
+            let grant = EarsGrant { kind: l.is.name.into(), token: (l.pass)(&set, &with.key)?, set, phrases: Vec::new() };
             let tape = crate::ears_stream::Tape::of(pcm, false);
-            let said = (l.stream)(Arc::new(move || grant.clone()), &tape, RATE, wav_header(), false).map_err(|_| "The live connection to the listening service failed.".to_string())?;
+            let said = crate::ears_stream::live(l.wire, Arc::new(move || grant.clone()), &tape, RATE, wav_header(), false).map_err(|_| "The live connection to the listening service failed.".to_string())?;
             let changes = tape.heard.lock().unwrap().len();
             Ok((said.unwrap_or_default(), changes))
         }
-        Some(_) => crate::hears::transcribe(with, &crate::hears::wav(RATE, &samples(pcm)), &[]).map(|said| (said, 0)),
-        None => Err("This version of airband does not know that listening service.".into()),
+        None => crate::hears::transcribe(with, &crate::hears::wav(RATE, &samples(pcm)), &[]).map(|said| (said, 0)),
     }
 }
 
 /// Does this service listen with this key and these settings? One real call to it.
 pub(crate) fn check(with: &Use) -> Result<(), String> {
-    match with.offer(Job::Ears).map(|(_, o)| o.by) {
-        Some(By::Listener(kind)) => pass_for(kind, &with.settings(Job::Ears), &with.key).map(|_| ()),
-        Some(_) => crate::hears::check(with),
-        None => Err("This version of airband does not know that listening service.".into()),
-    }
-}
-
-/// Google's short-lived token for its Live API: good for twenty minutes and for any number of connections in
-/// that time, so one fetched ahead is still good when he opens the microphone, and again if a connection drops.
-fn gemini_pass(_set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
-    let until = crate::ears_stream::stamp_at(now_ms() + 20 * 60 * 1000);
-    let body = serde_json::json!({ "uses": 0, "expireTime": until, "newSessionExpireTime": until });
-    let mut res = crate::net::agent(Duration::from_secs(8)).post("https://generativelanguage.googleapis.com/v1beta/auth_tokens").header("x-goog-api-key", key.trim()).send_json(&body).map_err(|_| "Could not reach Google's speech service.".to_string())?;
-    match res.status().as_u16() {
-        200 => res.body_mut().read_json::<Value>().ok().and_then(|v| v["name"].as_str().map(String::from)).ok_or_else(|| "Google's speech service gave no pass.".to_string()),
-        400 | 401 | 403 => Err("Google's speech service did not accept that key.".into()),
-        code => Err(format!("Google's speech service said no ({code}).")),
-    }
-}
-
-/// ElevenLabs' token for its realtime transcription: good for a quarter of an hour, and for one connection.
-fn elevenlabs_pass(_set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
-    let mut res = crate::net::agent(Duration::from_secs(8)).post("https://api.elevenlabs.io/v1/single-use-token/realtime_scribe").header("xi-api-key", key.trim()).header("Content-Length", "0").send_empty().map_err(|_| "Could not reach ElevenLabs.".to_string())?;
-    match res.status().as_u16() {
-        200 => res.body_mut().read_json::<Value>().ok().and_then(|v| v["token"].as_str().map(String::from)).ok_or_else(|| "ElevenLabs gave no pass.".to_string()),
-        401 | 403 => Err("ElevenLabs did not accept that key.".into()),
-        code => Err(format!("ElevenLabs said no ({code}).")),
-    }
-}
-
-fn azure_pass(set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
-    let region = set.get("region").map(|r| r.trim().to_lowercase()).unwrap_or_default();
-    if region.is_empty() || !region.bytes().all(|b| b.is_ascii_alphanumeric()) {
-        return Err("That is not a region. It looks like eastus or japaneast.".into());
-    }
-    let agent = crate::net::agent(Duration::from_secs(8));
-    let mut res = agent.post(format!("https://{region}.api.cognitive.microsoft.com/sts/v1.0/issueToken")).header("Ocp-Apim-Subscription-Key", key.trim()).header("Content-Length", "0").send_empty().map_err(|_| "Could not reach the speech service. Check the region.".to_string())?;
-    match res.status().as_u16() {
-        200 => res.body_mut().read_to_string().map_err(|_| "The speech service gave no pass.".to_string()),
-        401 | 403 => Err("The speech service did not accept that key for that region.".into()),
-        code => Err(format!("The speech service said no ({code}).")),
+    let (_, offer) = with.offer(Job::Ears).ok_or("This version of airband does not know that listening service.")?;
+    match live(offer) {
+        Some(l) => (l.pass)(&with.settings(Job::Ears), &with.key).map(|_| ()),
+        None => crate::hears::check(with),
     }
 }
 
@@ -179,11 +145,11 @@ impl Ears {
         let own = OWN.lock().unwrap().clone();
         if let Some(own) = own {
             let set = own.settings(Job::Ears);
-            let made = match own.offer(Job::Ears).map(|(_, o)| o.by) {
-                Some(By::Listener(kind)) => pass_for(kind, &set, &own.key).ok().map(|token| EarsGrant { kind: kind.into(), token, set, phrases: PHRASES.lock().unwrap().clone() }),
+            let made = match own.offer(Job::Ears).map(|(_, o)| (live(o), crate::hears::by_upload(&own))) {
+                Some((Some(l), _)) => (l.pass)(&set, &own.key).ok().map(|token| EarsGrant { kind: l.is.name.into(), token, set, phrases: PHRASES.lock().unwrap().clone() }),
                 // by upload, with the key that is already here: nothing to fetch
-                Some(_) => Some(EarsGrant { kind: BY_OWN_KEY.into(), token: String::new(), set, phrases: PHRASES.lock().unwrap().clone() }),
-                None => None,
+                Some((None, true)) => Some(EarsGrant { kind: BY_OWN_KEY.into(), token: String::new(), set, phrases: PHRASES.lock().unwrap().clone() }),
+                _ => None,
             };
             if let Some(g) = made {
                 *self.grant.lock().unwrap() = Some((g.clone(), Instant::now()));
@@ -286,7 +252,7 @@ impl Ears {
         };
         // as he speaks, with the words coming back while he talks. If that connection cannot be made, the same
         // microphone is listened to again the plain way (one upload, the words at the end), by a service that has one.
-        let heard = (with.stream)(pass, host, RATE, wav_header(), manual);
+        let heard = crate::ears_stream::live(with.wire, pass, host, RATE, wav_header(), manual);
         host.record_stop();
         let heard = match (heard, with.upload) {
             (Err(()), Some(upload)) if !manual && host.record_start(RATE) => {
@@ -419,76 +385,6 @@ fn by_tower(link: &Link, pcm: &[i16]) -> Result<String, ()> {
         }
     }
     Err(())
-}
-
-/// Microsoft's speech-to-text, fed while he is still talking so the answer is ready almost as he stops.
-/// Ok(None) is silence; Err is a failure of the service or the line.
-fn azure(grant: &EarsGrant, host: &dyn RadioHost, manual: bool) -> Result<Option<String>, ()> {
-    let mut end = Endpointer::new(RATE);
-    // a little audio from before he was judged to be speaking, so the first word is not clipped
-    let mut lead: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
-    let mut upload: Option<(std::sync::mpsc::SyncSender<Vec<u8>>, thread::JoinHandle<Result<Option<String>, ()>>)> = None;
-    loop {
-        let bytes = host.record_read();
-        if bytes.is_empty() {
-            break; // the host stopped the microphone
-        }
-        let mut verdict = Heard::Waiting;
-        for frame in samples(&bytes).chunks(320) {
-            verdict = end.feed(frame);
-            if matches!(verdict, Heard::Finished | Heard::Silence) {
-                break;
-            }
-        }
-        // he opened the microphone himself: it is all sent, and only he ends it
-        if manual {
-            verdict = Heard::Waiting;
-        }
-        if (end.speaking || manual) && upload.is_none() {
-            let (tx, rx) = sync_channel::<Vec<u8>>(256);
-            let url = format!("https://{}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language={}&format=simple&profanity=raw", grant.get("region"), grant.get("language"));
-            let auth = format!("Bearer {}", grant.token);
-            let worker = thread::spawn(move || -> Result<Option<String>, ()> {
-                let mut body = Feed(rx, wav_header());
-                let mut res = net::agent(Duration::from_secs(60))
-                    .post(&url)
-                    .header("Authorization", &auth)
-                    .header("Content-Type", "audio/wav; codecs=audio/pcm; samplerate=16000")
-                    .header("Accept", "application/json")
-                    .send(ureq::SendBody::from_reader(&mut body))
-                    .map_err(|_| ())?;
-                if res.status().as_u16() != 200 {
-                    return Err(());
-                }
-                let v: Value = res.body_mut().read_json().map_err(|_| ())?;
-                Ok(v["DisplayText"].as_str().map(str::trim).filter(|t| !t.is_empty() && v["RecognitionStatus"] == "Success").map(String::from))
-            });
-            for early in lead.drain(..) {
-                let _ = tx.send(early);
-            }
-            upload = Some((tx, worker));
-        }
-        match &upload {
-            Some((tx, _)) => {
-                let _ = tx.send(bytes);
-            }
-            None => {
-                lead.push_back(bytes);
-                while lead.len() > 5 {
-                    lead.pop_front();
-                }
-            }
-        }
-        match verdict {
-            Heard::Finished => break,
-            Heard::Silence => return Ok(None),
-            _ => {}
-        }
-    }
-    let Some((tx, worker)) = upload else { return Ok(None) };
-    drop(tx); // ends the upload; the service answers with what it heard
-    host.status(RadioStatus::Sending);
-    worker.join().map_err(|_| ())?
 }
 
 /// A WAV header for a recording whose length is not known yet.

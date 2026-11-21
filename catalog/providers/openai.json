@@ -9,19 +9,21 @@
     {
       "job": "summary",
       "by": {
-        "chat": {
-          "cold": false,
+        "interface": "chat",
+        "with": {
           "shaped": true
         }
       },
       "label": "OpenAI GPT-6 Luna",
       "preferred": true,
       "price": "About $0.11 per 1,000 messages",
+      "priced": "2026-11-20",
       "asks": [
         {
           "field": "url",
           "question": "Address",
-          "usual": "https://api.openai.com/v1"
+          "usual": "https://api.openai.com/v1",
+          "reach": true
         },
         {
           "field": "model",
@@ -32,7 +34,9 @@
     },
     {
       "job": "voice",
-      "by": "speech",
+      "by": {
+        "interface": "speech"
+      },
       "label": "OpenAI GPT-4o mini TTS",
       "voices": [
         {
@@ -55,7 +59,8 @@
         {
           "field": "url",
           "question": "Address",
-          "usual": "https://api.openai.com/v1"
+          "usual": "https://api.openai.com/v1",
+          "reach": true
         },
         {
           "field": "model",
@@ -76,15 +81,19 @@
     },
     {
       "job": "ears",
-      "by": "transcribe",
+      "by": {
+        "interface": "transcribe"
+      },
       "label": "OpenAI GPT Transcribe",
       "preferred": true,
       "price": "About $0.27 per hour of speech",
+      "priced": "2026-11-20",
       "asks": [
         {
           "field": "url",
           "question": "Address",
-          "usual": "https://api.openai.com/v1"
+          "usual": "https://api.openai.com/v1",
+          "reach": true
         },
         {
           "field": "model",

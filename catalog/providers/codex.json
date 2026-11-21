@@ -5,7 +5,8 @@
     {
       "job": "summary",
       "by": {
-        "command": {
+        "interface": "command",
+        "with": {
           "argv": [
             "codex",
             "exec",
@@ -56,7 +57,11 @@
       "label": "OpenAI GPT-6 Luna",
       "about": "Uses your Codex login",
       "preferred": true,
-      "login": "codex"
+      "login": "codex",
+      "needs": [
+        "brief",
+        "shape"
+      ]
     }
   ]
 }
