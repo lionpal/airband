@@ -151,6 +151,7 @@ pub fn run(cfg: &Config, args: &[String]) -> Result<(), String> {
     let link = flag("--link").unwrap_or_else(|| Pairing::Direct { url: format!("http://127.0.0.1:{}", cfg.port), token: cfg.radio_token.clone() }.link());
     let route = match Pairing::parse(&link)? {
         Pairing::Relay { relay, .. } => format!("through the relay at {relay}"),
+        Pairing::Near { at, .. } => format!("straight to {}, sealed", at.join(" or ")),
         Pairing::Direct { url, .. } => format!("straight to {url}"),
     };
     let window = flag("--window").and_then(|s| s.parse().ok()).unwrap_or(20);
