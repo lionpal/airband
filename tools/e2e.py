@@ -509,9 +509,9 @@ Send it as written, or do you want changes?""")
     out = []
     t = threading.Thread(target=ask_permission, args=("deploy", "orders", "run `rm -rf build`", out)); t.start()
     card = pending_card("orders deploy")
-    said = say("yes")
+    plain = say("yes")
     still = pending_card("orders deploy")
-    check("a \"yes\" that is not said to the request does not answer it", card and said != "Allowed." and still is not None and out == [], (said, out))
+    check("a \"yes\" that is not said to the request does not answer it", card and plain != "Allowed." and still is not None and out == [], (plain, out))
     check("said in reply to it, a plain yes in his own words allows it (model)", card and say("yeah, that's fine", re=card["id"]) == "Allowed." and (t.join(30) or out == [(0, "")]), out)
     out = []
     t = threading.Thread(target=ask_permission, args=("deploy", "orders", "run `sleep 1`", out)); t.start()
@@ -652,10 +652,12 @@ Send it as written, or do you want changes?""")
     code, again = http("POST", "/v1/radio/utterance", {"text": "the invoices: file the March ones too", "id": mine})
     check("asked after while it is being answered, it is still only taken", again == {"state": "taken"}, again)
     told = None
+    seen = rev
     for _ in range(100):
-        f = http("GET", f"/v1/radio/feed?since={rev}&wait=5")[1]
+        f = http("GET", f"/v1/radio/feed?since={seen}&wait=5")[1]
         told = next((a for a in f.get("answers", []) if a["id"] == mine), None)
         if told: break
+        seen = f.get("rev", seen)
     check("what came of it arrives in his radio's feed, under its id", told and told["state"] == "answered" and "say" in told["reply"], told)
     other = http("GET", f"/v1/radio/feed?since={rev}", radio="desk")[1]
     check("and in no other radio's", not other.get("answers"), other.get("answers"))

@@ -419,7 +419,20 @@ async fn utterance(State(app): State<Arc<App>>, headers: HeaderMap, Json(u): Jso
             }
         }
     }
-    tokio::spawn(async move {
+    // answered in the order it came from this radio: several can arrive in one moment (what the relay kept
+    // while the tower was away), and each is finished before the next is begun
+    let line = app.said.lock().unwrap().entry(radio.clone()).or_insert_with(|| {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>();
+        tokio::spawn(async move {
+            while let Some(next) = rx.recv().await {
+                next.await;
+            }
+        });
+        tx
+    }).clone();
+    let app_ = app.clone();
+    let _ = line.send(Box::pin(async move {
+        let app = app_;
         let began = Instant::now();
         // a file with no words still says something: look at it
         let text = match (u.text.trim(), u.attachments.is_empty()) {
@@ -448,7 +461,7 @@ async fn utterance(State(app): State<Arc<App>>, headers: HeaderMap, Json(u): Jso
         let mut inner = app.inner.lock().unwrap();
         inner.answering.remove(&u.id);
         inner.settle(&radio, &u.id, Outcome::Answered { reply });
-    });
+    }));
     Json(Outcome::Taken).into_response()
 }
 
