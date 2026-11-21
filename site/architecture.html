@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>airband: how it works</title>
+<meta name="description" content="The parts of airband, how a message travels between your agents and your phone, the two ways to connect, and where to plug in a new tool or model.">
+<style>
+:root { --ground: #0B0B0C; --ink: #F4F4F0; --soft: #C9C9C5; --quiet: #8E8E93; --line: #26292A; --card: #141716; --go: #3DDB96; --ask: #FFB454; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--ground); color: var(--soft); font: 17px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+main { max-width: 760px; margin: 0 auto; padding: 48px 20px 96px; }
+a { color: var(--ink); }
+h1 { margin: 28px 0 8px; font-size: 40px; line-height: 1.1; letter-spacing: -0.03em; color: var(--ink); }
+h2 { margin: 56px 0 10px; font-size: 24px; letter-spacing: -0.015em; color: var(--ink); }
+h3 { margin: 28px 0 6px; font-size: 18px; color: var(--ink); }
+p, li { margin: 0 0 12px; }
+ul { margin: 0; padding-left: 20px; }
+code { font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--card); border-radius: 5px; padding: 1px 5px; color: var(--ink); }
+.lead { font-size: 19px; color: var(--soft); }
+.fig { margin: 18px 0 8px; border: 1px solid var(--line); border-radius: 16px; background: #0E0F10; overflow-x: auto; }
+.fig svg { display: block; width: 100%; min-width: 640px; height: auto; }
+.cap { font-size: 14px; color: var(--quiet); margin: 0 0 12px; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 14px 0; }
+.two > div { border: 1px solid var(--line); border-radius: 14px; padding: 16px; background: var(--card); }
+.two h3 { margin: 0 0 8px; }
+.two ul { padding-left: 18px; font-size: 16px; }
+.tag { display: inline-block; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; border-radius: 6px; padding: 2px 7px; margin-bottom: 8px; }
+.tag.a { background: rgba(61,219,150,0.14); color: var(--go); }
+.tag.b { background: rgba(244,244,240,0.12); color: var(--ink); }
+table { border-collapse: collapse; width: 100%; font-size: 15px; margin: 10px 0; }
+th, td { text-align: left; padding: 8px 10px; border-top: 1px solid var(--line); vertical-align: top; }
+th { color: var(--ink); font-weight: 600; border-top: 0; }
+.scroll { overflow-x: auto; }
+svg text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+hr { border: 0; border-top: 1px solid var(--line); margin: 48px 0 0; }
+@media (max-width: 620px) { .two { grid-template-columns: 1fr; } h1 { font-size: 32px; } }
+</style>
+</head>
+<body>
+<main>
+  <a href="/">airband</a>
+  <h1>How it works</h1>
+  <p class="lead">airband has three parts. A small program on your computer listens to your coding agents. An app on your phone shows you what they said and takes your answer. A relay carries messages between the two when your phone is away from home, and you can turn it off.</p>
+
+  <h2>The parts</h2>
+  <div class="scroll">
+  <table>
+    <tr><th>Part</th><th>Where it runs</th><th>What it does</th></tr>
+    <tr><td><b>airband</b> (the <code>airband</code> command)</td><td>Your computer</td><td>Hears from Claude Code, Codex and OpenCode. Writes the short version of each message with the model you chose. Keeps the chat. Hands your answers to the right agent.</td></tr>
+    <tr><td><b>The app</b></td><td>Your phone</td><td>The chat. Listening and speaking happen here: with a model on the phone, or with a service you gave a key for, called from the phone.</td></tr>
+    <tr><td><b>The relay</b></td><td>relay.airband.dev, or your own</td><td>Passes encrypted messages between phone and computer. Keeps them for your computer for up to seven days if it is off. Hands notifications to Apple. It cannot read any of it.</td></tr>
+  </table>
+  </div>
+
+  <h2>Two ways to connect</h2>
+  <p>You choose when you pair. The first is the usual one. The second is for when nothing of yours should pass through anyone else's server.</p>
+
+  <div class="two">
+    <div>
+      <span class="tag a">With the relay</span>
+      <h3>Works anywhere</h3>
+      <ul>
+        <li>At home, the phone talks straight to your computer.</li>
+        <li>Away, messages go through the relay, encrypted with a key only your phone and computer hold.</li>
+        <li>It switches between the two by itself.</li>
+        <li>You get notifications and the lock screen banner.</li>
+      </ul>
+    </div>
+    <div>
+      <span class="tag b">Without the relay</span>
+      <h3>Nothing leaves your network</h3>
+      <ul>
+        <li>The phone only ever talks straight to your computer.</li>
+        <li>It works on the same Wi-Fi, or anywhere if both are on Tailscale.</li>
+        <li>Nothing passes through our servers.</li>
+        <li>No notifications: those need the relay to reach Apple.</li>
+      </ul>
+      <p style="margin: 8px 0 0; font-size: 15px">Turn it on with <code>airband relay off</code> before you pair.</p>
+    </div>
+  </div>
+
+  <div class="fig">
+  <svg viewBox="0 0 700 330" role="img" aria-label="With the relay. On your computer, Claude Code, Codex and OpenCode report to airband. airband reaches your phone two ways: straight, when the phone is on your network, and through the relay, encrypted, when it is away. The relay also hands notifications to Apple.">
+    <text x="20" y="26" fill="#3DDB96" font-size="13" font-weight="600" letter-spacing="0.5">WITH THE RELAY</text>
+    <rect x="20" y="44" width="330" height="262" rx="16" fill="none" stroke="#26292A"/>
+    <text x="36" y="68" fill="#8E8E93" font-size="13">Your computer</text>
+    <g font-size="14" fill="#F4F4F0">
+      <rect x="36" y="86" width="118" height="36" rx="9" fill="#141716" stroke="#26292A"/><text x="95" y="109" text-anchor="middle">Claude Code</text>
+      <rect x="36" y="134" width="118" height="36" rx="9" fill="#141716" stroke="#26292A"/><text x="95" y="157" text-anchor="middle">Codex</text>
+      <rect x="36" y="182" width="118" height="36" rx="9" fill="#141716" stroke="#26292A"/><text x="95" y="205" text-anchor="middle">OpenCode</text>
+      <rect x="206" y="112" width="128" height="80" rx="12" fill="#141716" stroke="#F4F4F0"/><text x="270" y="148" text-anchor="middle" font-weight="600">airband</text><text x="270" y="168" text-anchor="middle" font-size="12" fill="#8E8E93">chat, summaries</text>
+    </g>
+    <g stroke="#8E8E93" stroke-width="1.5" fill="none"><path d="M154 104 L206 136"/><path d="M154 152 L206 152"/><path d="M154 200 L206 168"/></g>
+    <rect x="206" y="236" width="128" height="50" rx="9" fill="#141716" stroke="#26292A"/><text x="270" y="258" text-anchor="middle" font-size="13" fill="#F4F4F0">Summary model</text><text x="270" y="275" text-anchor="middle" font-size="11.5" fill="#8E8E93">the one you chose</text>
+    <path d="M270 192 L270 236" stroke="#8E8E93" stroke-width="1.5"/>
+    <rect x="400" y="44" width="150" height="62" rx="12" fill="#141716" stroke="#3DDB96"/><text x="475" y="70" text-anchor="middle" font-size="14" font-weight="600" fill="#F4F4F0">Relay</text><text x="475" y="89" text-anchor="middle" font-size="11.5" fill="#8E8E93">cannot read what it carries</text>
+    <rect x="590" y="44" width="92" height="38" rx="9" fill="#141716" stroke="#26292A"/><text x="636" y="68" text-anchor="middle" font-size="13" fill="#F4F4F0">Apple</text>
+    <rect x="560" y="124" width="122" height="162" rx="16" fill="#141716" stroke="#F4F4F0"/><text x="621" y="150" text-anchor="middle" font-size="14" font-weight="600" fill="#F4F4F0">Your phone</text>
+    <g font-size="12.5" fill="#C9C9C5" text-anchor="middle"><text x="621" y="182">chat</text><text x="621" y="206">listening</text><text x="621" y="230">speaking</text><text x="621" y="262" fill="#8E8E93" font-size="11.5">on-phone models, or</text><text x="621" y="277" fill="#8E8E93" font-size="11.5">a service you chose</text></g>
+    <path d="M334 132 C 380 132, 380 76, 400 76" stroke="#3DDB96" stroke-width="2" fill="none"/>
+    <path d="M520 106 C 520 140, 540 150, 560 150" stroke="#3DDB96" stroke-width="2" fill="none"/>
+    <text x="334" y="92" font-size="11.5" fill="#3DDB96">encrypted</text>
+    <path d="M550 64 L590 64" stroke="#8E8E93" stroke-width="1.5" stroke-dasharray="4 4"/><path d="M636 82 L636 124" stroke="#8E8E93" stroke-width="1.5" stroke-dasharray="4 4"/>
+    <text x="628" y="107" font-size="11.5" fill="#8E8E93" text-anchor="end">notification</text>
+    <path d="M334 172 L560 210" stroke="#F4F4F0" stroke-width="2" fill="none"/>
+    <text x="446" y="182" font-size="11.5" fill="#F4F4F0" text-anchor="middle" transform="rotate(9.5 446 182)">straight, when on your network</text>
+  </svg>
+  </div>
+
+  <div class="fig">
+  <svg viewBox="0 0 700 330" role="img" aria-label="Without the relay. The same computer and phone, with one path between them: straight, on the same network or over Tailscale. There is no relay and nothing goes to Apple.">
+    <text x="20" y="26" fill="#F4F4F0" font-size="13" font-weight="600" letter-spacing="0.5">WITHOUT THE RELAY</text>
+    <rect x="20" y="44" width="330" height="262" rx="16" fill="none" stroke="#26292A"/>
+    <text x="36" y="68" fill="#8E8E93" font-size="13">Your computer</text>
+    <g font-size="14" fill="#F4F4F0">
+      <rect x="36" y="86" width="118" height="36" rx="9" fill="#141716" stroke="#26292A"/><text x="95" y="109" text-anchor="middle">Claude Code</text>
+      <rect x="36" y="134" width="118" height="36" rx="9" fill="#141716" stroke="#26292A"/><text x="95" y="157" text-anchor="middle">Codex</text>
+      <rect x="36" y="182" width="118" height="36" rx="9" fill="#141716" stroke="#26292A"/><text x="95" y="205" text-anchor="middle">OpenCode</text>
+      <rect x="206" y="112" width="128" height="80" rx="12" fill="#141716" stroke="#F4F4F0"/><text x="270" y="148" text-anchor="middle" font-weight="600">airband</text><text x="270" y="168" text-anchor="middle" font-size="12" fill="#8E8E93">chat, summaries</text>
+    </g>
+    <g stroke="#8E8E93" stroke-width="1.5" fill="none"><path d="M154 104 L206 136"/><path d="M154 152 L206 152"/><path d="M154 200 L206 168"/></g>
+    <rect x="206" y="236" width="128" height="50" rx="9" fill="#141716" stroke="#26292A"/><text x="270" y="258" text-anchor="middle" font-size="13" fill="#F4F4F0">Summary model</text><text x="270" y="275" text-anchor="middle" font-size="11.5" fill="#8E8E93">the one you chose</text>
+    <path d="M270 192 L270 236" stroke="#8E8E93" stroke-width="1.5"/>
+    <rect x="400" y="44" width="150" height="62" rx="12" fill="none" stroke="#26292A" stroke-dasharray="5 5"/><text x="475" y="80" text-anchor="middle" font-size="13" fill="#5A5D60">no relay</text>
+    <rect x="560" y="124" width="122" height="162" rx="16" fill="#141716" stroke="#F4F4F0"/><text x="621" y="150" text-anchor="middle" font-size="14" font-weight="600" fill="#F4F4F0">Your phone</text>
+    <g font-size="12.5" fill="#C9C9C5" text-anchor="middle"><text x="621" y="182">chat</text><text x="621" y="206">listening</text><text x="621" y="230">speaking</text><text x="621" y="262" fill="#8E8E93" font-size="11.5">on-phone models, or</text><text x="621" y="277" fill="#8E8E93" font-size="11.5">a service you chose</text></g>
+    <path d="M334 172 L560 210" stroke="#F4F4F0" stroke-width="2" fill="none"/>
+    <text x="446" y="182" font-size="11.5" fill="#F4F4F0" text-anchor="middle" transform="rotate(9.5 446 182)">straight: same Wi-Fi, or Tailscale</text>
+    <text x="446" y="228" font-size="11.5" fill="#8E8E93" text-anchor="middle" transform="rotate(9.5 446 228)">still encrypted with the pairing's key</text>
+  </svg>
+  </div>
+  <p class="cap">In both, the summary model and your coding agents talk to their own providers from your computer, and a listening or voice service you chose is called from your phone. None of that passes through airband's servers.</p>
+
+  <h2>One question, start to finish</h2>
+  <p>An agent stops and asks you something. Here is every step until your answer is back in its session.</p>
+  <div class="fig">
+  <svg viewBox="0 0 700 520" role="img" aria-label="Sequence. The agent stops with a question and its coding tool tells airband. airband asks the summary model for a one-sentence version and whether it needs you. airband sends that to the phone, straight or through the relay. Through the relay, Apple is asked to show a notification. The phone shows it and reads it aloud with its own voice. You answer by typing or speaking; speech is turned into text on the phone. The answer goes back to airband, which hands it to the agent as your turn.">
+    <g font-size="13" fill="#F4F4F0" text-anchor="middle" font-weight="600">
+      <rect x="14" y="16" width="112" height="36" rx="9" fill="#141716" stroke="#26292A"/><text x="70" y="39">Coding agent</text>
+      <rect x="150" y="16" width="112" height="36" rx="9" fill="#141716" stroke="#F4F4F0"/><text x="206" y="39">airband</text>
+      <rect x="286" y="16" width="120" height="36" rx="9" fill="#141716" stroke="#26292A"/><text x="346" y="39">Summary model</text>
+      <rect x="430" y="16" width="100" height="36" rx="9" fill="#141716" stroke="#3DDB96"/><text x="480" y="39">Relay</text>
+      <rect x="566" y="16" width="112" height="36" rx="9" fill="#141716" stroke="#F4F4F0"/><text x="622" y="39">Your phone</text>
+    </g>
+    <g stroke="#26292A" stroke-width="1.5"><path d="M70 52 V500"/><path d="M206 52 V500"/><path d="M346 52 V500"/><path d="M480 52 V500"/><path d="M622 52 V500"/></g>
+    <defs>
+      <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#C9C9C5"/></marker>
+      <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#3DDB96"/></marker>
+    </defs>
+    <g font-size="12" fill="#C9C9C5">
+      <path d="M70 92 H204" stroke="#C9C9C5" stroke-width="1.5" marker-end="url(#a)"/><text x="137" y="84" text-anchor="middle">stopped, with a question</text>
+      <path d="M206 132 H344" stroke="#C9C9C5" stroke-width="1.5" marker-end="url(#a)"/><text x="276" y="124" text-anchor="middle">the whole message</text>
+      <path d="M346 166 H208" stroke="#C9C9C5" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#a)"/><text x="276" y="158" text-anchor="middle">one sentence, "needs you"</text>
+      <rect x="216" y="186" width="396" height="76" rx="10" fill="#0B0B0C" stroke="#26292A"/>
+      <path d="M206 210 H620" stroke="#F4F4F0" stroke-width="1.5" marker-end="url(#a)"/><text x="350" y="203" text-anchor="middle" fill="#F4F4F0">straight, when the phone is on your network</text>
+      <path d="M206 244 H478" stroke="#3DDB96" stroke-width="1.5" marker-end="url(#g)"/><path d="M480 244 H620" stroke="#3DDB96" stroke-width="1.5" marker-end="url(#g)"/><text x="350" y="237" text-anchor="middle" fill="#3DDB96">or encrypted, through the relay</text>
+      <path d="M480 290 H620" stroke="#8E8E93" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#a)"/><text x="551" y="282" text-anchor="middle" fill="#8E8E93">notification, by Apple</text>
+      <rect x="532" y="310" width="160" height="48" rx="9" fill="#141716" stroke="#26292A"/><text x="612" y="330" text-anchor="middle" fill="#F4F4F0">shows it, and reads it</text><text x="612" y="347" text-anchor="middle" fill="#F4F4F0">aloud in its own voice</text>
+      <rect x="532" y="376" width="160" height="48" rx="9" fill="#141716" stroke="#26292A"/><text x="612" y="396" text-anchor="middle" fill="#F4F4F0">you tap or speak; speech</text><text x="612" y="413" text-anchor="middle" fill="#F4F4F0">becomes text on the phone</text>
+      <path d="M622 452 H208" stroke="#C9C9C5" stroke-width="1.5" marker-end="url(#a)"/><text x="414" y="444" text-anchor="middle">your answer, by the same two ways</text>
+      <path d="M206 486 H72" stroke="#C9C9C5" stroke-width="1.5" marker-end="url(#a)"/><text x="138" y="478" text-anchor="middle">your words, as your turn</text>
+    </g>
+  </svg>
+  </div>
+  <p class="cap">Without the relay, the two green arrows and the notification do not exist. Everything else is the same.</p>
+
+  <h2>What keeps it private</h2>
+  <ul>
+    <li><b>Pairing.</b> Your computer shows a code. The phone scans it. The code holds a secret that only those two devices ever have, and every message between them is encrypted with keys made from it, on your network as well as through the relay.</li>
+    <li><b>The relay.</b> It knows a random channel name and can check that a device belongs to it. It never has the secret, so it cannot read a message. The <a href="/privacy.html">privacy page</a> lists exactly what it keeps.</li>
+    <li><b>Keys.</b> An API key you enter is tested once, then stored encrypted on the device that uses it, and never shown again.</li>
+    <li><b>Voice.</b> Listening and speaking are the phone's job. With the on-phone models, no audio leaves the phone.</li>
+    <li><b>Logs.</b> Nothing is uploaded. A record of failed connections stays on the phone until you copy it yourself.</li>
+  </ul>
+
+  <h2>Where to plug something in</h2>
+  <p>Most additions are one data file. The files live in <code>catalog/</code> and are built into the app and the command. A newer signed copy is fetched from airband.dev, and a fetched copy cannot change a command that is run or where a key is sent.</p>
+  <div class="scroll">
+  <table>
+    <tr><th>To add</th><th>You write</th></tr>
+    <tr><td>A model for summaries, a voice, or a listening service that speaks a protocol airband already knows</td><td>One file in <code>catalog/providers/</code>: its address, how the key is presented, how to test a key, what it costs</td></tr>
+    <tr><td>A model that runs on the phone</td><td>One file in <code>catalog/models/</code>: its files, sizes and checksums, which engine runs it</td></tr>
+    <tr><td>A coding tool that already speaks the Agent Client Protocol</td><td>One file in <code>catalog/tools/</code>: how to start it</td></tr>
+    <tr><td>A coding tool with its own way of reporting</td><td>That file, plus one module in <code>crates/airband-cli/src/adapters/</code></td></tr>
+    <tr><td>Anything else that should report to you</td><td>No code: call <code>airband report</code> from a script</td></tr>
+  </table>
+  </div>
+
+  <h2>The code</h2>
+  <div class="scroll">
+  <table>
+    <tr><th>Folder</th><th>What is in it</th></tr>
+    <tr><td><code>crates/airband-core</code></td><td>The message formats, pairing and encryption, and the catalogue reader. Shared by everything.</td></tr>
+    <tr><td><code>crates/airband-cli</code></td><td>The <code>airband</code> command: the program on your computer and the adapters for each coding tool.</td></tr>
+    <tr><td><code>crates/airband-radio</code></td><td>Everything the phone does that is not drawing: the chat's rules, sending and retrying, listening and speaking. Written once in Rust.</td></tr>
+    <tr><td><code>apps/apple</code></td><td>The iPhone, iPad and CarPlay app. A thin layer of Swift over the radio crate.</td></tr>
+    <tr><td><code>crates/airband-relay</code></td><td>The relay. Run your own with <code>airband relay &lt;address&gt;</code>.</td></tr>
+  </table>
+  </div>
+  <p>The code is <a href="https://github.com/lionpal/airband">on GitHub</a>. The wire formats are written down in <code>docs/protocols.md</code>.</p>
+  <hr>
+</main>
+</body>
+</html>
