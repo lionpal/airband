@@ -152,12 +152,18 @@ struct Waiting {
     his: bool,
 }
 
+/// A kept pick as this build reads it. One it cannot read (a place this build does not have) is nothing
+/// chosen: he is told to choose where he would use it, and the rest of what was kept stands.
+fn pick_or_nothing<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Pick>, D::Error> {
+    Ok(Option::<serde_json::Value>::deserialize(d)?.and_then(|v| serde_json::from_value(v).ok()))
+}
+
 /// Everything kept about what he chose.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 struct Saved {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "pick_or_nothing")]
     ears: Option<Pick>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "pick_or_nothing")]
     voice: Option<Pick>,
     #[serde(default)]
     reads: Option<Waiting>,
@@ -496,6 +502,8 @@ impl Desk {
         match self.choices(job).into_iter().find(|c| c.chosen) {
             Some(c) if c.state == ChoiceState::Waiting => "Waiting for your computer".into(),
             Some(c) => c.title,
+            // what listens and what speaks are this device's: with none chosen, it says so
+            None if job != ChoiceJob::Reads => "Nothing chosen".into(),
             None => String::new(),
         }
     }
@@ -521,6 +529,25 @@ impl Desk {
         };
         // a key is kept under its provider's id, whichever of the provider's offers it was given for
         let (provider, offer) = (choice.provider.clone(), choice.offer.clone());
+        // A service that takes a key is asked, by this device, whether it takes this one: the request its row
+        // names, which costs nothing. A key that does not pass is not kept and goes nowhere else.
+        let row = airband_core::providers::provider(&provider).filter(|p| p.key && choice.place == ChoicePlace::Service);
+        if let Some(p) = &row {
+            let with = crate::mouth::service_of(&provider, &offer, &key.clone().or_else(|| host.secret(provider.clone())).unwrap_or_default(), set.clone().into_iter().collect());
+            if with.key.is_empty() {
+                return done(Err(told(format!("Enter your {}.", p.key_name))));
+            }
+            chooser.work(job, &id, "Testing the key", false);
+            host.changed();
+            let Some(check) = p.check.as_ref() else { return done(Err(told("This version of airband cannot test that key."))) };
+            let outcome = (self.shared.key_test)(check, &with.key, &with.settings(job.job()));
+            if let Some(why) = crate::keys::said(outcome, p) {
+                return done(Err(told(why)));
+            }
+            if outcome == (airband_core::providers::KeyCheck::Good { paid: true }) {
+                host.note(crate::keys::charged(p));
+            }
+        }
         if job == ChoiceJob::Reads {
             if let Some(key) = &key {
                 host.keep_secret(provider.clone(), Some(key.clone()));
@@ -549,12 +576,15 @@ impl Desk {
         let pick = match choice.place {
             ChoicePlace::Service => {
                 let with = crate::mouth::service_of(&provider, &offer, &key.clone().or_else(|| host.secret(provider.clone())).unwrap_or_default(), set.clone().into_iter().collect());
-                let tried = match job {
-                    ChoiceJob::Voice => crate::mouth::check(&with),
-                    _ => crate::ears::check(&with),
-                };
-                if let Err(why) = tried {
-                    return done(Err(told(why)));
+                // one with no key (a server of his own) has nothing to test but itself: one short real call
+                if row.is_none() {
+                    let tried = match job {
+                        ChoiceJob::Voice => crate::mouth::check(&with),
+                        _ => crate::ears::check(&with),
+                    };
+                    if let Err(why) = tried {
+                        return done(Err(told(why)));
+                    }
                 }
                 if let Some(key) = key {
                     host.keep_secret(provider.clone(), Some(key));
@@ -833,6 +863,33 @@ mod tests {
     }
 
     #[test]
+    fn a_kept_choice_this_build_cannot_read_is_nothing_chosen_and_says_where_to_choose() {
+        // kept by a build that let his computer listen and speak for the phone
+        let dir = std::env::temp_dir().join(format!("airband-choices-{}", random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("choices.json"), r#"{"ears":{"place":"computer","id":"","offer":"","set":{},"voice":""},"voice":{"place":"computer","id":""},"tools":["codex"]}"#).unwrap();
+        let host = Arc::new(Host::default());
+        let desk = Desk::alone(&dir.display().to_string(), host.clone());
+        // nothing is chosen for either, the rest of what was kept stands, and nothing else took their place
+        for job in [ChoiceJob::Ears, ChoiceJob::Voice] {
+            assert!(chosen(&desk.choices(job)).is_empty());
+            assert_eq!(desk.chosen_label(job), "Nothing chosen");
+        }
+        assert_eq!(desk.tools(), vec!["codex".to_string()]);
+        assert!(!desk.shared.senses.mouth.ready());
+        // the microphone, opened: he is told where to choose, and nothing listened
+        let tape = crate::ears_stream::Tape::of(&[], false);
+        let ears = crate::ears::Ears::new(desk.shared.senses.clone());
+        assert!(matches!(ears.hear(&tape, true), Listened::Cannot));
+        assert_eq!(desk.shared.senses.ears.failed().as_deref(), Some(crate::ears::NOTHING_CHOSEN));
+        // reading aloud, turned on: the same for the voice, and nothing is said
+        desk.set_call_mode(true);
+        assert_eq!(host.notes.lock().unwrap().last().map(String::as_str), Some(crate::voice::NOTHING_CHOSEN));
+        assert!(matches!(crate::voice::say_until(&tape, &desk.shared.senses.mouth, "Shop two is waiting.", &|| false), crate::voice::Said::Nothing(why) if why == crate::voice::NOTHING_CHOSEN));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn a_new_install_starts_with_what_needs_nothing_from_him() {
         let saved = Saved::fresh(&phone());
         for (job, pick) in [(Job::Ears, saved.ears.clone()), (Job::Voice, saved.voice.clone())] {
@@ -941,6 +998,12 @@ mod tests {
         }
         // summaries, with no computer to ask: it waits, with its key kept by the host and not by the core
         let (reads, provider) = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.key).map(|c| (c.id, c.provider)).unwrap();
+        // a key its service does not take is not kept, nothing is chosen with it, and he is told which key
+        let refused = desk.choose_for(ChoiceJob::Reads, reads.clone(), Some("sk-broken".into()), none(), false);
+        assert!(matches!(&refused, Err(RadioError::Told { reason }) if reason.contains("was not accepted")), "{refused:?}");
+        assert!(host.secret(provider.clone()).is_none() && chosen(&desk.choices(ChoiceJob::Reads)).iter().all(|c| *c != reads));
+        // and with no key at all it is asked for, before anything is tried
+        assert!(matches!(desk.choose_for(ChoiceJob::Reads, reads.clone(), None, none(), false), Err(RadioError::Told { reason }) if reason.starts_with("Enter your ")));
         desk.choose_for(ChoiceJob::Reads, reads.clone(), Some(" sk-test ".into()), none(), false).unwrap();
         assert_eq!(state(ChoiceJob::Reads, &reads), (true, ChoiceState::Waiting));
         assert_eq!(desk.chosen_label(ChoiceJob::Reads), "Waiting for your computer");

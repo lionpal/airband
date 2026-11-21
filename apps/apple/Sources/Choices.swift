@@ -250,7 +250,7 @@ struct ChoicePicker: View {
         if c.chosen && c.megabytesToFetch == nil { return }
         if c.place == .service && (c.key || !c.asks.isEmpty) {
             open = open == c.id ? nil : c.id
-        } else if c.place == .computer || mode == .onboarding {
+        } else if mode == .onboarding {
             choose(c)
         } else {
             asking = c

@@ -3,7 +3,26 @@
   "name": "OpenRouter",
   "key": {
     "name": "OpenRouter API key",
-    "at": "openrouter.ai/keys"
+    "at": "openrouter.ai/keys",
+    "check": {
+      "method": "GET",
+      "url": "{url}/key",
+      "auth": {
+        "header": "authorization",
+        "prefix": "Bearer "
+      },
+      "good": [
+        200
+      ],
+      "wrong_key": [
+        401
+      ],
+      "refused": [
+        402,
+        403,
+        429
+      ]
+    }
   },
   "offers": [
     {

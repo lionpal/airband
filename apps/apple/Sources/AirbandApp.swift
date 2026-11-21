@@ -1480,7 +1480,7 @@ struct ReaderView: View {
                     Text(m.from).font(.system(size: 13)).foregroundStyle(Palette.quiet).lineLimit(1)
                 }
                 Spacer()
-                // read it to him: the whole thing, in his computer's voice. Tap again to stop.
+                // read it to him: the whole thing, in the voice he chose on this phone. Tap again to stop.
                 Button { model.readAloud(m) } label: {
                     Image(systemName: reading ? "stop.fill" : "speaker.wave.2.fill").font(.system(size: 14, weight: .bold))
                         .foregroundStyle(reading ? Palette.ground : Palette.ink)
