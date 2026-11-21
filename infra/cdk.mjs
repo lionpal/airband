@@ -53,8 +53,6 @@ const of = (key) => {
   return INFRA[key];
 };
 const ACCOUNT = of('account'), REGION = of('region');
-// "speechRegion" is optional: with it, the relay lends its speech service (see the task's secrets below)
-const SPEECH_REGION = INFRA.speechRegion;
 // Optional: with AIRBAND_APNS set to {"keyId","teamId","topic"} the relay can wake iPhones through Apple's push
 // service. None of the three is secret. The signing key itself is (see the task's secrets below). The deploy
 // workflow takes it from the repository variable AIRBAND_APNS.
@@ -88,12 +86,9 @@ class AirbandRelay extends Stack {
     task.addContainer('relay', {
       image: ecs.ContainerImage.fromAsset(join(HERE, '..'), { platform: Platform.LINUX_AMD64 }),
       portMappings: [{ containerPort: PORT }],
-      environment: { PORT: String(PORT), DB_HOST, DB_PORT: '5432', DB_NAME, ...(SPEECH_REGION ? { AZURE_SPEECH_REGION: SPEECH_REGION } : {}),
+      environment: { PORT: String(PORT), DB_HOST, DB_PORT: '5432', DB_NAME,
         ...(APNS ? { APNS_KEY_ID: APNS.keyId, APNS_TEAM_ID: APNS.teamId, APNS_TOPIC: APNS.topic } : {}) },
       secrets: {
-        // optional: a speech service this relay lends to towers that have none. The key is written once by hand
-        // (aws ssm put-parameter --name /airband/speech-key --type SecureString --value <key>) and never in the repo
-        ...(SPEECH_REGION ? { AZURE_SPEECH_KEY: ecs.Secret.fromSsmParameter(ssm.StringParameter.fromSecureStringParameterAttributes(this, 'SpeechKey', { parameterName: '/airband/speech-key' })) } : {}),
         // optional: Apple's push signing key, the .p8 file's text, written once by hand and never in the repo
         // (aws ssm put-parameter --name /airband/apns-key --type SecureString --value file://AuthKey_….p8)
         ...(APNS ? { APNS_KEY: ecs.Secret.fromSsmParameter(ssm.StringParameter.fromSecureStringParameterAttributes(this, 'ApnsKey', { parameterName: '/airband/apns-key' })) } : {}),
@@ -140,7 +135,7 @@ class AirbandRelay extends Stack {
 //
 // Before the first deploy, once, by hand (none of it is in the repository):
 //   1. the three secrets, in this stack's region, as SecureString parameters:
-//      /airband/relay-admission, /airband/speech-key, /airband/apns-key
+//      /airband/relay-admission, /airband/apns-key
 //   2. a Caddy built with the Route 53 module, in the bucket as caddy/caddy-linux-arm64
 //      (https://caddyserver.com/api/download?os=linux&arch=arm64&p=github.com/caddy-dns/route53)
 // The name itself (the A record for relay.airband.dev) is not made here while the Tokyo stack still owns it:
@@ -175,7 +170,7 @@ class AirbandRelayUs extends Stack {
     const role = new iam.Role(this, 'HostRole', { assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'), description: 'The airband relay server',
       managedPolicies: [iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore')] });
     role.addToPolicy(new iam.PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:Scan'], resources: tables.map((t) => t.tableArn) }));
-    const settings = ['relay-env', 'relay-admission', 'speech-key', 'apns-key'].map((n) => `arn:aws:ssm:${this.region}:${this.account}:parameter/airband/${n}`);
+    const settings = ['relay-env', 'relay-admission', 'apns-key'].map((n) => `arn:aws:ssm:${this.region}:${this.account}:parameter/airband/${n}`);
     role.addToPolicy(new iam.PolicyStatement({ actions: ['ssm:GetParameter', 'ssm:GetParameters'], resources: settings }));
     ship.grantRead(role);
     // the two records Caddy proves the names with, and nothing else in the zone
@@ -186,7 +181,7 @@ class AirbandRelayUs extends Stack {
 
     // everything the server is told that is not a secret: read by setup.sh at each deploy
     const env = { AWS_REGION: this.region, AIRBAND_RELAY_DYNAMO: prefix, HOST: '127.0.0.1', PORT: String(PORT), SHIP_BUCKET: ship.bucketName, RELAY_NAMES: `"${names.join(', ')}"`, ZONE_ID,
-      ...(SPEECH_REGION ? { AZURE_SPEECH_REGION: SPEECH_REGION } : {}), ...(APNS ? { APNS_KEY_ID: APNS.keyId, APNS_TEAM_ID: APNS.teamId, APNS_TOPIC: APNS.topic } : {}) };
+      ...(APNS ? { APNS_KEY_ID: APNS.keyId, APNS_TEAM_ID: APNS.teamId, APNS_TOPIC: APNS.topic } : {}) };
     new ssm.StringParameter(this, 'Env', { parameterName: '/airband/relay-env', stringValue: Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n') + '\n' });
 
     // fetch what was shipped and run its setup: what a deploy asks of the server, and what a new server does by itself

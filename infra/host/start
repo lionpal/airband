@@ -4,7 +4,7 @@
 set -euo pipefail
 set -a; . /etc/airband/relay.env; set +a
 eval "$(aws ssm get-parameters --region "$AWS_REGION" --with-decryption --output json \
-  --names /airband/relay-admission /airband/speech-key /airband/apns-key | python3 -c '
+  --names /airband/relay-admission /airband/apns-key | python3 -c '
 import json, shlex, sys
 names = {"/airband/relay-admission": "AIRBAND_RELAY_ADMISSION", "/airband/apns-key": "APNS_KEY"}
 for p in json.load(sys.stdin)["Parameters"]:
