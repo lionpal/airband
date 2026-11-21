@@ -1,5 +1,18 @@
 {
   "id": "codex",
   "name": "Codex",
-  "maker": "OpenAI"
+  "maker": "OpenAI",
+  "launchers": [
+    {
+      "name": "codex",
+      "held": {
+        "by": "acp",
+        "program": [
+          "npx",
+          "-y",
+          "@agentclientprotocol/codex-acp@2.8.0"
+        ]
+      }
+    }
+  ]
 }

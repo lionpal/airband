@@ -51,9 +51,12 @@ pub struct Config {
     /// Inbound: what turns his speech into text on a call. Set separately from `voice`.
     #[serde(default)]
     pub ears: Ears,
-    /// How to start a new agent, by name. Each is a command; `{cwd}`, `{task}`, `{project}` and `{session}` (a
-    /// fresh name for a terminal session) are filled in. Add one per agent tool.
-    #[serde(default = "default_launchers")]
+    /// How to start a new agent, by name. The ones for the coding tools airband knows come with it (a tool's
+    /// row, `catalog/tools/`), are here whenever the settings are read, and are never written to the file: a
+    /// later version's correction to one reaches every computer. The file holds only the ones he added, under
+    /// names of their own. To change one that came with airband, copy it under another name and make that the
+    /// `launcher`.
+    #[serde(default, serialize_with = "his_own", skip_serializing_if = "none_his_own")]
     pub launchers: BTreeMap<String, Launcher>,
     /// Which launcher `launch` uses.
     #[serde(default = "default_launcher")]
@@ -82,95 +85,32 @@ pub type Summarizer = Use;
 pub type Voice = Use;
 pub type Ears = Use;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Launcher {
-    /// The harness it starts, by its adapter's name ("claude-code", "codex"): how the tower knows which
-    /// launcher carries on an agent of that kind, and what he means when he asks for a tool by name.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub harness: String,
-    /// `{cwd}`, `{task}`, `{project}` and `{session}` are filled in. An argument that is exactly `{options}` is
-    /// replaced by `with_model` and `with_effort`, each only when he asked for one, and by nothing otherwise.
-    pub argv: Vec<String>,
-    /// The models he can ask for by name ("with fable, …"), and what the tool calls each.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub models: BTreeMap<String, String>,
-    /// The efforts he can ask for ("with fable high, …"), as the tool takes them.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub efforts: Vec<String>,
-    /// The arguments that choose a model, with `{model}` filled in.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub with_model: Vec<String>,
-    /// The arguments that choose an effort, with `{effort}` filled in.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub with_effort: Vec<String>,
-    /// When set, the tower does not hand the agent off: it keeps the process and its input, and writes his
-    /// words there as his own turns. `argv` then starts a program that reads one message a line on standard
-    /// input for as long as it runs; `{task}` is not used, the task is the first message.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub held: Option<Held>,
+pub use airband_core::tools::{Held, Launcher};
+
+/// The launchers that come with airband: every coding tool's, in the order the tools are listed, each tool's
+/// preferred one first.
+fn built_in() -> impl Iterator<Item = &'static Launcher> {
+    airband_core::catalog::current().tools.iter().flat_map(|t| t.launchers.iter())
+}
+/// The settings as read from the file, made whole: his own launchers, and the ones that come with airband. One
+/// of his under a name airband uses is not read (the copies older versions wrote into the file were these).
+fn with_built_in(own: BTreeMap<String, Launcher>) -> BTreeMap<String, Launcher> {
+    let mut all: BTreeMap<String, Launcher> = own.into_iter().filter(|(name, _)| !built_in().any(|b| b.name == *name)).map(|(name, l)| (name.clone(), Launcher { name, ..l })).collect();
+    all.extend(built_in().map(|l| (l.name.clone(), l.clone())));
+    all
+}
+fn none_his_own(all: &BTreeMap<String, Launcher>) -> bool {
+    all.keys().all(|name| built_in().any(|b| b.name == *name))
+}
+fn his_own<S: serde::Serializer>(all: &BTreeMap<String, Launcher>, to: S) -> Result<S::Ok, S::Error> {
+    // the name is the key it is written under
+    to.collect_map(all.iter().filter(|(name, _)| !built_in().any(|b| b.name == **name)).map(|(name, l)| (name, Launcher { name: String::new(), ..l.clone() })))
 }
 
-/// How a held agent is started and spoken to. Each list is arguments, with `{id}` the session's id.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Held {
-    /// Arguments that start a new session under an id the tower chose.
-    pub fresh: Vec<String>,
-    /// Arguments that carry on the session with that id.
-    pub resume: Vec<String>,
-    /// One line of input for one message of his, with `{text}` where his words go as a JSON string.
-    pub line: String,
-    /// One line of input that stops what it is doing, with `{id}` a new id for the request. Without one, an
-    /// agent started this way cannot be stopped from a radio.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stop: Option<String>,
-}
-
+/// The launcher a new agent is started with until he sets another: the first that the tower holds itself.
 fn default_launcher() -> String {
-    "claude-held".into()
+    built_in().find(|l| l.held.is_some()).or_else(|| built_in().next()).map(|l| l.name.clone()).unwrap_or_default()
 }
-/// The launcher every tower used before it could hold an agent itself.
-const LAUNCHER_HANDED_OFF: &str = "claude-code";
-/// Claude Code in a detached tmux session: an ordinary interactive session he can attach to at his desk
-/// (`tmux attach -t <session>`), which reports in through the same hooks as any other.
-fn default_launchers() -> BTreeMap<String, Launcher> {
-    let list = |words: &[&str]| words.iter().map(|s| s.to_string()).collect::<Vec<String>>();
-    let claude = Launcher {
-        harness: "claude-code".into(),
-        argv: list(&["tmux", "new-session", "-d", "-s", "{session}", "-c", "{cwd}", "claude", "{options}", "{task}"]),
-        models: ["fable", "opus", "sonnet", "haiku"].iter().map(|m| (m.to_string(), m.to_string())).collect(),
-        efforts: list(&["low", "medium", "high", "xhigh", "max"]),
-        with_model: list(&["--model", "{model}"]),
-        with_effort: list(&["--effort", "{effort}"]),
-        held: None,
-    };
-    // Claude Code run by the tower itself, the way its Agent SDK runs it: one process that takes his messages a
-    // line at a time. What he says is his own turn there, and it reports through the same hooks as any other.
-    let held = Launcher {
-        argv: list(&["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "{options}"]),
-        held: Some(Held { fresh: list(&["--session-id", "{id}"]), resume: list(&["--resume", "{id}"]), line: r#"{"type":"user","message":{"role":"user","content":{text}}}"#.into(), stop: Some(r#"{"type":"control_request","request_id":"{id}","request":{"subtype":"interrupt"}}"#.into()) }),
-        ..claude.clone()
-    };
-    // Agents that speak the Agent Client Protocol are run by `airband acp`, one program for all of them: a row
-    // here is the agent's name and the command that starts it speaking that protocol.
-    let by_acp = |harness: &str, program: &[&str]| Launcher {
-        harness: harness.into(),
-        argv: list(&["{airband}", "acp", harness, "{id}"]).into_iter().chain(list(program)).collect(),
-        models: BTreeMap::new(),
-        efforts: Vec::new(),
-        with_model: Vec::new(),
-        with_effort: Vec::new(),
-        held: Some(Held { fresh: Vec::new(), resume: list(&["--carry-on"]), line: r#"{"say":{text}}"#.into(), stop: Some(r#"{"stop":"{id}"}"#.into()) }),
-    };
-    BTreeMap::from([
-        (LAUNCHER_HANDED_OFF.to_string(), claude),
-        (default_launcher(), held),
-        ("opencode".to_string(), by_acp("opencode", &["opencode", "acp"])),
-        ("codex".to_string(), by_acp("codex", &["npx", "-y", "@agentclientprotocol/codex-acp@2.8.0"])),
-    ])
-}
-/// The launcher every tower had before a model could be asked for. One still set to exactly this is brought up
-/// to date; one he has changed is his and is left alone.
-const LAUNCHER_BEFORE_MODELS: &[&str] = &["tmux", "new-session", "-d", "-s", "{session}", "-c", "{cwd}", "claude", "{task}"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredKey {
@@ -180,14 +120,17 @@ pub struct StoredKey {
 }
 
 impl Config {
-    /// The launcher for a new agent, or to carry one on. With no harness asked for, the one set as usual.
-    /// For a harness, the usual one if it starts that, else one that runs it itself, else any that starts it.
+    /// The launcher for a new agent, or to carry one on. With no tool asked for, the one set as usual. For a
+    /// tool: the usual one if it starts that tool; else the first of his own that does; else the first in
+    /// that tool's own row. Nothing when no launcher starts that tool.
     pub fn launcher_for(&self, harness: Option<&str>) -> Option<(&String, &Launcher)> {
         let usual = self.launchers.get_key_value(&self.launcher);
-        match harness {
-            None => usual,
-            Some(h) => usual.filter(|(_, l)| l.harness == h).or_else(|| self.launchers.iter().find(|(_, l)| l.harness == h && l.held.is_some())).or_else(|| self.launchers.iter().find(|(_, l)| l.harness == h)),
-        }
+        let Some(h) = harness else { return usual };
+        let named = |name: &String| self.launchers.get_key_value(name);
+        usual
+            .filter(|(_, l)| l.harness == h)
+            .or_else(|| self.launchers.iter().find(|(name, l)| l.harness == h && !built_in().any(|b| b.name == **name)))
+            .or_else(|| built_in().find(|l| l.harness == h).and_then(|l| named(&l.name)))
     }
     /// The harnesses a new agent can be started with, the usual one first.
     pub fn tools(&self) -> Vec<String> {
@@ -328,7 +271,9 @@ fn parse(text: &str) -> Result<Config, String> {
     if keyless().is_none() {
         fill_keys(&mut doc)?;
     }
-    serde_json::from_value(doc).map_err(|e| e.to_string())
+    let mut cfg: Config = serde_json::from_value(doc).map_err(|e| e.to_string())?;
+    cfg.launchers = with_built_in(std::mem::take(&mut cfg.launchers));
+    Ok(cfg)
 }
 
 /// The file's text for these settings. When the keys are kept in the keychain (`lock`, or the file as it is
@@ -383,7 +328,7 @@ pub fn load() -> Config {
     let existing = fs::read_to_string(&path).ok();
     let mut cfg: Config = match existing.as_deref().map(parse) {
         Some(Ok(cfg)) => cfg,
-        None => serde_json::from_str("{}").unwrap(),
+        None => parse("{}").unwrap(),
         // A config that cannot be read is never replaced: it holds the token, the pairings and the keys. A typo,
         // or a setting written by a newer build, must cost nothing but this message.
         Some(Err(e)) => {
@@ -394,36 +339,6 @@ pub fn load() -> Config {
     let argv_is = |u: &Use, usual: &[&str]| u.kind == "command" && u.set.get("argv").and_then(|a| a.as_array()).is_some_and(|a| a.iter().map(|v| v.as_str().unwrap_or_default()).eq(usual.iter().copied()));
     if argv_is(&cfg.summarizer, &HEAVY) || argv_is(&cfg.summarizer, match crate::providers::provider("claude").and_then(|p| p.offers.first()).map(|o| o.by) { Some(crate::providers::By::Command(usual)) => usual, _ => &[] }) {
         cfg.summarizer = default_summarizer();
-    }
-    if cfg.launchers.get(&default_launcher()).is_some_and(|l| l.models.is_empty() && l.argv.iter().map(String::as_str).eq(LAUNCHER_BEFORE_MODELS.iter().copied())) {
-        cfg.launchers.extend(default_launchers());
-    }
-    // launchers that came with a later version than these settings were written by are added; his own are left
-    for (name, launcher) in default_launchers() {
-        if name != default_launcher() && name != LAUNCHER_HANDED_OFF {
-            cfg.launchers.entry(name).or_insert(launcher);
-        }
-    }
-    // a tower set up before it could hold agents itself gets that launcher, and uses it if it was on the old default
-    if !cfg.launchers.contains_key(&default_launcher()) {
-        if let Some(held) = default_launchers().remove(&default_launcher()) {
-            cfg.launchers.insert(default_launcher(), held);
-        }
-        if cfg.launcher == LAUNCHER_HANDED_OFF {
-            cfg.launcher = default_launcher();
-        }
-    }
-    // the two that came with the tower, from before a launcher said what it starts
-    for name in [LAUNCHER_HANDED_OFF.to_string(), default_launcher()] {
-        if let Some(l) = cfg.launchers.get_mut(&name).filter(|l| l.harness.is_empty()) {
-            l.harness = "claude-code".into();
-        }
-    }
-    // the held launcher as first shipped could not stop its agent: one still exactly that gets the line that does
-    if let (Some(mine), Some(now)) = (cfg.launchers.get_mut(&default_launcher()).and_then(|l| l.held.as_mut()), default_launchers().remove(&default_launcher()).and_then(|l| l.held)) {
-        if mine.stop.is_none() && mine.line == now.line {
-            mine.stop = now.stop;
-        }
     }
     // a key given before keys had names is kept under its provider's name, so it can be used again and shown
     // (by name only) in `airband keys`

@@ -43,6 +43,10 @@ pub struct Tool {
     pub id: &'static str,
     pub name: &'static str,
     pub maker: &'static str,
+    /// How the tower starts its agents, the one to prefer first. Each names a program that is run, so these
+    /// are always the ones this build came with: a copy fetched later can change what a tool is called, and
+    /// never what is run for it.
+    pub launchers: &'static [crate::tools::Launcher],
 }
 
 /// A model that runs on the phone itself.
@@ -101,6 +105,12 @@ pub fn accept(document: &[u8], signature: &str) -> Result<bool, String> {
             offers.retain(|o| o["by"].get("command").is_none());
         }
     }
+    // How a coding tool is started is a program to run, and is this build's own for every tool it knows. What
+    // a later copy says about that is not read at all: a tool new to this build comes with no way to start it.
+    for t in doc["tools"].as_array_mut().into_iter().flatten() {
+        let own = built.tools.iter().find(|b| Some(b.id) == t["id"].as_str()).map(|b| b.launchers).unwrap_or_default();
+        t["launchers"] = serde_json::to_value(own).map_err(|e| e.to_string())?;
+    }
     let newer = read(&doc.to_string())?;
     if newer.rev <= current().rev {
         return Ok(false);
@@ -140,6 +150,12 @@ fn allowed(newer: &Catalog, built: &Catalog) -> Result<(), String> {
         }
         if known.is_some_and(|b| b.key != p.key) {
             return Err(format!("the catalogue would change whether {} takes a key", p.id));
+        }
+    }
+    // the same for how a coding tool is started: only what this build came with
+    for t in newer.tools {
+        if t.launchers != built.tools.iter().find(|b| b.id == t.id).map(|b| b.launchers).unwrap_or_default() {
+            return Err(format!("the catalogue would change the program run to start {}", t.id));
         }
     }
     let plain = |name: &str| !name.is_empty() && !name.starts_with('.') && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.' || b == b'_');
@@ -195,6 +211,8 @@ struct ToolRow {
     name: String,
     #[serde(default)]
     maker: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    launchers: Vec<crate::tools::Launcher>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -362,7 +380,15 @@ fn read(text: &str) -> Result<Catalog, String> {
             credit: keep(m.credit),
         })
         .collect();
-    let tools = doc.tools.into_iter().map(|t| Tool { id: keep(t.id), name: keep(t.name), maker: keep(t.maker) }).collect();
+    let tools = doc
+        .tools
+        .into_iter()
+        .map(|t| {
+            // a launcher in a tool's row starts that tool
+            let launchers = t.launchers.into_iter().map(|l| crate::tools::Launcher { harness: t.id.clone(), ..l }).collect();
+            Tool { id: keep(t.id), name: keep(t.name), maker: keep(t.maker), launchers: keep_all(launchers) }
+        })
+        .collect();
     Ok(Catalog { rev: doc.rev, providers: keep_all(providers), tools: keep_all(tools), models: keep_all(models) })
 }
 
@@ -422,6 +448,24 @@ mod tests {
         assert!(with(&|d| d["models"][0]["kind"] = "..".into()).is_err());
         assert!(with(&|d| d["models"][0]["files"][0][0] = "../../elsewhere".into()).is_err());
         assert!(with(&|d| d["models"][0]["base"] = "https://elsewhere.example/models/x".into()).is_err());
+    }
+
+    #[test]
+    fn a_later_copy_cannot_change_how_a_coding_tool_is_started() {
+        let built = read(BUILT_IN).unwrap();
+        let with = |edit: &dyn Fn(&mut Value)| {
+            let mut doc: Value = serde_json::from_str(BUILT_IN).unwrap();
+            edit(&mut doc);
+            read(&doc.to_string()).and_then(|c| allowed(&c, &built))
+        };
+        // every tool this build knows can be started, each launcher starting its own tool
+        assert!(built.tools.iter().all(|t| !t.launchers.is_empty() && t.launchers.iter().all(|l| l.harness == t.id && !l.name.is_empty())));
+        // what it is called may change; the program may not, and a tool new to this build brings none
+        assert!(with(&|d| d["tools"][0]["name"] = "Claude".into()).is_ok());
+        assert!(with(&|d| d["tools"][1]["launchers"][0]["held"]["program"] = serde_json::json!(["sh", "-c", "anything"])).is_err());
+        assert!(with(&|d| d["tools"][0]["launchers"][0]["argv"][0] = "other".into()).is_err());
+        assert!(with(&|d| d["tools"].as_array_mut().unwrap().push(serde_json::json!({ "id": "new", "name": "New", "launchers": [{ "name": "new", "held": { "by": "acp", "program": ["x"] } }] }))).is_err());
+        assert!(with(&|d| d["tools"].as_array_mut().unwrap().push(serde_json::json!({ "id": "new", "name": "New" }))).is_ok());
     }
 
     #[test]
