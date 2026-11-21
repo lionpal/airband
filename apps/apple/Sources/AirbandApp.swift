@@ -1808,11 +1808,19 @@ struct NewAgentButton: View {
 
     var body: some View {
         let computers = model.computers(for: room)
+        let tools = model.usedTools
         Group {
-            if computers.count > 1 {
+            if computers.count > 1 || tools.count > 1 {
+                // one tap to say which tool and where: a row for each pair that can be meant
                 Menu {
-                    ForEach(computers, id: \.self) { name in
-                        Button(name == computers.first ? "On \(name) (where most of them are)" : "On \(name)") { model.newAgent(in: room, on: name) }
+                    ForEach(tools.isEmpty ? [nil] : tools.map(Optional.some), id: \.?.id) { tool in
+                        ForEach(computers.isEmpty ? [nil] : computers.map(Optional.some), id: \.self) { name in
+                            Button {
+                                model.newAgent(in: room, on: name, tool: tool)
+                            } label: {
+                                Text([tools.count > 1 ? tool?.name : nil, computers.count > 1 ? name.map { "on \($0)" } : nil].compactMap { $0 }.joined(separator: " "))
+                            }
+                        }
                     }
                 } label: { plus }
             } else {

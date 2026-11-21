@@ -231,6 +231,9 @@ pub struct NewProject {
     pub folder: String,
     #[serde(default)]
     pub make: bool,
+    /// The coding tool its first agent is, by id; the tower's usual one when left out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
 }
 
 /// `POST takeover`: have the tower take over an agent he started in a terminal of his own. That terminal's
