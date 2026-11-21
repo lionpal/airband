@@ -30,11 +30,7 @@ const ACCOUNT: &str = "keys";
 
 /// Every place in the settings that holds a secret, with a name for it that does not change.
 fn each(doc: &mut Value, f: &mut dyn FnMut(String, &mut Value)) {
-    // "token" is no longer taken out, but a file from when it was still has its mark to fill
-    for name in ["token", "radio_token", "relay_admission"] {
-        if name == "token" && doc.get(name).and_then(Value::as_str) != Some(MARK) {
-            continue;
-        }
+    for name in ["radio_token", "relay_admission"] {
         if let Some(v) = doc.get_mut(name).filter(|v| v.is_string()) {
             f(name.to_string(), v);
         }
@@ -369,12 +365,5 @@ mod tests {
         let mut doc = whole.clone();
         seal(&mut doc, &Map::new());
         assert!(open(&mut doc, &short).unwrap_err().contains("pairing:pad"));
-        // a file from when the local token was taken out too is still opened, and then keeps it in the file
-        let mut old = json!({"token": MARK, "radio_token": MARK});
-        let had: Map<String, Value> = serde_json::from_value(json!({"token": "local", "radio_token": "t2"})).unwrap();
-        open(&mut old, &had).unwrap();
-        assert_eq!(old, json!({"token": "local", "radio_token": "t2"}));
-        assert_eq!(seal(&mut old, &had).len(), 1);
-        assert_eq!(old["token"], "local");
     }
 }

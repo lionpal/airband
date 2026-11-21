@@ -184,15 +184,6 @@ pub fn deliver(name: &str, session: &str, words: &str) -> Result<(), String> {
     harness(name).ok_or_else(|| format!("there is no adapter for \"{name}\""))?.deliver(session, words)
 }
 
-/// `airband deliver <harness> <session>`: the same, with his words on standard input. What an agent that
-/// checked in under an earlier version is still reached by.
-pub fn deliver_command(args: &[String]) -> Result<(), String> {
-    let (Some(name), Some(session)) = (args.first(), args.get(1)) else { return Err(format!("usage: airband deliver <{}> <session>", names().join("|"))) };
-    let mut words = String::new();
-    std::io::stdin().read_to_string(&mut words).map_err(|e| e.to_string())?;
-    deliver(name, session, words.trim())
-}
-
 /// Every account of every harness that has them.
 pub fn accounts() -> Accounts {
     let (mut all, mut notes) = (Vec::new(), Vec::new());
@@ -225,10 +216,6 @@ pub fn accounts_command(cfg: &config::Config, args: &[String]) -> Result<(), Str
         }
         .ok()?;
         let text = res.body_mut().read_to_string().ok()?;
-        // a tower from before accounts existed: do it here instead
-        if res.status() == 404 {
-            return None;
-        }
         let answer: Value = serde_json::from_str(&text).unwrap_or_default();
         Some(match (res.status().as_u16(), answer["error"].as_str()) {
             (200, Some(why)) => Err(why.to_string()),

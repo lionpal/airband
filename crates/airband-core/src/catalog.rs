@@ -15,19 +15,14 @@
 //! job is done, and a row names one ([`By`]). Every row that reads is kept here; the program that lists or
 //! calls leaves out a row naming an interface it has no code for, so an old build reads a new catalogue and
 //! shows what it can use.
-//!
-//! The document has had two forms. Builds from before the interfaces were named read form 1, at
-//! `catalog/1/`; it is still written for them from the same rows (`crate::catalog_v1`). This is form 2.
 use crate::providers::{Job, Offer, Provider};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::RwLock;
 
-/// The form of the document this build reads.
-pub const FORM: u64 = 2;
-/// Where the signed copy is kept, by its form.
-pub const ADDRESS: &str = "https://airband.dev/catalog/2/catalog.json";
+/// Where the signed copy is kept.
+pub const ADDRESS: &str = "https://airband.dev/catalog/catalog.json";
 
 /// The public half of the key that signs the hosted copy.
 const SIGNED_BY: [u8; 32] = include!("catalog.key.in");
@@ -267,7 +262,7 @@ fn weigh_against(text: &str, now: u64, have: &Catalog, built: &Catalog) -> Resul
     // stays. What he has chosen keeps working.
     for known in &built.providers {
         if !newer.providers.iter().any(|p| p.id == known.id) && !newer.retired.contains(&known.id) {
-            newer.left_out.push(format!("{}: not in this copy in a form this build reads; kept as compiled in", known.id));
+            newer.left_out.push(format!("{}: not in this copy in a shape this build reads; kept as compiled in", known.id));
             newer.providers.push(known.clone());
         }
     }
@@ -393,8 +388,6 @@ pub fn check(c: &Catalog) -> Result<(), String> {
 
 #[derive(Deserialize)]
 struct Document {
-    #[serde(default)]
-    form: u64,
     rev: u64,
     #[serde(default)]
     hash: String,
@@ -463,9 +456,6 @@ include!("catalog_hash.rs");
 
 fn read(text: &str) -> Result<Catalog, String> {
     let doc: Document = serde_json::from_str(text).map_err(|e| format!("the catalogue does not read: {e}"))?;
-    if doc.form != FORM {
-        return Err(format!("this is form {} of the catalogue, and this build reads form {FORM}", doc.form));
-    }
     let mut left_out = Vec::new();
     let mut providers = Vec::new();
     for row in doc.providers {
@@ -556,8 +546,8 @@ mod tests {
     #[test]
     fn a_row_this_build_cannot_read_is_left_out_and_said_so_and_the_rest_is_kept() {
         let c = read(
-            r#"{"form":2,"rev":9,"providers":[
-            {"id":"x","name":"X","offers":[{"job":"voice","by":{"interface":"something-new"},"label":"New"},{"job":"voice","by":"speech","label":"Old shape"},{"job":"ears","by":{"interface":"transcribe"},"label":"Known","preferred":"yes"}]},
+            r#"{"rev":9,"providers":[
+            {"id":"x","name":"X","offers":[{"job":"voice","by":{"interface":"something-new"},"label":"New"},{"job":"voice","by":"speech","label":"No interface named"},{"job":"ears","by":{"interface":"transcribe"},"label":"Known","preferred":"yes"}]},
             {"id":"y","name":"Y","key":"a new shape of key","offers":[]},
             {"id":"z","name":"Z","offers":[{"job":"summary","by":{"interface":"chat"},"label":"Reads"}]}],
             "models":[{"kind":"m","name":"M"}]}"#,
@@ -568,8 +558,6 @@ mod tests {
         // two offers and one provider and one model did not read, and each is named
         assert_eq!(c.left_out.len(), 4, "{:?}", c.left_out);
         assert!(c.left_out[0].starts_with("x: an offer") && c.left_out[2].starts_with("y:") && c.left_out[3].starts_with("m:"));
-        // another form of the document is not this build's to read
-        assert!(read(r#"{"rev":9,"providers":[]}"#).is_err() && read(r#"{"form":3,"rev":9,"providers":[]}"#).is_err());
     }
 
     #[test]

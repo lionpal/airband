@@ -190,7 +190,7 @@ pub fn keys(args: &[String]) -> Result<(), String> {
     }
     match args.first().map(String::as_str) {
         None => {
-            println!("{}", if config::locked() { format!("Kept encrypted, {}. The settings file holds none.", crate::vault::place()) } else { "Still in the settings file from an older version. Move them:  airband keys lock".to_string() });
+            println!("{}", if config::locked() { format!("Kept encrypted, {}. The settings file holds none.", crate::vault::place()) } else { "Still in the settings file. Move them:  airband keys lock".to_string() });
             if cfg.keys.is_empty() {
                 println!("No keys yet. Add them with:  airband setup");
             }

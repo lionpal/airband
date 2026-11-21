@@ -2,7 +2,7 @@
 # The checks, run on this computer: what CI ran on every push, without spending build minutes on it.
 #
 #   scripts/check.sh           the unit tests of every crate (under a minute once built)
-#   scripts/check.sh --full    those, then the three end-to-end suites: the relay and its queue (22 checks), agents
+#   scripts/check.sh --full    those, then the three end-to-end suites: the relay and its queue (20 checks), agents
 #                              the tower runs itself (54), and the whole tower with real model calls (125, a few
 #                              minutes, and it needs `claude` signed in)
 #

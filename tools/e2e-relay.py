@@ -67,7 +67,7 @@ def kept_bytes():
     if DYNAMO: return b"".join(base64.b64decode(i["sealed"]["B"]) for i in held_items(keys["channel"], "i#"))
     return b"".join(open(os.path.join(dp, f), "rb").read() for dp, _, fs in os.walk(os.path.join(data, "held")) for f in fs)
 def post(path, token=None, ident=None, channel=None, body=b"not something the tower's key opens", timeout=10):
-    """A request to the relay as a radio makes it, by hand: with a token or, as an older phone, without."""
+    """A request to the relay as a radio makes it, by hand: with a token or without."""
     headers = {"content-type": "application/octet-stream"}
     if ident is not None: headers["x-airband-id"] = ident
     if token: headers["authorization"] = f"Bearer {token}"
@@ -101,17 +101,12 @@ try:
     time.sleep(11)  # the tower picks a new pairing up within ten seconds
     subprocess.run([BIN, "report", "--id", "a1", "--harness", "script", "--cwd", project, "--deliver-command", f"sh -c cat>>{got}", "checkin"], env=tower_env)
 
-    print("Before the channel has seen its radio's token")
-    check("a message without a token is taken, as an older phone sends it", leave(os.urandom(8).hex()) == 202)
-    check("but not one with a wrong token", leave(os.urandom(8).hex(), stranger["radio"]) == 401)
-    time.sleep(5)  # the tower takes the one that was kept and finds its key does not open it
-
     print("With the computer there")
     check("what he says goes through the relay to the agent", "Delivered." in send("the first thing") and "the first thing" in received(), received()[-200:])
     logged = lambda name: open(os.path.join(work, name)).read()
     check("the tower writes one line for it: how it came, what became of it and how long it took", " by the relay: answered in " in logged("tower.log"), logged("tower.log")[-400:])
 
-    print("Now the radio has shown its token")
+    print("Only the channel's own radio")
     refused = post("queue", None, os.urandom(8).hex())
     check("a message without a token is refused", refused[0] == 401, refused)
     check("and one with a wrong token", post("queue", "0" * 64, os.urandom(8).hex()) == refused)

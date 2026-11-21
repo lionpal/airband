@@ -19,7 +19,7 @@ work = tempfile.mkdtemp(prefix="airband-soak-")
 home, projects = os.path.join(work, "home"), os.path.join(work, "code")
 for d in (os.path.join(home, ".airband"), *(os.path.join(projects, p) for p in ("catalog", "orders"))):
     os.makedirs(d)
-json.dump({"port": PORT, "token": OWN, "radio_token": RADIO, "name": "Charles", "station": "soak", "summarizer": {"kind": "none"}}, open(os.path.join(home, ".airband", "config.json"), "w"))
+json.dump({"port": PORT, "token": OWN, "radio_token": RADIO, "relay": None, "name": "Charles", "station": "soak", "summarizer": {"kind": "none"}}, open(os.path.join(home, ".airband", "config.json"), "w"))
 env = dict(os.environ, HOME=home)
 
 def http(method, path, body=None, token=RADIO):

@@ -7,13 +7,13 @@ pub(super) async fn deliver(app: &Arc<App>, how: &Deliver, agent_id: &str, conte
     let run = async {
         match how {
             Deliver::Held => held::tell(app, agent_id, content).await,
-            Deliver::ClaudeCodeInbox { socket, token } => {
+            Deliver::Socket { path, token } => {
                 let mut lines = String::new();
                 if let Some(t) = token {
                     lines.push_str(&format!("{}\n", json!({ "type": "auth", "token": t })));
                 }
                 lines.push_str(&format!("{}\n", json!({ "type": "user", "message": { "role": "user", "content": content } })));
-                inbox_write(socket, lines.as_bytes()).await
+                inbox_write(path, lines.as_bytes()).await
             }
             Deliver::Command { argv } => {
                 let (program, args) = argv.split_first().ok_or("its delivery command is empty")?;
@@ -32,7 +32,7 @@ pub(super) async fn deliver(app: &Arc<App>, how: &Deliver, agent_id: &str, conte
                 let status = child.wait().await.map_err(|e| e.to_string())?;
                 if status.success() { Ok(()) } else { Err(format!("{program} exited with {status}")) }
             }
-            Deliver::Tmux { target } => {
+            Deliver::Keys { tmux: target } => {
                 // a newline typed into a terminal would send the message early
                 let line = content.split_whitespace().collect::<Vec<_>>().join(" ");
                 for args in [vec!["send-keys", "-t", target, "-l", "--", &line], vec!["send-keys", "-t", target, "Enter"]] {

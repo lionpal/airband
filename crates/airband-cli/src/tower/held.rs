@@ -62,28 +62,17 @@ async fn say(id: &str, line: &[u8]) -> Result<String, String> {
     Ok(answer)
 }
 
-/// Where a held agent's holder has got to. `Ok(None)` is a holder started by a version before this one: it
-/// answers nothing, and takes raw input for its program instead of what `hold::Tell` says.
+/// Where a held agent's holder has got to.
 #[cfg(unix)]
-async fn status(id: &str) -> Result<Option<crate::hold::State>, String> {
+async fn status(id: &str) -> Result<crate::hold::State, String> {
     let answer = say(id, format!("{}\n", crate::hold::STATUS).as_bytes()).await?;
-    Ok(serde_json::from_str(answer.trim()).ok())
+    serde_json::from_str(answer.trim()).map_err(|e| format!("its holder's answer does not read: {e}"))
 }
 
-/// Tell a held agent's holder something. A holder from an earlier version is given what that version's
-/// took: the line its program reads, written here. (This goes when no such holder can still be running.)
+/// Tell a held agent's holder something.
 #[cfg(unix)]
-async fn tell_holder(app: &Arc<App>, kept: &Kept, tell: crate::hold::Tell) -> Result<(), String> {
-    use crate::hold::Tell;
-    let line = match (status(&kept.id).await?, &tell, app.cfg.launchers.get(&kept.launcher).and_then(|l| l.held.as_ref())) {
-        (Some(_), _, _) => format!("{}\n", tell.line()).into_bytes(),
-        (None, Tell::End, _) => crate::hold::END_BEFORE.to_vec(),
-        (None, Tell::Say(text), Some(config::Held::Lines { line, .. })) => format!("{}\n", line.replace("{text}", &Value::String(text.clone()).to_string())).into_bytes(),
-        (None, Tell::Stop, Some(config::Held::Lines { stop: Some(stop), .. })) => format!("{}\n", stop.replace("{id}", &config::random_hex(8))).into_bytes(),
-        (None, _, Some(config::Held::Acp { .. })) => format!("{}\n", tell.line()).into_bytes(),
-        (None, _, _) => return Err("its launcher is no longer configured".into()),
-    };
-    say(&kept.id, &line).await.map(|_| ())
+async fn tell_holder(kept: &Kept, tell: crate::hold::Tell) -> Result<(), String> {
+    say(&kept.id, format!("{}\n", tell.line()).as_bytes()).await.map(|_| ())
 }
 
 /// A session id of the usual shape, made here so the agent is known by it before it has said a word.
@@ -176,8 +165,8 @@ async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Option<String
     let mut listening = false;
     while Instant::now() < until {
         match status(&kept.id).await {
-            Ok(Some(crate::hold::State::Ready { session })) => return Ok(session),
-            Ok(Some(crate::hold::State::Failed { why })) => return Err(why),
+            Ok(crate::hold::State::Ready { session }) => return Ok(session),
+            Ok(crate::hold::State::Failed { why }) => return Err(why),
             Ok(_) => listening = true,
             // its holder has gone again without a word: the program could not be started at all
             Err(_) if listening => return Err(format!("{called} did not start")),
@@ -212,12 +201,12 @@ pub(super) async fn tell(app: &Arc<App>, id: &str, text: &str) -> Result<(), Str
     #[cfg(unix)]
     {
         let words = || crate::hold::Tell::Say(text.to_string());
-        if tell_holder(app, &kept, words()).await.is_ok() {
+        if tell_holder(&kept, words()).await.is_ok() {
             return Ok(());
         }
         // its holder has gone: carry the session on, then say it
         revive(app, &kept).await?;
-        tell_holder(app, &kept, words()).await
+        tell_holder(&kept, words()).await
     }
     #[cfg(not(unix))]
     {
@@ -281,7 +270,7 @@ pub(super) async fn stop(app: &Arc<App>, id: &str) -> Result<(), String> {
         return Err("It is not doing anything.".into());
     }
     #[cfg(unix)]
-    tell_holder(app, &kept, crate::hold::Tell::Stop).await.map_err(|_| "Its process has gone.".to_string())?;
+    tell_holder(&kept, crate::hold::Tell::Stop).await.map_err(|_| "Its process has gone.".to_string())?;
     #[cfg(not(unix))]
     let _ = kept;
     log(format!("stopped {}", session.callsign.text()));
@@ -375,7 +364,7 @@ pub(super) async fn end(app: &Arc<App>, id: &str) -> bool {
     let kept = app.inner.lock().unwrap().held.iter().find(|k| k.id == id).cloned();
     #[cfg(unix)]
     let was = match &kept {
-        Some(kept) => tell_holder(app, kept, crate::hold::Tell::End).await.is_ok(),
+        Some(kept) => tell_holder(kept, crate::hold::Tell::End).await.is_ok(),
         None => false,
     };
     #[cfg(not(unix))]
