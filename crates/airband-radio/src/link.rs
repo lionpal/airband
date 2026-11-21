@@ -476,7 +476,7 @@ impl Link {
 
     /// One try at sending something he typed, with each way it was tried and how that went.
     pub(crate) fn utterance_once(&self, id: &str, text: &str, re: Option<String>, scope: Option<String>, label: Option<String>, attachments: Vec<String>, others: &str) -> (Result<Reply, LinkError>, Vec<Step>) {
-        let u = Utterance { text: text.to_string(), id: Some(id.to_string()), re, scope, label, attachments, others: serde_json::from_str(others).unwrap_or_default(), again: true };
+        let u = Utterance { text: text.to_string(), id: Some(id.to_string()), re, scope, label, attachments, others: serde_json::from_str(others).unwrap_or_default() };
         let mut steps = Vec::new();
         (self.say_or_leave(&u, &mut steps), steps)
     }
@@ -485,7 +485,7 @@ impl Link {
     pub(crate) fn utterance(&self, text: &str, re: Option<String>, scope: Option<String>) -> Result<Reply, LinkError> {
         // what he has attached goes with what he says; if this fails for good they are his to send again
         let attachments = self.take_armed();
-        let u = Utterance { text: text.to_string(), id: Some(random_hex(12)), re, scope, label: None, attachments: attachments.clone(), others: Vec::new(), again: true };
+        let u = Utterance { text: text.to_string(), id: Some(random_hex(12)), re, scope, label: None, attachments: attachments.clone(), others: Vec::new() };
         let mut last = LinkError::Unreachable(Way::Relay);
         for attempt in 0..3 {
             if attempt > 0 {

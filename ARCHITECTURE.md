@@ -141,7 +141,7 @@ Every outside service, and every model that runs on a phone, is one small file i
 and `catalog/models/<kind>.json` (beside them: one per coding tool, one per program the tower fetches to run a
 model, and the words a recogniser should expect). Building `airband-core` puts them together into one
 document that is compiled into the tower and the app (`crates/airband-core/src/catalog.rs`), so both know all
-of it with no network. A newer copy is fetched from `airband.dev/catalog/2/` when he opens a chooser, and by
+of it with no network. A newer copy is fetched from `airband.dev/catalog/` when he opens a chooser, and by
 the tower twice a day (one piece of code for both, `airband-radio/src/models.rs`). So a new voice, model id or
 price needs `scripts/publish-catalog.sh` and no new build.
 
@@ -175,11 +175,6 @@ is done, looked up by that name: `READERS` in `tower/judge.rs`, `VOICES` in `air
 interfaces. A program lists and calls only the offers it has the code for, so an old build reads a new
 catalogue and shows what it can use. An offer can also say what its interface must be able to do (`needs`); a
 build whose interface cannot leaves it out, where it would otherwise call the service the old way.
-
-Builds from before the interfaces were named (the app up to TestFlight build 83, the tower up to 0.2.0) read
-an older form of the document at `airband.dev/catalog/1/`. It is still written for them from the same rows
-(`crates/airband-core/src/catalog_v1.rs`), holds what they already knew with today's prices, voices and model
-ids, and is checked before it is published the way they would check it. That file goes when those builds do.
 
 A provider's row says which jobs
 the service does (reading, speaking, listening), through which interface, and what it has to be told, and what

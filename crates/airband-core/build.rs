@@ -20,7 +20,7 @@ fn main() {
     let rev = stamped.lines().next().unwrap_or_default().trim();
     let phrases = std::fs::read_to_string(catalog.join("phrases.json")).expect("catalog/phrases.json");
     let document = format!(
-        "{{\"form\":2,\"rev\":{rev},\"providers\":[\n{}\n],\"models\":[\n{}\n],\"tools\":[\n{}\n],\"servers\":[\n{}\n],\"phrases\":{}}}\n",
+        "{{\"rev\":{rev},\"providers\":[\n{}\n],\"models\":[\n{}\n],\"tools\":[\n{}\n],\"servers\":[\n{}\n],\"phrases\":{}}}\n",
         rows(&catalog.join("providers")),
         rows(&catalog.join("models")),
         rows(&catalog.join("tools")),

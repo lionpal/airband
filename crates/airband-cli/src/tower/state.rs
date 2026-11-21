@@ -58,7 +58,7 @@ pub(super) enum Mover {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub(super) enum Aloud {
-    /// Not for reading out: his own words, and lines from before this was kept.
+    /// Not for reading out: his own words.
     #[default]
     No,
     /// To be read out when a radio on a call is free.
@@ -386,10 +386,6 @@ pub(super) struct Permit {
 #[derive(Serialize, Deserialize, Default)]
 pub(crate) struct Saved {
     pub(super) sessions: Vec<Session>,
-    /// From a tower before each line kept its own place in the reading queue: what was unheard then, read once
-    /// to mark those lines, and never written again.
-    #[serde(default, skip_serializing)]
-    pub(super) pending: Vec<Value>,
     #[serde(default)]
     pub(super) projects: BTreeMap<String, String>,
     #[serde(default)]
@@ -515,13 +511,8 @@ impl Inner {
         }
     }
     /// At start. Nothing is with a radio any more. What an agent that is gone was waiting on him for goes; what
-    /// it reported in the last while is still his news. `before` is what a tower from before lines kept their
-    /// own place had unheard: those lines are marked once.
-    pub(super) fn settle_reading(&mut self, before: &[Value]) {
-        let marked: Vec<String> = before.iter().filter_map(|p| p["id"].as_str()).filter(|id| self.log.iter().any(|e| e.id == *id && e.aloud == Aloud::No)).map(String::from).collect();
-        for id in marked {
-            self.set_aloud(&id, Aloud::Waiting);
-        }
+    /// it reported in the last while is still his news.
+    pub(super) fn settle_reading(&mut self) {
         let live: HashSet<String> = self.sessions.iter().map(|s| s.agent.id.clone()).collect();
         let recent = now().saturating_sub(STILL_NEWS.as_millis() as u64);
         let unheard: Vec<(String, bool, bool, bool)> = self.unheard().map(|e| (e.id.clone(), e.agent.as_ref().is_some_and(|a| live.contains(a)), e.kind == Some(Kind::Report), e.at >= recent)).collect();
@@ -762,19 +753,11 @@ impl Inner {
         }
     }
     /// At start: no harness is waiting on anything asked before the tower stopped, so every request for leave
-    /// still offering an answer is over. Lines from before requests were marked are known by their two buttons;
-    /// those are only marked and stop offering them.
+    /// still offering an answer is over.
     pub(super) fn close_requests_from_before(&mut self) {
-        let buttons = [permit::ALLOW.to_string(), permit::DENY.to_string()];
-        let open: Vec<(String, bool)> = self.log.iter().filter(|e| !e.options.is_empty() && (e.leave || e.options == buttons)).map(|e| (e.id.clone(), e.leave)).collect();
-        for (id, marked) in open {
-            if marked {
-                self.close_line(&id);
-            } else if let Some(e) = self.log.iter_mut().find(|e| e.id == id) {
-                e.leave = true;
-                e.options.clear();
-                self.touch(&id);
-            }
+        let open: Vec<String> = self.log.iter().filter(|e| e.leave && !e.options.is_empty()).map(|e| e.id.clone()).collect();
+        for id in open {
+            self.close_line(&id);
         }
     }
     /// The line of a request that is over.
@@ -995,18 +978,6 @@ impl Inner {
         [(!waiting.is_empty()).then(|| format!("Waiting on you: {waiting}.")), (!working.is_empty()).then(|| format!("Working: {working}."))].into_iter().flatten().collect::<Vec<_>>().join(" ")
     }
 
-    /// Lines written before ids were kept name their agent only by callsign. Where that callsign is still held
-    /// by the same session, give them its id; the rest stay as history.
-    pub(super) fn adopt_old_lines(&mut self) {
-        let by_name: HashMap<String, String> = self.sessions.iter().map(|s| (s.callsign.text(), s.agent.id.clone())).collect();
-        for e in self.log.iter_mut() {
-            if e.from != "you" && e.agent.is_none() {
-                e.agent = by_name.get(&e.from).cloned();
-            } else if e.from == "you" && e.to_agents.is_empty() && !e.to.is_empty() && e.to.iter().all(|t| by_name.contains_key(t)) {
-                e.to_agents = e.to.iter().map(|t| by_name[t].clone()).collect();
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1098,15 +1069,10 @@ mod tests {
         // what a restart leaves: the line as saved, and no record of anyone waiting
         inner.permits.clear();
         inner.log.iter_mut().for_each(|e| e.permit = None);
-        // and a line saved before requests were marked, known by its two buttons
-        let old = says(&mut inner, "a", Kind::NeedsYou, "Wants to run `ls`. Allow?");
-        inner.log.iter_mut().find(|e| e.id == old).unwrap().options = vec![permit::ALLOW.into(), permit::DENY.into()];
         inner.close_requests_from_before();
-        for id in [&line, &old] {
-            let c = card(&inner, id);
-            assert!(!c.permission && c.options.is_empty(), "{c:?}");
-            assert!(inner.log.iter().any(|e| e.id == *id && e.leave));
-        }
+        let c = card(&inner, &line);
+        assert!(!c.permission && c.options.is_empty(), "{c:?}");
+        assert!(inner.log.iter().any(|e| e.id == line && e.leave));
     }
 
     #[test]
@@ -1307,11 +1273,9 @@ mod tests {
         let question = queued(&mut inner, "b", Kind::NeedsYou, "Send the rest?");
         inner.log.iter_mut().find(|e| e.id == old).unwrap().at = 1;
         inner.set_aloud(&live, Aloud::Handed { radio: "phone".into(), at: 1 });
-        // a line a tower from before kept in its own list
-        let before = says(&mut inner, "a", Kind::Report, "From before.");
         inner.sessions.retain(|s| s.agent.id != "b");
-        inner.settle_reading(&[json!({ "id": before })]);
-        assert_eq!([aloud(&inner, &live), aloud(&inner, &report), aloud(&inner, &before)], [Aloud::Waiting, Aloud::Waiting, Aloud::Waiting]);
+        inner.settle_reading();
+        assert_eq!([aloud(&inner, &live), aloud(&inner, &report)], [Aloud::Waiting, Aloud::Waiting]);
         assert_eq!((aloud(&inner, &old), aloud(&inner, &question)), (dropped(Dropped::Stale), dropped(Dropped::AgentGone)));
     }
 

@@ -87,7 +87,7 @@ fn agent_of(hook: &Value) -> Option<Agent> {
         title: if env("AIRBAND_HELD").is_some() { None } else { session_name(hook) },
         pid: env("CLAUDE_PID").and_then(|p| p.parse().ok()),
         // one the tower started and holds is reached through the input it holds, and no other way
-        deliver: if env("AIRBAND_HELD").is_some() { Some(Deliver::Held) } else { env("CLAUDE_CODE_MESSAGING_SOCKET").map(|s| Deliver::ClaudeCodeInbox { socket: s.trim_start_matches("uds:").to_string(), token: env("CLAUDE_CODE_MESSAGING_TOKEN") }) },
+        deliver: if env("AIRBAND_HELD").is_some() { Some(Deliver::Held) } else { env("CLAUDE_CODE_MESSAGING_SOCKET").map(|s| Deliver::Socket { path: s.trim_start_matches("uds:").to_string(), token: env("CLAUDE_CODE_MESSAGING_TOKEN") }) },
         // where its transcript is, so the tower can ask what it is doing without a hook on every step
         meta: text("transcript_path").map(|t| serde_json::Map::from_iter([("transcript".to_string(), Value::String(t))])).unwrap_or_default(),
     })

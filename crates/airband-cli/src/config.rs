@@ -93,10 +93,9 @@ pub use airband_core::tools::{Held, Launcher};
 fn built_in() -> impl Iterator<Item = &'static Launcher> {
     airband_core::catalog::current().tools.iter().flat_map(|t| t.launchers.iter())
 }
-/// The settings as read from the file, made whole: his own launchers, and the ones that come with airband. One
-/// of his under a name airband uses is not read (the copies older versions wrote into the file were these).
+/// The settings as read from the file, made whole: his own launchers, and the ones that come with airband.
 fn with_built_in(own: BTreeMap<String, Launcher>) -> BTreeMap<String, Launcher> {
-    let mut all: BTreeMap<String, Launcher> = own.into_iter().filter(|(name, _)| !built_in().any(|b| b.name == *name)).map(|(name, l)| (name.clone(), Launcher { name, ..l })).collect();
+    let mut all: BTreeMap<String, Launcher> = own.into_iter().map(|(name, l)| (name.clone(), Launcher { name, ..l })).collect();
     all.extend(built_in().map(|l| (l.name.clone(), l.clone())));
     all
 }
@@ -178,10 +177,6 @@ pub struct PairedRadio {
 fn default_summarizer() -> Summarizer {
     Use::of("claude")
 }
-/// The command that read before a measurement showed what its tool list cost. Settings still holding it, or
-/// the lean one written out in full, are moved to the row that has the lean one.
-const HEAVY: [&str; 8] = ["claude", "-p", "--model", "haiku", "--no-session-persistence", "--strict-mcp-config", "--disallowedTools", "Bash,Edit,Write,Read,Agent,WebFetch,WebSearch"];
-
 /// airband's own relay. It is open to anyone, sees only sealed messages, and limits how much each may ask.
 pub const RELAY: &str = "https://relay.airband.dev";
 fn default_relay() -> Option<String> {
@@ -277,6 +272,10 @@ fn parse(text: &str) -> Result<Config, String> {
     if keyless().is_none() {
         fill_keys(&mut doc)?;
     }
+    // a launcher in the file under a name airband uses is not read at all: that name is airband's own
+    if let Some(his) = doc.get_mut("launchers").and_then(|l| l.as_object_mut()) {
+        his.retain(|name, _| !built_in().any(|b| b.name == *name));
+    }
     let mut cfg: Config = serde_json::from_value(doc).map_err(|e| e.to_string())?;
     cfg.launchers = with_built_in(std::mem::take(&mut cfg.launchers));
     Ok(cfg)
@@ -332,7 +331,7 @@ pub fn load() -> Config {
     let path = dir().join("config.json");
     fs::create_dir_all(dir()).expect("cannot create ~/.airband");
     let existing = fs::read_to_string(&path).ok();
-    let mut cfg: Config = match existing.as_deref().map(parse) {
+    let cfg: Config = match existing.as_deref().map(parse) {
         Some(Ok(cfg)) => cfg,
         None => parse("{}").unwrap(),
         // A config that cannot be read is never replaced: it holds the token, the pairings and the keys. A typo,
@@ -342,21 +341,6 @@ pub fn load() -> Config {
             std::process::exit(2);
         }
     };
-    let argv_is = |u: &Use, usual: &[&str]| u.kind == "command" && u.set.get("argv").and_then(|a| a.as_array()).is_some_and(|a| a.iter().map(|v| v.as_str().unwrap_or_default()).eq(usual.iter().copied()));
-    if argv_is(&cfg.summarizer, &HEAVY) || argv_is(&cfg.summarizer, &crate::providers::provider("claude").and_then(|p| p.offers.first()).map(|o| o.by.list("argv")).unwrap_or_default().iter().map(String::as_str).collect::<Vec<_>>()) {
-        cfg.summarizer = default_summarizer();
-    }
-    // a key given before keys had names is kept under its provider's name, so it can be used again and shown
-    // (by name only) in `airband keys`
-    if keyless().is_none() {
-        for used in [serde_json::to_value(&cfg.summarizer), serde_json::to_value(&cfg.voice), serde_json::to_value(&cfg.ears)].into_iter().flatten() {
-            let (Some(kind), Some(secret)) = (used["kind"].as_str(), used["key"].as_str().filter(|k| !k.is_empty())) else { continue };
-            if !cfg.keys.values().any(|k| k.secret == secret) {
-                let name = (1..).map(|n| if n == 1 { kind.to_string() } else { format!("{kind}-{n}") }).find(|n| !cfg.keys.contains_key(n)).unwrap();
-                cfg.keys.insert(name, StoredKey { provider: kind.to_string(), secret: secret.to_string() });
-            }
-        }
-    }
     // without the keys nothing is rewritten: the file is left exactly as it is
     let text = match render(&cfg, false) {
         Ok(text) => text,
