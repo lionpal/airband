@@ -2,6 +2,7 @@
   "id": "codex",
   "name": "Codex",
   "maker": "OpenAI",
+  "first": "In Codex, type /hooks once and trust airband’s hooks.",
   "launchers": [
     {
       "name": "codex",
