@@ -9,7 +9,8 @@
 //!   AIRBAND_RELAY_DATA       folder for channels.json (default ./relay-data), when no database is set
 //!   DB_HOST and friends      keep the channel list in Postgres instead (store.rs)
 //!   AIRBAND_RELAY_DYNAMO     keep it in Amazon DynamoDB instead: the tables' prefix (store.rs), with AWS_REGION
-//!   AIRBAND_RELAY_ADMISSION  if set, a tower must present this to open a channel; without it, anyone may
+//!   AIRBAND_RELAY_ADMISSION  if set, a tower must present this to open a channel; without it, anyone may,
+//!                            within limits (so many new channels from one address in a day, and in all in an hour)
 //!
 //! Who may do what. A tower does everything with its channel's pull token, and opening a new channel also
 //! takes the admission key. A radio does everything with its channel's radio token. Both tokens are made from
@@ -142,16 +143,24 @@ const PASSES_A_MINUTE: u32 = 30;
 /// Notifications asked for from one address in ten minutes, across its channels (`push::PUSHES` is one channel's).
 const PUSHES_AN_ADDRESS: u32 = push::PUSHES * 4;
 
+/// New channels: how many one internet address may open in a day, and how many the relay opens in an hour
+/// whoever asks. A channel is a pairing of one computer with one phone, so a person opens a handful in all;
+/// the hourly figure is what a script with many addresses is held to.
+const OPENED_AN_ADDRESS_A_DAY: u32 = 10;
+const OPENED_AN_HOUR: u32 = 300;
+
 struct Limits {
     /// For each of [`Asks`]: by channel, then by address.
     radio: [(Limiter, Limiter); 3],
     push_by_address: Limiter,
+    opened_by_address: Limiter,
+    opened: Limiter,
 }
 
 impl Limits {
     fn new() -> Limits {
         let pair = |most: u32| (Limiter::new(most, 60), Limiter::new(most * 2, 60));
-        Limits { radio: [pair(CALLS_A_MINUTE), pair(KEPT_A_MINUTE), pair(PASSES_A_MINUTE)], push_by_address: Limiter::new(PUSHES_AN_ADDRESS, 600) }
+        Limits { radio: [pair(CALLS_A_MINUTE), pair(KEPT_A_MINUTE), pair(PASSES_A_MINUTE)], push_by_address: Limiter::new(PUSHES_AN_ADDRESS, 600), opened_by_address: Limiter::new(OPENED_AN_ADDRESS_A_DAY, 86_400), opened: Limiter::new(OPENED_AN_HOUR, 3600) }
     }
     fn channel(&mut self, asks: Asks, channel: &str, now: Instant) -> bool {
         self.radio[asks as usize].0.allow(channel, now)
@@ -310,6 +319,16 @@ async fn open(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, head
         let given = headers.get("x-airband-admission").and_then(|v| v.to_str().ok()).unwrap_or("");
         if !same(given, want) {
             return say(StatusCode::UNAUTHORIZED, "this relay needs an admission key to open a channel");
+        }
+    }
+    // a new channel, which anyone may ask for: so many from one address, and so many in all
+    {
+        let (mut limits, now) = (relay.limits.lock().unwrap(), Instant::now());
+        if !limits.opened_by_address.allow(&caller(&headers), now) {
+            return say(StatusCode::TOO_MANY_REQUESTS, "too many new pairings from this address today; try again tomorrow");
+        }
+        if !limits.opened.allow("all", now) {
+            return say(StatusCode::TOO_MANY_REQUESTS, "the relay is taking no new pairings for a while; try again in an hour");
         }
     }
     // durable first: a channel the relay would forget on restart is worse than a slow answer
@@ -804,6 +823,21 @@ mod tests {
         assert_eq!(leave(&again, &mine.channel, "", "aaaaaaaa07").await, refused);
         assert_eq!(leave(&again, &mine.channel, &mine.radio_token, "aaaaaaaa07").await.0, 202);
         assert_eq!(leave(&again, &other.channel, "", "aaaaaaaa08").await.0, 202);
+        let _ = std::fs::remove_dir_all(folder);
+    }
+
+    #[tokio::test]
+    async fn an_open_relay_takes_so_many_new_channels_from_one_address() {
+        let (relay, folder) = relay_in_a_folder(None);
+        let new = || Keys::derive(&airband_core::relay::new_secret()).unwrap();
+        let first = new();
+        assert_eq!(open_as(&relay, &first, "").await, 201);
+        for _ in 1..OPENED_AN_ADDRESS_A_DAY {
+            assert_eq!(open_as(&relay, &new(), "").await, 201);
+        }
+        assert_eq!(open_as(&relay, &new(), "").await, 429);
+        // a channel it already has is not a new one: its tower can still look in
+        assert_eq!(open_as(&relay, &first, "").await, 204);
         let _ = std::fs::remove_dir_all(folder);
     }
 

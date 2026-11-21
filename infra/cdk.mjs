@@ -17,7 +17,6 @@
 // Before the first deploy:
 //   1. airband.dev must be delegated to this account's hosted zone (the registrar's name servers set to the zone's
 //      four), or the certificate never validates and the deploy waits until it times out.
-//   2. the admission key must exist:  aws ssm put-parameter --name /airband/relay-admission --type SecureString --value <key>
 // Deploy: the GitHub Actions (.github/workflows/deploy-relay.yml and deploy-site.yml), one per stack.
 // By hand, if the Action is down:  cd infra && npm ci && npx cdk deploy AirbandRelay --require-approval never
 // (a by-hand deploy builds the image locally and needs several GB of free disk for Docker)
@@ -93,8 +92,6 @@ class AirbandRelay extends Stack {
         // (aws ssm put-parameter --name /airband/apns-key --type SecureString --value file://AuthKey_….p8)
         ...(APNS ? { APNS_KEY: ecs.Secret.fromSsmParameter(ssm.StringParameter.fromSecureStringParameterAttributes(this, 'ApnsKey', { parameterName: '/airband/apns-key' })) } : {}),
         DB_USER: ecs.Secret.fromSecretsManager(dbSecret, 'username'), DB_PASS: ecs.Secret.fromSecretsManager(dbSecret, 'password'),
-        // without this anyone on the internet could open channels here; written once by hand, never in the repo
-        AIRBAND_RELAY_ADMISSION: ecs.Secret.fromSsmParameter(ssm.StringParameter.fromSecureStringParameterAttributes(this, 'Admission', { parameterName: '/airband/relay-admission' })),
       },
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'relay', logRetention: logs.RetentionDays.TWO_WEEKS }),
     });
@@ -135,7 +132,7 @@ class AirbandRelay extends Stack {
 //
 // Before the first deploy, once, by hand (none of it is in the repository):
 //   1. the three secrets, in this stack's region, as SecureString parameters:
-//      /airband/relay-admission, /airband/apns-key
+//      /airband/apns-key
 //   2. a Caddy built with the Route 53 module, in the bucket as caddy/caddy-linux-arm64
 //      (https://caddyserver.com/api/download?os=linux&arch=arm64&p=github.com/caddy-dns/route53)
 // The name itself (the A record for relay.airband.dev) is not made here while the Tokyo stack still owns it:
@@ -170,7 +167,7 @@ class AirbandRelayUs extends Stack {
     const role = new iam.Role(this, 'HostRole', { assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'), description: 'The airband relay server',
       managedPolicies: [iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore')] });
     role.addToPolicy(new iam.PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:Scan'], resources: tables.map((t) => t.tableArn) }));
-    const settings = ['relay-env', 'relay-admission', 'apns-key'].map((n) => `arn:aws:ssm:${this.region}:${this.account}:parameter/airband/${n}`);
+    const settings = ['relay-env', 'apns-key'].map((n) => `arn:aws:ssm:${this.region}:${this.account}:parameter/airband/${n}`);
     role.addToPolicy(new iam.PolicyStatement({ actions: ['ssm:GetParameter', 'ssm:GetParameters'], resources: settings }));
     ship.grantRead(role);
     // the two records Caddy proves the names with, and nothing else in the zone
