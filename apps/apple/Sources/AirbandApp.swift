@@ -277,7 +277,7 @@ struct FeedView: View {
         // development only: `-airband.devQuick 1` opens the quick messages, for a screenshot
         .onAppear {
             if UserDefaults.standard.bool(forKey: "airband.devQuick") { showQuick = true }
-            if UserDefaults.standard.bool(forKey: "airband.devAccounts") { showSetup = true }
+            if UserDefaults.standard.bool(forKey: "airband.devAccounts") || UserDefaults.standard.string(forKey: "airband.devPage") != nil { showSetup = true }
             if UserDefaults.standard.bool(forKey: "airband.devAgents") { showAgents = true }
         }
         #endif
@@ -1314,233 +1314,6 @@ struct ContextView: View {
     }
 }
 
-/// What a service of his own needs: which one, its key unless the phone already has one for it, and whatever
-/// else it has to be told. Used for listening and for the voice alike; which services there are, and what each
-/// needs, is the core's to say.
-struct ServiceForm: View {
-    @EnvironmentObject var model: RadioModel
-    let services: [Service]
-    /// Try it and keep it: the service, a new key if he typed one, its settings. Calls back with what is wrong.
-    let use: (Service, String?, [String: String], @escaping (String?) -> Void) -> Void
-    @State private var kind = ""
-    @State private var key = ""
-    @State private var told: [String: String] = [:]
-    @State private var checking = false
-    @State private var wrong: String?
-    private var chosen: Service? { services.first { $0.kind == kind } ?? services.first }
-
-    var body: some View {
-        Picker("Service", selection: $kind) { ForEach(services, id: \.kind) { Text($0.name).tag($0.kind) } }
-        if let chosen {
-            if chosen.key {
-                if model.phoneKeys[chosen.kind] != nil {
-                    Text("Uses the key you already gave for it").foregroundStyle(.secondary)
-                } else {
-                    SecureField("Key", text: $key).textContentType(.password)
-                    if !chosen.keysAt.isEmpty { Text("Its keys are made at \(chosen.keysAt).").font(.footnote).foregroundStyle(.secondary) }
-                }
-            }
-            ForEach(chosen.asks, id: \.field) { ask in
-                TextField(ask.usual.isEmpty ? ask.question : "\(ask.question): \(ask.usual)", text: Binding(get: { told[ask.field] ?? "" }, set: { told[ask.field] = $0 }))
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
-            }
-            Button {
-                (checking, wrong) = (true, nil)
-                let fresh = key.trimmingCharacters(in: .whitespaces)
-                use(chosen, fresh.isEmpty ? nil : fresh, told.filter { set in chosen.asks.contains { $0.field == set.key } }) { problem in
-                    (checking, wrong) = (false, problem)
-                    if problem == nil { key = "" }
-                }
-            } label: {
-                HStack { Text("Try it and use it"); if checking { Spacer(); ProgressView() } }
-            }
-            .disabled(checking || (chosen.key && model.phoneKeys[chosen.kind] == nil && key.trimmingCharacters(in: .whitespaces).isEmpty))
-            .onChange(of: kind) { _, _ in told = [:] }
-            .onAppear { if kind.isEmpty { kind = services.first?.kind ?? "" } }
-        }
-        if let wrong { Text(wrong).foregroundStyle(.red) }
-    }
-}
-
-/// A listening service of his own: optional. With it the microphone works with no computer and no relay.
-struct SpeechKeyView: View {
-    @EnvironmentObject var model: RadioModel
-    private let services = listeningServices()
-    @State private var local: [LocalModel] = []
-    @State private var fetching: String?
-    @State private var progress = 0.0
-    @State private var preparing = false
-    @State private var wrong: String?
-    private let tick = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
-
-    var body: some View {
-        Form {
-            ForEach(local, id: \.kind) { m in
-                Section(header: Text("On this phone"), footer: Text("What you say stays on the phone, and the mic works without your computer. The download is \(m.megabytes) MB. \(m.credit)")) {
-                    if m.fetched {
-                        Toggle("Listen with \(m.name)", isOn: Binding(get: { model.localEars == m.kind }, set: { on in
-                            if on { ready(m.kind) } else { model.useLocalEars("") }
-                        }))
-                        .disabled(preparing)
-                        if preparing { HStack { Text("Getting it ready for this phone. About a minute, once."); Spacer(); ProgressView() } }
-                        if model.localEars == m.kind, let last = model.lastHeard {
-                            Text(String(format: "Last heard %.1f s of speech in %.2f s", last.of, last.took)).font(.footnote).foregroundStyle(.secondary)
-                        }
-                        Button("Remove download", role: .destructive) {
-                            model.removeVoice(m.kind)
-                            local = localListeners(dir: model.voiceDir)
-                        }
-                    } else if fetching == m.kind {
-                        ProgressView(value: progress) { Text("Downloading \(m.name)") }
-                    } else {
-                        Button("Download \(m.name) (\(m.megabytes) MB)") {
-                            (fetching, progress, wrong) = (m.kind, 0, nil)
-                            model.downloadVoice(m.kind) { problem in
-                                (fetching, wrong) = (nil, problem)
-                                local = localListeners(dir: model.voiceDir)
-                                // he asked for it to use it
-                                if problem == nil { ready(m.kind) }
-                            }
-                        }
-                        .disabled(fetching != nil)
-                    }
-                    if let wrong { Text(wrong).foregroundStyle(.red) }
-                }
-            }
-            Section(header: Text("With your own key"), footer: Text("Optional. With your own key the mic works without your computer. The key stays in this phone\u{2019}s Keychain and only goes to the service it is for.")) {
-                if let using = services.first(where: { $0.kind == model.ownEars }) {
-                    Text("Listening with \(using.name)")
-                    Button("Stop using it") { model.forgetOwnEars() }
-                    Button("Remove its key", role: .destructive) {
-                        model.forgetOwnEars()
-                        model.keepPhoneKey(using.kind, nil)
-                    }
-                } else {
-                    ServiceForm(services: services) { service, key, settings, done in model.keepOwnEars(service.kind, key: key, settings: settings, done: done) }
-                }
-            }
-            // which computers have one of their own: said, never shown
-            if !model.view.stations.filter({ !$0.isEmpty }).isEmpty {
-                Section("On your computers") {
-                    ForEach(model.view.stations.filter { !$0.isEmpty }, id: \.self) { name in
-                        HStack { Text(name); Spacer(); Text(model.view.keyed.contains(name) ? "has a key" : "no key").foregroundStyle(.secondary) }
-                    }
-                }
-            }
-        }
-        .navigationTitle("Listening").navigationBarTitleDisplayMode(.inline)
-        .onAppear { local = localListeners(dir: model.voiceDir) }
-        .onReceive(tick) { _ in if fetching != nil { progress = Double(localModelProgress()) / 100 } }
-    }
-
-    /// Load the model, which the first time fits it to this phone's chip, and then listen with it.
-    private func ready(_ kind: String) {
-        (preparing, wrong) = (true, nil)
-        model.prepareLocalEars(kind) { problem in
-            (preparing, wrong) = (false, problem)
-            if problem == nil { model.useLocalEars(kind) }
-        }
-    }
-}
-
-/// A voice made on this phone: optional, and fetched only when he asks. Which voices there are, and how big
-/// each is, is the core's to say.
-struct VoiceView: View {
-    @EnvironmentObject var model: RadioModel
-    @State private var offered: [LocalModel] = []
-    @State private var fetching: String?
-    @State private var progress = 0.0
-    @State private var sampling = false
-    @State private var wrong: String?
-    private let tick = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
-    private let services = voiceServices()
-    @State private var serviceWrong: String?
-
-    var body: some View {
-        Form {
-            ForEach(offered, id: \.kind) { v in
-                Section(footer: Text("Optional. This voice is made on your phone. It needs no key and works without your computer. The download is \(v.megabytes) MB. \(v.credit)")) {
-                    // which voice: each can be heard before anything is downloaded
-                    ForEach(localVoiceChoices(kind: v.kind), id: \.name) { choice in
-                        let chosen = model.voiceName == choice.name || (model.voiceName.isEmpty && choice.name == localVoiceChoices(kind: v.kind).first?.name)
-                        HStack(spacing: 12) {
-                            Button { model.preview(choice) } label: {
-                                Image(systemName: model.previewing == choice.name ? "stop.circle.fill" : "play.circle.fill").font(.system(size: 28)).foregroundStyle(Palette.ink)
-                            }
-                            .buttonStyle(.plain).accessibilityLabel(model.previewing == choice.name ? "Stop \(choice.name)" : "Hear \(choice.name)")
-                            Button { model.chooseVoice(choice.name) } label: {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(choice.name).foregroundStyle(Palette.ink)
-                                        Text(choice.about).font(.footnote).foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    if chosen { Image(systemName: "checkmark").font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink) }
-                                }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain).accessibilityAddTraits(chosen ? .isSelected : [])
-                        }
-                    }
-                    if v.fetched {
-                        Toggle("Use \(v.name)", isOn: Binding(get: { model.localVoice == v.kind }, set: { model.useVoice($0 ? v.kind : "") }))
-                        if model.localVoice == v.kind {
-                            Button {
-                                (sampling, wrong) = (true, nil)
-                                model.sampleVoice { problem in (sampling, wrong) = (false, problem) }
-                            } label: {
-                                HStack { Text("Hear it"); if sampling { Spacer(); ProgressView() } }
-                            }
-                            .disabled(sampling)
-                        }
-                        Button("Remove download", role: .destructive) {
-                            model.removeVoice(v.kind)
-                            offered = localVoices(dir: model.voiceDir)
-                        }
-                    } else if fetching == v.kind {
-                        ProgressView(value: progress) { Text("Downloading \(v.name)") }
-                    } else {
-                        Button("Download \(v.name) (\(v.megabytes) MB)") {
-                            (fetching, progress, wrong) = (v.kind, 0, nil)
-                            model.downloadVoice(v.kind) { problem in
-                                (fetching, wrong) = (nil, problem)
-                                offered = localVoices(dir: model.voiceDir)
-                                // he asked for it to use it
-                                if problem == nil { model.useVoice(v.kind) }
-                            }
-                        }
-                        .disabled(fetching != nil)
-                    }
-                    if let wrong { Text(wrong).foregroundStyle(.red) }
-                }
-            }
-            // a voice service reached straight from this phone, with a key of his own
-            Section(header: Text("With your own key"), footer: Text("Optional. Your phone talks to the voice service itself, so it works without your computer. The key stays in this phone\u{2019}s Keychain and only goes to the service it is for.")) {
-                if let using = services.first(where: { $0.kind == model.serviceVoice }) {
-                    Text("Using \(using.name)")
-                    Button {
-                        (sampling, serviceWrong) = (true, nil)
-                        model.sampleVoice { problem in (sampling, serviceWrong) = (false, problem) }
-                    } label: {
-                        HStack { Text("Hear it"); if sampling { Spacer(); ProgressView() } }
-                    }
-                    .disabled(sampling)
-                    Button("Stop using it") { model.stopService() }
-                    Button("Remove its key", role: .destructive) {
-                        model.stopService()
-                        model.keepPhoneKey(using.kind, nil)
-                    }
-                } else {
-                    ServiceForm(services: services) { service, key, settings, done in model.useService(service.kind, key: key, settings: settings, done: done) }
-                }
-                if let serviceWrong { Text(serviceWrong).foregroundStyle(.red) }
-            }
-        }
-        .navigationTitle("Voice").navigationBarTitleDisplayMode(.inline)
-        .onAppear { offered = localVoices(dir: model.voiceDir) }
-        .onReceive(tick) { _ in if fetching != nil { progress = Double(localModelProgress()) / 100 } }
-    }
-}
 
 struct SetupView: View {
     @EnvironmentObject var model: RadioModel
@@ -1548,15 +1321,22 @@ struct SetupView: View {
     @Environment(\.dismiss) private var dismiss
     // development only: `-airband.devAccounts 1` opens the accounts page, for a screenshot
     @State private var showAccounts = UserDefaults.standard.bool(forKey: "airband.devAccounts")
+    // development only: `-airband.devPage Voice` opens Settings on that page (or `Settings` for the list itself)
+    @State private var devPage = UserDefaults.standard.string(forKey: "airband.devPage")
     @State private var scanning = false
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    NavigationLink { ChoicePage(title: "Summaries", headline: Headline.reads) { ReadsPicker(mode: .settings) }.environmentObject(model) } label: { row("Summaries", model.pendingReads != nil ? "Waiting for your computer" : model.view.reads) }
-                    NavigationLink { ChoicePage(title: "Listening", headline: Headline.ears) { EarsPicker(mode: .settings) }.environmentObject(model) } label: { row("Listening", listensWith) }
-                    NavigationLink { ChoicePage(title: "Voice", headline: Headline.voice) { VoicePicker(mode: .settings) }.environmentObject(model) } label: { row("Voice", speaksWith) }
+                    // one row for each job the core lists, opening the same picker the first run showed
+                    ForEach(model.jobs, id: \.self) { job in
+                        NavigationLink(isActive: Binding(get: { devPage == job.title }, set: { if !$0 { devPage = nil } })) {
+                            ChoicePage(title: job.title, headline: job.headline) { ChoicePicker(job: job, mode: .settings) }.environmentObject(model)
+                        } label: {
+                            row(job.title, model.chosenLabel(job))
+                        }
+                    }
                 }
                 Section {
                     NavigationLink {
@@ -1623,16 +1403,6 @@ extension SetupView {
     /// One row of the settings list: what it is, and what is chosen for it now.
     func row(_ title: String, _ now: String) -> some View {
         HStack { Text(title); Spacer(); Text(now).foregroundStyle(.secondary).lineLimit(1) }
-    }
-    var listensWith: String {
-        if !model.ownEars.isEmpty { return listeningServices().first { $0.kind == model.ownEars }?.name ?? "" }
-        if !model.localEars.isEmpty { return localListeners(dir: model.voiceDir).first { $0.kind == model.localEars }?.name ?? "" }
-        return "Your computer\u{2019}s choice"
-    }
-    var speaksWith: String {
-        if !model.serviceVoice.isEmpty { return voiceServices().first { $0.kind == model.serviceVoice }?.name ?? "" }
-        if !model.localVoice.isEmpty { return localVoices(dir: model.voiceDir).first { $0.kind == model.localVoice }?.name ?? "" }
-        return "Your computer\u{2019}s choice"
     }
 }
 

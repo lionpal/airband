@@ -111,9 +111,19 @@ needs no codec. For listening the phone goes straight to the service with a shor
 and the rule for when he has finished speaking (`Endpointer`) is in the core. The tower's keys never leave it.
 
 With nothing set (`device`), a terminal prints and takes a typed line. A phone has no voice or recognition
-worth using: nothing is spoken and he types. For listening he can also
-put a key of his own in the phone. It lives in the phone's Keychain, is given to the core at launch
-(`set_own_ears`) and goes only to its service; the app asks `own_listeners` which services it may offer.
+worth using: nothing is spoken and he types.
+
+What he chooses is one mechanism in the phone's core (`airband-radio/src/choices.rs`). For each job (what
+writes his summaries, what listens, what speaks) `Desk::choices(job)` is the one list: a model on the phone,
+a service with a key of his own, or his computer's choice, each with how it stands (ready, needs a key,
+needs a download, being fetched, failed and why). `Desk::choose_for` picks one: a service is tried with a
+real call and a model is fetched first. One thing is chosen for a job at a time; that rule is in that file
+and `ears.rs` and `mouth.rs` are handed the one thing to use. The choice is kept by the core
+(`choices.json`); a key is kept by the host where its system keeps secrets (`DeskHost::secret`), goes only
+to its service, and is never handed to a screen. A choice that stops working stays chosen and says why:
+nothing else listens or speaks in its place. Summaries are written on his computer, so that list is the
+computer's own (`GET reads`), with the one in use named by its id. The app draws one `ChoicePicker(job:)`
+on the first run and in Settings alike.
 
 The phone can also do both jobs itself, with a model on the device (`models.rs`). The program for it is in the
 app and the model is not: he chooses it on the Voice or Listening page and only then is it fetched, once, from

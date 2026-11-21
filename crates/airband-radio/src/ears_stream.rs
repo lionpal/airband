@@ -246,6 +246,7 @@ impl Tape {
 }
 
 impl RadioHost for Tape {
+    fn told(&self, _: String) {}
     fn speak(&self, _: String) {}
     fn listen(&self) -> Option<String> {
         None

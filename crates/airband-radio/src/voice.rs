@@ -15,11 +15,8 @@ const FIRST_SOUND: Duration = Duration::from_millis(8000);
 pub(crate) enum Said {
     /// He heard it, or stopped it himself.
     Aloud,
-    /// The phone's own voice was to say it and could not. That voice has been given up: the tower offers the
-    /// words again, this time with its own.
-    OwnVoiceFailed,
     /// No sound came out, and why. It has not been heard.
-    Nothing(&'static str),
+    Nothing(String),
 }
 
 /// Say `text`: with the tower's voice when it has one for this (`speech`), otherwise with the host's if that is
@@ -34,13 +31,16 @@ pub(crate) fn say_until(link: &Link, host: &dyn RadioHost, text: &str, speech: O
     if text.trim().is_empty() || stop() {
         return Said::Aloud;
     }
-    // a voice of the device's own, when he has chosen one, says everything
+    // A voice of the device's own, when he has chosen one, says everything. When it cannot, it stays the one
+    // he chose and he is told: nothing else speaks in its place.
     if crate::mouth::ready() {
-        if crate::mouth::say(host, text, stop) {
-            return Said::Aloud;
-        }
-        crate::mouth::give_up();
-        return Said::OwnVoiceFailed;
+        return match crate::mouth::say(host, text, stop) {
+            Ok(()) => Said::Aloud,
+            Err(why) => {
+                host.told(why.clone());
+                Said::Nothing(why)
+            }
+        };
     }
     match speech {
         Some(id) if play(link, host, id, stop) => Said::Aloud,
@@ -48,8 +48,8 @@ pub(crate) fn say_until(link: &Link, host: &dyn RadioHost, text: &str, speech: O
             host.speak(text.to_string());
             Said::Aloud
         }
-        Some(_) => Said::Nothing("the computer's voice gave no sound"),
-        None => Said::Nothing("there is no voice to read it with"),
+        Some(_) => Said::Nothing("the computer's voice gave no sound".into()),
+        None => Said::Nothing("there is no voice to read it with".into()),
     }
 }
 

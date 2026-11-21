@@ -47,5 +47,6 @@
       "597947905f317ee9bfed5efb84b60880217584046d5cb193a910c9959fe6e1bb"
     ]
   ],
-  "credit": "Phonon-2.5 English by Fermion Research, from NVIDIA's Parakeet TDT 0.6B v3. CC BY 4.0."
+  "credit": "Phonon-2.5 English by Fermion Research, from NVIDIA's Parakeet TDT 0.6B v3. CC BY 4.0.",
+  "with": {"prepare": "Getting it ready for this phone. About a minute, once."}
 }
