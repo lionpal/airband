@@ -38,9 +38,10 @@ pub struct Config {
     /// key is stored once however many things use it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub keys: BTreeMap<String, StoredKey>,
-    /// The relay radios reach this tower through ("https://relay.example"). Without one, a radio must be able
-    /// to reach this machine itself.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The relay radios reach this tower through: airband's own unless he names another (`airband relay <url>`)
+    /// or turns it off (`airband relay off`, written as null). With none, a radio reaches this computer at its
+    /// own addresses and nowhere else.
+    #[serde(default = "default_relay")]
     pub relay: Option<String>,
     /// The key the relay asks for before it opens a channel, if it asks for one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -181,6 +182,11 @@ fn default_summarizer() -> Summarizer {
 /// the lean one written out in full, are moved to the row that has the lean one.
 const HEAVY: [&str; 8] = ["claude", "-p", "--model", "haiku", "--no-session-persistence", "--strict-mcp-config", "--disallowedTools", "Bash,Edit,Write,Read,Agent,WebFetch,WebSearch"];
 
+/// airband's own relay. It is open to anyone, sees only sealed messages, and limits how much each may ask.
+pub const RELAY: &str = "https://relay.airband.dev";
+fn default_relay() -> Option<String> {
+    Some(RELAY.into())
+}
 fn default_port() -> u16 {
     7373
 }

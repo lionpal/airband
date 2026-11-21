@@ -50,10 +50,11 @@ async fn sealed(axum::extract::Path(channel): axum::extract::Path<String>, body:
 /// stops, and a changed relay address moves everything, all without restarting the tower.
 pub fn start(app: Arc<App>, router: Router, handle: Handle) {
     std::thread::spawn(move || {
-        let mut running: HashMap<(String, PairedRadio), (Arc<AtomicBool>, std::thread::JoinHandle<()>)> = HashMap::new();
+        let mut running: HashMap<(Option<String>, PairedRadio), (Arc<AtomicBool>, std::thread::JoinHandle<()>)> = HashMap::new();
         loop {
             let cfg = config::read().unwrap_or_else(|| app.cfg.clone());
-            let wanted: Vec<(String, PairedRadio)> = cfg.relay.iter().flat_map(|r| cfg.pairings.iter().map(move |p| (r.clone(), p.clone()))).collect();
+            // every pairing is served straight, at the tower's own addresses; through the relay too when there is one
+            let wanted: Vec<(Option<String>, PairedRadio)> = cfg.pairings.iter().map(|p| (cfg.relay.clone(), p.clone())).collect();
             running.retain(|key, (stop, serving)| {
                 let keep = wanted.contains(key);
                 // A pairing whose serving thread has ended while it is still wanted is started again below:
@@ -94,7 +95,8 @@ pub fn start(app: Arc<App>, router: Router, handle: Handle) {
 
 #[derive(Clone)]
 struct Serve {
-    relay: String,
+    /// The relay this pairing is also reached through, when there is one.
+    relay: Option<String>,
     name: String,
     keys: Keys,
     admission: Option<String>,
@@ -111,9 +113,17 @@ struct Serve {
 
 impl Serve {
     fn run(self) {
+        // with no relay there is nothing to pull: requests come straight (`answer_here`) until this is stopped
+        let Some(relay) = self.relay.clone() else {
+            log(format!("serving \"{}\" at this computer's own addresses, with no relay", self.name));
+            while !self.stop.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_secs(1));
+            }
+            return;
+        };
         let agent = airband_radio::net::agent(Duration::from_secs(40));
         let auth = format!("Bearer {}", self.keys.pull_token);
-        let base = format!("{}/v1/channels/{}", self.relay, self.keys.channel);
+        let base = format!("{}/v1/channels/{}", relay, self.keys.channel);
         let (mut open, mut wait, mut told) = (false, 1, false);
         let nap = |wait: &mut u64| {
             std::thread::sleep(Duration::from_secs(*wait));
@@ -128,16 +138,16 @@ impl Serve {
                 }
                 match req.send_empty().map(|r| r.status().as_u16()) {
                     Ok(201 | 204) => {
-                        log(format!("serving \"{}\" through {}", self.name, self.relay));
+                        log(format!("serving \"{}\" through {}", self.name, relay));
                         (open, wait, told) = (true, 1, false);
                     }
                     other => {
                         if !told {
                             log(match other {
-                                Ok(401) => format!("{} needs an admission key: airband relay <url> --admission <key>", self.relay),
-                                Ok(403) => format!("{} says the channel for \"{}\" belongs to another tower; pair again", self.relay, self.name),
-                                Ok(code) => format!("{} refused to open a channel ({code})", self.relay),
-                                Err(e) => format!("cannot reach {}: {e}; retrying", self.relay),
+                                Ok(401) => format!("{} needs an admission key: airband relay <url> --admission <key>", relay),
+                                Ok(403) => format!("{} says the channel for \"{}\" belongs to another tower; pair again", relay, self.name),
+                                Ok(code) => format!("{} refused to open a channel ({code})", relay),
+                                Err(e) => format!("cannot reach {}: {e}; retrying", relay),
                             });
                             told = true;
                         }
@@ -160,17 +170,17 @@ impl Serve {
                     204 => wait = 1,
                     // the relay restarted without its data, or the channel changed hands: open it again
                     status @ (403 | 404) => {
-                        log(format!("{} no longer knows the channel for \"{}\" ({status}); opening it again", self.relay, self.name));
+                        log(format!("{} no longer knows the channel for \"{}\" ({status}); opening it again", relay, self.name));
                         open = false;
                     }
                     status => {
-                        log(format!("{} answered {status} when asked for \"{}\"'s requests; retrying", self.relay, self.name));
+                        log(format!("{} answered {status} when asked for \"{}\"'s requests; retrying", relay, self.name));
                         nap(&mut wait);
                     }
                 },
                 Err(e) => {
                     if !told {
-                        log(format!("lost {}: {e}; retrying", self.relay));
+                        log(format!("lost {}: {e}; retrying", relay));
                         told = true;
                     }
                     open = false;
@@ -244,7 +254,8 @@ impl Serve {
     /// Give the relay the answer to a request (or, with none, take a kept message off its hands). An answer
     /// that does not get there is written down: the radio that asked is still waiting for it.
     async fn send_back(&self, request_id: &str, sealed: Option<Vec<u8>>) {
-        let url = format!("{}/v1/channels/{}/reply/{request_id}", self.relay, self.keys.channel);
+        let Some(relay) = &self.relay else { return };
+        let url = format!("{}/v1/channels/{}/reply/{request_id}", relay, self.keys.channel);
         let auth = format!("Bearer {}", self.keys.pull_token);
         // one agent for every answer on this channel: its connection to the relay is kept, not made again each time
         let agent = self.replies.clone();
@@ -262,8 +273,8 @@ impl Serve {
             Ok(Ok(204)) => {}
             // the radio gave up waiting before the answer was ready: it asks again, and nothing is lost
             Ok(Ok(410)) => log(format!("an answer for \"{}\" came after its radio stopped waiting (request {request_id})", self.name)),
-            Ok(Ok(status)) => log(format!("{} answered {status} to an answer for \"{}\" (request {request_id})", self.relay, self.name)),
-            Ok(Err(e)) => log(format!("an answer for \"{}\" did not reach {} (request {request_id}): {e}", self.name, self.relay)),
+            Ok(Ok(status)) => log(format!("{} answered {status} to an answer for \"{}\" (request {request_id})", relay, self.name)),
+            Ok(Err(e)) => log(format!("an answer for \"{}\" did not reach {} (request {request_id}): {e}", self.name, relay)),
             Err(_) => {}
         }
     }
