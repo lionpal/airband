@@ -87,6 +87,8 @@ pub struct DeskMember {
     pub question: String,
     /// The message that asked it, to answer or to have read out. Empty when it is not waiting.
     pub question_id: String,
+    /// The coding tool it is: `claude-code`, `codex`, `opencode`. A host shows that tool's mark.
+    pub harness: String,
 }
 
 /// Everything a chat screen shows, for the team or the agent he is looking at (or all of them).
@@ -640,7 +642,7 @@ impl Desk {
         // what an agent is waiting on him for: its newest question still open
         let asked = |a: &ChatAgent| all.iter().rev().find(|m| m.needs_you && m.from == a.callsign && state.is_open(&m.id));
         for a in &agents {
-            let member = DeskMember { id: a.id.clone(), callsign: a.callsign.clone(), state: a.state.clone(), subagents: a.subagents, doing: a.doing.clone(), held: a.held, unread: unread_from.get(a.callsign.as_str()).copied().unwrap_or(0), question: asked(a).map(|m| m.text.clone()).unwrap_or_default(), question_id: asked(a).map(|m| m.id.clone()).unwrap_or_default(), badge: airband_core::routing::badge(&a.group, &a.callsign), engine: [a.model.as_deref(), a.effort.as_deref()].into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} "), station: if state.stations.len() > 1 { state.stations.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(|s| s.name.clone()).unwrap_or_default() } else { String::new() } };
+            let member = DeskMember { id: a.id.clone(), callsign: a.callsign.clone(), state: a.state.clone(), subagents: a.subagents, doing: a.doing.clone(), held: a.held, unread: unread_from.get(a.callsign.as_str()).copied().unwrap_or(0), question: asked(a).map(|m| m.text.clone()).unwrap_or_default(), question_id: asked(a).map(|m| m.id.clone()).unwrap_or_default(), harness: a.harness.clone(), badge: airband_core::routing::badge(&a.group, &a.callsign), engine: [a.model.as_deref(), a.effort.as_deref()].into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} "), station: if state.stations.len() > 1 { state.stations.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(|s| s.name.clone()).unwrap_or_default() } else { String::new() } };
             // what the team is doing is said in the name of whoever is doing it, without the team's own name
             let doing = a.doing.as_ref().map(|d| match a.callsign.strip_prefix(&a.group).map(str::trim).filter(|rest| !rest.is_empty()) {
                 Some(who) => format!("{who}: {d}"),

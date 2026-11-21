@@ -66,8 +66,12 @@ struct ServiceEntry: View {
     @State private var more = false
     @State private var checking = false
     @State private var wrong: String?
+    /// He asked to put in another key in place of the one kept. The kept one is never shown.
+    @State private var replacing = false
+    @FocusState private var typing: Bool
+    @Environment(\.reveal) private var reveal
 
-    private var kept: Bool { model.phoneKeys[service.kind] != nil }
+    private var kept: Bool { model.phoneKeys[service.kind] != nil && !replacing }
     private var ready: Bool { !checking && !(service.key && !kept && key.trimmingCharacters(in: .whitespaces).isEmpty) }
 
     var body: some View {
@@ -77,9 +81,13 @@ struct ServiceEntry: View {
             }
             if service.key {
                 if kept {
-                    Text("Uses the key you already gave").font(.system(size: 14)).foregroundStyle(Palette.soft)
+                    HStack {
+                        Text("Uses the key you already gave").font(.system(size: 14)).foregroundStyle(Palette.soft)
+                        Spacer()
+                        Button("Change key") { replacing = true; typing = true }.font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.ink).buttonStyle(.plain)
+                    }
                 } else {
-                    SecureField(service.keyName, text: $key).textContentType(.password).font(.system(size: 16))
+                    SecureField(service.keyName, text: $key).textContentType(.password).font(.system(size: 16)).focused($typing)
                         .padding(.horizontal, 12).frame(minHeight: 44).background(Palette.field, in: RoundedRectangle(cornerRadius: 10))
                     if !service.keysAt.isEmpty { Text("Keys are made at \(service.keysAt)").font(.system(size: 12)).foregroundStyle(Palette.quiet) }
                 }
@@ -88,7 +96,7 @@ struct ServiceEntry: View {
             if !asks.isEmpty {
                 if more {
                     ForEach(asks, id: \.field) { ask in
-                        TextField(ask.usual.isEmpty ? ask.question : "\(ask.question): \(ask.usual)", text: Binding(get: { told[ask.field] ?? "" }, set: { told[ask.field] = $0 }))
+                        TextField(ask.usual.isEmpty ? ask.question : "\(ask.question): \(ask.usual)", text: Binding(get: { told[ask.field] ?? "" }, set: { told[ask.field] = $0 })).focused($typing)
                             .textInputAutocapitalization(.never).autocorrectionDisabled().font(.system(size: 15))
                             .padding(.horizontal, 12).frame(minHeight: 40).background(Palette.field, in: RoundedRectangle(cornerRadius: 10))
                     }
@@ -101,7 +109,7 @@ struct ServiceEntry: View {
                 let fresh = key.trimmingCharacters(in: .whitespaces)
                 use(fresh.isEmpty ? nil : fresh, told.filter { !$0.value.trimmingCharacters(in: .whitespaces).isEmpty }) { problem in
                     (checking, wrong) = (false, problem)
-                    if problem == nil { key = "" }
+                    if problem == nil { key = ""; replacing = false }
                 }
             } label: {
                 HStack(spacing: 8) { Text("Use it"); if checking { ProgressView().controlSize(.small) } }
@@ -111,6 +119,22 @@ struct ServiceEntry: View {
             .buttonStyle(.plain).disabled(!ready)
             if let wrong { Text(wrong).font(.system(size: 13)).foregroundStyle(.red) }
         }
+        .onChange(of: typing) { _, now in
+            // after the keyboard has taken its room
+            if now { DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { reveal(service.kind) } }
+        }
+    }
+}
+
+/// Bring the card with this id to the top of the scrolling area it is in. Whatever scrolls the choosers
+/// (the first run, a Settings page) supplies it.
+private struct RevealKey: EnvironmentKey {
+    static let defaultValue: (String) -> Void = { _ in }
+}
+extension EnvironmentValues {
+    var reveal: (String) -> Void {
+        get { self[RevealKey.self] }
+        set { self[RevealKey.self] = newValue }
     }
 }
 
@@ -167,10 +191,13 @@ struct ReadsPicker: View {
                 } extra: {
                     if busy == s.kind {
                         Fetching(label: "Asking your computer to switch", progress: nil)
-                    } else if open == s.kind && current != s.kind {
+                    } else if open == s.kind {
                         ServiceEntry(service: s) { key, settings, done in apply(s, key: key, settings: settings, done: done) }
+                    } else if current == s.kind && s.key && model.phoneKeys[s.kind] != nil {
+                        Button("Change key") { open = s.kind }.font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.ink).buttonStyle(.plain)
                     }
                 }
+                .id(s.kind)
             }
             MoreServices(shown: $more)
             if let wrong { Text(wrong).font(.system(size: 13)).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading) }
@@ -227,15 +254,18 @@ struct EarsPicker: View {
                 ChoiceCard(title: s.name, subtitle: s.line(using: model.ownEars == s.kind), chosen: model.ownEars == s.kind, open: open == s.kind) {
                     if model.ownEars != s.kind { open = open == s.kind ? nil : s.kind }
                 } extra: {
-                    if open == s.kind && model.ownEars != s.kind {
+                    if open == s.kind {
                         ServiceEntry(service: s) { key, settings, done in
                             model.keepOwnEars(s.kind, key: key, settings: settings) { problem in
                                 if problem == nil { open = nil; model.useLocalEars("") }
                                 done(problem)
                             }
                         }
+                    } else if model.ownEars == s.kind && s.key {
+                        Button("Change key") { open = s.kind }.font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.ink).buttonStyle(.plain)
                     }
                 }
+                .id(s.kind)
             }
             if more || (model.localEars.isEmpty && model.ownEars.isEmpty) {
                 ChoiceCard(title: "Your computer\u{2019}s choice", subtitle: "Whatever your computer is set up to listen with", chosen: model.localEars.isEmpty && model.ownEars.isEmpty) {
@@ -306,7 +336,7 @@ struct VoicePicker: View {
                 ChoiceCard(title: s.name, subtitle: s.line(using: model.serviceVoice == s.kind), chosen: model.serviceVoice == s.kind, open: open == s.kind) {
                     if model.serviceVoice != s.kind { open = open == s.kind ? nil : s.kind }
                 } extra: {
-                    if open == s.kind && model.serviceVoice != s.kind {
+                    if open == s.kind {
                         ServiceEntry(service: s) { key, settings, done in
                             model.useService(s.kind, key: key, settings: settings) { problem in
                                 if problem == nil { open = nil }
@@ -319,7 +349,11 @@ struct VoicePicker: View {
                                 model.useService(s.kind, key: nil, settings: model.serviceSettings.merging(["voice": choice.name]) { _, new in new }) { wrong = $0 }
                             }
                         }
-                        Button("Hear it") { model.sampleVoice { wrong = $0 } }.font(.system(size: 15, weight: .semibold)).foregroundStyle(Palette.ink).buttonStyle(.plain)
+                        HStack {
+                            Button("Hear it") { model.sampleVoice { wrong = $0 } }.font(.system(size: 15, weight: .semibold)).foregroundStyle(Palette.ink).buttonStyle(.plain)
+                            Spacer()
+                            if s.key { Button("Change key") { open = s.kind }.font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.ink).buttonStyle(.plain) }
+                        }
                     }
                 }
             }
@@ -418,12 +452,15 @@ struct ChoicePage<Picker: View>: View {
     @ViewBuilder var picker: () -> Picker
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text(headline).font(.system(size: 26, weight: .bold)).tracking(-0.5).foregroundStyle(Palette.ink).fixedSize(horizontal: false, vertical: true)
-                picker()
+        ScrollViewReader { page in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text(headline).font(.system(size: 26, weight: .bold)).tracking(-0.5).foregroundStyle(Palette.ink).fixedSize(horizontal: false, vertical: true)
+                    picker()
+                }
+                .padding(.horizontal, 20).padding(.vertical, 16).frame(maxWidth: 560).frame(maxWidth: .infinity)
             }
-            .padding(.horizontal, 20).padding(.vertical, 16).frame(maxWidth: 560).frame(maxWidth: .infinity)
+            .environment(\.reveal) { id in withAnimation(.snappy(duration: 0.25)) { page.scrollTo(id, anchor: .top) } }
         }
         .background(Palette.ground.ignoresSafeArea())
         .navigationTitle(title).navigationBarTitleDisplayMode(.inline)

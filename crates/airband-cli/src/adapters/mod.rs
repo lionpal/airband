@@ -9,6 +9,7 @@
 //!   `claude_code.rs` is the model.
 pub mod claude_accounts;
 pub mod claude_code;
+pub mod codex;
 pub mod report;
 
 use crate::config;
@@ -91,7 +92,8 @@ struct AccountBook {
 }
 
 /// Every harness `airband hook <name>` understands. A new one is a module and a line here.
-const ADAPTERS: &[Adapter] = &[Adapter {
+const ADAPTERS: &[Adapter] = &[
+Adapter {
     name: "claude-code",
     events: claude_code::events,
     install: Some(claude_code::install),
@@ -102,6 +104,18 @@ const ADAPTERS: &[Adapter] = &[Adapter {
     touched: Some(claude_code::touched),
     told: Some(claude_code::told),
     steps: Some(claude_code::steps),
+},
+Adapter {
+    name: "codex",
+    events: codex::events,
+    install: Some(codex::install),
+    uninstall: Some(codex::uninstall),
+    permission: Some((codex::permission, codex::permission_answer)),
+    accounts: None,
+    glance: Some(codex::glance),
+    touched: None,
+    told: None,
+    steps: None,
 }];
 
 /// `airband install`: set up every harness that can be. One line to say for each.

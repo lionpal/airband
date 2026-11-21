@@ -236,6 +236,17 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
     }
 
+    /// The picture he chose for each of his computers, by its name: a system symbol's name.
+    @Published var computerIcons: [String: String] = (try? JSONDecoder().decode([String: String].self, from: Data((UserDefaults.standard.string(forKey: "airband.computers.icons") ?? "{}").utf8))) ?? [:]
+    /// The pictures a computer can have.
+    static let computerSymbols = ["laptopcomputer", "macmini", "desktopcomputer", "macstudio", "macpro.gen3", "server.rack", "pc"]
+
+    func icon(of computer: String) -> String { computerIcons[computer] ?? "desktopcomputer" }
+    func setIcon(_ symbol: String, of computer: String) {
+        computerIcons[computer] = symbol
+        UserDefaults.standard.set(String(data: (try? JSONEncoder().encode(computerIcons)) ?? Data("{}".utf8), encoding: .utf8), forKey: "airband.computers.icons")
+    }
+
     /// The folders inside one of his on a computer. Calls back with them, or with what is wrong.
     func folders(on computer: String, under: String, done: @escaping (DeskFolders?, String?) -> Void) {
         fetch.async {

@@ -321,7 +321,7 @@ fn step(tool: &str, input: &Value) -> Option<String> {
 }
 
 /// The longest thing he is asked to allow from the phone. It is shown whole or not asked there at all.
-const SHOWN_WHOLE: usize = 4000;
+pub(super) const SHOWN_WHOLE: usize = 4000;
 
 /// Claude Code is about to show a permission prompt (its `PermissionRequest` hook): the request to put to him.
 /// What he reads is the thing itself, not a description of it: the command, the file, the address.

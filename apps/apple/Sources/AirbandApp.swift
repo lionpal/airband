@@ -80,6 +80,27 @@ struct Badge: View {
     }
 }
 
+/// Two small pictures for an agent: the coding tool it is, and the computer it is on when he has several.
+struct AgentMarks: View {
+    @EnvironmentObject var model: RadioModel
+    let agent: DeskMember
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if UIImage(named: "harness-\(agent.harness)") != nil {
+                Image("harness-\(agent.harness)").resizable().scaledToFit().frame(width: 15, height: 15)
+            } else {
+                Image(systemName: "terminal").font(.system(size: 13, weight: .medium))
+            }
+            if model.view.stations.count > 1, !agent.station.isEmpty {
+                Image(systemName: model.icon(of: agent.station)).font(.system(size: 14, weight: .medium))
+            }
+        }
+        .foregroundStyle(Palette.quiet)
+        .accessibilityElement().accessibilityLabel([agent.harness, agent.station].filter { !$0.isEmpty }.joined(separator: ", "))
+    }
+}
+
 /// How many things have been said somewhere he is not looking: a small count. Nothing when there are none.
 struct Unread: View {
     let count: UInt32
@@ -1528,6 +1549,17 @@ struct SetupView: View {
                     NavigationLink { ChoicePage(title: "Listening", headline: Headline.ears) { EarsPicker(mode: .settings) }.environmentObject(model) } label: { row("Listening", listensWith) }
                     NavigationLink { ChoicePage(title: "Voice", headline: Headline.voice) { VoicePicker(mode: .settings) }.environmentObject(model) } label: { row("Voice", speaksWith) }
                 }
+                if !model.view.stations.filter({ !$0.isEmpty }).isEmpty {
+                    Section("Computers") {
+                        ForEach(model.view.stations.filter { !$0.isEmpty }, id: \.self) { name in
+                            Picker(selection: Binding(get: { model.icon(of: name) }, set: { model.setIcon($0, of: name) })) {
+                                ForEach(RadioModel.computerSymbols, id: \.self) { symbol in Image(systemName: symbol).tag(symbol) }
+                            } label: {
+                                Label(name, systemImage: model.icon(of: name))
+                            }
+                        }
+                    }
+                }
                 if model.paired {
                     Section {
                         NavigationLink("Accounts", isActive: $showAccounts) { AccountsView().environmentObject(model) }
@@ -1802,7 +1834,8 @@ struct AgentsMenu: View {
     /// The small line under an agent's name: what it runs on, and the computer it is on when there are several.
     private func under(_ agent: DeskMember) -> String {
         // one he started in a terminal says so: it only gets messages from outside until it is taken over
-        [agent.engine, agent.station, agent.held ? "" : "terminal"].filter { !$0.isEmpty }.joined(separator: " \u{b7} ")
+        // the computer is a small picture at the end of the row, not more words
+        [agent.engine, agent.held ? "" : "terminal"].filter { !$0.isEmpty }.joined(separator: " \u{b7} ")
     }
 
     /// An agent dropped on a team, or on one of its agents, joins that team.
@@ -1837,6 +1870,8 @@ struct AgentsMenu: View {
                             model.room = nil
                             model.only = was ? nil : agent.callsign
                         }
+                        // which tool it is, and which computer it is on when there are several
+                        .overlay(alignment: .trailing) { AgentMarks(agent: agent).padding(.trailing, 12).allowsHitTesting(false) }
                         // hold and drag it onto another team; or hold, and pick the team from the list
                         .draggable(agent.id) {
                             HStack(spacing: 8) {
