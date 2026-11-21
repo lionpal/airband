@@ -415,9 +415,8 @@ async fn utterance(State(app): State<Arc<App>>, headers: HeaderMap, Json(u): Jso
                 return Json(reply).into_response();
             }
             Receipt::InProgress => {
-                // a radio that asks again is told so while there is still someone on the way to tell; one
-                // that does not is made to wait as long as it ever was
-                let until = Instant::now() + if u.again { WAIT_FOR_ANSWER } else { Duration::from_secs(60) };
+                // the radio is told so while there is still someone on the way to tell, and asks again
+                let until = Instant::now() + WAIT_FOR_ANSWER;
                 while Instant::now() < until {
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     if let Some(reply) = app.store.receipt_reply(id) {
@@ -426,10 +425,7 @@ async fn utterance(State(app): State<Arc<App>>, headers: HeaderMap, Json(u): Jso
                     }
                 }
                 done("still being answered", &Reply::default());
-                if u.again {
-                    return (StatusCode::from_u16(airband_core::radio::STILL_WORKING).unwrap(), Json(json!({ "working": true }))).into_response();
-                }
-                return Json(Reply { say: "Still working on that.".into(), listen: false, ..Reply::default() }).into_response();
+                return (StatusCode::from_u16(airband_core::radio::STILL_WORKING).unwrap(), Json(json!({ "working": true }))).into_response();
             }
         }
     }
@@ -504,7 +500,7 @@ impl Drop for Reading {
 /// first, and the count to pass next time. A message changes when its short version is made or its sender is
 /// renamed, so a radio always ends up with the current form of every line. `since=0` is a radio starting from
 /// nothing: it gets the newest lines.
-/// `after=<seq>` is the older form, still answered: lines added after that position, never changes to earlier ones.
+/// With no `since`, `after=<seq>` gives the lines added after that position, and never a change to an earlier one.
 async fn feed(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>) -> Json<Feed> {
     let radio = radio_of(&headers);
     let scope = q.get("scope").cloned().unwrap_or_else(|| "all".into());

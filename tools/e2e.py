@@ -636,7 +636,7 @@ Send it as written, or do you want changes?""")
     db.execute("insert into receipts (id, at) values (?, ?)", (slow, int(time.time() * 1000)))
     db.commit(); db.close()
     began = time.time()
-    code, told = http("POST", "/v1/radio/utterance", {"text": "@solo3 and again", "id": slow, "again": True}, timeout=50)
+    code, told = http("POST", "/v1/radio/utterance", {"text": "@solo3 and again", "id": slow}, timeout=50)
     check("a retry of something still being answered is told the tower is working on it, before the relay or the radio would give up",
           code == 202 and (told or {}).get("working") is True and 25 < time.time() - began < 38, (code, told, time.time() - began))
 finally:

@@ -175,7 +175,7 @@ fn provider_for(mut cfg: Config, job: crate::providers::Job, cmd: &str, what: &s
             println!("{}", crate::setup::works(&cfg, job, args.get(1).map(String::as_str))?);
             return Ok(());
         }
-        Some("none" | "device") => Use::default(),
+        Some("none") => Use::default(),
         Some(id) => {
             let p = providers::offering(job).find(|p| p.id == id).ok_or_else(|| format!("nothing called \"{id}\" does this: {} or none", offered()))?;
             let mut u = Use::of(&p.id);

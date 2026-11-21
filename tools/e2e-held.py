@@ -104,7 +104,7 @@ json.dump({
     "port": PORT, "token": OWN, "radio_token": RADIO, "name": "Charles", "station": "held", "summarizer": {"kind": "none"}, "projects": {"shop": project},
     "launcher": "stand-in",
     "launchers": {"stand-in": {"argv": [sys.executable, AGENT, BIN, "{id}", "{cwd}", os.path.join(got, "said")],
-                               "held": {"fresh": [], "resume": [], "line": '{"text":{text}}', "stop": '{"stop":"{id}"}'}},
+                               "held": {"by": "lines", "fresh": [], "resume": [], "line": '{"text":{text}}', "stop": '{"stop":"{id}"}'}},
                   "stand-acp": {"harness": "stand-acp", "held": {"by": "acp", "program": [sys.executable, ACP, os.path.join(got, "acp")]}},
                   "broken": {"harness": "broken", "held": {"by": "acp", "program": [sys.executable, "-c", "import sys; sys.stderr.write('you are not signed in\\n'); sys.exit(3)"]}}},
 }, open(os.path.join(home, ".airband", "config.json"), "w"))
