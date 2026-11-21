@@ -89,7 +89,7 @@ pub fn command(args: &[String]) -> Result<(), String> {
                 catalog::would_take(text, &before)?;
                 println!("A build that has the copy published before would take it.");
             }
-            println!("Rev {}: {} providers, {} models for the phone, every row usable by this build.", c.rev, c.providers.len(), c.models.len());
+            println!("Number {}: {} providers and {} models for the phone, and this version of airband can use every one.", c.rev, c.providers.len(), c.models.len());
             Ok(())
         }
         Some("stamp") => {

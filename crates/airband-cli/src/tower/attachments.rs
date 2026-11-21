@@ -57,14 +57,15 @@ pub(super) fn take(part: AttachmentPart) -> Result<u64, String> {
     let path = dir.join(safe(&part.name));
     let bytes = airband_core::audio::base64_decode(&part.data).ok_or("that part could not be read")?;
     let mut file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&path).map_err(|e| e.to_string())?;
-    if part.from + bytes.len() as u64 > MOST || part.total.is_some_and(|t| t > MOST) {
+    if part.from + bytes.len() as u64 > MOST || part.total > MOST {
         let _ = std::fs::remove_dir_all(&dir);
         return Err("that file is too large".into());
     }
-    let (next, whole) = match part.total {
-        // The radio said how long the file is: its parts come in any order, several at once. Each is written
-        // where it belongs, and what has come is kept beside the file until all of it has.
-        Some(total) => {
+    let (next, whole) = {
+        // The radio says how long the file is, and its parts come in any order, several at once. Each is
+        // written where it belongs, and what has come is kept beside the file until all of it has.
+        {
+            let total = part.total;
             if part.from + bytes.len() as u64 > total {
                 return Err("a part runs past the end of the file".into());
             }
@@ -89,16 +90,6 @@ pub(super) fn take(part: AttachmentPart) -> Result<u64, String> {
                 std::fs::write(&note, serde_json::to_string(&got).unwrap_or_default()).map_err(|e| e.to_string())?;
             }
             (have, have >= total)
-        }
-        None => {
-            let have = file.metadata().map_err(|e| e.to_string())?.len();
-            if part.from > have {
-                return Err(format!("a part is missing: the tower has {have} bytes and this one starts at {}", part.from));
-            }
-            file.set_len(part.from).map_err(|e| e.to_string())?;
-            file.seek(SeekFrom::Start(part.from)).map_err(|e| e.to_string())?;
-            file.write_all(&bytes).map_err(|e| e.to_string())?;
-            (part.from + bytes.len() as u64, part.done)
         }
     };
     if whole && !dir.join(".ready").exists() && !dir.join(".whole").exists() {

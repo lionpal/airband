@@ -10,5 +10,26 @@
       "file": "llama-b12589-bin-macos-arm64.tar.gz",
       "sha256": "711006321bbac464624da19f2333b49e8e0d5e6aa75c867b5323d88818abff2f"
     }
-  ]
+  ],
+  "args": [
+    "-hf",
+    "{model}",
+    "--no-mmproj",
+    "--reasoning",
+    "off",
+    "--chat-template-kwargs",
+    "{\"enable_thinking\":false}",
+    "--jinja",
+    "-c",
+    "24576",
+    "-np",
+    "3",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "{port}"
+  ],
+  "env": {
+    "LLAMA_CACHE": "{models}"
+  }
 }

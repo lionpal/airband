@@ -19,6 +19,7 @@ use crate::providers::{Job, Offer, Provider};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
 /// Where the signed copy is kept.
@@ -69,6 +70,16 @@ pub struct Tool {
     /// are always the ones this build came with: a copy fetched later can change what a tool is called, and
     /// never what is run for it.
     pub launchers: Vec<crate::tools::Launcher>,
+    /// What the code that speaks to this tool is told about it: the program's name, the addresses its
+    /// accounts are asked at. Programs and addresses again, so these too are always this build's own.
+    pub with: BTreeMap<String, Value>,
+}
+
+impl Tool {
+    /// Something its row tells the code that speaks to it, as text. Empty when the row does not say.
+    pub fn told(&self, what: &str) -> &str {
+        self.with.get(what).and_then(Value::as_str).unwrap_or_default()
+    }
 }
 
 /// A model that runs on the phone itself.
@@ -129,6 +140,12 @@ pub struct Server {
     pub base: String,
     /// The program inside the unpacked archive.
     pub program: String,
+    /// What it is started with. `{model}` is the model to run, `{port}` where to listen.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// What is set in its environment. `{models}` is the folder its models are kept in.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
     /// One archive for each kind of computer it is published for. One not listed cannot run it yet.
     pub archives: Vec<Archive>,
 }
@@ -281,7 +298,9 @@ fn weigh_against(text: &str, now: u64, have: &Catalog, built: &Catalog) -> Resul
     // How a coding tool is started is a program to run, and is this build's own for every tool it knows. What
     // a later copy says about that is not kept: a tool new to this build comes with no way to start it.
     for t in newer.tools.iter_mut() {
-        t.launchers = built.tools.iter().find(|b| b.id == t.id).map(|b| b.launchers.clone()).unwrap_or_default();
+        let own = built.tools.iter().find(|b| b.id == t.id);
+        t.launchers = own.map(|b| b.launchers.clone()).unwrap_or_default();
+        t.with = own.map(|b| b.with.clone()).unwrap_or_default();
     }
     if newer.providers.is_empty() {
         return Err("the catalogue has no providers in it".into());
@@ -339,7 +358,8 @@ fn allowed(newer: &Catalog, built: &Catalog) -> Result<(), String> {
     }
     // the same for how a coding tool is started: only what this build came with
     for t in &newer.tools {
-        if t.launchers != built.tools.iter().find(|b| b.id == t.id).map(|b| b.launchers.clone()).unwrap_or_default() {
+        let own = built.tools.iter().find(|b| b.id == t.id);
+        if t.launchers != own.map(|b| b.launchers.clone()).unwrap_or_default() || t.with != own.map(|b| b.with.clone()).unwrap_or_default() {
             return Err(format!("the catalogue would change the program run to start {}", t.id));
         }
     }
@@ -470,6 +490,8 @@ struct ToolRow {
     first: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     launchers: Vec<crate::tools::Launcher>,
+    #[serde(default)]
+    with: BTreeMap<String, Value>,
 }
 
 #[derive(Deserialize)]
@@ -526,7 +548,7 @@ fn read(text: &str) -> Result<Catalog, String> {
         .map(|t| {
             // a launcher in a tool's row starts that tool
             let launchers = t.launchers.into_iter().map(|l| crate::tools::Launcher { harness: t.id.clone(), ..l }).collect();
-            Tool { id: t.id, name: t.name, maker: t.maker, first: t.first, launchers }
+            Tool { id: t.id, name: t.name, maker: t.maker, first: t.first, launchers, with: t.with }
         })
         .collect();
     Ok(Catalog { rev: doc.rev, hash: doc.hash, providers, tools, models, servers, phrases: doc.phrases, retired: doc.retired, left_out })
@@ -723,6 +745,9 @@ mod tests {
             edit(&mut doc);
             read(&doc.to_string()).and_then(|c| allowed(&c, &built))
         };
+        // what a tool's code is told (a program's name, an address) is this build's own too
+        assert!(with(&|d| d["tools"][0]["with"]["program"] = "other".into()).is_err());
+        assert!(with(&|d| d["tools"][0]["with"]["accounts_token"] = "https://elsewhere.example/token".into()).is_err());
         // every tool this build knows can be started, each launcher starting its own tool
         assert!(built.tools.iter().all(|t| !t.launchers.is_empty() && t.launchers.iter().all(|l| l.harness == t.id && !l.name.is_empty())));
         // and every keyed offer says its own id and no two of a provider's share one

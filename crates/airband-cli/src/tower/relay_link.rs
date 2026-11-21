@@ -20,7 +20,7 @@ use airband_core::relay::{Answer, Call, Direction, FRESH_MS, Keys, fresh};
 
 
 /// What a radio whose clock is wrong is told.
-const WRONG_CLOCK: &str = "this request's time is more than two minutes from the tower's clock";
+const WRONG_CLOCK: &str = "the clocks of your phone and your computer are more than two minutes apart";
 
 /// Every pairing being served, by its channel: a request that comes straight to the tower is answered by the
 /// same code, with the same key, as one pulled from the relay.
@@ -146,7 +146,7 @@ impl Serve {
                         if !told {
                             log(match other {
                                 Ok(401) => format!("{} needs an admission key: airband relay <url> --admission <key>", relay),
-                                Ok(403) => format!("{} says the channel for \"{}\" belongs to another tower; pair again", relay, self.name),
+                                Ok(403) => format!("{} says the channel for \"{}\" belongs to another computer; pair again", relay, self.name),
                                 Ok(code) => format!("{} refused to open a channel ({code})", relay),
                                 Err(e) => format!("cannot reach {}: {e}; retrying", relay),
                             });
@@ -295,8 +295,8 @@ impl Serve {
     /// `now`: the request was made just now, so where its radio said it stands is where it stands. One the relay
     /// kept says where the radio stood when he said it, which is not news.
     async fn dispatch(&self, call: &Call, via: &str, now: bool) -> (u16, Value) {
-        if !call.schema.is_empty() && call.schema != airband_core::radio::SCHEMA {
-            return self.refused(call, via, 400, &format!("this tower speaks {}, not \"{}\"", airband_core::radio::SCHEMA, call.schema));
+        if call.schema != airband_core::radio::SCHEMA {
+            return self.refused(call, via, 400, &format!("this version of airband takes {}, not \"{}\"", airband_core::radio::SCHEMA, call.schema));
         }
         if !call.path.starts_with("/v1/radio/") || !matches!(call.method.as_str(), "GET" | "POST") {
             return self.refused(call, via, 403, "a radio may only use /v1/radio/");

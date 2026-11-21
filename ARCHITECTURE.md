@@ -49,7 +49,7 @@ callsigns that name an agent, and the shape of a credential.
 | Accounts for another agent tool (several logins, switched while sessions run) | Five functions in its adapter (`AccountBook`: list with allowances, switch, save, add, forget). `adapters/claude_accounts.rs` is the model. | `adapters/` only |
 | What an agent is doing right now, and its model and effort | No code: `airband report … doing "<text>"` and `… model "<name>" [effort]`. Or one function in its adapter (`glance`). | `adapters/` only |
 | Progress notes, what he types at an agent's own keyboard, and which team it belongs in, for another agent tool | One adapter function each: `steps` (the labels of its steps since a moment), `told` (his prompts, with any pictures he pasted), `touched` (the files and commands of its latest steps, from which a model says which project the work is part of, in `tower/place.rs`). | `adapters/` only |
-| Another model, or no model | `airband setup`, or `summarizer` in the config. `summarizer_fallback` is a second one, asked when the first does not answer. A new kind is a variant of `Summarizer`, an arm in `tower/judge.rs` and a row in `PROVIDERS` (`setup.rs`). | Config, or three files |
+| Another model, or no model | `airband setup`, or `summarizer` in the config. When it does not answer he is told on his phone why (`judge::Trouble`, `Feed.reads_failed`) and gets each message as written; no second model is asked. A new kind is a variant of `Summarizer`, an arm in `tower/judge.rs` and a row in `PROVIDERS` (`setup.rs`). | Config, or three files |
 | A better judgement of what is worth showing | `tower/judge.rs`. Try it with `airband triage < message.txt` on real messages first. | One file |
 | A better guess at who a reply is for | `tower/route.rs` for the model's reading; `airband-core/src/routing.rs` for tags and spoken names | One of two files |
 | Something else a button can tell the tower (`/mute`, `/today`) | A `Control` and its word in `COMMANDS` in `routing.rs`, and its arm in `tower/route.rs`. A radio's button sends the word behind a slash. | Two files |
@@ -77,7 +77,7 @@ No secret is written in that file. Every one is taken out and kept encrypted, wi
 | Store | Used by | Encrypted with |
 |---|---|---|
 | The login keychain, one item | a build signed with a developer certificate (`scripts/sign-mac.sh`) on a Mac | his login password, by the system. Read without a prompt only by the same signed program |
-| `~/.airband/keys.sealed` | everything else: Linux, Windows, an unsigned build, a shell with no keychain | ChaCha20-Poly1305, with a key made from the machine's own id and a salt beside the file. A copy on another machine or in a backup opens nothing; a program running as him on this machine can still read it |
+| `~/.airband/keys.sealed` | everything else: Linux, Windows, an unsigned build. A signed build whose keychain will not take the keys says so and keeps nothing; a machine with no id of its own keeps nothing either | ChaCha20-Poly1305, with a key made from the machine's own id and a salt beside the file. A copy on another machine or in a backup opens nothing; a program running as him on this machine can still read it |
 
 The loopback token, which hooks and commands on this computer show the tower, always stays in the settings
 file: it opens nothing from outside, and a shell over SSH cannot read the keychain.

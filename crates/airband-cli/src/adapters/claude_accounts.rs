@@ -36,10 +36,17 @@ fn place(key: &str, default: &str) -> String {
     super::env(key).unwrap_or_else(|| default.to_string())
 }
 fn api() -> String {
-    place("AIRBAND_CLAUDE_API", "https://api.anthropic.com")
+    place("AIRBAND_CLAUDE_API", &super::row_says(HARNESS, "accounts_api"))
 }
 fn token_url() -> String {
-    place("AIRBAND_CLAUDE_TOKEN_URL", "https://platform.claude.com/v1/oauth/token")
+    place("AIRBAND_CLAUDE_TOKEN_URL", &super::row_says(HARNESS, "accounts_token"))
+}
+/// What the tool is called, and who makes it, as its row has them: for what he is told.
+fn tool() -> String {
+    super::called(HARNESS).0
+}
+fn maker() -> String {
+    super::called(HARNESS).1
 }
 fn vault_service() -> String {
     place("AIRBAND_CLAUDE_VAULT_SERVICE", "airband")
@@ -131,8 +138,8 @@ fn security() -> Command {
 fn key_read(service: &str, account: &str) -> Res<Option<String>> {
     let out = security().args(["find-generic-password", "-a", account, "-s", service, "-w"]).stderr(Stdio::piped()).output().map_err(|e| e.to_string())?;
     if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        return if err.contains("could not be found") { Ok(None) } else { Err(format!("the keychain would not give {service}: {}", err.trim())) };
+        // `security` exits with 44 when there is no such item (errSecItemNotFound)
+        return if out.status.code() == Some(44) { Ok(None) } else { Err(format!("the keychain would not give {service} ({})", out.status)) };
     }
     let s = String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string();
     // `security -w` prints anything that is not plain text as hex
@@ -213,10 +220,10 @@ fn resolve(query: &str) -> Res<String> {
 // ── the live login ──
 
 fn live_blob() -> Res<Map<String, Value>> {
-    let s = key_read(&live_service(), &user())?.ok_or("Claude Code is not signed in on this computer.")?;
-    match serde_json::from_str::<Value>(&s).map_err(|e| format!("Claude Code's login cannot be read: {e}"))? {
+    let s = key_read(&live_service(), &user())?.ok_or_else(|| format!("{} is not signed in on this computer.", tool()))?;
+    match serde_json::from_str::<Value>(&s).map_err(|e| format!("{}'s login cannot be read: {e}", tool()))? {
         Value::Object(m) => Ok(m),
-        _ => Err("Claude Code's login is not in the form expected.".into()),
+        _ => Err(format!("{}'s login is not in the form expected.", tool())),
     }
 }
 fn live_token() -> Option<String> {
@@ -252,9 +259,9 @@ fn live_identity() -> Option<String> {
 /// Save the login Claude Code is using now. Returns its email.
 fn save_live() -> Res<String> {
     let blob = live_blob()?;
-    let oauth = blob.get("claudeAiOauth").cloned().ok_or("Claude Code is signed in with an API key or a setup token, which cannot be switched.")?;
+    let oauth = blob.get("claudeAiOauth").cloned().ok_or_else(|| format!("{} is signed in with an API key or a setup token, which cannot be switched.", tool()))?;
     let token = oauth.get("accessToken").and_then(|t| t.as_str()).unwrap_or("");
-    let email = profile_email(token).or_else(|| oauth_account().as_ref().and_then(email_of)).ok_or("Could not tell which account Claude Code is signed in to.")?;
+    let email = profile_email(token).or_else(|| oauth_account().as_ref().and_then(email_of)).ok_or_else(|| format!("Could not tell which account {} is signed in to.", tool()))?;
     let mut acct = oauth_account().unwrap_or(json!({}));
     if email_of(&acct).as_deref() != Some(email.as_str()) {
         acct = saved(&email)?.and_then(|v| v.get("oauthAccount").cloned()).unwrap_or(json!({ "emailAddress": email }));
@@ -280,7 +287,7 @@ fn saved_token(email: &str) -> Res<String> {
         .post(token_url())
         .header("content-type", "application/json")
         .send(json!({ "grant_type": "refresh_token", "refresh_token": refresh, "client_id": client, "scope": scopes }).to_string())
-        .map_err(|_| "Could not reach Anthropic to check it.".to_string())?;
+        .map_err(|_| format!("Could not reach {} to check it.", maker()))?;
     let body: Value = serde_json::from_str(&res.body_mut().read_to_string().map_err(|e| e.to_string())?).unwrap_or(json!({}));
     let new_token = body.get("access_token").and_then(|x| x.as_str()).ok_or(ADD_AGAIN)?;
     let mut n = o.clone();
@@ -343,11 +350,11 @@ fn usage(token: &str) -> Res<Vec<Limit>> {
         .header("authorization", format!("Bearer {token}"))
         .header("anthropic-beta", "oauth-2025-04-20")
         .call()
-        .map_err(|_| "Could not reach Anthropic to check it.".to_string())?;
+        .map_err(|_| format!("Could not reach {} to check it.", maker()))?;
     match res.status().as_u16() {
         200 => Ok(limits_in(&serde_json::from_str(&res.body_mut().read_to_string().map_err(|e| e.to_string())?).unwrap_or(json!({})))),
         401 | 403 => Err("Its login has run out.".into()),
-        n => Err(format!("Anthropic would not say how much is used ({n}).")),
+        n => Err(format!("{} would not say how much is used ({n}).", maker())),
     }
 }
 
@@ -364,7 +371,7 @@ fn account(email: String, live: bool, checked: Res<Vec<Limit>>) -> Account {
 /// Every account, with its allowances, and anything he should know about the list.
 pub fn list() -> (Vec<Account>, Option<String>) {
     if !cfg!(target_os = "macos") {
-        return (Vec::new(), Some("Switching Claude accounts works on a Mac only for now.".into()));
+        return (Vec::new(), Some(format!("Switching {} accounts works on a Mac only for now.", tool())));
     }
     locked(|| {
         let live = live_identity();
@@ -378,7 +385,7 @@ pub fn list() -> (Vec<Account>, Option<String>) {
             .map(|e| {
                 let is_live = live.as_deref() == Some(e.as_str());
                 std::thread::spawn(move || {
-                    let checked = if is_live { live_token().ok_or_else(|| "Claude Code is not signed in.".to_string()).and_then(|t| usage(&t)) } else { saved_token(&e).and_then(|t| usage(&t)) };
+                    let checked = if is_live { live_token().ok_or_else(|| format!("{} is not signed in.", tool())).and_then(|t| usage(&t)) } else { saved_token(&e).and_then(|t| usage(&t)) };
                     account(e, is_live, checked)
                 })
             })
@@ -388,7 +395,7 @@ pub fn list() -> (Vec<Account>, Option<String>) {
             a.problem = Some("Not checked: no session has used it lately.".into());
         }
         let note = match accounts.len() {
-            0 => Some("Claude Code is not signed in on this computer.".into()),
+            0 => Some(format!("{} is not signed in on this computer.", tool())),
             1 => Some("To add another account, on the computer: airband accounts add".into()),
             _ => None,
         };
@@ -450,13 +457,14 @@ pub fn add() -> Res<String> {
     let service = format!("{LIVE_BASE}-{}", sha8(&tmp.to_string_lossy()));
     std::fs::write(tmp.join(".claude.json"), "{\"hasCompletedOnboarding\":true}").map_err(|e| e.to_string())?;
     println!("A browser opens: sign in to the account to add. The login in use now is not touched.");
-    let status = Command::new("claude").args(["auth", "login"]).env("CLAUDE_CONFIG_DIR", &tmp).status().map_err(|e| format!("could not run claude: {e}"));
+    let program = super::row_says(HARNESS, "program");
+    let status = Command::new(&program).args(["auth", "login"]).env("CLAUDE_CONFIG_DIR", &tmp).status().map_err(|e| format!("could not run {program}: {e}"));
     let result = (|| -> Res<String> {
         if !status?.success() {
             return Err("The sign-in did not finish.".into());
         }
         let blob: Value = serde_json::from_str(&key_read(&service, &user())?.ok_or("The sign-in saved no login.")?).map_err(|e| e.to_string())?;
-        let oauth = blob.get("claudeAiOauth").cloned().ok_or("The sign-in saved no claude.ai login.")?;
+        let oauth = blob.get("claudeAiOauth").cloned().ok_or("The sign-in saved no login for an account.")?;
         let acct = read_json(&tmp.join(".claude.json"))?.get("oauthAccount").cloned().ok_or("The sign-in saved no account record.")?;
         let email = email_of(&acct).ok_or("The account record has no email.")?;
         locked(|| keep(&email, &oauth, &acct))?;

@@ -86,8 +86,11 @@ pub struct DeskMember {
     pub doing: Option<String>,
     /// Two characters to stand for it: "S3", "CP".
     pub badge: String,
-    /// What it runs on, for a small line beside its name: "Opus 4.7 · high". Empty when not known.
-    pub engine: String,
+    /// The model it runs on ("Opus 4.7") and how hard it is set to think ("high"). Each empty when not known.
+    pub model: String,
+    pub effort: String,
+    /// What tells it from the others of its team, for a place that already shows the team: "two", "removals".
+    pub number: String,
     /// The computer it is on, when he is paired with more than one; empty otherwise.
     pub station: String,
     /// The tower runs it itself, so his words reach it as his own. One that is not was started in a terminal
@@ -194,6 +197,8 @@ pub(crate) struct Station {
     listens: bool,
     /// What reads the agents' messages there, by name.
     reads: String,
+    /// Why it could not, the last time that computer asked it. Empty while it works.
+    reads_failed: String,
     agents: Vec<ChatAgent>,
     open: HashSet<String>,
     sending: Vec<Outgoing>,
@@ -229,6 +234,8 @@ pub(crate) struct State {
     /// there), and the links of the computers that have been told.
     push: Option<(String, String)>,
     push_told: HashSet<String>,
+    /// The coding tools each computer was last told he uses, by its link.
+    tools_told: HashMap<String, Vec<String>>,
     banner: BannerAddresses,
     read: ReadMarks,
 }
@@ -635,6 +642,7 @@ impl Desk {
                 failing_since: None,
                 listens: false,
                 reads: String::new(),
+                reads_failed: String::new(),
                 agents: was.map(|s| s.agents.clone()).unwrap_or_default(),
                 open: was.map(|s| s.open.clone()).unwrap_or_default(),
                 sending: Vec::new(),
@@ -719,7 +727,7 @@ impl Desk {
         // what an agent is waiting on him for: its newest question still open
         let asked = |a: &ChatAgent| all.iter().rev().find(|m| m.needs_you && m.from == a.callsign && state.is_open(&m.id));
         for a in &agents {
-            let member = DeskMember { id: a.id.clone(), callsign: a.callsign.clone(), state: a.state.clone(), subagents: a.subagents, doing: a.doing.clone(), held: a.held, unread: unread_from.get(a.callsign.as_str()).copied().unwrap_or(0), question: asked(a).map(|m| m.text.clone()).unwrap_or_default(), question_id: asked(a).map(|m| m.id.clone()).unwrap_or_default(), harness: a.harness.clone(), badge: airband_core::routing::badge(&a.group, &a.callsign), engine: [a.model.as_deref(), a.effort.as_deref()].into_iter().flatten().collect::<Vec<_>>().join(" \u{b7} "), station: if state.stations.len() > 1 { state.stations.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(|s| s.name.clone()).unwrap_or_default() } else { String::new() } };
+            let member = DeskMember { id: a.id.clone(), callsign: a.callsign.clone(), state: a.state.clone(), subagents: a.subagents, doing: a.doing.clone(), held: a.held, unread: unread_from.get(a.callsign.as_str()).copied().unwrap_or(0), question: asked(a).map(|m| m.text.clone()).unwrap_or_default(), question_id: asked(a).map(|m| m.id.clone()).unwrap_or_default(), harness: a.harness.clone(), badge: airband_core::routing::badge(&a.group, &a.callsign), model: a.model.clone().unwrap_or_default(), effort: a.effort.clone().unwrap_or_default(), number: a.number.clone(), station: if state.stations.len() > 1 { state.stations.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(|s| s.name.clone()).unwrap_or_default() } else { String::new() } };
             // what the team is doing is said in the name of whoever is doing it, without the team's own name
             let doing = a.doing.as_ref().map(|d| match a.callsign.strip_prefix(&a.group).map(str::trim).filter(|rest| !rest.is_empty()) {
                 Some(who) => format!("{who}: {d}"),
@@ -911,10 +919,10 @@ impl Desk {
     }
 
     /// The folders inside one of his on a computer, for choosing where a new team works. `computer` is its
-    /// name, or empty for the first that can be reached; `under` is a folder's whole path, or empty for his
+    /// name, or empty when he has only one; `under` is a folder's whole path, or empty for his
     /// home folder. Blocks: call it off the main thread.
     pub fn folders(&self, computer: String, under: String) -> Result<DeskFolders, RadioError> {
-        let f = self.station_radio(&computer).ok_or(RadioError::Offline)?.folders(under)?;
+        let f = self.station_radio(&computer)?.folders(under)?;
         Ok(DeskFolders { path: f.path, shown: f.shown, up: f.up, folders: f.folders })
     }
 
@@ -922,20 +930,32 @@ impl Desk {
     /// Its first agent is started there with nothing to do yet. Blocks: call it off the main thread.
     /// `tool` is the coding tool its first agent is, by id; nothing is the computer's usual one.
     pub fn new_team(&self, computer: String, name: String, folder: String, make: bool, tool: Option<String>) -> Result<(), RadioError> {
-        self.station_radio(&computer).ok_or(RadioError::Offline)?.new_project(name, folder, make, tool.filter(|t| !t.is_empty()))
+        self.station_radio(&computer)?.new_project(name, folder, make, tool.filter(|t| !t.is_empty()))
     }
 
-    /// Start a new agent in a team, on the computer named, or where most of that team's agents already run. It
-    /// is started with nothing to do yet and shows up at once, waiting for his first word. Nothing happens for
-    /// a team no computer has.
+    /// Start a new agent in a team, on the computer named. With none named it starts on the one computer that
+    /// has that team; when several have it he is asked which, and nothing is started. It is started with
+    /// nothing to do yet and shows up at once, waiting for his first word. Nothing happens for a team no
+    /// computer has.
     /// `tool` is the coding tool it is, by id, with what to call that tool; nothing is the computer's usual one.
     pub fn new_agent(&self, room: String, computer: Option<String>, tool: Option<CodingTool>) {
         let radio = {
             let state = self.shared.state.lock().unwrap();
             let has = |s: &&Station| s.agents.iter().any(|a| a.group == room);
-            let named = computer.filter(|c| !c.is_empty()).and_then(|c| state.stations.iter().filter(has).find(|s| s.name == c));
-            let most = || state.stations.iter().filter(has).max_by_key(|s| s.agents.iter().filter(|a| a.group == room).count());
-            named.or_else(most).map(|s| s.radio.clone())
+            let there: Vec<&Station> = state.stations.iter().filter(has).collect();
+            match (computer.filter(|c| !c.is_empty()), there.as_slice()) {
+                (Some(named), _) => there.iter().find(|s| s.name == named).map(|s| s.radio.clone()).ok_or_else(|| format!("{named} has no team called {room}.")),
+                (None, [only]) => Ok(only.radio.clone()),
+                (None, []) => return,
+                (None, several) => Err(format!("Which computer should it start on? {} each have a team called {room}.", several.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(" and "))),
+            }
+        };
+        let radio = match radio {
+            Ok(radio) => Some(radio),
+            Err(ask) => {
+                self.shared.host.note(ask);
+                None
+            }
         };
         if let Some(radio) = radio {
             // the typed command, which the tower takes as it is; the chat shows the words beside it
@@ -1258,10 +1278,16 @@ impl Desk {
         deliver(&self.shared, text, label, re, room, agent);
     }
 
-    /// The computer called this, or with no name the first that can be reached.
-    fn station_radio(&self, computer: &str) -> Option<Arc<Radio>> {
+    /// The computer called this. With no name it is the one computer he has; with several he has to say
+    /// which, and none is picked for him.
+    fn station_radio(&self, computer: &str) -> Result<Arc<Radio>, RadioError> {
         let state = self.shared.state.lock().unwrap();
-        state.stations.iter().filter(|s| s.online).find(|s| computer.is_empty() || s.name == computer).map(|s| s.radio.clone())
+        let found = match (computer.is_empty(), state.stations.as_slice()) {
+            (true, [only]) => Some(only),
+            (true, [_, _, ..]) => return Err(RadioError::Told { reason: "Choose which computer first.".into() }),
+            _ => state.stations.iter().find(|s| s.name == computer),
+        };
+        found.filter(|s| s.online).map(|s| s.radio.clone()).ok_or(RadioError::Offline)
     }
     fn radio_of(&self, message: &str) -> Option<Arc<Radio>> {
         let state = self.shared.state.lock().unwrap();
@@ -1425,6 +1451,23 @@ fn tell_push(shared: &Arc<Shared>, radio: &Arc<Radio>, index: usize, generation:
     }
 }
 
+/// Tell one computer which coding tools he uses, if it has not been told or he has since changed them: a new
+/// agent he asks for without naming a tool is started with the one he uses most.
+fn tell_tools(shared: &Arc<Shared>, radio: &Arc<Radio>, index: usize, generation: u64) {
+    let tools = shared.chooser.tools();
+    let link = {
+        let state = shared.state.lock().unwrap();
+        let Some(station) = state.stations.get(index).filter(|_| state.generation == generation) else { return };
+        if state.tools_told.get(&station.link) == Some(&tools) {
+            return;
+        }
+        station.link.clone()
+    };
+    if radio.uses_tools(&tools).is_ok() {
+        shared.state.lock().unwrap().tools_told.insert(link, tools);
+    }
+}
+
 /// Tell one computer where this device's banner can be put up and changed, if what it was told is not what is
 /// so now. A computer that cannot be reached is told the next time round.
 fn tell_banner(shared: &Arc<Shared>, radio: &Arc<Radio>, index: usize, generation: u64) {
@@ -1538,6 +1581,7 @@ fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64)
         // a computer that has not been told where this device can be woken is told as soon as it is reached
         tell_push(&shared, &radio, index, generation);
         tell_banner(&shared, &radio, index, generation);
+        tell_tools(&shared, &radio, index, generation);
         // the tower is told whether the chat is in front of him: only then does having it count as seeing it
         radio.set_away(!shared.host.watching());
         // the first answer must come at once: it is what says the tower is there and who is on it
@@ -1545,6 +1589,8 @@ fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64)
         let mut seen: Vec<String> = Vec::new();
         // this computer has just been reached, or says it now reads with something else
         let mut reached = false;
+        // what reads there has just stopped working, in words for him
+        let mut reads_trouble: Option<String> = None;
         {
             let mut state = shared.state.lock().unwrap();
             if state.generation != generation {
@@ -1560,11 +1606,17 @@ fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64)
                     station.fails = 0;
                     station.failing_since = None;
                     station.answered_at = Some(std::time::Instant::now());
-                    reached = !station.online || station.reads != feed.reads;
+                    reached = !station.online || station.reads != feed.reads || station.reads_failed != feed.reads_failed;
                     station.online = true;
                     station.name = feed.station.clone();
                     station.listens = feed.listens;
                     station.reads = feed.reads.clone();
+                    // what reads there has stopped working: he is told once, when it stops, and each message
+                    // comes as it was written until it works again
+                    if !feed.reads_failed.is_empty() && station.reads_failed != feed.reads_failed {
+                        reads_trouble = Some(format!("Summaries are not working on {}. {} You are getting each message as it was written. To change what makes them, open Settings, then Summaries.", if feed.station.is_empty() { "your computer" } else { feed.station.as_str() }, feed.reads_failed));
+                    }
+                    station.reads_failed = feed.reads_failed.clone();
                     station.agents = feed.agents.clone();
                     station.open = feed.open.iter().cloned().collect();
                     station.quick = feed.quick.clone();
@@ -1596,6 +1648,9 @@ fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64)
             }
         }
         shared.host.changed();
+        if let Some(trouble) = reads_trouble {
+            shared.host.note(trouble);
+        }
         if !seen.is_empty() {
             radio.seen(seen);
         }
@@ -1676,7 +1731,8 @@ mod tests {
             failing_since: None,
             listens: false,
             reads: String::new(),
-            agents: agents.iter().map(|(c, g)| ChatAgent { id: c.to_string(), callsign: c.to_string(), group: g.to_string(), harness: "h".into(), waiting: false, reachable: true, state: "working".into(), subagents: 0, doing: None, held: false, model: None, effort: None }).collect(),
+            reads_failed: String::new(),
+            agents: agents.iter().map(|(c, g)| ChatAgent { id: c.to_string(), callsign: c.to_string(), group: g.to_string(), number: String::new(), harness: "h".into(), waiting: false, reachable: true, state: "working".into(), subagents: 0, doing: None, held: false, model: None, effort: None }).collect(),
             open: messages.iter().filter(|m| m.needs_you).map(|m| m.id.clone()).collect(),
             sending: Vec::new(),
             landing: Vec::new(),
@@ -1723,6 +1779,55 @@ mod tests {
         fn run_model(&self, _: String, _: String, _: ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
             None
         }
+    }
+
+    #[test]
+    fn a_computer_is_never_picked_for_him() {
+        struct Noted(Mutex<Vec<String>>);
+        impl DeskHost for Noted {
+            fn secret(&self, _: String) -> Option<String> {
+                None
+            }
+            fn keep_secret(&self, _: String, _: Option<String>) {}
+            fn play(&self, _: u32, _: Vec<u8>, _: bool) {}
+            fn record_start(&self, _: u32) -> bool {
+                false
+            }
+            fn record_read(&self) -> Vec<u8> {
+                Vec::new()
+            }
+            fn record_stop(&self) {}
+            fn changed(&self) {}
+            fn status(&self, _: RadioStatus, _: String) {}
+            fn note(&self, text: String) {
+                self.0.lock().unwrap().push(text);
+            }
+            fn hearing(&self, _: String) {}
+            fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
+            fn watching(&self) -> bool {
+                true
+            }
+            fn device(&self) -> HostDevice {
+                HostDevice::default()
+            }
+            fn run_model(&self, _: String, _: String, _: ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
+                None
+            }
+        }
+        let host = Arc::new(Noted(Mutex::new(Vec::new())));
+        // two computers that each have a team called shop
+        let state = State { stations: vec![station("mini", 1, &[("shop two", "shop")], Vec::new()), station("macbook", 2, &[("shop one", "shop")], Vec::new())], ..State::default() };
+        let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host: host.clone(), chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default() }), data_dir: String::new() };
+        // with none named he is asked which, and one that has no such team is not swapped for one that has
+        desk.new_agent("shop".into(), None, None);
+        desk.new_agent("shop".into(), Some("laptop".into()), None);
+        // a team no computer has: nothing happens, and nothing is said
+        desk.new_agent("garden".into(), None, None);
+        let notes = host.0.lock().unwrap().clone();
+        assert_eq!(notes, vec!["Which computer should it start on? mini and macbook each have a team called shop.".to_string(), "laptop has no team called shop.".to_string()]);
+        // the same for anything else asked of a computer he did not name
+        assert!(matches!(desk.station_radio(""), Err(RadioError::Told { .. })));
+        assert!(matches!(desk.station_radio("laptop"), Err(RadioError::Offline)));
     }
 
     #[test]

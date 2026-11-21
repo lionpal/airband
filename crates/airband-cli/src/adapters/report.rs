@@ -84,5 +84,5 @@ pub fn run(args: &[String]) -> Result<(), String> {
         Some("signoff") => Event::Signoff,
         _ => return Err("expected one of: checkin, working, doing <text>, model <name> [effort], said <text>, asked <text>, notice <text>, show <picture file>, picture <picture file>, signoff".into()),
     };
-    if post(&AgentEvent { schema: SCHEMA.into(), agent, event }) { Ok(()) } else { Err("the tower did not answer (is it running? `airband status`)".into()) }
+    if post(&AgentEvent { schema: SCHEMA.into(), agent, event }) { Ok(()) } else { Err("airband did not answer (is it running? `airband status`)".into()) }
 }

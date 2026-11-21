@@ -147,6 +147,11 @@ pub fn setup(mut cfg: Config, start: bool) -> Result<(), String> {
     if let Some(why) = config::keyless() {
         return Err(format!("Setup needs the keys, which cannot be read from here: {why}"));
     }
+    // what his agents are told his name is: the one this computer's account has for him until he gives another
+    let name = line(&format!("Your name, as your agents are told it [{}]: ", cfg.name));
+    if !name.is_empty() {
+        cfg.name = name;
+    }
     println!("Three choices, then your phone. Keys you give stay on this computer{}.\nThey go to the service they are for and nowhere else: never to airband's servers.", format!(", {}", crate::vault::place()));
     choose(&mut cfg, Job::Summary, "1 of 3. Summaries", "What reads your agents' messages and tells you the short of them.", "None: you get every message in full");
     choose(&mut cfg, Job::Voice, "2 of 3. Voice", "What reads to you when you turn reading aloud on.", "None: nothing is read aloud");
@@ -156,7 +161,7 @@ pub fn setup(mut cfg: Config, start: bool) -> Result<(), String> {
         println!("\nSaved.");
         return Ok(());
     }
-    println!("\nSaved. Starting the tower with these.");
+    println!("\nSaved. Starting airband with these.");
     crate::install::install()?;
     if cfg.pairings.is_empty() {
         println!("\nNow your phone: open airband on it and scan this.");
@@ -171,7 +176,7 @@ pub fn setup(mut cfg: Config, start: bool) -> Result<(), String> {
 fn used_for(cfg: &Config, secret: &str) -> Vec<&'static str> {
     let has = |u: &Use| u.key == secret;
     let mut out = Vec::new();
-    if has(&cfg.summarizer) || cfg.summarizer_fallback.as_ref().is_some_and(has) {
+    if has(&cfg.summarizer) {
         out.push("summaries");
     }
     if has(&cfg.voice) {
@@ -183,7 +188,7 @@ fn used_for(cfg: &Config, secret: &str) -> Vec<&'static str> {
     out
 }
 
-/// `airband keys [add <name> <provider> | remove <name> | lock]`. A key is never shown.
+/// `airband keys [add <name> <provider> | remove <name>]`. A key is never shown.
 pub fn keys(args: &[String]) -> Result<(), String> {
     let mut cfg = config::load();
     if let Some(why) = config::keyless() {
@@ -191,7 +196,7 @@ pub fn keys(args: &[String]) -> Result<(), String> {
     }
     match args.first().map(String::as_str) {
         None => {
-            println!("{}", if config::locked() { format!("Kept encrypted, {}. The settings file holds none.", crate::vault::place()) } else { "Still in the settings file. Move them:  airband keys lock".to_string() });
+            println!("Kept encrypted, {}. The settings file holds none.", crate::vault::place());
             if cfg.keys.is_empty() {
                 println!("No keys yet. Add them with:  airband setup");
             }
@@ -226,21 +231,16 @@ pub fn keys(args: &[String]) -> Result<(), String> {
             config::save(&cfg)?;
             println!("Removed.");
         }
-        // settings written before the keys were always kept encrypted: move them now
-        Some("lock") => {
-            config::lock()?;
-            println!("The keys are {}. The settings file holds none.", crate::vault::place());
-        }
         // before installing a copy signed with another certificate, which the keychain would take for a stranger
         Some("carry") => match crate::vault::carry() {
-            Ok(true) => println!("The keys are out of the keychain and sealed in a file. Install the newly signed copy now: it puts them back in the keychain as its own."),
+            Ok(true) => println!("The keys are out of the keychain and kept in an encrypted file. Install the new copy of airband now: it puts them back in the keychain."),
             Ok(false) => println!("There is nothing in the keychain to move."),
             Err(why) => {
                 std::fs::write(crate::vault::carry_asked(), "").map_err(|e| e.to_string())?;
-                println!("The keychain cannot be read from here ({why}).\nThe tower will move the keys the next time it starts:  airband install");
+                println!("The keychain cannot be read from here ({why}).\nairband moves the keys the next time it starts:  airband install");
             }
         },
-        Some(other) => return Err(format!("airband keys takes add, remove, lock or carry, not \"{other}\"")),
+        Some(other) => return Err(format!("airband keys takes add, remove or carry, not \"{other}\"")),
     }
     Ok(())
 }

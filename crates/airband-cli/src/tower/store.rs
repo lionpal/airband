@@ -164,24 +164,6 @@ impl Store {
         self.db.lock().unwrap().query_row("select coalesce(max(seq), 0), coalesce(max(rev), 0) from messages", [], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64))).unwrap_or((0, 0))
     }
 
-    /// The record of what an agent's harness reported, as it arrived: the event and what the agent said of
-    /// itself, whether or not this build understands them. The one thing left out is a token for reaching the
-    /// agent, which is not this file's to keep.
-    /// Mask credentials in the record of raw events kept before they were masked on the way in.
-    pub(super) fn scrub_events(&self) {
-        let db = self.db.lock().unwrap();
-        let rows: Vec<(i64, String)> = match db.prepare("select n, event from events where event like '%ghp_%' or event like '%github_pat_%' or event like '%sk-%' or event like '%sk_live_%' or event like '%AKIA%' or event like '%PRIVATE KEY-----%' or event like '%secret=%' or event like '%AIza%' or event like '%eyJ%' or event like '%xox%'") {
-            Ok(mut q) => q.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).map(|rows| rows.flatten().collect()).unwrap_or_default(),
-            Err(_) => return,
-        };
-        for (n, event) in rows {
-            let clean = airband_core::redact::redact(&event);
-            if clean != event {
-                Self::warn("masking an old event", db.execute("update events set event = ?1 where n = ?2", params![clean, n]));
-            }
-        }
-    }
-
     /// Drop what is too old to be wanted, so the file does not grow for ever: the record of raw events and of
     /// deliveries after a month, the ids of what he said after a month (the relay holds a message for a week at
     /// most, so none can come again later than that), and all but the newest 5,000 messages.
@@ -194,6 +176,9 @@ impl Store {
         Self::warn("dropping old messages", db.execute("delete from messages where seq <= (select max(seq) from messages) - 5000", []));
     }
 
+    /// The record of what an agent's harness reported, as it arrived: the event and what the agent said of
+    /// itself, whether or not this build understands them. The one thing left out is a token for reaching the
+    /// agent, which is not this file's to keep.
     pub(super) fn event(&self, raw: &Value) {
         let mut about = raw["agent"].clone();
         if let Some(deliver) = about.get_mut("deliver").and_then(Value::as_object_mut) {

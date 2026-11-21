@@ -4,7 +4,7 @@ use super::*;
 
 pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
     if ev.schema != agent::SCHEMA {
-        return Err(format!("this tower speaks {}, not \"{}\"", agent::SCHEMA, ev.schema));
+        return Err(format!("this version of airband takes {}, not \"{}\"", agent::SCHEMA, ev.schema));
     }
     // copies of pictures are made before anything is locked: shrinking one takes a moment
     let kept: Vec<airband_core::radio::Picture> = match &ev.event {

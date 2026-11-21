@@ -346,6 +346,8 @@ pub(super) struct Inner {
     /// What an agent of each launcher that says so itself last said it can be set to, by the launcher's name
     /// (`held::offers`).
     pub(super) menus: BTreeMap<String, airband_core::tools::Offers>,
+    /// The coding tools he uses, by their rows' ids, the one he uses most first: as his phone last said.
+    pub(super) tools: Vec<String>,
     /// Names agents go by on his other computers, as a radio last told it. None of this tower's numbered
     /// agents is called any of them.
     pub(super) elsewhere: Vec<Callsign>,
@@ -411,6 +413,8 @@ pub(crate) struct Saved {
     pub(super) held: Vec<held::Kept>,
     #[serde(default)]
     pub(super) menus: BTreeMap<String, airband_core::tools::Offers>,
+    #[serde(default)]
+    pub(super) tools: Vec<String>,
     #[serde(default)]
     pub(super) placed: BTreeMap<String, (String, Mover)>,
 }
@@ -987,7 +991,7 @@ impl Inner {
     }
     pub(super) fn roster_entries(&self) -> Vec<RosterEntry> {
         let open = self.open_ids();
-        self.sessions.iter().map(|s| RosterEntry { id: s.agent.id.clone(), callsign: s.callsign.text(), group: s.callsign.project.clone(), harness: s.agent.harness.clone(), waiting: s.waiting, state: self.state_of(s, &open).into(), subagents: s.subagents, reachable: s.agent.deliver.is_some(), doing: s.doing.clone().filter(|_| !s.waiting), held: s.agent.deliver == Some(Deliver::Held), model: s.model.clone(), effort: s.effort.clone() }).collect()
+        self.sessions.iter().map(|s| RosterEntry { id: s.agent.id.clone(), callsign: s.callsign.text(), group: s.callsign.project.clone(), number: s.callsign.number.clone(), harness: s.agent.harness.clone(), waiting: s.waiting, state: self.state_of(s, &open).into(), subagents: s.subagents, reachable: s.agent.deliver.is_some(), doing: s.doing.clone().filter(|_| !s.waiting), held: s.agent.deliver == Some(Deliver::Held), model: s.model.clone(), effort: s.effort.clone() }).collect()
     }
     /// Where a new agent can be started: what the configuration lists, then wherever agents have been seen.
     pub(super) fn launchable(&self, cfg: &Config) -> BTreeMap<String, String> {
