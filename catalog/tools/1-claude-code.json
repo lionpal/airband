@@ -1,5 +1,90 @@
 {
   "id": "claude-code",
   "name": "Claude Code",
-  "maker": "Anthropic"
+  "maker": "Anthropic",
+  "launchers": [
+    {
+      "name": "claude-held",
+      "argv": [
+        "claude",
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "{options}"
+      ],
+      "models": {
+        "fable": "fable",
+        "opus": "opus",
+        "sonnet": "sonnet",
+        "haiku": "haiku"
+      },
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "with_model": [
+        "--model",
+        "{model}"
+      ],
+      "with_effort": [
+        "--effort",
+        "{effort}"
+      ],
+      "held": {
+        "by": "lines",
+        "fresh": [
+          "--session-id",
+          "{id}"
+        ],
+        "resume": [
+          "--resume",
+          "{id}"
+        ],
+        "line": "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":{text}}}",
+        "stop": "{\"type\":\"control_request\",\"request_id\":\"{id}\",\"request\":{\"subtype\":\"interrupt\"}}"
+      }
+    },
+    {
+      "name": "claude-code",
+      "argv": [
+        "tmux",
+        "new-session",
+        "-d",
+        "-s",
+        "{session}",
+        "-c",
+        "{cwd}",
+        "claude",
+        "{options}",
+        "{task}"
+      ],
+      "models": {
+        "fable": "fable",
+        "opus": "opus",
+        "sonnet": "sonnet",
+        "haiku": "haiku"
+      },
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "with_model": [
+        "--model",
+        "{model}"
+      ],
+      "with_effort": [
+        "--effort",
+        "{effort}"
+      ]
+    }
+  ]
 }
