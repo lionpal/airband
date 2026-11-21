@@ -9,18 +9,20 @@
     {
       "job": "summary",
       "by": {
-        "chat": {
-          "cold": true,
-          "shaped": false
+        "interface": "chat",
+        "with": {
+          "cold": true
         }
       },
       "label": "Groq GPT-OSS 120B",
       "price": "About $0.15 per 1,000 messages",
+      "priced": "2026-11-20",
       "asks": [
         {
           "field": "url",
           "question": "Address",
-          "usual": "https://api.groq.com/openai/v1"
+          "usual": "https://api.groq.com/openai/v1",
+          "reach": true
         },
         {
           "field": "model",
@@ -31,14 +33,18 @@
     },
     {
       "job": "ears",
-      "by": "transcribe",
+      "by": {
+        "interface": "transcribe"
+      },
       "label": "Groq Whisper Large v3 Turbo",
       "price": "About $0.04 per hour of speech",
+      "priced": "2026-11-20",
       "asks": [
         {
           "field": "url",
           "question": "Address",
-          "usual": "https://api.groq.com/openai/v1"
+          "usual": "https://api.groq.com/openai/v1",
+          "reach": true
         },
         {
           "field": "model",

@@ -9,7 +9,8 @@
     {
       "job": "summary",
       "by": {
-        "chat": {
+        "interface": "chat",
+        "with": {
           "cold": true,
           "shaped": true
         }
@@ -17,11 +18,13 @@
       "label": "Google Gemini 3.5 Flash-Lite",
       "preferred": true,
       "price": "About $0.40 per 1,000 messages",
+      "priced": "2026-11-20",
       "asks": [
         {
           "field": "url",
           "question": "Address",
-          "usual": "https://generativelanguage.googleapis.com/v1beta/openai"
+          "usual": "https://generativelanguage.googleapis.com/v1beta/openai",
+          "reach": true
         },
         {
           "field": "model",
@@ -32,10 +35,17 @@
     },
     {
       "job": "voice",
-      "by": "gemini_voice",
+      "by": {
+        "interface": "gemini",
+        "with": {
+          "url": "https://generativelanguage.googleapis.com/v1beta",
+          "style": "Calm and clear, at a brisk pace, like a radio dispatcher. Say the words exactly as written and nothing else."
+        }
+      },
       "label": "Google Gemini 3.8 Flash-Lite TTS",
       "preferred": true,
       "price": "About $0.54 per hour of speech",
+      "priced": "2026-11-20",
       "voices": [
         {
           "id": "Leda",
@@ -78,13 +88,12 @@
     {
       "job": "ears",
       "by": {
-        "listener": {
-          "dialect": "gemini"
-        }
+        "interface": "gemini"
       },
       "label": "Google Gemini 3.5 Transcribe",
       "preferred": true,
       "price": "About $0.54 per hour of speech",
+      "priced": "2026-11-20",
       "asks": [
         {
           "field": "model",

@@ -5,13 +5,16 @@
     {
       "job": "summary",
       "by": {
-        "on_this_computer": {
-          "model": "unsloth/Qwen3.5-4B-GGUF:Q4_K_M"
+        "interface": "on-this-computer",
+        "with": {
+          "model": "unsloth/Qwen3.5-4B-GGUF:Q4_K_M",
+          "server": "llama"
         }
       },
       "label": "Alibaba Qwen 3.5 4B",
       "about": "Runs on your computer. 2.7 GB download, about 4 GB of memory",
-      "preferred": true
+      "preferred": true,
+      "local": true
     }
   ]
 }

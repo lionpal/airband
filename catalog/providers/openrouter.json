@@ -9,18 +9,20 @@
     {
       "job": "summary",
       "by": {
-        "chat": {
-          "cold": true,
-          "shaped": false
+        "interface": "chat",
+        "with": {
+          "cold": true
         }
       },
       "label": "OpenRouter",
       "price": "About $0.40 per 1,000 messages",
+      "priced": "2026-11-20",
       "asks": [
         {
           "field": "url",
           "question": "Address",
-          "usual": "https://openrouter.ai/api/v1"
+          "usual": "https://openrouter.ai/api/v1",
+          "reach": true
         },
         {
           "field": "model",

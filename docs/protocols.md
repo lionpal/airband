@@ -149,6 +149,8 @@ Chat mode and the rest:
 | `POST folders` | `{ under }` → `{ path, shown, up, folders }`, or `{ error }` | The folders inside one of his on this computer, by name and without the hidden ones, for choosing where a new team works. `under` empty is his home folder; nothing outside it is listed. |
 | `POST project` | `{ name, folder, make }` → `{ say }`, or `{ error }` | Make a new team: one plain word for its name, and the folder its agents work in (inside his home folder; made first with `make`). A tower that runs agents itself starts the team's first one there with nothing to do yet. |
 | `POST takeover` | `{ agent }` → `{}`, or `{ error }` | Have the tower take over an agent he started in a terminal: that session ends there and carries on under a held launcher of the agent's own harness. Refused while it is in the middle of something. |
+| `GET reads` | `{ now, offers: [{ id, label, about, price, preferred, free, login, key, has_key, key_name, keys_at, asks }] }` | What can read the agents' messages on this tower, from the tower's own catalogue and in the order to show it, and the id of the one that reads now (empty when none does). `has_key` says only that the tower keeps a key for it. |
+| `POST reads` | `{ kind, key, set }` → `{ reads }`, or `{ error }` | Choose what reads, by an `id` from `GET reads`. `key` empty uses one the tower keeps. The tower tries it with a real call before keeping it. A radio cannot name a command to run. |
 | `POST stop` | `{ agent }` → `{}`, or `{ error }` | Stop what an agent the tower runs is doing. What he said to it meanwhile it then reads as one turn. |
 | `POST end` | `{ agent }` → `{}`, or `{ error }` | End an agent the tower runs: its input is closed, and it finishes and signs off. |
 | `GET accounts?fresh=1` | → `{ schema, accounts, note, checked_at }` | Every account of every harness whose sessions can be moved between logins. Kept for five minutes; `fresh` checks again. |
@@ -254,7 +256,7 @@ Nothing that could sign in as an account is ever sent.
 
 ### Listening
 
-`kind` in the answer to `GET ears` names a row of `LISTENERS` in `crates/airband-radio/src/ears.rs`. The radio
+`kind` in the answer to `GET ears` names a live dialect: a line of `LISTENERS` in `crates/airband-radio/src/ears.rs`, which is also the `by.interface` of the provider's row. The radio
 streams the microphone to that service as he speaks, and falls back to one upload if the connection cannot be
 made. With a key of his own in the phone, the radio gets its pass from the service itself and asks neither the
 tower nor the relay.

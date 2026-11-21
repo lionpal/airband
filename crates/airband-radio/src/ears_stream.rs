@@ -1,28 +1,20 @@
-//! Microsoft's speech-to-text over its streaming connection: the same audio as the plain upload, sent as he
-//! speaks, with the words coming back while he is still talking. One WebSocket, opened as the microphone opens
-//! so it is ready by his first word.
+//! Listening while he talks: one WebSocket to a live service, opened as the microphone opens so it is ready by
+//! his first word, fed as he speaks, with the words coming back while he is still talking.
 //!
-//! The wire format is the one Microsoft's own Speech SDK uses. A text message is headers, a blank line and JSON;
-//! an audio message is a two-byte header length, headers, then the audio. The service answers with
-//! `speech.hypothesis` (what it has so far, revised as he goes on) and `speech.phrase` (a finished stretch).
+//! Everything here is the same for every live service: the microphone, when he has finished, what is shown
+//! as he talks, carrying on after the service ends a turn. How one service is spoken to is a [`Wire`], and
+//! each has a file of its own under `ears/`.
 use super::*;
 use airband_core::audio::{Endpointer, Heard, samples};
 use airband_core::radio::EarsGrant;
-use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Instant;
-use tungstenite::client::IntoClientRequest;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Connector, Message, WebSocket};
 
-type Socket = WebSocket<MaybeTlsStream<TcpStream>>;
-
-/// `2026-11-19T10:00:00.000Z`, as the service wants on every message.
-fn stamp() -> String {
-    stamp_at(now_ms())
-}
+pub(crate) type Socket = WebSocket<MaybeTlsStream<TcpStream>>;
 
 /// The same for any moment, in milliseconds since 1970.
 pub(crate) fn stamp_at(ms: u64) -> String {
@@ -39,29 +31,9 @@ pub(crate) fn stamp_at(ms: u64) -> String {
     format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{:03}Z", rest / 3_600_000, rest / 60_000 % 60, rest / 1000 % 60, rest % 1000)
 }
 
-fn text(path: &str, request: &str, body: &Value) -> Message {
-    Message::text(format!("Path: {path}\r\nX-RequestId: {request}\r\nX-Timestamp: {}\r\nContent-Type: application/json\r\n\r\n{body}", stamp()))
-}
-
-fn audio(request: &str, bytes: &[u8]) -> Message {
-    let head = format!("Path: audio\r\nX-RequestId: {request}\r\nX-Timestamp: {}\r\nContent-Type: audio/x-wav\r\n", stamp());
-    let mut out = Vec::with_capacity(2 + head.len() + bytes.len());
-    out.extend_from_slice(&(head.len() as u16).to_be_bytes());
-    out.extend_from_slice(head.as_bytes());
-    out.extend_from_slice(bytes);
-    Message::binary(out)
-}
-
-/// What a text message from the service is about, and its JSON.
-fn parse(message: &str) -> Option<(String, Value)> {
-    let (head, body) = message.split_once("\r\n\r\n")?;
-    let path = head.lines().find_map(|l| l.split_once(':').filter(|(k, _)| k.trim().eq_ignore_ascii_case("path")).map(|(_, v)| v.trim().to_lowercase()))?;
-    Some((path, serde_json::from_str(body).unwrap_or(Value::Null)))
-}
-
 /// A WebSocket to `host`, over the same TLS as every other request this library makes, with the same roots.
 /// Reads and writes give up after six seconds until the caller says otherwise.
-fn dial(host: &str, req: tungstenite::handshake::client::Request) -> Result<Socket, ()> {
+pub(crate) fn dial(host: &str, req: tungstenite::handshake::client::Request) -> Result<Socket, ()> {
     let address = (host, 443).to_socket_addrs().map_err(|_| ())?.next().ok_or(())?;
     let tcp = TcpStream::connect_timeout(&address, Duration::from_secs(6)).map_err(|_| ())?;
     let _ = tcp.set_nodelay(true);
@@ -75,185 +47,28 @@ fn dial(host: &str, req: tungstenite::handshake::client::Request) -> Result<Sock
 }
 
 /// From here on a read waits only a moment, so audio keeps going out while answers are looked for.
-fn read_briefly(socket: &Socket) {
+pub(crate) fn read_briefly(socket: &Socket) {
     if let MaybeTlsStream::Rustls(stream) = socket.get_ref() {
         let _ = stream.get_ref().set_read_timeout(Some(Duration::from_millis(12)));
     }
-}
-
-/// Open the connection and say what is coming: the microphone's format, and the names worth listening for.
-fn connect(grant: &EarsGrant, request: &str) -> Result<Socket, ()> {
-    let host = format!("{}.stt.speech.microsoft.com", grant.get("region"));
-    let url = format!("wss://{host}/speech/recognition/conversation/cognitiveservices/v1?language={}&format=simple&profanity=raw", grant.get("language"));
-    let mut req = url.into_client_request().map_err(|_| ())?;
-    req.headers_mut().insert("Authorization", format!("Bearer {}", grant.token).parse().map_err(|_| ())?);
-    req.headers_mut().insert("X-ConnectionId", random_hex(16).parse().map_err(|_| ())?);
-    let mut socket = dial(&host, req)?;
-    let config = json!({ "context": { "system": { "name": "airband", "version": env!("CARGO_PKG_VERSION") }, "os": { "platform": std::env::consts::OS, "name": "airband", "version": "1" }, "audio": { "source": { "connectivity": "Unknown", "manufacturer": "Unknown", "model": "Unknown", "type": "Microphones" } } } });
-    socket.send(text("speech.config", request, &config)).map_err(|_| ())?;
-    if !grant.phrases.is_empty() {
-        let names: Vec<Value> = grant.phrases.iter().map(|p| json!({ "Text": p })).collect();
-        socket.send(text("speech.context", request, &json!({ "dgi": { "Groups": [{ "Type": "Generic", "Items": names }] } }))).map_err(|_| ())?;
-    }
-    read_briefly(&socket);
-    Ok(socket)
-}
-
-/// What one message from Microsoft's service says: an unfinished stretch (replacing the last), a finished one
-/// (into `kept`), or that its turn is over.
-fn azure_read(m: &Message, kept: &mut Vec<String>, ended: &mut bool) -> Option<String> {
-    match m.to_text().ok().and_then(parse) {
-        Some((path, v)) if path == "speech.hypothesis" => v["Text"].as_str().map(String::from),
-        Some((path, v)) if path == "speech.phrase" => {
-            if let Some(t) = v["DisplayText"].as_str().map(str::trim).filter(|t| !t.is_empty() && v["RecognitionStatus"] == "Success") {
-                kept.push(t.to_string());
-            }
-            Some(String::new())
-        }
-        Some((path, _)) if path == "turn.end" => {
-            *ended = true;
-            None
-        }
-        _ => None,
-    }
-}
-
-/// Google's Live API, with its model that only transcribes. The pass is a short-lived token made for the Live
-/// API; the model, the language and the names to expect go in the first message.
-fn gemini_connect(grant: &EarsGrant, _request: &str) -> Result<Socket, ()> {
-    const HOST: &str = "generativelanguage.googleapis.com";
-    let url = format!("wss://{HOST}/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token={}", grant.token);
-    let mut socket = dial(HOST, url.into_client_request().map_err(|_| ())?)?;
-    let mut hearing = json!({ "mode": "VERBATIM" });
-    if !grant.get("language").is_empty() {
-        hearing["languageCodes"] = json!([grant.get("language")]);
-    }
-    if !grant.phrases.is_empty() {
-        // it does best with a hundred or fewer
-        hearing["customVocabulary"] = json!(grant.phrases.iter().take(100).collect::<Vec<_>>());
-    }
-    let setup = json!({ "setup": { "model": format!("models/{}", grant.get("model")), "generationConfig": { "responseModalities": ["TEXT"] }, "inputAudioTranscription": hearing } });
-    socket.send(Message::text(setup.to_string())).map_err(|_| ())?;
-    // it says when it is ready, and nothing may be sent before
-    loop {
-        let m = socket.read().map_err(|_| ())?;
-        if m.is_close() {
-            return Err(());
-        }
-        if serde_json::from_slice::<Value>(&m.into_data()).is_ok_and(|v| v.get("setupComplete").is_some()) {
-            break;
-        }
-    }
-    read_briefly(&socket);
-    Ok(socket)
-}
-
-fn gemini_audio(_request: &str, bytes: &[u8]) -> Message {
-    Message::text(json!({ "realtimeInput": { "audio": { "data": airband_core::audio::base64_encode(bytes), "mimeType": "audio/pcm;rate=16000" } } }).to_string())
-}
-
-/// Its messages come as JSON, in a text frame or a binary one.
-fn gemini_read(m: &Message, kept: &mut Vec<String>, ended: &mut bool) -> Option<String> {
-    let v: Value = serde_json::from_slice(&m.clone().into_data()).ok()?;
-    let content = &v["serverContent"];
-    if content["turnComplete"] == true || content["generationComplete"] == true {
-        *ended = true;
-    }
-    // a finished stretch is kept, and the unfinished one starts again from nothing
-    if let Some(done) = content["inputTranscription"]["text"].as_str() {
-        if !done.trim().is_empty() {
-            kept.push(done.trim().to_string());
-        }
-        return Some(String::new());
-    }
-    content["interimInputTranscription"]["text"].as_str().map(|t| t.trim().to_string())
 }
 
 /// How one live service is spoken to. Everything else about listening live (the microphone, when he has
 /// finished, what is shown as he talks, carrying on after the service ends a turn) is the same for all.
 pub(crate) struct Wire {
     /// Open the connection and say what is coming.
-    connect: fn(&EarsGrant, &str) -> Result<Socket, ()>,
+    pub connect: fn(&EarsGrant, &str) -> Result<Socket, ()>,
     /// One piece of the microphone's sound.
-    audio: fn(&str, &[u8]) -> Message,
+    pub audio: fn(&str, &[u8]) -> Message,
     /// No more sound is coming: say what you have.
-    end: fn(&str) -> Message,
+    pub end: fn(&str) -> Message,
     /// What one of its messages says: the unfinished stretch if it changed. Finished stretches go into the
     /// list; the flag is set when it has ended its turn.
-    read: fn(&Message, &mut Vec<String>, &mut bool) -> Option<String>,
+    pub read: fn(&Message, &mut Vec<String>, &mut bool) -> Option<String>,
     /// A recording's header goes first, before any sound.
-    header: bool,
+    pub header: bool,
     /// When it ends a turn while he still has the microphone open, a new connection is needed to go on.
-    reopens: bool,
-}
-
-const AZURE: Wire = Wire { connect, audio, end: |request| audio(request, &[]), read: azure_read, header: true, reopens: true };
-const GEMINI: Wire = Wire { connect: gemini_connect, audio: gemini_audio, end: |_| Message::text(json!({ "realtimeInput": { "audioStreamEnd": true } }).to_string()), read: gemini_read, header: false, reopens: false };
-
-const ELEVENLABS: Wire = Wire { connect: elevenlabs_connect, audio: |_, bytes| elevenlabs_chunk(bytes, false), end: |_| elevenlabs_chunk(&[0u8; 3200], true), read: elevenlabs_read, header: false, reopens: false };
-
-pub(crate) fn elevenlabs(pass: Arc<dyn Fn() -> EarsGrant + Send + Sync>, host: &dyn RadioHost, rate: u32, header: Vec<u8>, manual: bool) -> Result<Option<String>, ()> {
-    live(&ELEVENLABS, pass, host, rate, header, manual)
-}
-
-/// ElevenLabs' realtime transcription. The pass goes in the address. A stretch is closed when it is asked to
-/// be (`commit` on a final piece of silence, when he has finished), or by the service itself after about half
-/// a minute of speech; what he has said so far comes back whole each time until then.
-fn elevenlabs_connect(grant: &EarsGrant, _request: &str) -> Result<Socket, ()> {
-    const HOST: &str = "api.elevenlabs.io";
-    let enc = |s: &str| s.bytes().map(|b| if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' { (b as char).to_string() } else { format!("%{b:02X}") }).collect::<String>();
-    let mut url = format!("wss://{HOST}/v1/speech-to-text/realtime?model_id={}&audio_format=pcm_16000&commit_strategy=manual&token={}", enc(&grant.get("model")), enc(&grant.token));
-    // its language codes are two letters ("en"), where a setting may say "en-US"
-    if let Some(language) = grant.get("language").split('-').next().filter(|l| !l.is_empty()) {
-        url.push_str(&format!("&language_code={}", enc(language)));
-    }
-    // the names he is likely to say, so "shop two" is not heard as something else
-    for term in grant.phrases.iter().take(50) {
-        url.push_str(&format!("&keyterms={}", enc(term)));
-    }
-    let mut socket = dial(HOST, url.into_client_request().map_err(|_| ())?)?;
-    // it says when the session has started, or why it will not
-    loop {
-        let m = socket.read().map_err(|_| ())?;
-        if m.is_close() {
-            return Err(());
-        }
-        match serde_json::from_slice::<Value>(&m.into_data()).ok().and_then(|v| v["message_type"].as_str().map(String::from)).as_deref() {
-            Some("session_started") => break,
-            Some(_) => return Err(()),
-            None => {}
-        }
-    }
-    read_briefly(&socket);
-    Ok(socket)
-}
-
-fn elevenlabs_chunk(bytes: &[u8], commit: bool) -> Message {
-    Message::text(json!({ "message_type": "input_audio_chunk", "audio_base_64": airband_core::audio::base64_encode(bytes), "commit": commit, "sample_rate": 16000 }).to_string())
-}
-
-/// A partial replaces the one before it; a committed stretch is final, and the next partial starts from nothing.
-fn elevenlabs_read(m: &Message, kept: &mut Vec<String>, ended: &mut bool) -> Option<String> {
-    let v: Value = serde_json::from_slice(&m.clone().into_data()).ok()?;
-    match v["message_type"].as_str()? {
-        "partial_transcript" => Some(v["text"].as_str().unwrap_or_default().trim().to_string()),
-        "committed_transcript" => {
-            let done = v["text"].as_str().unwrap_or_default().trim();
-            if !done.is_empty() {
-                kept.push(done.to_string());
-            }
-            *ended = true;
-            Some(String::new())
-        }
-        _ => None,
-    }
-}
-
-pub(crate) fn azure(pass: Arc<dyn Fn() -> EarsGrant + Send + Sync>, host: &dyn RadioHost, rate: u32, header: Vec<u8>, manual: bool) -> Result<Option<String>, ()> {
-    live(&AZURE, pass, host, rate, header, manual)
-}
-pub(crate) fn gemini(pass: Arc<dyn Fn() -> EarsGrant + Send + Sync>, host: &dyn RadioHost, rate: u32, header: Vec<u8>, manual: bool) -> Result<Option<String>, ()> {
-    live(&GEMINI, pass, host, rate, header, manual)
+    pub reopens: bool,
 }
 
 /// Whatever the service has said since last asked, without waiting for more. `kept` gathers finished stretches;
@@ -281,7 +96,7 @@ fn drain(wire: &Wire, socket: &mut Socket, kept: &mut Vec<String>, ended: &mut b
 /// (a long silence) a new one is opened and what he said so far is kept.
 /// Ok(None) is silence. Err is a failure of the service or the line before anything was heard: nothing was lost
 /// that the caller cannot get by listening again another way.
-fn live(wire: &'static Wire, pass: Arc<dyn Fn() -> EarsGrant + Send + Sync>, host: &dyn RadioHost, rate: u32, header: Vec<u8>, manual: bool) -> Result<Option<String>, ()> {
+pub(crate) fn live(wire: &'static Wire, pass: Arc<dyn Fn() -> EarsGrant + Send + Sync>, host: &dyn RadioHost, rate: u32, header: Vec<u8>, manual: bool) -> Result<Option<String>, ()> {
     // what goes first on every connection: a recording's header, for a service that wants one
     let header: Vec<Vec<u8>> = if wire.header { vec![header] } else { Vec::new() };
     let lead = header.len();
@@ -467,16 +282,6 @@ impl RadioHost for Tape {
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_message_from_the_service_is_read_whatever_its_spacing() {
-        let (path, v) = parse("X-RequestId:abc\r\nPath:speech.hypothesis\r\nContent-Type:application/json; charset=utf-8\r\n\r\n{\"Text\":\"make the add\",\"Offset\":100}").unwrap();
-        assert_eq!((path.as_str(), v["Text"].as_str()), ("speech.hypothesis", Some("make the add")));
-        assert_eq!(parse("path: Turn.End\r\n\r\n{}").map(|(p, _)| p).as_deref(), Some("turn.end"));
-        assert!(parse("no blank line").is_none());
-        // 2026-11-19T10:00:00.000Z is 1795082400000
-        assert_eq!(stamp().len(), 24);
-    }
-
     /// Against the real service, with a recording in place of the microphone:
     ///   AZURE_TOKEN=… AZURE_REGION=… SPEECH_WAV=said.wav cargo test -p airband-radio -- --ignored --nocapture streams
     ///   LISTEN_WITH=gemini GEMINI_KEY=… SPEECH_WAV=said.wav cargo test -p airband-radio -- --ignored --nocapture streams
@@ -486,23 +291,18 @@ mod tests {
         let wav = std::fs::read(std::env::var("SPEECH_WAV").unwrap()).unwrap();
         let pcm = &wav[44..];
         let tape = Tape::of(pcm, true);
-        // LISTEN_WITH=gemini GEMINI_KEY=… uses Google's; the key is turned into a pass the way a tower does it
-        let said = if std::env::var("LISTEN_WITH").as_deref() == Ok("gemini") {
-            let token = crate::ears::pass_for("gemini", &Default::default(), &std::env::var("GEMINI_KEY").unwrap()).unwrap();
-            let set = [("model".to_string(), std::env::var("GEMINI_MODEL").unwrap_or("gemini-3.5-transcribe-live".into())), ("language".to_string(), "en-US".to_string())].into();
-            let grant = EarsGrant { kind: "gemini".into(), token, set, phrases: vec!["airband".into(), "shop two".into()] };
-            gemini(Arc::new(move || grant.clone()), &tape, 16000, crate::ears::wav_header(), std::env::var("MANUAL").is_ok())
-        } else if std::env::var("LISTEN_WITH").as_deref() == Ok("elevenlabs") {
-            // LISTEN_WITH=elevenlabs ELEVENLABS_KEY=… ; WITHOUT_NAMES leaves out the names he is likely to say
-            let token = crate::ears::pass_for("elevenlabs", &Default::default(), &std::env::var("ELEVENLABS_KEY").unwrap()).unwrap();
-            let set = [("model".to_string(), "scribe_v3_live".to_string()), ("language".to_string(), "en".to_string())].into();
-            let phrases = if std::env::var("WITHOUT_NAMES").is_ok() { Vec::new() } else { vec!["airband".into(), "shop two".into()] };
-            let grant = EarsGrant { kind: "elevenlabs".into(), token, set, phrases };
-            elevenlabs(Arc::new(move || grant.clone()), &tape, 16000, crate::ears::wav_header(), std::env::var("MANUAL").is_ok())
-        } else {
-            let grant = EarsGrant { kind: "azure".into(), token: std::env::var("AZURE_TOKEN").unwrap(), set: [("region".to_string(), std::env::var("AZURE_REGION").unwrap()), ("language".to_string(), "en-US".to_string())].into(), phrases: vec![] };
-            azure(Arc::new(move || grant.clone()), &tape, 16000, crate::ears::wav_header(), false)
-        }
+        // LISTEN_WITH names the dialect (azure when left out); the key is turned into a pass the way a tower does it
+        let kind = std::env::var("LISTEN_WITH").unwrap_or("azure".into());
+        let l = crate::ears::listener(&kind).unwrap();
+        let (token, set): (String, std::collections::BTreeMap<String, String>) = match kind.as_str() {
+            "gemini" => (crate::ears::pass_for("gemini", &Default::default(), &std::env::var("GEMINI_KEY").unwrap()).unwrap(), [("model".to_string(), std::env::var("GEMINI_MODEL").unwrap_or("gemini-3.5-transcribe-live".into())), ("language".to_string(), "en-US".to_string())].into()),
+            "elevenlabs" => (crate::ears::pass_for("elevenlabs", &Default::default(), &std::env::var("ELEVENLABS_KEY").unwrap()).unwrap(), [("model".to_string(), "scribe_v3_live".to_string()), ("language".to_string(), "en".to_string())].into()),
+            _ => (std::env::var("AZURE_TOKEN").unwrap(), [("region".to_string(), std::env::var("AZURE_REGION").unwrap()), ("language".to_string(), "en-US".to_string())].into()),
+        };
+        // WITHOUT_NAMES leaves out the names he is likely to say
+        let phrases = if std::env::var("WITHOUT_NAMES").is_ok() { Vec::new() } else { vec!["airband".into(), "shop two".into()] };
+        let grant = EarsGrant { kind, token, set, phrases };
+        let said = live(l.wire, Arc::new(move || grant.clone()), &tape, 16000, crate::ears::wav_header(), std::env::var("MANUAL").is_ok())
         .unwrap();
         println!("{:>5} ms  FINAL: {said:?} (the recording is {} ms long)", tape.began.elapsed().as_millis(), pcm.len() / 32);
         assert!(said.is_some_and(|s| !s.is_empty()));

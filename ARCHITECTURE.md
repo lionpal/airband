@@ -62,7 +62,7 @@ old peers keep working.
 ## Settings and keys
 
 `airband setup` asks what makes summaries, what speaks and what listens, and tries each choice with a real call.
-A provider is one row of `PROVIDERS` in `setup.rs`: what it can do, whether it needs a key, and what else it
+A provider is one file under `catalog/providers/`: what it can do, whether it needs a key, and what else it
 has to be told.
 
 A key is kept once in `keys` in `~/.airband/config.json`, under a name, with its provider; each use of it is
@@ -96,11 +96,11 @@ Outbound and inbound are set separately (`airband setup`, or `airband voice …`
 
 | | Interface | Where | Providers |
 |---|---|---|---|
-| Outbound: text to audio | `Synth` (text in, PCM out a piece at a time) | `tower/speech.rs` | Any service that speaks OpenAI's `/audio/speech` (a row); Gemini, Microsoft and ElevenLabs by their own routes |
+| Outbound: text to audio | `Synth` (text in, PCM out a piece at a time), one file for each under `airband-radio/src/voices/` | `tower/speech.rs` makes the calls | Any service that speaks OpenAI's `/audio/speech` (a row); Gemini, Microsoft and ElevenLabs by their own routes |
 | Outbound, made on the phone | a file in `catalog/models/` | `airband-radio/src/models.rs`, run by `mouth.rs` | Phonon (Gradium, open weights, no key) |
 | Inbound, on the phone | a file in `catalog/models/` | `airband-radio/src/models.rs`, run by the host (`transcribe`) | Phonon 2.5 English (Fermion Research, open weights, no key) |
-| Inbound, live as he speaks | a dialect: a row of `LISTENERS` | `airband-radio/src/ears.rs` | Microsoft |
-| Inbound, a finished recording | `transcribe` (a WAV in, words out) | `airband-radio/src/hears.rs` | Any service that speaks OpenAI's `/audio/transcriptions` (a row); Gemini by its own route |
+| Inbound, live as he speaks | a dialect: a file under `airband-radio/src/ears/` and a line of `LISTENERS` | `airband-radio/src/ears.rs` | Microsoft, Google, ElevenLabs |
+| Inbound, a finished recording | `transcribe` (a WAV in, words out), a line of `UPLOADS` | `airband-radio/src/hears.rs` | Any service that speaks OpenAI's `/audio/transcriptions` (a row) |
 
 The tower makes speech the moment a sentence exists and hands it over in parts (`GET speech/<id>`), compressed
 four to one (`airband-core/src/audio.rs`); the radio decodes each part and gives the host plain PCM, so a host
@@ -125,32 +125,69 @@ A call starts from when he joins: what was said before is in the chat and is not
 opens by itself: a question is read to him and then waits in the chat (`airband-radio/src/call.rs`).
 
 Every outside service, and every model that runs on a phone, is one small file in the catalogue: `catalog/providers/<id>.json`
-and `catalog/models/<kind>.json`. Building `airband-core` puts them together into one document that is
-compiled into the tower and the app (`crates/airband-core/src/catalog.rs`), so both know all of it with no
-network. A newer copy is fetched from `airband.dev/catalog/1/` when he opens a chooser, and by the tower
-twice a day; it is taken only if it is signed with airband's catalogue key and its `rev` is higher. So a new
-voice, model id or price needs `scripts/publish-catalog.sh` and no new build. A way of calling a service is
-code and cannot arrive this way: a row names one, and a build leaves out a row that names one it lacks.
+and `catalog/models/<kind>.json` (beside them: one per coding tool, one per program the tower fetches to run a
+model, and the words a recogniser should expect). Building `airband-core` puts them together into one
+document that is compiled into the tower and the app (`crates/airband-core/src/catalog.rs`), so both know all
+of it with no network. A newer copy is fetched from `airband.dev/catalog/2/` when he opens a chooser, and by
+the tower twice a day (one piece of code for both, `airband-radio/src/models.rs`). So a new voice, model id or
+price needs `scripts/publish-catalog.sh` and no new build.
+
+A copy is taken only when all of these hold (`catalog::accept`):
+
+- it is signed with airband's catalogue key, its `rev` is higher than the one in hand, and it has not run out
+  (`expires`, 180 days from when it was published), so a copy replaced long ago cannot be served again;
+- it is well formed (`catalog::check`): names are plain names, no provider is listed twice, a model's files
+  stay inside its own folder;
+- for every provider this build has compiled in, the interface it is reached through and everything that
+  interface is told are unchanged, and so is the usual of every setting marked `reach` (an address, a
+  region). A signed catalogue cannot send a key he has entered somewhere new, or have a known service called
+  another way;
+- nothing that starts a program on his computer is added or changed. Those offers (`command`,
+  `on-this-computer`) are honoured only as compiled in, and the tower checks that again where the program is
+  started (`tower/judge.rs`). The program fetched to run a local model (`catalog/servers/`) is always the
+  compiled-in row;
+- a version of a model this build knows keeps its files. New files are a new version, kept in a folder of
+  its own (`models/<kind>/<version>`); the version already on the phone stays in use until the new one is
+  whole.
+
+Rows are read one at a time. One a build cannot read is left out and counted, the rest are kept, and the
+tower's log says what was left out. `catalog/rev` holds the number and what the rows hashed to when it was
+given: the tests fail when a row changed and the number did not (`scripts/catalog-stamp.sh` gives the next
+one), and a copy with the same number and other rows is logged.
+
+A way of calling a service is code and cannot arrive in a catalogue. A row names an interface and tells it
+what it needs: `"by": { "interface": "<name>", "with": { … } }`. The code for each is in a table where the job
+is done, looked up by that name: `READERS` in `tower/judge.rs`, `VOICES` in `airband-radio/src/voices.rs`,
+`LISTENERS` in `airband-radio/src/ears.rs` and `UPLOADS` in `airband-radio/src/hears.rs`. Nothing else lists
+interfaces. A program lists and calls only the offers it has the code for, so an old build reads a new
+catalogue and shows what it can use. An offer can also say what its interface must be able to do (`needs`); a
+build whose interface cannot leaves it out, where it would otherwise call the service the old way.
+
+Builds from before the interfaces were named (the app up to TestFlight build 83, the tower up to 0.2.0) read
+an older form of the document at `airband.dev/catalog/1/`. It is still written for them from the same rows
+(`crates/airband-core/src/catalog_v1.rs`), holds what they already knew with today's prices, voices and model
+ids, and is checked before it is published the way they would check it. That file goes when those builds do.
 
 A provider's row says which jobs
 the service does (reading, speaking, listening), through which interface, and what it has to be told, and what
-to show where he chooses it: its maker and model, its price, whether it is one of the few shown first, and
-for a voice a few voices with their makers' sample clips. `airband
+to show where he chooses it: its maker and model, its price and the day that price was read, whether it is one
+of the few shown first, and for a voice a few voices with their makers' sample clips. `airband
 setup`, `airband model`, `airband voice` and `airband ears` are driven by the table, and so are the calls. A
-setting in use is `{"kind": <row id>, "key": …, <what differs from the row>}`.
+setting in use is `{"kind": <row id>, "key": …, <what differs from the row>}`. What can read on a tower is
+the tower's to say: `GET reads` lists its own offers and which one reads now, by id.
 
-The interfaces, and what adding a provider touches:
+The interfaces, and what adding one touches:
 
-| Job | Interface | A new provider is |
-|---|---|---|
-| Reading | OpenAI Chat Completions (`POST {url}/chat/completions`), which nearly every model service and local model server accepts | a row |
-| Reading | a command: prompt on standard input, answer on standard output | a row with its arguments |
-| Speaking | OpenAI's speech endpoint (`POST {url}/audio/speech`, raw PCM) | a row |
-| Speaking | a route of its own, for what the common one lacks (ElevenLabs' word timings, Microsoft's own route) | an `impl Synth` in `tower/speech.rs`, a `By` for it, a row |
-| Speaking or listening, on the phone | a file in `catalog/models/` | the row, the files under `airband.dev/models/`, and the code that runs the model; an app release |
-| Listening, a finished recording | OpenAI's transcription endpoint (`POST {url}/audio/transcriptions`) | a row |
-| Listening, a finished recording | a route of its own (Gemini) | an arm of `transcribe` in `airband-radio/src/hears.rs`, a `By` for it, a row |
-| Listening, live as he speaks | no common interface exists, so each is a dialect the phone speaks: a row of `LISTENERS` in `airband-radio/src/ears.rs` | the dialect's code there, a row naming it; an app release, because the phone talks to the service itself |
+| Job | Interface (`by.interface`) | A new provider is | A new interface is |
+|---|---|---|---|
+| Reading | `chat`: OpenAI Chat Completions (`POST {url}/chat/completions`), which nearly every model service and local model server accepts | a row | a function and a line of `READERS` in `tower/judge.rs`; a tower release |
+| Reading | `command`: a program on his computer, prompt on standard input, answer on standard output | a row with its arguments, compiled in | |
+| Reading | `on-this-computer`: a model the tower fetches and runs itself | a row naming the model and the program that runs it, compiled in | |
+| Speaking | `speech`: OpenAI's speech endpoint (`POST {url}/audio/speech`, raw PCM) | a row | a file under `airband-radio/src/voices/` and a line of `VOICES`; an app and a tower release |
+| Speaking | `gemini`, `azure`, `elevenlabs`: a route of its own, for what the common one lacks (ElevenLabs' word timings, Microsoft's own route). The row says where it is reached | a row | |
+| Speaking or listening, on the phone | a file in `catalog/models/` | the row and the files under `airband.dev/models/<name>/<version>/` | the code that runs the model; an app release |
+| Listening, a finished recording | `transcribe`: OpenAI's transcription endpoint (`POST {url}/audio/transcriptions`) | a row | a function and a line of `UPLOADS` in `airband-radio/src/hears.rs` |
+| Listening, live as he speaks | `azure`, `gemini`, `elevenlabs`: no common interface exists, so each is a dialect the phone speaks | a row naming it | a file under `airband-radio/src/ears/` and a line of `LISTENERS`; an app release, because the phone talks to the service itself |
 
 What the phone listens with comes as one message, `{ kind, token, set, phrases }`, whoever sends it: the phone
 itself from a key of his own, or the tower. `set` is whatever the service

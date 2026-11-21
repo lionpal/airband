@@ -3,6 +3,7 @@
   "name": "Fermion Phonon 2.5",
   "job": "ears",
   "engine": "host-transcribe",
+  "version": "1",
   "base": "https://airband.dev/models/phonon-2.5-en/1",
   "files": [
     [

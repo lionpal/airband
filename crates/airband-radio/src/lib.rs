@@ -43,6 +43,7 @@ pub mod voices;
 use call::*;
 pub use desk::*;
 pub use ears::try_listening;
+pub use models::{catalog_load, catalog_refresh};
 pub use models::{LocalModel, VoiceChoice, fetch_local_model, local_listeners, local_model_progress, local_voice_choices, local_voices, remove_local_model};
 pub use mouth::{Service, ServiceAsk, VoiceSample, check_service_voice, listening_services, own_voice_sample, reading_services, set_local_voice, set_service_voice, voice_services};
 use link::*;

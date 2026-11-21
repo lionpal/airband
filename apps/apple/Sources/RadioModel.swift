@@ -564,7 +564,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// Get a listening model ready on this phone: the first time, the phone spends about a minute fitting it to
     /// its own chip. Calls back with what went wrong, or nil.
     func prepareLocalEars(_ kind: String, done: @escaping (String?) -> Void) {
-        let folder = URL(fileURLWithPath: voiceDir).appendingPathComponent("models").appendingPathComponent(kind).path
+        let folder = localModelFolder(dir: voiceDir, kind: kind)
         fetch.async {
             let heard = self.transcribe(folder: folder, pcm: Data(count: 32000))
             DispatchQueue.main.async { done(heard == nil ? "The model did not load on this phone." : nil) }

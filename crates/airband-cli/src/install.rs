@@ -146,7 +146,7 @@ fn option(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
 }
 /// `airband model`, `airband voice`, `airband ears`: show or change which provider does a job. Everything it
-/// knows about providers comes from `providers::PROVIDERS`.
+/// knows about providers comes from the catalogue (`providers::offering`).
 ///
 ///   airband voice                      what is set, and what can be
 ///   airband voice none                 nothing does this job
@@ -158,14 +158,14 @@ fn option(args: &[String], name: &str) -> Option<String> {
 /// environment variable, or is one already kept for that provider (`airband keys`).
 fn provider_for(mut cfg: Config, job: crate::providers::Job, cmd: &str, what: &str, without: &str, args: &[String]) -> Result<(), String> {
     use crate::providers::{self, Use};
-    let offered = || providers::offering(job).map(|p| p.id).collect::<Vec<_>>().join(", ");
+    let offered = || providers::offering(job).map(|p| p.id.as_str()).collect::<Vec<_>>().join(", ");
     let chosen = match args.first().map(String::as_str) {
         None => {
             let now = crate::setup::slot(&mut cfg, job).clone();
             println!("{what}: {}.{}", now.describe(job), if now.is_none() { format!(" {without}") } else { String::new() });
             println!("Change it:  airband {cmd} <provider> [--key-env VARIABLE] [--setting value]  |  airband {cmd} none  |  airband {cmd} test");
             for p in providers::offering(job) {
-                let asks: Vec<String> = p.offers.iter().filter(|o| o.job == job).flat_map(|o| o.asks).map(|a| if a.usual.is_empty() { format!("--{}", a.field) } else { format!("--{} ({})", a.field, a.usual) }).collect();
+                let asks: Vec<String> = p.offers.iter().filter(|o| o.job == job).flat_map(|o| &o.asks).map(|a| if a.usual.is_empty() { format!("--{}", a.field) } else { format!("--{} ({})", a.field, a.usual) }).collect();
                 println!("  {:<11} {}{}", p.id, p.name, if asks.is_empty() { String::new() } else { format!(": {}", asks.join(", ")) });
             }
             return Ok(());
@@ -178,7 +178,7 @@ fn provider_for(mut cfg: Config, job: crate::providers::Job, cmd: &str, what: &s
         Some("none" | "device") => Use::default(),
         Some(id) => {
             let p = providers::offering(job).find(|p| p.id == id).ok_or_else(|| format!("nothing called \"{id}\" does this: {} or none", offered()))?;
-            let mut u = Use::of(p.id);
+            let mut u = Use::of(&p.id);
             if p.key {
                 u.key = match option(args, "--key-env") {
                     Some(var) => std::env::var(&var).ok().filter(|k| !k.is_empty()).ok_or_else(|| format!("{var} is not set"))?,
@@ -190,9 +190,9 @@ fn provider_for(mut cfg: Config, job: crate::providers::Job, cmd: &str, what: &s
                     cfg.keys.insert(name, config::StoredKey { provider: id.into(), secret: u.key.clone() });
                 }
             }
-            for a in p.offers.iter().filter(|o| o.job == job).flat_map(|o| o.asks) {
+            for a in p.offers.iter().filter(|o| o.job == job).flat_map(|o| &o.asks) {
                 if let Some(said) = option(args, &format!("--{}", a.field)) {
-                    u.set.insert(a.field.into(), json!(said));
+                    u.set.insert(a.field.clone(), json!(said));
                 }
             }
             u

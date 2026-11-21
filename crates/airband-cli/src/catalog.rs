@@ -1,71 +1,120 @@
 //! The catalogue on this computer: a newer signed copy is fetched now and then and kept beside the settings,
-//! and `airband catalog` puts out what is built in, for publishing. See `airband_core::catalog`.
+//! and `airband catalog` puts out what is built in, for publishing. See `airband_core::catalog`. Reading a
+//! kept copy and fetching a new one are the phone core's (`airband_radio::catalog_load`, `catalog_refresh`),
+//! the same code the app runs.
 use crate::config;
-use airband_core::catalog;
-use std::time::Duration;
+use airband_core::{catalog, catalog_v1};
+use std::sync::Mutex;
 
-fn kept() -> (std::path::PathBuf, std::path::PathBuf) {
-    (config::dir().join("catalog.json"), config::dir().join("catalog.json.sig"))
-}
+/// What loading the kept copy had to say, until there is a log to say it in.
+static SAID: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// Use the newest copy this computer has kept, if it is newer than the one built in. Nothing is fetched.
 pub fn load() {
-    let (doc, sig) = kept();
-    if let (Ok(doc), Ok(sig)) = (std::fs::read(doc), std::fs::read_to_string(sig)) {
-        let _ = catalog::accept(&doc, &sig);
-    }
+    *SAID.lock().unwrap() = airband_radio::catalog_load(&config::dir(), &crate::providers::speaks);
 }
 
 /// Fetch the published copy and, if it is airband's and newer, use it and keep it. Quietly does nothing
-/// when there is no network. Blocks for a few seconds at most.
-pub fn refresh() -> bool {
-    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(6))).build().into();
-    let get = |url: &str| agent.get(url).call().ok().and_then(|mut r| r.body_mut().read_to_vec().ok());
-    let (Some(doc), Some(sig)) = (get(catalog::ADDRESS), get(&format!("{}.sig", catalog::ADDRESS))) else { return false };
-    let sig = String::from_utf8_lossy(&sig).to_string();
-    match catalog::accept(&doc, &sig) {
-        Ok(true) => {
-            let (to, to_sig) = kept();
-            let _ = std::fs::write(to, &doc);
-            let _ = std::fs::write(to_sig, sig);
-            true
-        }
-        _ => false,
-    }
+/// when there is no network. Blocks for a few seconds at most. True when it is now the one in use, with what
+/// is worth a line in a log (rows this build cannot use, a copy that was refused).
+pub fn refresh() -> (bool, Vec<String>) {
+    let mut lines = std::mem::take(&mut *SAID.lock().unwrap());
+    let (changed, more) = airband_radio::catalog_refresh(&config::dir(), &crate::providers::speaks);
+    lines.extend(more);
+    (changed, lines)
 }
 
-/// `airband catalog export` prints the catalogue built into this program. `airband catalog sign <key file>`
-/// prints its signature, made with the private key in that file (32 bytes, in hex). `airband catalog check
-/// <document> <signature>` says whether a pair would be taken. `scripts/publish-catalog.sh` uses all three.
+fn option(args: &[String], name: &str) -> Option<String> {
+    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+}
+
+/// The words after the command that are not an option or its value.
+fn plain(args: &[String]) -> Vec<&String> {
+    let mut out = Vec::new();
+    let mut skip = false;
+    for a in args {
+        if std::mem::take(&mut skip) {
+            continue;
+        }
+        if a.starts_with("--") {
+            skip = true;
+        } else {
+            out.push(a);
+        }
+    }
+    out
+}
+
+const USAGE: &str = "  airband catalog export [--form 1] [--expires-in-days 180]\n  airband catalog sign <key file> <document>\n  airband catalog check <document> [<signature>] [--form 1] [--against <the copy published before>]\n  airband catalog stamp <catalog/rev>";
+
+/// `airband catalog export` prints the catalogue built into this program, as it is published: form 2, which
+/// this build reads, or with `--form 1` the older form for builds from before the interfaces were named.
+/// `sign` prints a document's signature, made with the private key in a file (32 bytes, in hex). `check` says
+/// whether a document would be taken, by this build or (form 1) by those older ones. `stamp` gives the rows a
+/// new number when they have changed. `scripts/publish-catalog.sh` and `scripts/catalog-stamp.sh` use them.
 pub fn command(args: &[String]) -> Result<(), String> {
+    let form_1 = option(args, "--form").as_deref() == Some("1");
+    let words = plain(args.get(1..).unwrap_or_default());
     match args.first().map(String::as_str) {
         Some("export") => {
-            print!("{}", catalog::built_in());
+            let days: u64 = option(args, "--expires-in-days").map(|d| d.parse().map_err(|_| "--expires-in-days takes a number")).transpose()?.unwrap_or(180);
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let form_2 = catalog::built_in(now + days * 86400);
+            print!("{}", if form_1 { catalog_v1::export(&form_2)? } else { format!("{form_2}\n") });
             Ok(())
         }
         Some("sign") => {
             use ed25519_dalek::Signer;
-            let path = args.get(1).ok_or("usage: airband catalog sign <key file>")?;
+            let (path, doc) = (words.first().ok_or(USAGE)?, words.get(1).ok_or(USAGE)?);
             let hex = std::fs::read_to_string(path).map_err(|e| format!("cannot read the key file: {e}"))?;
             let hex = hex.trim();
             let seed: Vec<u8> = (0..hex.len() / 2).filter_map(|i| u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()).collect();
             let seed: [u8; 32] = seed.try_into().map_err(|_| "that file does not hold a key")?;
-            let signature = ed25519_dalek::SigningKey::from_bytes(&seed).sign(catalog::built_in().as_bytes());
-            println!("{}", airband_core::audio::base64_encode(&signature.to_bytes()));
+            let doc = std::fs::read(doc).map_err(|e| format!("cannot read the document: {e}"))?;
+            println!("{}", airband_core::audio::base64_encode(&ed25519_dalek::SigningKey::from_bytes(&seed).sign(&doc).to_bytes()));
             Ok(())
         }
         Some("check") => {
-            let (doc, sig) = (args.get(1).ok_or("usage: airband catalog check <document> <signature>")?, args.get(2).ok_or("usage: airband catalog check <document> <signature>")?);
-            let doc = std::fs::read(doc).map_err(|e| e.to_string())?;
-            let sig = std::fs::read_to_string(sig).map_err(|e| e.to_string())?;
-            match catalog::accept(&doc, &sig)? {
-                true => println!("Signed by airband, and newer than the one built in (rev {}).", catalog::current().rev),
-                false => println!("Signed by airband. Not newer than the one built in (rev {}).", catalog::current().rev),
+            let doc = std::fs::read(words.first().ok_or(USAGE)?).map_err(|e| e.to_string())?;
+            let text = std::str::from_utf8(&doc).map_err(|e| e.to_string())?;
+            if let Some(sig) = words.get(1) {
+                catalog::signed(&doc, &std::fs::read_to_string(sig).map_err(|e| e.to_string())?)?;
             }
+            if form_1 {
+                catalog_v1::check(text)?;
+                println!("Form 1: the builds that read it would take all of it.");
+                return Ok(());
+            }
+            // every row of it is one this build can use: what it would leave out is a mistake in a row, or
+            // an interface nobody has written yet
+            let c = catalog::inspect(text)?;
+            let unspoken: Vec<String> = c.providers.iter().flat_map(|p| p.offers.iter().filter(|o| !crate::providers::speaks(o)).map(move |o| format!("{} by \"{}\"", p.id, o.by.interface))).collect();
+            if !c.left_out.is_empty() || !unspoken.is_empty() {
+                return Err(format!("this build would leave rows of it out: {}", c.left_out.iter().chain(&unspoken).cloned().collect::<Vec<_>>().join("; ")));
+            }
+            if let Some(before) = option(args, "--against") {
+                let before = std::fs::read_to_string(before).map_err(|e| e.to_string())?;
+                catalog::would_take(text, &before)?;
+                println!("A build that has the copy published before would take it.");
+            }
+            println!("Form 2, rev {}: {} providers, {} models for the phone, every row usable by this build.", c.rev, c.providers.len(), c.models.len());
+            Ok(())
+        }
+        Some("stamp") => {
+            // the rows changed since the number was given: the next number, and what they hash to now
+            let path = words.first().ok_or(USAGE)?;
+            let built = catalog::built();
+            let stamped = std::fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?;
+            if stamped.lines().nth(1).map(str::trim) == Some(built.hash.as_str()) {
+                println!("The rows have not changed since rev {}.", built.rev);
+                return Ok(());
+            }
+            std::fs::write(path, format!("{}\n{}\n", built.rev + 1, built.hash)).map_err(|e| e.to_string())?;
+            println!("The rows changed: now rev {}. Build again before publishing.", built.rev + 1);
             Ok(())
         }
         _ => {
-            println!("The catalogue in use is rev {}: {} providers, {} models for the phone.\n  airband catalog export | sign <key file> | check <document> <signature>", catalog::current().rev, catalog::current().providers.len(), catalog::current().models.len());
+            println!("The catalogue in use is rev {}: {} providers, {} models for the phone.\n{USAGE}", catalog::current().rev, catalog::current().providers.len(), catalog::current().models.len());
             Ok(())
         }
     }

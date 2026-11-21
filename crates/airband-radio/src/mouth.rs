@@ -25,8 +25,8 @@ static VOICE: Mutex<String> = Mutex::new(String::new());
 pub fn set_local_voice(dir: String, kind: String, voice: String) {
     let found = model(&kind).filter(|m| m.job == airband_core::providers::Job::Voice && fetched(&dir, m));
     if let Some(m) = found {
-        let named = m.voices.iter().map(|(name, _)| *name).find(|name| *name == voice).or(m.voices.first().map(|(name, _)| *name)).unwrap_or_default();
-        *VOICE.lock().unwrap_or_else(|e| e.into_inner()) = named.to_string();
+        let named = m.voices.iter().map(|(name, _)| name).find(|name| **name == voice).or(m.voices.first().map(|(name, _)| name)).cloned().unwrap_or_default();
+        *VOICE.lock().unwrap_or_else(|e| e.into_inner()) = named;
     }
     let chosen = found.map(|_| (dir, kind));
     let on = chosen.is_some();
@@ -108,21 +108,29 @@ pub struct ServiceAsk {
 }
 
 fn services(job: airband_core::providers::Job) -> Vec<Service> {
+    use airband_core::providers::Job;
     airband_core::providers::in_order(job)
         .into_iter()
+        // what this build has the code for. Reading is his computer's job: every one is listed, and the
+        // computer says no to one it cannot use.
+        .filter(|(_, o)| match job {
+            Job::Voice => crate::voices::speaks(o),
+            Job::Ears => crate::hears::listens(o),
+            Job::Summary => true,
+        })
         .map(|(p, o)| Service {
-            kind: p.id.into(),
+            kind: p.id.clone(),
             more: !o.preferred,
             free: o.local(),
-            login: o.login.into(),
-            price: o.price.into(),
-            voices: o.voices.iter().map(|v| crate::models::VoiceChoice { name: v.id.into(), label: v.name.into(), about: v.about.into(), preview: v.sample.into() }).collect(),
-            name: o.label.into(),
-            about: o.about.into(),
+            login: o.login.clone(),
+            price: o.price.clone(),
+            voices: o.voices.iter().map(|v| crate::models::VoiceChoice { name: v.id.clone(), label: v.name.clone(), about: v.about.clone(), preview: v.sample.clone() }).collect(),
+            name: o.label.clone(),
+            about: o.about.clone(),
             key: p.key,
-            key_name: p.key_name.into(),
-            keys_at: p.keys_at.into(),
-            asks: o.asks.iter().map(|a| ServiceAsk { field: a.field.into(), question: a.question.into(), usual: a.usual.into() }).collect(),
+            key_name: p.key_name.clone(),
+            keys_at: p.keys_at.clone(),
+            asks: o.asks.iter().map(|a| ServiceAsk { field: a.field.clone(), question: a.question.clone(), usual: a.usual.clone() }).collect(),
         })
         .collect()
 }
@@ -185,7 +193,7 @@ pub fn set_service_voice(kind: String, key: String, settings: HashMap<String, St
 #[uniffi::export]
 pub fn check_service_voice(kind: String, key: String, settings: HashMap<String, String>) -> Result<(), RadioError> {
     let told = |reason: String| RadioError::Told { reason };
-    let synth = crate::voices::synth_for(&service_of(&kind, &key, settings)).ok_or_else(|| told("This app has no such voice service.".into()))?;
+    let synth = crate::voices::synth(&service_of(&kind, &key, settings)).map_err(told)?;
     let mut bytes = 0usize;
     synth.speak("Ready.", &mut |pcm| bytes += pcm.len(), &mut |_, _| {}).map_err(|e| told(format!("The voice service did not speak: {e}.")))?;
     if bytes == 0 { Err(told("The voice service answered with no sound.".into())) } else { Ok(()) }

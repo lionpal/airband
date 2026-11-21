@@ -9,11 +9,16 @@
     {
       "job": "voice",
       "by": {
-        "azure_voice": {}
+        "interface": "azure",
+        "with": {
+          "url": "https://{region}.tts.speech.microsoft.com/cognitiveservices/v1",
+          "language": "en-US"
+        }
       },
       "label": "Microsoft Azure Speech",
       "preferred": true,
       "price": "About $0.81 per hour of speech",
+      "priced": "2026-11-20",
       "voices": [
         {
           "id": "en-US-AvaMultilingualNeural",
@@ -40,7 +45,8 @@
         {
           "field": "region",
           "question": "Region",
-          "usual": "eastus"
+          "usual": "eastus",
+          "reach": true
         },
         {
           "field": "voice",
@@ -52,18 +58,18 @@
     {
       "job": "ears",
       "by": {
-        "listener": {
-          "dialect": "azure"
-        }
+        "interface": "azure"
       },
       "label": "Microsoft Azure Speech",
       "preferred": true,
       "price": "About $1 per hour, 5 hours a month free",
+      "priced": "2026-11-20",
       "asks": [
         {
           "field": "region",
           "question": "Region",
-          "usual": "eastus"
+          "usual": "eastus",
+          "reach": true
         },
         {
           "field": "language",
