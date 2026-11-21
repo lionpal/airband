@@ -124,7 +124,7 @@ impl Limiter {
     }
 }
 
-/// The three things a radio asks of the relay.
+/// The two things a radio asks of the relay.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Asks {
     Call,
@@ -134,11 +134,9 @@ enum Asks {
 /// How much is taken in a minute: on one channel, and from one internet address whatever channels it names.
 /// A phone sending a large file makes many calls quickly, six at a time, so calls are allowed generously; how
 /// many may wait at once (`MAX_IN_FLIGHT`) is what bounds them. Messages to keep are written to the database,
-/// and passes cost a request to the speech service, so those are few. An address gets twice a channel's share:
-/// a household's phones come from one address.
+/// so those are few. An address gets twice a channel's share: a household's phones come from one address.
 const CALLS_A_MINUTE: u32 = 3000;
 const KEPT_A_MINUTE: u32 = 60;
-const PASSES_A_MINUTE: u32 = 30;
 /// Notifications asked for from one address in ten minutes, across its channels (`push::PUSHES` is one channel's).
 const PUSHES_AN_ADDRESS: u32 = push::PUSHES * 4;
 /// The same for changes to a banner (`push::BANNERS` is one channel's).
@@ -152,7 +150,7 @@ const OPENED_AN_HOUR: u32 = 300;
 
 struct Limits {
     /// For each of [`Asks`]: by channel, then by address.
-    radio: [(Limiter, Limiter); 3],
+    radio: [(Limiter, Limiter); 2],
     push_by_address: Limiter,
     banner_by_address: Limiter,
     opened_by_address: Limiter,
@@ -162,7 +160,7 @@ struct Limits {
 impl Limits {
     fn new() -> Limits {
         let pair = |most: u32| (Limiter::new(most, 60), Limiter::new(most * 2, 60));
-        Limits { radio: [pair(CALLS_A_MINUTE), pair(KEPT_A_MINUTE), pair(PASSES_A_MINUTE)], push_by_address: Limiter::new(PUSHES_AN_ADDRESS, 600), banner_by_address: Limiter::new(BANNERS_AN_ADDRESS, 600), opened_by_address: Limiter::new(OPENED_AN_ADDRESS_A_DAY, 86_400), opened: Limiter::new(OPENED_AN_HOUR, 3600) }
+        Limits { radio: [pair(CALLS_A_MINUTE), pair(KEPT_A_MINUTE)], push_by_address: Limiter::new(PUSHES_AN_ADDRESS, 600), banner_by_address: Limiter::new(BANNERS_AN_ADDRESS, 600), opened_by_address: Limiter::new(OPENED_AN_ADDRESS_A_DAY, 86_400), opened: Limiter::new(OPENED_AN_HOUR, 3600) }
     }
     fn channel(&mut self, asks: Asks, channel: &str, now: Instant) -> bool {
         self.radio[asks as usize].0.allow(channel, now)

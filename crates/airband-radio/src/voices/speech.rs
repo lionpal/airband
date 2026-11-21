@@ -8,7 +8,7 @@ use std::time::Duration;
 
 pub(super) const VOICING: Voicing = Voicing { is: Interface { name: "speech", can: &[], told: &[] }, make };
 
-fn make(voice: &Use, by: &By) -> Made {
+fn make(voice: &Use, by: &By, _name: &str) -> Made {
     let set = |field: &str| voice.get(Job::Voice, field);
     // the interface does not say the rate in a way every service agrees on, so the row or his setting does
     let rate = set("rate").parse().ok().filter(|r| (8000..=48000).contains(r)).ok_or_else(|| format!("\"{}\" is not a rate a voice can be played at. It is a number like 24000.", set("rate")))?;

@@ -5,12 +5,12 @@
 //!   airband uninstall            remove both
 //!   airband status               agents, and what is waiting to be heard
 //!   airband relay <url>          reach radios through this relay (`airband relay off` to stop)
-//!   airband voice [device|gemini|azure …]   what speaks on a call (outbound)
-//!   airband ears [device|azure …]          what listens on a call (inbound), set separately
+//!   airband model [<provider>]   what reads your agents' messages (listening and voice are chosen on the phone)
 //!   airband pair [name]          print the link that sets up a radio (default name: phone)
 //!   airband unpair <name>        cut a paired radio off
 //!   airband radio [--quiet] [--link <pairing link>]
-//!                              a radio in this terminal: transmissions are spoken, typed lines are replies
+//!                              a radio in this terminal: transmissions are printed, typed lines are replies
+//!                              (it makes no sound, with or without --quiet: voice is the phone's)
 //!   airband feed [all|<group>|"<callsign>"] [--once]
 //!                              the chat in this terminal: every message, cut to a line or two
 //!   airband send "@shop2 ..."    say something; @group and @all work too
@@ -39,7 +39,7 @@ fn main() {
     // harness runs many times a minute. Where he is about to choose from it, a newer one is fetched first.
     match args.first().map(String::as_str) {
         Some("hook" | "report" | "hold" | "catalog") => {}
-        Some("setup" | "model" | "voice" | "ears") => {
+        Some("setup" | "model") => {
             catalog::load();
             catalog::refresh();
         }
@@ -77,15 +77,13 @@ fn main() {
         Some("catalog") => catalog::command(&args[1..]),
         Some("setup") => setup::setup(config::load(), !args.iter().any(|a| a == "--no-start")),
         Some("model") => install::model(config::load(), &args[1..]),
-        Some("voice") => install::voice(config::load(), &args[1..]),
-        Some("ears") => install::ears(config::load(), &args[1..]),
         Some("radio") => terminal::run(&config::load(), &args[1..]),
         Some("launch") => terminal::send(&config::load(), &[vec!["/launch".to_string()], args[1..].to_vec()].concat()),
         Some("triage") => tower::triage(config::load()),
         Some("progress") => tower::progress(config::load()),
         Some("feed") => terminal::feed(&config::load(), &args[1..]),
         Some("send") => terminal::send(&config::load(), &args[1..]),
-        Some(other) => Err(format!("unknown command \"{other}\": start, setup, install, uninstall, status, keys, relay, lan, model, voice, ears, pair, unpair, quick, accounts, radio, feed, send, launch, hook, report, run")),
+        Some(other) => Err(format!("unknown command \"{other}\": start, setup, install, uninstall, status, keys, relay, lan, model, pair, unpair, quick, accounts, radio, feed, send, launch, hook, report, run")),
     };
     if let Err(e) = result {
         eprintln!("airband: {e}");

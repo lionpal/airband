@@ -1,11 +1,10 @@
-//! The device's own voice, in place of the tower's. One of two kinds, whichever he chose:
+//! The voice: what speaks on this device. One of two kinds, whichever he chose:
 //!
 //! - made on the device itself by a model: no key, no computer, no relay, nothing sent anywhere;
-//! - a voice service reached straight from the device with a key of his own, kept on the device. The services
-//!   are the tower's own (`voices.rs`, by the rows of `airband_core::providers`), so the phone can use any the
-//!   tower can, and his computer is not needed for it.
+//! - a voice service reached straight from the device with a key of his own, kept on the device (`voices.rs`,
+//!   by the rows of `airband_core::providers`).
 //!
-//! Either way the radio tells the tower it speaks for itself, and the tower sends it words only.
+//! His computer sends words only and has no voice: nothing about speaking is set or done there.
 //!
 //! A model is fetched and kept by `models.rs` and run by its engine (`engines.rs`). While one is chosen it
 //! stays loaded, so a sentence starts at once.
@@ -23,6 +22,9 @@ pub(crate) enum Own {
     Service(airband_core::providers::Use),
     /// What he chose cannot speak as things are, and why. Nothing else speaks in its place.
     Cannot(String),
+    /// The host says it, its own way, with no sound made here: a radio in a terminal, which prints. This is
+    /// what such a radio is started with ([`Radio::start`]); it is never put in the place of something else.
+    Host,
 }
 
 /// What speaks on this device: one for everything that shares what he chose (a desk and its radios).
@@ -38,7 +40,7 @@ impl Mouth {
         self.using.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    /// Speak with this from now on; nothing is the tower's voice. A model is loaded in the background and
+    /// Speak with this from now on; nothing is nothing. A model is loaded in the background and
     /// stays loaded, so a sentence starts at once. The model that was chosen before is let go of, unless it is
     /// this one again (see [`Mouth::held`]).
     pub(crate) fn set(&self, own: Option<Own>) {
@@ -68,14 +70,7 @@ impl Mouth {
         self.failed.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    /// What a radio adds when it asks the tower for the next thing to say, or says it is ready for one:
-    /// whether it makes the speech itself.
-    pub(crate) fn asking(&self) -> &'static str {
-        if self.ready() { "?voice=own" } else { "" }
-    }
-
-    /// Has he chosen a voice of the device's own? Then the device says everything, and when that voice
-    /// cannot, nothing is said in its place.
+    /// Has he chosen a voice? When the one he chose cannot speak, nothing is said in its place.
     pub(crate) fn ready(&self) -> bool {
         self.using().is_some()
     }
@@ -209,7 +204,8 @@ impl Mouth {
             Some(Own::Service(with)) => crate::voices::synth(&with)?.speak(text, &mut |pcm| if !stop() { sink(pcm) }, mark),
             Some(Own::Model { held, voice }) => held.with(|m| m.speak(host, &voice, text, sink, stop))?,
             Some(Own::Cannot(why)) => Err(why),
-            None => Err("No voice is chosen on this device.".into()),
+            Some(Own::Host) => Err("This radio shows what is said and makes no sound.".into()),
+            None => Err(crate::voice::NOTHING_CHOSEN.into()),
         }
     }
 
@@ -220,7 +216,8 @@ impl Mouth {
             Some(Own::Service(with)) => crate::voices::synth(&with).map(|s| s.rate()),
             Some(Own::Model { held, .. }) => held.m.told("rate").parse().map_err(|_| format!("{} does not say what rate it speaks at.", held.m.name)),
             Some(Own::Cannot(why)) => Err(why),
-            None => Err("No voice is chosen on this device.".into()),
+            Some(Own::Host) => Err("This radio shows what is said and makes no sound.".into()),
+            None => Err(crate::voice::NOTHING_CHOSEN.into()),
         }
     }
 
@@ -230,6 +227,10 @@ impl Mouth {
     /// passed on, for showing the words as they are said.
     pub(crate) fn say(&self, host: &dyn RadioHost, text: &str, stop: &dyn Fn() -> bool) -> Result<(), String> {
         use std::cell::RefCell;
+        if matches!(self.using(), Some(Own::Host)) {
+            host.speak(text.to_string());
+            return Ok(());
+        }
         // what is waiting to be handed over, whether anything has been, and word timings not yet passed on
         let state = RefCell::new((Vec::<u8>::new(), false, Vec::<(u32, u32)>::new(), false));
         let fail = |why: String| {
