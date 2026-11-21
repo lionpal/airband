@@ -38,7 +38,7 @@ fn main() {
     // The catalogue: the newest signed copy this computer has kept, for everything but the small commands a
     // harness runs many times a minute. Where he is about to choose from it, a newer one is fetched first.
     match args.first().map(String::as_str) {
-        Some("hook" | "report" | "hold" | "catalog" | "deliver") => {}
+        Some("hook" | "report" | "hold" | "catalog") => {}
         Some("setup" | "model" | "voice" | "ears") => {
             catalog::load();
             catalog::refresh();
@@ -75,9 +75,6 @@ fn main() {
         Some("lan") => install::lan(config::load(), &args[1..]),
         Some("keys") => setup::keys(&args[1..]),
         Some("catalog") => catalog::command(&args[1..]),
-        // his words, on standard input, into a session of a tool's own: how an agent that checked in under an
-        // earlier version is reached
-        Some("deliver") => adapters::deliver_command(&args[1..]),
         Some("setup") => setup::setup(config::load(), !args.iter().any(|a| a == "--no-start")),
         Some("model") => install::model(config::load(), &args[1..]),
         Some("voice") => install::voice(config::load(), &args[1..]),

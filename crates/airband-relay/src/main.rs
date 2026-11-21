@@ -14,9 +14,7 @@
 //!
 //! Who may do what. A tower does everything with its channel's pull token, and opening a new channel also
 //! takes the admission key. A radio does everything with its channel's radio token. Both tokens are made from
-//! the pairing secret, and the relay holds only their hashes. A channel's name alone gets nothing, with one
-//! exception for phones from before radios sent their token on `call` and `queue`: until a channel has once
-//! seen its radio's token on one of those, they are taken without it. From that moment, for good, they are not.
+//! the pairing secret, and the relay holds only their hashes. A channel's name alone gets nothing.
 //!
 //!   PUT  /v1/channels/{c}             tower: open the channel (Bearer pull token; x-airband-radio-hash)
 //!   GET  /v1/channels/{c}/pull        tower: the next sealed request, held up to 25 s (204 when none)
@@ -57,22 +55,20 @@ struct Channel {
     has_held: bool,
     /// The kept message the tower has been handed and has not yet said it took, and when.
     holding: Option<(String, Instant)>,
-    /// The hash of the token the paired radio proves itself with, as the tower gave it (when it opened the
-    /// channel, and with each pull).
-    radio_hash: Option<String>,
-    /// A radio has shown that token on `call` or `queue`: nothing is taken on this channel without it again.
-    proven: bool,
+    /// The hash of the token the paired radio proves itself with, as the tower gave it when it opened the
+    /// channel.
+    radio_hash: String,
     /// How many notifications it has sent lately, and since when.
     pushed: Option<(Instant, u32)>,
 }
 
 impl Channel {
     #[cfg(test)]
-    fn new(pull_hash: String) -> Channel {
-        Channel::from(store::Saved { pull_hash, ..Default::default() })
+    fn new(pull_hash: String, radio_hash: String) -> Channel {
+        Channel::from(store::Saved { pull_hash, radio_hash })
     }
     fn from(saved: store::Saved) -> Channel {
-        Channel { pull_hash: saved.pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, holding: None, radio_hash: saved.radio_hash, proven: saved.proven, pushed: None }
+        Channel { pull_hash: saved.pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, holding: None, radio_hash: saved.radio_hash, pushed: None }
     }
 }
 
@@ -222,62 +218,21 @@ impl Relay {
     /// starts here.
     ///
     /// The radio shows a token made from the pairing secret (`Authorization: Bearer`), whose hash the channel's
-    /// tower has given. A wrong token is always refused. No token is refused once the channel is proven: once
-    /// a radio has shown the right token. Until then requests are taken as they were before radios sent a
-    /// token, so a phone on an older build keeps working.
+    /// tower gave when it opened the channel. Without that token nothing is taken.
     async fn admit(&self, asks: Asks, channel: &str, headers: &HeaderMap) -> Result<(), Response> {
         let now = Instant::now();
         if !self.limits.lock().unwrap().address(asks, &caller(headers), now) {
             return Err(say(StatusCode::TOO_MANY_REQUESTS, "too many requests from this address; try again in a minute"));
         }
-        let token = bearer(headers);
-        let shown = token_hash(token);
-        let first = {
-            let channels = self.channels.lock().unwrap();
-            let Some(ch) = channels.get(channel) else { return Err(not_the_radio()) };
-            match &ch.radio_hash {
-                Some(hash) if !token.is_empty() => {
-                    if !same(&shown, hash) {
-                        return Err(not_the_radio());
-                    }
-                    !ch.proven
-                }
-                _ if ch.proven => return Err(not_the_radio()),
-                _ => false,
-            }
-        };
-        // counted only now, so a stranger who knows a proven channel's name cannot use up its radio's share
+        let shown = token_hash(bearer(headers));
+        if !self.channels.lock().unwrap().get(channel).is_some_and(|ch| same(&shown, &ch.radio_hash)) {
+            return Err(not_the_radio());
+        }
+        // counted only now, so a stranger who knows a channel's name cannot use up its radio's share
         if !self.limits.lock().unwrap().channel(asks, channel, now) {
             return Err(say(StatusCode::TOO_MANY_REQUESTS, "too many requests on this channel; try again in a minute"));
         }
-        if first {
-            // durable before it counts: after a restart the channel must still refuse what it refuses now
-            match self.store.prove(channel).await {
-                Ok(()) => {
-                    if let Some(ch) = self.channels.lock().unwrap().get_mut(channel) {
-                        ch.proven = true;
-                    }
-                }
-                Err(e) => eprintln!("airband-relay: could not save that a channel's radio has shown its token: {e}"),
-            }
-        }
         Ok(())
-    }
-
-    /// The channel's tower has said what its radio's token hashes to: remember it, in memory and for good.
-    async fn note_radio(&self, channel: &str, given: Option<&str>) {
-        let Some(given) = given else { return };
-        {
-            let mut channels = self.channels.lock().unwrap();
-            let Some(ch) = channels.get_mut(channel) else { return };
-            if ch.radio_hash.as_deref() == Some(given) {
-                return;
-            }
-            ch.radio_hash = Some(given.to_string());
-        }
-        if let Err(e) = self.store.set_radio(channel, given).await {
-            eprintln!("airband-relay: could not save a channel's radio token hash: {e}");
-        }
     }
 
     /// A radio's request did not come to what it asked for: one line saying so. It has what the relay itself
@@ -301,18 +256,14 @@ impl Relay {
 }
 
 async fn open(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, headers: HeaderMap) -> Response {
-    if !valid_channel(&channel) || bearer(&headers).is_empty() {
-        return say(StatusCode::BAD_REQUEST, "a channel is 32 hex characters and needs a pull token");
-    }
+    let (true, false, Some(radio)) = (valid_channel(&channel), bearer(&headers).is_empty(), radio_hash_given(&headers)) else {
+        return say(StatusCode::BAD_REQUEST, "a channel is 32 hex characters and needs a pull token and its radio's token hash");
+    };
     let hash = token_hash(bearer(&headers));
-    let radio = radio_hash_given(&headers);
     // opening again is how a tower checks it is still known after a relay restart
     let known = |channels: &HashMap<String, Channel>| channels.get(&channel).map(|existing| if same(&existing.pull_hash, &hash) { StatusCode::NO_CONTENT.into_response() } else { say(StatusCode::FORBIDDEN, "that channel belongs to another tower") });
     let answer = known(&relay.channels.lock().unwrap());
     if let Some(answer) = answer {
-        if answer.status() == StatusCode::NO_CONTENT {
-            relay.note_radio(&channel, radio).await;
-        }
         return answer;
     }
     if let Some(want) = &relay.admission {
@@ -341,16 +292,12 @@ async fn open(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, head
     if let Some(answer) = known(&channels) {
         return answer;
     }
-    channels.insert(channel, Channel::from(store::Saved { pull_hash: hash, radio_hash: radio.map(str::to_string), proven: false }));
+    channels.insert(channel, Channel::from(store::Saved { pull_hash: hash, radio_hash: radio.to_string() }));
     StatusCode::CREATED.into_response()
 }
 
 async fn pull(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, headers: HeaderMap) -> Response {
     let until = Instant::now() + HOLD;
-    // the tower says who its radio is with every pull, for a relay that did not have it from when the channel was opened
-    if relay.channels.lock().unwrap().get(&channel).is_some_and(|ch| same(&token_hash(bearer(&headers)), &ch.pull_hash)) {
-        relay.note_radio(&channel, radio_hash_given(&headers)).await;
-    }
     loop {
         let wake = {
             let mut channels = relay.channels.lock().unwrap();
@@ -756,7 +703,7 @@ mod tests {
         let (auth, hash) = (token(&keys.pull_token), token_hash(&keys.radio_token));
         open(State(relay.clone()), Path(keys.channel.clone()), with(&[(auth.0, &auth.1), ("x-airband-radio-hash", &hash), ("x-airband-admission", admission)])).await.status().as_u16()
     }
-    /// A radio leaves a message, showing `shown` as its token (nothing when empty, as an older phone does).
+    /// A radio leaves a message, showing `shown` as its token (none when empty).
     async fn leave(relay: &Arc<Relay>, channel: &str, shown: &str, id: &str) -> (u16, String) {
         let auth = token(shown);
         let mut headers = with(&[("x-airband-id", id)]);
@@ -783,21 +730,9 @@ mod tests {
         assert_eq!(open_as(&relay, &mine, "").await, 201);
         assert_eq!(open_as(&relay, &other, "").await, 201);
         // the radio's token hash is kept with the channel from the moment it is opened
-        assert_eq!(relay.store.load().await.unwrap()[&mine.channel].radio_hash, Some(token_hash(&mine.radio_token)));
+        assert_eq!(relay.store.load().await.unwrap()[&mine.channel].radio_hash, token_hash(&mine.radio_token));
 
-        // a channel that has never seen its radio's token takes a request without one, as an older phone sends it
-        assert_eq!(leave(&relay, &mine.channel, "", "aaaaaaaa01").await.0, 202);
-        // but never one with a wrong token, and that proves nothing
-        assert_eq!(leave(&relay, &mine.channel, "not-the-token", "aaaaaaaa02").await.0, 401);
-        assert_eq!(leave(&relay, &mine.channel, &other.radio_token, "aaaaaaaa02").await.0, 401);
-        assert_eq!(leave(&relay, &mine.channel, "", "aaaaaaaa03").await.0, 202);
-
-        // the right token once, and the channel is proven: in memory and where it survives a restart
-        assert_eq!(leave(&relay, &mine.channel, &mine.radio_token, "aaaaaaaa04").await.0, 202);
-        assert!(relay.channels.lock().unwrap()[&mine.channel].proven);
-        assert!(relay.store.load().await.unwrap()[&mine.channel].proven);
-
-        // from then on: nothing without the token, with a wrong one, or with another channel's
+        // nothing without the token, with a wrong one, or with another channel's
         let refused = leave(&relay, &mine.channel, "", "aaaaaaaa05").await;
         assert_eq!(refused.0, 401);
         assert_eq!(leave(&relay, &mine.channel, "not-the-token", "aaaaaaaa05").await, refused);
@@ -806,8 +741,9 @@ mod tests {
         // a channel that does not exist answers exactly as one that refuses
         assert_eq!(leave(&relay, &"0".repeat(32), "", "aaaaaaaa05").await, refused);
         assert_eq!(leave(&relay, &"0".repeat(32), &mine.radio_token, "aaaaaaaa05").await, refused);
-        // the other channel has proven nothing and is as it was
-        assert_eq!(leave(&relay, &other.channel, "", "aaaaaaaa06").await.0, 202);
+        // the other channel takes its own radio's token and not this one's
+        assert_eq!(leave(&relay, &other.channel, &mine.radio_token, "aaaaaaaa06").await, refused);
+        assert_eq!(leave(&relay, &other.channel, &other.radio_token, "aaaaaaaa06").await.0, 202);
 
         // a call is under the same rule: refused without the token, let through to "no tower" with it
         let ask = |headers: HeaderMap| call(State(relay.clone()), Path(mine.channel.clone()), headers, Bytes::from_static(b"sealed"));
@@ -822,7 +758,7 @@ mod tests {
         let again = Arc::new(Relay::new(push::Push::default(), saved.into_iter().map(|(c, s)| (c, Channel::from(s))).collect(), store::Store::Folder(folder.clone()), None));
         assert_eq!(leave(&again, &mine.channel, "", "aaaaaaaa07").await, refused);
         assert_eq!(leave(&again, &mine.channel, &mine.radio_token, "aaaaaaaa07").await.0, 202);
-        assert_eq!(leave(&again, &other.channel, "", "aaaaaaaa08").await.0, 202);
+        assert_eq!(leave(&again, &other.channel, &other.radio_token, "aaaaaaaa08").await.0, 202);
         let _ = std::fs::remove_dir_all(folder);
     }
 
@@ -851,7 +787,8 @@ mod tests {
         // opening it again needs no key, only the same token; another tower's token is turned away
         assert_eq!(open_as(&relay, &mine, "").await, 204);
         let theirs = token(&other.pull_token);
-        let as_other = || with(&[(theirs.0, &theirs.1), ("x-airband-admission", "key")]);
+        let their_radio = token_hash(&other.radio_token);
+        let as_other = || with(&[(theirs.0, &theirs.1), ("x-airband-admission", "key"), ("x-airband-radio-hash", &their_radio)]);
         let channel = || Path(mine.channel.clone());
         assert_eq!(open(State(relay.clone()), channel(), as_other()).await.status().as_u16(), 403);
         // and so is everything else a tower does, with another channel's token or with none
@@ -862,32 +799,16 @@ mod tests {
             assert_eq!(wake_phone(State(relay.clone()), channel(), headers.clone(), Bytes::new()).await.status().as_u16(), 403);
             assert_eq!(close(State(relay.clone()), channel(), headers).await.status().as_u16(), 403);
         }
-        // another tower cannot say who this channel's radio is
-        let mut lying = as_other();
-        lying.insert("x-airband-radio-hash", token_hash(&other.radio_token).parse().unwrap());
-        assert_eq!(pull(State(relay.clone()), channel(), lying).await.status().as_u16(), 403);
-        assert_eq!(relay.channels.lock().unwrap()[&mine.channel].radio_hash, Some(token_hash(&mine.radio_token)));
+        // who this channel's radio is was said when it was opened, and nobody changes it
+        assert_eq!(relay.channels.lock().unwrap()[&mine.channel].radio_hash, token_hash(&mine.radio_token));
+        // a channel is not opened without saying who its radio is
+        let fresh = Keys::derive(&airband_core::relay::new_secret()).unwrap();
+        let own = token(&fresh.pull_token);
+        assert_eq!(open(State(relay.clone()), Path(fresh.channel.clone()), with(&[(own.0, &own.1), ("x-airband-admission", "key")])).await.status().as_u16(), 400);
         // its own tower closes it, and it is gone
         let own = token(&mine.pull_token);
         assert_eq!(close(State(relay.clone()), channel(), with(&[(own.0, &own.1)])).await.status().as_u16(), 204);
         assert!(relay.store.load().await.unwrap().is_empty());
-        let _ = std::fs::remove_dir_all(folder);
-    }
-
-    #[tokio::test]
-    async fn a_tower_that_only_says_who_its_radio_is_when_it_pulls_is_remembered_too() {
-        let (relay, folder) = relay_in_a_folder(None);
-        let keys = Keys::derive(&airband_core::relay::new_secret()).unwrap();
-        // an older tower: opens with its pull token alone
-        let own = token(&keys.pull_token);
-        assert_eq!(open(State(relay.clone()), Path(keys.channel.clone()), with(&[(own.0, &own.1)])).await.status().as_u16(), 201);
-        assert_eq!(relay.store.load().await.unwrap()[&keys.channel].radio_hash, None);
-        // something is waiting, so the pull returns at once
-        assert_eq!(leave(&relay, &keys.channel, "", "cccccccc01").await.0, 202);
-        let hash = token_hash(&keys.radio_token);
-        let res = pull(State(relay.clone()), Path(keys.channel.clone()), with(&[(own.0, &own.1), ("x-airband-radio-hash", &hash)])).await;
-        assert_eq!(res.headers().get("x-airband-request").unwrap(), "held-cccccccc01");
-        assert_eq!(relay.store.load().await.unwrap()[&keys.channel].radio_hash, Some(hash));
         let _ = std::fs::remove_dir_all(folder);
     }
 
@@ -926,19 +847,6 @@ mod tests {
         }
         assert!(!limit.allow("one more", t0) && limit.allow("7", t0) && !limit.allow("7", t0));
         assert!(limit.allow("one more", t0 + Duration::from_secs(61)));
-    }
-
-    #[tokio::test]
-    async fn a_channel_list_from_before_radios_had_tokens_is_still_read() {
-        let folder = std::env::temp_dir().join(format!("airband-relay-test-{}", random_hex(6)));
-        std::fs::create_dir_all(&folder).unwrap();
-        std::fs::write(folder.join("channels.json"), r#"{"00000000000000000000000000000001":"abc"}"#).unwrap();
-        let store = store::Store::Folder(folder.clone());
-        assert_eq!(store.load().await.unwrap()["00000000000000000000000000000001"], store::Saved { pull_hash: "abc".into(), radio_hash: None, proven: false });
-        store.set_radio("00000000000000000000000000000001", "def").await.unwrap();
-        store.prove("00000000000000000000000000000001").await.unwrap();
-        assert_eq!(store.load().await.unwrap()["00000000000000000000000000000001"], store::Saved { pull_hash: "abc".into(), radio_hash: Some("def".into()), proven: true });
-        let _ = std::fs::remove_dir_all(folder);
     }
 
     /// The push route, with a stand-in for Apple's server on this machine: the tower's token is asked for, the
@@ -981,7 +889,7 @@ mod tests {
         let keys = Keys::derive(&airband_core::relay::new_secret()).unwrap();
         let apns = push::Apns::new(&key, "KEY123", "TEAM456", "dev.example.app", &format!("http://{at}")).unwrap();
         let folder = std::env::temp_dir().join(format!("airband-relay-test-{}", random_hex(6)));
-        let relay = Arc::new(Relay::new(push::Push::with_apns(apns), HashMap::from([(keys.channel.clone(), Channel::new(token_hash(&keys.pull_token)))]), store::Store::Folder(folder), None));
+        let relay = Arc::new(Relay::new(push::Push::with_apns(apns), HashMap::from([(keys.channel.clone(), Channel::new(token_hash(&keys.pull_token), token_hash(&keys.radio_token)))]), store::Store::Folder(folder), None));
         let ask = |token: &str, provider: &str, to: &str| {
             let (relay, channel) = (relay.clone(), keys.channel.clone());
             let mut headers = HeaderMap::new();

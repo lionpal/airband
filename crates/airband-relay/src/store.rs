@@ -1,5 +1,5 @@
 //! Where the relay remembers which channels exist: the channel's name, the hash of its tower's pull token, the
-//! hash of its radio's token, and whether a radio has ever shown that token. With the sealed messages kept for
+//! hash of its radio's token. With the sealed messages kept for
 //! a tower that is away, that is all it ever stores about anyone's traffic. It also keeps the homepage's waiting
 //! list: email addresses people gave to be told when the app is ready, and nothing else about them. A folder
 //! (one JSON file) when run on a machine with a disk; a Postgres database or Amazon DynamoDB when run somewhere
@@ -8,7 +8,7 @@
 //! DynamoDB is chosen by setting AIRBAND_RELAY_DYNAMO to a prefix. Three tables, which must already exist
 //! (infra/cdk.mjs makes them; the relay's role needs no right to make or change a table):
 //!
-//!   <prefix>-channels   key `channel`. One item per channel: pull_hash, radio_hash, proven.
+//!   <prefix>-channels   key `channel`. One item per channel: pull_hash, radio_hash.
 //!   <prefix>-held       key `channel` + `k`; time to live on `expires`. Per channel:
 //!                         k = "n"              how many are kept (`held`), changed only inside a transaction
 //!                         k = "m#<ms>#<id>"    one per kept message, small, sorted as they arrived
@@ -49,12 +49,9 @@ pub struct Saved {
     /// The hash of the token its tower pulls with.
     #[serde(rename = "pull")]
     pub pull_hash: String,
-    /// The hash of the token its radio proves itself with, once the tower has given it.
-    #[serde(rename = "radio", default, skip_serializing_if = "Option::is_none")]
-    pub radio_hash: Option<String>,
-    /// A radio has shown that token on this channel, so from then on nothing is taken without it.
-    #[serde(default)]
-    pub proven: bool,
+    /// The hash of the token its radio proves itself with.
+    #[serde(rename = "radio")]
+    pub radio_hash: String,
 }
 
 pub struct Dyn {
@@ -68,15 +65,9 @@ fn now_secs() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-/// channels.json: each channel's [`Saved`]. A file from before radios had tokens has only the pull hash, as text.
+/// channels.json: each channel's [`Saved`].
 fn read_channels(dir: &std::path::Path) -> HashMap<String, Saved> {
-    let all: HashMap<String, Value> = std::fs::read_to_string(dir.join("channels.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-    all.into_iter()
-        .filter_map(|(channel, v)| match v {
-            Value::String(pull_hash) => Some((channel, Saved { pull_hash, ..Saved::default() })),
-            other => serde_json::from_value(other).ok().map(|saved| (channel, saved)),
-        })
-        .collect()
+    std::fs::read_to_string(dir.join("channels.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
 }
 fn write_channels(dir: &std::path::Path, all: &HashMap<String, Saved>) -> Result<(), String> {
     let (tmp, file) = (dir.join("channels.json.tmp"), dir.join("channels.json"));
@@ -155,8 +146,8 @@ impl Store {
                     }
                     let page = d.db.call("Scan", ask).await.map_err(|e| e.to_string())?;
                     for item in page["Items"].as_array().into_iter().flatten() {
-                        if let (Some(channel), Some(pull_hash)) = (dynamo::text(item, "channel"), dynamo::text(item, "pull_hash")) {
-                            all.insert(channel, Saved { pull_hash, radio_hash: dynamo::text(item, "radio_hash"), proven: item["proven"]["BOOL"].as_bool().unwrap_or(false) });
+                        if let (Some(channel), Some(pull_hash), Some(radio_hash)) = (dynamo::text(item, "channel"), dynamo::text(item, "pull_hash"), dynamo::text(item, "radio_hash")) {
+                            all.insert(channel, Saved { pull_hash, radio_hash });
                         }
                     }
                     match page.get("LastEvaluatedKey").filter(|k| k.is_object()) {
@@ -177,16 +168,14 @@ impl Store {
                 }
                 let db = pg.connect(&pg.name).await?;
                 db.batch_execute(
-                    "create table if not exists relay_channels (channel text primary key, pull_hash text not null, created_at timestamptz not null default now());
-                     alter table relay_channels add column if not exists radio_hash text;
-                     alter table relay_channels add column if not exists proven boolean not null default false;
+                    "create table if not exists relay_channels (channel text primary key, pull_hash text not null, radio_hash text not null, created_at timestamptz not null default now());
                      create table if not exists waitlist (email text primary key, joined_at timestamptz not null default now());
                      create table if not exists relay_held (seq bigserial primary key, channel text not null, id text not null, sealed bytea not null, held_at timestamptz not null default now(), unique (channel, id))",
                 )
                 .await
                 .map_err(|e| e.to_string())?;
-                let rows = db.query("select channel, pull_hash, radio_hash, proven from relay_channels", &[]).await.map_err(|e| e.to_string())?;
-                Ok(rows.iter().map(|r| (r.get(0), Saved { pull_hash: r.get(1), radio_hash: r.get(2), proven: r.get(3) })).collect())
+                let rows = db.query("select channel, pull_hash, radio_hash from relay_channels", &[]).await.map_err(|e| e.to_string())?;
+                Ok(rows.iter().map(|r| (r.get(0), Saved { pull_hash: r.get(1), radio_hash: r.get(2) })).collect())
             }
         }
     }
@@ -226,21 +215,17 @@ impl Store {
         }
     }
 
-    /// Remember a new channel, with its radio's token hash if the tower gave it. Returns only once it is
-    /// durable. A channel already there is left as it is.
-    pub async fn add(&self, channel: &str, pull_hash: &str, radio_hash: Option<&str>) -> Result<(), String> {
+    /// Remember a new channel, with its radio's token hash. Returns only once it is durable. A channel
+    /// already there is left as it is.
+    pub async fn add(&self, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<(), String> {
         match self {
             Store::Folder(dir) => {
                 let mut all = read_channels(dir);
-                all.entry(channel.into()).or_insert(Saved { pull_hash: pull_hash.into(), radio_hash: radio_hash.map(str::to_string), proven: false });
+                all.entry(channel.into()).or_insert(Saved { pull_hash: pull_hash.into(), radio_hash: radio_hash.into() });
                 write_channels(dir, &all)
             }
             Store::Dynamo(d) => {
-                let mut item = json!({ "channel": s(channel), "pull_hash": s(pull_hash), "proven": { "BOOL": false }, "created_at": n(now_secs()) });
-                if let Some(radio_hash) = radio_hash {
-                    item["radio_hash"] = s(radio_hash);
-                }
-                d.put_new(&d.channels, "channel", item).await
+                d.put_new(&d.channels, "channel", json!({ "channel": s(channel), "pull_hash": s(pull_hash), "radio_hash": s(radio_hash), "created_at": n(now_secs()) })).await
             }
             Store::Postgres(pg) => {
                 // one short connection per new channel: channels are opened rarely, and nothing is held open to go stale
@@ -250,41 +235,6 @@ impl Store {
         }
     }
 
-    /// The channel's tower has said what its radio's token hashes to.
-    pub async fn set_radio(&self, channel: &str, radio_hash: &str) -> Result<(), String> {
-        match self {
-            Store::Folder(dir) => {
-                let mut all = read_channels(dir);
-                if let Some(saved) = all.get_mut(channel) {
-                    saved.radio_hash = Some(radio_hash.into());
-                }
-                write_channels(dir, &all)
-            }
-            Store::Postgres(pg) => {
-                let db = pg.connect(&pg.name).await?;
-                db.execute("update relay_channels set radio_hash = $2 where channel = $1", &[&channel, &radio_hash]).await.map(|_| ()).map_err(|e| e.to_string())
-            }
-            Store::Dynamo(d) => d.set(channel, "radio_hash", s(radio_hash)).await,
-        }
-    }
-
-    /// A radio has shown the channel's token: from now on, and after any restart, nothing is taken without it.
-    pub async fn prove(&self, channel: &str) -> Result<(), String> {
-        match self {
-            Store::Folder(dir) => {
-                let mut all = read_channels(dir);
-                if let Some(saved) = all.get_mut(channel) {
-                    saved.proven = true;
-                }
-                write_channels(dir, &all)
-            }
-            Store::Postgres(pg) => {
-                let db = pg.connect(&pg.name).await?;
-                db.execute("update relay_channels set proven = true where channel = $1", &[&channel]).await.map(|_| ()).map_err(|e| e.to_string())
-            }
-            Store::Dynamo(d) => d.set(channel, "proven", json!({ "BOOL": true })).await,
-        }
-    }
 }
 
 /// A time in milliseconds that only goes up, so two messages kept in the same millisecond still have an order.
@@ -300,15 +250,6 @@ impl Dyn {
     /// Write an item unless one with its key is already there, which is left as it is.
     async fn put_new(&self, table: &str, key: &str, item: Value) -> Result<(), String> {
         match self.db.call("PutItem", json!({ "TableName": table, "Item": item, "ConditionExpression": "attribute_not_exists(#k)", "ExpressionAttributeNames": { "#k": key } })).await {
-            Ok(_) => Ok(()),
-            Err(e) if e.condition() => Ok(()),
-            Err(e) => Err(e.to_string()),
-        }
-    }
-    /// Change one thing about a channel that exists. A channel closed meanwhile stays closed.
-    async fn set(&self, channel: &str, name: &str, value: Value) -> Result<(), String> {
-        let ask = json!({ "TableName": self.channels, "Key": { "channel": s(channel) }, "UpdateExpression": "SET #n = :v", "ConditionExpression": "attribute_exists(#c)", "ExpressionAttributeNames": { "#n": name, "#c": "channel" }, "ExpressionAttributeValues": { ":v": value } });
-        match self.db.call("UpdateItem", ask).await {
             Ok(_) => Ok(()),
             Err(e) if e.condition() => Ok(()),
             Err(e) => Err(e.to_string()),
@@ -611,14 +552,11 @@ mod tests {
         assert_eq!(store.held_next(channel).await, Ok(Some(("dddddddd".into(), b"fourth".to_vec()))));
         store.held_done(channel, "dddddddd").await.unwrap();
         assert_eq!(store.held_next(channel).await, Ok(None));
-        // a channel's record: made once, changed, read back, removed
-        store.add(channel, "pull", None).await.unwrap();
-        store.add(channel, "someone else's", Some("x")).await.unwrap();
-        store.set_radio(channel, "radio").await.unwrap();
-        store.prove(channel).await.unwrap();
-        assert_eq!(store.load().await.unwrap()[channel], Saved { pull_hash: "pull".into(), radio_hash: Some("radio".into()), proven: true });
+        // a channel's record: made once, read back, removed
+        store.add(channel, "pull", "radio").await.unwrap();
+        store.add(channel, "someone else's", "x").await.unwrap();
+        assert_eq!(store.load().await.unwrap()[channel], Saved { pull_hash: "pull".into(), radio_hash: "radio".into() });
         store.remove(channel).await.unwrap();
-        store.prove(channel).await.unwrap(); // a closed channel stays closed
         assert!(!store.load().await.unwrap().contains_key(channel));
         // leave nothing: the one past its time goes when the line is counted
         d.recount(channel).await.unwrap();

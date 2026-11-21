@@ -24,8 +24,6 @@ use std::process::{ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
-/// What closes the program's input in a holder started by a version before this one, which took raw bytes.
-pub const END_BEFORE: &[u8] = b"\0end\n";
 
 /// What the tower says to a holder.
 pub enum Tell {

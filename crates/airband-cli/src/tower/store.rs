@@ -43,29 +43,15 @@ impl Store {
             "pragma journal_mode = wal;
              pragma cache_size = -256;
              create table if not exists messages (seq integer primary key, id text not null unique, at integer not null, sender text not null,
-                 grp text not null, recipients text not null, kind text, short text, full text not null, detail text);
-             create table if not exists events (n integer primary key autoincrement, at integer not null, agent text not null, harness text not null, event text not null);
+                 grp text not null, recipients text not null, kind text, short text, full text not null, detail text, options text,
+                 recommended integer, pictures text, agent text, to_agents text, rev integer, read text, waiting text, own_session integer,
+                 seen integer, leave integer, aloud text, notice integer);
+             create table if not exists events (n integer primary key autoincrement, at integer not null, agent text not null, harness text not null, event text not null, agent_doc text);
              create table if not exists receipts (id text primary key, at integer not null, reply text);
-             create table if not exists deliveries (n integer primary key autoincrement, at integer not null, message text not null, callsign text not null, ok integer not null, error text);
+             create table if not exists deliveries (n integer primary key autoincrement, at integer not null, message text not null, callsign text not null, ok integer not null, error text, utterance text);
              create table if not exists state (key text primary key, value text not null);",
         )
         .map_err(|e| format!("cannot prepare {}: {e}", path.display()))?;
-        // added after the first version: fails harmlessly when the column is already there
-        let _ = db.execute("alter table messages add column options text", []);
-        let _ = db.execute("alter table messages add column recommended integer", []);
-        let _ = db.execute("alter table messages add column pictures text", []);
-        let _ = db.execute("alter table messages add column agent text", []);
-        let _ = db.execute("alter table messages add column to_agents text", []);
-        let _ = db.execute("alter table messages add column rev integer", []);
-        let _ = db.execute("alter table messages add column read text", []);
-        let _ = db.execute("alter table messages add column waiting text", []);
-        let _ = db.execute("alter table messages add column own_session integer", []);
-        let _ = db.execute("alter table messages add column seen integer", []);
-        let _ = db.execute("alter table messages add column leave integer", []);
-        let _ = db.execute("alter table messages add column aloud text", []);
-        let _ = db.execute("alter table messages add column notice integer", []);
-        let _ = db.execute("alter table events add column agent_doc text", []);
-        let _ = db.execute("alter table deliveries add column utterance text", []);
         Ok(Store { db: Mutex::new(db) })
     }
 
@@ -306,7 +292,7 @@ mod tests {
     #[test]
     fn an_event_is_kept_as_it_came_without_the_way_to_reach_the_agent() {
         let (s, path) = store("events");
-        s.event(&json!({ "schema": "airband.agent/1", "agent": { "id": "a", "harness": "new-thing", "deliver": { "kind": "claude-code-inbox", "socket": "/s", "token": "secret" } }, "event": { "type": "molting", "depth": 3 } }));
+        s.event(&json!({ "schema": "airband.agent/1", "agent": { "id": "a", "harness": "new-thing", "deliver": { "kind": "socket", "path": "/s", "token": "secret" } }, "event": { "type": "molting", "depth": 3 } }));
         let (event, about): (String, String) = s.db.lock().unwrap().query_row("select event, agent_doc from events", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert_eq!(serde_json::from_str::<Value>(&event).unwrap(), json!({ "type": "molting", "depth": 3 }));
         assert!(about.contains("/s") && !about.contains("secret"));

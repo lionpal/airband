@@ -50,9 +50,10 @@ pub struct Agent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Deliver {
-    /// Claude Code's per-session inbox socket (`CLAUDE_CODE_MESSAGING_SOCKET`).
-    ClaudeCodeInbox {
-        socket: String,
+    /// A socket on this machine that takes a turn as one line of JSON (`{"type":"user","message":{…}}`), after
+    /// a line that shows `token` when it asks for one. Claude Code's per-session inbox is one.
+    Socket {
+        path: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         token: Option<String>,
     },
@@ -61,8 +62,9 @@ pub enum Deliver {
     /// The tower started this agent and holds its input: his words are written there as his own turn, with
     /// nothing around them. Nothing else can reach it this way.
     Held,
-    /// Type the message into a tmux pane and press Enter: works for any harness that runs in a terminal.
-    Tmux { target: String },
+    /// Type the message into a terminal and press Enter: works for any harness that runs in one. `tmux` is
+    /// the pane.
+    Keys { tmux: String },
     /// Through the agent's own tool, by whatever way that tool takes a turn of his into a session that is
     /// already open (its queue, its server). The tower's adapter for `name` knows how.
     Harness { name: String, session: String },
@@ -192,10 +194,10 @@ mod tests {
     #[test]
     fn round_trips_and_tolerates_the_future() {
         let j = r#"{"schema":"airband.agent/1","extra":1,
-            "agent":{"id":"a1","harness":"codex","cwd":"/x/shop","deliver":{"kind":"tmux","target":"%3"},"colour":"red","meta":{"model":"gpt-5","branch":"fix/retry"}},
+            "agent":{"id":"a1","harness":"codex","cwd":"/x/shop","deliver":{"kind":"keys","tmux":"%3"},"colour":"red","meta":{"model":"gpt-5","branch":"fix/retry"}},
             "event":{"type":"said","text":"Done.","kind":"report"}}"#;
         let e: AgentEvent = serde_json::from_str(j).unwrap();
-        assert_eq!(e.agent.deliver, Some(Deliver::Tmux { target: "%3".into() }));
+        assert_eq!(e.agent.deliver, Some(Deliver::Keys { tmux: "%3".into() }));
         assert_eq!(e.agent.meta["model"], "gpt-5");
         assert_eq!(e.event, Event::Said { text: "Done.".into(), kind: Some(crate::radio::Kind::Report) });
 
