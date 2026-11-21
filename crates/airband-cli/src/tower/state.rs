@@ -66,34 +66,39 @@ pub(super) enum Aloud {
     /// Given to a radio to read out. It has not yet said whether he heard it.
     Handed { radio: String, at: u64 },
     Heard { radio: String, at: u64 },
-    /// It will not be read out, and why.
-    Dropped { why: Dropped },
+    /// It will not be read out, and why. `missed`: it was still to be read to a radio on a call when that was
+    /// decided, so he was listening and did not hear it. [`Inner::set_aloud`] works that out; nobody else sets it.
+    Dropped {
+        why: Dropped,
+        #[serde(default)]
+        missed: bool,
+    },
 }
 
-/// Why something an agent said is not read out.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum Dropped {
-    /// The judge found nothing in it for his ears.
-    Routine,
-    /// Its agent said something newer before he heard it.
-    Superseded,
-    /// It was waiting on him, and he has since spoken to its agent, or the agent has gone back to work.
-    Answered,
-    /// He let the question go.
-    Dismissed,
-    /// It was waiting on him, and its agent has gone.
-    AgentGone,
-    /// It was said long before he turned reading aloud on.
-    Stale,
-    /// The request for leave it put to him is over.
-    PermissionEnded,
+/// Why something an agent said is not read out: the same reasons a radio is told (`airband.radio/1`).
+pub(super) use airband_core::radio::NotRead as Dropped;
+
+/// Does a line dropped for this reason count as one he missed, when it was dropped while he had reading aloud
+/// on? Not one that was never for his ears, and not one said before he turned reading on.
+fn missed(why: Dropped) -> bool {
+    !matches!(why, Dropped::Routine | Dropped::Stale)
 }
 
 impl Aloud {
     /// Still to be heard: waiting its turn, or with a radio that has not said he heard it.
     pub(super) fn unheard(&self) -> bool {
         matches!(self, Aloud::Waiting | Aloud::Handed { .. })
+    }
+    /// Not to be read out, for this reason.
+    pub(super) fn dropped(why: Dropped) -> Aloud {
+        Aloud::Dropped { why, missed: false }
+    }
+    /// The reason it was not read out, when he was listening and so missed it.
+    pub(super) fn not_read(&self) -> Option<Dropped> {
+        match self {
+            Aloud::Dropped { why, missed: true } => Some(*why),
+            _ => None,
+        }
     }
     /// For the log: the state in a word or two.
     pub(super) fn words(&self) -> String {
@@ -102,7 +107,7 @@ impl Aloud {
             Aloud::Waiting => "waiting".into(),
             Aloud::Handed { radio, .. } => format!("handed to {radio}"),
             Aloud::Heard { radio, .. } => format!("heard on {radio}"),
-            Aloud::Dropped { why } => format!("dropped ({})", serde_json::to_value(why).ok().and_then(|v| v.as_str().map(|w| w.replace('_', " "))).unwrap_or_default()),
+            Aloud::Dropped { why, .. } => format!("dropped ({})", serde_json::to_value(why).ok().and_then(|v| v.as_str().map(|w| w.replace('_', " "))).unwrap_or_default()),
         }
     }
 }
@@ -275,38 +280,37 @@ pub(super) struct Call {
     pub(super) quiet_until: Option<Instant>,
 }
 
-/// Whether a radio is there, as it last showed. Every rule that turns on "is he there" reads this, by the one
-/// clock [`THERE`]: who can be handed something to read out, whether there is anyone to ask for leave, whether
-/// a notification is needed, whether it is worth asking the harnesses what their agents are doing.
+/// Whether a radio is there: what it last said of itself (`airband.radio/1`'s `Presence`, which every request
+/// of its carries), and when. The tower infers nothing from which requests it makes. Every rule that turns on
+/// "is he there" reads this, by the one clock [`THERE`]: who can be handed something to read out, whether there
+/// is anyone to ask for leave, whether a notification is needed, whether it is worth asking the harnesses what
+/// their agents are doing.
 #[derive(Default)]
 pub(super) struct Presence {
-    /// When it last asked for something to read out, or said it was still on the call.
-    polled: Option<Instant>,
-    /// When it last asked for the chat.
-    followed: Option<Instant>,
+    said: airband_core::radio::Presence,
+    /// When it last said so. A radio that stops (the app is closed, the connection is gone) says nothing more,
+    /// and what it last said stops counting.
+    at: Option<Instant>,
 }
 
 impl Presence {
-    /// It is on a call: it has asked for something to read out lately.
+    /// It has been heard from lately: there is a radio to put a question to.
+    pub(super) fn there(&self) -> bool {
+        self.at.is_some_and(|t| t.elapsed() < THERE)
+    }
+    /// It is on a call: reading aloud is on.
     pub(super) fn on_call(&self) -> bool {
-        self.polled.is_some_and(|t| t.elapsed() < THERE)
+        self.there() && self.said.on_call
     }
-    /// It is following the chat.
-    pub(super) fn following(&self) -> bool {
-        self.followed.is_some_and(|t| t.elapsed() < THERE)
+    /// The chat is in front of him on it.
+    pub(super) fn showing_chat(&self) -> bool {
+        self.there() && self.said.showing_chat
     }
-    pub(super) fn polls(&mut self) {
-        self.polled = Some(Instant::now());
-    }
-    /// It says it is still on the call while it asks for nothing (he has the microphone open). Nothing for a
-    /// radio that was never on one.
-    pub(super) fn still_on_call(&mut self) {
-        if self.polled.is_some() {
-            self.polls();
-        }
-    }
-    pub(super) fn follows(&mut self) {
-        self.followed = Some(Instant::now());
+    /// The radio says where it stands. True when that puts it on a call it was not on.
+    pub(super) fn says(&mut self, said: airband_core::radio::Presence) -> bool {
+        let was = self.on_call();
+        (self.said, self.at) = (said, Some(Instant::now()));
+        !was && self.on_call()
     }
 }
 
@@ -358,7 +362,16 @@ pub(super) struct Inner {
     pub(super) pushed: HashSet<String>,
     /// How many requests for the whole chat are open right now: while there is one, it reads what agents say.
     pub(super) readers: u32,
+    /// Ids of things he said that this tower is working out an answer to right now.
+    pub(super) answering: HashSet<String>,
+    /// What has come of the last things he said, for telling the radio that said each in its feed: the change
+    /// count it was settled at, the radio, and the outcome under the utterance's id.
+    pub(super) settled: VecDeque<(u64, String, airband_core::radio::Settled)>,
 }
+
+/// How many outcomes are kept for the feed. One that has gone from here is still told to a radio that asks
+/// again under its id: the database has every answer.
+const SETTLED_KEEP: usize = 200;
 
 /// One request for permission.
 impl Permit {
@@ -401,10 +414,34 @@ impl Inner {
     pub(super) fn connected(&self) -> bool {
         self.calls.values().any(Call::connected)
     }
-    /// Is any radio following the chat? Then there is someone to put a question to, and someone to see what
-    /// the agents are doing.
+    /// Is any radio there at all? Then there is someone to put a question to, and someone to see what the
+    /// agents are doing.
     pub(super) fn following(&self) -> bool {
-        self.calls.values().any(|c| c.presence.following())
+        self.calls.values().any(|c| c.presence.there())
+    }
+    /// What came of something he said: told to the radio that said it, in its feed.
+    pub(super) fn settle(&mut self, radio: &str, id: &str, outcome: airband_core::radio::Outcome) {
+        self.rev += 1;
+        self.settled.push_back((self.rev, radio.to_string(), airband_core::radio::Settled { id: id.to_string(), outcome }));
+        while self.settled.len() > SETTLED_KEEP {
+            self.settled.pop_front();
+        }
+    }
+    /// The outcomes a radio has not been told: those since the change count it asks from, or all that are
+    /// kept for one starting from nothing.
+    pub(super) fn settled_for(&self, radio: &str, since: Option<u64>) -> Vec<airband_core::radio::Settled> {
+        self.settled.iter().filter(|(rev, to, _)| to == radio && *rev > since.unwrap_or(0)).map(|(_, _, s)| s.clone()).collect()
+    }
+    /// A radio says where it stands, as it does with every request. One that has just come on a call is free
+    /// to be handed something, and what it had when it was last on one is still to be heard.
+    pub(super) fn radio_says(&mut self, radio: &str, said: airband_core::radio::Presence) {
+        if self.call(radio).presence.says(said) {
+            log(format!("{radio} is on a call"));
+            let call = self.call(radio);
+            (call.began, call.ready, call.outbox) = (now(), true, None);
+            self.give_back(radio);
+            self.reap();
+        }
     }
     /// Does anyone on a call need the tower's voice? Not when every radio there makes its own.
     pub(super) fn wants_voice(&self) -> bool {
@@ -435,13 +472,24 @@ impl Inner {
     /// The one way a line's place in the reading queue changes. Every change is written to the log with what it
     /// was and what it became, so "why was that not read to me" has an answer.
     pub(super) fn set_aloud(&mut self, id: &str, to: Aloud) {
+        let on_call = self.connected();
         let Some(e) = self.log.iter_mut().find(|e| e.id == id) else { return };
+        // dropped while it was still to be read to a radio on a call: he was listening and did not hear it
+        let to = match to {
+            Aloud::Dropped { why, .. } => Aloud::Dropped { why, missed: on_call && e.aloud.unheard() && missed(why) },
+            other => other,
+        };
         if e.aloud == to {
             return;
         }
         let line = format!("aloud: {} ({id}) {} → {}", e.from, e.aloud.words(), to.words());
         e.aloud = to;
         self.unsaved.borrow_mut().insert(id.to_string());
+        // a radio showing the chat is sent the line again, to mark it
+        if e.aloud.not_read().is_some() {
+            self.rev += 1;
+            e.rev = self.rev;
+        }
         // not to be read by the radio that had it (it is heard, or is not to be read after all, or goes back in
         // the queue): that radio is not waited on for it any more
         if !matches!(e.aloud, Aloud::Handed { .. }) {
@@ -479,7 +527,7 @@ impl Inner {
     fn drop_asks(&mut self, agent_id: &str, why: Dropped) {
         let asks: Vec<String> = self.unheard().filter(|e| e.agent.as_deref() == Some(agent_id) && matches!(e.kind, Some(Kind::NeedsYou | Kind::Stalled))).map(|e| e.id.clone()).collect();
         for id in asks {
-            self.set_aloud(&id, Aloud::Dropped { why });
+            self.set_aloud(&id, Aloud::dropped(why));
         }
     }
     /// This agent has said something newer: only the latest thing each agent said is read out. A notice from
@@ -487,7 +535,7 @@ impl Inner {
     pub(super) fn supersede(&mut self, agent_id: &str, notice: bool) {
         let older: Vec<String> = self.unheard().filter(|e| e.agent.as_deref() == Some(agent_id) && e.notice == notice).map(|e| e.id.clone()).collect();
         for id in older {
-            self.set_aloud(&id, Aloud::Dropped { why: Dropped::Superseded });
+            self.set_aloud(&id, Aloud::dropped(Dropped::Superseded));
         }
     }
     /// A radio that took something to read out is not going to say he heard it (it came back to the call anew,
@@ -507,7 +555,7 @@ impl Inner {
         let recent = now().saturating_sub(STILL_NEWS.as_millis() as u64);
         let old: Vec<String> = self.unheard().filter(|e| e.at < recent).map(|e| e.id.clone()).collect();
         for id in old {
-            self.set_aloud(&id, Aloud::Dropped { why: Dropped::Stale });
+            self.set_aloud(&id, Aloud::dropped(Dropped::Stale));
         }
     }
     /// At start. Nothing is with a radio any more. What an agent that is gone was waiting on him for goes; what
@@ -519,8 +567,8 @@ impl Inner {
         for (id, live, report, recent) in unheard {
             self.set_aloud(&id, match (live, report, recent) {
                 (true, _, _) | (false, true, true) => Aloud::Waiting,
-                (false, true, false) => Aloud::Dropped { why: Dropped::Stale },
-                (false, false, _) => Aloud::Dropped { why: Dropped::AgentGone },
+                (false, true, false) => Aloud::dropped(Dropped::Stale),
+                (false, false, _) => Aloud::dropped(Dropped::AgentGone),
             });
         }
     }
@@ -742,7 +790,7 @@ impl Inner {
                     }
                 }
                 if self.log.iter().any(|e| e.id == entry && e.aloud.unheard()) {
-                    self.set_aloud(&entry, Aloud::Dropped { why: Dropped::Answered });
+                    self.set_aloud(&entry, Aloud::dropped(Dropped::Answered));
                 }
                 self.touch(&entry);
             }
@@ -770,7 +818,7 @@ impl Inner {
             }
         }
         if self.log.iter().any(|e| e.id == entry && e.aloud.unheard()) {
-            self.set_aloud(entry, Aloud::Dropped { why: Dropped::PermissionEnded });
+            self.set_aloud(entry, Aloud::dropped(Dropped::PermissionEnded));
         }
         self.touch(entry);
     }
@@ -797,7 +845,7 @@ impl Inner {
         }
         // not worth his ears: it stays in the chat, dimmed, and is not read out
         if kind == Kind::Fyi && self.log.iter().any(|e| e.id == id && e.aloud.unheard()) {
-            self.set_aloud(id, Aloud::Dropped { why: Dropped::Routine });
+            self.set_aloud(id, Aloud::dropped(Dropped::Routine));
         }
     }
 
@@ -835,6 +883,7 @@ impl Inner {
             agent: e.agent.clone(),
             rev: e.rev,
             open: false,
+            not_read: e.aloud.not_read(),
         }
     }
 
@@ -983,6 +1032,8 @@ impl Inner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const ON_CALL: airband_core::radio::Presence = airband_core::radio::Presence { on_call: true, showing_chat: false };
 
     fn agent(id: &str, cwd: &str, title: Option<&str>) -> Agent {
         Agent { id: id.into(), harness: "test".into(), cwd: Some(cwd.into()), name: None, title: title.map(String::from), pid: None, deliver: None, meta: Default::default() }
@@ -1172,7 +1223,7 @@ mod tests {
         let mut inner = Inner::default();
         for radio in ["phone", "desk"] {
             let c = inner.call(radio);
-            c.presence.polls();
+            c.presence.says(ON_CALL);
             c.ready = true;
         }
         inner.call("desk").held = true;
@@ -1197,7 +1248,7 @@ mod tests {
         inner.log.iter().find(|e| e.id == id).unwrap().aloud.clone()
     }
     fn dropped(why: Dropped) -> Aloud {
-        Aloud::Dropped { why }
+        Aloud::dropped(why)
     }
 
     #[test]
@@ -1243,6 +1294,75 @@ mod tests {
             assert!(trail.iter().any(|l| l.contains(&format!("waiting → dropped ({reason})"))), "{reason}: {trail:?}");
         }
         assert!(inner.unheard().next().is_none());
+    }
+
+    #[test]
+    fn a_line_dropped_while_he_was_listening_is_marked_as_missed_with_its_reason() {
+        let mut inner = Inner::default();
+        inner.check_in(&agent("a", "/x/shop", None));
+        // nobody on a call: a report replaced by a newer one was never going to be read, and is not marked
+        let early = queued(&mut inner, "a", Kind::Report, "Half done.");
+        inner.set_aloud(&early, Aloud::dropped(Dropped::Superseded));
+        assert_eq!(inner.message(inner.log.iter().find(|e| e.id == early).unwrap()).not_read, None);
+        // a radio on a call: the same thing is something he was listening for and did not hear
+        inner.radio_says("car", ON_CALL);
+        let report = queued(&mut inner, "a", Kind::Report, "Shipped.");
+        let before = inner.rev;
+        inner.set_aloud(&report, Aloud::dropped(Dropped::Superseded));
+        let line = inner.log.iter().find(|e| e.id == report).unwrap();
+        assert_eq!(inner.message(line).not_read, Some(Dropped::Superseded));
+        // and the line counts as changed, so a radio showing the chat is sent it again with the mark
+        assert!(line.rev > before);
+        // what was never for his ears, or was said before he turned reading on, is not something he missed
+        for why in [Dropped::Routine, Dropped::Stale] {
+            let id = queued(&mut inner, "a", Kind::Report, "Still going.");
+            inner.set_aloud(&id, Aloud::dropped(why));
+            assert_eq!(inner.message(inner.log.iter().find(|e| e.id == id).unwrap()).not_read, None, "{why:?}");
+        }
+        // one he heard and that is then let go was not missed
+        let heard = queued(&mut inner, "a", Kind::NeedsYou, "Ship it?");
+        inner.set_aloud(&heard, Aloud::Heard { radio: "car".into(), at: 1 });
+        inner.set_aloud(&heard, Aloud::dropped(Dropped::Dismissed));
+        assert_eq!(inner.message(inner.log.iter().find(|e| e.id == heard).unwrap()).not_read, None);
+    }
+
+    #[test]
+    fn a_radio_is_where_it_says_it_is() {
+        use airband_core::radio::Presence as Said;
+        let mut inner = Inner::default();
+        inner.check_in(&agent("a", "/x/shop", None));
+        // it says it is showing the chat and not on a call: there is someone to ask, and nobody to read to
+        inner.radio_says("phone", Said { on_call: false, showing_chat: true });
+        assert!(inner.following() && !inner.connected() && inner.call("phone").presence.showing_chat());
+        assert_eq!(inner.free_radio(), None);
+        // it says it is on a call: it is free to be handed something, from that moment
+        inner.radio_says("phone", ON_CALL);
+        assert!(inner.connected() && !inner.call("phone").presence.showing_chat());
+        assert_eq!(inner.free_radio().as_deref(), Some("phone"));
+        // what it took and never said it heard goes back in the queue when it comes on a call again
+        let report = queued(&mut inner, "a", Kind::Report, "Shipped.");
+        inner.set_aloud(&report, Aloud::Handed { radio: "phone".into(), at: 1 });
+        inner.radio_says("phone", Said::default());
+        assert!(!inner.connected());
+        inner.radio_says("phone", ON_CALL);
+        assert_eq!(aloud(&inner, &report), Aloud::Waiting);
+    }
+
+    #[test]
+    fn what_came_of_what_he_said_is_told_to_the_radio_that_said_it() {
+        use airband_core::radio::Outcome;
+        let mut inner = Inner::default();
+        let before = inner.rev;
+        inner.settle("phone", "u1", Outcome::Answered { reply: Reply { say: "Sent to shop one.".into(), ..Reply::default() } });
+        inner.settle("desk", "u2", Outcome::Rejected { why: airband_core::radio::Rejected::TooOld });
+        // each radio is told its own, once it asks from before the outcome
+        assert_eq!(inner.settled_for("phone", Some(before)).iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["u1"]);
+        assert_eq!(inner.settled_for("desk", None).iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["u2"]);
+        // and not again once it has asked from after it
+        assert!(inner.settled_for("phone", Some(inner.rev)).is_empty());
+        // only so many are kept; the database has the rest for a radio that asks again by id
+        (0..SETTLED_KEEP + 5).for_each(|n| inner.settle("phone", &format!("n{n}"), Outcome::Taken));
+        assert_eq!(inner.settled.len(), SETTLED_KEEP);
     }
 
     #[test]

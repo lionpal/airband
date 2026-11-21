@@ -45,7 +45,7 @@ pub(super) async fn pump(app: &Arc<App>) {
     // start the voice on everything that will be spoken, now, so each clip exists before its turn comes
     if inner.wants_voice() {
         for e in &ready {
-            app.speech.start(&app.voice(), &format!("{}. {}", cap(&name(&inner, e)), e.short.as_deref().unwrap_or_default()));
+            app.speech.start(&app.voice(), &e.id, &format!("{}. {}", cap(&name(&inner, e)), e.short.as_deref().unwrap_or_default()));
         }
     }
     // one transmission goes to one radio: whichever is on a call and free
@@ -59,7 +59,7 @@ pub(super) async fn pump(app: &Arc<App>) {
     log(format!("→ {radio}: {callsign} ({kind:?}): {say}"));
     let spoken_line = format!("{}. {say}", cap(&callsign));
     let waiting = inner.unheard().count() as u32 - 1;
-    let speech = app.speech.start(&app.voice_to(inner.call(&radio).speaks), &spoken_line);
+    let speech = app.speech.start(&app.voice_to(inner.call(&radio).speaks), &next.id, &spoken_line);
     inner.set_aloud(&next.id, Aloud::Handed { radio: radio.clone(), at: now() });
     transmit(app, &mut inner, &radio, Transmission { id: next.id.clone(), callsign, kind, speech, say: spoken_line, waiting });
     app.save(&inner);
@@ -119,7 +119,7 @@ fn remind(app: &Arc<App>, inner: &mut Inner, radio: &str) {
     let from = inner.sender(&e).map(|s| s.callsign.text()).unwrap_or_else(|| e.from.clone());
     log(format!("→ {radio}: {from} ({}): {say}", if first { "waiting" } else { "reminder" }));
     let spoken_line = if first { format!("{} is waiting. {say}", cap(&from)) } else { format!("Still waiting: {from}. {say}") };
-    let speech = app.speech.start(&app.voice_to(inner.call(radio).speaks), &spoken_line);
+    let speech = app.speech.start(&app.voice_to(inner.call(radio).speaks), &e.id, &spoken_line);
     transmit(app, inner, radio, Transmission { id: e.id.clone(), callsign: from, kind: Kind::NeedsYou, speech, say: spoken_line, waiting: 0 });
 }
 

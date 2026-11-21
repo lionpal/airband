@@ -5,7 +5,7 @@
 //! bytes; a request that does not open with a paired radio's key, is not fresh, or was already answered is
 //! dropped here.
 use crate::config::{self, PairedRadio};
-use super::{App, RADIO_HEADER, VIA_HEADER, log, now as now_ms};
+use super::{App, PRESENCE_HEADER, RADIO_HEADER, VIA_HEADER, log, now as now_ms};
 use axum::Router;
 use axum::body::Body;
 use axum::http::Request;
@@ -84,7 +84,7 @@ pub fn start(app: Arc<App>, router: Router, handle: Handle) {
                     }
                 };
                 let stop = Arc::new(AtomicBool::new(false));
-                let serve = Serve { relay: key.0.clone(), name: key.1.name.clone(), keys, admission: cfg.relay_admission.clone(), token: app.cfg.radio_token.clone(), router: router.clone(), handle: handle.clone(), stop: stop.clone(), seen: Arc::new(Mutex::new(HashMap::new())), replies: airband_radio::net::agent(Duration::from_secs(15)) };
+                let serve = Serve { app: app.clone(), relay: key.0.clone(), name: key.1.name.clone(), keys, admission: cfg.relay_admission.clone(), token: app.cfg.radio_token.clone(), router: router.clone(), handle: handle.clone(), stop: stop.clone(), seen: Arc::new(Mutex::new(HashMap::new())), replies: airband_radio::net::agent(Duration::from_secs(15)) };
                 served().lock().unwrap().insert(serve.keys.channel.clone(), serve.clone());
                 running.insert(key, (stop, std::thread::spawn(move || serve.run())));
             }
@@ -95,6 +95,7 @@ pub fn start(app: Arc<App>, router: Router, handle: Handle) {
 
 #[derive(Clone)]
 struct Serve {
+    app: Arc<App>,
     /// The relay this pairing is also reached through, when there is one.
     relay: Option<String>,
     name: String,
@@ -205,7 +206,7 @@ impl Serve {
                     return None;
                 }
             }
-            self.dispatch(&call, "his own network").await
+            self.dispatch(&call, "his own network", true).await
         };
         Some(self.keys.seal(Direction::ToRadio, &serde_json::to_vec(&Answer { id: call.id, status, body }).unwrap()))
     }
@@ -229,9 +230,13 @@ impl Serve {
             let said = call.method == "POST" && call.path == "/v1/radio/utterance" && call.body["id"].as_str().is_some_and(|id| !id.is_empty());
             if said && now.saturating_sub(call.t) <= airband_core::relay::HELD_FOR_MS {
                 log(format!("\"{}\" said this while the tower was away", self.name));
-                self.dispatch(&call, "the relay, kept while the tower was away").await
+                self.dispatch(&call, "the relay, kept while the tower was away", false).await
             } else {
-                // nobody is waiting on this answer: the line below is the only word of it
+                // Nobody is waiting on this answer. Something he said that came too late is told to his
+                // radio, in its feed, under the id it was said with: he was told it would get here.
+                if said {
+                    self.app.inner.lock().unwrap().settle(&self.name, call.body["id"].as_str().unwrap_or_default(), airband_core::radio::Outcome::Rejected { why: airband_core::radio::Rejected::TooOld });
+                }
                 self.refused(&call, "the relay, kept while the tower was away", 400, "only something he said, sent in the last week, is taken late")
             }
         } else if !fresh(call.t, now) {
@@ -245,7 +250,7 @@ impl Serve {
                     return log(format!("dropped a replayed request on \"{}\"'s channel", self.name));
                 }
             }
-            self.dispatch(&call, "the relay").await
+            self.dispatch(&call, "the relay", true).await
         };
         let sealed = self.keys.seal(Direction::ToRadio, &serde_json::to_vec(&Answer { id: call.id, status, body }).unwrap());
         self.send_back(&request_id, Some(sealed)).await;
@@ -287,7 +292,9 @@ impl Serve {
 
     /// Run a radio's request through the same routes the local port serves. Only the radio's routes: a paired
     /// phone cannot post agent events or read the status page.
-    async fn dispatch(&self, call: &Call, via: &str) -> (u16, Value) {
+    /// `now`: the request was made just now, so where its radio said it stands is where it stands. One the relay
+    /// kept says where the radio stood when he said it, which is not news.
+    async fn dispatch(&self, call: &Call, via: &str, now: bool) -> (u16, Value) {
         if !call.schema.is_empty() && call.schema != airband_core::radio::SCHEMA {
             return self.refused(call, via, 400, &format!("this tower speaks {}, not \"{}\"", airband_core::radio::SCHEMA, call.schema));
         }
@@ -295,7 +302,11 @@ impl Serve {
             return self.refused(call, via, 403, "a radio may only use /v1/radio/");
         }
         let body = if call.body.is_null() { Body::empty() } else { Body::from(serde_json::to_vec(&call.body).unwrap()) };
-        let Ok(req) = Request::builder().method(call.method.as_str()).uri(&call.path).header("authorization", format!("Bearer {}", self.token)).header(RADIO_HEADER, &self.name).header(VIA_HEADER, via).header("content-type", "application/json").body(body) else {
+        let mut req = Request::builder().method(call.method.as_str()).uri(&call.path).header("authorization", format!("Bearer {}", self.token)).header(RADIO_HEADER, &self.name).header(VIA_HEADER, via).header("content-type", "application/json");
+        if now {
+            req = req.header(PRESENCE_HEADER, serde_json::to_string(&call.presence).unwrap());
+        }
+        let Ok(req) = req.body(body) else {
             return (400, Value::Null);
         };
         let Ok(res) = self.router.clone().oneshot(req).await;
