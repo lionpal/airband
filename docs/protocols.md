@@ -158,6 +158,7 @@ Chat mode and the rest:
 | `GET accounts?fresh=1` | → `{ schema, accounts, note, checked_at }` | Every account of every harness whose sessions can be moved between logins. Kept for five minutes; `fresh` checks again. |
 | `POST accounts/use` | `{ harness, id }` → the same, or `{ error }` | Move that harness's sessions to that account. |
 | `POST push` | `{ provider, token }` → `{}` | Where this radio can be woken: its address at a push service (`apns` is Apple's). An empty `token` takes it away. |
+| `POST banner` | `{ provider, which, token }` → `{}` | Where this radio's banner can be changed while the app is asleep. `which` is `start` (the address that puts one up) or `update` (the address of the one that is up). An empty `token` takes it away. |
 
 ### The feed
 
@@ -334,6 +335,25 @@ service learn only that a notification was sent, when, to which phone, and wheth
 opens it with `open_notice` in the radio core. An answer given on the notification is an ordinary
 `POST utterance` with `re` set to the notification's `id`.
 
+### The banner while the app is asleep
+
+A push service delivers a banner (a Live Activity) as it is given it. It cannot be sealed, so it is never given
+anything of his work: the tower sends three numbers and the relay builds the rest.
+
+| Call | Body → answer | Meaning |
+|---|---|---|
+| `POST /v1/channels/<channel>/banner` | `{ provider, to, event, counts: { waiting, working, unread }, urgent }` → `{ sent, gone, reason }` | `event` is `start`, `update` or `end`; `to` is the address for that (`POST banner`). `urgent` lights the screen (more agents are waiting than before). The statuses are a notification's; 429 is more than 90 from this channel in ten minutes, or 360 from one internet address. |
+
+`Counts` (`core/relay.rs`) is how many agents are waiting for him, how many are working and how many reports
+he has not seen. It can hold no text: a test fails to compile if a field that could is added, and a relay test
+checks that everything Apple is handed is those numbers and the words written in `relay/push.rs` ("airband",
+"An agent needs you"). A banner also carries one number that says which of his computers it is for, taken from
+the channel's name (`banner_slot`).
+
+A banner is up while an agent is waiting for him and he is not in the app. The tower puts it up, changes it
+no more often than every 20 seconds and 40 times an hour, and takes it down when nobody is waiting. The app
+takes it down when he opens it. With no relay there is no banner.
+
 ### When the tower is away
 
 A relay that has not heard from a tower for 45 seconds answers a call with 503. What he said is then left with
@@ -367,6 +387,11 @@ Nothing is uploaded: no log, no trail and no diagnostic leaves the device it was
   on the channel, whether messages are kept for its tower and whether the tower has been pulling, and the
   first six characters of the channel's name. It cannot write what was sent, because that is sealed and it has
   no key. It writes no token and no internet address.
+
+One thing passes through Apple unsealed, when a relay is in use and an agent is waiting while the app is
+asleep: the three numbers on the banner (how many agents are waiting, working, and how many reports are
+unread). The relay passes them on and neither keeps nor logs them; the tower's log says that a banner was
+changed, not the numbers.
 
 ### What it does not give
 
