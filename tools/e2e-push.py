@@ -63,9 +63,11 @@ results = []
 def check(name, ok, detail=""):
     results.append((name, bool(ok)))
     print(("  ok    " if ok else "  FAIL  ") + name + (f"   [{detail}]" if detail and not ok else ""), flush=True)
-def http(method, path, body=None, token=RADIO, radio="phone", timeout=40):
+def http(method, path, body=None, token=RADIO, radio="phone", timeout=40, showing=True):
+    """`showing`: the radio says the chat is in front of him, as every request of a radio's says whether it is."""
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", method=method, data=None if body is None else json.dumps(body).encode(),
-                                 headers={"authorization": f"Bearer {token}", "content-type": "application/json", "x-airband-radio": radio})
+                                 headers={"authorization": f"Bearer {token}", "content-type": "application/json", "x-airband-radio": radio,
+                                          "x-airband-presence": json.dumps({"on_call": False, "showing_chat": showing})})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             raw = r.read()
@@ -112,7 +114,7 @@ try:
               p["auth"] == f"Bearer {PULL}" and p["to"] == ADDRESS and p["provider"] == "apns" and p["question"] is True and sorted(k for k in p if k not in ("auth", "raw")) == ["provider", "question", "sealed", "to"], {k: v for k, v in p.items() if k != "raw"})
         check("nothing the relay is given can be read: no name, no words", b"shop" not in p["raw"] and b"Rewrite" not in p["raw"] and b"e2e" not in p["raw"])
         check("opened with the pairing's secret, it says who asked and what", note["from"] == "shop one" and note["group"] == "shop" and note["station"] == "e2e" and note["kind"] == "needs-you" and "Rewrite the two easy questions" in note["text"], note)
-        line = [m for m in http("GET", "/v1/radio/feed?since=0&away=1")[1]["messages"] if "Rewrite" in m["text"]]
+        line = [m for m in http("GET", "/v1/radio/feed?since=0", showing=False)[1]["messages"] if "Rewrite" in m["text"]]
         check("and names the message an answer goes to", line and note["id"] == line[-1]["id"], note)
     check("once: the same message is not sent again, though the phone follows the chat without showing it", quiet(1))
 
@@ -142,15 +144,22 @@ try:
     print("He puts the phone down with a permission card waiting")
     # the card was put while the chat was open and he has not seen it change since: a second card, now
     check("the card he saw arrive wakes nothing", quiet(2, 6))
-    card = [m for m in http("GET", "/v1/radio/feed?since=0&away=1")[1]["messages"] if m.get("permission") and m["open"]]
-    http("POST", "/v1/radio/utterance", {"text": "Deny", "id": os.urandom(6).hex(), "re": card[-1]["id"]} if card else {"text": ""})
+    card = [m for m in http("GET", "/v1/radio/feed?since=0", showing=False)[1]["messages"] if m.get("permission") and m["open"]]
+    if card: http("POST", "/v1/radio/utterance", {"text": "Deny", "id": os.urandom(6).hex(), "re": card[-1]["id"]})
     asking.join(40)
     asking = threading.Thread(target=ask_permission); asking.start()
     check("a permission card wakes the phone that was there a moment ago", pushed(3))
     if len(pushes) >= 3:
         note = opened(pushes[2]["sealed"])
         check("it says what will run, word for word, and that it is a permission card", note.get("permission") is True and note["text"] == "Wants to run `npm run deploy`. Allow?" and pushes[2]["question"] is True, note)
-        code, reply = http("POST", "/v1/radio/utterance", {"text": "Allow", "id": os.urandom(6).hex(), "re": note["id"]})
+        allow = {"text": "Allow", "id": os.urandom(6).hex(), "re": note["id"]}
+        reply = None
+        for _ in range(300):
+            took = http("POST", "/v1/radio/utterance", allow)[1]
+            if took and took["state"] == "answered":
+                reply = took["reply"]
+                break
+            time.sleep(0.1)
         asking.join(40)
         check("Allow, sent as the answer to the message the notification named, lets it run", reply and reply["say"] == "Allowed." and out[-1:] == [0], (reply, out))
 

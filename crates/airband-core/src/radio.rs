@@ -5,8 +5,11 @@
 //! - `GET next`: held open up to 25 seconds. 200 with a [`Transmission`], or 204 when nothing is waiting.
 //!   With `?voice=own` the radio makes the speech itself and the transmission carries words only.
 //! - `POST heard` [`Heard`]: that transmission was spoken to the end.
-//! - `POST utterance` [`Utterance`] → [`Reply`]: what he said.
+//! - `POST utterance` [`Utterance`] → [`Outcome`]: what he said. Answered at once: the tower has it. What came
+//!   of it arrives in the feed ([`Feed::answers`]), and asking again under the same id says the same.
 //! - `POST ready`: the radio is free for the next transmission.
+//! - `POST presence` [`Presence`]: whether the radio is on a call and whether the chat is in front of him.
+//!   Said when either changes; every other request carries it too.
 //! - `GET ears` → [`EarsGrant`]: what should listen: the phone's own recognition, or a service and a pass for it.
 //! - `GET speech/<id>?from=<block>` → [`SpeechPart`]: a transmission's or a reply's speech, in parts, as the
 //!   tower's voice produces it. 404 when the tower has no voice set up: the radio then speaks the text itself.
@@ -70,10 +73,9 @@ pub struct Heard {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Utterance {
     pub text: String,
-    /// Random, the same on every retry of this utterance: the tower delivers each id once. The message it
-    /// becomes in the chat carries the same id, so a radio can match what it sent to what came back.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
+    /// Random, the same on every retry of this utterance: the tower takes each id once, and tells what came
+    /// of it under this id.
+    pub id: String,
     /// The message this answers, when the radio knows: the transmission just spoken, or the chat line he
     /// replied to. With it the tower need not work out who it is for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -95,9 +97,72 @@ pub struct Utterance {
     pub others: Vec<Other>,
 }
 
-/// The status the tower answers an utterance with while an earlier request with the same id is still being
-/// answered: nothing has gone wrong, and asking again with the same id gets the answer once there is one.
-pub const STILL_WORKING: u16 = 202;
+/// Where something he said stands with the tower.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum Outcome {
+    /// The tower has it, written down under its id, and is working out what to do with it. Nothing waits on
+    /// that: what comes of it arrives in the feed.
+    Taken,
+    /// This is what came of it.
+    Answered { reply: Reply },
+    /// The tower would not take it. Nothing was done with it.
+    Rejected { why: Rejected },
+}
+
+/// Why the tower would not take something he said.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Rejected {
+    /// It was left with the relay more than a week ago: too late to act on.
+    TooOld,
+    /// A reason this build does not know.
+    #[serde(other)]
+    Unknown,
+}
+
+/// What came of one thing he said, as the feed tells the radio that said it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Settled {
+    /// The utterance's id.
+    pub id: String,
+    #[serde(flatten)]
+    pub outcome: Outcome,
+}
+
+/// Whether a radio is there, as the radio itself says. The tower infers none of this.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Presence {
+    /// He has reading aloud on: the radio takes transmissions and speaks them.
+    #[serde(default)]
+    pub on_call: bool,
+    /// The chat is in front of him: what the radio is sent, he sees.
+    #[serde(default)]
+    pub showing_chat: bool,
+}
+
+/// Why something an agent said was not read out to him on a call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotRead {
+    /// The judge found nothing in it for his ears.
+    Routine,
+    /// Its agent said something newer before he heard it.
+    Superseded,
+    /// It was waiting on him, and he has since spoken to its agent, or the agent has gone back to work.
+    Answered,
+    /// He let the question go.
+    Dismissed,
+    /// It was waiting on him, and its agent has gone.
+    AgentGone,
+    /// It was said long before he turned reading aloud on.
+    Stale,
+    /// The request for leave it put to him is over.
+    PermissionEnded,
+    /// A reason this build does not know.
+    #[serde(other)]
+    Unknown,
+}
 
 /// An agent on another of his computers, as his screen shows it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -612,6 +677,9 @@ pub struct Message {
     /// agent has said nothing since. These are what an inbox shows, and what he is reminded of.
     #[serde(default)]
     pub open: bool,
+    /// It was to be read out to him while he had reading aloud on, and was not: why. A client marks the line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_read: Option<NotRead>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -695,6 +763,10 @@ pub struct Feed {
     /// round if there are more teams than colours). Given once and kept, so a team keeps its colour.
     #[serde(default)]
     pub colours: std::collections::BTreeMap<String, u8>,
+    /// What has come of things this radio said, since the change count it asked from: each under its
+    /// utterance's id. One may be told more than once; a radio that has dealt with an id ignores it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub answers: Vec<Settled>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -716,7 +788,7 @@ mod tests {
     use super::*;
 
     fn m(from: &str, group: &str, to: &[&str]) -> Message {
-        Message { seq: 1, id: "x".into(), at: 0, from: from.into(), group: group.into(), to: to.iter().map(|s| s.to_string()).collect(), kind: None, text: String::new(), long: false, options: Vec::new(), recommended: None, read: None, own_session: false, permission: false, pictures: Vec::new(), links: Vec::new(), agent: None, rev: 0, open: false, queued: false, seen: None, cancelled: false }
+        Message { seq: 1, id: "x".into(), at: 0, from: from.into(), group: group.into(), to: to.iter().map(|s| s.to_string()).collect(), kind: None, text: String::new(), long: false, options: Vec::new(), recommended: None, read: None, own_session: false, permission: false, pictures: Vec::new(), links: Vec::new(), agent: None, rev: 0, open: false, queued: false, seen: None, cancelled: false, not_read: None }
     }
     #[test]
     fn a_feed_from_a_newer_tower_still_reads() {

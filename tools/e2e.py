@@ -59,9 +59,13 @@ def check(name, ok, detail=""):
     results.append((name, bool(ok)))
     print(("  ok    " if ok else "  FAIL  ") + name + (f"   [{detail}]" if detail and not ok else ""), flush=True)
 
+# Where each radio here says it stands, which every request of a radio's says: the one that types has the chat
+# in front of him; the ones that read aloud are on a call.
+STANDS = {"reader": {"on_call": True, "showing_chat": False}, "reader2": {"on_call": True, "showing_chat": False}}
 def http(method, path, body=None, token=RADIO, radio="e2e", timeout=90):
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", method=method, data=None if body is None else json.dumps(body).encode(),
-                                 headers={"authorization": f"Bearer {token}", "content-type": "application/json", "x-airband-radio": radio})
+                                 headers={"authorization": f"Bearer {token}", "content-type": "application/json", "x-airband-radio": radio,
+                                          "x-airband-presence": json.dumps(STANDS.get(radio, {"on_call": False, "showing_chat": True}))})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             raw = r.read()
@@ -79,8 +83,16 @@ def report(agent, project, title, *words):
 def received(agent):
     path = os.path.join(got, agent)
     return open(path).read() if os.path.exists(path) else ""
+def said(text, **more):
+    """Say something and wait for what came of it. The tower takes it at once; asking again under the same id
+    says where it stands, until it is answered."""
+    body = {"text": text, "id": os.urandom(6).hex(), **more}
+    for _ in range(1200):
+        took = http("POST", "/v1/radio/utterance", body)[1]
+        if took["state"] == "answered": return took["reply"]
+        time.sleep(0.1)
 def say(text, **more):
-    return http("POST", "/v1/radio/utterance", {"text": text, "id": os.urandom(6).hex(), **more})[1]["say"]
+    return said(text, **more)["say"]
 def feed(since=0):
     return http("GET", f"/v1/radio/feed?since={since}")[1]
 def message(f, who, has=""):
@@ -365,11 +377,11 @@ try:
     check("what an agent gets is his words with one line in front and nothing after", received("page").rstrip().endswith("and keep the price next to it") and "From Charles, on his phone through Airband." in received("page"), received("page")[-300:])
     # what his phone adds when he is paired with a second computer: the agents he can see that this tower does not have
     there = [{"callsign": "warehouse stock", "group": "warehouse", "said": "Counted the shelves in bay 4: 212 units, 9 short of what the system says.", "ago": 40}]
-    told = http("POST", "/v1/radio/utterance", {"text": "recount bay 4 and tell me which units are missing", "id": os.urandom(6).hex(), "others": there})[1]
+    told = said("recount bay 4 and tell me which units are missing", others=there)
     check("words about the work of an agent on another computer are handed back for that computer (model)", told.get("elsewhere") == "warehouse stock" and not told.get("say") and "bay 4" not in "".join(received(a) for a in ("page", "import", "rates", "refunds", "schedule")), told)
-    told = http("POST", "/v1/radio/utterance", {"text": "make the photo on the part page a bit smaller again", "id": os.urandom(6).hex(), "others": there})[1]
+    told = said("make the photo on the part page a bit smaller again", others=there)
     check("and words about this computer's work still go to its own agent (model)", told.get("say") == "Sent to catalog part page." and not told.get("elsewhere"), told)
-    unsure = http("POST", "/v1/radio/utterance", {"text": "hm, what about the other thing", "id": os.urandom(6).hex(), "others": there})[1]
+    unsure = said("hm, what about the other thing", others=there)
     check("when it cannot tell, it says who it might be for, to tap, and delivers nothing (model)", len(unsure.get("ask", [])) >= 2 and unsure["say"].startswith("Who is that for?"), unsure)
     say("@catalogpartpage never mind")  # so the words it was holding are not waiting for a name
     check("with no voice set and no relay to lend one, there is nothing to read a message aloud with", http("GET", f"/v1/radio/message/{p['id']}?form=speech")[0] == 404)
@@ -625,20 +637,57 @@ Send it as written, or do you want changes?""")
     report("solo3", "solo", "solo third", "said", "All 120 invoices are filed and the totals match the ledger.")
     check("an unheard report replaced by a newer one leaves the queue with its reason on record", any("solo third" in l and "→ dropped (superseded)" in l for l in trail()), trail())
     check("and the change is a line in the tower's log", "→ dropped (superseded)" in open(os.path.join(work, "tower.log")).read())
-    # everything he says is one line in the tower's log, with its id and how it came
+    first = [m for m in feed()["messages"] if "first batch" in (m.get("text") or "") + m["id"] or m.get("not_read")]
+    check("the line he missed while he was listening says so in the chat, with the reason", any(m.get("not_read") == "superseded" for m in first), first)
+
+    print("Saying something")
+    # The tower answers at once that it has what he said. What came of it is told in the feed of the radio that
+    # said it, under the id it was said with, and to anyone who asks again.
+    before = received("solo3")
     mine = os.urandom(6).hex()
-    http("POST", "/v1/radio/utterance", {"text": "@solo3 thanks", "id": mine})
-    check("everything he says is one line in the tower's log, with its id and what became of it", f"utterance {mine} from e2e by this computer: answered in" in open(os.path.join(work, "tower.log")).read())
-    # a retry that arrives while the first is still being answered is told so, by a status a radio reads as "ask again"
-    import sqlite3
-    slow = os.urandom(6).hex()
-    db = sqlite3.connect(os.path.join(home, ".airband", "airband.db"), timeout=10)
-    db.execute("insert into receipts (id, at) values (?, ?)", (slow, int(time.time() * 1000)))
-    db.commit(); db.close()
+    rev = feed()["rev"]
     began = time.time()
-    code, told = http("POST", "/v1/radio/utterance", {"text": "@solo3 and again", "id": slow}, timeout=50)
-    check("a retry of something still being answered is told the tower is working on it, before the relay or the radio would give up",
-          code == 202 and (told or {}).get("working") is True and 25 < time.time() - began < 38, (code, told, time.time() - began))
+    code, took = http("POST", "/v1/radio/utterance", {"text": "the invoices: file the March ones too", "id": mine})
+    check("what he says is taken at once, before a model has read it", code == 200 and took == {"state": "taken"} and time.time() - began < 2, (code, took, time.time() - began))
+    code, again = http("POST", "/v1/radio/utterance", {"text": "the invoices: file the March ones too", "id": mine})
+    check("asked after while it is being answered, it is still only taken", again == {"state": "taken"}, again)
+    told = None
+    for _ in range(100):
+        f = http("GET", f"/v1/radio/feed?since={rev}&wait=5")[1]
+        told = next((a for a in f.get("answers", []) if a["id"] == mine), None)
+        if told: break
+    check("what came of it arrives in his radio's feed, under its id", told and told["state"] == "answered" and "say" in told["reply"], told)
+    other = http("GET", f"/v1/radio/feed?since={rev}", radio="desk")[1]
+    check("and in no other radio's", not other.get("answers"), other.get("answers"))
+    code, later = http("POST", "/v1/radio/utterance", {"text": "the invoices: file the March ones too", "id": mine})
+    check("asking again says the same, and nothing is delivered twice", later.get("state") == "answered" and told and later["reply"]["say"] == told["reply"]["say"] and received("solo3")[len(before):].count("March") <= 1, (later, received("solo3")[len(before):]))
+    check("everything he says is one line in the tower's log, with its id and what became of it", f"utterance {mine} from e2e by this computer: answered in" in open(os.path.join(work, "tower.log")).read())
+    check("something said with no id is refused", http("POST", "/v1/radio/utterance", {"text": "@solo3 thanks"})[0] in (400, 422))
+    # a tower that stopped part way through answering: the id is in its database with no answer, and nothing in
+    # this tower is answering it. It is taken up again, with no wait.
+    import sqlite3
+    stopped = os.urandom(6).hex()
+    db = sqlite3.connect(os.path.join(home, ".airband", "airband.db"), timeout=10)
+    db.execute("insert into receipts (id, at) values (?, ?)", (stopped, int(time.time() * 1000)))
+    db.commit(); db.close()
+    before = received("solo3")
+    body = {"text": "@solo3 and again", "id": stopped}
+    for _ in range(100):
+        took = http("POST", "/v1/radio/utterance", body)[1]
+        if took["state"] == "answered": break
+        time.sleep(0.1)
+    check("something an earlier tower took and never answered is answered by this one, once", took["state"] == "answered" and received("solo3")[len(before):].count("and again") == 1, (took, received("solo3")[len(before):]))
+
+    print("Whether he is there")
+    # a radio says where it stands; the tower does not work it out from what the radio asks for
+    radios = lambda: http("GET", "/v1/status", token=OWN)[1]["radios"]
+    check("a radio that says it is on a call is on one", "reader2" in radios(), radios())
+    http("POST", "/v1/radio/presence", {"on_call": False, "showing_chat": False}, radio="reader2")
+    STANDS["reader2"] = {"on_call": False, "showing_chat": False}
+    check("and is off it the moment it says so, not a minute later", "reader2" not in radios(), radios())
+    STANDS["quiet"] = {"on_call": False, "showing_chat": False}
+    quiet = http("GET", "/v1/radio/next", radio="quiet", timeout=40)
+    check("asking for something to read does not put a radio on a call that says it is not on one", quiet[0] == 204 and "quiet" not in radios(), (quiet, radios()))
 finally:
     tower.terminate()
     tower.wait(10)

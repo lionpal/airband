@@ -720,7 +720,7 @@ impl Desk {
             sending: state
                 .stations
                 .iter()
-                .flat_map(|s| s.sending.iter().cloned().chain(s.landing.iter().filter(|(o, at)| at.elapsed() < Duration::from_secs(15) && !s.messages.iter().any(|m| m.id == o.id)).map(|(o, _)| o.clone())))
+                .flat_map(|s| s.sending.iter().filter(|o| !s.messages.iter().any(|m| m.id == o.id)).cloned().chain(s.landing.iter().filter(|(o, at)| at.elapsed() < Duration::from_secs(15) && !s.messages.iter().any(|m| m.id == o.id)).map(|(o, _)| o.clone())))
                 .collect(),
             stations: state.stations.iter().map(|s| s.name.clone()).collect(),
             keyed: state.stations.iter().filter(|s| s.listens).map(|s| s.name.clone()).collect(),
@@ -1140,7 +1140,7 @@ impl Desk {
     /// What to copy when something is wrong with the connection: for each computer, every request that failed
     /// lately and every try at sending something he said, with the time, the way it went, how it ended and how
     /// long it took. Nothing that he or an agent said is in it, and no key or address. It is made on this
-    /// device from what this device kept in memory, and goes nowhere unless he pastes it somewhere.
+    /// device from what this device kept, and goes nowhere unless he pastes it somewhere.
     pub fn diagnostics(&self) -> String {
         let radios: Vec<(String, Arc<Radio>)> = self.shared.state.lock().unwrap().stations.iter().map(|s| (s.name.clone(), s.radio.clone())).collect();
         let mut out = vec![format!("airband {} connection record", env!("CARGO_PKG_VERSION"))];
@@ -1152,6 +1152,11 @@ impl Desk {
                 out.push("nothing has failed".into());
             }
             out.extend(trail);
+            // what the computer is told in passing (he heard this, he saw that) and did not get
+            let lost = radio.lost();
+            if !lost.is_empty() {
+                out.push(format!("told in passing and not delivered, since the app was opened: {}", lost.iter().map(|(what, n)| format!("{what} {n}")).collect::<Vec<_>>().join(", ")));
+            }
         }
         out.join("\n")
     }
@@ -1557,7 +1562,7 @@ mod tests {
     }
 
     fn msg(id: &str, seq: u64, from: &str, group: &str, needs: bool) -> ChatMessage {
-        ChatMessage { seq, id: id.into(), at: seq, from: from.into(), group: group.into(), to: Vec::new(), needs_you: needs, fyi: false, stalled: false, text: id.into(), long: false, queued: false, seen: 0, options: Vec::new(), recommended: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: Some(from.into()), station: String::new(), open: needs, badge: String::new(), colour: 0, read: None, own_session: false }
+        ChatMessage { seq, id: id.into(), at: seq, from: from.into(), group: group.into(), to: Vec::new(), needs_you: needs, fyi: false, stalled: false, text: id.into(), long: false, queued: false, seen: 0, options: Vec::new(), recommended: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: Some(from.into()), station: String::new(), open: needs, badge: String::new(), colour: 0, read: None, own_session: false, not_read: String::new() }
     }
     fn station(name: &str, port: u16, agents: &[(&str, &str)], messages: Vec<ChatMessage>) -> Station {
         let link = format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A{port}&token=t");
@@ -1618,6 +1623,43 @@ mod tests {
         fn transcribe(&self, _: String, _: Vec<u8>) -> Option<String> {
             None
         }
+    }
+
+    #[test]
+    fn the_connection_record_he_can_copy_holds_nothing_said_and_nothing_secret() {
+        let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
+        let dir = std::env::temp_dir().join(format!("airband-record-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // paired through a relay nobody is at, so what he says fails and is written down
+        let secret = "ef".repeat(32);
+        let link = format!("airband://pair?relay=http%3A%2F%2F127.0.0.1%3A9&secret={secret}");
+        let radio = Radio::start(link.clone(), dir.display().to_string(), Arc::new(Quiet)).unwrap();
+        radio.queue("the door code is 4471".into(), None, None, None);
+        for _ in 0..200 {
+            if !radio.link_trail().is_empty() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        radio.seen(vec!["m-private-id".into()]);
+        let mut state = State { stations: vec![station("mini", 1, &[], vec![msg("an agent's own words", 1, "shop two", "shop", false)])], ..State::default() };
+        state.stations[0].radio = radio.clone();
+        state.stations[0].link = link;
+        let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open("") }), data_dir: dir.display().to_string() };
+        let record = desk.diagnostics();
+        // what is in it: which computer, each try, the way it went and how it ended, and what was told in passing and lost
+        assert!(record.starts_with("airband ") && record.contains("\nmini\n"), "{record}");
+        assert!(record.contains("POST /v1/radio/utterance by relay: there was no connection to the relay"), "{record}");
+        assert!(record.contains("told in passing and not delivered, since the app was opened: heard 1"), "{record}");
+        // what is not: anything he or an agent said, an id of a message, the pairing's secret or anything made
+        // from it, or an address
+        let keys = Keys::derive(&secret).unwrap();
+        for private in ["door code", "4471", "an agent's own words", "m-private-id", secret.as_str(), keys.channel.as_str(), keys.radio_token.as_str(), keys.pull_token.as_str(), "127.0.0.1", "http"] {
+            assert!(!record.contains(private), "the record holds {private:?}: {record}");
+        }
+        radio.stop();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

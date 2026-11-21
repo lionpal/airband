@@ -18,18 +18,11 @@ pub struct Store {
 }
 
 pub(super) enum Receipt {
-    /// Nobody has taken this id: it is now ours to answer.
+    /// Nobody has answered this id: it is now ours to answer.
     Begun,
     /// Already answered: this is what was said.
     Done(Reply),
-    /// Someone is answering it right now.
-    InProgress,
 }
-
-/// A receipt with no answer after this long belongs to a tower that stopped mid-answer; it may be taken again.
-/// Longer than the longest an answer can take (two model calls of up to 90 seconds each), or a slow answer
-/// would be taken for abandoned and what he said delivered twice.
-const ABANDONED_MS: u64 = 240_000;
 
 impl Store {
     pub(super) fn open(path: &std::path::Path) -> Result<Store, String> {
@@ -202,16 +195,17 @@ impl Store {
         );
     }
 
-    /// Take an utterance id before doing anything about it.
+    /// Take an utterance id before doing anything about it. The caller knows which ids this tower is answering
+    /// right now and does not ask about those: a receipt found here with no answer was left by a tower that
+    /// stopped part way.
     pub(super) fn begin_receipt(&self, id: &str) -> Receipt {
         let db = self.db.lock().unwrap();
-        let found = db.query_row("select at, reply from receipts where id = ?1", params![id], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, Option<String>>(1)?))).optional().ok().flatten();
+        let found = db.query_row("select reply from receipts where id = ?1", params![id], |r| r.get::<_, Option<String>>(0)).optional().ok().flatten();
         match found {
-            Some((_, Some(reply))) => Receipt::Done(serde_json::from_str(&reply).unwrap_or_default()),
-            Some((at, None)) if now().saturating_sub(at) < ABANDONED_MS => Receipt::InProgress,
+            Some(Some(reply)) => Receipt::Done(serde_json::from_str(&reply).unwrap_or_default()),
             // A receipt with no answer: the tower stopped part way. If the words had already reached their
             // agents, say so and deliver nothing again; a message arriving twice can be acted on twice.
-            Some(_) if !Self::delivered(&db, id).is_empty() => {
+            Some(None) if !Self::delivered(&db, id).is_empty() => {
                 let reply = Reply { say: format!("Sent to {}.", list(&Self::delivered(&db, id))), listen: false, done: true, ..Reply::default() };
                 Self::warn("closing a receipt", db.execute("update receipts set reply = ?2 where id = ?1", params![id, serde_json::to_string(&reply).unwrap()]));
                 Receipt::Done(reply)
@@ -226,11 +220,6 @@ impl Store {
     pub(super) fn finish_receipt(&self, id: &str, reply: &Reply) {
         let db = self.db.lock().unwrap();
         Self::warn("closing a receipt", db.execute("update receipts set reply = ?2 where id = ?1", params![id, serde_json::to_string(reply).unwrap()]));
-    }
-
-    pub(super) fn receipt_reply(&self, id: &str) -> Option<Reply> {
-        let db = self.db.lock().unwrap();
-        db.query_row("select reply from receipts where id = ?1", params![id], |r| r.get::<_, Option<String>>(0)).optional().ok().flatten().flatten().and_then(|t| serde_json::from_str(&t).ok())
     }
 
     /// `utterance` is the id the radio gave what he said, when it gave one.
@@ -267,7 +256,6 @@ mod tests {
     fn an_utterance_is_taken_once() {
         let (s, path) = store("receipts");
         assert!(matches!(s.begin_receipt("u1"), Receipt::Begun));
-        assert!(matches!(s.begin_receipt("u1"), Receipt::InProgress));
         s.finish_receipt("u1", &Reply { say: "Sent to shop one.".into(), listen: false, ..Reply::default() });
         assert!(matches!(s.begin_receipt("u1"), Receipt::Done(r) if r.say == "Sent to shop one."));
         let _ = std::fs::remove_file(path);
@@ -278,13 +266,11 @@ mod tests {
         let (s, path) = store("redeliver");
         assert!(matches!(s.begin_receipt("u2"), Receipt::Begun));
         s.delivery("m1", Some("u2"), "backoffice one", &Ok(()));
-        // the tower stops here, before the receipt is closed; much later the radio tries the same utterance again
-        s.db.lock().unwrap().execute("update receipts set at = 0 where id = 'u2'", []).unwrap();
+        // the tower stops here, before the receipt is closed; the radio tries the same utterance again
         assert!(matches!(s.begin_receipt("u2"), Receipt::Done(r) if r.say == "Sent to backoffice one."));
         // one that stopped before reaching anyone is taken up again
         assert!(matches!(s.begin_receipt("u3"), Receipt::Begun));
         s.delivery("m2", Some("u3"), "shop one", &Err("gone".into()));
-        s.db.lock().unwrap().execute("update receipts set at = 0 where id = 'u3'", []).unwrap();
         assert!(matches!(s.begin_receipt("u3"), Receipt::Begun));
         let _ = std::fs::remove_file(path);
     }
