@@ -547,9 +547,11 @@ mod tests {
         assert_eq!(steps.iter().map(|s| s.way).collect::<Vec<_>>(), [Way::Relay, Way::Near]);
         assert!(steps.iter().all(|s| s.outcome.is_err() && s.what == "POST /v1/radio/utterance"));
         // the link's own trail has them too, a line each, with nothing of what he said
+        // (a port nobody listens on refuses at once on some systems and is silent on others: either is his
+        // computer not answering)
         let trail = link.trail();
         assert_eq!(trail.len(), 2);
-        assert!(trail[0].contains("by relay: there was no connection to the relay") && trail[1].contains("by own network: your computer did not answer on this network"), "{trail:?}");
+        assert!(trail[0].contains("by relay: there was no connection to the relay") && trail[1].contains("by own network: your computer did not answer"), "{trail:?}");
         assert!(!trail.iter().any(|l| l.contains("ship it")));
         // the address that did not answer is left alone for a while: the next try goes by the relay only
         let (_, again) = link.utterance_once("0123456789ab", "ship it", None, None, None, Vec::new(), "");
