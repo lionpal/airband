@@ -42,7 +42,7 @@ line. Your phone pairs with it.
 
 Messages between the two are end-to-end encrypted. On the same network the phone talks to your computer
 directly. Anywhere else it goes through airband's relay, which cannot read them. You can turn the relay off
-and pair the phone straight to your computer.
+and pair the phone directly with your computer.
 
 It is one Rust program and uses about 6 MB of memory.
 
