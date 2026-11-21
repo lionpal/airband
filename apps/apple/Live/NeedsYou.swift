@@ -15,10 +15,29 @@ struct NeedsYouAttributes: ActivityAttributes {
     var badge: String
 }
 
+/// What his agents are up to, as three numbers. This is the banner for when the app is asleep: his computer
+/// keeps it current through Apple's push service, which delivers what it is given unsealed. So it holds numbers
+/// and nothing else. Who is waiting and what was asked are in the app, and in the notification for it, which
+/// is sealed.
+struct StatusAttributes: ActivityAttributes {
+    struct ContentState: Codable, Hashable {
+        /// How many agents are waiting for him.
+        var waiting: Int
+        /// How many are working.
+        var working: Int
+        /// How many reports he has not seen.
+        var unread: Int
+    }
+    /// Which of his computers it is for: a number worked out from the pairing, the same on both sides.
+    var slot: UInt32
+}
+
 /// The addresses a tile or a banner opens the app with.
 enum OpenWith {
     /// Open the microphone, for whoever his words turn out to be for.
     static let talk = URL(string: "airband://talk")!
+    /// Open the app as it was left.
+    static let chat = URL(string: "airband://chat")!
     /// Open the microphone to answer one agent.
     static func answer(_ callsign: String) -> URL {
         var parts = URLComponents(string: "airband://answer")!

@@ -139,7 +139,7 @@ struct OnboardingView: View {
                 }
                 .font(.system(size: 15, weight: .medium)).foregroundStyle(Palette.quiet).buttonStyle(.plain)
                 if noRelay {
-                    Text("Your phone then talks straight to your computer, on the same network or over Tailscale. Notifications need the relay, so you get none this way.")
+                    Text("Your phone then talks straight to your computer, on the same network or over Tailscale. Notifications and the lock screen banner need the relay, so you get neither this way.")
                         .font(.system(size: 14)).foregroundStyle(Palette.quiet).fixedSize(horizontal: false, vertical: true)
                 }
             }

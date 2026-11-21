@@ -235,7 +235,8 @@ impl Entry {
 /// One radio's place in a call. Each radio has its own, so a phone and a desktop app on a call at the same time
 /// do not take each other's transmissions or answer each other's questions.
 /// A new agent he asked for: where, on what, and to do what. The project is nothing until it is known; the
-/// model and effort are names the launcher offers, or nothing for its own defaults.
+/// model and effort are as he named them, by a name the launcher offers when it offers one like it
+/// (`held::offers`), or nothing for the tool's own defaults.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(super) struct Idea {
     /// The harness he asked for by name ("a codex agent"), when he did and a launcher starts it.
@@ -342,6 +343,9 @@ pub(super) struct Inner {
     pub(super) colours: BTreeMap<String, u8>,
     /// The agents the tower runs itself.
     pub(super) held: Vec<held::Kept>,
+    /// What an agent of each launcher that says so itself last said it can be set to, by the launcher's name
+    /// (`held::offers`).
+    pub(super) menus: BTreeMap<String, airband_core::tools::Offers>,
     /// Names agents go by on his other computers, as a radio last told it. None of this tower's numbered
     /// agents is called any of them.
     pub(super) elsewhere: Vec<Callsign>,
@@ -405,6 +409,8 @@ pub(crate) struct Saved {
     pub(super) colours: BTreeMap<String, u8>,
     #[serde(default)]
     pub(super) held: Vec<held::Kept>,
+    #[serde(default)]
+    pub(super) menus: BTreeMap<String, airband_core::tools::Offers>,
     #[serde(default)]
     pub(super) placed: BTreeMap<String, (String, Mover)>,
 }

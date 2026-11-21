@@ -7,11 +7,16 @@
   },
   "offers": [
     {
+      "id": "chat",
       "job": "summary",
       "by": {
         "interface": "chat",
         "with": {
-          "cold": true
+          "cold": true,
+          "auth": {
+            "header": "authorization",
+            "prefix": "Bearer "
+          }
         }
       },
       "label": "OpenRouter",

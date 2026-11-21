@@ -3,6 +3,7 @@
   "name": "OpenAI, with your Codex login",
   "offers": [
     {
+      "id": "luna",
       "job": "summary",
       "by": {
         "interface": "command",

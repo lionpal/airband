@@ -4,7 +4,7 @@
 //! socket. So the agent does not end when the tower does: a tower that is updated or restarted finds the socket
 //! again and carries on, and whatever the agent was in the middle of goes on undisturbed.
 //!
-//!   airband hold --sock <path> --cwd <folder> --id <agent id> --harness <tool> --by <lines|acp> […] -- <program> [arguments...]
+//!   airband hold --sock <path> --cwd <folder> --id <agent id> --harness <tool> --by <lines|acp> [--model <name>] [--effort <name>] […] -- <program> [arguments...]
 //!
 //! What the tower says to it is one JSON line a connection, the same whatever the program is ([`Tell`]): his
 //! words for the agent, stop what you are doing, finish, and how are you. How that reaches the program is the
@@ -13,6 +13,8 @@
 //! - `lines`: the program reads one message a line on its standard input (`--line` is what a line looks like,
 //!   `--stop` the line that stops it) and reports to the tower by itself.
 //! - `acp`: the program speaks the Agent Client Protocol; `acp.rs` speaks it back and reports for the agent.
+//!   The agent says what models and efforts it can be set to when its session opens. `--model` and `--effort`
+//!   name the ones he asked for, and an agent that has no such one never starts.
 //!
 //! To "how are you" it answers where it has got to ([`State`]): still starting, ready, or failed and why, with
 //! the last of what the program printed as an error. The tower tells him an agent is there only once it is.
@@ -63,9 +65,12 @@ pub enum State {
     Starting,
     /// The agent is there and takes his words. `session` is what the agent's own tool calls its session, when
     /// that is not the id the tower gave it: what carries it on later.
+    /// `offers` is what the agent itself said a session of its can be set to, when it says.
     Ready {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         session: Option<String>,
+        #[serde(default)]
+        offers: airband_core::tools::Offers,
     },
     /// It did not start, and never will: why, in the program's own words where it had any.
     Failed { why: String },
@@ -100,8 +105,8 @@ impl Held {
     pub fn close_input(&self) {
         *self.to_program.lock().unwrap() = None;
     }
-    pub fn ready(&self, session: Option<String>) {
-        *self.state.lock().unwrap() = State::Ready { session };
+    pub fn ready(&self, session: Option<String>, offers: airband_core::tools::Offers) {
+        *self.state.lock().unwrap() = State::Ready { session, offers };
     }
     /// Why it failed, with what the program itself had to say.
     pub fn why(&self, what: &str) -> String {
@@ -116,10 +121,10 @@ fn lines(held: &Held, line: &str, stop: Option<&str>) -> Result<(), String> {
     match held.rx.recv_timeout(Duration::from_millis(400)) {
         Ok(Msg::Gone) => return Err(held.why("it ended as soon as it started")),
         Ok(Msg::Tell(first)) => {
-            held.ready(None);
+            held.ready(None, Default::default());
             told(held, first, line, stop);
         }
-        _ => held.ready(None),
+        _ => held.ready(None, Default::default()),
     }
     loop {
         match held.rx.recv() {
@@ -148,7 +153,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     while let Some(a) = it.next() {
         match a.as_str() {
             "--" => argv = it.by_ref().cloned().collect(),
-            flag @ ("--sock" | "--cwd" | "--id" | "--harness" | "--by" | "--line" | "--stop" | "--session" | "--mode") => {
+            flag @ ("--sock" | "--cwd" | "--id" | "--harness" | "--by" | "--line" | "--stop" | "--session" | "--mode" | "--model" | "--effort") => {
                 named.insert(&flag[2..], it.next().cloned().ok_or_else(|| format!("airband hold: {flag} needs a value"))?);
             }
             other => return Err(format!("airband hold does not take \"{other}\"")),
@@ -230,7 +235,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
             let held = Held { id: named.get("id").cloned().unwrap_or_default(), harness: named.get("harness").cloned().unwrap_or_default(), cwd, rx, to_program: Arc::new(Mutex::new(child.stdin.take())), state: state.clone(), errors };
             let done = match by {
                 "lines" => lines(&held, named.get("line").ok_or("airband hold --by lines needs --line")?, named.get("stop").map(String::as_str)),
-                "acp" => crate::acp::run(&held, named.get("session").cloned(), named.get("mode").map(String::as_str)),
+                "acp" => crate::acp::run(&held, named.get("session").cloned(), named.get("mode").map(String::as_str), crate::acp::Asked { model: named.get("model").cloned(), effort: named.get("effort").cloned() }),
                 other => Err(format!("this version of airband does not drive a program by \"{other}\"")),
             };
             held.close_input();

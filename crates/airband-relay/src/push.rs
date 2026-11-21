@@ -10,6 +10,7 @@
 //!   APNS_TEAM_ID   the developer team it belongs to
 //!   APNS_TOPIC     the app's bundle id
 //!   APNS_HOST      where to send (default https://api.push.apple.com; a development build needs the sandbox)
+use airband_core::relay::{BannerEvent, Counts};
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use ring::rand::SystemRandom;
@@ -67,6 +68,13 @@ impl Push {
             _ => None,
         }
     }
+    /// Change a phone's banner through the service its address belongs to. Nothing when this relay has no such service.
+    pub async fn banner(&self, provider: &str, to: &str, event: BannerEvent, counts: Counts, slot: u32, urgent: bool) -> Option<Outcome> {
+        match provider {
+            "apns" => Some(self.apns.as_ref()?.banner(to, event, counts, slot, urgent).await),
+            _ => None,
+        }
+    }
 }
 
 /// Apple's push service, with a signing key (token-based authentication, HTTP/2).
@@ -120,7 +128,20 @@ impl Apns {
         })
         .to_string();
         // kept by Apple for a phone that is off: a question for a day, anything else for an hour
-        let until = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) + if question { 86_400 } else { 3600 };
+        let until = now_secs() + if question { 86_400 } else { 3600 };
+        self.post(to, &self.topic, "alert", "10", until, body).await
+    }
+
+    /// Change a banner (a Live Activity). Its contents are not sealed: they are the three numbers and the fixed
+    /// words below, and nothing a tower sends can add to them.
+    async fn banner(&self, to: &str, event: BannerEvent, counts: Counts, slot: u32, urgent: bool) -> Outcome {
+        let now = now_secs();
+        let body = banner_body(event, counts, slot, now).to_string();
+        // not kept for a phone that is off for long: by then the numbers are old
+        self.post(to, &format!("{}.push-type.liveactivity", self.topic), "liveactivity", if urgent || event == BannerEvent::Start { "10" } else { "5" }, now + 900, body).await
+    }
+
+    async fn post(&self, to: &str, topic: &str, kind: &str, priority: &str, until: u64, body: String) -> Outcome {
         for attempt in 0..2 {
             let pass = match self.pass() {
                 Ok(pass) => pass,
@@ -130,9 +151,9 @@ impl Apns {
                 .http
                 .post(format!("{}/3/device/{to}", self.host))
                 .header("authorization", format!("bearer {pass}"))
-                .header("apns-topic", &self.topic)
-                .header("apns-push-type", "alert")
-                .header("apns-priority", "10")
+                .header("apns-topic", topic)
+                .header("apns-push-type", kind)
+                .header("apns-priority", priority)
                 .header("apns-expiration", until.to_string())
                 .header("content-type", "application/json")
                 .body(body.clone())
@@ -161,15 +182,44 @@ impl Apns {
     }
 }
 
+fn now_secs() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// The name of the banner in the app (`StatusAttributes` in apps/apple/Live), which Apple asks for when one is put up.
+const BANNER: &str = "StatusAttributes";
+/// What the phone shows for a moment when a banner is put up. The same words every time.
+const BANNER_SAYS: &str = "An agent needs you";
+
+/// What Apple is sent for a banner. Apple delivers this as it is, so it is built here from numbers only: the
+/// words in it are the ones written in this file.
+pub fn banner_body(event: BannerEvent, counts: Counts, slot: u32, now: u64) -> serde_json::Value {
+    let state = serde_json::json!({ "waiting": counts.waiting, "working": counts.working, "unread": counts.unread });
+    match event {
+        // shown as out of date after an hour with no news, so old numbers are not taken for new ones
+        BannerEvent::Update => serde_json::json!({ "aps": { "timestamp": now, "event": "update", "content-state": state, "stale-date": now + 3600 } }),
+        BannerEvent::End => serde_json::json!({ "aps": { "timestamp": now, "event": "end", "content-state": state, "dismissal-date": now } }),
+        BannerEvent::Start => serde_json::json!({ "aps": {
+            "timestamp": now, "event": "start", "content-state": state, "stale-date": now + 3600,
+            "attributes-type": BANNER, "attributes": { "slot": slot },
+            "alert": { "title": "airband", "body": BANNER_SAYS },
+        } }),
+    }
+}
+
 /// How many notifications one channel may send, and in how long. A tower sends one for a question or a report,
 /// to each phone paired with it; anything faster than this is not a person's agents.
 pub const PUSHES: u32 = 60;
 pub const PUSHES_IN: Duration = Duration::from_secs(600);
 
-/// May this channel send another now? Counts it if so.
-pub fn allow(slot: &mut Option<(Instant, u32)>, now: Instant) -> bool {
+/// How many times one channel may change a banner in the same time. The numbers on it change more often than
+/// he is asked something, and a tower already spaces them out.
+pub const BANNERS: u32 = 90;
+
+/// May this channel send another now, of a kind it may send `most` of? Counts it if so.
+pub fn allow(slot: &mut Option<(Instant, u32)>, most: u32, now: Instant) -> bool {
     let (began, sent) = slot.filter(|(began, _)| now.duration_since(*began) < PUSHES_IN).unwrap_or((now, 0));
-    if sent >= PUSHES {
+    if sent >= most {
         return false;
     }
     *slot = Some((began, sent + 1));
@@ -217,8 +267,34 @@ pub mod tests {
     #[test]
     fn a_channel_sends_so_many_and_then_waits() {
         let (mut slot, t0) = (None, Instant::now());
-        assert!((0..PUSHES).all(|_| allow(&mut slot, t0)) && !allow(&mut slot, t0 + Duration::from_secs(1)));
-        assert!(allow(&mut slot, t0 + PUSHES_IN));
+        assert!((0..PUSHES).all(|_| allow(&mut slot, PUSHES, t0)) && !allow(&mut slot, PUSHES, t0 + Duration::from_secs(1)));
+        assert!(allow(&mut slot, PUSHES, t0 + PUSHES_IN));
+    }
+
+    /// Apple is handed a banner unsealed. Every piece of text in what it is handed is one of the words written
+    /// in this file, whatever the numbers are; a field that carried anything else would show up here.
+    #[test]
+    fn a_banner_is_numbers_and_the_same_few_words() {
+        fn text(v: &serde_json::Value, out: &mut Vec<String>) {
+            match v {
+                serde_json::Value::String(s) => out.push(s.clone()),
+                serde_json::Value::Array(a) => a.iter().for_each(|v| text(v, out)),
+                serde_json::Value::Object(o) => o.values().for_each(|v| text(v, out)),
+                _ => {}
+            }
+        }
+        let counts = Counts { waiting: 2, working: 5, unread: 1 };
+        for (event, words) in [(BannerEvent::Update, vec!["update"]), (BannerEvent::End, vec!["end"]), (BannerEvent::Start, vec!["airband", BANNER_SAYS, BANNER, "start"])] {
+            let body = banner_body(event, counts, 7, 1000);
+            let mut found = Vec::new();
+            text(&body, &mut found);
+            found.sort();
+            let mut words: Vec<String> = words.into_iter().map(String::from).collect();
+            words.sort();
+            assert_eq!(found, words, "{body}");
+            assert_eq!(body["aps"]["content-state"], serde_json::json!({ "waiting": 2, "working": 5, "unread": 1 }));
+        }
+        assert_eq!(banner_body(BannerEvent::Start, counts, 7, 1000)["aps"]["attributes"], serde_json::json!({ "slot": 7 }));
     }
 
     /// Against Apple itself, for a key in a file: an address nobody has must come back as not good, which

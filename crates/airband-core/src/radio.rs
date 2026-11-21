@@ -396,15 +396,28 @@ pub struct Reply {
     pub elsewhere: Option<String>,
 }
 
-/// `GET ears`: what should turn his speech into text, and what the phone needs for it.
-///
-/// `kind` is a listening dialect the phone speaks to the service itself, with `token` (a pass that expires in
-/// minutes) and `set` (whatever that service has to be told: a region, a language, a model). Or it is `tower`:
-/// the phone records, and sends the recording to the tower (`POST hear`), which holds the key. Or `none`.
+/// `GET ears`: what should turn his speech into text, and what the phone needs for it. One of three things,
+/// said by `by`: nothing listens here; the phone records and sends the recording to the tower (`POST hear`),
+/// which holds the key; or the phone speaks to a service itself, live, with a pass.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct EarsGrant {
-    pub kind: String,
-    #[serde(default)]
+#[serde(tag = "by", rename_all = "snake_case")]
+pub enum EarsGrant {
+    /// Nothing is set to listen on this computer. `phrases` are still the names he is likely to say, for
+    /// whatever the phone listens with by itself.
+    None {
+        #[serde(default)]
+        phrases: Vec<String>,
+    },
+    Tower,
+    Live(Pass),
+}
+
+/// What the phone needs to listen live with a service: which dialect to speak (a name the phone core has
+/// the code for), a pass that expires in minutes, and whatever that service has to be told (a region, a
+/// language, a model).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Pass {
+    pub dialect: String,
     pub token: String,
     #[serde(default)]
     pub set: std::collections::BTreeMap<String, String>,
@@ -415,40 +428,60 @@ pub struct EarsGrant {
 
 impl Default for EarsGrant {
     fn default() -> Self {
-        EarsGrant { kind: crate::providers::NO_EARS.into(), token: String::new(), set: Default::default(), phrases: Vec::new() }
+        EarsGrant::None { phrases: Vec::new() }
     }
 }
 
 impl EarsGrant {
+    pub fn listens(&self) -> bool {
+        !matches!(self, EarsGrant::None { .. })
+    }
+    /// The names he is likely to say that came with it.
+    pub fn phrases(&self) -> &[String] {
+        match self {
+            EarsGrant::None { phrases } => phrases,
+            EarsGrant::Live(pass) => &pass.phrases,
+            EarsGrant::Tower => &[],
+        }
+    }
+}
+
+impl Pass {
     /// One of the settings, or empty.
     pub fn get(&self, field: &str) -> &str {
         self.set.get(field).map(String::as_str).unwrap_or_default()
     }
-    pub fn listens(&self) -> bool {
-        self.kind != crate::providers::NO_EARS
-    }
 }
 
-/// `POST reads`: choose what reads for this tower, from a radio. `kind` is a provider that reads and that a
-/// person can choose (a row of the provider table); never a command of the radio's own naming. `key` is its
-/// key, or empty to use one this tower already keeps for that provider. `set` is what else it is told.
+/// `POST reads`: choose what reads for this tower, from a radio. `kind` and `offer` name one of the tower's
+/// own list (`ReadsOffer::provider` and `ReadsOffer::offer`): something that reads and that a person can
+/// choose, never a command of the radio's own naming. `key` is its provider's key, or empty to use one this
+/// tower already keeps for that provider. `set` is what else it is told.
 /// The tower tries it with a real call first, and answers `{ reads }` (its name) or `{ error }`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SetReads {
     pub kind: String,
+    pub offer: String,
     #[serde(default)]
     pub key: String,
     #[serde(default)]
     pub set: std::collections::BTreeMap<String, String>,
 }
 
+/// Which of a tower's offers: the provider and the offer, both by id.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfferName {
+    pub provider: String,
+    pub offer: String,
+}
+
 /// `GET reads`: what can read for this tower, from the tower's own catalogue and in the order to show it,
-/// and which of them reads now (`now`, a provider's id; empty when nothing does). A radio offers these and
-/// sends one back by its id (`SetReads::kind`): it never has to match a name of its own against the tower's.
+/// and which of them reads now (`now`; nothing when nothing does). A radio offers these and sends one back
+/// by its ids (`SetReads`): it never has to match a name of its own against the tower's.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ReadsOffered {
     #[serde(default)]
-    pub now: String,
+    pub now: Option<OfferName>,
     #[serde(default)]
     pub offers: Vec<ReadsOffer>,
 }
@@ -456,7 +489,10 @@ pub struct ReadsOffered {
 /// One thing that can read for a tower.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ReadsOffer {
-    pub id: String,
+    /// The provider's id. One key serves everything a provider offers.
+    pub provider: String,
+    /// The offer's id among that provider's.
+    pub offer: String,
     pub label: String,
     #[serde(default)]
     pub about: String,
@@ -564,6 +600,27 @@ pub struct PushTarget {
     /// The push service ("apns" for Apple's).
     pub provider: String,
     pub token: String,
+}
+
+/// `POST banner`: where this radio's banner can be changed while the app is asleep. A phone has one address that
+/// puts a banner up, and each banner that is up has an address of its own for changing it and taking it down.
+/// An empty `token` takes that address away.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BannerTarget {
+    /// The push service ("apns" for Apple's).
+    pub provider: String,
+    pub which: BannerAddress,
+    pub token: String,
+}
+
+/// Which of a banner's two addresses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BannerAddress {
+    /// Puts one up.
+    Start,
+    /// Changes the one that is up.
+    Update,
 }
 
 /// A notification, as the tower seals it for the phone (`airband.relay/1`, direction "push"). Neither the relay
