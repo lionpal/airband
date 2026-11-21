@@ -738,7 +738,7 @@ mod probe {
         for (what, ordered) in [("as a question (by the relay or straight)", false), ("as something he said (by the relay first)", true)] {
             let began = std::time::Instant::now();
             let mut steps = Vec::new();
-            let got = link.request_as("GET", "/feed?since=0&limit=1&away=1", None, ordered, &mut steps);
+            let got = link.request_as("GET", "/feed?since=0&limit=1", None, ordered, &mut steps);
             println!("{what}: {} in {:.1} s", match &got { Ok((status, body)) => format!("{} answered {status}", body["station"].as_str().unwrap_or("?")), Err(e) => e.told() }, began.elapsed().as_secs_f32());
             steps.iter().for_each(|s| println!("    {}", s.line()));
         }

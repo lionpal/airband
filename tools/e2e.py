@@ -26,16 +26,16 @@ for d in (os.path.join(home, ".airband"), got, *(os.path.join(projects, p) for p
 OWN, RADIO = "e2e-own-token", "e2e-radio-token"
 # the model that reads everything: Claude Code as a command, or with --gemini the Gemini key this computer's own
 # tower already has for its voice
-MODEL = {"kind": "command", "argv": ["env", f"HOME={REAL_HOME}", "claude", "-p", "--model", "haiku", "--no-session-persistence", "--strict-mcp-config",
+MODEL = {"kind": "command", "offer": "own", "argv": ["env", f"HOME={REAL_HOME}", "claude", "-p", "--model", "haiku", "--no-session-persistence", "--strict-mcp-config",
                                      "--system-prompt", "You rewrite messages. Reply with the JSON asked for and nothing else.", "--tools", ""]}
 if "--gemini" in sys.argv:
-    MODEL = {"kind": "gemini", "key": json.load(open(os.path.join(REAL_HOME, ".airband", "config.json")))["voice"]["key"]}
+    MODEL = {"kind": "gemini", "offer": "flash-lite", "key": json.load(open(os.path.join(REAL_HOME, ".airband", "config.json")))["voice"]["key"]}
     if os.environ.get("GEMINI_MODEL"):
         MODEL["model"] = os.environ["GEMINI_MODEL"]
 # --local runs everything through the model the tower fetches and runs itself (catalog/providers/qwen.json).
 # AIRBAND_LOCAL_CACHE names a folder that already has the model, so it is not fetched again (2.7 GB).
 if "--local" in sys.argv:
-    MODEL = {"kind": "qwen"}
+    MODEL = {"kind": "qwen", "offer": "qwen-4b"}
     if os.environ.get("AIRBAND_LOCAL_CACHE"):
         os.makedirs(os.path.join(home, ".airband", "local"))
         os.symlink(os.environ["AIRBAND_LOCAL_CACHE"], os.path.join(home, ".airband", "local", "models"))

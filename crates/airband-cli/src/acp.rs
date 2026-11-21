@@ -9,10 +9,17 @@
 //! works waits here, in order. What the agent says and does goes to the tower as the same events any other
 //! tool sends, under the id the tower gave it. Its requests for leave are put to him. Every turn ends with a
 //! report: what it said, or that it stopped.
+//!
+//! What a session can be set to is the agent's to say. It lists its settings when the session opens
+//! (`configOptions`), each with the protocol's own word for what kind of setting it is (`category`): `model`
+//! is what it runs on and `thought_level` how hard it thinks. Those two lists go to the tower as they are
+//! (`hold::State::Ready`), and the model and effort he asked for are set from them before the agent is said
+//! to be there.
 #![cfg(unix)]
 use crate::adapters;
 use crate::hold::{Held, Msg, Tell};
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, SCHEMA};
+use airband_core::tools::{Choice, Offers, named};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -21,9 +28,53 @@ use std::time::Duration;
 /// use (`npx`) takes a while.
 const OPENING: Duration = Duration::from_secs(120);
 
-/// Open a session (a new one, or `session` carried on), say the agent is ready, and drive it until it ends.
-/// An error is the agent never having started.
-pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>) -> Result<(), String> {
+/// What he asked a new agent to be set to, in his own words for it: a name the agent lists, or its id.
+#[derive(Default)]
+pub(crate) struct Asked {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+}
+
+/// The protocol's words for the two kinds of setting airband sets (a setting's `category`).
+const MODEL: &str = "model";
+const EFFORT: &str = "thought_level";
+
+/// One of the settings a session lists, by the protocol's word for its kind: its id, the value it has now,
+/// and the values it can be given (listed flat, or in named groups).
+struct Setting {
+    id: String,
+    now: Option<String>,
+    choices: Vec<Choice>,
+}
+fn setting(options: &Value, category: &str) -> Option<Setting> {
+    let o = options.as_array()?.iter().find(|o| o["category"] == category && o["type"] == "select")?;
+    let choice = |c: &Value| Some(Choice { id: c["value"].as_str()?.to_string(), name: c["name"].as_str().unwrap_or_default().to_string() });
+    let choices = o["options"].as_array().map(|list| list.iter().flat_map(|c| match c["options"].as_array() {
+        Some(group) => group.iter().filter_map(choice).collect::<Vec<_>>(),
+        None => choice(c).into_iter().collect(),
+    }).collect()).unwrap_or_default();
+    Some(Setting { id: o["id"].as_str()?.to_string(), now: o["currentValue"].as_str().map(String::from), choices })
+}
+
+/// What a session's settings say it can be set to.
+fn offers(options: &Value) -> Offers {
+    let of = |category| setting(options, category).map(|s| s.choices).unwrap_or_default();
+    Offers { models: of(MODEL), efforts: of(EFFORT) }
+}
+
+/// Why something he asked for cannot be had: the agent has no such setting, or no such value of it. The ones
+/// it does have are named when they are few enough to say.
+fn no_such(what: &str, said: &str, has: Option<&Setting>) -> String {
+    match has.map(|s| s.choices.as_slice()) {
+        None | Some([]) => format!("it cannot be given {what}"),
+        Some(choices) if choices.len() <= 8 => format!("it has no {} called {said}. It can be {}", what.rsplit(' ').next().unwrap_or(what), choices.iter().map(|c| c.id.as_str()).collect::<Vec<_>>().join(", ")),
+        Some(_) => format!("it has no {} called {said}", what.rsplit(' ').next().unwrap_or(what)),
+    }
+}
+
+/// Open a session (a new one, or `session` carried on), set it to what he asked for, say the agent is ready,
+/// and drive it until it ends. An error is the agent never having started.
+pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>, asked: Asked) -> Result<(), String> {
     let send = |message: Value| held.write(&message.to_string());
     // an answer to one of this driver's own requests, waited for; what he says meanwhile is kept
     let mut early: VecDeque<Tell> = VecDeque::new();
@@ -74,12 +125,32 @@ pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>) -> R
     let tell = |event: Event| {
         adapters::post(&AgentEvent { schema: SCHEMA.into(), agent: me.clone(), event });
     };
-    held.ready(Some(session.clone()));
+    // What it can be set to, as it opens. Then what he asked for, the model first: which efforts there are
+    // can depend on it, and the agent lists its settings again after each change. One it does not have is
+    // not left out and the agent started without it.
+    let offered = offers(&made["configOptions"]);
+    let mut settings = made["configOptions"].clone();
+    for (category, what, said, request) in [(MODEL, "a model", &asked.model, 5), (EFFORT, "an effort", &asked.effort, 6)] {
+        let Some(said) = said else { continue };
+        let has = setting(&settings, category);
+        let (Some(s), Some(choice)) = (has.as_ref(), has.as_ref().and_then(|s| named(&s.choices, said))) else {
+            return Err(no_such(what, said, has.as_ref()));
+        };
+        if s.now.as_deref() != Some(choice.id.as_str()) {
+            send(json!({ "jsonrpc": "2.0", "id": request, "method": "session/set_config_option", "params": { "sessionId": session, "configId": s.id, "value": choice.id } }));
+            let set = answer_to(request).map_err(|e| format!("it would not be set to {}: {e}", choice.id))?;
+            if !set["configOptions"].is_array() {
+                return Err(format!("it did not say whether it was set to {}", choice.id));
+            }
+            settings = set["configOptions"].clone();
+        }
+    }
+    held.ready(Some(session.clone()), offered);
     tell(Event::Checkin);
-    // what it runs on, where the agent says: its own name for the model in use
-    let model = made["models"]["currentModelId"].as_str().or_else(|| made["configOptions"].as_array().and_then(|o| o.iter().find(|o| o["category"] == "model")).and_then(|o| o["currentValue"].as_str()));
-    if let Some(model) = model {
-        tell(Event::Model { name: model.to_string(), effort: None });
+    // what it runs on, where the agent says: its own id for the model in use, and for how hard it thinks
+    let now = |category| setting(&settings, category).and_then(|s| s.now);
+    if let Some(model) = now(MODEL) {
+        tell(Event::Model { name: model, effort: now(EFFORT) });
     }
 
     // one prompt at a time: what he says while it works waits here, in the order he said it
@@ -216,5 +287,24 @@ mod tests {
         assert_eq!(leave(&command, me.clone()).unwrap().what, "run `bash -lc echo hi`");
         assert!(ask.detail.contains("echo hi"));
         assert!(leave(&json!({ "toolCall": { "title": "x".repeat(5000) } }), me).is_none());
+    }
+
+    #[test]
+    fn what_a_session_can_be_set_to_is_what_the_agent_lists_under_the_protocols_own_words() {
+        let options = json!([
+            { "id": "m", "category": "model", "type": "select", "currentValue": "one", "options": [{ "value": "one", "name": "One" }, { "group": "g", "name": "More", "options": [{ "value": "two", "name": "Two" }] }] },
+            { "id": "reasoning", "category": "thought_level", "type": "select", "currentValue": "low", "options": [{ "value": "low", "name": "Low" }, { "value": "high", "name": "High" }] },
+            { "id": "mode", "category": "mode", "type": "select", "currentValue": "plan", "options": [{ "value": "plan", "name": "Plan" }] },
+            { "id": "model-ish", "name": "Model", "type": "select", "currentValue": "x", "options": [{ "value": "x", "name": "X" }] }
+        ]);
+        let o = offers(&options);
+        assert_eq!(o.models.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["one", "two"]);
+        assert_eq!(o.efforts.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["Low", "High"]);
+        let s = setting(&options, EFFORT).unwrap();
+        assert_eq!((s.id.as_str(), s.now.as_deref()), ("reasoning", Some("low")));
+        // an agent that lists nothing offers nothing
+        assert_eq!(offers(&Value::Null), Offers::default());
+        assert_eq!(no_such("an effort", "huge", Some(&s)), "it has no effort called huge. It can be low, high");
+        assert_eq!(no_such("a model", "x", None), "it cannot be given a model");
     }
 }

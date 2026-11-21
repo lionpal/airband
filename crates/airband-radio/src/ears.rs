@@ -14,8 +14,8 @@
 //! service.
 use super::*;
 use airband_core::audio::{BLOCK_SAMPLES, Encoder, Endpointer, Heard, base64_encode, samples};
-use airband_core::providers::{BY_TOWER, Interface, Job, Offer, Use};
-use airband_core::radio::{EarsGrant, HearPart, HeardText};
+use airband_core::providers::{Interface, Job, Offer, Use};
+use airband_core::radio::{EarsGrant, HearPart, HeardText, Pass};
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::sync::mpsc::{Receiver as Rx, sync_channel};
@@ -32,12 +32,12 @@ mod gemini;
 /// A live listening dialect: how one service is listened with while he talks. Each is a file under `ears/`
 /// and a line of [`LISTENERS`].
 pub(crate) struct Listener {
-    /// Its name: what a provider's row names (`by.interface`), and what a pass calls it (`EarsGrant::kind`).
+    /// Its name: what a provider's row names (`by.interface`), and what a pass calls it (`Pass::dialect`).
     pub is: Interface,
     /// How its live connection is spoken to.
     pub wire: &'static crate::ears_stream::Wire,
     /// The same microphone in one upload to the same service, for when the live connection cannot be made.
-    upload: Option<fn(&EarsGrant, &dyn RadioHost, bool) -> Result<Option<String>, ()>>,
+    upload: Option<fn(&Pass, &dyn RadioHost, bool) -> Result<Option<String>, ()>>,
     /// A short-lived pass for a key: the service's settings, and the key. Err says why not, in words for him.
     pass: fn(&BTreeMap<String, String>, &str) -> Result<String, String>,
     /// Its pass is good for one connection only: a new one is asked for each time, and none is kept.
@@ -119,12 +119,12 @@ pub(crate) fn pass_for(kind: &str, set: &BTreeMap<String, String>, key: &str) ->
 /// `pcm` is 16 kHz 16-bit mono. Blocks for as long as the recording is. For trying a service by hand.
 pub fn try_listening(with: &Use, pcm: &[u8]) -> Result<(String, usize), String> {
     let (_, offer) = with.offer(Job::Ears).ok_or("This version of airband does not know that listening service.")?;
-    match live(offer) {
+    match live(&offer) {
         Some(l) => {
             let set = with.settings(Job::Ears);
-            let grant = EarsGrant { kind: l.is.name.into(), token: (l.pass)(&set, &with.key)?, set, phrases: Vec::new() };
+            let grant = Pass { dialect: l.is.name.into(), token: (l.pass)(&set, &with.key)?, set, phrases: Vec::new() };
             let tape = crate::ears_stream::Tape::of(pcm, false);
-            let said = crate::ears_stream::live(l.wire, Arc::new(move || grant.clone()), &tape, RATE, wav_header(), false).map_err(|_| "The live connection to the listening service failed.".to_string())?;
+            let said = crate::ears_stream::live(l.wire, Arc::new(move || Some(grant.clone())), &tape, RATE, wav_header(), false).map_err(|_| "The live connection to the listening service failed.".to_string())?;
             let changes = tape.heard.lock().unwrap().len();
             Ok((said.unwrap_or_default(), changes))
         }
@@ -135,7 +135,7 @@ pub fn try_listening(with: &Use, pcm: &[u8]) -> Result<(String, usize), String> 
 /// Does this service listen with this key and these settings? One real call to it.
 pub(crate) fn check(with: &Use) -> Result<(), String> {
     let (_, offer) = with.offer(Job::Ears).ok_or("This version of airband does not know that listening service.")?;
-    match live(offer) {
+    match live(&offer) {
         Some(l) => (l.pass)(&with.settings(Job::Ears), &with.key).map(|_| ()),
         None => crate::hears::check(with),
     }
@@ -152,20 +152,20 @@ enum Way {
     /// In one upload to his computer, which has the key.
     Tower,
     /// Live, as he speaks, in the dialect the pass names. `own` when the service is the one he chose here.
-    Live { pass: EarsGrant, own: bool },
+    Live { pass: Pass, own: bool },
     /// Nothing can listen. With a reason when it is what he chose that cannot: nothing else is asked then.
     Nothing(Option<String>),
 }
 
 #[derive(Default, Clone)]
 pub(crate) struct Ears {
-    /// The last live pass, and when it was given: one is good for a few minutes.
+    /// What was last granted, and when: a live pass is good for a few minutes.
     pass: Arc<Mutex<Option<(EarsGrant, Instant)>>>,
 }
 
 impl Ears {
     fn kept(&self) -> Option<EarsGrant> {
-        self.pass.lock().unwrap().clone().filter(|(g, when)| when.elapsed() < PASS_LIFE && !once(&g.kind)).map(|(g, _)| g)
+        self.pass.lock().unwrap().clone().filter(|(g, when)| when.elapsed() < PASS_LIFE && !matches!(g, EarsGrant::Live(p) if once(&p.dialect))).map(|(g, _)| g)
     }
     fn keep(&self, pass: &EarsGrant) {
         *self.pass.lock().unwrap() = Some((pass.clone(), Instant::now()));
@@ -180,16 +180,16 @@ impl Ears {
             Some(Own::Cannot(why)) => Way::Nothing(Some(why)),
             Some(Own::Service(with)) => {
                 let phrases = PHRASES.lock().unwrap().clone();
-                match with.offer(Job::Ears).map(|(_, o)| (live(o), crate::hears::by_upload(&with))) {
+                match with.offer(Job::Ears).map(|(_, o)| (live(&o), crate::hears::by_upload(&with))) {
                     Some((Some(l), _)) => {
-                        if let Some(pass) = self.kept() {
+                        if let Some(EarsGrant::Live(pass)) = self.kept() {
                             return Way::Live { pass, own: true };
                         }
                         let set = with.settings(Job::Ears);
                         match (l.pass)(&set, &with.key) {
                             Ok(token) => {
-                                let pass = EarsGrant { kind: l.is.name.into(), token, set, phrases };
-                                self.keep(&pass);
+                                let pass = Pass { dialect: l.is.name.into(), token, set, phrases };
+                                self.keep(&EarsGrant::Live(pass.clone()));
                                 Way::Live { pass, own: true }
                             }
                             Err(why) => Way::Nothing(Some(why)),
@@ -209,8 +209,8 @@ impl Ears {
                             Ok((200, v)) => serde_json::from_value(v).unwrap_or_default(),
                             _ => EarsGrant::default(),
                         };
-                        if !pass.phrases.is_empty() {
-                            *PHRASES.lock().unwrap() = pass.phrases.clone();
+                        if !pass.phrases().is_empty() {
+                            *PHRASES.lock().unwrap() = pass.phrases().to_vec();
                         }
                         // only a pass that can be used is kept: with none, the tower is asked again next time
                         if pass.listens() {
@@ -219,10 +219,10 @@ impl Ears {
                         pass
                     }
                 };
-                match pass.kind.as_str() {
-                    BY_TOWER => Way::Tower,
-                    _ if !pass.listens() => Way::Nothing(None),
-                    _ => Way::Live { pass, own: false },
+                match pass {
+                    EarsGrant::Tower => Way::Tower,
+                    EarsGrant::None { .. } => Way::Nothing(None),
+                    EarsGrant::Live(pass) => Way::Live { pass, own: false },
                 }
             }
         }
@@ -234,10 +234,10 @@ impl Ears {
         // with a service of his own the tower is still asked, when it is there, for the names he is likely to say
         if matches!(using(), Some(Own::Service(_))) {
             if let Ok((200, v)) = link.request("GET", "/ears", None) {
-                let phrases = serde_json::from_value::<EarsGrant>(v).map(|g| g.phrases).unwrap_or_default();
+                let phrases = serde_json::from_value::<EarsGrant>(v).map(|g| g.phrases().to_vec()).unwrap_or_default();
                 if !phrases.is_empty() {
-                    if let Some((g, _)) = self.pass.lock().unwrap().as_mut() {
-                        g.phrases = phrases.clone();
+                    if let Some((EarsGrant::Live(p), _)) = self.pass.lock().unwrap().as_mut() {
+                        p.phrases = phrases.clone();
                     }
                     *PHRASES.lock().unwrap() = phrases;
                 }
@@ -310,17 +310,17 @@ impl Ears {
             }
             Way::Live { pass, own } => {
                 // one this build has no code for cannot be listened with
-                let Some(with) = listener(&pass.kind) else {
+                let Some(with) = listener(&pass.dialect) else {
                     host.record_stop();
                     self.forget();
                     return if host.own_voice() { said(host.listen()) } else { Listened::Cannot };
                 };
                 // a fresh pass whenever the connection asks for one: the same way, worked out again
-                let again: Arc<dyn Fn() -> EarsGrant + Send + Sync> = {
+                let again: Arc<dyn Fn() -> Option<Pass> + Send + Sync> = {
                     let (ears, link) = (self.clone(), link.clone());
                     Arc::new(move || match ears.way(&link) {
-                        Way::Live { pass, .. } => pass,
-                        _ => EarsGrant::default(),
+                        Way::Live { pass, .. } => Some(pass),
+                        _ => None,
                     })
                 };
                 // As he speaks, with the words coming back while he talks. If that connection cannot be made, the
@@ -330,7 +330,7 @@ impl Ears {
                 host.record_stop();
                 let heard = match (heard, with.upload) {
                     (Err(()), Some(upload)) if !manual && host.record_start(RATE) => {
-                        let plain = upload(&again(), host, manual);
+                        let plain = again().ok_or(()).and_then(|pass| upload(&pass, host, manual));
                         host.record_stop();
                         plain
                     }

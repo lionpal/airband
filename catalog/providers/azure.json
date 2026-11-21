@@ -7,6 +7,7 @@
   },
   "offers": [
     {
+      "id": "neural-voices",
       "job": "voice",
       "by": {
         "interface": "azure",
@@ -56,6 +57,7 @@
       ]
     },
     {
+      "id": "speech-to-text",
       "job": "ears",
       "by": {
         "interface": "azure"
