@@ -9,9 +9,7 @@
     {
       "job": "voice",
       "by": {
-        "azure_voice": {
-          "pass": false
-        }
+        "azure_voice": {}
       },
       "label": "Microsoft Azure Speech",
       "preferred": true,

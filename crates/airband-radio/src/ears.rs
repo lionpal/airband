@@ -10,7 +10,7 @@
 //!   tower, which makes the call.
 //!
 //! What to listen with comes as an [`EarsGrant`]: from a key of his own on this device first, else from the
-//! tower, else from the relay when it lends its service. Nothing here, in the tower or in the app names a
+//! tower. Nothing here, in the tower or in the app names a
 //! service.
 use super::*;
 use airband_core::audio::{BLOCK_SAMPLES, Encoder, Endpointer, Heard, base64_encode, samples};
@@ -190,16 +190,15 @@ impl Ears {
                 return g;
             }
         }
-        // His computer says what to listen with. When it cannot be reached, the relay lends the same service, so
-        // he can still say what he has to say: it is kept for the computer until it is back.
+        // His computer says what to listen with. When it cannot be reached there is nothing to listen with:
+        // a model or a key of the phone's own came first, above, and he types otherwise.
         let g: EarsGrant = match link.request("GET", "/ears", None) {
             Ok((200, v)) => serde_json::from_value(v).unwrap_or_default(),
-            _ => link.relay_ears().unwrap_or_default(),
+            _ => EarsGrant::default(),
         };
         if !g.phrases.is_empty() {
             *PHRASES.lock().unwrap() = g.phrases.clone();
         }
-        let g = if g.listens() { g } else { link.relay_ears().unwrap_or(g) };
         // only a pass that can be used is kept: with none, the tower is asked again next time
         if g.listens() {
             *self.grant.lock().unwrap() = Some((g.clone(), Instant::now()));

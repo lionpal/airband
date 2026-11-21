@@ -58,9 +58,8 @@ impl Synth for Gemini {
 }
 
 struct Azure {
-    /// The service's key, or a pass made with it.
+    /// The service's key.
     key: String,
-    pass: bool,
     region: String,
     voice: String,
 }
@@ -74,7 +73,7 @@ impl Synth for Azure {
         let ssml = format!("<speak version='1.0' xml:lang='en-US'><voice name='{}'>{escaped}</voice></speak>", self.voice);
         let res = crate::net::agent(Duration::from_secs(30))
             .post(format!("https://{}.tts.speech.microsoft.com/cognitiveservices/v1", self.region))
-            .header(if self.pass { "Authorization" } else { "Ocp-Apim-Subscription-Key" }, if self.pass { format!("Bearer {}", self.key) } else { self.key.clone() })
+            .header("Ocp-Apim-Subscription-Key", &self.key)
             .header("Content-Type", "application/ssml+xml")
             .header("X-Microsoft-OutputFormat", "raw-24khz-16bit-mono-pcm")
             .header("User-Agent", "airband")
@@ -184,7 +183,7 @@ pub fn synth_for(voice: &Use) -> Option<Box<dyn Synth>> {
     Some(match offer.by {
         By::Speech => Box::new(OpenAiSpeech { url: set("url"), key, model: set("model"), voice: set("voice"), rate: set("rate").parse().ok().filter(|r| (8000..=48000).contains(r)).unwrap_or(24000) }),
         By::GeminiVoice => Box::new(Gemini { key, model: set("model"), voice: set("voice") }),
-        By::AzureVoice { pass } => Box::new(Azure { key, pass, region: set("region"), voice: set("voice") }),
+        By::AzureVoice => Box::new(Azure { key, region: set("region"), voice: set("voice") }),
         By::ElevenlabsVoice => Box::new(Elevenlabs { key, voice: set("voice"), model: set("model") }),
         _ => return None,
     })

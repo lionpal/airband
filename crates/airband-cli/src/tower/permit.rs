@@ -33,7 +33,7 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
     for id in earlier {
         inner.close_permit(&id);
     }
-    inner.drop_pending(&agent_id, None);
+    inner.no_longer_waiting(&agent_id);
     let (id, entry_id) = (config::random_hex(8), config::random_hex(8));
     let what = ask.what.trim();
     // a question of the agent's is put as the question it is, with its own answers; anything else as "may I"

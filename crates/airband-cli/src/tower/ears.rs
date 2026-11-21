@@ -3,7 +3,7 @@
 //! service is a row of `providers::PROVIDERS`; how to get its pass and how to talk to it is the phone core's
 //! (`airband-radio/src/ears.rs`), asked for here by the dialect the row names.
 use super::*;
-use crate::providers::{BY_TOWER, By, Job, LENT_LISTENER};
+use crate::providers::{BY_TOWER, By, Job};
 use airband_core::radio::EarsGrant;
 
 /// A pass lasts ten minutes at the shortest of the services; one is handed out for eight.
@@ -14,11 +14,8 @@ pub(super) async fn grant(app: &Arc<App>) -> EarsGrant {
     let ears = &app.cfg.ears;
     let none = EarsGrant { phrases: phrases(app), ..EarsGrant::default() };
     let Some((_, offer)) = ears.offer(Job::Ears) else {
-        // none set here: the relay's, when it lends one
-        return match app.lent() {
-            Some((region, token)) => EarsGrant { kind: LENT_LISTENER.into(), token, set: [("region".to_string(), region), ("language".to_string(), "en-US".to_string())].into(), phrases: phrases(app) },
-            None => none,
-        };
+        // none set here: the phone listens with a model or a key of its own, or he types
+        return none;
     };
     let set = ears.settings(Job::Ears);
     let kind = match offer.by {

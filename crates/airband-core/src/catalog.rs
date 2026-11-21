@@ -85,8 +85,54 @@ pub fn accept(document: &[u8], signature: &str) -> Result<bool, String> {
     if newer.rev <= current().rev {
         return Ok(false);
     }
+    let built: Catalog = read(BUILT_IN)?;
+    allowed(&newer, &built)?;
     *CURRENT.write().unwrap() = Some(Box::leak(Box::new(newer)));
     Ok(true)
+}
+
+/// What a copy taken later may not do, whoever signed it. The signature says it came from airband; these say
+/// that even airband's own key cannot, through a catalogue, run a different program on his computer or send
+/// a key he has already entered somewhere new. Those take a new build, which he installs himself.
+///
+/// - A provider this build knows keeps the command it runs and every address it is reached at.
+/// - A provider this build does not know cannot be a command at all.
+/// - Nothing may be emptied: a copy with no providers is refused.
+/// - A model's name and its files' paths stay inside its own folder, and its files come from airband's address.
+fn allowed(newer: &Catalog, built: &Catalog) -> Result<(), String> {
+    if newer.providers.is_empty() {
+        return Err("the catalogue has no providers in it".into());
+    }
+    let address = |o: &Offer| o.asks.iter().find(|a| a.field == "url").map(|a| a.usual);
+    for p in newer.providers {
+        let known = built.providers.iter().find(|b| b.id == p.id);
+        for o in p.offers {
+            let was = known.and_then(|b| b.offers.iter().find(|x| x.job == o.job));
+            match (o.by, was.map(|w| w.by)) {
+                (By::Command(now), Some(By::Command(then))) if now == then => {}
+                (By::Command(_), _) => return Err(format!("the catalogue would change the program run for {}", p.id)),
+                (By::OnThisComputer(_), _) | (_, None) => {}
+                (_, Some(_)) => {
+                    if address(o) != was.and_then(address) {
+                        return Err(format!("the catalogue would change where {} is reached", p.id));
+                    }
+                }
+            }
+        }
+        if known.is_some_and(|b| b.key != p.key) {
+            return Err(format!("the catalogue would change whether {} takes a key", p.id));
+        }
+    }
+    let plain = |name: &str| !name.is_empty() && !name.starts_with('.') && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.' || b == b'_');
+    for m in newer.models {
+        if !plain(m.kind) || !m.base.starts_with("https://airband.dev/models/") {
+            return Err(format!("the catalogue names a model that is not airband's to offer: {}", m.kind));
+        }
+        if m.files.iter().any(|(path, _, sha)| path.starts_with('/') || path.split('/').any(|part| !plain(part)) || sha.len() != 64) {
+            return Err(format!("the catalogue gives {} a file outside its own folder", m.kind));
+        }
+    }
+    Ok(())
 }
 
 // The document as written. Everything is optional that has a plain default, so a file says only what is so.
@@ -172,10 +218,9 @@ enum ByRow {
     },
     Speech,
     GeminiVoice,
-    AzureVoice {
-        #[serde(default)]
-        pass: bool,
-    },
+    /// Written `{"azure_voice": {}}`: builds from before the relay stopped lending its speech service read a
+    /// setting here, and a row written this way still reads in them.
+    AzureVoice {},
     ElevenlabsVoice,
     Listener {
         dialect: String,
@@ -250,7 +295,7 @@ fn read(text: &str) -> Result<Catalog, String> {
                         ByRow::Command { argv } => By::Command(keep_all(argv.into_iter().map(keep).collect())),
                         ByRow::Speech => By::Speech,
                         ByRow::GeminiVoice => By::GeminiVoice,
-                        ByRow::AzureVoice { pass } => By::AzureVoice { pass },
+                        ByRow::AzureVoice {} => By::AzureVoice,
                         ByRow::ElevenlabsVoice => By::ElevenlabsVoice,
                         ByRow::Listener { dialect } => By::Listener(keep(dialect)),
                         ByRow::Transcribe => By::Transcribe,
@@ -317,6 +362,32 @@ mod tests {
         // the same for a listening dialect this build does not speak
         let c = read(r#"{"rev":9,"providers":[{"id":"x","name":"X","offers":[{"job":"ears","by":{"listener":{"dialect":"martian"}},"label":"New"}]}]}"#).unwrap();
         assert!(c.providers[0].offers.is_empty());
+    }
+
+    #[test]
+    fn a_later_copy_cannot_change_what_is_run_or_where_a_key_goes() {
+        let built = read(BUILT_IN).unwrap();
+        let with = |edit: &dyn Fn(&mut Value)| {
+            let mut doc: Value = serde_json::from_str(BUILT_IN).unwrap();
+            edit(&mut doc);
+            read(&doc.to_string()).and_then(|c| allowed(&c, &built))
+        };
+        let provider = |doc: &mut Value, id: &str| doc["providers"].as_array_mut().unwrap().iter_mut().find(|p| p["id"] == id).unwrap().clone();
+        let _ = provider;
+        // as it is: fine. A new price or voice: fine.
+        assert!(with(&|_| {}).is_ok());
+        assert!(with(&|d| d["providers"].as_array_mut().unwrap().iter_mut().find(|p| p["id"] == "gemini").unwrap()["offers"][0]["price"] = "About $1".into()).is_ok());
+        // the program the tower runs for summaries
+        assert!(with(&|d| d["providers"].as_array_mut().unwrap().iter_mut().find(|p| p["id"] == "claude").unwrap()["offers"][0]["by"]["command"]["argv"] = serde_json::json!(["sh", "-c", "anything"])).is_err());
+        // where a key he has entered is sent
+        assert!(with(&|d| d["providers"].as_array_mut().unwrap().iter_mut().find(|p| p["id"] == "openai").unwrap()["offers"][0]["asks"][0]["usual"] = "https://elsewhere.example/v1".into()).is_err());
+        // a provider nobody has seen may not be a command, and the list may not be emptied
+        assert!(with(&|d| d["providers"].as_array_mut().unwrap().push(serde_json::json!({ "id": "new", "name": "New", "offers": [{ "job": "summary", "by": { "command": { "argv": ["x"] } }, "label": "New" }] }))).is_err());
+        assert!(with(&|d| d["providers"] = serde_json::json!([])).is_err());
+        // a model whose files would land outside its folder, or come from somewhere else
+        assert!(with(&|d| d["models"][0]["kind"] = "..".into()).is_err());
+        assert!(with(&|d| d["models"][0]["files"][0][0] = "../../elsewhere".into()).is_err());
+        assert!(with(&|d| d["models"][0]["base"] = "https://elsewhere.example/models/x".into()).is_err());
     }
 
     #[test]

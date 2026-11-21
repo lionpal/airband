@@ -23,7 +23,6 @@
 //!   POST /v1/channels/{c}/push        tower: a sealed notification for a push service to wake the phone with (push.rs)
 //!   POST /v1/channels/{c}/call        radio: a sealed request; the response is the sealed answer (Bearer radio token)
 //!   POST /v1/channels/{c}/queue       radio: a sealed message to keep for a tower that is away (x-airband-id names it)
-//!   GET  /v1/channels/{c}/ears        radio: a pass to the relay's speech service
 //!   POST /v1/waitlist                 the homepage's sign-up: {"email": "…"} (airband.dev only, by CORS)
 //!   GET  /healthz
 use axum::body::Bytes;
@@ -130,7 +129,6 @@ impl Limiter {
 enum Asks {
     Call,
     Queue,
-    Ears,
 }
 
 /// How much is taken in a minute: on one channel, and from one internet address whatever channels it names.
@@ -169,10 +167,6 @@ struct Relay {
     channels: Mutex<HashMap<String, Channel>>,
     store: store::Store,
     admission: Option<String>,
-    /// A speech service's key and region, when this relay lends its own to towers that have none
-    /// (`AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`), and the pass last made with it.
-    speech: Option<(String, String)>,
-    speech_pass: Mutex<Option<(String, Instant)>>,
     /// How many sign-ups the waiting list has taken lately.
     signups: Mutex<Signups>,
     /// At most two sign-ups are being written to the database at any moment.
@@ -187,60 +181,6 @@ fn same(a: &str, b: &str) -> bool {
 fn bearer(headers: &HeaderMap) -> &str {
     headers.get("authorization").and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).unwrap_or("")
 }
-/// A tower with no speech service of its own asks for a pass to this relay's: a token from Microsoft that works
-/// for ten minutes, for listening and for speaking. The key itself never leaves here. Only a tower that holds
-/// the admission key is given one, and a relay open to anyone lends nothing. One pass is made every eight
-/// minutes at most, however many towers ask.
-async fn speech_pass(State(relay): State<Arc<Relay>>, headers: HeaderMap) -> Response {
-    let Some(want) = relay.admission.as_ref().filter(|_| relay.speech.is_some()) else { return say(StatusCode::NOT_FOUND, "this relay has no speech service to lend") };
-    if !same(headers.get("x-airband-admission").and_then(|v| v.to_str().ok()).unwrap_or(""), want) {
-        return say(StatusCode::UNAUTHORIZED, "a speech pass needs the admission key");
-    }
-    lend(&relay).await
-}
-
-/// The same pass, for a radio of a channel this relay knows: so he can still speak to his agents when his
-/// computer cannot be reached to ask. What he says is then kept here, sealed, until it is back. Knowing a
-/// channel's name is what a paired radio has; the pass is the one every tower shares, so asking costs nothing.
-async fn ears_pass(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, headers: HeaderMap) -> Response {
-    if relay.speech.is_none() || relay.admission.is_none() {
-        return say(StatusCode::NOT_FOUND, "this relay has no speech service to lend");
-    }
-    // only the radio paired on this channel: it shows a token made from the pairing secret, whose hash the
-    // channel's tower has given. A channel's name alone gets nothing, and neither does a channel whose tower
-    // has not said who its radio is.
-    match relay.admit(Asks::Ears, &channel, &headers).await {
-        Ok(()) => lend(&relay).await,
-        Err(no) => no,
-    }
-}
-
-async fn lend(relay: &Arc<Relay>) -> Response {
-    let Some((key, region)) = relay.speech.clone() else { return say(StatusCode::NOT_FOUND, "this relay has no speech service to lend") };
-    let fresh = relay.speech_pass.lock().unwrap().clone().filter(|(_, when)| when.elapsed() < Duration::from_secs(480));
-    let token = match fresh {
-        Some((token, _)) => token,
-        None => {
-            let url = format!("https://{region}.api.cognitive.microsoft.com/sts/v1.0/issueToken");
-            let made = tokio::task::spawn_blocking(move || {
-                let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(8))).http_status_as_error(false).build().into();
-                let mut res = agent.post(&url).header("Ocp-Apim-Subscription-Key", &key).header("Content-Length", "0").send_empty().ok()?;
-                (res.status().as_u16() == 200).then(|| res.body_mut().read_to_string().ok()).flatten()
-            })
-            .await
-            .ok()
-            .flatten();
-            let Some(token) = made else {
-                eprintln!("airband-relay: the speech service gave no pass");
-                return say(StatusCode::BAD_GATEWAY, "the speech service gave no pass");
-            };
-            *relay.speech_pass.lock().unwrap() = Some((token.clone(), Instant::now()));
-            token
-        }
-    };
-    axum::Json(serde_json::json!({ "kind": "azure", "token": token, "set": { "region": region, "language": "en-US" } })).into_response()
-}
-
 fn valid_channel(c: &str) -> bool {
     c.len() == 32 && c.bytes().all(|b| b.is_ascii_hexdigit())
 }
@@ -258,18 +198,17 @@ fn not_the_radio() -> Response {
 }
 
 impl Relay {
-    fn new(push: push::Push, channels: HashMap<String, Channel>, store: store::Store, admission: Option<String>, speech: Option<(String, String)>) -> Relay {
-        Relay { push, channels: Mutex::new(channels), store, admission, speech, speech_pass: Mutex::new(None), signups: Mutex::new(Signups::default()), writing: tokio::sync::Semaphore::new(2), limits: Mutex::new(Limits::new()) }
+    fn new(push: push::Push, channels: HashMap<String, Channel>, store: store::Store, admission: Option<String>) -> Relay {
+        Relay { push, channels: Mutex::new(channels), store, admission, signups: Mutex::new(Signups::default()), writing: tokio::sync::Semaphore::new(2), limits: Mutex::new(Limits::new()) }
     }
 
     /// Is this request from the channel's radio, and within what a radio may ask? Every route a radio uses
     /// starts here.
     ///
     /// The radio shows a token made from the pairing secret (`Authorization: Bearer`), whose hash the channel's
-    /// tower has given. A wrong token is always refused. No token is refused for a pass, and for `call` and
-    /// `queue` once the channel is proven: once a radio has shown the right token on one of those two. Until
-    /// then they are taken as they were before radios sent a token, so a phone on an older build keeps working.
-    /// A pass does not prove a channel, because older phones already show the token for a pass and for nothing else.
+    /// tower has given. A wrong token is always refused. No token is refused once the channel is proven: once
+    /// a radio has shown the right token. Until then requests are taken as they were before radios sent a
+    /// token, so a phone on an older build keeps working.
     async fn admit(&self, asks: Asks, channel: &str, headers: &HeaderMap) -> Result<(), Response> {
         let now = Instant::now();
         if !self.limits.lock().unwrap().address(asks, &caller(headers), now) {
@@ -285,9 +224,9 @@ impl Relay {
                     if !same(&shown, hash) {
                         return Err(not_the_radio());
                     }
-                    !ch.proven && asks != Asks::Ears
+                    !ch.proven
                 }
-                _ if asks == Asks::Ears || ch.proven => return Err(not_the_radio()),
+                _ if ch.proven => return Err(not_the_radio()),
                 _ => false,
             }
         };
@@ -707,11 +646,9 @@ async fn relay_from_env() -> Arc<Relay> {
     let channels = saved.into_iter().map(|(c, saved)| (c, Channel::from(saved))).collect::<HashMap<_, _>>();
     let admission = std::env::var("AIRBAND_RELAY_ADMISSION").ok().filter(|a| !a.is_empty());
     println!("airband-relay: {} channels known; opening a channel {}", channels.len(), if admission.is_some() { "needs the admission key" } else { "is open to anyone" });
-    let speech = std::env::var("AZURE_SPEECH_KEY").ok().filter(|k| !k.is_empty()).zip(std::env::var("AZURE_SPEECH_REGION").ok().filter(|r| !r.is_empty()));
-    println!("airband-relay: {}", if speech.is_some() { "lends its speech service to towers that have none" } else { "has no speech service to lend" });
     let push = push::Push::from_env();
     println!("airband-relay: {}", push.describe());
-    Arc::new(Relay::new(push, channels, store, admission, speech))
+    Arc::new(Relay::new(push, channels, store, admission))
 }
 
 fn routes(relay: Arc<Relay>) -> Router {
@@ -721,9 +658,7 @@ fn routes(relay: Arc<Relay>) -> Router {
         .route("/v1/channels/{channel}/reply/{id}", post(reply))
         .route("/v1/channels/{channel}/call", post(call))
         .route("/v1/channels/{channel}/queue", post(hold))
-        .route("/v1/channels/{channel}/ears", get(ears_pass))
         .route("/v1/channels/{channel}/push", post(wake_phone))
-        .route("/v1/speech/pass", post(speech_pass))
         .route("/v1/waitlist", post(waitlist).options(waitlist_preflight))
         .route("/healthz", get(|| async { "ok" }))
         .layer(DefaultBodyLimit::max(MAX_MESSAGE))
@@ -749,7 +684,7 @@ mod tests {
     fn relay_in_a_folder(admission: Option<&str>) -> (Arc<Relay>, std::path::PathBuf) {
         let folder = std::env::temp_dir().join(format!("airband-relay-test-{}", random_hex(6)));
         std::fs::create_dir_all(&folder).unwrap();
-        (Arc::new(Relay::new(push::Push::default(), HashMap::new(), store::Store::Folder(folder.clone()), admission.map(str::to_string), None)), folder)
+        (Arc::new(Relay::new(push::Push::default(), HashMap::new(), store::Store::Folder(folder.clone()), admission.map(str::to_string))), folder)
     }
     fn with(pairs: &[(&str, &str)]) -> HeaderMap {
         let mut headers = HeaderMap::new();
@@ -823,28 +758,10 @@ mod tests {
 
         // a relay started again on the same folder remembers all of it
         let saved = store::Store::Folder(folder.clone()).load().await.unwrap();
-        let again = Arc::new(Relay::new(push::Push::default(), saved.into_iter().map(|(c, s)| (c, Channel::from(s))).collect(), store::Store::Folder(folder.clone()), None, None));
+        let again = Arc::new(Relay::new(push::Push::default(), saved.into_iter().map(|(c, s)| (c, Channel::from(s))).collect(), store::Store::Folder(folder.clone()), None));
         assert_eq!(leave(&again, &mine.channel, "", "aaaaaaaa07").await, refused);
         assert_eq!(leave(&again, &mine.channel, &mine.radio_token, "aaaaaaaa07").await.0, 202);
         assert_eq!(leave(&again, &other.channel, "", "aaaaaaaa08").await.0, 202);
-        let _ = std::fs::remove_dir_all(folder);
-    }
-
-    #[tokio::test]
-    async fn a_pass_is_only_for_the_radio_and_asking_for_one_proves_nothing() {
-        let (relay, folder) = relay_in_a_folder(Some("key"));
-        let relay = Arc::new(Relay { speech: Some(("k".into(), "nowhere".into())), speech_pass: Mutex::new(Some(("a-pass".into(), Instant::now()))), ..Arc::into_inner(relay).unwrap() });
-        let keys = Keys::derive(&airband_core::relay::new_secret()).unwrap();
-        assert_eq!(open_as(&relay, &keys, "key").await, 201);
-        let ask = |headers: HeaderMap| ears_pass(State(relay.clone()), Path(keys.channel.clone()), headers);
-        assert_eq!(ask(HeaderMap::new()).await.status().as_u16(), 401);
-        assert_eq!(ask(with(&[("authorization", "Bearer nope")])).await.status().as_u16(), 401);
-        let auth = token(&keys.radio_token);
-        let (status, body) = text(ask(with(&[(auth.0, &auth.1)])).await).await;
-        assert!(status == 200 && body.contains("a-pass"), "{status} {body}");
-        // an older phone shows its token for a pass and for nothing else: its calls must go on being taken
-        assert!(!relay.channels.lock().unwrap()[&keys.channel].proven);
-        assert_eq!(leave(&relay, &keys.channel, "", "bbbbbbbb01").await.0, 202);
         let _ = std::fs::remove_dir_all(folder);
     }
 
@@ -988,7 +905,7 @@ mod tests {
         let keys = Keys::derive(&airband_core::relay::new_secret()).unwrap();
         let apns = push::Apns::new(&key, "KEY123", "TEAM456", "dev.example.app", &format!("http://{at}")).unwrap();
         let folder = std::env::temp_dir().join(format!("airband-relay-test-{}", random_hex(6)));
-        let relay = Arc::new(Relay::new(push::Push::with_apns(apns), HashMap::from([(keys.channel.clone(), Channel::new(token_hash(&keys.pull_token)))]), store::Store::Folder(folder), None, None));
+        let relay = Arc::new(Relay::new(push::Push::with_apns(apns), HashMap::from([(keys.channel.clone(), Channel::new(token_hash(&keys.pull_token)))]), store::Store::Folder(folder), None));
         let ask = |token: &str, provider: &str, to: &str| {
             let (relay, channel) = (relay.clone(), keys.channel.clone());
             let mut headers = HeaderMap::new();

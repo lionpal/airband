@@ -150,7 +150,23 @@ fn default_launchers() -> BTreeMap<String, Launcher> {
         held: Some(Held { fresh: list(&["--session-id", "{id}"]), resume: list(&["--resume", "{id}"]), line: r#"{"type":"user","message":{"role":"user","content":{text}}}"#.into(), stop: Some(r#"{"type":"control_request","request_id":"{id}","request":{"subtype":"interrupt"}}"#.into()) }),
         ..claude.clone()
     };
-    BTreeMap::from([(LAUNCHER_HANDED_OFF.to_string(), claude), (default_launcher(), held)])
+    // Agents that speak the Agent Client Protocol are run by `airband acp`, one program for all of them: a row
+    // here is the agent's name and the command that starts it speaking that protocol.
+    let by_acp = |harness: &str, program: &[&str]| Launcher {
+        harness: harness.into(),
+        argv: list(&["{airband}", "acp", harness, "{id}"]).into_iter().chain(list(program)).collect(),
+        models: BTreeMap::new(),
+        efforts: Vec::new(),
+        with_model: Vec::new(),
+        with_effort: Vec::new(),
+        held: Some(Held { fresh: Vec::new(), resume: list(&["--carry-on"]), line: r#"{"say":{text}}"#.into(), stop: Some(r#"{"stop":"{id}"}"#.into()) }),
+    };
+    BTreeMap::from([
+        (LAUNCHER_HANDED_OFF.to_string(), claude),
+        (default_launcher(), held),
+        ("opencode".to_string(), by_acp("opencode", &["opencode", "acp"])),
+        ("codex".to_string(), by_acp("codex", &["npx", "-y", "@agentclientprotocol/codex-acp@2.8.0"])),
+    ])
 }
 /// The launcher every tower had before a model could be asked for. One still set to exactly this is brought up
 /// to date; one he has changed is his and is left alone.
@@ -381,6 +397,12 @@ pub fn load() -> Config {
     }
     if cfg.launchers.get(&default_launcher()).is_some_and(|l| l.models.is_empty() && l.argv.iter().map(String::as_str).eq(LAUNCHER_BEFORE_MODELS.iter().copied())) {
         cfg.launchers.extend(default_launchers());
+    }
+    // launchers that came with a later version than these settings were written by are added; his own are left
+    for (name, launcher) in default_launchers() {
+        if name != default_launcher() && name != LAUNCHER_HANDED_OFF {
+            cfg.launchers.entry(name).or_insert(launcher);
+        }
     }
     // a tower set up before it could hold agents itself gets that launcher, and uses it if it was on the old default
     if !cfg.launchers.contains_key(&default_launcher()) {

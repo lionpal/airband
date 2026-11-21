@@ -108,7 +108,7 @@ needs no codec. For listening the phone goes straight to the service with a shor
 and the rule for when he has finished speaking (`Endpointer`) is in the core. The tower's keys never leave it.
 
 With nothing set (`device`), a terminal prints and takes a typed line. A phone has no voice or recognition
-worth using: nothing is spoken and he types, unless the relay lends its speech pass. For listening he can also
+worth using: nothing is spoken and he types. For listening he can also
 put a key of his own in the phone. It lives in the phone's Keychain, is given to the core at launch
 (`set_own_ears`) and goes only to its service; the app asks `own_listeners` which services it may offer.
 
@@ -146,14 +146,14 @@ The interfaces, and what adding a provider touches:
 | Reading | OpenAI Chat Completions (`POST {url}/chat/completions`), which nearly every model service and local model server accepts | a row |
 | Reading | a command: prompt on standard input, answer on standard output | a row with its arguments |
 | Speaking | OpenAI's speech endpoint (`POST {url}/audio/speech`, raw PCM) | a row |
-| Speaking | a route of its own, for what the common one lacks (ElevenLabs' word timings, Microsoft's lendable pass) | an `impl Synth` in `tower/speech.rs`, a `By` for it, a row |
+| Speaking | a route of its own, for what the common one lacks (ElevenLabs' word timings, Microsoft's own route) | an `impl Synth` in `tower/speech.rs`, a `By` for it, a row |
 | Speaking or listening, on the phone | a file in `catalog/models/` | the row, the files under `airband.dev/models/`, and the code that runs the model; an app release |
 | Listening, a finished recording | OpenAI's transcription endpoint (`POST {url}/audio/transcriptions`) | a row |
 | Listening, a finished recording | a route of its own (Gemini) | an arm of `transcribe` in `airband-radio/src/hears.rs`, a `By` for it, a row |
 | Listening, live as he speaks | no common interface exists, so each is a dialect the phone speaks: a row of `LISTENERS` in `airband-radio/src/ears.rs` | the dialect's code there, a row naming it; an app release, because the phone talks to the service itself |
 
 What the phone listens with comes as one message, `{ kind, token, set, phrases }`, whoever sends it: the phone
-itself from a key of his own, the tower, or the relay when it lends its service. `set` is whatever the service
+itself from a key of his own, or the tower. `set` is whatever the service
 has to be told, so a service that needs a model or an address fits without a new field. A live service gives a
 short-lived pass for a key, and the key stays where it is. A service that only takes a finished recording has
 no such pass: with the key on the phone the recording goes straight to it, and with the key on the computer the

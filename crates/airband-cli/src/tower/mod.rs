@@ -98,9 +98,6 @@ pub struct App {
     ears_pass: Mutex<Option<(String, Instant)>>,
     /// Recordings arriving in parts from a phone, for a listening service that takes a finished clip.
     clips: Mutex<HashMap<String, (Vec<i16>, Instant)>>,
-    /// The pass the relay lends for speech, for a tower with no voice or no ears of its own: region, token,
-    /// and when it was fetched.
-    lent_pass: Mutex<Option<(String, String, Instant)>>,
     inner: Mutex<Inner>,
     kick: Notify,
     accounts: accounts::Kept,
@@ -109,51 +106,14 @@ pub struct App {
 }
 
 impl App {
-    /// The relay's speech pass, while it is fresh: (region, token).
-    fn lent(&self) -> Option<(String, String)> {
-        self.lent_pass.lock().unwrap().clone().filter(|(_, _, when)| when.elapsed() < Duration::from_secs(540)).map(|(region, token, _)| (region, token))
-    }
-    /// What speaks: the voice he set, or with none set, Microsoft's through the relay's pass when there is one.
-    /// The phone's own voice is never the fallback: with nothing here, nothing is spoken.
+    /// What speaks: the voice he set. With none set, nothing is spoken by the tower: a phone speaks with a
+    /// voice of its own, or he reads.
     /// The voice for one radio: none for a radio that makes its own speech.
     fn voice_to(&self, speaks: bool) -> config::Voice {
         if speaks { config::Voice::default() } else { self.voice() }
     }
     fn voice(&self) -> config::Voice {
-        match (self.cfg.voice.is_none(), self.lent()) {
-            (true, Some((region, token))) => config::Voice { kind: providers::LENT.into(), key: token, set: [("region".to_string(), json!(region))].into() },
-            _ => self.cfg.voice.clone(),
-        }
-    }
-}
-
-/// A tower with no voice or no listening service of its own borrows the relay's: a pass that lasts ten minutes,
-/// fetched again every seven. A relay that lends none is asked again every ten minutes, in case it starts to.
-async fn lent_pass_loop(app: Arc<App>) {
-    let wanted = app.cfg.voice.is_none() || app.cfg.ears.is_none();
-    let (Some(relay), true) = (app.cfg.relay.clone(), wanted) else { return };
-    let admission = app.cfg.relay_admission.clone().unwrap_or_default();
-    loop {
-        let (url, key) = (format!("{}/v1/speech/pass", relay.trim_end_matches('/')), admission.clone());
-        let got = tokio::task::spawn_blocking(move || {
-            let mut res = airband_radio::net::agent(Duration::from_secs(10)).post(&url).header("x-airband-admission", &key).header("Content-Length", "0").send_empty().ok()?;
-            let v: Value = (res.status().as_u16() == 200).then(|| res.body_mut().read_json().ok()).flatten()?;
-            Some((v["set"]["region"].as_str()?.to_string(), v["token"].as_str()?.to_string()))
-        })
-        .await
-        .ok()
-        .flatten();
-        let had = app.lent_pass.lock().unwrap().is_some();
-        match got {
-            Some((region, token)) => {
-                if !had {
-                    log("speech: using the relay's service, as none is set here");
-                }
-                *app.lent_pass.lock().unwrap() = Some((region, token, Instant::now()));
-                tokio::time::sleep(Duration::from_secs(420)).await;
-            }
-            None => tokio::time::sleep(Duration::from_secs(if had { 30 } else { 600 })).await,
-        }
+        self.cfg.voice.clone()
     }
 }
 
@@ -422,7 +382,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         inner.pending.retain(|p| live.contains(&p.agent_id));
         let port = cfg.port;
         let push = push::Wake::load(&store);
-        let app = Arc::new(App { push, cfg, store, speech: speech::Speech::default(), ears_pass: Mutex::new(None), clips: Mutex::new(HashMap::new()), lent_pass: Mutex::new(None), inner: Mutex::new(inner), kick: Notify::new(), accounts: accounts::Kept::default() });
+        let app = Arc::new(App { push, cfg, store, speech: speech::Speech::default(), ears_pass: Mutex::new(None), clips: Mutex::new(HashMap::new()), inner: Mutex::new(inner), kick: Notify::new(), accounts: accounts::Kept::default() });
         // what was changed while starting (a credential masked in a kept message) is written now, not at the
         // next thing an agent says
         {
@@ -435,7 +395,6 @@ pub fn run(cfg: Config) -> Result<(), String> {
         tokio::spawn(accounts::keep_alive(app.clone()));
         tokio::spawn(progress_loop(app.clone()));
         tokio::spawn(activity_loop(app.clone()));
-        tokio::spawn(lent_pass_loop(app.clone()));
         held::carry_on(&app).await;
         relay_link::start(app.clone(), router.clone(), tokio::runtime::Handle::current());
         {

@@ -223,16 +223,6 @@ impl Link {
         if res.status().as_u16() == 202 { Ok(()) } else { Err(LinkError::Offline) }
     }
 
-    /// A pass for the listening service straight from the relay, for when his computer cannot be reached to
-    /// ask. Only through a relay that lends one.
-    pub(crate) fn relay_ears(&self) -> Option<airband_core::radio::EarsGrant> {
-        let Route::Relay { relay, keys } = &self.route else { return None };
-        let mut res = self.agent.get(format!("{relay}/v1/channels/{}/ears", keys.channel)).header("authorization", format!("Bearer {}", keys.radio_token)).call().ok()?;
-        if res.status().as_u16() != 200 {
-            return None;
-        }
-        res.body_mut().read_json().ok()
-    }
 
     fn post_ordered<T: serde::Serialize>(&self, path: &str, body: &T) -> Result<Value, LinkError> {
         match self.request_as("POST", path, Some(serde_json::to_value(body).unwrap()), true)? {
