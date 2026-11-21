@@ -26,8 +26,10 @@
 //! - `store`: the database: the chat log, the raw event record, receipts, delivery attempts
 //! - `relay_link`: the outbound connection to the relay, one per paired radio
 //! - `push`: waking his phone with a sealed notification when a message deserves it and he is not looking
+//! - `banner`: the numbers on his phone's lock screen while the app is asleep
 mod accounts;
 mod attachments;
+mod banner;
 mod deliver;
 mod held;
 mod ears;
@@ -109,6 +111,8 @@ pub struct App {
     accounts: accounts::Kept,
     /// Where each paired phone can be woken with a notification.
     push: push::Wake,
+    /// Where each paired phone's banner can be changed, and what it was last sent.
+    banner: banner::Banners,
 }
 
 impl App {
@@ -402,7 +406,8 @@ pub fn run(cfg: Config) -> Result<(), String> {
         inner.settle_reading();
         let port = cfg.port;
         let push = push::Wake::load(&store);
-        let app = Arc::new(App { push, cfg, store, speech: speech::Speech::default(), ears_pass: Mutex::new(None), clips: Mutex::new(HashMap::new()), inner: Mutex::new(inner), kick: Notify::new(), accounts: accounts::Kept::default() });
+        let banner = banner::Banners::load(&store, inner.rev);
+        let app = Arc::new(App { push, banner, cfg, store, speech: speech::Speech::default(), ears_pass: Mutex::new(None), clips: Mutex::new(HashMap::new()), inner: Mutex::new(inner), kick: Notify::new(), accounts: accounts::Kept::default() });
         // what was changed while starting (a credential masked in a kept message) is written now, not at the
         // next thing an agent says
         {
@@ -415,6 +420,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         tokio::spawn(accounts::keep_alive(app.clone()));
         tokio::spawn(progress_loop(app.clone()));
         tokio::spawn(activity_loop(app.clone()));
+        tokio::spawn(banner::banner_loop(app.clone()));
         held::carry_on(&app).await;
         // tools that have no hooks and are watched (a server of the tool's own): each adapter that watches is
         // started, and tells the tower what it sees the same way an event over HTTP is taken

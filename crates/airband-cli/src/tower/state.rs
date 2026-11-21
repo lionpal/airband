@@ -284,6 +284,8 @@ pub(super) struct Presence {
     polled: Option<Instant>,
     /// When it last asked for the chat.
     followed: Option<Instant>,
+    /// When it last asked for the chat with the chat in front of him.
+    shown: Option<Instant>,
 }
 
 impl Presence {
@@ -294,6 +296,13 @@ impl Presence {
     /// It is following the chat.
     pub(super) fn following(&self) -> bool {
         self.followed.is_some_and(|t| t.elapsed() < THERE)
+    }
+    /// It has the chat in front of him. One that follows the chat with the app put away does not.
+    pub(super) fn showing(&self) -> bool {
+        self.shown.is_some_and(|t| t.elapsed() < THERE)
+    }
+    pub(super) fn shows(&mut self) {
+        self.shown = Some(Instant::now());
     }
     pub(super) fn polls(&mut self) {
         self.polled = Some(Instant::now());

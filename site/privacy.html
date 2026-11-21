@@ -41,9 +41,10 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0 0; }
     <li>If your computer is off, the relay holds the encrypted messages for it for up to seven days, then deletes them.</li>
     <li>For each pairing the relay keeps a random channel name and two check values that let it tell your devices from anyone else's.</li>
     <li>To send a notification, your computer hands the relay an encrypted note and your phone's notification address, which the relay passes to Apple. The relay does not keep the address.</li>
+    <li>While an agent is waiting for you and the app is closed, your lock screen shows three numbers: how many agents are waiting, how many are working and how many reports are unread. Your computer sends those numbers through the relay and Apple, and they are not encrypted. No name, project or message is ever sent this way.</li>
     <li>For a request that fails, the relay records the time, the kind of request, its size and the first characters of the channel name. It counts requests by internet address, in memory, to limit abuse.</li>
   </ul>
-  <p>You can pair your phone straight to your computer and not use the relay at all.</p>
+  <p>You can pair your phone straight to your computer and not use the relay at all. You then get no notifications and no lock screen numbers.</p>
 
   <h2>Services you choose</h2>
   <p>You pick what writes your summaries, what listens and what speaks. If you pick a service from another company, such as Anthropic, OpenAI, Google or ElevenLabs, the text or audio for that job goes from your device to that company, under your own login or key and their terms. It does not pass through us.</p>
