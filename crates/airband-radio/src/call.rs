@@ -88,8 +88,12 @@ pub(crate) fn work(jobs: Receiver<Job>, link: Arc<Link>, host: Arc<dyn RadioHost
                 // middle of saying something to someone else.
                 let _ = link.post(&format!("/ready{}", crate::mouth::asking()), &serde_json::json!({}));
             }
-            Job::Talk(re, scope) => converse(&link, &*host, &ears, re, scope),
+            Job::Talk(re, scope) => {
+                let _here = still_here(&link, &calling);
+                converse(&link, &*host, &ears, re, scope)
+            }
             Job::Dictate(done) => {
+                let _here = still_here(&link, &calling);
                 host.status(RadioStatus::Listening);
                 done(ears.hear(&link, &*host, true));
             }
@@ -97,6 +101,33 @@ pub(crate) fn work(jobs: Receiver<Job>, link: Arc<Link>, host: Arc<dyn RadioHost
         busy.store(false, Ordering::SeqCst);
         host.status(RadioStatus::Idle);
     }
+}
+
+/// While he has the microphone open on a call this line asks the tower for nothing, and a tower that hears
+/// nothing for long takes the radio for gone. So it is told, every quarter of a minute, that the radio is
+/// still there, until the returned guard is dropped.
+fn still_here(link: &Arc<Link>, calling: &Arc<AtomicBool>) -> impl Drop {
+    struct Until(Arc<AtomicBool>);
+    impl Drop for Until {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+    let over = Arc::new(AtomicBool::new(false));
+    if calling.load(Ordering::SeqCst) {
+        let (link, over) = (link.clone(), over.clone());
+        thread::spawn(move || {
+            let mut waited = 0;
+            while !over.load(Ordering::SeqCst) {
+                thread::sleep(Duration::from_millis(500));
+                waited += 1;
+                if waited % 30 == 0 {
+                    let _ = link.post("/busy", &serde_json::json!({}));
+                }
+            }
+        });
+    }
+    Until(over)
 }
 
 /// Open the microphone; send what he says; speak the tower's answer; listen again if the tower asks.

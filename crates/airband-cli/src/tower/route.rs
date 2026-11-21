@@ -607,7 +607,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
         if let Some(s) = inner.session(&id) {
             s.waiting = false;
         }
-        inner.drop_pending(&id, None);
+        inner.no_longer_waiting(&id);
     }
     if let [one] = sent.as_slice() {
         inner.call(radio).focus = Some(one.agent.id.clone());

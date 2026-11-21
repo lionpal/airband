@@ -85,6 +85,8 @@ pub(crate) const RADIO_HEADER: &str = "x-airband-radio";
 const HOLD: Duration = Duration::from_secs(25);
 /// A radio that has not asked for this long is gone.
 const RADIO_GONE: Duration = Duration::from_secs(40);
+/// How old something an agent said can be and still be read out when he turns reading aloud back on.
+const STILL_NEWS: Duration = Duration::from_secs(600);
 /// A radio that took a transmission and never said "ready" is assumed free again after this.
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
 

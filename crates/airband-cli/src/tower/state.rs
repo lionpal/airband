@@ -329,7 +329,21 @@ impl Inner {
         e.agent.as_deref().and_then(|id| self.find(id))
     }
 
-    /// What this agent last said is stale: he answered it, or it went back to work.
+    /// This agent is no longer waiting on him: he spoke to it, or it went back to work. What it was waiting
+    /// for is not read out any more. A report he has not heard yet still is: he asked to hear what his
+    /// agents report, and talking to one is not the same as having heard it.
+    pub(super) fn no_longer_waiting(&mut self, agent_id: &str) {
+        let gone: HashSet<String> = self.pending.iter().filter(|p| p.agent_id == agent_id && matches!(p.kind, Some(Kind::NeedsYou | Kind::Stalled))).map(|p| p.id.clone()).collect();
+        self.pending.retain(|p| !gone.contains(&p.id));
+        for call in self.calls.values_mut() {
+            if call.outbox.as_ref().is_some_and(|t| gone.contains(&t.id)) {
+                call.outbox = None;
+                call.ready = true;
+            }
+        }
+    }
+
+    /// What this agent last said is stale: it has said something newer, or it has gone.
     pub(super) fn drop_pending(&mut self, agent_id: &str, only_notice: Option<bool>) {
         let gone: HashSet<String> = self.pending.iter().filter(|p| p.agent_id == agent_id && only_notice.is_none_or(|n| p.notice == n)).map(|p| p.id.clone()).collect();
         self.pending.retain(|p| !gone.contains(&p.id));
@@ -956,6 +970,20 @@ mod tests {
         // the agent goes back to work: what the phone was about to say is withdrawn, and only there
         inner.drop_pending("a", None);
         assert!(inner.call("phone").outbox.is_none() && inner.call("phone").ready);
+    }
+
+    #[test]
+    fn a_report_he_has_not_heard_is_kept_when_he_speaks_to_its_agent_and_its_question_is_not() {
+        let mut inner = Inner::default();
+        inner.check_in(&agent("a", "/x/shop", None));
+        let item = |id: &str, kind| Item { id: id.into(), agent_id: "a".into(), notice: false, full: String::new(), kind: Some(kind), say: Some("said".into()), detail: None, created: 0, asked: None };
+        inner.pending.push(item("report", Kind::Report));
+        inner.pending.push(item("question", Kind::NeedsYou));
+        inner.no_longer_waiting("a");
+        assert_eq!(inner.pending.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["report"]);
+        // something newer from the same agent still takes the place of what it said before
+        inner.drop_pending("a", None);
+        assert!(inner.pending.is_empty());
     }
 
     #[test]
