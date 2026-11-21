@@ -1330,7 +1330,7 @@ fn pick_station(state: &State, text: &str, re: Option<&str>, room: Option<&str>,
 }
 
 /// Tell one computer where this device can be woken, if it has not been told. A computer that cannot be reached
-/// is told the next time round; one that answers at all, even to say it does not know how, is not asked again.
+/// or does not take it is told the next time round.
 fn tell_push(shared: &Arc<Shared>, radio: &Arc<Radio>, index: usize, generation: u64) {
     let (link, push) = {
         let state = shared.state.lock().unwrap();
@@ -1338,7 +1338,7 @@ fn tell_push(shared: &Arc<Shared>, radio: &Arc<Radio>, index: usize, generation:
         let Some(push) = state.push.clone().filter(|_| !state.push_told.contains(&station.link)) else { return };
         (station.link.clone(), push)
     };
-    if !matches!(radio.push_target(&push.0, &push.1), Err(RadioError::Offline)) {
+    if radio.push_target(&push.0, &push.1).is_ok() {
         let mut state = shared.state.lock().unwrap();
         // unless the address changed while this one was on its way
         if state.push.as_ref() == Some(&push) {
