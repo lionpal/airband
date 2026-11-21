@@ -1,6 +1,7 @@
 //! The first half of the dispatcher: how much of his attention a message deserves, and what to tell him of it.
 //! Also the fuller version, for "say more". The model is whatever command the configuration names.
 use super::*;
+use crate::providers::{By, Interface, Job, Offer};
 
 /// One question to a model behind an API key, off the async threads. `read` finds the answer in what came back.
 /// One call to a service that speaks OpenAI's chat interface. A service with no key (one on his own computer)
@@ -53,8 +54,8 @@ pub(super) async fn set_reader(wanted: airband_core::radio::SetReads) -> Result<
         (true, given) => given.to_string(),
     };
     // only the settings its row asks for
-    let set = wanted.set.into_iter().filter(|(field, value)| !value.trim().is_empty() && offer.asks.iter().any(|a| a.field == field)).map(|(f, v)| (f, Value::String(v.trim().to_string()))).collect();
-    let using = Use { kind: p.id.into(), key: key.clone(), set };
+    let set = wanted.set.into_iter().filter(|(field, value)| !value.trim().is_empty() && offer.asks.iter().any(|a| a.field == *field)).map(|(f, v)| (f, Value::String(v.trim().to_string()))).collect();
+    let using = Use { kind: p.id.clone(), key: key.clone(), set };
     // a model on this computer is fetched the first time it is chosen: wait through that
     super::local::wait_for_it(true);
     let tried = ask(&using, "Reply with the one word: ready".into(), None).await;
@@ -62,12 +63,12 @@ pub(super) async fn set_reader(wanted: airband_core::radio::SetReads) -> Result<
     tried.map_err(|why| format!("{} did not answer: {}", p.name, why.chars().take(160).collect::<String>()))?;
     if p.key && !cfg.keys.values().any(|k| k.secret == key) {
         let name = (1..).map(|n| if n == 1 { p.id.to_string() } else { format!("{}-{n}", p.id) }).find(|n| !cfg.keys.contains_key(n)).unwrap();
-        cfg.keys.insert(name, config::StoredKey { provider: p.id.into(), secret: key });
+        cfg.keys.insert(name, config::StoredKey { provider: p.id.clone(), secret: key });
     }
     cfg.summarizer = using.clone();
     config::save(&cfg)?;
     // a model this tower was running for the last choice is stopped, unless it is the new one too
-    if !matches!(offer.by, crate::providers::By::OnThisComputer(_)) {
+    if local_model(&using).is_none() {
         super::local::stop();
     }
     *READER.lock().unwrap() = Some(using);
@@ -95,46 +96,100 @@ pub(super) async fn ask_shaped(cfg: &Config, prompt: String, shape: Option<Value
     }
 }
 
+/// What comes back from asking: the model's answer, or why there is none.
+type Asked<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>>;
+
+/// One way of reaching a model that reads: its name in a provider's row (`by.interface`), what it can do
+/// that a row may say it needs, and what a row has to tell it.
+pub(crate) struct Reader {
+    pub is: Interface,
+    /// It starts a program on this computer. Such an offer is honoured only as it is compiled in
+    /// (`airband_core::catalog::BUILT_IN_ONLY`).
+    pub runs: bool,
+    ask: for<'a> fn(&'a Summarizer, &'a By, String, Option<Value>) -> Asked<'a>,
+}
+
+/// Every interface the tower reads through. A new one is a function here and a line of this table.
+pub(crate) const READERS: &[Reader] = &[
+    // OpenAI's Chat Completions, which nearly every model service and every local model server accepts.
+    // `cold` sends `temperature: 0`, which most services take and some refuse. `shaped`: the service can be
+    // held to a JSON schema, so what comes back always parses.
+    Reader { is: Interface { name: "chat", can: &[], told: &[] }, runs: false, ask: |m, by, prompt, shape| Box::pin(chat(m, by, prompt, shape)) },
+    // A model the tower fetches and runs itself on this computer (`local.rs`), spoken to by the same chat
+    // interface held to shape. `model` is named as the server takes it; `server` is the program that runs it.
+    Reader { is: Interface { name: ON_THIS_COMPUTER, can: &[], told: &["model", "server"] }, runs: true, ask: |m, by, prompt, shape| Box::pin(on_this_computer(m, by, prompt, shape)) },
+    // A program on this computer: the prompt on standard input, the answer on standard output. `argv` is the
+    // usual command; `argv` in his settings replaces it. It can hand the program a brief (`{brief}`, and a
+    // folder to run in that holds one), the shape of the answer as a file (`{shape}`), and his settings
+    // (`{model}` and the like).
+    Reader { is: Interface { name: "command", can: &["brief", "shape", "settings"], told: &["argv"] }, runs: true, ask: |m, by, prompt, shape| Box::pin(command(m, by, prompt, shape)) },
+];
+
+const ON_THIS_COMPUTER: &str = "on-this-computer";
+
+/// Does this tower have the code to read through what this offer names?
+pub(crate) fn reads(offer: &Offer) -> bool {
+    offer.job == Job::Summary && READERS.iter().any(|r| r.is.fits(offer))
+}
+
+/// The model this setting has the tower run on this computer, and the program that runs it, when it is one
+/// of those.
+pub(crate) fn local_model(model: &Summarizer) -> Option<(String, String)> {
+    let (_, offer) = model.offer(Job::Summary)?;
+    READERS.iter().find(|r| r.is.name == ON_THIS_COMPUTER && r.is.fits(offer)).map(|_| (offer.by.text("model").to_string(), offer.by.text("server").to_string()))
+}
+
 /// Ask one model, through whichever interface its row names.
 async fn ask(model: &Summarizer, prompt: String, shape: Option<Value>) -> Result<String, String> {
-    use crate::providers::{By, Job};
     if model.is_none() {
         return Err("no summarizer is configured".into());
     }
     let (_, offer) = model.offer(Job::Summary).ok_or_else(|| format!("this version of airband has nothing called \"{}\" that reads", model.kind))?;
-    let argv: Vec<String> = match offer.by {
-        // OpenAI's chat interface, which the row's service speaks at its address
-        By::Chat { cold, shaped } => {
-            let mut body = json!({ "model": model.get(Job::Summary, "model"), "messages": [{ "role": "user", "content": prompt }] });
-            if cold {
-                body["temperature"] = json!(0);
-            }
-            if let (true, Some(shape)) = (shaped, shape) {
-                body["response_format"] = json!({ "type": "json_schema", "json_schema": { "name": "answer", "strict": true, "schema": shape } });
-            }
-            let url = format!("{}/chat/completions", model.get(Job::Summary, "url").trim_end_matches('/'));
-            return ask_api(url, model.key.clone(), body).await;
-        }
-        // a model this tower runs itself: the same chat interface, at its own address, always held to shape
-        By::OnThisComputer(name) => {
-            let url = tokio::task::spawn_blocking(move || super::local::ensure(name)).await.map_err(|e| e.to_string())??;
-            let mut body = json!({ "model": name, "messages": [{ "role": "user", "content": prompt }], "temperature": 0, "max_tokens": 400 });
-            if let Some(shape) = shape {
-                body["response_format"] = json!({ "type": "json_schema", "json_schema": { "name": "answer", "strict": true, "schema": shape } });
-            }
-            return ask_api(format!("{url}/chat/completions"), String::new(), body).await;
-        }
-        By::Command(usual) => match model.set.get("argv").and_then(|a| a.as_array()) {
-            Some(own) => own.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
-            None => usual.iter().map(|s| s.to_string()).collect(),
-        },
-        _ => return Err(format!("\"{}\" does not read", model.kind)),
+    let reader = READERS.iter().find(|r| r.is.fits(offer)).ok_or_else(|| format!("this version of airband cannot read through \"{}\" yet", model.kind))?;
+    // What starts a program on this computer is run only as this build has it compiled in, whatever a
+    // catalogue taken since may say (taking one already refuses such a change; this is the same rule where
+    // the program is started).
+    if reader.runs && !airband_core::catalog::built().providers.iter().any(|p| p.id == model.kind && p.offers.iter().any(|o| o.job == Job::Summary && o.by == offer.by)) {
+        return Err(format!("\"{}\" would run a program this version of airband does not come with", model.kind));
+    }
+    (reader.ask)(model, &offer.by, prompt, shape).await
+}
+
+async fn chat(model: &Summarizer, by: &By, prompt: String, shape: Option<Value>) -> Result<String, String> {
+    let mut body = json!({ "model": model.get(Job::Summary, "model"), "messages": [{ "role": "user", "content": prompt }] });
+    if by.flag("cold") {
+        body["temperature"] = json!(0);
+    }
+    if let (true, Some(shape)) = (by.flag("shaped"), shape) {
+        body["response_format"] = json!({ "type": "json_schema", "json_schema": { "name": "answer", "strict": true, "schema": shape } });
+    }
+    let url = format!("{}/chat/completions", model.get(Job::Summary, "url").trim_end_matches('/'));
+    ask_api(url, model.key.clone(), body).await
+}
+
+async fn on_this_computer(_model: &Summarizer, by: &By, prompt: String, shape: Option<Value>) -> Result<String, String> {
+    let (name, server) = (by.text("model").to_string(), by.text("server").to_string());
+    let url = {
+        let name = name.clone();
+        tokio::task::spawn_blocking(move || super::local::ensure(&name, &server)).await.map_err(|e| e.to_string())??
+    };
+    let mut body = json!({ "model": name, "messages": [{ "role": "user", "content": prompt }], "temperature": 0, "max_tokens": 400 });
+    if let Some(shape) = shape {
+        body["response_format"] = json!({ "type": "json_schema", "json_schema": { "name": "answer", "strict": true, "schema": shape } });
+    }
+    ask_api(format!("{url}/chat/completions"), String::new(), body).await
+}
+
+async fn command(model: &Summarizer, by: &By, prompt: String, shape: Option<Value>) -> Result<String, String> {
+    let argv: Vec<String> = match model.set.get("argv").and_then(|a| a.as_array()) {
+        Some(own) => own.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
+        None => by.list("argv"),
     };
     let mut shape_file: Option<std::path::PathBuf> = None;
     // `{brief}` in an argument is the file that tells a coding tool it is only rewriting a message here
     let folder = brief_folder()?;
     // and `{model}`, or any other setting the row asks for, is what he set or the row's usual
-    let asked: Vec<(String, String)> = model.offer(Job::Summary).map(|(_, o)| o.asks.iter().map(|a| (format!("{{{}}}", a.field), model.get(Job::Summary, a.field))).collect()).unwrap_or_default();
+    let asked: Vec<(String, String)> = model.offer(Job::Summary).map(|(_, o)| o.asks.iter().map(|a| (format!("{{{}}}", a.field), model.get(Job::Summary, &a.field))).collect()).unwrap_or_default();
     let mut argv: Vec<String> = argv.into_iter().map(|a| asked.iter().fold(a.replace("{brief}", &folder.join("brief.md").display().to_string()), |a, (name, value)| a.replace(name, value))).collect();
     // `{shape}` is a file holding the shape the answer must take, for a tool that can be held to one. A call
     // that wants no shape leaves that argument out, and the flag before it.
@@ -209,6 +264,32 @@ fn brief_folder() -> Result<std::path::PathBuf, String> {
         }
     }
     Ok(folder)
+}
+
+/// What can read on this tower, for a radio that offers the choice: the tower's own list for its own job, so
+/// a phone with another copy of the catalogue offers nothing this tower would refuse.
+pub(super) fn offered(cfg: &Config) -> airband_core::radio::ReadsOffered {
+    use airband_core::radio::{ReadsAsk, ReadsOffer, ReadsOffered};
+    let now = reader(cfg);
+    let kept: std::collections::HashSet<String> = cfg.keys.values().map(|k| k.provider.clone()).collect();
+    let offers = crate::providers::in_order(Job::Summary)
+        .into_iter()
+        .map(|(p, o)| ReadsOffer {
+            id: p.id.clone(),
+            label: o.label.clone(),
+            about: o.about.clone(),
+            price: o.price.clone(),
+            preferred: o.preferred,
+            free: o.local(),
+            login: o.login.clone(),
+            key: p.key,
+            has_key: p.key && kept.contains(&p.id),
+            key_name: p.key_name.clone(),
+            keys_at: p.keys_at.clone(),
+            asks: o.asks.iter().map(|a| ReadsAsk { field: a.field.clone(), question: a.question.clone(), usual: a.usual.clone() }).collect(),
+        })
+        .collect();
+    ReadsOffered { now: if now.is_none() { String::new() } else { now.kind.clone() }, offers }
 }
 
 pub(super) fn tail(text: &str, max_chars: usize) -> String {
@@ -486,4 +567,37 @@ pub(super) async fn detail_of(app: &Arc<App>, id: &str) -> Option<String> {
     }
     drop(inner);
     Some(d)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_reader_in_the_catalogue_is_one_this_tower_has() {
+        let mut named: Vec<&str> = READERS.iter().map(|r| r.is.name).collect();
+        named.sort();
+        named.dedup();
+        assert_eq!(named.len(), READERS.len(), "an interface is in the table twice");
+        for p in &airband_core::catalog::built().providers {
+            for o in p.offers.iter().filter(|o| o.job == Job::Summary) {
+                assert!(reads(o), "{}: nothing here reads by \"{}\", or its row does not tell it what it needs or asks more than it can do", p.id, o.by.interface);
+            }
+        }
+        // what starts a program here is exactly what a later catalogue may not bring or change
+        let mut runs: Vec<&str> = READERS.iter().filter(|r| r.runs).map(|r| r.is.name).collect();
+        let mut held: Vec<&str> = airband_core::catalog::BUILT_IN_ONLY.to_vec();
+        runs.sort();
+        held.sort();
+        assert_eq!(runs, held);
+        // an interface this tower has, asked for something it cannot do, and one it does not have: not offered
+        let odd: Offer = serde_json::from_value(json!({ "job": "summary", "by": { "interface": "chat" }, "label": "New", "needs": ["auth-header"] })).unwrap();
+        let new: Offer = serde_json::from_value(json!({ "job": "summary", "by": { "interface": "something-new" }, "label": "New" })).unwrap();
+        assert!(!reads(&odd) && !reads(&new));
+        // every job's offers, as this program lists them, are ones it can do
+        for job in [Job::Summary, Job::Voice, Job::Ears] {
+            assert!(crate::providers::in_order(job).len() >= 3 && crate::providers::in_order(job).iter().all(|(_, o)| crate::providers::speaks(o)));
+            assert_eq!(crate::providers::in_order(job).len(), airband_core::providers::in_order(job).len(), "an offer compiled in is one this build cannot do");
+        }
+    }
 }

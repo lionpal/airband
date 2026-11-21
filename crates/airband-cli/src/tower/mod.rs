@@ -33,7 +33,7 @@ mod held;
 mod ears;
 mod http;
 mod intake;
-mod judge;
+pub(crate) mod judge;
 mod launch;
 mod local;
 mod permit;
@@ -267,7 +267,7 @@ pub fn try_model(cfg: &Config) -> Result<String, String> {
     // a model on this computer is fetched the first time: wait through that, and say so
     local::listen_after(cfg.port);
     local::wait_for_it(true);
-    if matches!(cfg.summarizer.offer(providers::Job::Summary).map(|(_, o)| o.by), Some(providers::By::OnThisComputer(_))) {
+    if judge::local_model(&cfg.summarizer).is_some() {
         println!("  Fetching the model and starting it. The first time this is a few gigabytes and takes a while.");
     }
     println!("  Asking it something…");
@@ -287,19 +287,19 @@ pub fn try_voice(cfg: &Config) -> Result<String, String> {
 /// of someone speaking, 16 kHz 16-bit mono) it is played to the service the way a phone would send it, and
 /// what came back is said.
 pub fn try_ears(cfg: &Config, recording: Option<&str>) -> Result<String, String> {
-    use providers::{By, Job};
-    let by = cfg.ears.offer(Job::Ears).map(|(_, o)| o.by);
-    if let (Some(path), Some(_)) = (recording, by) {
+    use providers::Job;
+    if let (Some(path), Some(_)) = (recording, cfg.ears.offer(Job::Ears)) {
         let wav = std::fs::read(path).map_err(|e| format!("cannot read {path}: {e}"))?;
         let pcm = wav.get(44..).filter(|_| wav.starts_with(b"RIFF")).ok_or("that is not a WAV file")?;
         println!("  Playing it to the service, at the speed it was spoken…");
         let (said, changes) = airband_radio::try_listening(&cfg.ears, pcm)?;
         return Ok(if changes > 0 { format!("It heard: \"{said}\"\n  The words on screen changed {changes} times while it played.") } else { format!("It heard: \"{said}\"") });
     }
-    match by {
-        Some(By::Listener(kind)) => airband_radio::listening_pass(kind, &cfg.ears.settings(Job::Ears), &cfg.ears.key).map(|_| "It gives a pass.".into()),
-        Some(By::Transcribe) => airband_radio::hears::check(&cfg.ears).map(|_| "It listens.".into()),
-        _ => Ok("Set to none.".into()),
+    match (airband_radio::hears::live(&cfg.ears), airband_radio::hears::by_upload(&cfg.ears)) {
+        (Some(kind), _) => airband_radio::listening_pass(kind, &cfg.ears.settings(Job::Ears), &cfg.ears.key).map(|_| "It gives a pass.".into()),
+        (None, true) => airband_radio::hears::check(&cfg.ears).map(|_| "It listens.".into()),
+        (None, false) if cfg.ears.is_none() => Ok("Set to none.".into()),
+        (None, false) => Err(format!("This version of airband cannot listen with \"{}\".", cfg.ears.kind)),
     }
 }
 
@@ -353,7 +353,9 @@ pub fn run(cfg: Config) -> Result<(), String> {
     std::thread::spawn(crate::adapters::opencode::watch);
     // a newer catalogue, now and twice a day: what a phone is offered for this computer comes from it
     std::thread::spawn(|| loop {
-        if crate::catalog::refresh() {
+        let (changed, lines) = crate::catalog::refresh();
+        lines.into_iter().for_each(log);
+        if changed {
             log(format!("catalogue: now rev {}", airband_core::catalog::current().rev));
         }
         std::thread::sleep(Duration::from_secs(12 * 3600));
@@ -361,10 +363,10 @@ pub fn run(cfg: Config) -> Result<(), String> {
     // a model on this computer is started now, so it is ready when the first message comes; until it is, a
     // message is given as written
     local::listen_after(cfg.port);
-    if let Some(providers::By::OnThisComputer(model)) = cfg.summarizer.offer(providers::Job::Summary).map(|(_, o)| o.by) {
+    if let Some((model, server)) = judge::local_model(&cfg.summarizer) {
         std::thread::spawn(move || {
             local::wait_for_it(true);
-            match local::ensure(model) {
+            match local::ensure(&model, &server) {
                 Ok(_) => log("local model: ready"),
                 Err(why) => log(format!("local model: {why}")),
             }

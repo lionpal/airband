@@ -8,7 +8,7 @@
 //! Each model is a row of the catalogue (`catalog/models/`, see `airband_core::catalog`): what job it does, what to show, what to fetch and where it goes. A host
 //! offers what [`local_models`] lists and names none itself.
 use super::*;
-use airband_core::providers::Job;
+use airband_core::providers::{Job, Offer};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 
@@ -24,35 +24,88 @@ const ENGINES: &[&str] = &[
 
 /// The models in the catalogue that this build can run.
 pub(crate) fn models() -> impl Iterator<Item = &'static Model> {
-    airband_core::catalog::current().models.iter().filter(|m| ENGINES.contains(&m.engine))
+    airband_core::catalog::current().models.iter().filter(|m| ENGINES.contains(&m.engine.as_str()))
+}
+
+/// The name a copy of the catalogue is kept under, by the form of the document.
+const KEPT: &str = "catalog.2.json";
+
+/// What to write in a log about a copy of the catalogue that was just looked at: what it holds that this
+/// build cannot use, so an offer that vanished is never a mystery. `speaks` says whether this program has the
+/// code for an offer.
+fn news(taken: &airband_core::catalog::Taken, speaks: &dyn Fn(&Offer) -> bool) -> Vec<String> {
+    let mut lines: Vec<String> = taken.note.iter().map(|n| format!("catalogue: {n}")).collect();
+    if taken.newer {
+        let now = airband_core::catalog::current();
+        let unspoken: Vec<String> = now.providers.iter().flat_map(|p| p.offers.iter().filter(|o| !speaks(o)).map(move |o| format!("{} by \"{}\"", p.id, o.by.interface))).collect();
+        if !taken.left_out.is_empty() {
+            lines.push(format!("catalogue rev {}: left out {} rows this build cannot read ({})", now.rev, taken.left_out.len(), taken.left_out.join("; ")));
+        }
+        if !unspoken.is_empty() {
+            lines.push(format!("catalogue rev {}: {} offers are for a newer build and are not offered here ({})", now.rev, unspoken.len(), unspoken.join(", ")));
+        }
+    }
+    lines
+}
+
+/// Use the newest catalogue kept in `dir`, if it is newer than the one built in. Nothing is fetched. Returns
+/// what is worth a line in a log. The one place a kept catalogue is read, for the app and the tower alike.
+pub fn catalog_load(dir: &Path, speaks: &dyn Fn(&Offer) -> bool) -> Vec<String> {
+    let at = dir.join(KEPT);
+    match (std::fs::read(&at), std::fs::read_to_string(at.with_extension("json.sig"))) {
+        (Ok(doc), Ok(sig)) => match airband_core::catalog::accept(&doc, &sig) {
+            Ok(taken) => news(&taken, speaks),
+            Err(why) => vec![format!("catalogue: the copy kept here was not used ({why})")],
+        },
+        _ => Vec::new(),
+    }
+}
+
+/// Fetch the published catalogue and, if it is airband's and newer, use it and keep it in `dir`. True when
+/// it is now the one in use, with what is worth a line in a log. Blocks for a few seconds at most; does
+/// nothing with no network. The one place it is fetched, for the app and the tower alike.
+pub fn catalog_refresh(dir: &Path, speaks: &dyn Fn(&Offer) -> bool) -> (bool, Vec<String>) {
+    let agent = crate::net::agent(Duration::from_secs(6));
+    let get = |url: &str| agent.get(url).call().ok().filter(|r| r.status().as_u16() == 200).and_then(|mut r| r.body_mut().read_to_vec().ok());
+    let address = airband_core::catalog::ADDRESS;
+    let (Some(doc), Some(sig)) = (get(address), get(&format!("{address}.sig"))) else { return (false, Vec::new()) };
+    let sig = String::from_utf8_lossy(&sig).to_string();
+    match airband_core::catalog::accept(&doc, &sig) {
+        Ok(taken) => {
+            if taken.newer {
+                let at = dir.join(KEPT);
+                let _ = std::fs::write(&at, &doc);
+                let _ = std::fs::write(at.with_extension("json.sig"), sig);
+            }
+            (taken.newer, news(&taken, speaks))
+        }
+        Err(why) => (false, vec![format!("catalogue: the published copy was not taken ({why})")]),
+    }
+}
+
+/// What this device does itself is speaking and listening; reading is his computer's.
+fn this_device_speaks(offer: &Offer) -> bool {
+    match offer.job {
+        Job::Voice => crate::voices::speaks(offer),
+        Job::Ears => crate::hears::listens(offer),
+        Job::Summary => true,
+    }
 }
 
 /// Use the newest catalogue this device has kept (in `dir`, a folder of the app's own), if it is newer than
 /// the one built in. Nothing is fetched. Call once at the start.
 #[uniffi::export]
 pub fn load_catalog(dir: String) {
-    let at = Path::new(&dir).join("catalog.json");
-    if let (Ok(doc), Ok(sig)) = (std::fs::read(&at), std::fs::read_to_string(at.with_extension("json.sig"))) {
-        let _ = airband_core::catalog::accept(&doc, &sig);
-    }
+    catalog_load(Path::new(&dir), &this_device_speaks).iter().for_each(|line| eprintln!("{line}"));
 }
 
 /// Fetch the published catalogue and, if it is airband's and newer, use it and keep it in `dir`. True when
 /// what a chooser lists may have changed. Blocks for a few seconds at most; does nothing with no network.
 #[uniffi::export]
 pub fn refresh_catalog(dir: String) -> bool {
-    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(6))).build().into();
-    let get = |url: &str| agent.get(url).call().ok().and_then(|mut r| r.body_mut().read_to_vec().ok());
-    let address = airband_core::catalog::ADDRESS;
-    let (Some(doc), Some(sig)) = (get(address), get(&format!("{address}.sig"))) else { return false };
-    let sig = String::from_utf8_lossy(&sig).to_string();
-    if airband_core::catalog::accept(&doc, &sig) != Ok(true) {
-        return false;
-    }
-    let at = Path::new(&dir).join("catalog.json");
-    let _ = std::fs::write(&at, &doc);
-    let _ = std::fs::write(at.with_extension("json.sig"), sig);
-    true
+    let (changed, lines) = catalog_refresh(Path::new(&dir), &this_device_speaks);
+    lines.iter().for_each(|line| eprintln!("{line}"));
+    changed
 }
 
 /// A model the device can run itself, for a settings screen.
@@ -64,8 +117,10 @@ pub struct LocalModel {
     pub name: String,
     /// How much is fetched, in megabytes.
     pub megabytes: u32,
-    /// It is on this device, whole.
+    /// It is on this device, whole, and can be used.
     pub fetched: bool,
+    /// What is on this device is an earlier version: it works, and fetching again brings the new one.
+    pub stale: bool,
     /// Who made it and under what licence: shown where it is offered.
     pub credit: String,
 }
@@ -73,17 +128,72 @@ pub struct LocalModel {
 pub(crate) fn model(kind: &str) -> Option<&'static Model> {
     models().find(|m| m.kind == kind)
 }
-/// Where a model's files are, under the app's folder.
-pub(crate) fn folder(dir: &str, m: &Model) -> PathBuf {
-    Path::new(dir).join("models").join(m.kind)
+
+/// Everything of one model on this device, under the app's folder: a folder for each version of it.
+fn home(dir: &str, m: &Model) -> PathBuf {
+    Path::new(dir).join("models").join(&m.kind)
 }
+/// Where the version the catalogue now names is kept.
+fn version_folder(dir: &str, m: &Model) -> PathBuf {
+    if m.version.is_empty() { home(dir, m) } else { home(dir, m).join(&m.version) }
+}
+/// Left in a version's folder when every file of it has been fetched and checked: it says the folder is whole
+/// without the catalogue row it was fetched by, which may since have moved on.
+const WHOLE: &str = ".whole";
+
+/// Files fetched before versions had folders of their own sit in the model's folder itself. When they are
+/// the version the catalogue names, whole, they are moved into its folder, so nothing is fetched twice.
+fn settle(dir: &str, m: &Model) {
+    let (home, to) = (home(dir, m), version_folder(dir, m));
+    let whole_in = |folder: &Path| m.files.iter().all(|(path, size, _)| std::fs::metadata(folder.join(path)).is_ok_and(|f| f.is_file() && f.len() == *size));
+    if m.version.is_empty() || to.exists() || !whole_in(&home) {
+        return;
+    }
+    for (path, _, _) in &m.files {
+        let dest = to.join(path);
+        if std::fs::create_dir_all(dest.parent().unwrap_or(&to)).and_then(|_| std::fs::rename(home.join(path), &dest)).is_err() {
+            return;
+        }
+    }
+    let _ = std::fs::write(to.join(WHOLE), "");
+}
+
+/// The version the catalogue names is on this device, whole: each file was checked against its hash before
+/// it took its name.
+fn current(dir: &str, m: &Model) -> bool {
+    settle(dir, m);
+    m.files.iter().all(|(to, size, _)| std::fs::metadata(version_folder(dir, m).join(to)).is_ok_and(|f| f.is_file() && f.len() == *size))
+}
+
+/// Where to run the model from: the version the catalogue names when it is here whole; else a version
+/// fetched earlier, which stays in use until the new one is whole. Nothing when none is here.
+pub(crate) fn usable(dir: &str, m: &Model) -> Option<PathBuf> {
+    if current(dir, m) {
+        return Some(version_folder(dir, m));
+    }
+    let mut earlier: Vec<PathBuf> = std::fs::read_dir(home(dir, m)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.join(WHOLE).is_file()).collect();
+    earlier.sort();
+    earlier.pop()
+}
+
+/// Where a model's files are, to run it: see [`usable`]. Before any are here, where they will be.
+pub(crate) fn folder(dir: &str, m: &Model) -> PathBuf {
+    usable(dir, m).unwrap_or_else(|| version_folder(dir, m))
+}
+/// The model can be run on this device now.
 pub(crate) fn fetched(dir: &str, m: &Model) -> bool {
-    // whole files only: each was checked against its hash before it took its name
-    m.files.iter().all(|(to, size, _)| std::fs::metadata(folder(dir, m).join(to)).is_ok_and(|f| f.is_file() && f.len() == *size))
+    usable(dir, m).is_some()
+}
+
+/// Where the files of a model are on this device, for a host that runs the model itself. Empty for a model
+/// this build does not have.
+#[uniffi::export]
+pub fn local_model_folder(dir: String, kind: String) -> String {
+    model(&kind).map(|m| folder(&dir, m).display().to_string()).unwrap_or_default()
 }
 
 fn listed(dir: &str, job: Job) -> Vec<LocalModel> {
-    models().filter(|m| m.job == job).map(|m| LocalModel { kind: m.kind.into(), name: m.name.into(), megabytes: (m.files.iter().map(|f| f.1).sum::<u64>() as f64 / 1e6).round() as u32, fetched: fetched(dir, m), credit: m.credit.into() }).collect()
+    models().filter(|m| m.job == job).map(|m| LocalModel { kind: m.kind.clone(), name: m.name.clone(), megabytes: (m.files.iter().map(|f| f.1).sum::<u64>() as f64 / 1e6).round() as u32, fetched: fetched(dir, m), stale: fetched(dir, m) && !current(dir, m), credit: m.credit.clone() }).collect()
 }
 
 /// The voices this build can make on the device, and whether each one's model is here. `dir` is a folder of
@@ -110,7 +220,7 @@ pub struct VoiceChoice {
 /// The voices a voice model offers, the usual one first. Empty for a model that is not a voice.
 #[uniffi::export]
 pub fn local_voice_choices(kind: String) -> Vec<VoiceChoice> {
-    model(&kind).map(|m| m.voices.iter().map(|(name, about)| VoiceChoice { name: name.to_string(), label: name.to_string(), about: about.to_string(), preview: format!("{}/previews/{name}.m4a", m.base) }).collect()).unwrap_or_default()
+    model(&kind).map(|m| m.voices.iter().map(|(name, about)| VoiceChoice { name: name.clone(), label: name.clone(), about: about.clone(), preview: format!("{}/previews/{name}.m4a", m.base) }).collect()).unwrap_or_default()
 }
 
 /// And the listening models it can run.
@@ -139,13 +249,14 @@ pub fn fetch_local_model(dir: String, kind: String) -> Result<(), RadioError> {
     let told = |reason: &str| RadioError::Told { reason: reason.into() };
     let m = model(&kind).ok_or_else(|| told("This app has no such model."))?;
     let _one = FETCHING.lock().unwrap_or_else(|e| e.into_inner());
-    let folder = folder(&dir, m);
+    settle(&dir, m);
+    let folder = version_folder(&dir, m);
     GOT.store(0, Ordering::SeqCst);
     OF.store(m.files.iter().map(|f| f.1).sum(), Ordering::SeqCst);
     // no limit on the whole of it (a model is tens or hundreds of megabytes on whatever connection he has),
     // only on a stall
     let agent: ureq::Agent = ureq::Agent::config_builder().timeout_connect(Some(Duration::from_secs(15))).timeout_recv_response(Some(Duration::from_secs(30))).build().into();
-    for (to, size, sha) in m.files {
+    for (to, size, sha) in &m.files {
         let path = folder.join(to);
         if std::fs::metadata(&path).is_ok_and(|f| f.len() == *size) {
             GOT.fetch_add(*size, Ordering::SeqCst);
@@ -187,6 +298,14 @@ pub fn fetch_local_model(dir: String, kind: String) -> Result<(), RadioError> {
         }
         std::fs::rename(&part, &path).map_err(|_| told("Could not write the model to this device."))?;
     }
+    // This version is whole: say so, and only now let go of what was here before it (an earlier version, or
+    // files from before versions had folders), which was in use until this moment.
+    if !m.version.is_empty() {
+        let _ = std::fs::write(folder.join(WHOLE), "");
+        for other in std::fs::read_dir(home(&dir, m)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| *p != folder) {
+            let _ = if other.is_dir() { std::fs::remove_dir_all(&other) } else { std::fs::remove_file(&other) };
+        }
+    }
     Ok(())
 }
 
@@ -199,7 +318,7 @@ pub fn remove_local_model(dir: String, kind: String) {
             Job::Ears => crate::ears::stop_using(&kind),
             Job::Summary => {}
         }
-        let _ = std::fs::remove_dir_all(folder(&dir, m));
+        let _ = std::fs::remove_dir_all(home(&dir, m));
     }
 }
 
@@ -217,6 +336,53 @@ mod tests {
         // nothing is here until it is fetched
         let dir = std::env::temp_dir().join(format!("airband-models-{}", random_hex(4))).display().to_string();
         assert!(local_listeners(dir.clone()).iter().chain(local_voices(dir).iter()).all(|m| !m.fetched && m.megabytes > 0));
+    }
+
+    #[test]
+    fn what_a_copy_holds_that_this_build_cannot_use_is_said() {
+        let taken = airband_core::catalog::Taken { newer: true, left_out: vec!["x: an offer (missing field `label`)".into()], note: None };
+        // a build that speaks nothing: every offer in hand is for another build
+        let lines = news(&taken, &|_| false);
+        assert!(lines.len() == 2 && lines[0].contains("left out 1 rows") && lines[1].contains("for a newer build"), "{lines:?}");
+        // one that speaks everything, and a copy with nothing odd in it: nothing to say
+        assert!(news(&airband_core::catalog::Taken { newer: true, ..Default::default() }, &|_| true).is_empty());
+        // a copy that was not taken says only what is worth knowing about that
+        let same = airband_core::catalog::Taken { note: Some("a catalogue with the same rev (5) has different rows; the one in hand is kept".into()), ..Default::default() };
+        assert_eq!(news(&same, &|_| false).len(), 1);
+    }
+
+    /// A model like one in the catalogue, with two small files.
+    fn small(version: &str) -> Model {
+        Model { kind: "tiny".into(), name: "Tiny".into(), job: Job::Voice, engine: "ptts".into(), version: version.into(), base: "https://airband.dev/models/tiny".into(), files: vec![("a.bin".into(), 3, "0".repeat(64)), ("voices/b.bin".into(), 2, "0".repeat(64))], voices: Vec::new(), credit: String::new() }
+    }
+    fn put(folder: &Path) {
+        std::fs::create_dir_all(folder.join("voices")).unwrap();
+        std::fs::write(folder.join("a.bin"), "abc").unwrap();
+        std::fs::write(folder.join("voices/b.bin"), "de").unwrap();
+    }
+
+    #[test]
+    fn a_version_here_stays_in_use_until_the_new_one_is_whole() {
+        let dir = std::env::temp_dir().join(format!("airband-models-{}", random_hex(4)));
+        let at = dir.display().to_string();
+        let (one, two) = (small("1"), small("2"));
+        // fetched before versions had folders: found, and moved into the folder of the version it is
+        put(&dir.join("models/tiny"));
+        assert!(fetched(&at, &one) && current(&at, &one));
+        assert_eq!(folder(&at, &one), dir.join("models/tiny/1"));
+        assert!(!dir.join("models/tiny/a.bin").exists() && dir.join("models/tiny/1/.whole").is_file());
+        // the catalogue moves on to version 2: version 1 is still what runs, and it is known to be behind
+        assert!(fetched(&at, &two) && !current(&at, &two));
+        assert_eq!(folder(&at, &two), dir.join("models/tiny/1"));
+        // half of version 2 changes nothing
+        std::fs::create_dir_all(dir.join("models/tiny/2")).unwrap();
+        std::fs::write(dir.join("models/tiny/2/a.bin"), "abc").unwrap();
+        assert_eq!(folder(&at, &two), dir.join("models/tiny/1"));
+        // whole: it is the one that runs
+        put(&dir.join("models/tiny/2"));
+        assert!(current(&at, &two));
+        assert_eq!(folder(&at, &two), dir.join("models/tiny/2"));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// The real download, from where the app gets it, every file checked against its hash. Run by hand:

@@ -542,7 +542,7 @@ async fn feed(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
                 m
             })
             .collect();
-        return Json(Feed { schema: airband_core::radio::SCHEMA.into(), rev: upto, messages, roster: inner.roster_entries(), roster_rev: inner.roster_rev(), listens: !app.cfg.ears.is_none(), reads: { let r = judge::reader(&app.cfg); r.offer(crate::providers::Job::Summary).map(|(_, o)| o.label.to_string()).unwrap_or_default() }, direct: config::lan_addrs().into_iter().filter(|_| app.cfg.lan).chain(config::tailscale_addrs()).map(|a| format!("http://{a}:{}", app.cfg.port)).collect(), colours: inner.colours.clone(), seq: inner.seq, projects: inner.launchable(&app.cfg).into_keys().collect(), open: open.into_iter().collect(), quick: airband_core::radio::quick_defaults().into_iter().chain(app.cfg.quick.iter().cloned()).collect(), station: config::station(&app.cfg) });
+        return Json(Feed { schema: airband_core::radio::SCHEMA.into(), rev: upto, messages, roster: inner.roster_entries(), roster_rev: inner.roster_rev(), listens: !app.cfg.ears.is_none(), reads: { let r = judge::reader(&app.cfg); r.offer(crate::providers::Job::Summary).map(|(_, o)| o.label.clone()).unwrap_or_default() }, direct: config::lan_addrs().into_iter().filter(|_| app.cfg.lan).chain(config::tailscale_addrs()).map(|a| format!("http://{a}:{}", app.cfg.port)).collect(), colours: inner.colours.clone(), seq: inner.seq, projects: inner.launchable(&app.cfg).into_keys().collect(), open: open.into_iter().collect(), quick: airband_core::radio::quick_defaults().into_iter().chain(app.cfg.quick.iter().cloned()).collect(), station: config::station(&app.cfg) });
     }
 }
 
@@ -612,6 +612,11 @@ async fn ears(State(app): State<Arc<App>>) -> Json<EarsGrant> {
     Json(ears::grant(&app).await)
 }
 
+/// What can read for this tower, and what does now: the tower's own list, for a radio that offers the choice.
+async fn reads_offered(State(app): State<Arc<App>>) -> Json<airband_core::radio::ReadsOffered> {
+    Json(judge::offered(&app.cfg))
+}
+
 /// A radio chooses what reads for this tower. Tried with a real call before it is kept.
 async fn reads(Json(wanted): Json<airband_core::radio::SetReads>) -> Json<Value> {
     Json(match judge::set_reader(wanted).await {
@@ -671,7 +676,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/radio/picture/{id}", get(picture_part))
         .route("/v1/radio/ears", get(ears))
         .route("/v1/radio/hear", post(hear))
-        .route("/v1/radio/reads", post(reads))
+        .route("/v1/radio/reads", get(reads_offered).post(reads))
         .route("/v1/radio/message/{id}", get(message))
         .route("/v1/radio/attachment", post(attachment))
         .route("/v1/radio/accounts", get(accounts_list))

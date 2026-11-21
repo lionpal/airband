@@ -9,13 +9,13 @@
 use super::*;
 use airband_core::audio::{BLOCK_BYTES, BLOCK_SAMPLES, Encoder, base64_encode, samples};
 use airband_core::radio::SpeechPart;
-use airband_radio::voices::synth_for;
+use airband_radio::voices::{synth, synth_for};
 use config::Voice;
 use sha2::{Digest, Sha256};
 
 /// Speak a word with this voice and say how many seconds of sound came back. For trying a voice by hand.
 pub(super) fn try_voice(voice: &Voice) -> Result<f32, String> {
-    let synth = synth_for(voice).ok_or("no voice is set")?;
+    let synth = synth(voice)?;
     let mut bytes = 0usize;
     synth.speak("Ready.", &mut |pcm| bytes += pcm.len(), &mut |_, _| {})?;
     if bytes == 0 {

@@ -1,7 +1,7 @@
 //! `airband setup`: choose what reads, what speaks and what listens, in the terminal, and pair a phone.
 //! `airband keys`: the keys those use.
 //!
-//! What can be chosen is `providers::PROVIDERS`; nothing in the questions below names a provider.
+//! What can be chosen is what `providers::offering` lists; nothing in the questions below names a provider.
 //!
 //! A key is kept once, under a name, with the provider it is for (`Config::keys`). The summaries, the voice
 //! and the listening each use a key by its value, and the settings file writes that as the key's name, so
@@ -80,7 +80,7 @@ fn key_for(cfg: &mut Config, p: &Provider) -> Option<String> {
     }
     // the provider's own name for the first, then a number
     let name = (1..).map(|n| if n == 1 { p.id.to_string() } else { format!("{}-{n}", p.id) }).find(|n| !cfg.keys.contains_key(n)).unwrap();
-    cfg.keys.insert(name, StoredKey { provider: p.id.into(), secret: pasted.clone() });
+    cfg.keys.insert(name, StoredKey { provider: p.id.clone(), secret: pasted.clone() });
     Some(pasted)
 }
 
@@ -92,7 +92,7 @@ fn choose(cfg: &mut Config, job: Job, title: &str, about: &str, none: &str) {
     loop {
         for (i, p) in offered.iter().enumerate() {
             let o = p.offers.iter().find(|o| o.job == job);
-            println!("  {}. {}{}", i + 1, o.map(|o| o.label).unwrap_or(p.name), o.filter(|o| !o.about.is_empty()).map(|o| format!(". {}.", o.about)).unwrap_or_default());
+            println!("  {}. {}{}", i + 1, o.map(|o| &o.label).unwrap_or(&p.name), o.filter(|o| !o.about.is_empty()).map(|o| format!(". {}.", o.about)).unwrap_or_default());
         }
         println!("  {}. {none}", offered.len() + 1);
         let pick = line("  Which? (return keeps what you have) ");
@@ -107,16 +107,16 @@ fn choose(cfg: &mut Config, job: Job, title: &str, about: &str, none: &str) {
         let chosen = match offered.get(n - 1) {
             None => Use::default(),
             Some(p) => {
-                let mut u = Use::of(p.id);
+                let mut u = Use::of(&p.id);
                 if p.key {
                     let Some(key) = key_for(cfg, p) else { continue };
                     u.key = key;
                 }
-                for a in p.offers.iter().filter(|o| o.job == job).flat_map(|o| o.asks) {
+                for a in p.offers.iter().filter(|o| o.job == job).flat_map(|o| &o.asks) {
                     let said = line(&format!("  {} [{}]: ", a.question, a.usual));
                     // what he leaves as usual is not written down, so it follows the row if the row changes
                     if !said.is_empty() && said != a.usual {
-                        u.set.insert(a.field.into(), json!(said));
+                        u.set.insert(a.field.clone(), json!(said));
                     }
                 }
                 u
@@ -196,13 +196,13 @@ pub fn keys(args: &[String]) -> Result<(), String> {
             }
             for (name, k) in &cfg.keys {
                 let uses = used_for(&cfg, &k.secret);
-                println!("  {name}  ({})  {}", airband_core::catalog::current().providers.iter().find(|p| p.id == k.provider).map(|p| p.name).unwrap_or(&k.provider), if uses.is_empty() { "not in use".to_string() } else { format!("used for {}", uses.join(", ")) });
+                println!("  {name}  ({})  {}", airband_core::catalog::current().providers.iter().find(|p| p.id == k.provider).map(|p| &p.name).unwrap_or(&k.provider), if uses.is_empty() { "not in use".to_string() } else { format!("used for {}", uses.join(", ")) });
             }
             println!("Change them:  airband setup  |  airband keys add <name> <provider>  |  airband keys remove <name>");
         }
         Some("add") => {
             let (name, provider) = (args.get(1).ok_or("airband keys add <name> <provider>")?, args.get(2).ok_or("airband keys add <name> <provider>")?);
-            let p = airband_core::catalog::current().providers.iter().find(|p| p.id == *provider && p.key).ok_or_else(|| format!("no provider called \"{provider}\" takes a key: {}", airband_core::catalog::current().providers.iter().filter(|p| p.key).map(|p| p.id).collect::<Vec<_>>().join(", ")))?;
+            let p = airband_core::catalog::current().providers.iter().find(|p| p.id == *provider && p.key).ok_or_else(|| format!("no provider called \"{provider}\" takes a key: {}", airband_core::catalog::current().providers.iter().filter(|p| p.key).map(|p| p.id.as_str()).collect::<Vec<_>>().join(", ")))?;
             if name.starts_with('-') || cfg.keys.contains_key(name) {
                 return Err(format!("\"{name}\" is taken or is not a name."));
             }
@@ -210,7 +210,7 @@ pub fn keys(args: &[String]) -> Result<(), String> {
             if pasted.is_empty() {
                 return Err("No key given.".into());
             }
-            cfg.keys.insert(name.clone(), StoredKey { provider: p.id.into(), secret: pasted });
+            cfg.keys.insert(name.clone(), StoredKey { provider: p.id.clone(), secret: pasted });
             config::save(&cfg)?;
             println!("Kept as \"{name}\". Choose what uses it with:  airband setup");
         }
