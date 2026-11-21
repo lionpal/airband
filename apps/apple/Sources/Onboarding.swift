@@ -24,7 +24,8 @@ struct OnboardingView: View {
     /// The same, for a computer that is to be reached with no relay between.
     private static let straight = "brew install lionpal/airband/airband && airband relay off && airband start"
     /// He asked for the pairing with no relay.
-    @State private var noRelay = false
+    // (development only: `-airband.devNoRelay YES` opens with it asked for, for a screenshot)
+    @State private var noRelay = UserDefaults.standard.bool(forKey: "airband.devNoRelay")
     private var command: String { noRelay ? Self.straight : Self.command }
     /// The steps: the coding agent, each job, then the computer.
     private var jobs: [ChoiceJob] { model.jobs }
