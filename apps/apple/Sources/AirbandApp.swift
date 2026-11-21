@@ -629,7 +629,7 @@ struct FeedView: View {
         switch model.status {
         case .listening: return "listening \u{b7} tap to send"
         case .sending: return "sending"
-        case .speaking(let callsign): return callsign.isEmpty ? "speaking" : callsign
+        case .speaking(let callsign): return callsign ?? "airband"
         default: return nil
         }
     }
