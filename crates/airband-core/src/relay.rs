@@ -195,6 +195,56 @@ pub struct PushAnswer {
 /// The largest sealed notification, in bytes before base64: what fits in one push with room for the rest.
 pub const PUSH_MOST: usize = 2400;
 
+/// What a banner on the phone's lock screen says while the app is asleep: three numbers and nothing else.
+///
+/// A push service delivers a banner's contents as it is given them, not sealed, so this is everything a relay
+/// and a push service ever see of what his agents are doing. It must stay numbers: never a name, a project, a
+/// sentence or an agent's id. A test below fails if a field that can hold text is added.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Counts {
+    /// How many agents are waiting for him.
+    pub waiting: u32,
+    /// How many are working.
+    pub working: u32,
+    /// How many reports he has not had in front of him.
+    pub unread: u32,
+}
+
+/// What a tower asks to be done with a phone's banner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BannerEvent {
+    /// Put one up (the phone has none from this computer).
+    Start,
+    /// Change the numbers on the one that is up.
+    Update,
+    /// Take it down.
+    End,
+}
+
+/// `POST /v1/channels/<channel>/banner`, from the channel's tower: have a push service change the banner on the
+/// phone. Answered with a [`PushAnswer`], as a notification is.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BannerRequest {
+    /// Which push service the address belongs to ("apns").
+    pub provider: String,
+    /// The banner's address at that service, as the phone gave it to the tower: for [`BannerEvent::Start`] the
+    /// address that puts one up, otherwise the address of the one that is up.
+    pub to: String,
+    pub event: BannerEvent,
+    pub counts: Counts,
+    /// More agents are waiting than before: worth lighting the screen for. Anything else arrives quietly.
+    #[serde(default)]
+    pub urgent: bool,
+}
+
+/// The number a banner carries to say which of his computers it is for: the phone may be paired with several,
+/// and each keeps its own banner. Taken from the channel's name, which the relay already knows and which says
+/// nothing about him. The phone works out the same number for each pairing.
+pub fn banner_slot(channel: &str) -> u32 {
+    channel.get(..8).and_then(|h| u32::from_str_radix(h, 16).ok()).unwrap_or(0)
+}
+
 /// True when a call's time is close enough to now to be accepted.
 pub fn fresh(call_ms: u64, now_ms: u64) -> bool {
     call_ms.abs_diff(now_ms) <= FRESH_MS
@@ -229,6 +279,35 @@ mod tests {
         let k = Keys::derive(&new_secret()).unwrap();
         assert_ne!(k.seal(Direction::ToTower, b"yes"), k.seal(Direction::ToTower, b"yes"));
     }
+    /// A banner's numbers go through a push service unsealed. Nothing that can hold words may be among them.
+    #[test]
+    fn what_a_banner_carries_is_numbers_and_can_hold_no_text() {
+        // a type with a String, a Vec or a map in it is not Copy: adding one stops this compiling
+        fn only_plain_values<T: Copy>() {}
+        only_plain_values::<Counts>();
+        only_plain_values::<BannerEvent>();
+        // and as it is written out, every value is a number
+        let written = serde_json::to_value(Counts { waiting: u32::MAX, working: u32::MAX, unread: u32::MAX }).unwrap();
+        let fields = written.as_object().unwrap();
+        let mut names: Vec<&str> = fields.keys().map(String::as_str).collect();
+        names.sort();
+        assert_eq!(names, ["unread", "waiting", "working"]);
+        assert!(fields.values().all(|v| v.is_u64()), "a banner's contents must be numbers: {written}");
+        // the whole request: the only text in it is the service's name, the address and the event's own word
+        let ask = serde_json::to_value(BannerRequest { provider: "apns".into(), to: "abc".into(), event: BannerEvent::Update, counts: Counts::default(), urgent: true }).unwrap();
+        let mut text: Vec<&str> = ask.as_object().unwrap().iter().filter(|(_, v)| v.is_string()).map(|(k, _)| k.as_str()).collect();
+        text.sort();
+        assert_eq!(text, ["event", "provider", "to"]);
+        assert_eq!(ask["event"], "update");
+    }
+
+    #[test]
+    fn a_banner_slot_is_the_same_number_on_both_sides() {
+        let k = Keys::derive(&new_secret()).unwrap();
+        assert_eq!(banner_slot(&k.channel), u32::from_str_radix(&k.channel[..8], 16).unwrap());
+        assert_eq!(banner_slot("zz"), 0);
+    }
+
     #[test]
     fn the_pull_token_is_not_the_channel_and_secrets_are_checked() {
         let k = Keys::derive(&new_secret()).unwrap();

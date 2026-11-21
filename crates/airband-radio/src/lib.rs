@@ -835,6 +835,12 @@ impl Radio {
         self.ask("/push", serde_json::to_value(airband_core::radio::PushTarget { provider: provider.into(), token: token.into() }).unwrap())
     }
 
+    /// Tell the tower where this radio's banner can be put up or changed while the app is asleep, or with an
+    /// empty token that it no longer can.
+    pub(crate) fn banner_target(&self, provider: &str, which: airband_core::radio::BannerAddress, token: &str) -> Result<(), RadioError> {
+        self.ask("/banner", serde_json::to_value(airband_core::radio::BannerTarget { provider: provider.into(), which, token: token.into() }).unwrap())
+    }
+
     /// Send an answer now and wait for the tower to have it: for an answer given where there are only seconds
     /// to send it in (a notification's button, with the app behind the lock screen). If it cannot be sent in
     /// that time it is left in the outbox under the same id, to go when it can, and the caller is told.
