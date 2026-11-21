@@ -77,10 +77,15 @@ pub fn command(args: &[String]) -> Result<(), String> {
             if let Some(sig) = words.get(1) {
                 catalog::signed(&doc, &std::fs::read_to_string(sig).map_err(|e| e.to_string())?)?;
             }
-            // every row of it is one this build can use: what it would leave out is a mistake in a row, or
-            // an interface nobody has written yet
+            // every row of it is one this source can use: summaries by this program, listening and speaking by
+            // the phone's core. What it would leave out is a mistake in a row, or an interface nobody has
+            // written yet
             let c = catalog::inspect(text)?;
-            let unspoken: Vec<String> = c.providers.iter().flat_map(|p| p.offers.iter().filter(|o| !crate::providers::speaks(o)).map(move |o| format!("{} by \"{}\"", p.id, o.by.interface))).collect();
+            let usable = |o: &airband_core::providers::Offer| match o.job {
+                airband_core::providers::Job::Summary => crate::providers::speaks(o),
+                airband_core::providers::Job::Voice | airband_core::providers::Job::Ears => airband_radio::can_use(o),
+            };
+            let unspoken: Vec<String> = c.providers.iter().flat_map(|p| p.offers.iter().filter(|o| !usable(o)).map(move |o| format!("{} by \"{}\"", p.id, o.by.interface))).collect();
             if !c.left_out.is_empty() || !unspoken.is_empty() {
                 return Err(format!("this build would leave rows of it out: {}", c.left_out.iter().chain(&unspoken).cloned().collect::<Vec<_>>().join("; ")));
             }

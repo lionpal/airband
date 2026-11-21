@@ -1028,3 +1028,13 @@ impl Radio {
         }
     }
 }
+
+/// Does the phone's core have the code for what this listening or voice offer names? For whoever checks a
+/// catalogue before it is published.
+pub fn can_use(offer: &airband_core::providers::Offer) -> bool {
+    match offer.job {
+        airband_core::providers::Job::Voice => voices::speaks(offer),
+        airband_core::providers::Job::Ears => hears::listens(offer),
+        airband_core::providers::Job::Summary => false,
+    }
+}
