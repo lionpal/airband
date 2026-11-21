@@ -492,7 +492,15 @@ struct FeedView: View {
                 ProgressView().controlSize(.large).tint(Palette.quiet).padding(.bottom, 4)
                 Text("Connecting").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.quiet)
             } else if model.online {
-                Text("No messages yet").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.quiet)
+                if model.view.rooms.isEmpty {
+                    // paired, and no agent has been heard from: say what makes one appear
+                    let tool = model.usedTools.first?.name ?? "your coding agent"
+                    Text("You\u{2019}re connected").font(.system(size: 19, weight: .semibold))
+                    Text("Start \(tool) in a project on your computer and it shows up here. A session that was already open needs to be started again.")
+                        .font(.system(size: 16)).foregroundStyle(Palette.quiet).multilineTextAlignment(.center).lineSpacing(3)
+                } else {
+                    Text("No messages yet").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.quiet)
+                }
             } else {
                 Image(systemName: "wifi.slash").font(.system(size: 26, weight: .medium)).foregroundStyle(Palette.dim).padding(.bottom, 4)
                 Text(model.view.away.isEmpty ? "Can\u{2019}t reach your computer" : "Can\u{2019}t reach " + model.view.away.joined(separator: ", ")).font(.system(size: 19, weight: .semibold))
