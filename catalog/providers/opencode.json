@@ -3,6 +3,7 @@
   "name": "OpenCode, with your OpenCode login",
   "offers": [
     {
+      "id": "luna",
       "job": "summary",
       "by": {
         "interface": "command",

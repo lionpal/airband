@@ -18,7 +18,7 @@ use super::*;
 use crate::models::{Model, VoiceChoice};
 use crate::mouth::{Service, ServiceAsk};
 use airband_core::providers::{BY_TOWER, Job};
-use airband_core::radio::{ReadsOffered, SetReads};
+use airband_core::radio::{OfferName, ReadsOffered, SetReads};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -78,9 +78,15 @@ pub enum ChoiceState {
 /// One thing he can choose for a job.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct Choice {
-    /// What to pass back to [`Desk::choose_for`].
+    /// What to pass back to [`Desk::choose_for`]. It says nothing by itself: what it stands for is `place`,
+    /// `provider` and `offer`.
     pub id: String,
     pub place: ChoicePlace,
+    /// For a service: its provider's id, which is also what its key is kept under (one key serves everything
+    /// a provider offers). For a model on this device: the model's kind. Empty for his computer's choice.
+    pub provider: String,
+    /// For a service: which of its provider's offers this is. Empty otherwise.
+    pub offer: String,
     /// What to call it.
     pub title: String,
     /// One line under that: where it runs, what it needs from him, what it costs.
@@ -119,6 +125,9 @@ struct Pick {
     /// The model's kind or the provider's id. Empty for his computer's choice.
     #[serde(default)]
     id: String,
+    /// For a service: which of its provider's offers.
+    #[serde(default)]
+    offer: String,
     /// What a service was told beyond its key.
     #[serde(default)]
     set: BTreeMap<String, String>,
@@ -129,7 +138,7 @@ struct Pick {
 
 impl Pick {
     fn computer() -> Pick {
-        Pick { place: ChoicePlace::Computer, id: String::new(), set: BTreeMap::new(), voice: String::new() }
+        Pick { place: ChoicePlace::Computer, id: String::new(), offer: String::new(), set: BTreeMap::new(), voice: String::new() }
     }
 }
 
@@ -137,7 +146,10 @@ impl Pick {
 /// that can.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct Waiting {
+    /// The provider's id, and which of its offers.
     id: String,
+    #[serde(default)]
+    offer: String,
     #[serde(default)]
     set: BTreeMap<String, String>,
     /// He picked it himself. Otherwise it follows from the coding tool he said he uses most, and changes when
@@ -168,7 +180,7 @@ impl Saved {
     /// they need nothing from him (they are fetched when he finishes the first run), and the first coding tool
     /// in the catalogue is the one he is taken to use until he says.
     fn fresh() -> Saved {
-        let first = |job: Job| crate::models::models().find(|m| m.job == job).map(|m| Pick { place: ChoicePlace::Phone, id: m.kind.clone(), set: BTreeMap::new(), voice: String::new() }).unwrap_or_else(Pick::computer);
+        let first = |job: Job| crate::models::models().find(|m| m.job == job).map(|m| Pick { place: ChoicePlace::Phone, id: m.kind.clone(), offer: String::new(), set: BTreeMap::new(), voice: String::new() }).unwrap_or_else(Pick::computer);
         let mut saved = Saved { ears: Some(first(Job::Ears)), voice: Some(first(Job::Voice)), ..Saved::default() };
         saved.use_tools(airband_core::catalog::current().tools.first().map(|t| vec![t.id.to_string()]).unwrap_or_default());
         saved
@@ -189,7 +201,7 @@ impl Saved {
         self.tools = tools;
         if self.offered.is_none() && self.reads.as_ref().is_none_or(|w| !w.his) {
             let most = self.tools.first().cloned().unwrap_or_default();
-            self.reads = crate::mouth::services(Job::Summary).into_iter().find(|s| !most.is_empty() && s.login == most).map(|s| Waiting { id: s.kind, set: BTreeMap::new(), his: false });
+            self.reads = crate::mouth::services(Job::Summary).into_iter().find(|s| !most.is_empty() && s.login == most).map(|s| Waiting { id: s.kind, offer: s.offer, set: BTreeMap::new(), his: false });
         }
     }
 }
@@ -237,13 +249,21 @@ fn line(s: &Service, has_key: bool) -> String {
     if s.price.is_empty() { needs } else { format!("{needs}. {}.", s.price) }
 }
 
+/// What a service is called in a list: its provider and its offer together. Never taken apart again: a
+/// choice carries both beside it.
+fn service_id(provider: &str, offer: &str) -> String {
+    format!("{provider}/{offer}")
+}
+
 /// The one list for a job.
 fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> {
     let working = |id: &str| facts.work.as_ref().filter(|w| w.0 == id).map(|w| ChoiceState::Working { label: w.1.clone(), fraction: w.2 });
     let of_service = |s: Service, chosen: bool, has_key: bool, voice: String, state: ChoiceState| Choice {
         line: line(&s, has_key && chosen),
-        id: s.kind,
+        id: service_id(&s.kind, &s.offer),
         place: ChoicePlace::Service,
+        provider: s.kind,
+        offer: s.offer,
         title: s.name,
         free: s.free,
         more: s.more,
@@ -261,29 +281,29 @@ fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> {
     };
     if job == ChoiceJob::Reads {
         // his computer's own list once it has said; until then, what this build knows a computer can use
-        let (now, offers): (String, Vec<(Service, bool)>) = match &saved.offered {
+        let (now, offers): (Option<OfferName>, Vec<(Service, bool)>) = match &saved.offered {
             Some(o) => (
                 o.now.clone(),
                 o.offers
                     .iter()
                     .map(|r| {
                         let asks = r.asks.iter().map(|a| ServiceAsk { field: a.field.clone(), question: a.question.clone(), usual: a.usual.clone() }).collect();
-                        (Service { kind: r.id.clone(), name: r.label.clone(), more: !r.preferred, free: r.free, login: r.login.clone(), price: r.price.clone(), voices: Vec::new(), about: r.about.clone(), key: r.key, key_name: r.key_name.clone(), keys_at: r.keys_at.clone(), asks }, r.has_key)
+                        (Service { kind: r.provider.clone(), offer: r.offer.clone(), name: r.label.clone(), more: !r.preferred, free: r.free, login: r.login.clone(), price: r.price.clone(), voices: Vec::new(), about: r.about.clone(), key: r.key, key_name: r.key_name.clone(), keys_at: r.keys_at.clone(), asks }, r.has_key)
                     })
                     .collect(),
             ),
-            None => (String::new(), crate::mouth::services(Job::Summary).into_iter().map(|s| (s, false)).collect()),
+            None => (None, crate::mouth::services(Job::Summary).into_iter().map(|s| (s, false)).collect()),
         };
-        let chosen = saved.reads.as_ref().map(|w| w.id.clone()).unwrap_or(now);
+        let chosen = saved.reads.as_ref().map(|w| OfferName { provider: w.id.clone(), offer: w.offer.clone() }).or(now);
         // what uses the sign-in of a coding tool is offered to someone who uses that tool, those first
         let (mine, rest): (Vec<_>, Vec<_>) = offers.into_iter().filter(|(s, _)| s.login.is_empty() || saved.tools.contains(&s.login)).partition(|(s, _)| !s.login.is_empty());
         return mine
             .into_iter()
             .chain(rest)
             .map(|(s, there)| {
-                let is = s.kind == chosen;
+                let is = chosen.as_ref().is_some_and(|c| c.provider == s.kind && c.offer == s.offer);
                 let has_key = there || (facts.has_key)(&s.kind);
-                let state = working(&s.kind).unwrap_or(match () {
+                let state = working(&service_id(&s.kind, &s.offer)).unwrap_or(match () {
                     _ if is && saved.reads.is_some() => ChoiceState::Waiting,
                     _ if s.key && !has_key => ChoiceState::NeedsKey,
                     _ => ChoiceState::Ready,
@@ -296,6 +316,7 @@ fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> {
     let failed = |chosen: bool| facts.failed.clone().filter(|_| chosen).map(|why| ChoiceState::Failed { why });
     let mut out: Vec<Choice> = Vec::new();
     for m in crate::models::models().filter(|m| m.job == job.job()) {
+        let m = &*m;
         let (fetched, current) = (facts.here)(m);
         let chosen = pick.place == ChoicePlace::Phone && pick.id == m.kind;
         let size = megabytes(m);
@@ -307,6 +328,8 @@ fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> {
         out.push(Choice {
             id: m.kind.clone(),
             place: ChoicePlace::Phone,
+            provider: m.kind.clone(),
+            offer: String::new(),
             title: m.name.clone(),
             line: if fetched { "Runs on this phone".into() } else { format!("Runs on this phone. {size}\u{a0}MB download") },
             free: true,
@@ -326,9 +349,9 @@ fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> {
         });
     }
     for s in crate::mouth::services(job.job()) {
-        let chosen = pick.place == ChoicePlace::Service && pick.id == s.kind;
+        let chosen = pick.place == ChoicePlace::Service && pick.id == s.kind && pick.offer == s.offer;
         let has_key = (facts.has_key)(&s.kind);
-        let state = working(&s.kind).or(failed(chosen)).unwrap_or(if s.key && !has_key { ChoiceState::NeedsKey } else { ChoiceState::Ready });
+        let state = working(&service_id(&s.kind, &s.offer)).or(failed(chosen)).unwrap_or(if s.key && !has_key { ChoiceState::NeedsKey } else { ChoiceState::Ready });
         let voice = if chosen { pick.set.get("voice").cloned().unwrap_or_default() } else { String::new() };
         let usual = s.voices.first().map(|v| v.name.clone()).unwrap_or_default();
         out.push(of_service(s, chosen, has_key, if voice.is_empty() { usual } else { voice }, state));
@@ -337,6 +360,8 @@ fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> {
     out.push(Choice {
         id: BY_TOWER.into(),
         place: ChoicePlace::Computer,
+        provider: String::new(),
+        offer: String::new(),
         title: "Your computer\u{2019}s choice".into(),
         line: match job {
             ChoiceJob::Voice => "Whatever your computer is set up to speak with".into(),
@@ -394,12 +419,12 @@ impl Chooser {
             ChoicePlace::Computer => None,
             ChoicePlace::Phone => Some(match crate::models::model(&ears.id).filter(|m| m.job == Job::Ears) {
                 None => crate::ears::Own::Cannot("This version of airband cannot run the listening model you chose. Choose another in Settings, under Listening.".into()),
-                Some(m) if !crate::models::fetched(&self.dir, m) => crate::ears::Own::Cannot(format!("{} is not on this phone yet. Download it in Settings, under Listening.", m.name)),
-                Some(m) => crate::ears::Own::Model { name: m.name.clone(), folder: crate::models::folder(&self.dir, m).display().to_string() },
+                Some(m) if !crate::models::fetched(&self.dir, &m) => crate::ears::Own::Cannot(format!("{} is not on this phone yet. Download it in Settings, under Listening.", m.name)),
+                Some(m) => crate::ears::Own::Model { name: m.name.clone(), folder: crate::models::folder(&self.dir, &m).display().to_string() },
             }),
             ChoicePlace::Service => {
-                let with = crate::mouth::service_of(&ears.id, &key(&ears.id), ears.set.clone().into_iter().collect());
-                Some(if with.offer(Job::Ears).is_some_and(|(_, o)| crate::hears::listens(o)) { crate::ears::Own::Service(with) } else { crate::ears::Own::Cannot("This version of airband cannot listen with the service you chose. Choose another in Settings, under Listening.".into()) })
+                let with = crate::mouth::service_of(&ears.id, &ears.offer, &key(&ears.id), ears.set.clone().into_iter().collect());
+                Some(if with.offer(Job::Ears).is_some_and(|(_, o)| crate::hears::listens(&o)) { crate::ears::Own::Service(with) } else { crate::ears::Own::Cannot("This version of airband cannot listen with the service you chose. Choose another in Settings, under Listening.".into()) })
             }
         });
         let voice = saved.pick(ChoiceJob::Voice);
@@ -407,7 +432,7 @@ impl Chooser {
             ChoicePlace::Computer => None,
             ChoicePlace::Phone => Some(match crate::models::model(&voice.id).filter(|m| m.job == Job::Voice) {
                 None => crate::mouth::Own::Cannot("This version of airband cannot run the voice you chose. Choose another in Settings, under Voice.".into()),
-                Some(m) if !crate::models::fetched(&self.dir, m) => crate::mouth::Own::Cannot(format!("{} is not on this phone yet. Download it in Settings, under Voice.", m.name)),
+                Some(m) if !crate::models::fetched(&self.dir, &m) => crate::mouth::Own::Cannot(format!("{} is not on this phone yet. Download it in Settings, under Voice.", m.name)),
                 Some(m) => match m.voices.iter().map(|v| &v.0).find(|name| voice.voice.is_empty() || **name == voice.voice) {
                     Some(name) => crate::mouth::Own::Model { dir: self.dir.clone(), kind: m.kind.clone(), voice: name.clone() },
                     // a voice the model no longer has is not swapped for another of its voices
@@ -415,7 +440,7 @@ impl Chooser {
                 },
             }),
             ChoicePlace::Service => {
-                let with = crate::mouth::service_of(&voice.id, &key(&voice.id), voice.set.clone().into_iter().collect());
+                let with = crate::mouth::service_of(&voice.id, &voice.offer, &key(&voice.id), voice.set.clone().into_iter().collect());
                 Some(if crate::voices::synth_for(&with).is_some() { crate::mouth::Own::Service(with) } else { crate::mouth::Own::Cannot("This version of airband cannot speak with the service you chose. Choose another in Settings, under Voice.".into()) })
             }
         });
@@ -511,19 +536,21 @@ impl Desk {
             host.changed();
             r
         };
+        // a key is kept under its provider's id, whichever of the provider's offers it was given for
+        let (provider, offer) = (choice.provider.clone(), choice.offer.clone());
         if job == ChoiceJob::Reads {
             if let Some(key) = &key {
-                host.keep_secret(id.clone(), Some(key.clone()));
+                host.keep_secret(provider.clone(), Some(key.clone()));
             }
             let radios: Vec<Arc<Radio>> = self.shared.state.lock().unwrap().stations.iter().filter(|s| s.online).map(|s| s.radio.clone()).collect();
             // no computer to ask: it waits for one
             if radios.is_empty() {
-                chooser.change(|s| s.reads = Some(Waiting { id, set, his: true }));
+                chooser.change(|s| s.reads = Some(Waiting { id: provider, offer, set, his: true }));
                 return done(Ok(()));
             }
             chooser.work(job, &id, "Asking your computer to switch", false);
             host.changed();
-            let wanted = SetReads { kind: id.clone(), key: key.or_else(|| host.secret(id.clone())).unwrap_or_default(), set };
+            let wanted = SetReads { kind: provider.clone(), offer, key: key.or_else(|| host.secret(provider.clone())).unwrap_or_default(), set };
             let sent = radios.iter().try_for_each(|radio| radio.set_reads(&wanted));
             if sent.is_ok() {
                 let offered = radios.iter().find_map(|radio| radio.reads_offered());
@@ -539,7 +566,7 @@ impl Desk {
         let pick = match choice.place {
             ChoicePlace::Computer => Pick::computer(),
             ChoicePlace::Service => {
-                let with = crate::mouth::service_of(&id, &key.clone().or_else(|| host.secret(id.clone())).unwrap_or_default(), set.clone().into_iter().collect());
+                let with = crate::mouth::service_of(&provider, &offer, &key.clone().or_else(|| host.secret(provider.clone())).unwrap_or_default(), set.clone().into_iter().collect());
                 let tried = match job {
                     ChoiceJob::Voice => crate::mouth::check(&with),
                     _ => crate::ears::check(&with),
@@ -548,20 +575,20 @@ impl Desk {
                     return done(Err(told(why)));
                 }
                 if let Some(key) = key {
-                    host.keep_secret(id.clone(), Some(key));
+                    host.keep_secret(provider.clone(), Some(key));
                 }
-                Pick { place: ChoicePlace::Service, id, set, voice: String::new() }
+                Pick { place: ChoicePlace::Service, id: provider, offer, set, voice: String::new() }
             }
             ChoicePlace::Phone => {
                 let m = crate::models::model(&id).ok_or_else(|| told("This app has no such model."))?;
                 if !later {
-                    if let Err(why) = chooser.make_ready(job, m, host) {
+                    if let Err(why) = chooser.make_ready(job, &m, host) {
                         return done(Err(why));
                     }
                 }
                 // the same model again keeps the voice he had picked for it
                 let before = chooser.saved().pick(job);
-                Pick { place: ChoicePlace::Phone, voice: if before.place == ChoicePlace::Phone && before.id == id { before.voice } else { String::new() }, id, set: BTreeMap::new() }
+                Pick { place: ChoicePlace::Phone, voice: if before.place == ChoicePlace::Phone && before.id == id { before.voice } else { String::new() }, id, offer: String::new(), set: BTreeMap::new() }
             }
         };
         chooser.change(|s| match job {
@@ -590,7 +617,7 @@ impl Desk {
             ChoicePlace::Service => {
                 let mut set: HashMap<String, String> = pick.set.into_iter().collect();
                 set.insert("voice".into(), name);
-                self.choose_for(ChoiceJob::Voice, pick.id, None, set, false)
+                self.choose_for(ChoiceJob::Voice, service_id(&pick.id, &pick.offer), None, set, false)
             }
             ChoicePlace::Computer => Err(told("Your computer\u{2019}s voice is chosen on your computer.")),
         }
@@ -606,7 +633,7 @@ impl Desk {
         for job in [ChoiceJob::Voice, ChoiceJob::Ears] {
             let pick = chooser.saved().pick(job);
             let Some(m) = crate::models::model(&pick.id).filter(|_| pick.place == ChoicePlace::Phone) else { continue };
-            went = chooser.make_ready(job, m, host);
+            went = chooser.make_ready(job, &m, host);
             if went.is_err() {
                 break;
             }
@@ -645,7 +672,7 @@ impl Desk {
 pub(crate) fn computer_reached(shared: &Shared, radio: &Radio) {
     let chooser = &shared.chooser;
     if let Some(waiting) = chooser.saved().reads {
-        let wanted = SetReads { kind: waiting.id.clone(), key: shared.host.secret(waiting.id.clone()).unwrap_or_default(), set: waiting.set.clone() };
+        let wanted = SetReads { kind: waiting.id.clone(), offer: waiting.offer.clone(), key: shared.host.secret(waiting.id.clone()).unwrap_or_default(), set: waiting.set.clone() };
         match radio.set_reads(&wanted) {
             Ok(()) => chooser.change(|s| s.reads = None),
             // the computer would not take it: it is let go and said, and he picks again where he chooses
@@ -679,15 +706,19 @@ mod tests {
 
     #[test]
     fn one_thing_is_chosen_for_a_job_whatever_was_picked() {
-        let service = crate::mouth::services(Job::Ears).into_iter().find(|s| s.key).expect("a listening service that takes a key").kind;
+        let service = crate::mouth::services(Job::Ears).into_iter().find(|s| s.key).expect("a listening service that takes a key");
         let model = crate::models::models().find(|m| m.job == Job::Ears).map(|m| m.kind.clone());
-        let mut picks = vec![Pick::computer(), Pick { place: ChoicePlace::Service, id: service.clone(), set: BTreeMap::new(), voice: String::new() }];
-        picks.extend(model.clone().map(|id| Pick { place: ChoicePlace::Phone, id, set: BTreeMap::new(), voice: String::new() }));
+        let mut picks = vec![Pick::computer(), Pick { place: ChoicePlace::Service, id: service.kind.clone(), offer: service.offer.clone(), set: BTreeMap::new(), voice: String::new() }];
+        picks.extend(model.clone().map(|id| Pick { place: ChoicePlace::Phone, id, offer: String::new(), set: BTreeMap::new(), voice: String::new() }));
         for pick in picks {
             let saved = Saved { ears: Some(pick.clone()), ..Saved::default() };
             let all = list(ChoiceJob::Ears, &saved, &facts(HERE, &|_| true));
-            let want = if pick.place == ChoicePlace::Computer { BY_TOWER } else { pick.id.as_str() };
-            assert_eq!(chosen(&all), vec![want], "{pick:?}");
+            let want = match pick.place {
+                ChoicePlace::Computer => BY_TOWER.to_string(),
+                ChoicePlace::Service => service_id(&pick.id, &pick.offer),
+                ChoicePlace::Phone => pick.id.clone(),
+            };
+            assert_eq!(chosen(&all), vec![want.as_str()], "{pick:?}");
             // every id is offered once, and his computer's choice is always there to go back to
             assert!(all.iter().all(|c| all.iter().filter(|o| o.id == c.id).count() == 1));
             assert_eq!(all.last().map(|c| c.place), Some(ChoicePlace::Computer));
@@ -699,22 +730,23 @@ mod tests {
     #[test]
     fn each_choice_says_how_it_stands() {
         let service = crate::mouth::services(Job::Voice).into_iter().find(|s| s.key).expect("a voice service that takes a key");
-        let saved = Saved { voice: Some(Pick { place: ChoicePlace::Service, id: service.kind.clone(), set: BTreeMap::from([("voice".to_string(), "Kore".to_string())]), voice: String::new() }), ..Saved::default() };
+        let saved = Saved { voice: Some(Pick { place: ChoicePlace::Service, id: service.kind.clone(), offer: service.offer.clone(), set: BTreeMap::from([("voice".to_string(), "Kore".to_string())]), voice: String::new() }), ..Saved::default() };
+        let service_choice = service_id(&service.kind, &service.offer);
         let of = |all: &[Choice], id: &str| all.iter().find(|c| c.id == id).unwrap().clone();
         // no key kept: it says so, and asks for it by name
-        let c = of(&list(ChoiceJob::Voice, &saved, &facts(HERE, NO_KEYS)), &service.kind);
+        let c = of(&list(ChoiceJob::Voice, &saved, &facts(HERE, NO_KEYS)), &service_choice);
         assert!(c.state == ChoiceState::NeedsKey && !c.has_key && c.line.starts_with("Enter your "), "{c:?}");
         // a key kept: ready, and the voice he picked is the one named
-        let c = of(&list(ChoiceJob::Voice, &saved, &facts(HERE, &|_| true)), &service.kind);
+        let c = of(&list(ChoiceJob::Voice, &saved, &facts(HERE, &|_| true)), &service_choice);
         assert!(c.state == ChoiceState::Ready && c.has_key && c.voice == "Kore" && c.line.starts_with("Using your "), "{c:?}");
         // it failed the last time: still chosen, and it says why. What is not chosen is not blamed.
         let failing = Facts { failed: Some("no sound".into()), ..facts(HERE, &|_| true) };
         let all = list(ChoiceJob::Voice, &saved, &failing);
-        assert_eq!(of(&all, &service.kind).state, ChoiceState::Failed { why: "no sound".into() });
-        assert!(of(&all, &service.kind).chosen && all.iter().filter(|c| matches!(c.state, ChoiceState::Failed { .. })).count() == 1);
+        assert_eq!(of(&all, &service_choice).state, ChoiceState::Failed { why: "no sound".into() });
+        assert!(of(&all, &service_choice).chosen && all.iter().filter(|c| matches!(c.state, ChoiceState::Failed { .. })).count() == 1);
         // being worked on
-        let busy = Facts { work: Some((service.kind.clone(), "Trying it".into(), None)), ..facts(HERE, &|_| true) };
-        assert_eq!(of(&list(ChoiceJob::Voice, &saved, &busy), &service.kind).state, ChoiceState::Working { label: "Trying it".into(), fraction: None });
+        let busy = Facts { work: Some((service_choice.clone(), "Trying it".into(), None)), ..facts(HERE, &|_| true) };
+        assert_eq!(of(&list(ChoiceJob::Voice, &saved, &busy), &service_choice).state, ChoiceState::Working { label: "Trying it".into(), fraction: None });
         // a model: not here, here but behind, here
         if let Some(m) = crate::models::models().find(|m| m.job == Job::Voice) {
             let at = |here: &dyn Fn(&Model) -> (bool, bool)| of(&list(ChoiceJob::Voice, &Saved::default(), &facts(here, NO_KEYS)), &m.kind);
@@ -729,21 +761,60 @@ mod tests {
     #[test]
     fn summaries_are_listed_from_the_computer_and_chosen_by_its_id() {
         use airband_core::radio::ReadsOffer;
-        let offer = |id: &str, login: &str, key: bool, has_key: bool| ReadsOffer { id: id.into(), label: format!("The {id} one"), login: login.into(), key, has_key, key_name: "API key".into(), preferred: true, ..ReadsOffer::default() };
-        let offered = ReadsOffered { now: "b".into(), offers: vec![offer("a", "", true, false), offer("b", "", true, true), offer("c", "codex", false, false), offer("d", "opencode", false, false)] };
+        let offer = |id: &str, login: &str, key: bool, has_key: bool| ReadsOffer { provider: id.into(), offer: "x".into(), label: format!("The {id} one"), login: login.into(), key, has_key, key_name: "API key".into(), preferred: true, ..ReadsOffer::default() };
+        let named = |provider: &str, offer: &str| OfferName { provider: provider.into(), offer: offer.into() };
+        let offered = ReadsOffered { now: Some(named("b", "x")), offers: vec![offer("a", "", true, false), offer("b", "", true, true), offer("c", "codex", false, false), offer("d", "opencode", false, false)] };
         let saved = Saved { offered: Some(offered), tools: vec!["codex".into()], ..Saved::default() };
         let all = list(ChoiceJob::Reads, &saved, &facts(HERE, NO_KEYS));
         // his tool's sign-in first, another tool's left out, and the label is the computer's own
-        assert_eq!(all.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), vec!["c", "a", "b"]);
+        assert_eq!(all.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), vec!["c/x", "a/x", "b/x"]);
         assert_eq!(all[0].title, "The c one");
         // the one in use is the one the computer names, and a key the computer keeps counts as kept
-        assert_eq!(chosen(&all), vec!["b"]);
+        assert_eq!(chosen(&all), vec!["b/x"]);
         assert!(all[2].has_key && all[2].state == ChoiceState::Ready && all[1].state == ChoiceState::NeedsKey);
         // what he picked while it could not be reached is the one shown, as waiting
-        let waiting = Saved { reads: Some(Waiting { id: "a".into(), set: BTreeMap::new(), his: true }), ..saved };
+        let waiting = Saved { reads: Some(Waiting { id: "a".into(), offer: "x".into(), set: BTreeMap::new(), his: true }), ..saved };
         let all = list(ChoiceJob::Reads, &waiting, &facts(HERE, &|_| true));
-        assert_eq!(chosen(&all), vec!["a"]);
+        assert_eq!(chosen(&all), vec!["a/x"]);
         assert_eq!(all[1].state, ChoiceState::Waiting);
+    }
+
+    #[test]
+    fn two_offers_of_one_provider_are_two_choices_under_one_key() {
+        use airband_core::radio::ReadsOffer;
+        // a computer that reads with either of two models of one company
+        let offer = |id: &str| ReadsOffer { provider: "maker".into(), offer: id.into(), label: format!("Maker {id}"), key: true, key_name: "Maker key".into(), preferred: true, ..ReadsOffer::default() };
+        let offered = ReadsOffered { now: Some(OfferName { provider: "maker".into(), offer: "small".into() }), offers: vec![offer("small"), offer("large")] };
+        let saved = Saved { offered: Some(offered), ..Saved::default() };
+        // with no key kept both ask for the one key, by the same name
+        let all = list(ChoiceJob::Reads, &saved, &facts(HERE, NO_KEYS));
+        assert_eq!(all.iter().map(|c| (c.id.as_str(), c.provider.as_str(), c.offer.as_str())).collect::<Vec<_>>(), vec![("maker/small", "maker", "small"), ("maker/large", "maker", "large")]);
+        assert!(all.iter().all(|c| c.state == ChoiceState::NeedsKey && c.key_name == "Maker key"));
+        // a key is asked about by the provider's id, once, and then serves both; one of them is chosen
+        let asked = Mutex::new(Vec::<String>::new());
+        let has = |id: &str| {
+            asked.lock().unwrap().push(id.to_string());
+            id == "maker"
+        };
+        let all = list(ChoiceJob::Reads, &saved, &facts(HERE, &has));
+        assert!(all.iter().all(|c| c.has_key && c.state == ChoiceState::Ready));
+        assert!(asked.lock().unwrap().iter().all(|id| id == "maker"));
+        assert_eq!(chosen(&all), vec!["maker/small"]);
+
+        // the same through the desk, for a job done on this device: a key typed for one offer is kept under
+        // the provider and is the key the other offer finds
+        let dir = std::env::temp_dir().join(format!("airband-choices-{}", random_hex(4)));
+        let host = Arc::new(Host::default());
+        let desk = Desk::alone(&dir.display().to_string(), host.clone());
+        let reads = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.key).unwrap();
+        desk.choose_for(ChoiceJob::Reads, reads.id.clone(), Some("sk-one".into()), HashMap::new(), false).unwrap();
+        assert_eq!(host.keys.lock().unwrap().keys().cloned().collect::<Vec<_>>(), vec![reads.provider.clone()]);
+        for job in [ChoiceJob::Reads, ChoiceJob::Ears, ChoiceJob::Voice] {
+            for c in desk.choices(job).into_iter().filter(|c| c.place == ChoicePlace::Service && c.key) {
+                assert_eq!(c.has_key, c.provider == reads.provider, "{job:?} {}", c.id);
+            }
+        }
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -755,12 +826,12 @@ mod tests {
         assert_eq!(saved.reads.as_ref().map(|w| (w.id.as_str(), w.his)), Some((one.kind.as_str(), false)));
         // the other tool's sign-in is not offered to him, and his own is the one shown as chosen
         let all = list(ChoiceJob::Reads, &saved, &facts(HERE, NO_KEYS));
-        assert!(chosen(&all) == vec![one.kind.as_str()] && all.iter().all(|c| c.id != two.kind));
+        assert!(chosen(&all) == vec![service_id(&one.kind, &one.offer).as_str()] && all.iter().all(|c| c.provider != two.kind));
         // he changes the tool: it follows
         saved.use_tools(vec![two.login.clone(), one.login.clone()]);
         assert_eq!(saved.reads.as_ref().map(|w| w.id.as_str()), Some(two.kind.as_str()));
         // he picks for himself: a change of tool leaves that alone
-        saved.reads = Some(Waiting { id: "anthropic".into(), set: BTreeMap::new(), his: true });
+        saved.reads = Some(Waiting { id: "anthropic".into(), offer: "haiku".into(), set: BTreeMap::new(), his: true });
         saved.use_tools(vec![one.login.clone()]);
         assert_eq!(saved.reads.as_ref().map(|w| w.id.as_str()), Some("anthropic"));
         // and once a computer has said what it reads with, nothing is made to wait by a change of tool
@@ -783,7 +854,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("airband-choices-{}", random_hex(4)));
         let at = dir.display().to_string();
         let chooser = Chooser::open(&at);
-        chooser.change(|s| s.voice = Some(Pick { place: ChoicePlace::Service, id: "gemini".into(), set: BTreeMap::from([("voice".to_string(), "Leda".to_string())]), voice: String::new() }));
+        chooser.change(|s| s.voice = Some(Pick { place: ChoicePlace::Service, id: "gemini".into(), offer: "flash-lite-tts".into(), set: BTreeMap::from([("voice".to_string(), "Leda".to_string())]), voice: String::new() }));
         let again = Chooser::open(&at);
         assert_eq!(again.saved(), chooser.saved());
         // and no key is in it
@@ -861,20 +932,21 @@ mod tests {
         }
         // a service whose key is wrong is not taken: the one before it stays, and the key is not kept
         // (his own voice server, at an address where nothing answers: no call leaves this machine)
-        let service = crate::mouth::services(Job::Voice).into_iter().find(|s| s.kind == "local").map(|s| s.kind);
+        let service = crate::mouth::services(Job::Voice).into_iter().find(|s| s.kind == "local");
         if let Some(service) = service {
+            let (service, provider) = (service_id(&service.kind, &service.offer), service.kind);
             let before = chosen(&desk.choices(ChoiceJob::Voice)).iter().map(|s| s.to_string()).collect::<Vec<_>>();
             let refused = desk.choose_for(ChoiceJob::Voice, service.clone(), Some("k".into()), HashMap::from([("url".to_string(), "http://127.0.0.1:9/v1".to_string())]), false);
             assert!(refused.is_err());
             assert_eq!(chosen(&desk.choices(ChoiceJob::Voice)), before.iter().map(String::as_str).collect::<Vec<_>>());
-            assert!(host.secret(service).is_none());
+            assert!(host.secret(provider).is_none());
         }
         // summaries, with no computer to ask: it waits, with its key kept by the host and not by the core
-        let reads = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.key).unwrap().id;
+        let (reads, provider) = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.key).map(|c| (c.id, c.provider)).unwrap();
         desk.choose_for(ChoiceJob::Reads, reads.clone(), Some(" sk-test ".into()), none(), false).unwrap();
         assert_eq!(state(ChoiceJob::Reads, &reads), (true, ChoiceState::Waiting));
         assert_eq!(desk.chosen_label(ChoiceJob::Reads), "Waiting for your computer");
-        assert_eq!(host.secret(reads).as_deref(), Some("sk-test"));
+        assert_eq!(host.secret(provider).as_deref(), Some("sk-test"));
         assert!(!std::fs::read_to_string(dir.join("choices.json")).unwrap().contains("sk-test"));
         // opened again, it is all as he left it
         let again = Desk::alone(&dir.display().to_string(), host);

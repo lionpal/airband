@@ -4,13 +4,13 @@ use super::*;
 use crate::providers::{By, Interface, Job, Offer};
 
 /// One question to a model behind an API key, off the async threads. `read` finds the answer in what came back.
-/// One call to a service that speaks OpenAI's chat interface. A service with no key (one on his own computer)
-/// is sent none.
-async fn ask_api(url: String, key: String, body: Value) -> Result<String, String> {
+/// One call to a service that speaks OpenAI's chat interface. `auth` is the header its key goes in and the
+/// value there, as its row says; a service with no key (one on his own computer) is sent none.
+async fn ask_api(url: String, auth: Option<(String, String)>, body: Value) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         let mut req = airband_radio::net::agent(Duration::from_secs(60)).post(&url);
-        if !key.is_empty() {
-            req = req.header("authorization", format!("Bearer {key}"));
+        if let Some((header, value)) = auth {
+            req = req.header(header, value);
         }
         let mut res = req.send_json(&body).map_err(|e| format!("the model could not be reached: {e}"))?;
         let status = res.status().as_u16();
@@ -44,9 +44,9 @@ pub(super) fn reader(cfg: &Config) -> Summarizer {
 /// way its row says: a radio cannot name a command to run here. It is tried with a real call before anything
 /// is kept. The key is kept encrypted with the others. Returns the provider's name.
 pub(super) async fn set_reader(wanted: airband_core::radio::SetReads) -> Result<String, String> {
-    use crate::providers::{Job, Use, offering};
-    let p = offering(Job::Summary).find(|p| p.id == wanted.kind).ok_or("That is not something that can be chosen to read here.")?;
-    let offer = p.offers.iter().find(|o| o.job == Job::Summary).ok_or("That does not read.")?;
+    use crate::providers::{Job, Use};
+    // one of this tower's own list, named by its provider and its own id
+    let (p, offer) = crate::providers::in_order(Job::Summary).into_iter().find(|(p, o)| p.id == wanted.kind && o.id == wanted.offer).ok_or("That is not something that can be chosen to read here.")?;
     let mut cfg = config::read().filter(|_| config::keyless().is_none()).ok_or("This computer's settings cannot be read right now.")?;
     let key = match (p.key, wanted.key.trim()) {
         (false, _) => String::new(),
@@ -55,7 +55,7 @@ pub(super) async fn set_reader(wanted: airband_core::radio::SetReads) -> Result<
     };
     // only the settings its row asks for
     let set = wanted.set.into_iter().filter(|(field, value)| !value.trim().is_empty() && offer.asks.iter().any(|a| a.field == *field)).map(|(f, v)| (f, Value::String(v.trim().to_string()))).collect();
-    let using = Use { kind: p.id.clone(), key: key.clone(), set };
+    let using = Use { kind: p.id.clone(), offer: offer.id.clone(), key: key.clone(), set };
     // a model on this computer is fetched the first time it is chosen: wait through that
     super::local::wait_for_it(true);
     let tried = ask(&using, "Reply with the one word: ready".into(), None).await;
@@ -136,7 +136,7 @@ pub(crate) fn reads(offer: &Offer) -> bool {
 /// of those.
 pub(crate) fn local_model(model: &Summarizer) -> Option<(String, String)> {
     let (_, offer) = model.offer(Job::Summary)?;
-    READERS.iter().find(|r| r.is.name == ON_THIS_COMPUTER && r.is.fits(offer)).map(|_| (offer.by.text("model").to_string(), offer.by.text("server").to_string()))
+    READERS.iter().find(|r| r.is.name == ON_THIS_COMPUTER && r.is.fits(&offer)).map(|_| (offer.by.text("model").to_string(), offer.by.text("server").to_string()))
 }
 
 /// Ask one model, through whichever interface its row names.
@@ -144,12 +144,12 @@ async fn ask(model: &Summarizer, prompt: String, shape: Option<Value>) -> Result
     if model.is_none() {
         return Err("no summarizer is configured".into());
     }
-    let (_, offer) = model.offer(Job::Summary).ok_or_else(|| format!("this version of airband has nothing called \"{}\" that reads", model.kind))?;
-    let reader = READERS.iter().find(|r| r.is.fits(offer)).ok_or_else(|| format!("this version of airband cannot read through \"{}\" yet", model.kind))?;
+    let (_, offer) = model.offer(Job::Summary).ok_or_else(|| format!("this version of airband has nothing called \"{} {}\" that reads", model.kind, model.offer))?;
+    let reader = READERS.iter().find(|r| r.is.fits(&offer)).ok_or_else(|| format!("this version of airband cannot read through \"{}\" yet", model.kind))?;
     // What starts a program on this computer is run only as this build has it compiled in, whatever a
     // catalogue taken since may say (taking one already refuses such a change; this is the same rule where
     // the program is started).
-    if reader.runs && !airband_core::catalog::built().providers.iter().any(|p| p.id == model.kind && p.offers.iter().any(|o| o.job == Job::Summary && o.by == offer.by)) {
+    if reader.runs && !airband_core::catalog::built().providers.iter().any(|p| p.id == model.kind && p.offers.iter().any(|o| o.id == offer.id && o.job == Job::Summary && o.by == offer.by)) {
         return Err(format!("\"{}\" would run a program this version of airband does not come with", model.kind));
     }
     (reader.ask)(model, &offer.by, prompt, shape).await
@@ -164,7 +164,12 @@ async fn chat(model: &Summarizer, by: &By, prompt: String, shape: Option<Value>)
         body["response_format"] = json!({ "type": "json_schema", "json_schema": { "name": "answer", "strict": true, "schema": shape } });
     }
     let url = format!("{}/chat/completions", model.get(Job::Summary, "url").trim_end_matches('/'));
-    ask_api(url, model.key.clone(), body).await
+    // how this service takes a key is its row's to say; one sent no key needs nothing said
+    let auth = match model.key.is_empty() {
+        true => None,
+        false => Some(by.auth().map(|a| (a.header.clone(), a.value(&model.key))).ok_or("this version of airband was not told how that service takes its key")?),
+    };
+    ask_api(url, auth, body).await
 }
 
 async fn on_this_computer(_model: &Summarizer, by: &By, prompt: String, shape: Option<Value>) -> Result<String, String> {
@@ -177,7 +182,7 @@ async fn on_this_computer(_model: &Summarizer, by: &By, prompt: String, shape: O
     if let Some(shape) = shape {
         body["response_format"] = json!({ "type": "json_schema", "json_schema": { "name": "answer", "strict": true, "schema": shape } });
     }
-    ask_api(format!("{url}/chat/completions"), String::new(), body).await
+    ask_api(format!("{url}/chat/completions"), None, body).await
 }
 
 async fn command(model: &Summarizer, by: &By, prompt: String, shape: Option<Value>) -> Result<String, String> {
@@ -275,7 +280,8 @@ pub(super) fn offered(cfg: &Config) -> airband_core::radio::ReadsOffered {
     let offers = crate::providers::in_order(Job::Summary)
         .into_iter()
         .map(|(p, o)| ReadsOffer {
-            id: p.id.clone(),
+            provider: p.id.clone(),
+            offer: o.id.clone(),
             label: o.label.clone(),
             about: o.about.clone(),
             price: o.price.clone(),
@@ -289,7 +295,7 @@ pub(super) fn offered(cfg: &Config) -> airband_core::radio::ReadsOffered {
             asks: o.asks.iter().map(|a| ReadsAsk { field: a.field.clone(), question: a.question.clone(), usual: a.usual.clone() }).collect(),
         })
         .collect();
-    ReadsOffered { now: if now.is_none() { String::new() } else { now.kind.clone() }, offers }
+    ReadsOffered { now: (!now.is_none()).then(|| airband_core::radio::OfferName { provider: now.kind.clone(), offer: now.offer.clone() }), offers }
 }
 
 pub(super) fn tail(text: &str, max_chars: usize) -> String {
@@ -582,6 +588,8 @@ mod tests {
         for p in &airband_core::catalog::built().providers {
             for o in p.offers.iter().filter(|o| o.job == Job::Summary) {
                 assert!(reads(o), "{}: nothing here reads by \"{}\", or its row does not tell it what it needs or asks more than it can do", p.id, o.by.interface);
+                // one that takes a key says how the key is presented
+                assert!(!p.key || o.by.auth().is_some(), "{}: its row does not say how its key is presented", p.id);
             }
         }
         // what starts a program here is exactly what a later catalogue may not bring or change
@@ -591,8 +599,8 @@ mod tests {
         held.sort();
         assert_eq!(runs, held);
         // an interface this tower has, asked for something it cannot do, and one it does not have: not offered
-        let odd: Offer = serde_json::from_value(json!({ "job": "summary", "by": { "interface": "chat" }, "label": "New", "needs": ["auth-header"] })).unwrap();
-        let new: Offer = serde_json::from_value(json!({ "job": "summary", "by": { "interface": "something-new" }, "label": "New" })).unwrap();
+        let odd: Offer = serde_json::from_value(json!({ "id": "new", "job": "summary", "by": { "interface": "chat" }, "label": "New", "needs": ["auth-header"] })).unwrap();
+        let new: Offer = serde_json::from_value(json!({ "id": "new", "job": "summary", "by": { "interface": "something-new" }, "label": "New" })).unwrap();
         assert!(!reads(&odd) && !reads(&new));
         // every job's offers, as this program lists them, are ones it can do
         for job in [Job::Summary, Job::Voice, Job::Ears] {

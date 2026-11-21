@@ -3,6 +3,7 @@
   "name": "Alibaba Qwen 3.5 4B, on this computer",
   "offers": [
     {
+      "id": "qwen-4b",
       "job": "summary",
       "by": {
         "interface": "on-this-computer",

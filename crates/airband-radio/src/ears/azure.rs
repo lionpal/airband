@@ -39,7 +39,7 @@ fn parse(message: &str) -> Option<(String, Value)> {
 }
 
 /// Open the connection and say what is coming: the microphone's format, and the names worth listening for.
-fn connect(grant: &EarsGrant, request: &str) -> Result<Socket, ()> {
+fn connect(grant: &Pass, request: &str) -> Result<Socket, ()> {
     let host = format!("{}.stt.speech.microsoft.com", grant.get("region"));
     let url = format!("wss://{host}/speech/recognition/conversation/cognitiveservices/v1?language={}&format=simple&profanity=raw", grant.get("language"));
     let mut req = url.into_client_request().map_err(|_| ())?;
@@ -91,7 +91,7 @@ fn pass(set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
 
 /// Microsoft's speech-to-text, fed while he is still talking so the answer is ready almost as he stops.
 /// Ok(None) is silence; Err is a failure of the service or the line.
-fn upload(grant: &EarsGrant, host: &dyn RadioHost, manual: bool) -> Result<Option<String>, ()> {
+fn upload(grant: &Pass, host: &dyn RadioHost, manual: bool) -> Result<Option<String>, ()> {
     let mut end = Endpointer::new(RATE);
     // a little audio from before he was judged to be speaking, so the first word is not clipped
     let mut lead: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
