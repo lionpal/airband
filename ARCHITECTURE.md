@@ -290,13 +290,6 @@ when the phone is neither on a call nor showing the chat. The tower seals it and
 service, so neither can read it. On the iPhone a notification extension (`apps/apple/Notify`) opens it with the
 radio core. An answer given there is sent in the background (`Desk.answer_now`), or kept and sent later.
 
-While the app is asleep and an agent is waiting, the lock screen has a banner of three numbers: how many
-agents are waiting, working, and how many reports are unread (`tower/banner.rs`, `StatusAttributes` in
-`apps/apple/Live`). A push service delivers a banner unsealed, so the numbers are all it is ever given: the type
-that carries them (`Counts` in `core/relay.rs`) can hold no text. Who is waiting and what was asked stay in the
-sealed notification and in the app. On a call the app puts up a banner for each waiting agent itself, with the
-question, and nothing of those leaves the phone.
-
 ## Accounts
 
 Someone with several subscriptions can see how much of each is used and move every running session on a computer

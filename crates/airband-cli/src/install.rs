@@ -263,7 +263,7 @@ pub fn pair(mut cfg: Config, name: &str) -> Result<(), String> {
             if at.is_empty() {
                 return Err("with no relay a phone must reach this computer itself, and it has no address a phone could use: join a network (and `airband lan on`), start Tailscale, or `airband relay on`".into());
             }
-            println!("Pairing \"{name}\" with no relay. It works where the phone can reach this computer: on its network, or over Tailscale. Notifications and the lock screen banner need the relay, so you get neither.");
+            println!("Pairing \"{name}\" with no relay. It works where the phone can reach this computer: on its network, or over Tailscale. Notifications need the relay, so none are sent.");
             Pairing::Near { at, secret }
         }
     };

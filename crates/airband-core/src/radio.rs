@@ -527,27 +527,6 @@ pub struct PushTarget {
     pub token: String,
 }
 
-/// `POST banner`: where this radio's banner can be changed while the app is asleep. A phone has one address that
-/// puts a banner up, and each banner that is up has an address of its own for changing it and taking it down.
-/// An empty `token` takes that address away.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BannerTarget {
-    /// The push service ("apns" for Apple's).
-    pub provider: String,
-    pub which: BannerAddress,
-    pub token: String,
-}
-
-/// Which of a banner's two addresses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BannerAddress {
-    /// Puts one up.
-    Start,
-    /// Changes the one that is up.
-    Update,
-}
-
 /// A notification, as the tower seals it for the phone (`airband.relay/1`, direction "push"). Neither the relay
 /// nor the push service can read it; the phone opens it and shows it. Everything the phone needs to show it and
 /// to answer it is here, because the app may not be running.

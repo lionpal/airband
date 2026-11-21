@@ -57,11 +57,10 @@ pub(super) fn take_event(app: &Arc<App>, ev: AgentEvent) -> Result<(), String> {
     // its turn is over, with or without words
     let ended = matches!(ev.event, Event::Said { .. } | Event::Stopped { .. }).then(|| ev.agent.id.clone());
     on_event(app, ev)?;
-    // With a phone that can be woken, or one with a banner to keep current, and nobody reading the chat,
-    // what it said is read now: whether it deserves a notification, and whether it is a report he has not
-    // seen, is not known until then. With a radio reading, that radio's own request
+    // With a phone that can be woken and nobody reading the chat, what it said is read now: whether it
+    // deserves a notification is not known until then. With a radio reading, that radio's own request
     // has it read.
-    if let Some(id) = spoke.filter(|_| app.push.any() || app.banner.any()) {
+    if let Some(id) = spoke.filter(|_| app.push.any()) {
         let unread: Vec<Entry> = {
             let inner = app.inner.lock().unwrap();
             inner.log.iter().rev().take(8).filter(|e| inner.readers == 0 && e.short.is_none() && e.agent.as_deref() == Some(id.as_str())).take(1).cloned().collect()
@@ -284,12 +283,6 @@ async fn uses_tools(State(app): State<Arc<App>>, Json(said): Json<airband_core::
         inner.tools = tools;
         app.save(&inner);
     }
-    Json(json!({}))
-}
-
-/// A radio says where its banner can be put up or changed while the app is asleep, or takes that back.
-async fn banner_target(State(app): State<Arc<App>>, headers: HeaderMap, Json(target): Json<airband_core::radio::BannerTarget>) -> Json<Value> {
-    banner::register(&app, &radio_of(&headers), target);
     Json(json!({}))
 }
 
@@ -746,7 +739,6 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/radio/end", post(end_agent))
         .route("/v1/radio/push", post(push_target))
         .route("/v1/radio/tools", post(uses_tools))
-        .route("/v1/radio/banner", post(banner_target))
         .route("/v1/status", get(status))
         .layer(middleware::from_fn_with_state(app.clone(), presence_said))
         .layer(middleware::from_fn_with_state(app.clone(), auth))
