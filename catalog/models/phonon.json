@@ -3,6 +3,7 @@
   "name": "Gradium Phonon",
   "job": "voice",
   "engine": "ptts",
+  "version": "1",
   "base": "https://airband.dev/models/phonon-31m-en/1",
   "files": [
     [

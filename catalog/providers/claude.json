@@ -5,7 +5,8 @@
     {
       "job": "summary",
       "by": {
-        "command": {
+        "interface": "command",
+        "with": {
           "argv": [
             "claude",
             "-p",

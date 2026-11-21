@@ -8,10 +8,16 @@
   "offers": [
     {
       "job": "voice",
-      "by": "elevenlabs_voice",
+      "by": {
+        "interface": "elevenlabs",
+        "with": {
+          "url": "https://api.elevenlabs.io/v1"
+        }
+      },
       "label": "ElevenLabs Flash 2.5",
       "preferred": true,
       "price": "About $2.16 per hour of speech",
+      "priced": "2026-11-20",
       "voices": [
         {
           "id": "cgSgspJ2msm6clMCkdW9",
@@ -53,13 +59,12 @@
     {
       "job": "ears",
       "by": {
-        "listener": {
-          "dialect": "elevenlabs"
-        }
+        "interface": "elevenlabs"
       },
       "label": "ElevenLabs Scribe v3 Live",
       "preferred": true,
       "price": "About $0.22 per hour of speech",
+      "priced": "2026-11-20",
       "asks": [
         {
           "field": "model",

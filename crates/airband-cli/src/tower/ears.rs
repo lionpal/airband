@@ -1,9 +1,9 @@
 //! Inbound sound: what turns his speech into text. The phone does the listening; the tower only says how, and
 //! gives the phone a short-lived pass for the service so the service's key never leaves this machine. Which
-//! service is a row of `providers::PROVIDERS`; how to get its pass and how to talk to it is the phone core's
+//! service is a row of the catalogue; how to get its pass and how to talk to it is the phone core's
 //! (`airband-radio/src/ears.rs`), asked for here by the dialect the row names.
 use super::*;
-use crate::providers::{BY_TOWER, By, Job};
+use crate::providers::{BY_TOWER, Job};
 use airband_core::radio::EarsGrant;
 
 /// A pass lasts ten minutes at the shortest of the services; one is handed out for eight.
@@ -13,16 +13,14 @@ const PASS: Duration = Duration::from_secs(480);
 pub(super) async fn grant(app: &Arc<App>) -> EarsGrant {
     let ears = &app.cfg.ears;
     let none = EarsGrant { phrases: phrases(app), ..EarsGrant::default() };
-    let Some((_, offer)) = ears.offer(Job::Ears) else {
-        // none set here: the phone listens with a model or a key of its own, or he types
-        return none;
-    };
     let set = ears.settings(Job::Ears);
-    let kind = match offer.by {
-        By::Listener(kind) => kind,
+    let kind = match (airband_radio::hears::live(ears), airband_radio::hears::by_upload(ears)) {
+        (Some(kind), _) => kind,
         // a service that takes a finished recording: the phone sends it here, where the key is
-        By::Transcribe => return EarsGrant { kind: BY_TOWER.into(), token: String::new(), set: Default::default(), phrases: Vec::new() },
-        _ => return none,
+        (None, true) => return EarsGrant { kind: BY_TOWER.into(), token: String::new(), set: Default::default(), phrases: Vec::new() },
+        // none set here, or one this build has no code for: the phone listens with a model or a key of its
+        // own, or he types
+        (None, false) => return none,
     };
     let grant = |token: String| EarsGrant { kind: kind.into(), token, set: set.clone(), phrases: phrases(app) };
     if let Some((token, when)) = app.ears_pass.lock().unwrap().clone() {
@@ -77,18 +75,13 @@ pub(super) async fn hear(app: &Arc<App>, part: airband_core::radio::HearPart) ->
     tokio::task::spawn_blocking(move || airband_radio::hears::transcribe(&with, &airband_radio::hears::wav(16000, &whole), &expect)).await.map_err(|e| e.to_string())?
 }
 
-/// Words of the trade that a recogniser otherwise hears as everyday ones ("sync" as "sink", "cache" as "cash").
-const SOFTWARE: [&str; 40] = [
-    "sync", "cache", "repo", "commit", "merge", "rebase", "deploy", "staging", "prod", "branch", "pull request", "diff", "lint", "regex", "API", "SDK", "CLI", "JSON", "YAML", "SQL",
-    "Postgres", "Redis", "Docker", "Kubernetes", "AWS", "S3", "Lambda", "NAS", "SSH", "cron", "webhook", "endpoint", "refactor", "async", "queue", "token", "TestFlight", "Xcode", "Claude", "airband",
-];
-
 /// The names he is likely to say, for a recogniser that can be told what to expect.
 fn phrases(app: &App) -> Vec<String> {
     let inner = app.inner.lock().unwrap();
     let mut out: Vec<String> = inner.sessions.iter().flat_map(|s| [s.callsign.text(), s.callsign.project.clone()]).collect();
     // he is talking to coding agents: where a sound could be two words, the one from software is the likelier
-    out.extend(SOFTWARE.iter().map(|w| w.to_string()));
+    // (words of the trade a recogniser otherwise hears as everyday ones, "sync" as "sink": a list in the catalogue)
+    out.extend(airband_core::catalog::current().phrases.iter().cloned());
     out.sort();
     out.dedup();
     out

@@ -1,0 +1,14 @@
+{
+  "id": "llama",
+  "build": "b12589",
+  "base": "https://github.com/ggml-org/llama.cpp/releases/download/b12589",
+  "program": "llama-b12589/llama-server",
+  "archives": [
+    {
+      "os": "macos",
+      "arch": "aarch64",
+      "file": "llama-b12589-bin-macos-arm64.tar.gz",
+      "sha256": "711006321bbac464624da19f2333b49e8e0d5e6aa75c867b5323d88818abff2f"
+    }
+  ]
+}

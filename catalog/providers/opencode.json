@@ -5,7 +5,8 @@
     {
       "job": "summary",
       "by": {
-        "command": {
+        "interface": "command",
+        "with": {
           "argv": [
             "opencode",
             "run",
@@ -27,6 +28,10 @@
           "question": "Model",
           "usual": "opencode-go/gpt-6-luna#low"
         }
+      ],
+      "needs": [
+        "brief",
+        "settings"
       ]
     }
   ]

@@ -1,0 +1,834 @@
+{"rev":4,"providers":[
+{
+  "id": "anthropic",
+  "name": "Anthropic, with an API key",
+  "key": {
+    "name": "Anthropic API key",
+    "at": "console.anthropic.com/settings/keys"
+  },
+  "offers": [
+    {
+      "job": "summary",
+      "by": {
+        "chat": {
+          "cold": false,
+          "shaped": false
+        }
+      },
+      "label": "Anthropic Claude Haiku 5.5, with an API key",
+      "price": "About $0.11 per 1,000 messages",
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "https://api.anthropic.com/v1"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "claude-haiku-5-5"
+        }
+      ],
+      "preferred": true
+    }
+  ]
+},
+{
+  "id": "azure",
+  "name": "Microsoft Azure Speech",
+  "key": {
+    "name": "Azure key",
+    "at": "portal.azure.com, a Speech resource, Keys and Endpoint"
+  },
+  "offers": [
+    {
+      "job": "voice",
+      "by": {
+        "azure_voice": {}
+      },
+      "label": "Microsoft Azure Speech",
+      "preferred": true,
+      "price": "About $0.81 per hour of speech",
+      "voices": [
+        {
+          "id": "en-US-AvaMultilingualNeural",
+          "name": "Ava",
+          "about": "Expressive, American"
+        },
+        {
+          "id": "en-US-EmmaMultilingualNeural",
+          "name": "Emma",
+          "about": "Cheerful, American"
+        },
+        {
+          "id": "en-GB-SoniaNeural",
+          "name": "Sonia",
+          "about": "Friendly, British"
+        },
+        {
+          "id": "en-GB-LibbyNeural",
+          "name": "Libby",
+          "about": "Positive, British"
+        }
+      ],
+      "asks": [
+        {
+          "field": "region",
+          "question": "Region",
+          "usual": "eastus"
+        },
+        {
+          "field": "voice",
+          "question": "Voice",
+          "usual": "en-US-AvaMultilingualNeural"
+        }
+      ]
+    },
+    {
+      "job": "ears",
+      "by": {
+        "listener": {
+          "dialect": "azure"
+        }
+      },
+      "label": "Microsoft Azure Speech",
+      "preferred": true,
+      "price": "About $1 per hour, 5 hours a month free",
+      "asks": [
+        {
+          "field": "region",
+          "question": "Region",
+          "usual": "eastus"
+        },
+        {
+          "field": "language",
+          "question": "Language",
+          "usual": "en-US"
+        }
+      ]
+    }
+  ]
+},
+{
+  "id": "claude",
+  "name": "Claude on this computer, with your Claude login",
+  "offers": [
+    {
+      "job": "summary",
+      "by": {
+        "command": {
+          "argv": [
+            "claude",
+            "-p",
+            "--model",
+            "haiku",
+            "--no-session-persistence",
+            "--strict-mcp-config",
+            "--system-prompt",
+            "You are a dispatcher. Output only what is asked for.",
+            "--tools",
+            ""
+          ]
+        }
+      },
+      "label": "Anthropic Claude Haiku 5.5",
+      "about": "Uses your Claude Code login",
+      "preferred": true,
+      "login": "claude-code"
+    }
+  ]
+},
+{
+  "id": "codex",
+  "name": "OpenAI, with your Codex login",
+  "offers": [
+    {
+      "job": "summary",
+      "by": {
+        "command": {
+          "argv": [
+            "codex",
+            "exec",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "-s",
+            "read-only",
+            "--ignore-rules",
+            "--ignore-user-config",
+            "-m",
+            "gpt-6-luna",
+            "-c",
+            "model_reasoning_effort=medium",
+            "-c",
+            "model_instructions_file=\"{brief}\"",
+            "-c",
+            "web_search=\"disabled\"",
+            "--disable",
+            "apps",
+            "--disable",
+            "plugins",
+            "--disable",
+            "goals",
+            "--disable",
+            "image_generation",
+            "--disable",
+            "shell_tool",
+            "--disable",
+            "tool_suggest",
+            "--disable",
+            "view_image",
+            "--disable",
+            "multi_agent",
+            "--disable",
+            "browser_use",
+            "--disable",
+            "computer_use",
+            "--disable",
+            "skill_search",
+            "--disable",
+            "unified_exec",
+            "--output-schema",
+            "{shape}",
+            "-"
+          ]
+        }
+      },
+      "label": "OpenAI GPT-6 Luna",
+      "about": "Uses your Codex login",
+      "preferred": true,
+      "login": "codex"
+    }
+  ]
+},
+{
+  "id": "command",
+  "name": "A command of your own",
+  "offered": false,
+  "offers": [
+    {
+      "job": "summary",
+      "by": {
+        "command": {
+          "argv": []
+        }
+      },
+      "label": "A command of your own"
+    }
+  ]
+},
+{
+  "id": "elevenlabs",
+  "name": "ElevenLabs",
+  "key": {
+    "name": "ElevenLabs API key",
+    "at": "elevenlabs.io/app/settings/api-keys"
+  },
+  "offers": [
+    {
+      "job": "voice",
+      "by": "elevenlabs_voice",
+      "label": "ElevenLabs Flash 2.5",
+      "preferred": true,
+      "price": "About $2.16 per hour of speech",
+      "voices": [
+        {
+          "id": "cgSgspJ2msm6clMCkdW9",
+          "name": "Jessica",
+          "about": "Playful, American",
+          "sample": "https://storage.googleapis.com/eleven-public-prod/premade/voices/cgSgspJ2msm6clMCkdW9/56a97bf8-b69b-448f-846c-c3a11683d45a.mp3"
+        },
+        {
+          "id": "FGY2WhTYpPnrIDTdsKH5",
+          "name": "Laura",
+          "about": "Quirky, American"
+        },
+        {
+          "id": "Xb7hH8MSUJpSbSDYk0k2",
+          "name": "Alice",
+          "about": "Clear, British",
+          "sample": "https://storage.googleapis.com/eleven-public-prod/premade/voices/Xb7hH8MSUJpSbSDYk0k2/d10f7534-11f6-41fe-a012-2de1e482d336.mp3"
+        },
+        {
+          "id": "pFZP5JQG7iQjIQuC4Bku",
+          "name": "Lily",
+          "about": "Velvety, British",
+          "sample": "https://storage.googleapis.com/eleven-public-prod/premade/voices/pFZP5JQG7iQjIQuC4Bku/89b68b35-b3dd-4348-a84a-a3c13a3c2b30.mp3"
+        }
+      ],
+      "asks": [
+        {
+          "field": "voice",
+          "question": "Voice id",
+          "usual": "cgSgspJ2msm6clMCkdW9"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "eleven_flash_v2_5"
+        }
+      ]
+    },
+    {
+      "job": "ears",
+      "by": {
+        "listener": {
+          "dialect": "elevenlabs"
+        }
+      },
+      "label": "ElevenLabs Scribe v3 Live",
+      "preferred": true,
+      "price": "About $0.22 per hour of speech",
+      "asks": [
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "scribe_v3_live"
+        },
+        {
+          "field": "language",
+          "question": "Language",
+          "usual": "en"
+        }
+      ]
+    }
+  ]
+},
+{
+  "id": "gemini",
+  "name": "Google Gemini",
+  "key": {
+    "name": "Gemini API key",
+    "at": "aistudio.google.com/apikey"
+  },
+  "offers": [
+    {
+      "job": "summary",
+      "by": {
+        "chat": {
+          "cold": true,
+          "shaped": true
+        }
+      },
+      "label": "Google Gemini 3.5 Flash-Lite",
+      "preferred": true,
+      "price": "About $0.40 per 1,000 messages",
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "https://generativelanguage.googleapis.com/v1beta/openai"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "gemini-3.5-flash-lite"
+        }
+      ]
+    },
+    {
+      "job": "voice",
+      "by": "gemini_voice",
+      "label": "Google Gemini 3.8 Flash-Lite TTS",
+      "preferred": true,
+      "price": "About $0.54 per hour of speech",
+      "voices": [
+        {
+          "id": "Leda",
+          "name": "Leda",
+          "about": "Youthful, American",
+          "sample": "https://docs.cloud.google.com/static/text-to-speech/docs/audio/chirp3-hd-leda.wav"
+        },
+        {
+          "id": "Kore",
+          "name": "Kore",
+          "about": "Firm, American",
+          "sample": "https://docs.cloud.google.com/static/text-to-speech/docs/audio/chirp3-hd-kore.wav"
+        },
+        {
+          "id": "Zephyr",
+          "name": "Zephyr",
+          "about": "Bright, American",
+          "sample": "https://docs.cloud.google.com/static/text-to-speech/docs/audio/chirp3-hd-zephyr.wav"
+        },
+        {
+          "id": "Sulafat",
+          "name": "Sulafat",
+          "about": "Warm, American",
+          "sample": "https://docs.cloud.google.com/static/text-to-speech/docs/audio/chirp3-hd-sulafat.wav"
+        }
+      ],
+      "asks": [
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "gemini-3.8-flash-lite-tts"
+        },
+        {
+          "field": "voice",
+          "question": "Voice",
+          "usual": "Leda"
+        }
+      ]
+    },
+    {
+      "job": "ears",
+      "by": {
+        "listener": {
+          "dialect": "gemini"
+        }
+      },
+      "label": "Google Gemini 3.5 Transcribe",
+      "preferred": true,
+      "price": "About $0.54 per hour of speech",
+      "asks": [
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "gemini-3.5-transcribe-live"
+        },
+        {
+          "field": "language",
+          "question": "Language",
+          "usual": "en-US"
+        }
+      ]
+    }
+  ]
+},
+{
+  "id": "groq",
+  "name": "Groq",
+  "key": {
+    "name": "Groq API key",
+    "at": "console.groq.com/keys"
+  },
+  "offers": [
+    {
+      "job": "summary",
+      "by": {
+        "chat": {
+          "cold": true,
+          "shaped": false
+        }
+      },
+      "label": "Groq GPT-OSS 120B",
+      "price": "About $0.15 per 1,000 messages",
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "https://api.groq.com/openai/v1"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "openai/gpt-oss-120b"
+        }
+      ]
+    },
+    {
+      "job": "ears",
+      "by": "transcribe",
+      "label": "Groq Whisper Large v3 Turbo",
+      "price": "About $0.04 per hour of speech",
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "https://api.groq.com/openai/v1"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "whisper-large-v3-turbo"
+        }
+      ]
+    }
+  ]
+},
+{
+  "id": "local",
+  "name": "A model server on this computer or your network (Ollama, LM Studio, llama.cpp, a voice server)",
+  "offers": [
+    {
+      "job": "summary",
+      "by": {
+        "chat": {
+          "cold": true,
+          "shaped": true
+        }
+      },
+      "label": "Your own model server",
+      "about": "Ollama, LM Studio or llama.cpp, at an address you give",
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "http://localhost:11434/v1"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": ""
+        }
+      ]
+    },
+    {
+      "job": "voice",
+      "by": "speech",
+      "label": "Your own voice server",
+      "about": "At an address you give",
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "http://localhost:8880/v1"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "kokoro"
+        },
+        {
+          "field": "voice",
+          "question": "Voice",
+          "usual": "af_heart"
+        },
+        {
+          "field": "rate",
+          "question": "Samples a second",
+          "usual": "24000"
+        }
+      ]
+    },
+    {
+      "job": "ears",
+      "by": "transcribe",
+      "label": "Your own speech server",
+      "about": "At an address you give",
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "http://localhost:8000/v1"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "whisper-1"
+        }
+      ]
+    }
+  ]
+},
+{
+  "id": "openai",
+  "name": "OpenAI",
+  "key": {
+    "name": "OpenAI API key",
+    "at": "platform.openai.com/api-keys"
+  },
+  "offers": [
+    {
+      "job": "summary",
+      "by": {
+        "chat": {
+          "cold": false,
+          "shaped": true
+        }
+      },
+      "label": "OpenAI GPT-6 Luna",
+      "preferred": true,
+      "price": "About $0.11 per 1,000 messages",
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "https://api.openai.com/v1"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "gpt-6-luna"
+        }
+      ]
+    },
+    {
+      "job": "voice",
+      "by": "speech",
+      "label": "OpenAI GPT-4o mini TTS",
+      "voices": [
+        {
+          "id": "coral",
+          "name": "Coral",
+          "sample": "https://cdn.openai.com/API/docs/audio/coral.wav"
+        },
+        {
+          "id": "nova",
+          "name": "Nova",
+          "sample": "https://cdn.openai.com/API/docs/audio/nova.wav"
+        },
+        {
+          "id": "shimmer",
+          "name": "Shimmer",
+          "sample": "https://cdn.openai.com/API/docs/audio/shimmer.wav"
+        }
+      ],
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "https://api.openai.com/v1"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "gpt-4o-mini-tts"
+        },
+        {
+          "field": "voice",
+          "question": "Voice",
+          "usual": "coral"
+        },
+        {
+          "field": "rate",
+          "question": "Samples a second",
+          "usual": "24000"
+        }
+      ]
+    },
+    {
+      "job": "ears",
+      "by": "transcribe",
+      "label": "OpenAI GPT Transcribe",
+      "preferred": true,
+      "price": "About $0.27 per hour of speech",
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "https://api.openai.com/v1"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "gpt-transcribe"
+        }
+      ]
+    }
+  ]
+},
+{
+  "id": "opencode",
+  "name": "OpenCode, with your OpenCode login",
+  "offers": [
+    {
+      "job": "summary",
+      "by": {
+        "command": {
+          "argv": [
+            "opencode",
+            "run",
+            "--archived",
+            "--agent",
+            "airband",
+            "-m",
+            "{model}"
+          ]
+        }
+      },
+      "label": "OpenCode Go GPT-6 Luna",
+      "about": "Uses your OpenCode login",
+      "preferred": true,
+      "login": "opencode",
+      "asks": [
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "opencode-go/gpt-6-luna#low"
+        }
+      ]
+    }
+  ]
+},
+{
+  "id": "openrouter",
+  "name": "OpenRouter",
+  "key": {
+    "name": "OpenRouter API key",
+    "at": "openrouter.ai/keys"
+  },
+  "offers": [
+    {
+      "job": "summary",
+      "by": {
+        "chat": {
+          "cold": true,
+          "shaped": false
+        }
+      },
+      "label": "OpenRouter",
+      "price": "About $0.40 per 1,000 messages",
+      "asks": [
+        {
+          "field": "url",
+          "question": "Address",
+          "usual": "https://openrouter.ai/api/v1"
+        },
+        {
+          "field": "model",
+          "question": "Model",
+          "usual": "google/gemini-3.5-flash-lite"
+        }
+      ]
+    }
+  ]
+},
+{
+  "id": "qwen",
+  "name": "Alibaba Qwen 3.5 4B, on this computer",
+  "offers": [
+    {
+      "job": "summary",
+      "by": {
+        "on_this_computer": {
+          "model": "unsloth/Qwen3.5-4B-GGUF:Q4_K_M"
+        }
+      },
+      "label": "Alibaba Qwen 3.5 4B",
+      "about": "Runs on your computer. 2.7 GB download, about 4 GB of memory",
+      "preferred": true
+    }
+  ]
+}
+],"models":[
+{
+  "kind": "phonon-2.5-en",
+  "name": "Fermion Phonon 2.5",
+  "job": "ears",
+  "engine": "host-transcribe",
+  "base": "https://airband.dev/models/phonon-2.5-en/1",
+  "files": [
+    [
+      "manifest.json",
+      597,
+      "4682560886674dfa082ee26133e2797ac404ac519dd76704f81d21529ee4e6ad"
+    ],
+    [
+      "NOTICE.txt",
+      1901,
+      "33c1c49cbad0fc9dd8da7a9b4f7a17f0e86a41c793ae792942e79b48da2255ea"
+    ],
+    [
+      "decoder.bin",
+      13301279,
+      "0bc5d72c61d48f3ca731fae0824bd415278c5fb7c0fba6dc41941f9f2951d4ee"
+    ],
+    [
+      "Phonon-2.5-English.mlmodelc/analytics/coremldata.bin",
+      243,
+      "c7916daab8e2af5e111473da8f9f86d222e8dbeed48e19c21e13e33097b6cefb"
+    ],
+    [
+      "Phonon-2.5-English.mlmodelc/coremldata.bin",
+      750,
+      "9e8514ea3128326850181e1b8056d965ab521bbc89dae3ab115e5462752b14d9"
+    ],
+    [
+      "Phonon-2.5-English.mlmodelc/metadata.json",
+      15619,
+      "26729c24178409c1b6b2d566695fe4bb68d35e36ed5b363e57c23440073cce7d"
+    ],
+    [
+      "Phonon-2.5-English.mlmodelc/model.mil",
+      2713692,
+      "fc6b8c27b168f326f1c006bce0e84a7da11787955edd2b09a4af6304d473ff93"
+    ],
+    [
+      "Phonon-2.5-English.mlmodelc/weights/weight.bin",
+      329432768,
+      "597947905f317ee9bfed5efb84b60880217584046d5cb193a910c9959fe6e1bb"
+    ]
+  ],
+  "credit": "Phonon-2.5 English by Fermion Research, from NVIDIA's Parakeet TDT 0.6B v3. CC BY 4.0."
+},
+{
+  "kind": "phonon",
+  "name": "Gradium Phonon",
+  "job": "voice",
+  "engine": "ptts",
+  "base": "https://airband.dev/models/phonon-31m-en/1",
+  "files": [
+    [
+      "config.json",
+      4634,
+      "b5d0f88353638370d94035b7d73d7d6577c0554d78f8d7ecfd40490aae39ae85"
+    ],
+    [
+      "tokenizer.json",
+      277967,
+      "691a00068fa7b989f2f3e5ae5daa2d1a5bb319f2d5360deafcfb19a8bb6e7936"
+    ],
+    [
+      "voices/Zoey.safetensors",
+      256136,
+      "97c7f8c253413574406ab80dd23f49c3ebb2517163b00a9bf86b9c4cf43e7e23"
+    ],
+    [
+      "voices/Harper.safetensors",
+      256136,
+      "6b3da6e2d796a20c51af892c482bd6509fb88267a221aff83c870843dee2a123"
+    ],
+    [
+      "voices/Freya.safetensors",
+      256136,
+      "eb3cd47418349e618408c16bea7153988b3ad04b41a6033039dd474a9a4dcd23"
+    ],
+    [
+      "voices/Pippa.safetensors",
+      256136,
+      "d41a8f01d6e33450f1ce062d332914da10beee99e585dab531750706f187c48a"
+    ],
+    [
+      "model.q8.gguf",
+      64512352,
+      "a7d9aad2cd6dc66473f24a08bc6d2939030ef4d751ef82349361fbef3272dbae"
+    ]
+  ],
+  "voices": [
+    [
+      "Zoey",
+      "Playful, American"
+    ],
+    [
+      "Harper",
+      "Confident, American"
+    ],
+    [
+      "Freya",
+      "Bubbly, British"
+    ],
+    [
+      "Pippa",
+      "Upbeat, British"
+    ]
+  ],
+  "credit": "Phonon by Gradium, Apache 2.0."
+}
+],"tools":[
+{
+  "id": "claude-code",
+  "name": "Claude Code",
+  "maker": "Anthropic"
+},
+{
+  "id": "codex",
+  "name": "Codex",
+  "maker": "OpenAI"
+},
+{
+  "id": "opencode",
+  "name": "OpenCode",
+  "maker": "Open source, any model"
+}
+]}

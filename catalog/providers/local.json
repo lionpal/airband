@@ -5,7 +5,8 @@
     {
       "job": "summary",
       "by": {
-        "chat": {
+        "interface": "chat",
+        "with": {
           "cold": true,
           "shaped": true
         }
@@ -16,7 +17,8 @@
         {
           "field": "url",
           "question": "Address",
-          "usual": "http://localhost:11434/v1"
+          "usual": "http://localhost:11434/v1",
+          "reach": true
         },
         {
           "field": "model",
@@ -27,14 +29,17 @@
     },
     {
       "job": "voice",
-      "by": "speech",
+      "by": {
+        "interface": "speech"
+      },
       "label": "Your own voice server",
       "about": "At an address you give",
       "asks": [
         {
           "field": "url",
           "question": "Address",
-          "usual": "http://localhost:8880/v1"
+          "usual": "http://localhost:8880/v1",
+          "reach": true
         },
         {
           "field": "model",
@@ -55,14 +60,17 @@
     },
     {
       "job": "ears",
-      "by": "transcribe",
+      "by": {
+        "interface": "transcribe"
+      },
       "label": "Your own speech server",
       "about": "At an address you give",
       "asks": [
         {
           "field": "url",
           "question": "Address",
-          "usual": "http://localhost:8000/v1"
+          "usual": "http://localhost:8000/v1",
+          "reach": true
         },
         {
           "field": "model",
