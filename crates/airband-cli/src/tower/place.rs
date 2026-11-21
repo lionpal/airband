@@ -23,7 +23,7 @@ pub(super) fn by_him(app: &App, agent: &str, team: &str) -> Result<(String, Stri
 /// Is this report one to look at where the agent belongs on? Its first, so one in the wrong team is not left
 /// there long; then a few more as it settles into its work; then now and then.
 pub(super) fn due(reports: u32) -> bool {
-    matches!(reports, 1 | 3 | 6) || (reports > 0 && reports % 12 == 0)
+    matches!(reports, 1 | 3 | 6) || (reports > 0 && reports.is_multiple_of(12))
 }
 
 /// Look at what an agent has been doing and move it if its work is plainly part of another project.

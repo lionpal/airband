@@ -47,15 +47,14 @@ pub fn redact(text: &str) -> String {
     let mut rest = text;
     'scan: while !rest.is_empty() {
         // a private key, from its first line to its last
-        if rest.starts_with("-----BEGIN ") {
-            if let Some(head) = rest.find("PRIVATE KEY-----").filter(|i| *i < 40) {
+        if rest.starts_with("-----BEGIN ")
+            && let Some(head) = rest.find("PRIVATE KEY-----").filter(|i| *i < 40) {
                 let end = rest.find("-----END ").and_then(|e| rest[e..].find("KEY-----").map(|k| e + k + 8)).unwrap_or(rest.len());
                 out.push_str(&rest[..head + 16]);
                 out.push_str(DOTS);
                 rest = &rest[end..];
                 continue;
             }
-        }
         // only at the start of a word: "task-force" holds no key
         let at_word = out.chars().next_back().is_none_or(|c| !c.is_ascii_alphanumeric() && c != '_' && c != '-');
         if at_word {

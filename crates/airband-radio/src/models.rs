@@ -168,7 +168,7 @@ static FETCHING: Mutex<()> = Mutex::new(());
 /// How far the fetch now running has got, in hundredths. For a progress bar, asked a few times a second.
 pub(crate) fn local_model_progress() -> u32 {
     let of = OF.load(Ordering::SeqCst);
-    if of == 0 { 0 } else { (GOT.load(Ordering::SeqCst).min(of) * 100 / of) as u32 }
+    (GOT.load(Ordering::SeqCst).min(of) * 100).checked_div(of).unwrap_or(0) as u32
 }
 
 /// Fetch a model. Blocks until it is all here: call it off the main thread. Files already here are kept, so
@@ -176,7 +176,7 @@ pub(crate) fn local_model_progress() -> u32 {
 pub(crate) fn fetch_local_model(dir: String, m: &Model) -> Result<(), RadioError> {
     let told = |reason: &str| RadioError::Told { reason: reason.into() };
     let _one = FETCHING.lock().unwrap_or_else(|e| e.into_inner());
-    let folder = version_folder(&dir, &m);
+    let folder = version_folder(&dir, m);
     GOT.store(0, Ordering::SeqCst);
     OF.store(m.files.iter().map(|f| f.1).sum(), Ordering::SeqCst);
     // no limit on the whole of it (a model is tens or hundreds of megabytes on whatever connection he has),
@@ -227,7 +227,7 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model) -> Result<(), RadioError
     // This version is whole: say so, and only now let go of the one that was here before it, which was in use
     // until this moment.
     let _ = std::fs::write(folder.join(WHOLE), "");
-    for other in std::fs::read_dir(home(&dir, &m)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| *p != folder) {
+    for other in std::fs::read_dir(home(&dir, m)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| *p != folder) {
         let _ = if other.is_dir() { std::fs::remove_dir_all(&other) } else { std::fs::remove_file(&other) };
     }
     Ok(())

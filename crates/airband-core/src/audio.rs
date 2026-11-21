@@ -90,7 +90,7 @@ impl Endpointer {
 
 /// Raw little-endian 16-bit PCM bytes to samples. An odd trailing byte is left for the next call.
 pub fn samples(bytes: &[u8]) -> Vec<i16> {
-    bytes.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect()
+    bytes.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes([b[0], b[1]])).collect()
 }
 
 #[cfg(test)]

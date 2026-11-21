@@ -266,14 +266,13 @@ pub fn pair(mut cfg: Config, name: &str) -> Result<(), String> {
     };
     let link = pairing.link();
     // on a terminal, the link as a picture to point the phone's camera at; piped somewhere, only the link
-    if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
-        if let Ok(code) = qrcode::QrCode::with_error_correction_level(link.as_bytes(), qrcode::EcLevel::L) {
+    if std::io::IsTerminal::is_terminal(&std::io::stdout())
+        && let Ok(code) = qrcode::QrCode::with_error_correction_level(link.as_bytes(), qrcode::EcLevel::L) {
             // black on white whatever the terminal's own colours, so any camera reads it
             let picture = code.render::<qrcode::render::unicode::Dense1x2>().quiet_zone(true).build();
             let lines: Vec<String> = picture.lines().map(|l| format!("\x1b[47;30m{l}\x1b[0m")).collect();
             println!("\nPoint the phone's camera at this:\n\n{}", lines.join("\n"));
         }
-    }
     println!("\nOr open this on your phone, or paste it into the app. It is the key to your agents: treat it like a password.\n\n{link}");
     Ok(())
 }

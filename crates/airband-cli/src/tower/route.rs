@@ -55,11 +55,10 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
         let since = inner.log.iter().rposition(|e| e.from == "you").map(|i| i + 1).unwrap_or(0);
         let mut seen: Vec<(Session, Entry)> = Vec::new();
         for e in inner.log[since..].iter().rev().filter(|e| e.kind != Some(Kind::Fyi)) {
-            if let Some(s) = inner.sender(e).filter(|s| within(s)) {
-                if !seen.iter().any(|(have, _)| have.agent.id == s.agent.id) {
+            if let Some(s) = inner.sender(e).filter(|s| within(s))
+                && !seen.iter().any(|(have, _)| have.agent.id == s.agent.id) {
                     seen.push((s.clone(), e.clone()));
                 }
-            }
         }
         let focus = inner.calls.get(radio).and_then(|c| c.focus.clone()).and_then(|f| inner.find(&f).filter(|s| within(s)).cloned());
         // the last thing he said and who it went to, so "and keep the price next to it" can be read as carrying on
@@ -450,7 +449,8 @@ async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, projects: &[
 /// `uid` is the utterance's own id, when the radio gave one: deliveries are recorded against it, so a retry after
 /// a crash can tell that the message already reached its agent.
 /// `label` is the button's words when this is a quick message: the chat shows those, and the agent gets `text`.
-pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>, text: &str, re: Option<&str>, scope: Option<&str>, label: Option<&str>, attached: &[String], others: &[airband_core::radio::Other]) -> Reply {
+pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: &airband_core::radio::Utterance) -> Reply {
+    let (uid, re, scope, label, attached, others) = (Some(said.id.as_str()), said.re.as_deref(), said.scope.as_deref(), said.label.as_deref(), said.attachments.as_slice(), said.others.as_slice());
     // an answer to a request for permission goes back to the harness that asked, not to the agent as a message
     // The buttons say yes or no outright. Anything else he says to a request for leave is read by a model, and
     // only a plain yes allows it; if his words do not settle it, nothing is decided.
@@ -480,21 +480,19 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
     // Words that are about something else leave the idea waiting for its answer, for as long as it would have.
     let held_idea = app.inner.lock().unwrap().call(radio).unplaced_idea.take().filter(|(_, when)| when.elapsed() < Duration::from_secs(90));
     if let Some((idea, when)) = held_idea {
-        if !text.trim_start().starts_with(['/', '@']) {
-            if let Some(project) = named_project(app, &idea.task, text, &projects).await {
+        if !text.trim_start().starts_with(['/', '@'])
+            && let Some(project) = named_project(app, &idea.task, text, &projects).await {
                 log(format!("← radio: \"{text}\" → launch in {project}"));
                 return launch(app, &project, &idea).await;
             }
-        }
         app.inner.lock().unwrap().call(radio).unplaced_idea = Some((idea, when));
     }
     // a typed command says what it is and needs no reading
-    if text.trim_start().starts_with('/') {
-        if let Some(mut idea) = new_by_command(app, text, &projects) {
+    if text.trim_start().starts_with('/')
+        && let Some(mut idea) = new_by_command(app, text, &projects) {
             idea.task.push_str(&files);
             return start(app, radio, text, idea, &projects, true).await;
         }
-    }
     let say = |s: String| Reply { say: s, ..Reply::default() };
     let ask = |s: String| Reply { say: s, listen: true, ..Reply::default() };
     let (mut parsed, named, roster, names, pending, held) = {
@@ -515,12 +513,11 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
     if let (Some((words, their_files)), None) = (&held, parsed.control) {
         if parsed.rest.is_empty() && !named.is_empty() {
             (parsed.rest, files) = (words.clone(), their_files.clone());
-        } else if named.is_empty() && !parsed.rest.is_empty() {
-            if let Some(meant) = named_agents(app, words, &parsed.rest, scope).await {
+        } else if named.is_empty() && !parsed.rest.is_empty()
+            && let Some(meant) = named_agents(app, words, &parsed.rest, scope).await {
                 named = meant;
                 (parsed.rest, files) = (words.clone(), their_files.clone());
             }
-        }
     }
     // work out who it is for only when there is something to deliver
     let mut targets: Vec<Session> = if !named.is_empty() {
@@ -614,7 +611,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
         let at = inner.log.iter().position(|e| e.id == id)?;
         let asked = &inner.log[at];
         let agent = asked.agent.clone()?;
-        let since = inner.log[at + 1..].iter().any(|e| e.agent.as_deref() == Some(agent.as_str()) && e.kind != Some(super::Kind::Fyi) || e.to_agents.iter().any(|t| *t == agent));
+        let since = inner.log[at + 1..].iter().any(|e| e.agent.as_deref() == Some(agent.as_str()) && e.kind != Some(super::Kind::Fyi) || e.to_agents.contains(&agent));
         since.then(|| (agent, asked.short.clone().unwrap_or_else(|| asked.full.clone())))
     });
     let answering = |agent: &str| answers.as_ref().filter(|(a, _)| a == agent).map(|(_, q)| format!("This answers what you asked earlier (as he was shown it): \"{q}\"\n\n")).unwrap_or_default();

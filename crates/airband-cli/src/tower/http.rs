@@ -24,11 +24,10 @@ async fn auth(State(app): State<Arc<App>>, req: Request, next: Next) -> Response
 /// Every request from a radio says where the radio stands: on a call or not, showing the chat or not. It is
 /// written down before the request is run, so every rule about whether he is there reads what the radio said.
 async fn presence_said(State(app): State<Arc<App>>, req: Request, next: Next) -> Response {
-    if req.uri().path().starts_with("/v1/radio/") {
-        if let Some(said) = req.headers().get(PRESENCE_HEADER).and_then(|v| v.to_str().ok()).and_then(|v| serde_json::from_str::<airband_core::radio::Presence>(v).ok()) {
+    if req.uri().path().starts_with("/v1/radio/")
+        && let Some(said) = req.headers().get(PRESENCE_HEADER).and_then(|v| v.to_str().ok()).and_then(|v| serde_json::from_str::<airband_core::radio::Presence>(v).ok()) {
             app.inner.lock().unwrap().radio_says(&radio_of(req.headers()), said);
         }
-    }
     next.run(req).await
 }
 
@@ -168,11 +167,10 @@ async fn project(State(app): State<Arc<App>>, Json(new): Json<airband_core::radi
             Some(Ok(parent)) => match wanted.file_name().filter(|n| !n.to_string_lossy().starts_with('.')) {
                 Some(last) => {
                     let made = parent.join(last);
-                    if let Err(e) = std::fs::create_dir(&made) {
-                        if !made.is_dir() {
+                    if let Err(e) = std::fs::create_dir(&made)
+                        && !made.is_dir() {
                             return Json(json!({ "error": format!("That folder could not be made: {e}") }));
                         }
-                    }
                     Ok(made)
                 }
                 None => Err("That is not a name for a folder.".to_string()),
@@ -321,12 +319,11 @@ async fn next(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
         // heard nothing about it, the answer that carried it was lost on the way: it is given again now, not
         // after two minutes of silence.
         let call = inner.call(&radio);
-        if let (Some(have), Some(lost)) = (q.get("have"), call.handed.clone()) {
-            if *have != lost.id && call.outbox.is_none() && !call.ready {
+        if let (Some(have), Some(lost)) = (q.get("have"), call.handed.clone())
+            && *have != lost.id && call.outbox.is_none() && !call.ready {
                 log(format!("{radio} never got what it was handed ({}); handing it over again", lost.callsign));
                 call.outbox = Some(lost);
             }
-        }
     }
     app.kick.notify_one();
     let until = Instant::now() + HOLD;
@@ -464,7 +461,7 @@ async fn utterance(State(app): State<Arc<App>>, headers: HeaderMap, Json(u): Jso
             (said, _) => Some(said),
         };
         let reply = match text {
-            Some(text) => on_utterance(&app, &radio, Some(&u.id), text, u.re.as_deref(), u.scope.as_deref(), u.label.as_deref(), &u.attachments, &u.others).await,
+            Some(text) => on_utterance(&app, &radio, text, &u).await,
             None => Reply::default(),
         };
         app.store.finish_receipt(&u.id, &reply);
@@ -711,9 +708,6 @@ async fn status(State(app): State<Arc<App>>) -> Json<Value> {
         "aloud": inner.aloud_trail,
     }))
 }
-
-/// `airband triage`: judge one message from standard input the way the tower would, and print the verdict.
-/// For trying the judgement on real messages.
 
 /// Every route the tower serves. The relay link hands sealed requests to this same router, so a request is
 /// handled identically however it arrived.

@@ -35,11 +35,14 @@ pub fn wav(rate: u32, pcm: &[i16]) -> Vec<u8> {
     out
 }
 
+/// One way of hearing a finished recording: what is used, its row, the recording and the names to expect.
+type Hear = fn(&Use, &By, &[u8], &[String]) -> Result<String, String>;
+
 /// One way of sending a finished recording to a service.
 struct Upload {
     is: Interface,
     /// What was said in a WAV recording, with the names he is likely to say. Err says why not, in words for him.
-    hear: fn(&Use, &By, &[u8], &[String]) -> Result<String, String>,
+    hear: Hear,
 }
 
 /// Every upload interface this build speaks.

@@ -93,6 +93,9 @@ fn ask_pass(by: &By, name: &str, set: &BTreeMap<String, String>, key: &str, body
 /// Said when he opens the microphone with nothing chosen to listen with.
 pub(crate) const NOTHING_CHOSEN: &str = "Nothing is chosen to listen with on this device. Choose it in Settings, under Listening.";
 
+/// How a dialect gets its pass: from the row, the service's name, his settings and his key.
+type AskPass = fn(&By, &str, &BTreeMap<String, String>, &str) -> Result<String, String>;
+
 /// A live listening dialect: how one service is listened with while he talks. Each is a file under `ears/`
 /// and a line of [`LISTENERS`].
 pub(crate) struct Listener {
@@ -102,7 +105,7 @@ pub(crate) struct Listener {
     pub wire: &'static crate::ears_stream::Wire,
     /// A short-lived pass for a key: what the service's row tells the dialect, what the service is called, his
     /// settings, and the key. Err says why not, in words for him.
-    pass: fn(&By, &str, &BTreeMap<String, String>, &str) -> Result<String, String>,
+    pass: AskPass,
     /// Its pass is good for one connection only: a new one is asked for each time, and none is kept.
     once: bool,
 }

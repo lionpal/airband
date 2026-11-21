@@ -98,11 +98,10 @@ impl Apns {
     /// The pass Apple asks for with every notification: a JWT signed with the key (ES256).
     fn pass(&self) -> Result<String, String> {
         let mut pass = self.pass.lock().unwrap();
-        if let Some((made, when)) = pass.as_ref() {
-            if when.elapsed() < PASS_FOR {
+        if let Some((made, when)) = pass.as_ref()
+            && when.elapsed() < PASS_FOR {
                 return Ok(made.clone());
             }
-        }
         let now = airband_core::clock::now_secs();
         let part = |v: serde_json::Value| URL_SAFE_NO_PAD.encode(v.to_string());
         let signed = format!("{}.{}", part(serde_json::json!({ "alg": "ES256", "kid": self.key_id })), part(serde_json::json!({ "iss": self.team, "iat": now })));

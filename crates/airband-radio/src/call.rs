@@ -14,9 +14,22 @@ pub(crate) enum Job {
     Dictate(Box<dyn FnOnce(Listened) + Send>),
 }
 
+/// Everything the polling thread is given to work with.
+pub(crate) struct Polling {
+    pub jobs: Sender<Job>,
+    pub link: Arc<Link>,
+    pub host: Arc<dyn RadioHost>,
+    pub stop: Arc<AtomicBool>,
+    pub busy: Arc<AtomicBool>,
+    pub calling: Arc<AtomicBool>,
+    pub wake: Arc<Wake>,
+    pub senses: Arc<Senses>,
+}
+
 /// Asks the tower for the next transmission, over and over. The tower only hands one out when the radio has
 /// said it is ready, so this never gets ahead of the speaking.
-pub(crate) fn poll(jobs: Sender<Job>, link: Arc<Link>, host: Arc<dyn RadioHost>, stop: Arc<AtomicBool>, busy: Arc<AtomicBool>, calling: Arc<AtomicBool>, wake: Arc<Wake>, senses: Arc<Senses>) {
+pub(crate) fn poll(with: Polling) {
+    let Polling { jobs, link, host, stop, busy, calling, wake, senses } = with;
     let mut online = false;
     let mut wait = 1;
     let mut joined = true;

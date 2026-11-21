@@ -108,6 +108,9 @@ const STILL_NEWS: Duration = Duration::from_secs(600);
 /// A radio that took a transmission and never said "ready" is assumed free again after this.
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// One radio's line: what it said is worked on in the order it was put here.
+type Line = tokio::sync::mpsc::UnboundedSender<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>;
+
 pub struct App {
     pub cfg: Config,
     store: Store,
@@ -115,7 +118,7 @@ pub struct App {
     kick: Notify,
     /// What each radio has said and the tower has yet to answer, in the order it came: one is finished before
     /// the next of the same radio is begun, so an agent gets what he said in the order he said it.
-    said: Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>>>,
+    said: Mutex<HashMap<String, Line>>,
     accounts: accounts::Kept,
     /// Where each paired phone can be woken with a notification.
     push: push::Wake,
@@ -200,7 +203,7 @@ async fn progress_loop(app: Arc<App>) {
                 .filter(|s| !s.waiting)
                 .filter_map(|s| {
                     // since it last said anything, or he last said anything to it
-                    let since = inner.log.iter().rev().find(|e| e.agent.as_deref() == Some(s.agent.id.as_str()) || e.to_agents.iter().any(|t| *t == s.agent.id)).map(|e| e.at)?;
+                    let since = inner.log.iter().rev().find(|e| e.agent.as_deref() == Some(s.agent.id.as_str()) || e.to_agents.contains(&s.agent.id)).map(|e| e.at)?;
                     let last = since.max(looked.get(&s.agent.id).copied().unwrap_or(0));
                     (now_ms().saturating_sub(last) >= QUIET_FOR).then(|| (s.agent.clone(), since))
                 })
@@ -455,7 +458,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
                     tokio::time::sleep(Duration::from_secs(30)).await;
                     ticks += 1;
                     // old copies of pictures go once an hour, not only when the tower starts: it runs for weeks
-                    if ticks % 120 == 0 {
+                    if ticks.is_multiple_of(120) {
                         tokio::task::spawn_blocking(pictures::prune);
                         let app = app.clone();
                         tokio::task::spawn_blocking(move || app.store.prune());

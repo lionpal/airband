@@ -170,12 +170,7 @@ pub(super) fn answer(app: &App, text: &str, re: Option<&str>, verdict: Option<bo
     let mut inner = app.inner.lock().unwrap();
     let waiting = |p: &Permit| p.decided.is_none();
     let on_question = re.and_then(|r| inner.permits.iter().find(|(_, p)| p.entry == r && waiting(p)).map(|(id, _)| id.clone()));
-    let id = match on_question {
-        Some(id) => id,
-        // Not said to a request: it answers none. A "yes" or an "ok" he says to someone else, or to nobody in
-        // particular, must never let a command run.
-        None => return None,
-    };
+    let id = on_question?;
     let question = inner.permits[&id].question;
     // to a question of the agent's, whatever he says is the answer
     let (allow, reason) = match verdict.filter(|_| !question) {
@@ -187,7 +182,7 @@ pub(super) fn answer(app: &App, text: &str, re: Option<&str>, verdict: Option<bo
     let Some(session) = inner.find(&agent_id).cloned() else { return say("That agent has gone.") };
     log(format!("← radio: \"{text}\" → {} is {} {}", session.callsign.text(), if question { "answered" } else if allow { "allowed" } else { "refused" }, if reason.is_empty() || question { String::new() } else { "with his reason".into() }));
     let shown = if allow { ALLOW.to_string() } else if reason.is_empty() { DENY.into() } else { reason };
-    inner.record(Entry::his(config::random_hex(8), &[session.clone()], shown));
+    inner.record(Entry::his(config::random_hex(8), std::slice::from_ref(&session), shown));
     inner.touch(&entry);
     app.save(&inner);
     // his answer was taken as he gave it, and is in the chat as his own line: the words only confirm it

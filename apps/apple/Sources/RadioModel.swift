@@ -688,7 +688,6 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
                 return
             }
             voice.goOnDuty()
-            said = ""
         }
         calling = on
         // off: the core is told first, so it hands over no more sound, and then what is playing is cut

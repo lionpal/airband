@@ -116,6 +116,9 @@ pub struct Worked {
     pub at: u64,
 }
 
+/// Asks the tower which sessions of a harness it has that their tool has listed.
+pub type Listed = Box<dyn Fn(&str) -> Vec<String> + Send>;
+
 /// What a watcher is given of the tower it runs in.
 pub struct Tower {
     /// Hand the tower an event. False when it was not taken: it should be offered again.
@@ -127,7 +130,7 @@ pub struct Tower {
     pub found: Box<dyn Fn(Agent, bool) -> bool + Send>,
     /// The sessions of a harness on the tower's roster that its tool has listed as open, now or before the
     /// tower last stopped. One of these the tool no longer lists has gone.
-    pub listed: Box<dyn Fn(&str) -> Vec<String> + Send>,
+    pub listed: Listed,
 }
 
 /// Something he said to an agent directly, at its keyboard.
@@ -219,7 +222,7 @@ pub fn told(agent: &Agent, from: u64) -> (Vec<Told>, u64) {
 /// Start watching every tool that is watched and not hooked, each on a thread of its own. `tower` makes
 /// what each is given.
 pub fn watch_all(tower: impl Fn() -> Tower) {
-    for h in HARNESSES.iter().copied() {
+    for h in HARNESSES {
         let tower = tower();
         std::thread::spawn(move || h.watch(tower));
     }
@@ -264,7 +267,7 @@ fn look(h: &dyn Harness, tower: &Tower, told: &mut std::collections::HashMap<Str
 /// was, newest first. Folders that are gone are left out. Reads each tool's records: not for a hot path.
 pub fn worked_all() -> Vec<(String, Vec<String>, u64)> {
     let mut all: Vec<(String, Vec<String>, u64)> = Vec::new();
-    for h in HARNESSES.iter().copied() {
+    for h in HARNESSES {
         for w in h.worked() {
             match all.iter_mut().find(|(folder, _, _)| *folder == w.folder) {
                 Some((_, tools, at)) => {
@@ -497,14 +500,10 @@ pub fn drain_spool(take: impl Fn(AgentEvent) -> bool) {
     kept.sort();
     for path in kept {
         let old = std::fs::metadata(&path).and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|age| age > Duration::from_secs(600)));
-        match std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<AgentEvent>(&b).ok()).filter(|_| !old) {
-            Some(event) => {
-                if !take(event) {
-                    return;
-                }
+        if let Some(event) = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<AgentEvent>(&b).ok()).filter(|_| !old)
+            && !take(event) {
+                return;
             }
-            None => {}
-        }
         let _ = std::fs::remove_file(&path);
     }
 }
@@ -529,7 +528,8 @@ mod finding {
     #[test]
     fn what_a_tool_lists_as_open_goes_on_the_radio_and_what_it_lists_no_longer_is_signed_off() {
         // the tower, as far as a look can tell: what it was handed, and which sessions it has marked as listed
-        let (found, events, listed): (Arc<Mutex<Vec<String>>>, Arc<Mutex<Vec<String>>>, Arc<Mutex<Vec<String>>>) = Default::default();
+        type Seen = Arc<Mutex<Vec<String>>>;
+        let (found, events, listed): (Seen, Seen, Seen) = Default::default();
         let tower = {
             let (found, events, listed, marks) = (found.clone(), events.clone(), listed.clone(), listed.clone());
             Tower {

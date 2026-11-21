@@ -51,7 +51,10 @@ fn main() {
         _ => catalog::load(),
     }
     let result = match args.first().map(String::as_str) {
-        Some("--version" | "-V" | "version") => Ok(println!("airband {}", env!("CARGO_PKG_VERSION"))),
+        Some("--version" | "-V" | "version") => {
+            println!("airband {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        },
         Some("hook") => adapters::hook(args.get(1).map(String::as_str)),
         Some("report") => adapters::report::run(&args[1..]),
         #[cfg(unix)]
@@ -71,7 +74,10 @@ fn main() {
             }
         }),
         Some("uninstall") => install::uninstall(),
-        Some("status") => Ok(install::status(&config::load())),
+        Some("status") => {
+            install::status(&config::load());
+            Ok(())
+        },
         Some("pair") => install::pair(config::load(), args.get(1).map(String::as_str).unwrap_or("phone")),
         Some("unpair") => install::unpair(config::load(), args.get(1).map(String::as_str)),
         Some("quick") => install::quick(config::load(), &args[1..]),

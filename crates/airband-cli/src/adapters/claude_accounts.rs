@@ -126,7 +126,7 @@ fn key_read(service: &str, account: &str) -> Res<Option<String>> {
     }
     let s = String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string();
     // `security -w` prints anything that is not plain text as hex
-    if !s.is_empty() && s.len() % 2 == 0 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if !s.is_empty() && s.len().is_multiple_of(2) && s.bytes().all(|b| b.is_ascii_hexdigit()) {
         let bytes: Option<Vec<u8>> = (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok()).collect();
         if let Some(t) = bytes.and_then(|b| String::from_utf8(b).ok()).filter(|t| t.starts_with('{')) {
             return Ok(Some(t));
@@ -172,7 +172,7 @@ fn index() -> Vec<String> {
 }
 fn write_index(list: &[String]) -> Res<()> {
     std::fs::create_dir_all(dir()).map_err(|e| e.to_string())?;
-    config::write_private(&index_path(), &json!({ "accounts": list }).to_string()).map_err(|e| e.to_string())
+    config::write_private(&index_path(), json!({ "accounts": list }).to_string()).map_err(|e| e.to_string())
 }
 fn saved(email: &str) -> Res<Option<Value>> {
     Ok(match key_read(&vault_service(), email)? {

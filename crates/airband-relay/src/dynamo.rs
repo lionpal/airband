@@ -119,14 +119,14 @@ impl Dynamo {
         }
         let fresh = match (var("AWS_ACCESS_KEY_ID"), var("AWS_SECRET_ACCESS_KEY")) {
             (Some(key), Some(secret)) => Creds { key, secret, token: var("AWS_SESSION_TOKEN") },
-            _ => self.from_instance().await.map_err(|why| Failed { kind: "NoCredentials".into(), message: format!("this machine's role could not be read from the metadata service: {why}"), reasons: Vec::new() })?,
+            _ => self.instance_creds().await.map_err(|why| Failed { kind: "NoCredentials".into(), message: format!("this machine's role could not be read from the metadata service: {why}"), reasons: Vec::new() })?,
         };
         *have = Some((fresh.clone(), Instant::now()));
         Ok(fresh)
     }
 
     /// The instance's role, from the metadata service (IMDSv2: a session token first, then the role's keys).
-    async fn from_instance(&self) -> Result<Creds, String> {
+    async fn instance_creds(&self) -> Result<Creds, String> {
         const AT: &str = "http://169.254.169.254/latest";
         let quick = Duration::from_secs(2);
         let text = |res: Result<reqwest::Response, reqwest::Error>| async move {

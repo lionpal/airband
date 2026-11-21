@@ -8,7 +8,7 @@ impl Desk {
     pub fn computers_for(&self, room: String) -> Vec<String> {
         let state = self.shared.state.lock().unwrap();
         let mut found: Vec<(usize, &Station)> = state.stations.iter().map(|s| (s.agents.iter().filter(|a| a.group == room).count(), s)).filter(|(n, _)| *n > 0).collect();
-        found.sort_by(|a, b| b.0.cmp(&a.0));
+        found.sort_by_key(|a| std::cmp::Reverse(a.0));
         found.into_iter().map(|(_, s)| s.name.clone()).collect()
     }
     /// The folders inside one of his on a computer, for choosing where a new team works. `computer` is its

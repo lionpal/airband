@@ -133,7 +133,7 @@ pub fn setup(mut cfg: Config, start: bool) -> Result<(), String> {
     if !name.is_empty() {
         cfg.name = name;
     }
-    println!("One choice, then your phone. What listens to you and what speaks are chosen in the app. A key you give stays on this computer{}.\nIt goes to the service it is for and nowhere else: never to airband's servers.", format!(", {}", crate::vault::place()));
+    println!("One choice, then your phone. What listens to you and what speaks are chosen in the app. A key you give stays on this computer, {}.\nIt goes to the service it is for and nowhere else: never to airband's servers.", crate::vault::place());
     choose(&mut cfg, "Summaries", "What reads your agents' messages and tells you the short of them.", "None: you get every message in full");
     config::save(&cfg)?;
     if !start {

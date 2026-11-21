@@ -227,11 +227,10 @@ fn kept() -> Result<serde_json::Map<String, serde_json::Value>, String> {
     static LAST: std::sync::Mutex<Option<(std::time::SystemTime, serde_json::Map<String, serde_json::Value>)>> = std::sync::Mutex::new(None);
     let stamp = fs::metadata(dir().join("config.json")).and_then(|m| m.modified()).ok();
     let mut last = LAST.lock().unwrap();
-    if let (Some(stamp), Some((at, map))) = (stamp, last.as_ref()) {
-        if *at == stamp {
+    if let (Some(stamp), Some((at, map))) = (stamp, last.as_ref())
+        && *at == stamp {
             return Ok(map.clone());
         }
-    }
     let map = crate::vault::get()?;
     if let Some(stamp) = stamp {
         *last = Some((stamp, map.clone()));

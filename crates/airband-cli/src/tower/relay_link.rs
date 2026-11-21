@@ -50,7 +50,9 @@ async fn sealed(axum::extract::Path(channel): axum::extract::Path<String>, body:
 /// stops, and a changed relay address moves everything, all without restarting the tower.
 pub fn start(app: Arc<App>, router: Router, handle: Handle) {
     std::thread::spawn(move || {
-        let mut running: HashMap<(Option<String>, PairedRadio), (Arc<AtomicBool>, std::thread::JoinHandle<()>)> = HashMap::new();
+        // each link that is up, by its relay and its radio, with the way to stop it
+        type Running = HashMap<(Option<String>, PairedRadio), (Arc<AtomicBool>, std::thread::JoinHandle<()>)>;
+        let mut running: Running = HashMap::new();
         loop {
             let cfg = config::read().unwrap_or_else(|| app.cfg.clone());
             // every pairing is served straight, at the tower's own addresses; through the relay too when there is one

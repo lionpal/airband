@@ -179,7 +179,11 @@ struct Relay {
 }
 
 /// The line for a radio's request that failed: see [`Relay::note_failed`].
-fn failed_line(route: &str, channel: &str, status: u16, took: Duration, bytes: usize, in_flight: usize, has_held: bool, pulling: bool) -> String {
+/// How busy a channel was when a request on it failed: (requests in flight, messages kept for its tower, its
+/// tower pulling).
+type Load = (usize, bool, bool);
+
+fn failed_line(route: &str, channel: &str, status: u16, took: Duration, bytes: usize, (in_flight, has_held, pulling): Load) -> String {
     // six characters tell one channel's lines from another's in the log and are not enough to use the channel
     let short: String = channel.chars().filter(char::is_ascii_hexdigit).take(6).collect();
     format!("airband-relay: {route} on {short} answered {status} after {} ms ({bytes} bytes sent; {in_flight} in flight; kept messages: {}; tower pulling: {})", took.as_millis(), if has_held { "yes" } else { "no" }, if pulling { "yes" } else { "no" })
@@ -217,18 +221,18 @@ impl Relay {
     ///
     /// The radio shows a token made from the pairing secret (`Authorization: Bearer`), whose hash the channel's
     /// tower gave when it opened the channel. Without that token nothing is taken.
-    async fn admit(&self, asks: Asks, channel: &str, headers: &HeaderMap) -> Result<(), Response> {
+    async fn admit(&self, asks: Asks, channel: &str, headers: &HeaderMap) -> Result<(), Box<Response>> {
         let now = Instant::now();
         if !self.limits.lock().unwrap().address(asks, &caller(headers), now) {
-            return Err(say(StatusCode::TOO_MANY_REQUESTS, "too many requests from this address; try again in a minute"));
+            return Err(Box::new(say(StatusCode::TOO_MANY_REQUESTS, "too many requests from this address; try again in a minute")));
         }
         let shown = token_hash(bearer(headers));
         if !self.channels.lock().unwrap().get(channel).is_some_and(|ch| same(&shown, &ch.radio_hash)) {
-            return Err(not_the_radio());
+            return Err(Box::new(not_the_radio()));
         }
         // counted only now, so a stranger who knows a channel's name cannot use up its radio's share
         if !self.limits.lock().unwrap().channel(asks, channel, now) {
-            return Err(say(StatusCode::TOO_MANY_REQUESTS, "too many requests on this channel; try again in a minute"));
+            return Err(Box::new(say(StatusCode::TOO_MANY_REQUESTS, "too many requests on this channel; try again in a minute")));
         }
         Ok(())
     }
@@ -243,13 +247,13 @@ impl Relay {
             return;
         }
         let (in_flight, has_held, pulling) = self.channels.lock().unwrap().get(channel).map(|ch| (ch.waiting.len(), ch.has_held, ch.last_pull.is_some_and(|t| t.elapsed() <= AIRBAND_GONE))).unwrap_or_default();
-        eprintln!("{}", failed_line(route, channel, status.as_u16(), began.elapsed(), bytes, in_flight, has_held, pulling));
+        eprintln!("{}", failed_line(route, channel, status.as_u16(), began.elapsed(), bytes, (in_flight, has_held, pulling)));
     }
 
     /// The channel, if this request carries its tower's pull token.
-    fn as_tower<'a>(&self, channels: &'a mut HashMap<String, Channel>, channel: &str, headers: &HeaderMap) -> Result<&'a mut Channel, Response> {
-        let ch = channels.get_mut(channel).ok_or_else(|| say(StatusCode::NOT_FOUND, "no such channel: open it first"))?;
-        if same(&token_hash(bearer(headers)), &ch.pull_hash) { Ok(ch) } else { Err(say(StatusCode::FORBIDDEN, "not this channel's tower")) }
+    fn as_tower<'a>(&self, channels: &'a mut HashMap<String, Channel>, channel: &str, headers: &HeaderMap) -> Result<&'a mut Channel, Box<Response>> {
+        let ch = channels.get_mut(channel).ok_or_else(|| Box::new(say(StatusCode::NOT_FOUND, "no such channel: open it first")))?;
+        if same(&token_hash(bearer(headers)), &ch.pull_hash) { Ok(ch) } else { Err(Box::new(say(StatusCode::FORBIDDEN, "not this channel's tower"))) }
     }
 }
 
@@ -301,7 +305,7 @@ async fn pull(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, head
             let mut channels = relay.channels.lock().unwrap();
             let ch = match relay.as_tower(&mut channels, &channel, &headers) {
                 Ok(ch) => ch,
-                Err(r) => return r,
+                Err(r) => return *r,
             };
             ch.last_pull = Some(Instant::now());
             // a radio that gave up leaves its request behind; skip those
@@ -455,7 +459,7 @@ async fn close(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, hea
     {
         let mut channels = relay.channels.lock().unwrap();
         if let Err(r) = relay.as_tower(&mut channels, &channel, &headers) {
-            return r;
+            return *r;
         }
         channels.remove(&channel);
     }
@@ -475,7 +479,7 @@ async fn reply(State(relay): State<Arc<Relay>>, Path((channel, id)): Path<(Strin
             let mut channels = relay.channels.lock().unwrap();
             let ch = match relay.as_tower(&mut channels, &channel, &headers) {
                 Ok(ch) => ch,
-                Err(r) => return r,
+                Err(r) => return *r,
             };
             if ch.holding.as_ref().is_some_and(|(held, _)| held == kept) {
                 ch.holding = None;
@@ -490,7 +494,7 @@ async fn reply(State(relay): State<Arc<Relay>>, Path((channel, id)): Path<(Strin
     let mut channels = relay.channels.lock().unwrap();
     let ch = match relay.as_tower(&mut channels, &channel, &headers) {
         Ok(ch) => ch,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     match ch.waiting.remove(&id) {
         Some(radio) => {
@@ -515,7 +519,7 @@ async fn keep(relay: &Arc<Relay>, channel: &str, headers: &HeaderMap, sealed: By
         return say(StatusCode::BAD_REQUEST, "a kept message needs an id and a body");
     }
     if let Err(no) = relay.admit(Asks::Queue, channel, headers).await {
-        return no;
+        return *no;
     }
     match relay.store.hold(channel, id, &sealed, HELD_MOST).await {
         Ok(true) => {
@@ -541,7 +545,7 @@ async fn call(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, head
 }
 async fn carry(relay: &Arc<Relay>, channel: &str, headers: &HeaderMap, sealed: Bytes) -> Response {
     if let Err(no) = relay.admit(Asks::Call, channel, headers).await {
-        return no;
+        return *no;
     }
     let id = random_hex(12);
     let answer = {
@@ -589,7 +593,7 @@ async fn wake_phone(State(relay): State<Arc<Relay>>, Path(channel): Path<String>
         let mut channels = relay.channels.lock().unwrap();
         let ch = match relay.as_tower(&mut channels, &channel, &headers) {
             Ok(ch) => ch,
-            Err(r) => return r,
+            Err(r) => return *r,
         };
         if !push::allow(&mut ch.pushed, Instant::now()) {
             return answer(StatusCode::TOO_MANY_REQUESTS, false, false, "too many notifications from this channel; try again later");
@@ -714,11 +718,11 @@ mod tests {
     #[test]
     fn a_failed_request_is_one_line_with_nothing_of_the_channel_but_its_first_six_characters() {
         let channel = "0123456789abcdef0123456789abcdef";
-        let line = failed_line("call", channel, 504, Duration::from_millis(40_012), 412, 3, true, true);
+        let line = failed_line("call", channel, 504, Duration::from_millis(40_012), 412, (3, true, true));
         assert_eq!(line, "airband-relay: call on 012345 answered 504 after 40012 ms (412 bytes sent; 3 in flight; kept messages: yes; tower pulling: yes)");
         assert!(!line.contains(&channel[..7]));
         // a name that is not a channel's at all says nothing of itself either
-        assert!(failed_line("queue", "../../etc/passwd", 400, Duration::ZERO, 0, 0, false, false).contains("queue on ecad answered 400"));
+        assert!(failed_line("queue", "../../etc/passwd", 400, Duration::ZERO, 0, (0, false, false)).contains("queue on ecad answered 400"));
     }
 
     #[tokio::test]

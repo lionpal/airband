@@ -439,11 +439,10 @@ impl Link {
                 // Straight to the tower whenever it is on this network: no trip to the relay and back, and it
                 // works when the relay does not. Only while the relay still keeps earlier words of his does
                 // something he says go by the relay first, so it keeps its place behind them.
-                if !(ordered && self.kept_at_relay.load(std::sync::atomic::Ordering::SeqCst)) {
-                    if let Some(Ok(answer)) = self.straight(keys, method, &path, &body, ordered, steps) {
+                if !(ordered && self.kept_at_relay.load(std::sync::atomic::Ordering::SeqCst))
+                    && let Some(Ok(answer)) = self.straight(keys, method, &path, &body, ordered, steps) {
                         return Ok(answer);
                     }
-                }
                 let began = std::time::Instant::now();
                 let call = self.call(method, &path, body.clone().unwrap_or(Value::Null));
                 let sealed = keys.seal_call(&call);
@@ -478,11 +477,10 @@ impl Link {
                 // is still handing over earlier words of his, these wait their turn behind them. And when the
                 // tower already has the request and is slow to answer, asking it again another way only makes
                 // two of them wait.
-                if ordered && self.kept_at_relay.load(std::sync::atomic::Ordering::SeqCst) && !matches!(failed, LinkError::Behind | LinkError::TowerSilent) {
-                    if let Some(Ok(answer)) = self.straight(keys, method, &path, &body, ordered, steps) {
+                if ordered && self.kept_at_relay.load(std::sync::atomic::Ordering::SeqCst) && !matches!(failed, LinkError::Behind | LinkError::TowerSilent)
+                    && let Some(Ok(answer)) = self.straight(keys, method, &path, &body, ordered, steps) {
                         return Ok(answer);
                     }
-                }
                 Err(failed)
             }
         }
@@ -586,10 +584,9 @@ impl Link {
     }
 
     /// One try at sending something he typed, with each way it was tried and how that went.
-    pub(crate) fn utterance_once(&self, id: &str, text: &str, re: Option<String>, scope: Option<String>, label: Option<String>, attachments: Vec<String>, others: &str) -> (Result<Sent, LinkError>, Vec<Step>) {
-        let u = Utterance { text: text.to_string(), id: id.to_string(), re, scope, label, attachments, others: serde_json::from_str(others).unwrap_or_default() };
+    pub(crate) fn utterance_once(&self, u: &Utterance) -> (Result<Sent, LinkError>, Vec<Step>) {
         let mut steps = Vec::new();
-        (self.say_or_leave(&u, &mut steps), steps)
+        (self.say_or_leave(u, &mut steps), steps)
     }
 
     /// Something he said aloud, tried a few times over a few seconds while he waits for the answer. The tower
@@ -666,6 +663,10 @@ mod tests {
         assert!(Tower { status: 400, error: String::new() }.refused() && !Away.refused());
     }
 
+    fn said(id: &str, text: &str) -> Utterance {
+        Utterance { text: text.into(), id: id.into(), re: None, scope: None, label: None, attachments: Vec::new(), others: Vec::new() }
+    }
+
     /// A link to a relay nobody is at, with a tower address nobody is at either.
     fn nowhere() -> Link {
         let secret: String = "ab".repeat(32);
@@ -677,7 +678,7 @@ mod tests {
     #[test]
     fn something_he_said_is_tried_straight_then_by_the_relay_and_each_try_is_written_down() {
         let link = nowhere();
-        let (got, steps) = link.utterance_once("0123456789ab", "ship it", None, None, None, Vec::new(), "");
+        let (got, steps) = link.utterance_once(&said("0123456789ab", "ship it"));
         assert_eq!(got.err(), Some(LinkError::Unreachable(Way::Relay)));
         assert_eq!(steps.iter().map(|s| s.way).collect::<Vec<_>>(), [Way::Near, Way::Relay]);
         assert!(steps.iter().all(|s| s.outcome.is_err() && s.what == "POST /v1/radio/utterance"));
@@ -689,7 +690,7 @@ mod tests {
         assert!(trail[0].contains("by own network: your computer did not answer") && trail[1].contains("by relay: there was no connection to the relay"), "{trail:?}");
         assert!(!trail.iter().any(|l| l.contains("ship it")));
         // the address that did not answer is left alone for a while: the next try goes by the relay only
-        let (_, again) = link.utterance_once("0123456789ab", "ship it", None, None, None, Vec::new(), "");
+        let (_, again) = link.utterance_once(&said("0123456789ab", "ship it"));
         assert_eq!(again.iter().map(|s| s.way).collect::<Vec<_>>(), [Way::Relay]);
         assert_eq!(link.last_by(Way::Near).map(|s| s.outcome.is_err()), Some(true));
     }
@@ -701,7 +702,7 @@ mod tests {
         let secret: String = "cd".repeat(32);
         let open = || Link::new(Pairing::Relay { relay: "http://127.0.0.1:9".into(), secret: secret.clone() }, "test", Some(file.clone())).unwrap();
         let link = open();
-        let _ = link.utterance_once("0123456789ab", "ship it", None, None, None, Vec::new(), "");
+        let _ = link.utterance_once(&said("0123456789ab", "ship it"));
         link.remark("something worth a line".into());
         link.tell("/heard", &Heard { id: "m1".into() });
         assert_eq!(link.lost(), [("heard".to_string(), 1)]);

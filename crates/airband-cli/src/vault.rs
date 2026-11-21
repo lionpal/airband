@@ -35,7 +35,8 @@ fn each(doc: &mut Value, f: &mut dyn FnMut(String, &mut Value)) {
             f(name.to_string(), v);
         }
     }
-    for part in ["summarizer"] {
+    {
+        let part = "summarizer";
         // a key written by its name is not a secret: the key it names is kept below
         if let Some(v) = doc.get_mut(part).and_then(|p| p.get_mut("key")).filter(|v| v.as_str().is_some_and(|k| !k.starts_with("key:"))) {
             f(format!("{part}.key"), v);
@@ -162,16 +163,6 @@ mod file {
         }
         crate::config::dir()
     }
-    #[cfg(test)]
-    pub mod tests_folder {
-        thread_local!(static DIR: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) });
-        pub fn set(dir: std::path::PathBuf) {
-            DIR.with(|d| *d.borrow_mut() = Some(dir));
-        }
-        pub fn get() -> Option<std::path::PathBuf> {
-            DIR.with(|d| d.borrow().clone())
-        }
-    }
     fn sealed_at() -> PathBuf {
         folder().join("keys.sealed")
     }
@@ -235,12 +226,22 @@ mod file {
         let mut nonce = [0u8; 12];
         getrandom::fill(&mut nonce).map_err(|e| e.to_string())?;
         let sealed = cipher(true)?.encrypt(Nonce::from_slice(&nonce), Payload { msg: &serde_json::to_vec(kept).unwrap(), aad: BOUND }).map_err(|_| "the keys could not be sealed".to_string())?;
-        crate::config::write_private(&sealed_at(), &[nonce.as_slice(), &sealed].concat()).map_err(|e| format!("cannot write the sealed keys: {e}"))
+        crate::config::write_private(&sealed_at(), [nonce.as_slice(), &sealed].concat()).map_err(|e| format!("cannot write the sealed keys: {e}"))
     }
 
     pub fn forget() {
         let _ = std::fs::remove_file(sealed_at());
         let _ = std::fs::remove_file(salt_at());
+    }
+    #[cfg(test)]
+    pub mod tests_folder {
+        thread_local!(static DIR: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) });
+        pub fn set(dir: std::path::PathBuf) {
+            DIR.with(|d| *d.borrow_mut() = Some(dir));
+        }
+        pub fn get() -> Option<std::path::PathBuf> {
+            DIR.with(|d| d.borrow().clone())
+        }
     }
 }
 
@@ -311,14 +312,12 @@ pub fn carry() -> Result<bool, String> {
 /// tower, at its start. Says so when it moved them.
 pub fn settle() -> bool {
     #[cfg(target_os = "macos")]
-    if keychain() && file::has() {
-        if let Ok(kept) = file::get() {
-            if mac::put(&kept).is_ok() && mac::get().is_ok_and(|back| back == kept) {
+    if keychain() && file::has()
+        && let Ok(kept) = file::get()
+            && mac::put(&kept).is_ok() && mac::get().is_ok_and(|back| back == kept) {
                 file::forget();
                 return true;
             }
-        }
-    }
     false
 }
 

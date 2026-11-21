@@ -172,10 +172,7 @@ fn watch(tower: Tower) {
                     }
                     if idle > was_idle && idle >= busy {
                         // its turn is over: its newest answer is what it said, and with none it only stopped
-                        let ended = match get(&format!("/api/session/{id}/message?limit=6")) {
-                            Some(messages) => Some(newest_answer(&messages).map(|text| Event::Said { text, kind: None, turn: None }).unwrap_or(Event::Stopped { why: None })),
-                            None => None,
-                        };
+                        let ended = get(&format!("/api/session/{id}/message?limit=6")).map(|messages| newest_answer(&messages).map(|text| Event::Said { text, kind: None, turn: None }).unwrap_or(Event::Stopped { why: None }));
                         if ended.is_some_and(|event| send(id, cwd, event)) {
                             (told_busy, told_idle) = (told_busy.max(busy), idle);
                         }

@@ -524,7 +524,7 @@ impl Radio {
         }
         {
             let (tx, stop, link, calling, host, wake, senses) = (tx.clone(), stop.clone(), link.clone(), calling.clone(), host.clone(), wake.clone(), senses.clone());
-            thread::spawn(move || poll(tx, link, host, stop, busy, calling, wake, senses));
+            thread::spawn(move || poll(call::Polling { jobs: tx, link, host, stop, busy, calling, wake, senses }));
         }
         store.prune_pictures();
         {
@@ -920,7 +920,7 @@ impl Radio {
             if attempt > 0 {
                 thread::sleep(Duration::from_secs(2));
             }
-            match self.link.utterance_once(&id, &text, Some(re.clone()), None, None, Vec::new(), "").0 {
+            match self.link.utterance_once(&airband_core::radio::Utterance { text: text.clone(), id: id.clone(), re: Some(re.clone()), scope: None, label: None, attachments: Vec::new(), others: Vec::new() }).0 {
                 // left with the relay for a computer that is away: it will get there, and he should know it has not yet
                 Ok(Sent::Left { away: true }) => return Err(RadioError::Told { reason: AWAY.into() }),
                 // his computer has it: that is the answer given

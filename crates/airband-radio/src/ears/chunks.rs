@@ -23,7 +23,7 @@ fn pass(by: &By, name: &str, set: &BTreeMap<String, String>, key: &str) -> Resul
 fn connect(grant: &Pass, _request: &str) -> Result<Socket, ()> {
     let (stream, host) = grant.stream()?;
     let enc = |s: &str| s.bytes().map(|b| if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' { (b as char).to_string() } else { format!("%{b:02X}") }).collect::<String>();
-    let mut url = format!("{stream}?model_id={}&audio_format=pcm_16000&commit_strategy=manual&token={}", enc(&grant.get("model")), enc(&grant.token));
+    let mut url = format!("{stream}?model_id={}&audio_format=pcm_16000&commit_strategy=manual&token={}", enc(grant.get("model")), enc(&grant.token));
     // its language codes are two letters ("en"), where a setting may say "en-US"
     if let Some(language) = grant.get("language").split('-').next().filter(|l| !l.is_empty()) {
         url.push_str(&format!("&language_code={}", enc(language)));

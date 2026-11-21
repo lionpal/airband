@@ -258,11 +258,10 @@ impl Inner {
                     } else {
                         latest.insert(agent, (&e.id, e.at, 0));
                     }
-                } else if e.kind != Some(Kind::Fyi) {
-                    if let Some(q) = latest.get_mut(agent) {
+                } else if e.kind != Some(Kind::Fyi)
+                    && let Some(q) = latest.get_mut(agent) {
                         q.2 += 1;
                     }
-                }
             } else {
                 for to in &e.to_agents {
                     latest.remove(to.as_str());

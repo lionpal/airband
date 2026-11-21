@@ -229,15 +229,14 @@ pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>, aske
             }
             Msg::Gone => break,
         }
-        if running.is_none() {
-            if let Some(text) = waiting.pop_front() {
+        if running.is_none()
+            && let Some(text) = waiting.pop_front() {
                 next_id += 1;
                 running = Some(next_id);
                 said.clear();
                 send(json!({ "jsonrpc": "2.0", "id": next_id, "method": "session/prompt", "params": { "sessionId": session, "prompt": [{ "type": "text", "text": text }] } }));
                 tell(Event::Working);
             }
-        }
     }
     tell(Event::Signoff);
     Ok(())

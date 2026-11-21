@@ -600,11 +600,10 @@ impl Desk {
             }
             ChoicePlace::Phone => {
                 let m = chooser.model(&id).ok_or_else(|| told("This app has no such model."))?;
-                if !later {
-                    if let Err(why) = chooser.make_ready(job, &m, host) {
+                if !later
+                    && let Err(why) = chooser.make_ready(job, &m, host) {
                         return done(Err(why));
                     }
-                }
                 // the same model again keeps the voice he had picked for it
                 let before = chooser.saved().pick(job);
                 Pick { place: ChoicePlace::Phone, voice: before.filter(|b| b.place == ChoicePlace::Phone && b.id == id).map(|b| b.voice).unwrap_or_default(), id, offer: String::new(), set: BTreeMap::new() }

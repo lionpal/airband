@@ -1,7 +1,7 @@
 #!/bin/sh
 # The checks, run on this computer: what CI ran on every push, without spending build minutes on it.
 #
-#   scripts/check.sh           the unit tests of every crate (under a minute once built)
+#   scripts/check.sh           the linter, then the unit tests of every crate (under a minute once built)
 #   scripts/check.sh --full    those, then the three end-to-end suites: the relay and its queue (25 checks), agents
 #                              the tower runs itself (77), and the whole tower with real model calls (135, a few
 #                              minutes, and it needs `claude` signed in)
@@ -12,6 +12,8 @@
 set -e
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
+# the linter first: a warning from it fails the check
+cargo clippy -q --workspace --all-targets -- -D warnings
 cargo test -q --release -p airband-core -p airband-relay -p airband-radio -p airband-cli
 [ "$1" = "--full" ] || exit 0
 cargo build -q --release -p airband-cli -p airband-relay
