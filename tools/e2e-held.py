@@ -65,6 +65,15 @@ note = lambda *words: open(sys.argv[1], "a").write(" ".join(words) + "\n")
 out = lambda m: (sys.stdout.write(json.dumps(m) + "\n"), sys.stdout.flush())
 chunk = lambda sid, text: out({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": sid, "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}}})
 cancel, asked = threading.Event(), {}
+# what a session can be set to, as a real agent lists it: which efforts there are turns on the model, and a
+# session carried on opens as a new one does
+EFFORTS = {"stand-in-1": ["low", "mid", "max"], "stand-in-2": ["low", "mid"]}
+now = {"model": "stand-in-1", "effort": "low"}
+def settings():
+    pick = lambda values: [{"value": v, "name": v.replace("stand-in-", "Stand ").capitalize()} for v in values]
+    return [{"id": "which", "name": "Model", "category": "model", "type": "select", "currentValue": now["model"], "options": [{"group": "all", "name": "All", "options": pick(EFFORTS)}]},
+            {"id": "how-hard", "name": "Effort", "category": "thought_level", "type": "select", "currentValue": now["effort"], "options": pick(EFFORTS[now["model"]])},
+            {"id": "mode", "name": "Mode", "category": "mode", "type": "select", "currentValue": "build", "options": [{"value": "build", "name": "Build"}]}]
 def turn(mid, sid, text):
     if text.startswith("say "): chunk(sid, text[4:])
     elif text == "fail": return out({"jsonrpc": "2.0", "id": mid, "error": {"code": -32000, "message": "the model refused the request"}})
@@ -85,9 +94,17 @@ for line in sys.stdin:
         time.sleep(1)
         out({"jsonrpc": "2.0", "id": mid, "result": {"protocolVersion": 1, "agentCapabilities": {"loadSession": True}}})
     elif method == "session/new":
-        note("new"); out({"jsonrpc": "2.0", "id": mid, "result": {"sessionId": "ses-stand-in", "models": {"currentModelId": "stand-in-1"}}})
+        note("new"); out({"jsonrpc": "2.0", "id": mid, "result": {"sessionId": "ses-stand-in", "configOptions": settings()}})
     elif method == "session/load":
-        note("load", p["sessionId"]); out({"jsonrpc": "2.0", "id": mid, "result": {}})
+        note("load", p["sessionId"]); out({"jsonrpc": "2.0", "id": mid, "result": {"configOptions": settings()}})
+    elif method == "session/set_config_option":
+        kind = {"which": "model", "how-hard": "effort"}.get(p["configId"])
+        if kind is None or p["value"] not in (EFFORTS if kind == "model" else EFFORTS[now["model"]]):
+            out({"jsonrpc": "2.0", "id": mid, "error": {"code": -32602, "message": "Invalid params"}})
+        else:
+            now[kind] = p["value"]
+            if now["effort"] not in EFFORTS[now["model"]]: now["effort"] = "low"
+            note("set", kind, p["value"]); out({"jsonrpc": "2.0", "id": mid, "result": {"configOptions": settings()}})
     elif method == "session/prompt":
         note("prompt", p["prompt"][0]["text"])
         threading.Thread(target=turn, args=(mid, p["sessionId"], p["prompt"][0]["text"]), daemon=True).start()
@@ -265,7 +282,7 @@ try:
     time.sleep(5)
     check("a session the tower runs is not put on the radio a second time by the watcher of its tool's server", not [a for a in feed()["roster"] if a.get("harness") == "opencode"], feed()["roster"])
     Fake.sessions = []
-    check("it is on the radio, held, waiting, and says what it runs on", acp and acp.get("held") and acp["state"] not in ("working", "asking") and until(lambda: one().get("model") == "stand-in-1"), acp)
+    check("it is on the radio, held, waiting, and says what it runs on", acp and acp.get("held") and acp["state"] not in ("working", "asking") and until(lambda: (one().get("model"), one().get("effort")) == ("stand-in-1", "low")), one())
     call = "@" + acp["callsign"].replace(" ", "") + " "
     check("his words are its prompt, and what it writes is what it said", say(call + "say the shelves are stocked").startswith("Sent to") and until(lambda: [m for m in from_it() if m["text"] == "the shelves are stocked"]), [m["text"] for m in from_it()])
     say(call + "nothing")
@@ -293,6 +310,24 @@ try:
     time.sleep(0.5)
     check("with its holder gone, his next words carry on the session it had, by the agent's own name for it", say(call + "say back again").startswith("Sent to") and until(lambda: "load ses-stand-in" in noted() and [m for m in from_it() if m["text"] == "back again"], 10), noted())
     check("it can be ended, and its program ends with it", http("POST", "/v1/radio/end", {"agent": acp["id"]})[1] == {} and until(lambda: one() is None) and until(lambda: not subprocess.run(["pgrep", "-f", ACP], capture_output=True, text=True).stdout.strip(), 8), feed()["roster"])
+
+    print("The model and effort of an agent that lists its own")
+    mark = len(noted())
+    since = lambda: noted()[mark:]
+    check("he names a model by the agent's own name for it and an effort, and the agent is set to them before it is given its work",
+          say("/launch shop tool:stand-acp with stand2 mid: say on two") == "Launching in shop with Stand 2, Mid." and until(lambda: since()[:4] == ["new", "set model stand-in-2", "set effort mid", "prompt say on two"]), since())
+    check("it says what it now runs on, and how hard it thinks", until(lambda: one() and (one().get("model"), one().get("effort")) == ("stand-in-2", "mid")), one())
+    second = one()
+    holder = subprocess.run(["pgrep", "-f", "hold --sock .* --id " + second["id"]], capture_output=True, text=True).stdout.split()
+    for pid in holder: os.kill(int(pid), signal.SIGKILL)
+    time.sleep(0.5)
+    mark = len(noted())
+    check("carried on, it is set to them again", say("@" + second["callsign"].replace(" ", "") + " say still two").startswith("Sent to") and until(lambda: since()[:4] == ["load ses-stand-in", "set model stand-in-2", "set effort mid", "prompt say still two"], 10), since())
+    http("POST", "/v1/radio/end", {"agent": second["id"]})
+    until(lambda: one() is None)
+    mark = len(noted())
+    refused = say("/launch shop tool:stand-acp with stand-in-2 max: say never")
+    check("an effort the model he named does not have starts nothing, and he is told what it can be", refused == "Could not launch in shop: it has no effort called max. It can be low, mid" and one() is None and "prompt say never" not in since(), (refused, since()))
 
     print("A tool that is a server the tower watches (as OpenCode is)")
     clock = lambda: int(time.time() * 1000)
