@@ -4,6 +4,7 @@
   "offered": false,
   "offers": [
     {
+      "id": "own",
       "job": "summary",
       "by": {
         "interface": "command",

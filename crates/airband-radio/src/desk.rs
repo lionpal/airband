@@ -1471,7 +1471,7 @@ fn station_key(link: &str) -> Option<String> {
 /// `sealed` is the notification as the push service delivered it. Nothing when none of them opens it. This
 /// needs no desk: a host calls it from wherever its system hands it a notification.
 /// A short-lived pass from a live listening service, for a key: what a tower hands a phone so the key stays
-/// where it is. `kind` is the dialect a provider's row names. Blocks. Err says why not, in words for him.
+/// where it is. `kind` is the dialect a provider's row names (`Pass::dialect`). Blocks. Err says why not, in words for him.
 pub fn listening_pass(kind: &str, set: &std::collections::BTreeMap<String, String>, key: &str) -> Result<String, String> {
     crate::ears::pass_for(kind, set, key)
 }

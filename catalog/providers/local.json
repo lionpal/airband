@@ -3,6 +3,7 @@
   "name": "A model server on this computer or your network (Ollama, LM Studio, llama.cpp, a voice server)",
   "offers": [
     {
+      "id": "model-server",
       "job": "summary",
       "by": {
         "interface": "chat",
@@ -28,6 +29,7 @@
       ]
     },
     {
+      "id": "voice-server",
       "job": "voice",
       "by": {
         "interface": "speech"
@@ -59,6 +61,7 @@
       ]
     },
     {
+      "id": "speech-server",
       "job": "ears",
       "by": {
         "interface": "transcribe"
