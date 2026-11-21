@@ -90,7 +90,7 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
         (several, _) => {
             // more than one agent could be meant. His words decide, read against what each has been saying:
             // "ship the login fix" goes to whoever is working on the login fix, whoever spoke last.
-            let now = now();
+            let now = now_ms();
             // each with the two letters the app shows for it: he may say those and not the name
             let letters = |s: &Session| airband_core::routing::badge(&s.callsign.project, &s.callsign.text());
             // Everyone he could mean, in the order the model is shown them. Each is listed under a number, and

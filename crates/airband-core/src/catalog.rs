@@ -199,10 +199,6 @@ pub struct Taken {
     pub note: Option<String>,
 }
 
-fn now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
-}
-
 /// Take a newer copy of the catalogue. `signature` is the 64 bytes of its Ed25519 signature, in base64.
 /// An error when it is not signed by airband's key, does not read, has run out, or would do something a
 /// later copy may not; then nothing changes.
@@ -212,7 +208,7 @@ fn now() -> u64 {
 pub fn accept(document: &[u8], signature: &str) -> Result<Taken, String> {
     signed(document, signature)?;
     let text = std::str::from_utf8(document).map_err(|e| e.to_string())?;
-    let (newer, taken) = weigh(text, now(), &current())?;
+    let (newer, taken) = weigh(text, crate::clock::now_secs(), &current())?;
     if let Some(newer) = newer {
         *CURRENT.write().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(newer));
     }
@@ -236,7 +232,7 @@ pub fn inspect(text: &str) -> Result<Catalog, String> {
         return Err("the hash it carries is not the hash of its rows".into());
     }
     match serde_json::from_str::<Value>(text).ok().and_then(|v| v["expires"].as_u64()) {
-        Some(until) if until > now() => Ok(c),
+        Some(until) if until > crate::clock::now_secs() => Ok(c),
         _ => Err("it does not say when it runs out, or already has".into()),
     }
 }
@@ -245,7 +241,7 @@ pub fn inspect(text: &str) -> Result<Catalog, String> {
 /// published before it.
 pub fn would_take(newer: &str, before: &str) -> Result<(), String> {
     let before = read(before)?;
-    match weigh_against(newer, now(), &before, &before)? {
+    match weigh_against(newer, crate::clock::now_secs(), &before, &before)? {
         (Some(_), _) => Ok(()),
         (None, _) => Err(format!("its rev is not higher than the one before ({})", before.rev)),
     }
@@ -568,9 +564,9 @@ mod tests {
     fn offered(edit: &dyn Fn(&mut Value)) -> Result<(Option<Catalog>, Taken), String> {
         let mut doc: Value = serde_json::from_str(BUILT_IN).unwrap();
         doc["rev"] = (built().rev + 1).into();
-        doc["expires"] = (now() + 3600).into();
+        doc["expires"] = (crate::clock::now_secs() + 3600).into();
         edit(&mut doc);
-        weigh(&doc.to_string(), now(), built())
+        weigh(&doc.to_string(), crate::clock::now_secs(), built())
     }
     fn row<'a>(doc: &'a mut Value, id: &str) -> &'a mut Value {
         doc["providers"].as_array_mut().unwrap().iter_mut().find(|p| p["id"] == id).unwrap()
@@ -740,7 +736,7 @@ mod tests {
         .unwrap();
         assert!(taken.is_none() && said.note.is_some_and(|n| n.contains("same rev")));
         // run out, or never said when it does: refused, so a copy replaced long ago cannot be served again
-        assert!(offered(&|d| d["expires"] = (now() - 1).into()).is_err());
+        assert!(offered(&|d| d["expires"] = (crate::clock::now_secs() - 1).into()).is_err());
         assert!(offered(&|d| {
             d.as_object_mut().unwrap().remove("expires");
         })
@@ -772,7 +768,7 @@ mod tests {
 
     #[test]
     fn a_copy_not_signed_by_airband_is_refused() {
-        let doc = built_in(now() + 3600).replace(&format!("\"rev\":{}", built().rev), "\"rev\":999999");
+        let doc = built_in(crate::clock::now_secs() + 3600).replace(&format!("\"rev\":{}", built().rev), "\"rev\":999999");
         let forged = crate::audio::base64_encode(&[7u8; 64]);
         assert!(accept(doc.as_bytes(), &forged).is_err());
         assert!(current().rev < 999999);

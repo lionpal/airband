@@ -133,6 +133,25 @@ impl Keys {
         let (nonce, body) = sealed.split_at(12);
         self.cipher(dir).decrypt(Nonce::from_slice(nonce), Payload { msg: body, aad: &self.bound(dir) }).map_err(|_| "not sealed with this pairing's key".to_string())
     }
+
+    /// A request sealed for the tower.
+    pub fn seal_call(&self, call: &Call) -> Vec<u8> {
+        self.seal(Direction::ToTower, &serde_json::to_vec(call).unwrap_or_default())
+    }
+    /// A request as a radio sealed it. Nothing for bytes this pairing's key does not open or that are not one.
+    pub fn open_call(&self, sealed: &[u8]) -> Option<Call> {
+        serde_json::from_slice(&self.open(Direction::ToTower, sealed).ok()?).ok()
+    }
+    /// An answer sealed for the radio.
+    pub fn seal_answer(&self, answer: &Answer) -> Vec<u8> {
+        self.seal(Direction::ToRadio, &serde_json::to_vec(answer).unwrap_or_default())
+    }
+    /// The tower's answer to one request, by the request's id. Nothing for bytes this pairing's key does
+    /// not open, and nothing for an answer to some other request: only the tower can make one, and only
+    /// the one asked for is this one's.
+    pub fn open_answer(&self, sealed: &[u8], id: &str) -> Option<Answer> {
+        serde_json::from_slice::<Answer>(&self.open(Direction::ToRadio, sealed).ok()?).ok().filter(|a| a.id == id)
+    }
 }
 
 /// What the radio seals and sends: one `airband.radio/1` request.

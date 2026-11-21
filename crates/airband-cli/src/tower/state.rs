@@ -467,7 +467,7 @@ impl Inner {
         if self.call(radio).presence.says(said) {
             log(format!("{radio} is on a call"));
             let call = self.call(radio);
-            (call.began, call.ready, call.outbox) = (now(), true, None);
+            (call.began, call.ready, call.outbox) = (now_ms(), true, None);
             self.give_back(radio);
             self.reap();
         }
@@ -577,7 +577,7 @@ impl Inner {
     /// He has just turned reading aloud on: what was said long before is in the chat for him to read, and is
     /// not read out now, hours late.
     pub(super) fn leave_old_news(&mut self) {
-        let recent = now().saturating_sub(STILL_NEWS.as_millis() as u64);
+        let recent = now_ms().saturating_sub(STILL_NEWS.as_millis() as u64);
         let old: Vec<String> = self.unheard().filter(|e| e.at < recent).map(|e| e.id.clone()).collect();
         for id in old {
             self.set_aloud(&id, Aloud::dropped(Dropped::Stale));
@@ -587,7 +587,7 @@ impl Inner {
     /// it reported in the last while is still his news.
     pub(super) fn settle_reading(&mut self) {
         let live: HashSet<String> = self.sessions.iter().map(|s| s.agent.id.clone()).collect();
-        let recent = now().saturating_sub(STILL_NEWS.as_millis() as u64);
+        let recent = now_ms().saturating_sub(STILL_NEWS.as_millis() as u64);
         let unheard: Vec<(String, bool, bool, bool)> = self.unheard().map(|e| (e.id.clone(), e.agent.as_ref().is_some_and(|a| live.contains(a)), e.kind == Some(Kind::Report), e.at >= recent)).collect();
         for (id, live, report, recent) in unheard {
             self.set_aloud(&id, match (live, report, recent) {
@@ -748,7 +748,7 @@ impl Inner {
     pub(super) fn told(&mut self, agent_id: &str, told: Vec<crate::adapters::Told>, pictures: Vec<Vec<airband_core::radio::Picture>>, upto: u64) {
         let Some(to) = self.find(agent_id).cloned() else { return };
         // nothing from before the chat he has; with no chat yet, the last day
-        let oldest = self.log.first().map(|e| e.at).unwrap_or_else(|| now().saturating_sub(24 * 3600 * 1000));
+        let oldest = self.log.first().map(|e| e.at).unwrap_or_else(|| now_ms().saturating_sub(24 * 3600 * 1000));
         // what the tower passed on, now taken in by the agent: his message is marked read, the oldest unread first
         for t in told.iter().filter(|t| !t.his) {
             let read = self.log.iter().position(|e| e.from == "you" && e.seen.is_none() && !e.queued && !e.cancelled && e.to_agents.iter().any(|a| a == agent_id) && e.at <= t.at + 5000 && t.text.contains(e.full.trim()));
@@ -775,7 +775,7 @@ impl Inner {
 
     /// Add a line to the log.
     pub(super) fn record(&mut self, e: Entry) {
-        self.record_at(e, now());
+        self.record_at(e, now_ms());
     }
     /// Add a line that was said at a time already past: it takes its place among the others by that time.
     pub(super) fn record_at(&mut self, mut e: Entry, at: u64) {
@@ -783,7 +783,7 @@ impl Inner {
         self.rev += 1;
         e.seq = self.seq;
         e.rev = self.rev;
-        e.at = at.min(now());
+        e.at = at.min(now_ms());
         // a key or a token in what was said is not kept in the chat (the agent it went to has it as he said it)
         e.scrub();
         self.unsaved.borrow_mut().insert(e.id.clone());
@@ -813,19 +813,12 @@ impl Inner {
             }
         };
         match ended {
-            permit::Ended::Answered(..) => {
-                if let Some(e) = self.log.iter_mut().find(|e| e.id == entry) {
-                    e.permit = None;
-                    // answered: a request for leave offers nothing more
-                    if e.leave {
-                        e.options.clear();
-                    }
+            // answered: a request for leave offers nothing more
+            permit::Ended::Answered(..) => self.end_line(&entry, Dropped::Answered, |e| {
+                if e.leave {
+                    e.options.clear();
                 }
-                if self.log.iter().any(|e| e.id == entry && e.aloud.unheard()) {
-                    self.set_aloud(&entry, Aloud::dropped(Dropped::Answered));
-                }
-                self.touch(&entry);
-            }
+            }),
             _ => self.close_line(&entry),
         }
         if let Some(s) = self.session(&agent_id) {
@@ -842,15 +835,22 @@ impl Inner {
     }
     /// The line of a request that is over.
     pub(super) fn close_line(&mut self, entry: &str) {
-        if let Some(e) = self.log.iter_mut().find(|e| e.id == entry) {
-            e.permit = None;
+        self.end_line(entry, Dropped::PermissionEnded, |e| {
             e.options.clear();
             if e.leave {
                 e.short = e.short.as_ref().map(|s| s.strip_suffix(permit::ASKS).map(|line| format!("{line}{}", permit::MOVED)).unwrap_or_else(|| s.clone()));
             }
+        });
+    }
+    /// A line that was waiting on a request stops waiting: it is changed as `change` says, it leaves the
+    /// call queue for the reason given if he had not heard it yet, and every radio sees it again.
+    fn end_line(&mut self, entry: &str, why: Dropped, change: impl FnOnce(&mut Entry)) {
+        if let Some(e) = self.log.iter_mut().find(|e| e.id == entry) {
+            e.permit = None;
+            change(e);
         }
         if self.log.iter().any(|e| e.id == entry && e.aloud.unheard()) {
-            self.set_aloud(entry, Aloud::dropped(Dropped::PermissionEnded));
+            self.set_aloud(entry, Aloud::dropped(why));
         }
         self.touch(entry);
     }
@@ -948,7 +948,7 @@ impl Inner {
                 }
             }
         }
-        let now = now();
+        let now = now_ms();
         // a request for permission is open for as long as the harness is waiting on it, whatever its age
         let permits: HashSet<&str> = self.permits.values().filter(|p| p.decided.is_none()).map(|p| p.entry.as_str()).collect();
         latest
@@ -960,7 +960,7 @@ impl Inner {
 
     /// The last thing he said to an agent: a message addressed to it, or the task it was launched with.
     pub(super) fn last_instruction(&self, agent_id: &str) -> Option<String> {
-        let launched = self.find(agent_id).map(|s| format!("a new agent in {}", s.callsign.project));
+        let launched = self.find(agent_id).map(|s| launch::launch_label(&s.callsign.project));
         self.log.iter().rev().find(|e| e.from == "you" && (e.to_agents.iter().any(|a| a == agent_id) || (e.to_agents.is_empty() && e.to.first() == launched.as_ref()))).map(|e| e.full.clone())
     }
     /// The last thing an agent said that was worth his attention.
@@ -977,7 +977,7 @@ impl Inner {
         // while. If nothing has come of it after twenty minutes it is not coming back by itself: it has
         // stalled, and a poke is offered.
         if let Some(e) = self.log.iter().rev().find(|e| e.agent.as_deref() == Some(s.agent.id.as_str())).filter(|e| e.background) {
-            return if now().saturating_sub(e.at) < 20 * 60 * 1000 { "working" } else { "stalled" };
+            return if now_ms().saturating_sub(e.at) < 20 * 60 * 1000 { "working" } else { "stalled" };
         }
         match self.last_said(&s.agent.id) {
             Some(e) if open.contains(&e.id) => "asking",

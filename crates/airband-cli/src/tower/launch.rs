@@ -82,10 +82,7 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
             }
             Ok(_) => {
                 log(format!("started {named}{with} in {project}, held by the tower: {task}"));
-                let mut inner = app.inner.lock().unwrap();
-                inner.record(Entry { id: config::random_hex(8), from: "you".into(), group: project.into(), to: vec![format!("a new agent in {project}")], short: Some(task.into()), full: task.into(), ..Entry::default() });
-                app.save(&inner);
-                say(format!("Launching in {project}{with}."))
+                say(launched(app, project, &with, task))
             }
             Err(e) => {
                 log(format!("launch in {project} failed: {e}"));
@@ -93,7 +90,7 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
             }
         };
     }
-    let stamp = now() / 1000 % 100_000;
+    let stamp = now_ms() / 1000 % 100_000;
     let session = format!("airband-{}-{stamp}", project.replace(' ', "-"));
     let fill = |a: &String| a.replace("{cwd}", &cwd).replace("{task}", task).replace("{project}", project).replace("{session}", &session);
     let argv: Vec<String> = launcher.argv.iter().flat_map(|a| if a == "{options}" { options.clone() } else { vec![fill(a)] }).collect();
@@ -103,10 +100,7 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
     match tokio::time::timeout(Duration::from_secs(20), run).await {
         Ok(Ok(out)) if out.status.success() => {
             log(format!("launched {named}{with} in {project} ({session}): {task}"));
-            let mut inner = app.inner.lock().unwrap();
-            inner.record(Entry { id: config::random_hex(8), from: "you".into(), group: project.into(), to: vec![format!("a new agent in {project}")], short: Some(task.into()), full: task.into(), ..Entry::default() });
-            app.save(&inner);
-            say(format!("Launching in {project}{with}."))
+            say(launched(app, project, &with, task))
         }
         Ok(Ok(out)) => {
             log(format!("launch in {project} failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
@@ -118,4 +112,18 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
         }
         Err(_) => say(format!("Launching in {project} did not finish within twenty seconds.")),
     }
+}
+
+/// Who his words are shown as going to when they start a new agent, before it has a name of its own.
+pub(super) fn launch_label(project: &str) -> String {
+    format!("a new agent in {project}")
+}
+
+/// A new agent was started with a task: the task is written into the chat as his words to it, and he is
+/// told it is on its way.
+fn launched(app: &App, project: &str, with: &str, task: &str) -> String {
+    let mut inner = app.inner.lock().unwrap();
+    inner.record(Entry { id: config::random_hex(8), from: "you".into(), group: project.into(), to: vec![launch_label(project)], short: Some(task.into()), full: task.into(), ..Entry::default() });
+    app.save(&inner);
+    format!("Launching in {project}{with}.")
 }

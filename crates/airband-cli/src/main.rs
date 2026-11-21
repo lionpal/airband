@@ -33,6 +33,11 @@ mod tower;
 mod vault;
 mod setup;
 
+/// The value given after an option on the command line (`--name value`), when it is there.
+pub(crate) fn option(args: &[String], name: &str) -> Option<String> {
+    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // The catalogue: the newest signed copy this computer has kept, for everything but the small commands a

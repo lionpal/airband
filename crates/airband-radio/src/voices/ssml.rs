@@ -4,7 +4,6 @@
 //! (`headers`, such as the sound format it is asked for) and the rate of what comes back (`rate`).
 use super::{Made, Reach, Synth, Voicing};
 use airband_core::providers::{By, Interface, Job, Use};
-use std::io::Read;
 use std::time::Duration;
 
 pub(super) const VOICING: Voicing = Voicing { is: Interface { name: "ssml", can: &[], told: &["url", "language", "auth", "rate"] }, make };
@@ -31,14 +30,6 @@ impl Synth for Ssml {
         if res.status().as_u16() != 200 {
             return Err(self.reach.answered(res.status().as_u16()));
         }
-        let mut reader = res.into_body().into_reader();
-        let mut buf = [0u8; 4800]; // a tenth of a second
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => return Ok(()),
-                Ok(n) => sink(&buf[..n]),
-                Err(e) => return Err(e.to_string()),
-            }
-        }
+        super::pump(res.into_body().into_reader(), sink)
     }
 }

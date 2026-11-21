@@ -15,7 +15,7 @@ use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use ring::rand::SystemRandom;
 use ring::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair};
 use std::sync::Mutex;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 /// What became of one notification.
 #[derive(Debug, PartialEq, Eq)]
@@ -103,7 +103,7 @@ impl Apns {
                 return Ok(made.clone());
             }
         }
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let now = airband_core::clock::now_secs();
         let part = |v: serde_json::Value| URL_SAFE_NO_PAD.encode(v.to_string());
         let signed = format!("{}.{}", part(serde_json::json!({ "alg": "ES256", "kid": self.key_id })), part(serde_json::json!({ "iss": self.team, "iat": now })));
         let signature = self.key.sign(&SystemRandom::new(), signed.as_bytes()).map_err(|_| "the push key could not sign")?;
@@ -120,7 +120,7 @@ impl Apns {
         })
         .to_string();
         // kept by Apple for a phone that is off: a question for a day, anything else for an hour
-        let until = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) + if question { 86_400 } else { 3600 };
+        let until = airband_core::clock::now_secs() + if question { 86_400 } else { 3600 };
         for attempt in 0..2 {
             let pass = match self.pass() {
                 Ok(pass) => pass,

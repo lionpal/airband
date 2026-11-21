@@ -16,8 +16,7 @@ const WIRE: Wire = Wire { connect, audio: |_, bytes| chunk(bytes, false), end: |
 /// The service's token: asked for with nothing in the request, good for a quarter of an hour and for one
 /// connection.
 fn pass(by: &By, name: &str, set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
-    let mut res = ask_pass(by, name, set, key, None)?;
-    res.body_mut().read_json::<Value>().ok().and_then(|v| v["token"].as_str().map(String::from)).ok_or_else(|| format!("{name} gave no pass to listen with."))
+    pass_field(by, name, set, key, None, "token")
 }
 
 /// The pass goes in the address, with the model, the language and the names he is likely to say.

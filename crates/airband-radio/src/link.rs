@@ -223,9 +223,7 @@ fn unsent(e: &ureq::Error, way: Way) -> LinkError {
     }
 }
 
-pub(crate) fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
-}
+pub(crate) use airband_core::clock::now_ms;
 
 impl Link {
     /// `radio` is this radio's own name for itself, the same every launch: the tower keeps each radio's place
@@ -275,6 +273,12 @@ impl Link {
             self.keep(Line::Step(step.clone()));
         }
         steps.push(step);
+    }
+
+    /// A request as it is sealed for the tower: made now, under an id of its own, saying where this radio
+    /// stands.
+    fn call(&self, method: &str, path: &str, body: Value) -> Call {
+        Call { t: now_ms(), id: random_hex(12), method: method.into(), path: path.into(), body, schema: airband_core::radio::SCHEMA.into(), presence: self.presence() }
     }
 
     /// Add a line to the trail, and to its file.
@@ -368,12 +372,12 @@ impl Link {
         let mut last = LinkError::Unreachable(Way::Near);
         for addr in tries {
             let began = std::time::Instant::now();
-            let call = Call { t: now_ms(), id: random_hex(12), method: method.into(), path: path.into(), body: body.clone().unwrap_or(Value::Null), schema: airband_core::radio::SCHEMA.into(), presence: self.presence() };
-            let sealed = keys.seal(Direction::ToTower, &serde_json::to_vec(&call).unwrap());
+            let call = self.call(method, path, body.clone().unwrap_or(Value::Null));
+            let sealed = keys.seal_call(&call);
             let got = match self.near.post(format!("{addr}/v1/sealed/{}", keys.channel)).header("content-type", "application/octet-stream").send(&sealed[..]) {
                 Err(e) => Err(unsent(&e, Way::Near)),
                 // only the tower can make an answer this key opens: anything else at that address is not it
-                Ok(mut res) => match (res.status().as_u16() == 200).then(|| res.body_mut().read_to_vec().ok()).flatten().and_then(|bytes| keys.open(Direction::ToRadio, &bytes).ok()).and_then(|p| serde_json::from_slice::<Answer>(&p).ok()).filter(|a| a.id == call.id) {
+                Ok(mut res) => match (res.status().as_u16() == 200).then(|| res.body_mut().read_to_vec().ok()).flatten().and_then(|bytes| keys.open_answer(&bytes, &call.id)) {
                     Some(answer) => Ok((answer.status, answer.body)),
                     None => Err(LinkError::Unreadable(Way::Near)),
                 },
@@ -441,8 +445,8 @@ impl Link {
                     }
                 }
                 let began = std::time::Instant::now();
-                let call = Call { t: now_ms(), id: random_hex(12), method: method.into(), path: path.clone(), body: body.clone().unwrap_or(Value::Null), schema: airband_core::radio::SCHEMA.into(), presence: self.presence() };
-                let sealed = keys.seal(Direction::ToTower, &serde_json::to_vec(&call).unwrap());
+                let call = self.call(method, &path, body.clone().unwrap_or(Value::Null));
+                let sealed = keys.seal_call(&call);
                 // the token shows the relay this is the channel's own radio: it takes nothing on the channel from anyone else
                 let mut req = self.agent.post(format!("{relay}/v1/channels/{}/call", keys.channel)).header("authorization", format!("Bearer {}", keys.radio_token)).header("content-type", "application/octet-stream");
                 if ordered {
@@ -452,10 +456,10 @@ impl Link {
                     Err(e) => Err(unsent(&e, Way::Relay)),
                     // anything but 200 is the relay speaking (tower offline, timed out, unknown channel), not the tower
                     Ok(mut res) => match res.status().as_u16() {
-                        200 => match res.body_mut().read_to_vec().ok().and_then(|bytes| keys.open(Direction::ToRadio, &bytes).ok()).and_then(|p| serde_json::from_slice::<Answer>(&p).ok()) {
-                            // an answer to some other request is not an answer to this one
-                            Some(answer) if answer.id == call.id => Ok((answer.status, answer.body)),
-                            _ => Err(LinkError::Unreadable(Way::Relay)),
+                        // an answer to some other request is not an answer to this one
+                        200 => match res.body_mut().read_to_vec().ok().and_then(|bytes| keys.open_answer(&bytes, &call.id)) {
+                            Some(answer) => Ok((answer.status, answer.body)),
+                            None => Err(LinkError::Unreadable(Way::Relay)),
                         },
                         409 => Err(LinkError::Behind),
                         503 => Err(LinkError::Away),
@@ -510,8 +514,7 @@ impl Link {
         let Route::Relay { relay, keys } = &self.route else { return Err(LinkError::Unreachable(Way::Paired)) };
         let id = &u.id;
         let began = std::time::Instant::now();
-        let call = Call { t: now_ms(), id: random_hex(12), method: "POST".into(), path: "/v1/radio/utterance".into(), body: serde_json::to_value(u).unwrap(), schema: airband_core::radio::SCHEMA.into(), presence: self.presence() };
-        let sealed = keys.seal(Direction::ToTower, &serde_json::to_vec(&call).unwrap());
+        let sealed = keys.seal_call(&self.call("POST", "/v1/radio/utterance", serde_json::to_value(u).unwrap()));
         let kept = match self.agent.post(format!("{relay}/v1/channels/{}/queue", keys.channel)).header("authorization", format!("Bearer {}", keys.radio_token)).header("content-type", "application/octet-stream").header("x-airband-id", id).send(&sealed[..]) {
             Err(e) => Err(unsent(&e, Way::Kept)),
             Ok(res) if res.status().as_u16() == 202 => Ok(202),

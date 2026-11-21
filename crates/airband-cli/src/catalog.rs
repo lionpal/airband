@@ -24,9 +24,6 @@ pub fn refresh() -> (bool, Vec<String>) {
     (changed, lines)
 }
 
-fn option(args: &[String], name: &str) -> Option<String> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
-}
 
 /// The words after the command that are not an option or its value.
 fn plain(args: &[String]) -> Vec<&String> {
@@ -55,8 +52,8 @@ pub fn command(args: &[String]) -> Result<(), String> {
     let words = plain(args.get(1..).unwrap_or_default());
     match args.first().map(String::as_str) {
         Some("export") => {
-            let days: u64 = option(args, "--expires-in-days").map(|d| d.parse().map_err(|_| "--expires-in-days takes a number")).transpose()?.unwrap_or(180);
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let days: u64 = crate::option(args, "--expires-in-days").map(|d| d.parse().map_err(|_| "--expires-in-days takes a number")).transpose()?.unwrap_or(180);
+            let now = airband_core::clock::now_secs();
             println!("{}", catalog::built_in(now + days * 86400));
             Ok(())
         }
@@ -89,7 +86,7 @@ pub fn command(args: &[String]) -> Result<(), String> {
             if !c.left_out.is_empty() || !unspoken.is_empty() {
                 return Err(format!("this build would leave rows of it out: {}", c.left_out.iter().chain(&unspoken).cloned().collect::<Vec<_>>().join("; ")));
             }
-            if let Some(before) = option(args, "--against") {
+            if let Some(before) = crate::option(args, "--against") {
                 let before = std::fs::read_to_string(before).map_err(|e| e.to_string())?;
                 catalog::would_take(text, &before)?;
                 println!("A build that has the copy published before would take it.");

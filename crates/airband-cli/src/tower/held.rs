@@ -467,10 +467,7 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
         return Err("It is in the middle of something. Take it over when it has stopped.".into());
     }
     // ask it to end, and wait for it to be gone: two processes must never run one session
-    #[cfg(unix)]
-    unsafe {
-        libc::kill(pid as i32, libc::SIGTERM);
-    }
+    terminate(pid);
     for _ in 0..50 {
         if !alive(pid) {
             break;

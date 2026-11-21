@@ -55,6 +55,22 @@ impl Pass {
     }
 }
 
+/// What he is told when a service answered and gave nothing to listen with.
+fn no_pass(name: &str) -> String {
+    format!("{name} gave no pass to listen with.")
+}
+
+/// A pass that a service gives as one field of a JSON answer.
+fn pass_field(by: &By, name: &str, set: &BTreeMap<String, String>, key: &str, body: Option<Value>, field: &str) -> Result<String, String> {
+    let mut res = ask_pass(by, name, set, key, body)?;
+    res.body_mut().read_json::<Value>().ok().and_then(|v| v[field].as_str().map(String::from)).ok_or_else(|| no_pass(name))
+}
+
+/// A pass that a service gives as the whole of its answer.
+fn pass_whole(by: &By, name: &str, set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
+    ask_pass(by, name, set, key, None)?.body_mut().read_to_string().map_err(|_| no_pass(name))
+}
+
 /// Ask a live service for a pass, the way every dialect here does: one request to where its row says
 /// (`pass`), with the key presented as its row says (`auth`), and `body` when the dialect sends one. The
 /// answer comes back for the dialect to take its pass from. Err says why not, in words for him, naming the
@@ -352,7 +368,7 @@ impl Ears {
                 };
                 // As he speaks, with the words coming back while he talks. When that connection cannot be made
                 // he is told, and nothing listens another way in its place.
-                let heard = crate::ears_stream::live(with.wire, again, host, RATE, wav_header(), manual);
+                let heard = crate::ears_stream::live(with.wire, again, host, RATE, crate::hears::wav_header(RATE, None), manual);
                 host.record_stop();
                 match heard {
                     Ok(text) => {
@@ -460,22 +476,4 @@ fn by_model(host: &dyn RadioHost, held: &crate::engines::Held, chosen: &Chosen, 
         *chosen.last.lock().unwrap_or_else(|e| e.into_inner()) = Some((pcm.len() as f32 / RATE as f32, began.elapsed().as_secs_f32()));
     }
     heard.map(|text| Some(text.trim().to_string()).filter(|t| !t.is_empty())).ok_or(())
-}
-
-/// A WAV header for a recording whose length is not known yet.
-pub(crate) fn wav_header() -> Vec<u8> {
-    let mut h = Vec::with_capacity(44);
-    h.extend_from_slice(b"RIFF");
-    h.extend_from_slice(&0u32.to_le_bytes());
-    h.extend_from_slice(b"WAVEfmt ");
-    h.extend_from_slice(&16u32.to_le_bytes());
-    h.extend_from_slice(&1u16.to_le_bytes());
-    h.extend_from_slice(&1u16.to_le_bytes());
-    h.extend_from_slice(&RATE.to_le_bytes());
-    h.extend_from_slice(&(RATE * 2).to_le_bytes());
-    h.extend_from_slice(&2u16.to_le_bytes());
-    h.extend_from_slice(&16u16.to_le_bytes());
-    h.extend_from_slice(b"data");
-    h.extend_from_slice(&0u32.to_le_bytes());
-    h
 }

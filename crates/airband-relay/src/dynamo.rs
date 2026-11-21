@@ -146,6 +146,21 @@ impl Dynamo {
         Ok(Creds { key: field("AccessKeyId")?, secret: field("SecretAccessKey")?, token: Some(field("Token")?) })
     }
 
+    /// One page of a `Scan` or a `Query`: its items, and where the next page starts when there is one.
+    /// `from` is where this page starts, as the page before it said; nothing for the first.
+    pub async fn page(&self, operation: &str, mut ask: Value, from: Option<Value>) -> Result<(Vec<Value>, Option<Value>), String> {
+        if let Some(from) = from {
+            ask["ExclusiveStartKey"] = from;
+        }
+        let mut page = self.call(operation, ask).await.map_err(|e| e.to_string())?;
+        let next = page.get("LastEvaluatedKey").filter(|k| k.is_object()).cloned();
+        let items = match page["Items"].take() {
+            Value::Array(items) => items,
+            _ => Vec::new(),
+        };
+        Ok((items, next))
+    }
+
     /// One DynamoDB operation, such as `PutItem`. Tried again a few times when the service is busy, cannot be
     /// reached, or two transactions touched the same item at once; a refusal that trying again cannot change
     /// comes back at once.
@@ -160,7 +175,7 @@ impl Dynamo {
                 tokio::time::sleep(Duration::from_millis((40 << attempt) + apart * attempt as u64)).await;
             }
             let creds = self.creds().await?;
-            let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let secs = airband_core::clock::now_secs();
             let mut req = self.http.post(format!("https://{host}/")).body(bytes.clone());
             for (name, value) in signed(&creds, &self.region, &host, &format!("DynamoDB_20120810.{operation}"), &bytes, secs) {
                 req = req.header(name, value);

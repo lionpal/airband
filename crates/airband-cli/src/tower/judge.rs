@@ -207,10 +207,7 @@ async fn chat(model: &Summarizer, by: &By, prompt: String, shape: Option<Value>)
     }
     let url = format!("{}/chat/completions", model.get(Job::Summary, "url").trim_end_matches('/'));
     // how this service takes a key is its row's to say; one sent no key needs nothing said
-    let auth = match model.key.is_empty() {
-        true => None,
-        false => Some(by.auth().map(|a| (a.header.clone(), a.value(&model.key))).ok_or_else(|| Failed(Trouble::NotSet, "this version of airband was not told how that service takes its key".into()))?),
-    };
+    let auth = by.key_header(&model.key).map_err(|_| Failed(Trouble::NotSet, "this version of airband was not told how that service takes its key".into()))?;
     Ok(ask_api(url, auth, body).await?)
 }
 

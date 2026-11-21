@@ -37,29 +37,54 @@ struct Voicing {
 /// sent, the rate of the sound it gives back, and its name for when it has to be named to him.
 pub(crate) struct Reach {
     url: String,
-    auth: (String, String),
+    /// The header its key goes in and the value there. Nothing for a service sent no key.
+    auth: Option<(String, String)>,
     headers: Vec<(String, String)>,
     pub rate: u32,
     name: String,
 }
 
+/// The rates a voice's sound can be played at.
+const RATES: std::ops::RangeInclusive<u32> = 8000..=48000;
+
+/// How a voice service takes this key, by its row. One sent no key needs nothing said.
+fn key_header(by: &By, key: &str) -> Result<Option<(String, String)>, String> {
+    by.key_header(key).map_err(|_| "This version of airband was not told how that voice service takes its key.".to_string())
+}
+
+/// What is said when a voice service answers with anything but the sound.
+fn answered(name: &str, status: u16) -> String {
+    format!("{name} answered {status}")
+}
+
+/// Hand a service's sound on as it arrives, a tenth of a second at a time.
+fn pump(mut sound: impl std::io::Read, sink: &mut dyn FnMut(&[u8])) -> Result<(), String> {
+    let mut buf = [0u8; 4800];
+    loop {
+        match sound.read(&mut buf).map_err(|e| e.to_string())? {
+            0 => return Ok(()),
+            n => sink(&buf[..n]),
+        }
+    }
+}
+
 impl Reach {
     fn of(voice: &Use, by: &By, name: &str) -> Result<Reach, String> {
         let url = airband_core::providers::fill(by.text("url"), &|field| voice.get(Job::Voice, field))?;
-        let auth = by.auth().map(|a| (a.header.clone(), a.value(&voice.key))).ok_or("This version of airband was not told how that voice service takes its key.")?;
-        let rate = by.with.get("rate").and_then(serde_json::Value::as_u64).filter(|r| (8000..=48000).contains(r)).ok_or("That voice service's row does not say the rate of its sound.")? as u32;
+        let auth = key_header(by, &voice.key)?;
+        let rate = by.with.get("rate").and_then(serde_json::Value::as_u64).map(|r| r as u32).filter(|r| RATES.contains(r)).ok_or("That voice service's row does not say the rate of its sound.")?;
         let headers = by.with.get("headers").and_then(serde_json::Value::as_object).map(|h| h.iter().filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string()))).collect()).unwrap_or_default();
         Ok(Reach { url, auth, headers, rate, name: name.into() })
     }
 
     /// A request to it, with the key and what else the row says to send.
     fn post(&self, timeout: std::time::Duration) -> ureq::RequestBuilder<ureq::typestate::WithBody> {
-        self.headers.iter().fold(crate::net::agent(timeout).post(&self.url).header(self.auth.0.as_str(), self.auth.1.as_str()), |r, (k, v)| r.header(k.as_str(), v.as_str()))
+        self.auth.iter().chain(self.headers.iter()).fold(crate::net::agent(timeout).post(&self.url), |r, (k, v)| r.header(k.as_str(), v.as_str()))
     }
 
     /// What is said when it answers with anything but the sound.
     fn answered(&self, status: u16) -> String {
-        format!("{} answered {status}", self.name)
+        answered(&self.name, status)
     }
 }
 

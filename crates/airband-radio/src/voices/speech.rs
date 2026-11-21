@@ -3,21 +3,15 @@
 use super::{Made, Synth, Voicing};
 use airband_core::providers::{By, Interface, Job, Use};
 use serde_json::json;
-use std::io::Read;
 use std::time::Duration;
 
 pub(super) const VOICING: Voicing = Voicing { is: Interface { name: "speech", can: &[], told: &[] }, make };
 
-fn make(voice: &Use, by: &By, _name: &str) -> Made {
+fn make(voice: &Use, by: &By, name: &str) -> Made {
     let set = |field: &str| voice.get(Job::Voice, field);
     // the interface does not say the rate in a way every service agrees on, so the row or his setting does
-    let rate = set("rate").parse().ok().filter(|r| (8000..=48000).contains(r)).ok_or_else(|| format!("\"{}\" is not a rate a voice can be played at. It is a number like 24000.", set("rate")))?;
-    // how this service takes a key is its row's to say; one sent no key needs nothing said
-    let auth = match voice.key.is_empty() {
-        true => None,
-        false => Some(by.auth().map(|a| (a.header.clone(), a.value(&voice.key))).ok_or("This version of airband was not told how that voice service takes its key.")?),
-    };
-    Ok(Box::new(OpenAiSpeech { url: set("url"), auth, model: set("model"), voice: set("voice"), rate }))
+    let rate = set("rate").parse().ok().filter(|r| super::RATES.contains(r)).ok_or_else(|| format!("\"{}\" is not a rate a voice can be played at. It is a number like 24000.", set("rate")))?;
+    Ok(Box::new(OpenAiSpeech { url: set("url"), auth: super::key_header(by, &voice.key)?, model: set("model"), voice: set("voice"), rate, name: name.into() }))
 }
 
 /// Any service that speaks OpenAI's speech interface: `POST {url}/audio/speech`, asked for raw 16-bit mono PCM.
@@ -30,6 +24,8 @@ struct OpenAiSpeech {
     model: String,
     voice: String,
     rate: u32,
+    /// What the service is called, for when it has to be named to him.
+    name: String,
 }
 
 impl Synth for OpenAiSpeech {
@@ -44,15 +40,8 @@ impl Synth for OpenAiSpeech {
         }
         let res = req.send_json(&body).map_err(|e| e.to_string())?;
         if res.status().as_u16() != 200 {
-            return Err(format!("the voice service answered {}", res.status()));
+            return Err(super::answered(&self.name, res.status().as_u16()));
         }
-        let mut body = res.into_body().into_reader();
-        let mut buf = [0u8; 8192];
-        loop {
-            match body.read(&mut buf).map_err(|e| e.to_string())? {
-                0 => return Ok(()),
-                n => sink(&buf[..n]),
-            }
-        }
+        super::pump(res.into_body().into_reader(), sink)
     }
 }

@@ -18,8 +18,7 @@ const WIRE: Wire = Wire { connect, audio, end: |_| Message::text(json!({ "realti
 fn pass(by: &By, name: &str, set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
     let until = crate::ears_stream::stamp_at(now_ms() + 20 * 60 * 1000);
     let body = serde_json::json!({ "uses": 0, "expireTime": until, "newSessionExpireTime": until });
-    let mut res = ask_pass(by, name, set, key, Some(body))?;
-    res.body_mut().read_json::<Value>().ok().and_then(|v| v["name"].as_str().map(String::from)).ok_or_else(|| format!("{name} gave no pass to listen with."))
+    pass_field(by, name, set, key, Some(body), "name")
 }
 
 /// The pass goes in the address; the model, the language and the names to expect go in the first message.

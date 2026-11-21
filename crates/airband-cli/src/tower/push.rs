@@ -90,7 +90,7 @@ pub(super) fn consider(app: &Arc<App>, inner: &mut Inner, id: &str) {
     if !app.push.any() {
         return;
     }
-    let Some(e) = inner.log.iter().find(|e| e.id == id).filter(|e| deserves(e, now())) else { return };
+    let Some(e) = inner.log.iter().find(|e| e.id == id).filter(|e| deserves(e, now_ms())) else { return };
     let (rev, card) = (e.rev, e.permit.is_some());
     if !inner.pushed.insert(id.to_string()) {
         return;
@@ -105,7 +105,7 @@ pub(super) fn consider(app: &Arc<App>, inner: &mut Inner, id: &str) {
         let station = config::station(&app.cfg);
         let (note, to): (Notice, Vec<(String, Vec<PushTarget>)>) = {
             let inner = app.inner.lock().unwrap();
-            let Some(e) = inner.log.iter().find(|e| e.id == id).filter(|e| deserves(e, now())) else { return };
+            let Some(e) = inner.log.iter().find(|e| e.id == id).filter(|e| deserves(e, now_ms())) else { return };
             // answered meanwhile, from another radio or at the keyboard: there is nothing left to tell him
             if (card && e.permit.is_none()) || (e.kind == Some(Kind::NeedsYou) && !inner.open_ids().contains(&id)) {
                 return;
@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn a_question_or_a_report_deserves_one_and_nothing_else_does() {
         let mut inner = tower();
-        let t = now();
+        let t = now_ms();
         assert!(deserves(&line(&mut inner, "q", Some(Kind::NeedsYou), Some("Ship it?")), t));
         assert!(deserves(&line(&mut inner, "r", Some(Kind::Report), Some("Shipped.")), t));
         assert!(!deserves(&line(&mut inner, "f", Some(Kind::Fyi), Some("Starting.")), t));

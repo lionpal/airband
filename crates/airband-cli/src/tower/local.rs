@@ -87,10 +87,7 @@ fn end_the_last_one() {
     if let (Some(pid), Some(was)) = (lines.next().and_then(|p| p.trim().parse::<u32>().ok()), lines.next().filter(|p| !p.is_empty())) {
         let is_ours = Command::new("ps").args(["-p", &pid.to_string(), "-o", "command="]).output().is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains(was));
         if is_ours {
-            #[cfg(unix)]
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
-            }
+            terminate(pid);
             std::thread::sleep(Duration::from_millis(600));
         }
     }
@@ -99,10 +96,7 @@ fn end_the_last_one() {
 
 /// Ask the server's keeper to end it, and wait until it has: asked, not killed, so the keeper can pass it on.
 fn end(keeper: &mut Child) {
-    #[cfg(unix)]
-    unsafe {
-        libc::kill(keeper.id() as i32, libc::SIGTERM);
-    }
+    terminate(keeper.id());
     #[cfg(not(unix))]
     let _ = keeper.kill();
     let _ = keeper.wait();

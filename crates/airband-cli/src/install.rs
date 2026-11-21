@@ -148,9 +148,6 @@ pub fn relay(mut cfg: Config, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn option(args: &[String], name: &str) -> Option<String> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
-}
 /// `airband model`: show or change what reads. Everything it knows about providers comes from the catalogue
 /// (`providers::offering`). What listens and what speaks are chosen on the phone, not here.
 ///
@@ -196,7 +193,7 @@ pub fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
             };
             let mut u = Use::of(&p.id, &o.id);
             if p.key {
-                u.key = match option(args, "--key-env") {
+                u.key = match crate::option(args, "--key-env") {
                     Some(var) => std::env::var(&var).ok().filter(|k| !k.is_empty()).ok_or_else(|| format!("{var} is not set"))?,
                     // one he already gave for this provider will do
                     None => cfg.keys.values().find(|k| k.provider == p.id).map(|k| k.secret.clone()).ok_or_else(|| format!("{} needs a key: --key-env <VARIABLE>, or give one first with  airband keys add {id} {id}", p.name))?,
@@ -207,7 +204,7 @@ pub fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
                 }
             }
             for a in &o.asks {
-                if let Some(said) = option(args, &format!("--{}", a.field)) {
+                if let Some(said) = crate::option(args, &format!("--{}", a.field)) {
                     u.set.insert(a.field.clone(), json!(said));
                 }
             }

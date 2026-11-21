@@ -36,7 +36,7 @@ fn file(id: &str) -> Option<PathBuf> {
 /// decodes and shrinks the picture): not for a thread that others wait on.
 pub(super) fn keep(path: &Path) -> Option<Picture> {
     let meta = std::fs::metadata(path).ok().filter(|m| m.is_file() && m.len() <= TOO_LARGE)?;
-    let modified = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis()).unwrap_or(0);
+    let modified = crate::adapters::written(path);
     let digest = Sha256::digest(format!("{}\n{}\n{modified}", path.display(), meta.len()));
     keep_as(airband_core::relay::hex(&digest[..12]), || image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.decode().ok())
 }

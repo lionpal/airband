@@ -58,10 +58,23 @@ impl By {
     pub fn auth(&self) -> Option<Auth> {
         self.with.get("auth").and_then(|a| serde_json::from_value(a.clone()).ok())
     }
+    /// The header a key goes in for this service and its value there, for sending with a request. Nothing
+    /// for a service that is sent no key. Err when there is a key to send and the row does not say how:
+    /// the caller says so in its own words.
+    pub fn key_header(&self, key: &str) -> Result<Option<(String, String)>, Untold> {
+        if key.is_empty() {
+            return Ok(None);
+        }
+        self.auth().map(|a| Some((a.header.clone(), a.value(key)))).ok_or(Untold)
+    }
     pub fn list(&self, name: &str) -> Vec<String> {
         self.with.get(name).and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default()
     }
 }
+
+/// A row does not say how its service takes a key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Untold;
 
 /// How a key is presented to a service: `{ "header": "authorization", "prefix": "Bearer " }`.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]

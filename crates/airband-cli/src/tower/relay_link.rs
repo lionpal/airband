@@ -5,7 +5,7 @@
 //! bytes; a request that does not open with a paired radio's key, is not fresh, or was already answered is
 //! dropped here.
 use crate::config::{self, PairedRadio};
-use super::{App, PRESENCE_HEADER, RADIO_HEADER, VIA_HEADER, log, now as now_ms};
+use super::{App, PRESENCE_HEADER, RADIO_HEADER, VIA_HEADER, log, now_ms};
 use axum::Router;
 use axum::body::Body;
 use axum::http::Request;
@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::runtime::Handle;
 use tower::ServiceExt;
-use airband_core::relay::{Answer, Call, Direction, FRESH_MS, Keys, fresh};
+use airband_core::relay::{Answer, Call, FRESH_MS, Keys, fresh};
 
 
 /// What a radio whose clock is wrong is told.
@@ -191,28 +191,32 @@ impl Serve {
         }
     }
 
+    /// Is this the first time a request of this id has come? Each is answered once: a copy of one, sent
+    /// again by someone who saw it go by, is not. Ids are remembered for as long as a request counts as fresh.
+    fn first_time(&self, id: &str, now: u64) -> bool {
+        let mut seen = self.seen.lock().unwrap();
+        seen.retain(|_, t| t.abs_diff(now) <= FRESH_MS * 2);
+        seen.insert(id.to_string(), now).is_none()
+    }
+
     /// A request that came straight to the tower: opened, checked and run as one from the relay is, and its
     /// answer sealed. Nothing for one this pairing's key does not open, that is stale, or that was seen before.
     async fn answer_here(&self, sealed: &[u8]) -> Option<Vec<u8>> {
-        let call: Call = self.keys.open(Direction::ToTower, sealed).ok().and_then(|p| serde_json::from_slice(&p).ok())?;
+        let call = self.keys.open_call(sealed)?;
         let now = now_ms();
         let (status, body) = if !fresh(call.t, now) {
             self.refused(&call, "his own network", 408, WRONG_CLOCK)
         } else {
-            {
-                let mut seen = self.seen.lock().unwrap();
-                seen.retain(|_, t| t.abs_diff(now) <= FRESH_MS * 2);
-                if seen.insert(call.id.clone(), now).is_some() {
-                    return None;
-                }
+            if !self.first_time(&call.id, now) {
+                return None;
             }
             self.dispatch(&call, "his own network", true).await
         };
-        Some(self.keys.seal(Direction::ToRadio, &serde_json::to_vec(&Answer { id: call.id, status, body }).unwrap()))
+        Some(self.keys.seal_answer(&Answer { id: call.id, status, body }))
     }
 
     async fn answer(self, request_id: String, sealed: Vec<u8>) {
-        let Some(call) = self.keys.open(Direction::ToTower, &sealed).ok().and_then(|p| serde_json::from_slice::<Call>(&p).ok()) else {
+        let Some(call) = self.keys.open_call(&sealed) else {
             log(format!("dropped a request on \"{}\"'s channel that its key does not open", self.name));
             // one the relay was keeping has to be taken off its hands all the same, or it would be handed over
             // for ever and hold up everything kept behind it
@@ -243,16 +247,12 @@ impl Serve {
             // answered, not dropped, so a phone with a wrong clock is told why nothing works
             self.refused(&call, "the relay", 408, WRONG_CLOCK)
         } else {
-            {
-                let mut seen = self.seen.lock().unwrap();
-                seen.retain(|_, t| t.abs_diff(now) <= FRESH_MS * 2);
-                if seen.insert(call.id.clone(), now).is_some() {
-                    return log(format!("dropped a replayed request on \"{}\"'s channel", self.name));
-                }
+            if !self.first_time(&call.id, now) {
+                return log(format!("dropped a replayed request on \"{}\"'s channel", self.name));
             }
             self.dispatch(&call, "the relay", true).await
         };
-        let sealed = self.keys.seal(Direction::ToRadio, &serde_json::to_vec(&Answer { id: call.id, status, body }).unwrap());
+        let sealed = self.keys.seal_answer(&Answer { id: call.id, status, body });
         self.send_back(&request_id, Some(sealed)).await;
     }
 

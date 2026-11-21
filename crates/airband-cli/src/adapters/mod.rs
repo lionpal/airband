@@ -312,7 +312,7 @@ pub fn accounts() -> Accounts {
         all.extend(accounts);
         notes.extend(note);
     }
-    let checked_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    let checked_at = airband_core::clock::now_ms();
     Accounts { schema: airband_core::radio::SCHEMA.into(), accounts: all, note: (!notes.is_empty()).then(|| notes.join(" ")), checked_at }
 }
 fn book(harness: &str) -> Result<&'static AccountBook, String> {

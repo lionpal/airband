@@ -315,7 +315,7 @@ async fn next(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
         // while and is back says no such thing, and nothing is taken from the queue for it.
         if q.contains_key("joined") {
             inner.leave_old_news();
-            inner.call(&radio).began = super::now();
+            inner.call(&radio).began = now_ms();
         }
         // The radio says which transmission it last got (`have`). If the tower gave it another since and has
         // heard nothing about it, the answer that carried it was lost on the way: it is given again now, not
@@ -384,7 +384,7 @@ async fn heard(State(app): State<Arc<App>>, headers: HeaderMap, Json(h): Json<He
     }
     // a reminder of a question he has heard before is not in the queue; what was is now heard
     if let Some(agent_id) = inner.log.iter().find(|e| e.id == h.id && e.aloud.unheard()).map(|e| e.agent.clone().unwrap_or_default()) {
-        inner.set_aloud(&h.id, Aloud::Heard { radio: radio.clone(), at: super::now() });
+        inner.set_aloud(&h.id, Aloud::Heard { radio: radio.clone(), at: now_ms() });
         if let Some(s) = inner.session(&agent_id) {
             s.last_heard = Some(h.id.clone());
             inner.call(&radio).focus = Some(agent_id);

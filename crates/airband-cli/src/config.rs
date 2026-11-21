@@ -199,11 +199,7 @@ fn default_name() -> String {
         std::env::var("USERNAME").unwrap_or_default()
     }
 }
-pub fn random_hex(bytes: usize) -> String {
-    let mut buf = vec![0u8; bytes];
-    getrandom::fill(&mut buf).expect("the system has no random source");
-    buf.iter().map(|b| format!("{b:02x}")).collect()
-}
+pub use airband_core::relay::random_hex;
 fn default_permission_wait() -> u64 {
     180
 }

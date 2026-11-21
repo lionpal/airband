@@ -157,7 +157,7 @@ impl Store {
     /// deliveries after a month, the ids of what he said after a month (the relay holds a message for a week at
     /// most, so none can come again later than that), and all but the newest 5,000 messages.
     pub(super) fn prune(&self) {
-        let before = now().saturating_sub(30 * 24 * 3600 * 1000) as i64;
+        let before = now_ms().saturating_sub(30 * 24 * 3600 * 1000) as i64;
         let db = self.db.lock().unwrap();
         for table in ["events", "deliveries", "receipts"] {
             Self::warn("dropping old records", db.execute(&format!("delete from {table} where at < ?1"), params![before]));
@@ -176,7 +176,7 @@ impl Store {
         let db = self.db.lock().unwrap();
         Self::warn(
             "recording an event",
-            db.execute("insert into events (at, agent, harness, event, agent_doc) values (?1, ?2, ?3, ?4, ?5)", params![now() as i64, raw["agent"]["id"].as_str().unwrap_or(""), raw["agent"]["harness"].as_str().unwrap_or(""), airband_core::redact::redact(&raw["event"].to_string()), about.to_string()]),
+            db.execute("insert into events (at, agent, harness, event, agent_doc) values (?1, ?2, ?3, ?4, ?5)", params![now_ms() as i64, raw["agent"]["id"].as_str().unwrap_or(""), raw["agent"]["harness"].as_str().unwrap_or(""), airband_core::redact::redact(&raw["event"].to_string()), about.to_string()]),
         );
     }
 
@@ -196,7 +196,7 @@ impl Store {
                 Receipt::Done(reply)
             }
             _ => {
-                Self::warn("taking a receipt", db.execute("insert into receipts (id, at) values (?1, ?2) on conflict (id) do update set at = excluded.at", params![id, now() as i64]));
+                Self::warn("taking a receipt", db.execute("insert into receipts (id, at) values (?1, ?2) on conflict (id) do update set at = excluded.at", params![id, now_ms() as i64]));
                 Receipt::Begun
             }
         }
@@ -210,7 +210,7 @@ impl Store {
     /// `utterance` is the id the radio gave what he said, when it gave one.
     pub(super) fn delivery(&self, message: &str, utterance: Option<&str>, callsign: &str, outcome: &Result<(), String>) {
         let db = self.db.lock().unwrap();
-        Self::warn("recording a delivery", db.execute("insert into deliveries (at, message, callsign, ok, error, utterance) values (?1, ?2, ?3, ?4, ?5, ?6)", params![now() as i64, message, callsign, outcome.is_ok() as i64, outcome.as_ref().err(), utterance]));
+        Self::warn("recording a delivery", db.execute("insert into deliveries (at, message, callsign, ok, error, utterance) values (?1, ?2, ?3, ?4, ?5, ?6)", params![now_ms() as i64, message, callsign, outcome.is_ok() as i64, outcome.as_ref().err(), utterance]));
     }
 
     /// Who an utterance has already reached.

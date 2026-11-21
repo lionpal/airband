@@ -306,7 +306,7 @@ mod tests {
         if std::env::var("WITHOUT_NAMES").is_err() {
             grant.phrases = vec!["airband".into(), "shop two".into()];
         }
-        let said = live(l.wire, Arc::new(move || Some(grant.clone())), &tape, 16000, crate::ears::wav_header(), std::env::var("MANUAL").is_ok())
+        let said = live(l.wire, Arc::new(move || Some(grant.clone())), &tape, 16000, crate::hears::wav_header(16000, None), std::env::var("MANUAL").is_ok())
         .unwrap();
         println!("{:>5} ms  FINAL: {said:?} (the recording is {} ms long)", tape.began.elapsed().as_millis(), pcm.len() / 32);
         assert!(said.is_some_and(|s| !s.is_empty()));

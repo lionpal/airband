@@ -21,10 +21,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use serde_json::Value;
-use std::time::{SystemTime, UNIX_EPOCH};
 use airband_core::pairing::Pairing;
 use airband_core::radio::{Feed, Heard, Kind, Reply, Transmission, Utterance};
-use airband_core::relay::{Answer, Call, Direction, Keys, random_hex};
+use airband_core::relay::{Call, Direction, Keys, random_hex};
 
 mod call;
 mod choices;

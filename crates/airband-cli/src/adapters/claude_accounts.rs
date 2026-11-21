@@ -76,7 +76,7 @@ fn dir() -> PathBuf {
     config::dir().join("claude-code")
 }
 fn now_ms() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+    airband_core::clock::now_ms() as i64
 }
 fn http() -> ureq::Agent {
     ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(20))).http_status_as_error(false).build().into()

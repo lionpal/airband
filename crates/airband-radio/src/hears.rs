@@ -8,12 +8,12 @@ use airband_core::providers::{By, Interface, Job, Offer, Use};
 use serde_json::Value;
 use std::time::Duration;
 
-/// A recording as a WAV file: 16-bit mono PCM at `rate`.
-pub fn wav(rate: u32, pcm: &[i16]) -> Vec<u8> {
-    let data = (pcm.len() * 2) as u32;
-    let mut out = Vec::with_capacity(44 + pcm.len() * 2);
+/// The 44 bytes a WAV file of 16-bit mono PCM at `rate` starts with. `data` is how many bytes of sound
+/// follow; a recording still being made does not know, and says nought for both lengths.
+pub(crate) fn wav_header(rate: u32, data: Option<u32>) -> Vec<u8> {
+    let mut out = Vec::with_capacity(44);
     out.extend_from_slice(b"RIFF");
-    out.extend_from_slice(&(36 + data).to_le_bytes());
+    out.extend_from_slice(&data.map_or(0, |d| 36 + d).to_le_bytes());
     out.extend_from_slice(b"WAVEfmt ");
     out.extend_from_slice(&16u32.to_le_bytes());
     out.extend_from_slice(&1u16.to_le_bytes());
@@ -23,7 +23,14 @@ pub fn wav(rate: u32, pcm: &[i16]) -> Vec<u8> {
     out.extend_from_slice(&2u16.to_le_bytes());
     out.extend_from_slice(&16u16.to_le_bytes());
     out.extend_from_slice(b"data");
-    out.extend_from_slice(&data.to_le_bytes());
+    out.extend_from_slice(&data.unwrap_or(0).to_le_bytes());
+    out
+}
+
+/// A recording as a WAV file: 16-bit mono PCM at `rate`.
+pub fn wav(rate: u32, pcm: &[i16]) -> Vec<u8> {
+    let mut out = wav_header(rate, Some((pcm.len() * 2) as u32));
+    out.reserve(pcm.len() * 2);
     pcm.iter().for_each(|s| out.extend_from_slice(&s.to_le_bytes()));
     out
 }
@@ -77,10 +84,9 @@ fn transcriptions(with: &Use, by: &By, wav: &[u8], phrases: &[String]) -> Result
     body.extend_from_slice(wav);
     body.extend_from_slice(format!("\r\n--{edge}--\r\n").as_bytes());
     let mut req = agent.post(format!("{}/audio/transcriptions", set("url").trim_end_matches('/'))).header("content-type", format!("multipart/form-data; boundary={edge}"));
-    if !with.key.is_empty() {
-        // how this service takes a key is its row's to say
-        let auth = by.auth().ok_or("This version of airband was not told how that service takes its key.")?;
-        req = req.header(auth.header.as_str(), auth.value(&with.key));
+    // how this service takes a key is its row's to say; one sent no key needs nothing said
+    if let Some((header, value)) = by.key_header(&with.key).map_err(|_| "This version of airband was not told how that service takes its key.")? {
+        req = req.header(header.as_str(), value.as_str());
     }
     let mut res = req.send(&body[..]).map_err(|_| "Could not reach the listening service.".to_string())?;
     match res.status().as_u16() {

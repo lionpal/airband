@@ -53,7 +53,7 @@ pub(super) async fn pump(app: &Arc<App>) {
     log(format!("→ {radio}: {callsign} ({kind:?}): {say}"));
     let spoken_line = format!("{}. {say}", cap(&callsign));
     let waiting = inner.unheard().count() as u32 - 1;
-    inner.set_aloud(&next.id, Aloud::Handed { radio: radio.clone(), at: now() });
+    inner.set_aloud(&next.id, Aloud::Handed { radio: radio.clone(), at: now_ms() });
     transmit(app, &mut inner, &radio, Transmission { id: next.id.clone(), callsign, kind, say: spoken_line, waiting });
     app.save(&inner);
 }

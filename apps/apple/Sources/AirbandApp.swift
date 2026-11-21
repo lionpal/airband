@@ -1613,7 +1613,7 @@ struct ConnectionPage: View {
     var body: some View {
         Form {
             ForEach(reach, id: \.computer) { r in
-                Section(r.computer.isEmpty ? "Your computer" : r.computer) {
+                Section(r.computer) {
                     line("Through the relay", r.relay)
                     line("On this network", r.near)
                 }

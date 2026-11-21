@@ -310,6 +310,31 @@ fn send_file(shared: Arc<Shared>, radio: Arc<Radio>, id: String, file_path: Stri
 }
 
 impl State {
+    /// Every computer's radio, in the computers' order.
+    fn radios(&self) -> Vec<Arc<Radio>> {
+        self.stations.iter().map(|s| s.radio.clone()).collect()
+    }
+    /// The radio of the computer that has this agent, by the agent's id.
+    fn radio_with_agent(&self, id: &str) -> Option<Arc<Radio>> {
+        self.stations.iter().find(|s| s.agents.iter().any(|a| a.id == id)).map(|s| s.radio.clone())
+    }
+    /// What a computer is called wherever one is named to him: the name it gave itself, and for one that
+    /// gave none, "Your computer" when it is the only one and its place among them when there are several.
+    fn computer_name(&self, index: usize) -> String {
+        match self.stations.get(index).map(|s| s.name.as_str()).filter(|n| !n.is_empty()) {
+            Some(name) => name.to_string(),
+            None if self.stations.len() == 1 => "Your computer".to_string(),
+            None => format!("Computer {}", index + 1),
+        }
+    }
+    /// Every computer's radio with what the computer is called.
+    fn named_radios(&self) -> Vec<(String, Arc<Radio>)> {
+        (0..self.stations.len()).map(|i| (self.computer_name(i), self.stations[i].radio.clone())).collect()
+    }
+    /// The colour a team is shown in, as the computer that has it says.
+    fn colour(&self, group: &str) -> u8 {
+        self.stations.iter().find_map(|s| s.colours.get(group).copied()).unwrap_or(0)
+    }
     fn owner(&self, message: &str) -> Option<usize> {
         self.stations.iter().position(|s| s.messages.iter().any(|m| m.id == message))
     }
@@ -432,7 +457,7 @@ impl RadioHost for StationHost {
             let there = elsewhere.as_ref().and_then(|c| state.stations.iter().enumerate().find(|(i, s)| *i != self.index && s.agents.iter().any(|a| a.callsign == *c)).map(|(_, s)| s.radio.clone()));
             match (there, elsewhere) {
                 (Some(radio), Some(callsign)) => {
-                    let text = format!("@{} {}", callsign.replace(' ', ""), message.text);
+                    let text = addressed(&callsign, &message.text);
                     drop(state);
                     radio.queue_with(text, None, None, message.label.clone(), String::new());
                 }
@@ -724,7 +749,7 @@ impl Desk {
                     r.doing = r.doing.take().or(doing);
                     r.members.push(member);
                 }
-                None => rooms.push(DeskRoom { name: a.group.clone(), state: if a.state.is_empty() { "working".into() } else { a.state.clone() }, agents: 1, subagents: a.subagents, doing, members: vec![member], unread: unread_in.get(a.group.as_str()).copied().unwrap_or(0), colour: state.stations.iter().find_map(|s| s.colours.get(&a.group).copied()).unwrap_or(0) }),
+                None => rooms.push(DeskRoom { name: a.group.clone(), state: if a.state.is_empty() { "working".into() } else { a.state.clone() }, agents: 1, subagents: a.subagents, doing, members: vec![member], unread: unread_in.get(a.group.as_str()).copied().unwrap_or(0), colour: state.colour(&a.group) }),
             }
         }
         rooms.sort_by(|a, b| a.name.cmp(&b.name));
@@ -741,7 +766,7 @@ impl Desk {
             online: state.stations.iter().any(|s| s.online),
             connecting: !state.stations.iter().any(|s| s.online) && state.stations.iter().any(|s| !s.tried),
             near: state.stations.iter().any(|s| s.online) && state.stations.iter().filter(|s| s.online).all(|s| s.radio.near()),
-            away: if state.stations.len() > 1 { state.stations.iter().enumerate().filter(|(_, s)| s.tried && !s.online).map(|(i, s)| if s.name.is_empty() { format!("computer {}", i + 1) } else { s.name.clone() }).collect() } else { Vec::new() },
+            away: if state.stations.len() > 1 { state.stations.iter().enumerate().filter(|(_, s)| s.tried && !s.online).map(|(i, _)| state.computer_name(i)).collect() } else { Vec::new() },
             can_poke: agents.iter().any(|a| a.state == "stalled" && room.as_ref().is_none_or(|r| a.group == *r)),
             feed,
             rooms,
@@ -764,7 +789,7 @@ impl Desk {
                 let guessed = asking.guesses.iter().filter_map(|c| agents.iter().copied().find(|a| a.callsign == *c));
                 DeskAsk {
                     text: asking.message.label.clone().unwrap_or_else(|| asking.message.text.clone()),
-                    choices: guessed.chain(rest).take(8).map(|a| DeskChoice { id: a.id.clone(), callsign: a.callsign.clone(), badge: airband_core::routing::badge(&a.group, &a.callsign), colour: state.stations.iter().find_map(|s| s.colours.get(&a.group).copied()).unwrap_or(0) }).collect(),
+                    choices: guessed.chain(rest).take(8).map(|a| DeskChoice { id: a.id.clone(), callsign: a.callsign.clone(), badge: airband_core::routing::badge(&a.group, &a.callsign), colour: state.colour(&a.group) }).collect(),
                 }
             }),
         }
@@ -776,7 +801,7 @@ impl Desk {
             let mut state = self.shared.state.lock().unwrap();
             let to = state.stations.iter().find_map(|s| s.agents.iter().find(|a| a.id == agent).map(|a| (s.radio.clone(), a.callsign.clone())));
             match (to, state.asking.take()) {
-                (Some((radio, callsign)), Some(asking)) => Some((radio, format!("@{} {}", callsign.replace(' ', ""), asking.message.text), asking.message.label)),
+                (Some((radio, callsign)), Some(asking)) => Some((radio, addressed(&callsign, &asking.message.text), asking.message.label)),
                 (_, asking) => {
                     state.asking = asking;
                     None
@@ -850,7 +875,7 @@ impl Desk {
         thread::spawn(move || {
             let (generation, radios): (u64, Vec<Arc<Radio>>) = {
                 let state = shared.state.lock().unwrap();
-                (state.generation, state.stations.iter().map(|s| s.radio.clone()).collect())
+                (state.generation, state.radios())
             };
             for (index, radio) in radios.iter().enumerate() {
                 tell_push(&shared, radio, index, generation);
@@ -1054,7 +1079,7 @@ impl Desk {
         let radios: Vec<Arc<Radio>> = {
             let mut state = self.shared.state.lock().unwrap();
             state.calling = on;
-            state.stations.iter().map(|s| s.radio.clone()).collect()
+            state.radios()
         };
         if !on {
             self.shared.floor.clear();
@@ -1086,7 +1111,7 @@ impl Desk {
 
     /// Leave off reading aloud. The host stops what is already playing.
     pub fn stop_reading(&self) {
-        let radios: Vec<Arc<Radio>> = self.shared.state.lock().unwrap().stations.iter().map(|s| s.radio.clone()).collect();
+        let radios = self.shared.state.lock().unwrap().radios();
         radios.iter().for_each(|r| r.hush());
     }
 
@@ -1100,7 +1125,7 @@ impl Desk {
     /// main thread.
     pub fn accounts(&self, fresh: bool) -> Vec<StationAccounts> {
         // a computer is always headed by a name: its own, or its place in the list until it has said its own
-        let radios: Vec<(String, Arc<Radio>)> = self.shared.state.lock().unwrap().stations.iter().enumerate().map(|(i, s)| (if s.name.is_empty() { format!("computer {}", i + 1) } else { s.name.clone() }, s.radio.clone())).collect();
+        let radios = self.shared.state.lock().unwrap().named_radios();
         // one after another, not all at once: two computers on the same account asking Anthropic in the same
         // moment is how one of them gets refused
         let mut all: Vec<StationAccounts> = radios
@@ -1140,7 +1165,7 @@ impl Desk {
     /// Put an agent in another team: one of the teams on screen, or a new one of that name. `agent` is its id.
     /// The list shows it there at once. Blocks: call it off the main thread.
     pub fn move_agent(&self, agent: String, team: String) -> Result<(), RadioError> {
-        let radio = self.shared.state.lock().unwrap().stations.iter().find(|s| s.agents.iter().any(|a| a.id == agent)).map(|s| s.radio.clone()).ok_or(RadioError::Refused)?;
+        let radio = self.agent_radio(&agent)?;
         let now = radio.move_agent(agent.clone(), team)?;
         {
             // shown as the tower now has it, without waiting for the next look at the feed
@@ -1156,13 +1181,13 @@ impl Desk {
     /// Stop what an agent is doing, now: one its computer runs itself. What he said to it meanwhile it then
     /// reads together. Blocks: call it off the main thread.
     pub fn stop_agent(&self, agent: String) -> Result<(), RadioError> {
-        let radio = self.shared.state.lock().unwrap().stations.iter().find(|s| s.agents.iter().any(|a| a.id == agent)).map(|s| s.radio.clone()).ok_or(RadioError::Refused)?;
+        let radio = self.agent_radio(&agent)?;
         radio.stop_agent(agent)
     }
 
     /// End an agent its computer runs itself: it finishes and leaves the radio. Blocks: call it off the main thread.
     pub fn end_agent(&self, agent: String) -> Result<(), RadioError> {
-        let radio = self.shared.state.lock().unwrap().stations.iter().find(|s| s.agents.iter().any(|a| a.id == agent)).map(|s| s.radio.clone()).ok_or(RadioError::Refused)?;
+        let radio = self.agent_radio(&agent)?;
         radio.end_agent(agent)
     }
 
@@ -1185,6 +1210,10 @@ impl Desk {
     pub fn discard_unsent(&self, id: String) -> Option<String> {
         self.sender_of(&id).and_then(|radio| radio.discard(&id)).map(|o| o.label.unwrap_or(o.text))
     }
+    /// The radio of the computer that has this agent, or a refusal when none does.
+    fn agent_radio(&self, agent: &str) -> Result<Arc<Radio>, RadioError> {
+        self.shared.state.lock().unwrap().radio_with_agent(agent).ok_or(RadioError::Refused)
+    }
     /// The computer's radio that a message still waiting to go, or given up on, belongs to.
     fn sender_of(&self, id: &str) -> Option<Arc<Radio>> {
         self.shared.state.lock().unwrap().stations.iter().find(|s| s.sending.iter().any(|o| o.id == id)).map(|s| s.radio.clone())
@@ -1193,7 +1222,7 @@ impl Desk {
     /// For each computer: how it was last reached, or not, through the relay and at its own address on the
     /// network the phone is on. From what this phone has seen itself; nothing is asked of anyone to make it.
     pub fn reach(&self) -> Vec<DeskReach> {
-        let radios: Vec<(String, Arc<Radio>)> = self.shared.state.lock().unwrap().stations.iter().map(|s| (s.name.clone(), s.radio.clone())).collect();
+        let radios = self.shared.state.lock().unwrap().named_radios();
         radios
             .into_iter()
             .map(|(computer, radio)| {
@@ -1208,12 +1237,12 @@ impl Desk {
     /// long it took. Nothing that he or an agent said is in it, and no key or address. It is made on this
     /// device from what this device kept, and goes nowhere unless he pastes it somewhere.
     pub fn diagnostics(&self) -> String {
-        let radios: Vec<(String, Arc<Radio>)> = self.shared.state.lock().unwrap().stations.iter().map(|s| (s.name.clone(), s.radio.clone())).collect();
+        let radios = self.shared.state.lock().unwrap().named_radios();
         let mut out = vec![format!("airband {} connection record", env!("CARGO_PKG_VERSION"))];
         for (computer, radio) in radios {
             let trail = radio.link_trail();
             out.push(String::new());
-            out.push(if computer.is_empty() { "This computer".to_string() } else { computer });
+            out.push(computer);
             if trail.is_empty() {
                 out.push("nothing has failed".into());
             }
@@ -1234,7 +1263,7 @@ impl Desk {
 
     /// Have its computer take over an agent he started in a terminal. Blocks: call it off the main thread.
     pub fn take_over(&self, agent: String) -> Result<(), RadioError> {
-        let radio = self.shared.state.lock().unwrap().stations.iter().find(|s| s.agents.iter().any(|a| a.id == agent)).map(|s| s.radio.clone()).ok_or(RadioError::Refused)?;
+        let radio = self.agent_radio(&agent)?;
         radio.take_over(agent)
     }
 
@@ -1334,7 +1363,7 @@ fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>, re: Option
         // the ones that have arrived leave with this message
         state.uploads.retain(|u| !(u.station == pick && u.shown.state == "ready"));
         let text = match (&agent, aimed) {
-            (Some(callsign), true) => format!("@{} {text}", callsign.replace(' ', "")),
+            (Some(callsign), true) => addressed(callsign, &text),
             _ => text,
         };
         let scope = room.clone().filter(|_| re.is_none() && agent.is_none() && !tagged).map(|r| format!("group:{r}"));
@@ -1367,6 +1396,11 @@ fn others(state: &State, pick: usize, room: Option<&str>) -> String {
         })
         .collect();
     if list.is_empty() { String::new() } else { serde_json::to_string(&list).unwrap_or_default() }
+}
+
+/// His words as written to one agent: its callsign run together as a tag, then the words.
+fn addressed(callsign: &str, text: &str) -> String {
+    format!("@{} {text}", callsign.replace(' ', ""))
 }
 
 /// Which computer a message of his goes to.

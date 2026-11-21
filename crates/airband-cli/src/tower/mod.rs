@@ -64,7 +64,8 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use airband_core::clock::{now_ms, now_secs};
+use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Notify;
 use airband_core::agent::{self, Agent, AgentEvent, Deliver, Event};
@@ -188,12 +189,12 @@ async fn progress_loop(app: Arc<App>) {
                     // since it last said anything, or he last said anything to it
                     let since = inner.log.iter().rev().find(|e| e.agent.as_deref() == Some(s.agent.id.as_str()) || e.to_agents.iter().any(|t| *t == s.agent.id)).map(|e| e.at)?;
                     let last = since.max(looked.get(&s.agent.id).copied().unwrap_or(0));
-                    (now().saturating_sub(last) >= QUIET_FOR).then(|| (s.agent.clone(), since))
+                    (now_ms().saturating_sub(last) >= QUIET_FOR).then(|| (s.agent.clone(), since))
                 })
                 .collect()
         };
         for (agent, since) in due {
-            looked.insert(agent.id.clone(), now());
+            looked.insert(agent.id.clone(), now_ms());
             let looked_at = agent.clone();
             let steps = tokio::task::spawn_blocking(move || crate::adapters::steps(&looked_at, since)).await.unwrap_or_default();
             if steps.len() < FEWEST {
@@ -216,14 +217,11 @@ async fn progress_loop(app: Arc<App>) {
 
 /// The time of day as the log stamps it.
 fn clock() -> String {
-    let s = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let s = now_secs();
     format!("{:02}:{:02}:{:02}Z", s / 3600 % 24, s / 60 % 60, s % 60)
 }
 fn log(msg: impl AsRef<str>) {
     println!("{} {}", clock(), msg.as_ref());
-}
-fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 #[cfg(unix)]
@@ -234,6 +232,17 @@ fn alive(pid: u32) -> bool {
 #[cfg(not(unix))]
 fn alive(_pid: u32) -> bool {
     true // not checked on this platform yet: an agent leaves when it signs off or a delivery fails
+}
+
+/// Ask a process to end: asked, not killed, so it can finish what it must and pass the word on to its own.
+/// Nothing on a system with no such way of asking.
+fn terminate(pid: u32) {
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(pid as i32, libc::SIGTERM);
+    }
+    #[cfg(not(unix))]
+    let _ = pid;
 }
 
 impl App {

@@ -61,10 +61,6 @@ pub struct Dyn {
     waitlist: String,
 }
 
-fn now_secs() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
-}
-
 /// channels.json: each channel's [`Saved`].
 fn read_channels(dir: &std::path::Path) -> HashMap<String, Saved> {
     airband_core::kept::load(&dir.join("channels.json")).unwrap_or_default()
@@ -140,18 +136,14 @@ impl Store {
             Store::Dynamo(d) => {
                 let (mut all, mut from) = (HashMap::new(), None::<Value>);
                 loop {
-                    let mut ask = json!({ "TableName": d.channels, "ConsistentRead": true });
-                    if let Some(from) = from.take() {
-                        ask["ExclusiveStartKey"] = from;
-                    }
-                    let page = d.db.call("Scan", ask).await.map_err(|e| e.to_string())?;
-                    for item in page["Items"].as_array().into_iter().flatten() {
+                    let (items, next) = d.db.page("Scan", json!({ "TableName": d.channels, "ConsistentRead": true }), from.take()).await?;
+                    for item in &items {
                         if let (Some(channel), Some(pull_hash), Some(radio_hash)) = (dynamo::text(item, "channel"), dynamo::text(item, "pull_hash"), dynamo::text(item, "radio_hash")) {
                             all.insert(channel, Saved { pull_hash, radio_hash });
                         }
                     }
-                    match page.get("LastEvaluatedKey").filter(|k| k.is_object()) {
-                        Some(next) => from = Some(next.clone()),
+                    match next {
+                        Some(next) => from = Some(next),
                         None => return Ok(all),
                     }
                 }
@@ -195,7 +187,7 @@ impl Store {
                 let db = pg.connect(&pg.name).await?;
                 db.execute("insert into waitlist (email) values ($1) on conflict (email) do nothing", &[&email]).await.map(|_| ()).map_err(|e| e.to_string())
             }
-            Store::Dynamo(d) => d.put_new(&d.waitlist, "email", json!({ "email": s(email), "joined_at": n(now_secs()) })).await,
+            Store::Dynamo(d) => d.put_new(&d.waitlist, "email", json!({ "email": s(email), "joined_at": n(airband_core::clock::now_secs()) })).await,
         }
     }
 
@@ -225,7 +217,7 @@ impl Store {
                 write_channels(dir, &all)
             }
             Store::Dynamo(d) => {
-                d.put_new(&d.channels, "channel", json!({ "channel": s(channel), "pull_hash": s(pull_hash), "radio_hash": s(radio_hash), "created_at": n(now_secs()) })).await
+                d.put_new(&d.channels, "channel", json!({ "channel": s(channel), "pull_hash": s(pull_hash), "radio_hash": s(radio_hash), "created_at": n(airband_core::clock::now_secs()) })).await
             }
             Store::Postgres(pg) => {
                 // one short connection per new channel: channels are opened rarely, and nothing is held open to go stale
@@ -240,7 +232,7 @@ impl Store {
 /// A time in milliseconds that only goes up, so two messages kept in the same millisecond still have an order.
 fn next_ms() -> u64 {
     static LAST: std::sync::Mutex<u64> = std::sync::Mutex::new(0);
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    let now = airband_core::clock::now_ms();
     let mut last = LAST.lock().unwrap();
     *last = now.max(*last + 1);
     *last
@@ -262,18 +254,14 @@ impl Dyn {
     async fn line(&self, channel: &str) -> Result<Vec<(String, String, u64)>, String> {
         let (mut all, mut from) = (Vec::new(), None::<Value>);
         loop {
-            let mut ask = json!({ "TableName": self.held, "ConsistentRead": true, "KeyConditionExpression": "#c = :c AND begins_with(#k, :m)", "ExpressionAttributeNames": { "#c": "channel", "#k": "k" }, "ExpressionAttributeValues": { ":c": s(channel), ":m": s("m#") } });
-            if let Some(from) = from.take() {
-                ask["ExclusiveStartKey"] = from;
-            }
-            let page = self.db.call("Query", ask).await.map_err(|e| e.to_string())?;
-            for item in page["Items"].as_array().into_iter().flatten() {
+            let (items, next) = self.db.page("Query", json!({ "TableName": self.held, "ConsistentRead": true, "KeyConditionExpression": "#c = :c AND begins_with(#k, :m)", "ExpressionAttributeNames": { "#c": "channel", "#k": "k" }, "ExpressionAttributeValues": { ":c": s(channel), ":m": s("m#") } }), from.take()).await?;
+            for item in &items {
                 if let (Some(k), Some(id)) = (dynamo::text(item, "k"), dynamo::text(item, "id")) {
                     all.push((k, id, dynamo::number(item, "expires").unwrap_or(0)));
                 }
             }
-            match page.get("LastEvaluatedKey").filter(|k| k.is_object()) {
-                Some(next) => from = Some(next.clone()),
+            match next {
+                Some(next) => from = Some(next),
                 None => return Ok(all),
             }
         }
@@ -288,7 +276,7 @@ impl Dyn {
     async fn recount(&self, channel: &str) -> Result<(), String> {
         let counter = self.db.call("GetItem", json!({ "TableName": self.held, "Key": Self::key(channel, "n"), "ConsistentRead": true })).await.map_err(|e| e.to_string())?;
         let Some(was) = dynamo::number(&counter["Item"], "held") else { return Ok(()) };
-        let (line, now) = (self.line(channel).await?, now_secs());
+        let (line, now) = (self.line(channel).await?, airband_core::clock::now_secs());
         let mut live = 0u64;
         for (place, id, expires) in &line {
             if *expires > now {
@@ -309,7 +297,7 @@ impl Dyn {
     }
     async fn hold(&self, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<bool, String> {
         for attempt in 0..2 {
-            let (now, place) = (now_secs(), format!("m#{:013}#{id}", next_ms()));
+            let (now, place) = (airband_core::clock::now_secs(), format!("m#{:013}#{id}", next_ms()));
             let expires = n(now + airband_core::relay::HELD_FOR_MS / 1000);
             let ask = json!({ "TransactItems": [
                 // kept once: only if nothing is there under this id, or what is there has outlived its time
@@ -336,13 +324,9 @@ impl Dyn {
     async fn held_next(&self, channel: &str) -> Result<Option<(String, Vec<u8>)>, String> {
         let mut from = None::<Value>;
         loop {
-            let mut ask = json!({ "TableName": self.held, "ConsistentRead": true, "Limit": 20, "KeyConditionExpression": "#c = :c AND begins_with(#k, :m)", "ExpressionAttributeNames": { "#c": "channel", "#k": "k" }, "ExpressionAttributeValues": { ":c": s(channel), ":m": s("m#") } });
-            if let Some(from) = from.take() {
-                ask["ExclusiveStartKey"] = from;
-            }
-            let page = self.db.call("Query", ask).await.map_err(|e| e.to_string())?;
-            let now = now_secs();
-            for item in page["Items"].as_array().into_iter().flatten() {
+            let (items, next) = self.db.page("Query", json!({ "TableName": self.held, "ConsistentRead": true, "Limit": 20, "KeyConditionExpression": "#c = :c AND begins_with(#k, :m)", "ExpressionAttributeNames": { "#c": "channel", "#k": "k" }, "ExpressionAttributeValues": { ":c": s(channel), ":m": s("m#") } }), from.take()).await?;
+            let now = airband_core::clock::now_secs();
+            for item in &items {
                 let (Some(place), Some(id)) = (dynamo::text(item, "k"), dynamo::text(item, "id")) else { continue };
                 // past its time and not yet removed: as good as gone
                 if dynamo::number(item, "expires").unwrap_or(0) <= now {
@@ -355,8 +339,8 @@ impl Dyn {
                     None => self.drop_stale(channel, &place, &id).await,
                 }
             }
-            match page.get("LastEvaluatedKey").filter(|k| k.is_object()) {
-                Some(next) => from = Some(next.clone()),
+            match next {
+                Some(next) => from = Some(next),
                 None => return Ok(None),
             }
         }
