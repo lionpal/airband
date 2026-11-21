@@ -10,14 +10,15 @@ pub(super) async fn pump_loop(app: Arc<App>) {
 
 pub(super) async fn pump(app: &Arc<App>) {
     let todo: Vec<Item> = {
-        let inner = app.inner.lock().unwrap();
+        let mut inner = app.inner.lock().unwrap();
         if inner.free_radio().is_none() {
             return;
         }
-        let mut todo: Vec<Item> = inner.pending.iter().filter(|p| p.say.is_none()).take(6).cloned().collect();
-        for item in todo.iter_mut() {
-            item.asked = inner.last_instruction(&item.agent_id);
-        }
+        // what waits to be read out and has no short version yet, unless one is being made already
+        let todo: Vec<Item> = inner.unheard().filter(|e| e.short.is_none() && !inner.judging.contains(&e.id)).take(6).map(|e| inner.item(e)).collect();
+        todo.iter().for_each(|item| {
+            inner.judging.insert(item.id.clone());
+        });
         todo
     };
     // all of them, so a blocking question further back can jump the queue
@@ -33,42 +34,44 @@ pub(super) async fn pump(app: &Arc<App>) {
 
     let mut inner = app.inner.lock().unwrap();
     for (id, j) in done {
+        // what is not worth his ears leaves the queue here, and stays in the chat, dimmed
         inner.fill(&id, j.kind, &j.say, &j.options, j.recommended, j.read.as_deref(), j.background, j.own_session);
         // a radio on a call hears it; another that is neither on a call nor showing the chat is woken
         push::consider(app, &mut inner, &id);
     }
-    // not worth his ears: it stays in the chat log, dimmed, and leaves the call queue
-    inner.pending.retain(|p| p.kind != Some(Kind::Fyi) || p.say.is_none());
+    // read out under what its agent is called now, or was called when it said it, if it has gone
+    let name = |inner: &Inner, e: &Entry| inner.sender(e).map(|s| s.callsign.text()).unwrap_or_else(|| e.from.clone());
+    let ready: Vec<Entry> = inner.log.iter().filter(|e| e.aloud == Aloud::Waiting && e.short.is_some()).cloned().collect();
     // start the voice on everything that will be spoken, now, so each clip exists before its turn comes
-    for p in inner.pending.iter().filter(|p| p.say.is_some() && inner.wants_voice()) {
-        if let Some(callsign) = inner.find(&p.agent_id).map(|s| s.callsign.clone()).or(p.callsign.clone()).map(|c| c.spoken()) {
-            app.speech.start(&app.voice(), &format!("{callsign}. {}", p.say.as_deref().unwrap_or_default()));
+    if inner.wants_voice() {
+        for e in &ready {
+            app.speech.start(&app.voice(), &format!("{}. {}", cap(&name(&inner, e)), e.short.as_deref().unwrap_or_default()));
         }
     }
     // one transmission goes to one radio: whichever is on a call and free
     let Some(radio) = inner.free_radio() else { return };
-    let Some(next) = inner.pending.iter().filter(|p| p.say.is_some()).min_by_key(|p| (p.kind != Some(Kind::NeedsYou), p.created)).cloned() else {
+    let Some(next) = ready.iter().min_by_key(|e| (e.kind != Some(Kind::NeedsYou), e.at)) else {
         return remind(app, &mut inner, &radio);
     };
-    let Some(callsign) = inner.find(&next.agent_id).map(|s| s.callsign.clone()).or(next.callsign.clone()) else {
-        inner.pending.retain(|p| p.id != next.id);
-        return;
-    };
-    let say = next.say.unwrap_or_default();
+    let callsign = name(&inner, next);
+    let say = next.short.clone().unwrap_or_default();
     let kind = next.kind.unwrap_or(Kind::Report);
-    log(format!("→ {radio}: {} ({kind:?}): {say}", callsign.text()));
-    let spoken_line = format!("{}. {say}", callsign.spoken());
-    let waiting = inner.pending.len() as u32 - 1;
+    log(format!("→ {radio}: {callsign} ({kind:?}): {say}"));
+    let spoken_line = format!("{}. {say}", cap(&callsign));
+    let waiting = inner.unheard().count() as u32 - 1;
     let speech = app.speech.start(&app.voice_to(inner.call(&radio).speaks), &spoken_line);
-    transmit(app, &mut inner, &radio, Transmission { id: next.id, callsign: callsign.text(), kind, speech, say: spoken_line, waiting });
+    inner.set_aloud(&next.id, Aloud::Handed { radio: radio.clone(), at: now() });
+    transmit(app, &mut inner, &radio, Transmission { id: next.id.clone(), callsign, kind, speech, say: spoken_line, waiting });
     app.save(&inner);
 }
 
 /// Hand a radio its next transmission. If it takes it and never says it is ready for another, it is assumed
-/// free again after a while, so one radio that went quiet cannot hold the queue.
+/// free again after a while, and what it had goes back in the queue, so one radio that went quiet cannot
+/// hold the queue or lose anything from it.
 fn transmit(app: &Arc<App>, inner: &mut Inner, radio: &str, t: Transmission) {
     let call = inner.call(radio);
     call.outbox = Some(t);
+    call.handed = None;
     call.ready = false;
     call.epoch += 1;
     let (epoch, app, radio) = (call.epoch, app.clone(), radio.to_string());
@@ -80,6 +83,8 @@ fn transmit(app: &Arc<App>, inner: &mut Inner, radio: &str, t: Transmission) {
             log(format!("{radio} never said it was ready; carrying on"));
             call.ready = true;
             call.outbox = None;
+            inner.give_back(&radio);
+            app.save(&inner);
             app.kick.notify_one();
         }
     });

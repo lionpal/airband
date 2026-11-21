@@ -476,7 +476,7 @@ pub(super) async fn detail_of(app: &Arc<App>, id: &str) -> Option<String> {
     if let Some(d) = entry.detail {
         return Some(d);
     }
-    let item = Item { id: entry.id.clone(), agent_id: String::new(), notice: false, full: entry.full.clone(), kind: entry.kind, say: entry.short.clone(), detail: None, created: entry.at, asked: None, callsign: None };
+    let item = Item { id: entry.id.clone(), notice: false, full: entry.full.clone(), kind: entry.kind, say: entry.short.clone(), asked: None };
     let d = detail(&app.cfg, &item).await;
     let mut inner = app.inner.lock().unwrap();
     if let Some(e) = inner.log.iter_mut().find(|e| e.id == id) {

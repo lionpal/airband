@@ -472,6 +472,7 @@ impl RadioHost for StationHost {
                 // tower gives the message the same id), so it never vanishes for a moment in between. Not when
                 // there is something to tell him about it: then it did not go.
                 if note.is_none() {
+                    // (one that was given up on and has now been let go did not go anywhere)
                     let gone: Vec<Outgoing> = s.sending.iter().filter(|was| !waiting.iter().any(|w| w.id == was.id)).cloned().collect();
                     let now = std::time::Instant::now();
                     s.landing.retain(|(_, at)| at.elapsed() < Duration::from_secs(15));
@@ -481,10 +482,19 @@ impl RadioHost for StationHost {
             }
         }
         self.shared.host.changed();
-        if let Some(note) = note {
+        if let Some(note) = note.filter(|n| !n.is_empty()) {
             self.shared.host.note(note);
         }
     }
+}
+
+/// How one computer was last reached. Each is a few words ("answered", "the relay says your computer is not
+/// connected"), or empty when that way has not been tried or has only ever worked.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct DeskReach {
+    pub computer: String,
+    pub relay: String,
+    pub near: String,
 }
 
 /// The folders inside one of his on a computer.
@@ -1087,6 +1097,53 @@ impl Desk {
         }
         let wanted = airband_core::radio::SetReads { kind, key, set: settings.into_iter().collect() };
         radios.iter().try_for_each(|radio| radio.set_reads(&wanted))
+    }
+
+    /// Try again a message that was not sent ([`Outgoing::failed`]). It goes after anything else still waiting.
+    pub fn send_again(&self, id: String) {
+        if let Some(radio) = self.sender_of(&id) {
+            radio.send_again(&id);
+        }
+    }
+    /// Let go of a message that was not sent. Returns its words, for putting back where he types.
+    pub fn discard_unsent(&self, id: String) -> Option<String> {
+        self.sender_of(&id).and_then(|radio| radio.discard(&id)).map(|o| o.label.unwrap_or(o.text))
+    }
+    /// The computer's radio that a message still waiting to go, or given up on, belongs to.
+    fn sender_of(&self, id: &str) -> Option<Arc<Radio>> {
+        self.shared.state.lock().unwrap().stations.iter().find(|s| s.sending.iter().any(|o| o.id == id)).map(|s| s.radio.clone())
+    }
+
+    /// For each computer: how it was last reached, or not, through the relay and at its own address on the
+    /// network the phone is on. From what this phone has seen itself; nothing is asked of anyone to make it.
+    pub fn reach(&self) -> Vec<DeskReach> {
+        let radios: Vec<(String, Arc<Radio>)> = self.shared.state.lock().unwrap().stations.iter().map(|s| (s.name.clone(), s.radio.clone())).collect();
+        radios
+            .into_iter()
+            .map(|(computer, radio)| {
+                let (relay, near) = radio.reach();
+                DeskReach { computer, relay: relay.unwrap_or_default(), near: near.unwrap_or_default() }
+            })
+            .collect()
+    }
+
+    /// What to copy when something is wrong with the connection: for each computer, every request that failed
+    /// lately and every try at sending something he said, with the time, the way it went, how it ended and how
+    /// long it took. Nothing that he or an agent said is in it, and no key or address. It is made on this
+    /// device from what this device kept in memory, and goes nowhere unless he pastes it somewhere.
+    pub fn diagnostics(&self) -> String {
+        let radios: Vec<(String, Arc<Radio>)> = self.shared.state.lock().unwrap().stations.iter().map(|s| (s.name.clone(), s.radio.clone())).collect();
+        let mut out = vec![format!("airband {} connection record", env!("CARGO_PKG_VERSION"))];
+        for (computer, radio) in radios {
+            let trail = radio.link_trail();
+            out.push(String::new());
+            out.push(if computer.is_empty() { "This computer".to_string() } else { computer });
+            if trail.is_empty() {
+                out.push("nothing has failed".into());
+            }
+            out.extend(trail);
+        }
+        out.join("\n")
     }
 
     /// Take back something he said that is still waiting its turn. Blocks: call it off the main thread.

@@ -5,7 +5,7 @@
 //! bytes; a request that does not open with a paired radio's key, is not fresh, or was already answered is
 //! dropped here.
 use crate::config::{self, PairedRadio};
-use super::{App, RADIO_HEADER, log, now as now_ms};
+use super::{App, RADIO_HEADER, VIA_HEADER, log, now as now_ms};
 use axum::Router;
 use axum::body::Body;
 use axum::http::Request;
@@ -18,6 +18,9 @@ use tokio::runtime::Handle;
 use tower::ServiceExt;
 use airband_core::relay::{Answer, Call, Direction, FRESH_MS, Keys, fresh};
 
+
+/// What a radio whose clock is wrong is told.
+const WRONG_CLOCK: &str = "this request's time is more than two minutes from the tower's clock";
 
 /// Every pairing being served, by its channel: a request that comes straight to the tower is answered by the
 /// same code, with the same key, as one pulled from the relay.
@@ -47,12 +50,18 @@ async fn sealed(axum::extract::Path(channel): axum::extract::Path<String>, body:
 /// stops, and a changed relay address moves everything, all without restarting the tower.
 pub fn start(app: Arc<App>, router: Router, handle: Handle) {
     std::thread::spawn(move || {
-        let mut running: HashMap<(String, PairedRadio), Arc<AtomicBool>> = HashMap::new();
+        let mut running: HashMap<(String, PairedRadio), (Arc<AtomicBool>, std::thread::JoinHandle<()>)> = HashMap::new();
         loop {
             let cfg = config::read().unwrap_or_else(|| app.cfg.clone());
             let wanted: Vec<(String, PairedRadio)> = cfg.relay.iter().flat_map(|r| cfg.pairings.iter().map(move |p| (r.clone(), p.clone()))).collect();
-            running.retain(|key, stop| {
+            running.retain(|key, (stop, serving)| {
                 let keep = wanted.contains(key);
+                // A pairing whose serving thread has ended while it is still wanted is started again below:
+                // with nobody pulling, the relay would call the computer away while it is on.
+                if keep && serving.is_finished() {
+                    log(format!("the link serving \"{}\" stopped; starting it again", key.1.name));
+                    return false;
+                }
                 if !keep {
                     stop.store(true, Ordering::SeqCst);
                     if let Ok(keys) = Keys::derive(&key.1.secret) {
@@ -74,10 +83,9 @@ pub fn start(app: Arc<App>, router: Router, handle: Handle) {
                     }
                 };
                 let stop = Arc::new(AtomicBool::new(false));
-                running.insert(key.clone(), stop.clone());
-                let serve = Serve { relay: key.0, name: key.1.name, keys, admission: cfg.relay_admission.clone(), token: app.cfg.radio_token.clone(), router: router.clone(), handle: handle.clone(), stop, seen: Arc::new(Mutex::new(HashMap::new())), replies: airband_radio::net::agent(Duration::from_secs(15)) };
+                let serve = Serve { relay: key.0.clone(), name: key.1.name.clone(), keys, admission: cfg.relay_admission.clone(), token: app.cfg.radio_token.clone(), router: router.clone(), handle: handle.clone(), stop: stop.clone(), seen: Arc::new(Mutex::new(HashMap::new())), replies: airband_radio::net::agent(Duration::from_secs(15)) };
                 served().lock().unwrap().insert(serve.keys.channel.clone(), serve.clone());
-                std::thread::spawn(move || serve.run());
+                running.insert(key, (stop, std::thread::spawn(move || serve.run())));
             }
             std::thread::sleep(Duration::from_secs(10));
         }
@@ -151,8 +159,14 @@ impl Serve {
                     }
                     204 => wait = 1,
                     // the relay restarted without its data, or the channel changed hands: open it again
-                    403 | 404 => open = false,
-                    _ => nap(&mut wait),
+                    status @ (403 | 404) => {
+                        log(format!("{} no longer knows the channel for \"{}\" ({status}); opening it again", self.relay, self.name));
+                        open = false;
+                    }
+                    status => {
+                        log(format!("{} answered {status} when asked for \"{}\"'s requests; retrying", self.relay, self.name));
+                        nap(&mut wait);
+                    }
                 },
                 Err(e) => {
                     if !told {
@@ -172,7 +186,7 @@ impl Serve {
         let call: Call = self.keys.open(Direction::ToTower, sealed).ok().and_then(|p| serde_json::from_slice(&p).ok())?;
         let now = now_ms();
         let (status, body) = if !fresh(call.t, now) {
-            (408, serde_json::json!({ "error": "this request's time is more than two minutes from the tower's clock" }))
+            self.refused(&call, "his own network", 408, WRONG_CLOCK)
         } else {
             {
                 let mut seen = self.seen.lock().unwrap();
@@ -181,7 +195,7 @@ impl Serve {
                     return None;
                 }
             }
-            self.dispatch(&call).await
+            self.dispatch(&call, "his own network").await
         };
         Some(self.keys.seal(Direction::ToRadio, &serde_json::to_vec(&Answer { id: call.id, status, body }).unwrap()))
     }
@@ -192,8 +206,7 @@ impl Serve {
             // one the relay was keeping has to be taken off its hands all the same, or it would be handed over
             // for ever and hold up everything kept behind it
             if request_id.starts_with(airband_core::relay::HELD) {
-                let (url, auth, agent) = (format!("{}/v1/channels/{}/reply/{request_id}", self.relay, self.keys.channel), format!("Bearer {}", self.keys.pull_token), self.replies.clone());
-                let _ = tokio::task::spawn_blocking(move || agent.post(url).header("authorization", auth).send_empty().map(|_| ())).await;
+                self.send_back(&request_id, None).await;
             }
             return;
         };
@@ -206,13 +219,14 @@ impl Serve {
             let said = call.method == "POST" && call.path == "/v1/radio/utterance" && call.body["id"].as_str().is_some_and(|id| !id.is_empty());
             if said && now.saturating_sub(call.t) <= airband_core::relay::HELD_FOR_MS {
                 log(format!("\"{}\" said this while the tower was away", self.name));
-                self.dispatch(&call).await
+                self.dispatch(&call, "the relay, kept while the tower was away").await
             } else {
-                (400, serde_json::json!({ "error": "only something he said, sent in the last week, is taken late" }))
+                // nobody is waiting on this answer: the line below is the only word of it
+                self.refused(&call, "the relay, kept while the tower was away", 400, "only something he said, sent in the last week, is taken late")
             }
         } else if !fresh(call.t, now) {
             // answered, not dropped, so a phone with a wrong clock is told why nothing works
-            (408, serde_json::json!({ "error": "this request's time is more than two minutes from the tower's clock" }))
+            self.refused(&call, "the relay", 408, WRONG_CLOCK)
         } else {
             {
                 let mut seen = self.seen.lock().unwrap();
@@ -221,30 +235,56 @@ impl Serve {
                     return log(format!("dropped a replayed request on \"{}\"'s channel", self.name));
                 }
             }
-            self.dispatch(&call).await
+            self.dispatch(&call, "the relay").await
         };
         let sealed = self.keys.seal(Direction::ToRadio, &serde_json::to_vec(&Answer { id: call.id, status, body }).unwrap());
+        self.send_back(&request_id, Some(sealed)).await;
+    }
+
+    /// Give the relay the answer to a request (or, with none, take a kept message off its hands). An answer
+    /// that does not get there is written down: the radio that asked is still waiting for it.
+    async fn send_back(&self, request_id: &str, sealed: Option<Vec<u8>>) {
         let url = format!("{}/v1/channels/{}/reply/{request_id}", self.relay, self.keys.channel);
         let auth = format!("Bearer {}", self.keys.pull_token);
         // one agent for every answer on this channel: its connection to the relay is kept, not made again each time
         let agent = self.replies.clone();
-        let _ = tokio::task::spawn_blocking(move || {
-            let _ = agent.post(url).header("authorization", auth).header("content-type", "application/octet-stream").send(&sealed[..]);
+        let sent = tokio::task::spawn_blocking(move || {
+            let req = agent.post(url).header("authorization", auth);
+            match sealed {
+                Some(sealed) => req.header("content-type", "application/octet-stream").send(&sealed[..]),
+                None => req.send_empty(),
+            }
+            .map(|r| r.status().as_u16())
+            .map_err(|e| e.to_string())
         })
         .await;
+        match sent {
+            Ok(Ok(204)) => {}
+            // the radio gave up waiting before the answer was ready: it asks again, and nothing is lost
+            Ok(Ok(410)) => log(format!("an answer for \"{}\" came after its radio stopped waiting (request {request_id})", self.name)),
+            Ok(Ok(status)) => log(format!("{} answered {status} to an answer for \"{}\" (request {request_id})", self.relay, self.name)),
+            Ok(Err(e)) => log(format!("an answer for \"{}\" did not reach {} (request {request_id}): {e}", self.name, self.relay)),
+            Err(_) => {}
+        }
+    }
+
+    /// A request the tower will not run, and the line that says so: which pairing, how it came, and why.
+    fn refused(&self, call: &Call, via: &str, status: u16, why: &str) -> (u16, Value) {
+        log(format!("refused a request from \"{}\" by {via} ({} {}, {status}): {why}", self.name, call.method, call.path.split('?').next().unwrap_or_default()));
+        (status, serde_json::json!({ "error": why }))
     }
 
     /// Run a radio's request through the same routes the local port serves. Only the radio's routes: a paired
     /// phone cannot post agent events or read the status page.
-    async fn dispatch(&self, call: &Call) -> (u16, Value) {
+    async fn dispatch(&self, call: &Call, via: &str) -> (u16, Value) {
         if !call.schema.is_empty() && call.schema != airband_core::radio::SCHEMA {
-            return (400, serde_json::json!({ "error": format!("this tower speaks {}, not \"{}\"", airband_core::radio::SCHEMA, call.schema) }));
+            return self.refused(call, via, 400, &format!("this tower speaks {}, not \"{}\"", airband_core::radio::SCHEMA, call.schema));
         }
         if !call.path.starts_with("/v1/radio/") || !matches!(call.method.as_str(), "GET" | "POST") {
-            return (403, serde_json::json!({ "error": "a radio may only use /v1/radio/" }));
+            return self.refused(call, via, 403, "a radio may only use /v1/radio/");
         }
         let body = if call.body.is_null() { Body::empty() } else { Body::from(serde_json::to_vec(&call.body).unwrap()) };
-        let Ok(req) = Request::builder().method(call.method.as_str()).uri(&call.path).header("authorization", format!("Bearer {}", self.token)).header(RADIO_HEADER, &self.name).header("content-type", "application/json").body(body) else {
+        let Ok(req) = Request::builder().method(call.method.as_str()).uri(&call.path).header("authorization", format!("Bearer {}", self.token)).header(RADIO_HEADER, &self.name).header(VIA_HEADER, via).header("content-type", "application/json").body(body) else {
             return (400, Value::Null);
         };
         let Ok(res) = self.router.clone().oneshot(req).await;

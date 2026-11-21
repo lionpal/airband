@@ -20,6 +20,9 @@ pub(crate) fn poll(jobs: Sender<Job>, link: Arc<Link>, host: Arc<dyn RadioHost>,
     let mut online = false;
     let mut wait = 1;
     let mut joined = true;
+    // the last transmission this radio got: a tower that gave it another since, in an answer that never
+    // arrived, gives that one again
+    let mut have = String::new();
     while !stop.load(Ordering::SeqCst) {
         if !calling.load(Ordering::SeqCst) {
             // not in call mode: ask for nothing, so the tower keeps transmissions for the chat or for later
@@ -30,7 +33,7 @@ pub(crate) fn poll(jobs: Sender<Job>, link: Arc<Link>, host: Arc<dyn RadioHost>,
         }
         // the first request after he turned reading aloud on says so, and only that one: the tower leaves old
         // news for the chat when he joins, and never because a radio was quiet for a while
-        match link.next(joined) {
+        match link.next(joined, &have) {
             Ok(next) => {
                 joined = false;
                 if !online && !busy.load(Ordering::SeqCst) {
@@ -39,6 +42,7 @@ pub(crate) fn poll(jobs: Sender<Job>, link: Arc<Link>, host: Arc<dyn RadioHost>,
                 online = true;
                 wait = 1;
                 if let Some(t) = next {
+                    have = t.id.clone();
                     if jobs.send(Job::Transmission(t)).is_err() {
                         return;
                     }
@@ -149,10 +153,11 @@ pub(crate) fn converse(link: &Arc<Link>, host: &dyn RadioHost, ears: &ears::Ears
         host.status(RadioStatus::Sending);
         let reply = match link.utterance(&text, re.take(), scope.clone()) {
             Ok(r) => r,
-            Err(_) => {
+            Err(e) => {
+                // said in the device's own voice, with what went wrong: the tower's voice cannot be fetched either
                 if host.own_voice() {
                     host.status(RadioStatus::Speaking { callsign: "tower".into() });
-                    host.speak("No connection. That was not sent.".into());
+                    host.speak(format!("That was not sent: {}.", e.told()));
                 }
                 return;
             }

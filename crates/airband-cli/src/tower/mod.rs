@@ -81,10 +81,16 @@ use airband_core::speech::{opening, reads_as_written, spoken};
 /// relay is named by its pairing; one that sends nothing is "radio".
 pub(crate) const RADIO_HEADER: &str = "x-airband-radio";
 
+/// The header the tower's own link puts on a radio's request to say how it came: `the relay`, `his own
+/// network`, or `the relay, kept while the tower was away`. Only for the log.
+pub(crate) const VIA_HEADER: &str = "x-airband-via";
+
 /// How long `GET next` is held open.
 const HOLD: Duration = Duration::from_secs(25);
-/// A radio that has not asked for this long is gone.
-const RADIO_GONE: Duration = Duration::from_secs(40);
+/// How long after a radio last showed it was there it is still taken to be: the one clock for that (see
+/// [`state::Presence`]). Longer than a radio waits for an answer before it asks again (50 seconds), so one
+/// request lost on the way does not make it gone.
+const THERE: Duration = Duration::from_secs(60);
 /// How old something an agent said can be and still be read out when he turns reading aloud back on.
 const STILL_NEWS: Duration = Duration::from_secs(600);
 /// A radio that took a transmission and never said "ready" is assumed free again after this.
@@ -126,7 +132,7 @@ async fn activity_loop(app: Arc<App>) {
         // the ones at work, and any whose model is not known yet (one that has been waiting since the tower started)
         let (looked_at, everyone): (Vec<agent::Agent>, Vec<(agent::Agent, u64)>) = {
             let inner = app.inner.lock().unwrap();
-            if !inner.last_reader.is_some_and(|t| t.elapsed() < Duration::from_secs(40)) {
+            if !inner.following() {
                 continue;
             }
             (inner.sessions.iter().filter(|s| !s.waiting || s.model.is_none()).map(|s| s.agent.clone()).collect(), inner.sessions.iter().map(|s| (s.agent.clone(), s.told_upto)).collect())
@@ -223,9 +229,13 @@ async fn progress_loop(app: Arc<App>) {
     }
 }
 
-fn log(msg: impl AsRef<str>) {
+/// The time of day as the log stamps it.
+fn clock() -> String {
     let s = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    println!("{:02}:{:02}:{:02}Z {}", s / 3600 % 24, s / 60 % 60, s % 60, msg.as_ref());
+    format!("{:02}:{:02}:{:02}Z", s / 3600 % 24, s / 60 % 60, s % 60)
+}
+fn log(msg: impl AsRef<str>) {
+    println!("{} {}", clock(), msg.as_ref());
 }
 fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
@@ -247,7 +257,7 @@ impl App {
         let touched: HashSet<String> = inner.unsaved.borrow_mut().drain().collect();
         let entries: Vec<Entry> = inner.log.iter().filter(|e| touched.contains(&e.id)).cloned().collect();
         self.store.put_messages(&entries);
-        self.store.save_state(&Saved { sessions: inner.sessions.clone(), pending: inner.pending.clone(), projects: inner.projects.clone(), colours: inner.colours.clone(), held: inner.held.clone(), placed: inner.placed.clone() });
+        self.store.save_state(&Saved { sessions: inner.sessions.clone(), pending: Vec::new(), projects: inner.projects.clone(), colours: inner.colours.clone(), held: inner.held.clone(), placed: inner.placed.clone() });
     }
 }
 
@@ -255,7 +265,7 @@ pub fn triage(cfg: Config) -> Result<(), String> {
     let mut full = String::new();
     std::io::Read::read_to_string(&mut std::io::stdin(), &mut full).map_err(|e| e.to_string())?;
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
-    let item = Item { id: String::new(), agent_id: String::new(), notice: false, full: full.trim().to_string(), kind: None, say: None, detail: None, created: 0, asked: None, callsign: None };
+    let item = Item { id: String::new(), notice: false, full: full.trim().to_string(), kind: None, say: None, asked: None };
     let j = rt.block_on(prepare(&cfg, &item));
     println!("{}\t{}\t{}", serde_json::to_value(j.kind).unwrap().as_str().unwrap_or(""), j.say, j.options.iter().enumerate().map(|(i, o)| if j.recommended == Some(i as u32) { format!("[{o}]") } else { o.clone() }).collect::<Vec<_>>().join(" | "));
     Ok(())
@@ -376,7 +386,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         let store = Store::open(&config::dir().join("airband.db"))?;
         let (saved, entries) = store.load(LOG_KEEP);
         let (seq, rev) = store.last_counts();
-        let mut inner = Inner { sessions: saved.sessions, pending: saved.pending, projects: saved.projects, colours: saved.colours, held: saved.held, placed: saved.placed, seq, rev, log: entries, ..Inner::default() };
+        let mut inner = Inner { sessions: saved.sessions, projects: saved.projects, colours: saved.colours, held: saved.held, placed: saved.placed, seq, rev, log: entries, ..Inner::default() };
         inner.reap();
         inner.close_requests_from_before();
         // a team from before teams had colours gets one now, not at its agents' next word
@@ -391,10 +401,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         store.scrub_events();
         pictures::prune();
         attachments::prune();
-        let live: HashSet<String> = inner.sessions.iter().map(|s| s.agent.id.clone()).collect();
-        // what an agent that is gone was waiting on him for goes; what it reported in the last while is still his news
-        let recent = now().saturating_sub(STILL_NEWS.as_millis() as u64);
-        inner.pending.retain(|p| live.contains(&p.agent_id) || (p.callsign.is_some() && p.kind == Some(Kind::Report) && p.created >= recent));
+        inner.settle_reading(&saved.pending);
         let port = cfg.port;
         let push = push::Wake::load(&store);
         let app = Arc::new(App { push, cfg, store, speech: speech::Speech::default(), ears_pass: Mutex::new(None), clips: Mutex::new(HashMap::new()), inner: Mutex::new(inner), kick: Notify::new(), accounts: accounts::Kept::default() });

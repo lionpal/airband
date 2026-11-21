@@ -142,6 +142,28 @@ pub struct Outgoing {
     /// For the tower, not for a host to read: the agents on his screen that other computers have, as JSON.
     #[serde(default)]
     pub others: String,
+    /// How many times it has been tried.
+    #[serde(default)]
+    pub tries: u32,
+    /// When it was last tried, in milliseconds since 1970; 0 before the first try.
+    #[serde(default)]
+    pub last_tried: u64,
+    /// How the last try went, a sentence for each way it was tried ("The relay says your computer is not
+    /// connected."). Empty before the first try, and while nothing has gone wrong. Kept on this device only.
+    #[serde(default)]
+    pub trail: Vec<String>,
+    /// It is no longer being tried, and why, in a sentence: it could not be sent, or half an hour of trying
+    /// was not enough. It stays in the list until he sends it again ([`Radio::send_again`]) or lets it go
+    /// ([`Radio::discard`]).
+    #[serde(default)]
+    pub failed: Option<String>,
+}
+
+impl Outgoing {
+    /// Something he has just said, not yet tried.
+    pub(crate) fn new(id: String, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, attachments: Vec<String>, others: String) -> Outgoing {
+        Outgoing { id, text, re, at: now_ms(), scope, label, attachments, others, tries: 0, last_tried: 0, trail: Vec::new(), failed: None }
+    }
 }
 
 fn chat(m: airband_core::radio::Message) -> ChatMessage {
@@ -198,8 +220,10 @@ impl std::fmt::Display for RadioError {
 impl From<LinkError> for RadioError {
     fn from(e: LinkError) -> Self {
         match e {
-            LinkError::Offline | LinkError::Away | LinkError::Behind => RadioError::Offline,
-            LinkError::Refused => RadioError::Refused,
+            // his computer's own reason, when it gave one, is what he should read
+            LinkError::Tower { error, .. } if !error.is_empty() => RadioError::Told { reason: error },
+            LinkError::Tower { .. } => RadioError::Refused,
+            _ => RadioError::Offline,
         }
     }
 }
@@ -508,11 +532,48 @@ impl Radio {
     pub(crate) fn queue_with(&self, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, others: String) {
         let waiting = self.store.change(|s| {
             // whatever he attached and has reached the tower goes with this
-            s.outbox.push(Outgoing { id: random_hex(12), text, re, at: now_ms(), scope, label, attachments: self.link.take_armed(), others });
+            s.outbox.push(Outgoing::new(random_hex(12), text, re, scope, label, self.link.take_armed(), others));
             s.outbox.clone()
         });
         self.wake.ring();
         self.host.outbox(waiting, None);
+    }
+
+    /// Try again something that was given up on: it goes to the end of what is waiting, as if just said.
+    pub(crate) fn send_again(&self, id: &str) {
+        let waiting = self.store.change(|s| {
+            if let Some(i) = s.outbox.iter().position(|o| o.id == id && o.failed.is_some()) {
+                let was = s.outbox.remove(i);
+                s.outbox.push(Outgoing { at: now_ms(), tries: 0, last_tried: 0, trail: Vec::new(), failed: None, ..was });
+            }
+            s.outbox.clone()
+        });
+        self.wake.ring();
+        self.host.outbox(waiting, None);
+    }
+    /// Let go of something that was not sent. Returns it, if it was there, so its words can be put back for
+    /// him to change.
+    pub(crate) fn discard(&self, id: &str) -> Option<Outgoing> {
+        let (gone, waiting) = self.store.change(|s| {
+            let gone = s.outbox.iter().position(|o| o.id == id && o.failed.is_some()).map(|i| s.outbox.remove(i));
+            (gone, s.outbox.clone())
+        });
+        // with a note of nothing to say: it did not go, so it is not shown as on its way to the chat
+        self.host.outbox(waiting, Some(String::new()));
+        gone
+    }
+    /// Every request that failed lately and every try at sending what he said, a line each, oldest first.
+    /// Nothing he or an agent said is in it. It is kept in memory on this device and sent nowhere.
+    pub(crate) fn link_trail(&self) -> Vec<String> {
+        self.link.trail()
+    }
+    /// How this computer was last reached, or not, each way: through the relay, and at its own address.
+    pub(crate) fn reach(&self) -> (Option<String>, Option<String>) {
+        let told = |s: Step| match s.outcome {
+            Ok(_) => "answered".to_string(),
+            Err(e) => e.told(),
+        };
+        (self.link.last_by(if self.link.by_relay() { Way::Relay } else { Way::Paired }).map(told), self.link.last_by(Way::Near).map(told))
     }
 
     /// A file he attached has reached the tower: the next thing he says or sends from this radio takes it along.
@@ -767,21 +828,22 @@ impl Radio {
     /// that time it is left in the outbox under the same id, to go when it can, and the caller is told.
     pub(crate) fn answer_now(&self, text: String, re: String) -> Result<(), RadioError> {
         let id = random_hex(12);
-        let mut failed = LinkError::Offline;
+        let mut failed = LinkError::Unreachable(Way::Relay);
         for attempt in 0..3 {
             if attempt > 0 {
                 thread::sleep(Duration::from_secs(2));
             }
-            match self.link.utterance_once(&id, &text, Some(re.clone()), None, None, Vec::new(), "") {
+            match self.link.utterance_once(&id, &text, Some(re.clone()), None, None, Vec::new(), "").0 {
                 // left with the relay for a computer that is away: it will get there, and he should know it has not yet
                 Ok(reply) if reply.say == AWAY => return Err(RadioError::Told { reason: AWAY.into() }),
                 Ok(_) => return Ok(()),
-                Err(LinkError::Refused) => return Err(RadioError::Refused),
+                // it cannot be sent however often it is tried: he is told why, and nothing is left to try again
+                Err(e) if e.retry() == Retry::Never => return Err(e.into()),
                 Err(e) => failed = e,
             }
         }
         let waiting = self.store.change(|s| {
-            s.outbox.push(Outgoing { id, text, re: Some(re), at: now_ms(), scope: None, label: None, attachments: Vec::new(), others: String::new() });
+            s.outbox.push(Outgoing::new(id, text, Some(re), None, None, Vec::new(), String::new()));
             s.outbox.clone()
         });
         self.wake.ring();
@@ -814,7 +876,7 @@ impl Radio {
             loop {
                 match self.link.attachment_part(part) {
                     Ok(answer) => return Ok(answer),
-                    Err(LinkError::Refused) => return Err(RadioError::Refused),
+                    Err(e) if e.refused() => return Err(e.into()),
                     Err(_) if tries < 6 => {
                         tries += 1;
                         thread::sleep(Duration::from_secs(tries.min(4)));

@@ -653,6 +653,15 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
     }
 
+    /// Try again a message that was not sent.
+    func sendAgain(_ o: Outgoing) { desk.sendAgain(id: o.id) }
+    /// Let go of a message that was not sent.
+    func discardUnsent(_ o: Outgoing) { _ = desk.discardUnsent(id: o.id) }
+    /// How each computer was last reached, as this phone saw it.
+    func reach() -> [DeskReach] { desk.reach() }
+    /// The record of failed requests, for him to copy. Made here and sent nowhere.
+    func diagnostics() -> String { desk.diagnostics() }
+
     /// Take back something he said that is still waiting its turn.
     func unsend(_ m: ChatMessage) {
         fetch.async {

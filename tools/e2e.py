@@ -598,12 +598,47 @@ Send it as written, or do you want changes?""")
     if gone: heard(gone)
     report("solo2", "solo", "solo second", "said", "The price list is rebuilt: 88 parts changed price and none failed.")
     silent = read_until("solo second")
+    def trail():
+        return http("GET", "/v1/status", token=OWN)[1]["aloud"]
     check("the next report is handed over in its turn (model)", silent and "88" in silent["say"], silent)
     if silent:
         http("POST", "/v1/radio/unheard", {"id": silent["id"], "why": "the test made no sound"}, radio="reader")
         waiting = http("GET", "/v1/status", token=OWN)[1]["pending"]
         check("a report that made no sound stays waiting to be read", any(p["callsign"] == "solo second" for p in waiting), waiting)
         check("and the tower writes down why", "could not read solo second aloud (the test made no sound)" in open(os.path.join(work, "tower.log")).read())
+        check("its place in the queue is on record: handed over, then back to waiting", any("solo second" in l and "handed to reader → waiting" in l for l in trail()), trail())
+        # another radio takes it, and the answer that carried it is lost on the way: asking again, saying what it
+        # last got, gets the same one at once and not after two minutes
+        def other(query):
+            return http("GET", "/v1/radio/next?" + query, radio="reader2", timeout=40)
+        lost = other("joined=1&have=")
+        began = time.time()
+        again = other("have=")
+        check("a transmission whose answer was lost is handed over again when the radio says what it last got",
+              lost[0] == 200 and again[0] == 200 and again[1]["id"] == lost[1]["id"] == silent["id"] and time.time() - began < 5, (lost, again))
+        http("POST", "/v1/radio/heard", {"id": silent["id"]}, radio="reader2")
+        http("POST", "/v1/radio/ready", {}, radio="reader2")
+        status = http("GET", "/v1/status", token=OWN)[1]
+        check("once heard it is out of the queue and on record as heard", not any(p["callsign"] == "solo second" for p in status["pending"]) and any("solo second" in l and "→ heard on reader2" in l for l in status["aloud"]), status["aloud"])
+    # something newer from the same agent takes the place of what it said before, and that is written down too
+    report("solo3", "solo", "solo third", "said", "The first batch of 40 invoices is filed.")
+    report("solo3", "solo", "solo third", "said", "All 120 invoices are filed and the totals match the ledger.")
+    check("an unheard report replaced by a newer one leaves the queue with its reason on record", any("solo third" in l and "→ dropped (superseded)" in l for l in trail()), trail())
+    check("and the change is a line in the tower's log", "→ dropped (superseded)" in open(os.path.join(work, "tower.log")).read())
+    # everything he says is one line in the tower's log, with its id and how it came
+    mine = os.urandom(6).hex()
+    http("POST", "/v1/radio/utterance", {"text": "@solo3 thanks", "id": mine})
+    check("everything he says is one line in the tower's log, with its id and what became of it", f"utterance {mine} from e2e by this computer: answered in" in open(os.path.join(work, "tower.log")).read())
+    # a retry that arrives while the first is still being answered is told so, by a status a radio reads as "ask again"
+    import sqlite3
+    slow = os.urandom(6).hex()
+    db = sqlite3.connect(os.path.join(home, ".airband", "airband.db"), timeout=10)
+    db.execute("insert into receipts (id, at) values (?, ?)", (slow, int(time.time() * 1000)))
+    db.commit(); db.close()
+    began = time.time()
+    code, told = http("POST", "/v1/radio/utterance", {"text": "@solo3 and again", "id": slow, "again": True}, timeout=50)
+    check("a retry of something still being answered is told the tower is working on it, before the relay or the radio would give up",
+          code == 202 and (told or {}).get("working") is True and 25 < time.time() - began < 38, (code, told, time.time() - began))
 finally:
     tower.terminate()
     tower.wait(10)

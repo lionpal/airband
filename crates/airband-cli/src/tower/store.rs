@@ -27,7 +27,9 @@ pub(super) enum Receipt {
 }
 
 /// A receipt with no answer after this long belongs to a tower that stopped mid-answer; it may be taken again.
-const ABANDONED_MS: u64 = 120_000;
+/// Longer than the longest an answer can take (two model calls of up to 90 seconds each), or a slow answer
+/// would be taken for abandoned and what he said delivered twice.
+const ABANDONED_MS: u64 = 240_000;
 
 impl Store {
     pub(super) fn open(path: &std::path::Path) -> Result<Store, String> {
@@ -60,6 +62,8 @@ impl Store {
         let _ = db.execute("alter table messages add column own_session integer", []);
         let _ = db.execute("alter table messages add column seen integer", []);
         let _ = db.execute("alter table messages add column leave integer", []);
+        let _ = db.execute("alter table messages add column aloud text", []);
+        let _ = db.execute("alter table messages add column notice integer", []);
         let _ = db.execute("alter table events add column agent_doc text", []);
         let _ = db.execute("alter table deliveries add column utterance text", []);
         Ok(Store { db: Mutex::new(db) })
@@ -85,7 +89,7 @@ impl Store {
             }
         };
         let mut entries = Vec::new();
-        if let Some(mut q) = Self::warn("reading messages", db.prepare("select seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session from messages order by seq desc limit ?1")) {
+        if let Some(mut q) = Self::warn("reading messages", db.prepare("select seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice from messages order by seq desc limit ?1")) {
             let rows = q.query_map(params![keep as i64], |r| {
                 Ok(Entry {
                     seq: r.get::<_, i64>(0)? as u64,
@@ -113,6 +117,8 @@ impl Store {
                     cancelled: r.get::<_, Option<String>>(17)?.as_deref() == Some("cancelled"),
                     permit: None,
                     leave: r.get::<_, Option<i64>>(19)? == Some(1),
+                    aloud: r.get::<_, Option<String>>(21)?.and_then(|a| serde_json::from_str(&a).ok()).unwrap_or_default(),
+                    notice: r.get::<_, Option<i64>>(22)? == Some(1),
                 })
             });
             if let Some(rows) = Self::warn("reading messages", rows) {
@@ -154,9 +160,9 @@ impl Store {
             Self::warn(
                 "saving a message",
                 db.execute(
-                    "insert into messages (seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
-                     on conflict (seq) do update set kind = excluded.kind, short = excluded.short, full = excluded.full, detail = excluded.detail, options = excluded.options, recommended = excluded.recommended, rev = excluded.rev, read = excluded.read, waiting = excluded.waiting, seen = excluded.seen, leave = excluded.leave, own_session = excluded.own_session",
-                    params![e.seq as i64, e.id, e.at as i64, e.from, e.group, serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, if e.cancelled { Some("cancelled") } else if e.queued { Some("queued") } else if e.dismissed { Some("dismissed") } else { None }, e.seen.map(|t| t as i64), e.leave as i64, e.own_session as i64],
+                    "insert into messages (seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
+                     on conflict (seq) do update set kind = excluded.kind, short = excluded.short, full = excluded.full, detail = excluded.detail, options = excluded.options, recommended = excluded.recommended, rev = excluded.rev, read = excluded.read, waiting = excluded.waiting, seen = excluded.seen, leave = excluded.leave, own_session = excluded.own_session, aloud = excluded.aloud",
+                    params![e.seq as i64, e.id, e.at as i64, e.from, e.group, serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, if e.cancelled { Some("cancelled") } else if e.queued { Some("queued") } else if e.dismissed { Some("dismissed") } else { None }, e.seen.map(|t| t as i64), e.leave as i64, e.own_session as i64, serde_json::to_string(&e.aloud).unwrap(), e.notice as i64],
                 ),
             );
         }

@@ -105,10 +105,12 @@ Call mode, one spoken transmission at a time:
 
 | Call | Body → answer | Meaning |
 |---|---|---|
-| `GET next` | → `Transmission`, or 204 | Held open up to 25 s. A radio that has not asked for 40 s is gone. Only what arrives after a radio joins is read out. With `?voice=own` the radio has a voice of its own: the tower makes no speech for it and sends words only. |
+| `GET next` | → `Transmission`, or 204 | Held open up to 25 s. A radio that has not asked for 60 s is gone. With `?voice=own` the radio has a voice of its own: the tower makes no speech for it and sends words only. `joined=1` on the first request after he turns reading aloud on: what was said more than ten minutes before is left for the chat. `have=<id>` is the last transmission the radio got: if the tower handed it another since, in an answer that never arrived, it hands that one over again. |
 | `POST heard` | `{ id }` | That transmission was spoken to the end. Only now is it off the queue. |
+| `POST unheard` | `{ id, why }` | It was handed over and no sound came of it. It goes back in the queue, and that radio is handed nothing for a minute. |
+| `POST busy` | | Still on the call while asking for nothing (the microphone is open). |
 | `POST utterance` | `Utterance` → `Reply` | What he said. Chat mode sends through it too. |
-| `POST ready` | | Free for the next transmission. |
+| `POST ready` | | Free for the next transmission. Something it took and said nothing about goes back in the queue. |
 
 ```json
 { "id": "9a41…", "callsign": "shop two", "kind": "needs-you", "say": "Shop two. The checker passes…", "waiting": 2, "speech": "…" }
@@ -202,7 +204,26 @@ effort }`. `state` is `working`, `asking`, `stalled` or `idle`. `doing` is what 
 now, asked of its adapter every two seconds while a radio is reading the feed. `held` marks an agent the tower
 runs.
 
+### The reading queue
+
+There is no separate list of what is unheard. Each line an agent says carries where it stands with being read
+out (`aloud` in the `messages` table): `waiting`, `handed` to a radio, `heard` on a radio, or `dropped` with a
+reason: `routine` (the judge found nothing for his ears), `superseded` (its agent said something newer),
+`answered` (it was waiting on him and he spoke to the agent, or it went back to work), `dismissed`,
+`agent_gone`, `stale` (said long before he turned reading aloud on), `permission_ended`. One function changes
+it (`Inner::set_aloud`, `tower/state.rs`), and every change is a line in the tower's log:
+`aloud: shop two (9a41…) waiting → dropped (superseded)`. `airband status` and `GET /v1/status` list what is
+unheard and the last twenty changes. A report whose agent has gone is still read out; a question it was
+waiting on is not.
+
 ### What he says
+
+An `Utterance` carries an `id` that is the same on every retry: the tower writes a receipt for it before doing
+anything, and gives the same answer however often it arrives. A retry that arrives while the first is still
+being answered waits up to 30 seconds for that answer, and is then told 202, `{ "working": true }`, when the
+radio said it asks again (`again: true`). The radio asks again with the same id until there is an answer. The
+waits are in order: the tower's 30 seconds, the relay's 40 for the tower, the radio's 50 for anything, so
+whoever is asked last gives up first and each answer still has someone to go to.
 
 Nothing is decided by matching his words.
 
@@ -323,6 +344,29 @@ its reply takes that one off the relay. The tower takes a kept request only if i
 While some are still kept, the relay turns back a new utterance (409 to a call that carries
 `x-airband-ordered`) and the radio leaves that one with the relay too, so everything arrives in order. Files
 he attaches wait on the phone.
+
+### What is written down, and where it stays
+
+Nothing is uploaded: no log, no trail and no diagnostic leaves the device it was made on.
+
+- **The phone** keeps, in memory, the last 300 requests that failed and every try at sending something he
+  said: the time, the kind of request (`POST /v1/radio/utterance`, with nothing after a `?`), the way it went
+  (relay, own network, kept at the relay), how it ended and how long it took. Each failure is one named cause
+  (`LinkError` in `radio/link.rs`): no connection, timed out, the relay says the computer is not connected
+  (503), earlier messages still on their way (409), the computer took it and has not answered (504), another
+  relay status, the relay would not keep it, an answer that cannot be read, the computer still working (202),
+  or the computer's own refusal with its explanation. A message that has not gone shows how its last try
+  went, each way, under its bubble; one that cannot go, or that half an hour did not send, stays in the chat
+  with the reason and Send again. Settings, Connection shows how each computer was last reached and copies
+  the record to the clipboard. Nothing he or an agent said is in it.
+- **The tower** writes to `~/.airband/airband.log` on his computer: a line for everything he says (its id,
+  how it came, what became of it, how long it took), a line for each request it refuses and each answer that
+  does not reach the relay, and every change to the reading queue.
+- **The relay** writes one line for a radio's request that fails, from what it handled itself: the route
+  (`call` or `queue`), the status, the time taken, the size of what was sent, how many requests were in flight
+  on the channel, whether messages are kept for its tower and whether the tower has been pulling, and the
+  first six characters of the channel's name. It cannot write what was sent, because that is sealed and it has
+  no key. It writes no token and no internet address.
 
 ### What it does not give
 
