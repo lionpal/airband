@@ -140,8 +140,9 @@ pub(crate) fn ensure(model: &str, server: &str) -> Result<String, String> {
                 .args(["-c", KEEPER, "sh"])
                 .arg(&program)
                 .env("AIRBAND_TOWER_PID", std::process::id().to_string())
-                .args(["-hf", model, "--no-mmproj", "--reasoning", "off", "--chat-template-kwargs", "{\"enable_thinking\":false}", "--jinja", "-c", "24576", "-np", "3", "--host", "127.0.0.1", "--port", &PORT.load(Ordering::SeqCst).to_string()])
-                .env("LLAMA_CACHE", dir().join("models"))
+                // what it is started with and in is its row's to say
+                .args(server.args.iter().map(|a| a.replace("{model}", model).replace("{port}", &PORT.load(Ordering::SeqCst).to_string())))
+                .envs(server.env.iter().map(|(name, value)| (name.clone(), value.replace("{models}", &dir().join("models").display().to_string()))))
                 .stdin(Stdio::null())
                 .stdout(out.try_clone().map_err(|e| e.to_string())?)
                 .stderr(out)

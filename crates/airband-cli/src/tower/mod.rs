@@ -267,7 +267,7 @@ impl App {
         let touched: HashSet<String> = inner.unsaved.borrow_mut().drain().collect();
         let entries: Vec<Entry> = inner.log.iter().filter(|e| touched.contains(&e.id)).cloned().collect();
         self.store.put_messages(&entries);
-        self.store.save_state(&Saved { sessions: inner.sessions.clone(), projects: inner.projects.clone(), colours: inner.colours.clone(), held: inner.held.clone(), menus: inner.menus.clone(), placed: inner.placed.clone() });
+        self.store.save_state(&Saved { sessions: inner.sessions.clone(), projects: inner.projects.clone(), colours: inner.colours.clone(), held: inner.held.clone(), menus: inner.menus.clone(), tools: inner.tools.clone(), placed: inner.placed.clone() });
     }
 }
 
@@ -336,17 +336,10 @@ pub fn progress(cfg: Config) -> Result<(), String> {
 
 pub fn run(cfg: Config) -> Result<(), String> {
     if let Some(why) = config::keyless() {
-        return Err(format!("The tower's keys could not be read: {why}"));
+        return Err(format!("airband's keys could not be read: {why}"));
     }
-    // The keys are kept encrypted and never in the settings file: any that are there (a first run, a file he
-    // edited) are moved now, and keys a run without the keychain had to seal in a file go into the keychain
-    // when this one can use it.
-    if !config::locked() {
-        match config::lock() {
-            Ok(()) => log(format!("the keys are now {}; the settings file holds none", crate::vault::place())),
-            Err(e) => log(format!("the keys could not be moved out of the settings file: {e}")),
-        }
-    } else if crate::vault::carry_asked().exists() {
+    // Keys a run without the keychain had to seal in a file go into the keychain when this one can use it.
+    if crate::vault::carry_asked().exists() {
         // asked for from a shell that could not read the keychain: this run can
         let _ = std::fs::remove_file(crate::vault::carry_asked());
         match crate::vault::carry() {
@@ -392,7 +385,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         let store = Store::open(&config::dir().join("airband.db"))?;
         let (saved, entries) = store.load(LOG_KEEP);
         let (seq, rev) = store.last_counts();
-        let mut inner = Inner { sessions: saved.sessions, projects: saved.projects, colours: saved.colours, held: saved.held, menus: saved.menus, placed: saved.placed, seq, rev, log: entries, ..Inner::default() };
+        let mut inner = Inner { sessions: saved.sessions, projects: saved.projects, colours: saved.colours, held: saved.held, menus: saved.menus, tools: saved.tools, placed: saved.placed, seq, rev, log: entries, ..Inner::default() };
         inner.reap();
         inner.close_requests_from_before();
         // credentials said before the chat masked them: masked now, and sent to every radio again as they are
@@ -401,7 +394,6 @@ pub fn run(cfg: Config) -> Result<(), String> {
             log(format!("masked a credential in {} kept message{}", leaked.len(), if leaked.len() == 1 { "" } else { "s" }));
             leaked.iter().for_each(|id| inner.touch(id));
         }
-        store.scrub_events();
         pictures::prune();
         attachments::prune();
         inner.settle_reading();
@@ -475,7 +467,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
             });
         }
 
-        let local = tokio::net::TcpListener::bind(("127.0.0.1", port)).await.map_err(|e| format!("cannot listen on 127.0.0.1:{port}: {e} (is a tower already running?)"))?;
+        let local = tokio::net::TcpListener::bind(("127.0.0.1", port)).await.map_err(|e| format!("cannot listen on 127.0.0.1:{port}: {e} (is airband already running?)"))?;
         log(format!("listening on 127.0.0.1:{port}"));
         // every address also takes sealed requests from a paired radio that can reach it without the relay
         let router = router.merge(relay_link::sealed_router());

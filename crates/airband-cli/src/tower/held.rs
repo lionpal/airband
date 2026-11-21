@@ -42,6 +42,20 @@ pub(super) fn holds(inner: &Inner, session: &str) -> bool {
     inner.held.iter().any(|k| k.session.as_deref() == Some(session))
 }
 
+/// The launcher a new agent is started with. For a tool he named, that tool's. With none named: the launcher he
+/// set as usual in this computer's settings, and when he set none, the launcher of the coding tool he uses
+/// most, as his phone said. Nothing when neither says: he is asked, and nothing is started on a guess.
+pub(super) fn launcher_for(app: &App, tool: Option<&str>) -> Option<(String, config::Launcher)> {
+    let found = |tool: Option<&str>| app.cfg.launcher_for(tool).map(|(name, l)| (name.clone(), l.clone()));
+    match tool {
+        Some(tool) => found(Some(tool)),
+        None => found(None).or_else(|| {
+            let most = app.inner.lock().unwrap().tools.first().cloned();
+            most.and_then(|tool| found(Some(&tool)))
+        }),
+    }
+}
+
 /// What a new agent of this launcher can be started on. A program started with arguments takes what its row
 /// lists. One that speaks the Agent Client Protocol says for itself each time a session of its opens, and what
 /// it last said is what is offered: nothing, until the first of its agents has been started here.
@@ -223,7 +237,7 @@ async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Started, Stri
 }
 #[cfg(not(unix))]
 async fn spawn(_: &Arc<App>, _: &Kept, _: bool) -> Result<Started, String> {
-    Err("the tower cannot run agents itself on this system yet".into())
+    Err("airband cannot start agents itself on this system yet".into())
 }
 
 /// Carry on a held agent whose holder has gone, and remember what its session is called now.
@@ -241,7 +255,7 @@ async fn revive(app: &Arc<App>, kept: &Kept) -> Result<(), String> {
 /// Give a held agent one message of his as its next turn. One whose process has gone (the computer restarted,
 /// or it crashed) is carried on first.
 pub(super) async fn tell(app: &Arc<App>, id: &str, text: &str) -> Result<(), String> {
-    let kept = app.inner.lock().unwrap().held.iter().find(|k| k.id == id).cloned().ok_or("the tower no longer holds this agent")?;
+    let kept = app.inner.lock().unwrap().held.iter().find(|k| k.id == id).cloned().ok_or("airband is no longer running this agent")?;
     #[cfg(unix)]
     {
         let words = || crate::hold::Tell::Say(text.to_string());
@@ -255,7 +269,7 @@ pub(super) async fn tell(app: &Arc<App>, id: &str, text: &str) -> Result<(), Str
     #[cfg(not(unix))]
     {
         let _ = (kept, text);
-        Err("the tower cannot run agents itself on this system yet".into())
+        Err("airband cannot start agents itself on this system yet".into())
     }
 }
 
@@ -303,7 +317,7 @@ pub(super) async fn stop(app: &Arc<App>, id: &str) -> Result<(), String> {
         if s.agent.deliver != Some(Deliver::Held) {
             return Err("Only an agent airband runs can be stopped from here. Take it over first.".into());
         }
-        let kept = inner.held.iter().find(|k| k.id == id).cloned().ok_or("The tower no longer holds this agent.")?;
+        let kept = inner.held.iter().find(|k| k.id == id).cloned().ok_or("airband is no longer running this agent.")?;
         // a program that reads lines can be stopped only if its launcher says what line stops it
         if matches!(app.cfg.launchers.get(&kept.launcher).and_then(|l| l.held.as_ref()), None | Some(config::Held::Lines { stop: None, .. })) {
             return Err("Its launcher has no way to stop it.".into());
@@ -442,13 +456,13 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
         (s, launcher)
     };
     if session.agent.deliver == Some(Deliver::Held) {
-        return Err("The tower already runs this one.".into());
+        return Err("airband already runs this one.".into());
     }
     let Some(launcher) = launcher else {
         return Err(format!("No launcher here runs {} agents itself.", session.agent.harness));
     };
-    let cwd = session.agent.cwd.clone().ok_or("The tower does not know its folder.")?;
-    let pid = session.agent.pid.ok_or("The tower does not know its process. Close it in its terminal, then start it from here.")?;
+    let cwd = session.agent.cwd.clone().ok_or("airband does not know which folder it is in.")?;
+    let pid = session.agent.pid.ok_or("airband cannot find it running on this computer. Close it in its terminal, then start it from here.")?;
     if !session.waiting {
         return Err("It is in the middle of something. Take it over when it has stopped.".into());
     }

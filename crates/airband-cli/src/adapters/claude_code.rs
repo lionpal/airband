@@ -163,8 +163,9 @@ fn told_in(piece: &str) -> Vec<super::Told> {
             _ => return None,
         };
         let text = text.trim().to_string();
-        // a command of the harness's and its output are not something he said to the agent
-        (!text.is_empty() && !text.starts_with('<') && !text.starts_with('/')).then_some(text)
+        // whose words they are is settled below, by who Claude Code says the prompt came from: a command of
+        // its own and that command's output carry no such mark
+        (!text.is_empty()).then_some(text)
     };
     piece
         .lines()
@@ -392,9 +393,10 @@ pub fn events(hook: &Value) -> Vec<AgentEvent> {
         "SessionStart" => vec![Event::Checkin],
         "UserPromptSubmit" => vec![Event::Working],
         "Stop" => text("last_assistant_message").map(|text| Event::Said { text, kind: None }).into_iter().collect(),
-        // "waiting for your input" only repeats the Stop that came just before it
+        // the notice that it has been idle only repeats the Stop that came just before it. Claude Code says
+        // which kind a notice is; none is told from its wording.
         "Notification" => match text("message") {
-            Some(message) if hook["notification_type"].as_str() != Some("idle_prompt") && !message.to_lowercase().contains("waiting for your input") => vec![Event::Notice { text: message }],
+            Some(message) if hook["notification_type"].as_str() != Some("idle_prompt") => vec![Event::Notice { text: message }],
             _ => Vec::new(),
         },
         // it is handing part of the work to a subagent
@@ -481,7 +483,10 @@ mod tests {
     }
     #[test]
     fn claude_code_idle_notification_is_dropped() {
-        assert!(events(&json!({ "session_id": "s1", "hook_event_name": "Notification", "message": "Claude is waiting for your input" })).is_empty());
+        // by the kind Claude Code says it is, whatever its words: the same words under another kind are passed on
+        assert!(events(&json!({ "session_id": "s1", "hook_event_name": "Notification", "notification_type": "idle_prompt", "message": "Claude is waiting for your input" })).is_empty());
+        let other = events(&json!({ "session_id": "s1", "hook_event_name": "Notification", "notification_type": "auth_success", "message": "Claude is waiting for your input" }));
+        assert_eq!(other[0].event, Event::Notice { text: "Claude is waiting for your input".into() });
         assert!(events(&json!({ "session_id": "s1", "hook_event_name": "Stop", "last_assistant_message": "" })).is_empty());
     }
     #[test]
@@ -549,7 +554,8 @@ mod tests {
             // passed on by the tower, sent by another agent, the harness's own notice, a command: none is him typing
             r#"{"type":"user","uuid":"a2","timestamp":"2026-11-19T17:38:00.000Z","origin":{"kind":"peer","from":"uds:/tmp/x.sock"},"message":{"role":"user","content":"Message from Charles, sent through Airband: a human said this"}}"#,
             r#"{"type":"user","uuid":"a3","timestamp":"2026-11-19T17:38:01.000Z","origin":{"kind":"task-notification"},"message":{"role":"user","content":"done"}}"#,
-            r#"{"type":"user","uuid":"a4","timestamp":"2026-11-19T17:38:02.000Z","origin":{"kind":"human"},"message":{"role":"user","content":"<command-name>/model</command-name>"}}"#,
+            // as Claude Code writes a command of its own: with no word on who it came from
+            r#"{"type":"user","uuid":"a4","timestamp":"2026-11-19T17:38:02.000Z","message":{"role":"user","content":"<command-name>/model</command-name>"}}"#,
             r#"{"type":"user","uuid":"a5","timestamp":"2026-11-19T17:38:03.000Z","message":{"role":"user","content":[{"type":"tool_result","content":"a \"human\" wrote this file"}]}}"#,
             // sent while it was working, with a picture
             r#"{"type":"attachment","uuid":"a6","attachment":{"type":"queued_command","prompt":[{"type":"image","source":{"data":"…"}},{"type":"text","text":"Swiping on the pop-up should get rid of it."}],"source_uuid":"q6","origin":{"kind":"human"},"timestamp":"2026-11-19T17:40:46.000Z"}}"#,

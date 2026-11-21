@@ -16,13 +16,13 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
         return say(format!("The folder for {project} is gone."));
     }
     // the tool he asked for, when he named one; otherwise the usual launcher
-    let Some((named, launcher)) = app.cfg.launcher_for(idea.tool.as_deref()) else {
+    let Some((named, launcher)) = held::launcher_for(app, idea.tool.as_deref()) else {
         return say(match &idea.tool {
             Some(tool) => format!("This computer is not set up to start {tool} agents."),
-            None => format!("No launcher called {} is configured.", app.cfg.launcher),
+            None => "Which coding agent should start it? Choose the ones you use on your phone, in Settings, under Coding agents, or name one when you ask.".to_string(),
         });
     };
-    let named = named.clone();
+    let launcher = &launcher;
     // An agent the tower runs can be started with nothing to do yet: it is there at once, waiting for his first
     // word. One that is handed off needs its task to start with.
     if task.is_empty() && launcher.held.is_none() {

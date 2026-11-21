@@ -575,9 +575,9 @@ impl Link {
 
     /// One part of a file he is attaching. Returns where the next part starts.
     /// Returns how far the tower has the file whole from its start, and whether it takes parts in any order.
-    pub(crate) fn attachment_part(&self, part: &airband_core::radio::AttachmentPart) -> Result<(u64, bool), LinkError> {
+    pub(crate) fn attachment_part(&self, part: &airband_core::radio::AttachmentPart) -> Result<u64, LinkError> {
         let v = self.post("/attachment", part)?;
-        Ok((v["next"].as_u64().ok_or_else(|| Self::no(200, &v))?, v["any"].as_bool().unwrap_or(false)))
+        v["next"].as_u64().ok_or_else(|| Self::no(200, &v))
     }
 
     /// One try at sending something he typed, with each way it was tried and how that went.
@@ -645,7 +645,7 @@ mod tests {
         use LinkError::*;
         let soon = [Unreachable(Way::Relay), Unreachable(Way::Near), TimedOut(Way::Relay), Away, Behind, TowerSilent, Relay(502), HoldRefused(503), Relay(401), HoldRefused(403)];
         let later = [Relay(429), HoldRefused(507), HoldRefused(429), Unreadable(Way::Relay), Tower { status: 500, error: String::new() }];
-        let never = [Relay(413), HoldRefused(400), Tower { status: 408, error: "this request's time is more than two minutes from the tower's clock".into() }, Tower { status: 400, error: String::new() }];
+        let never = [Relay(413), HoldRefused(400), Tower { status: 408, error: "the clocks of your phone and your computer are more than two minutes apart".into() }, Tower { status: 400, error: String::new() }];
         for (wanted, causes) in [(Retry::Soon, &soon[..]), (Retry::Later, &later[..]), (Retry::Never, &never[..])] {
             for cause in causes {
                 assert_eq!(cause.retry(), wanted, "{cause:?}");
@@ -657,7 +657,7 @@ mod tests {
         assert!(told.len() >= all.len() - 3, "{told:?}");
         assert!(all.iter().all(|c| !c.told().is_empty() && !c.told().ends_with('.')));
         // the tower's own explanation reaches him
-        assert!(never[2].told().contains("two minutes from the tower's clock"));
+        assert!(never[2].told().contains("more than two minutes apart"));
         assert!(Tower { status: 400, error: String::new() }.refused() && !Away.refused());
     }
 

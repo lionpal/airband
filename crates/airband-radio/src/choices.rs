@@ -299,6 +299,8 @@ fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> {
             ),
             None => (None, crate::mouth::services(Job::Summary).into_iter().map(|s| (s, false)).collect()),
         };
+        // what reads now could not, the last time his computer asked it: it stays chosen and says why
+        let reads_failed = saved.offered.as_ref().and_then(|o| o.failed.clone());
         let chosen = saved.reads.as_ref().map(|w| OfferName { provider: w.id.clone(), offer: w.offer.clone() }).or(now);
         // what uses the sign-in of a coding tool is offered to someone who uses that tool, those first
         let (mine, rest): (Vec<_>, Vec<_>) = offers.into_iter().filter(|(s, _)| s.login.is_empty() || saved.tools.contains(&s.login)).partition(|(s, _)| !s.login.is_empty());
@@ -310,6 +312,7 @@ fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> {
                 let has_key = there || (facts.has_key)(&s.kind);
                 let state = working(&service_id(&s.kind, &s.offer)).unwrap_or(match () {
                     _ if is && saved.reads.is_some() => ChoiceState::Waiting,
+                    _ if is && reads_failed.is_some() => ChoiceState::Failed { why: reads_failed.clone().unwrap_or_default() },
                     _ if s.key && !has_key => ChoiceState::NeedsKey,
                     _ => ChoiceState::Ready,
                 });
@@ -399,6 +402,11 @@ impl Chooser {
         let kept: Option<Saved> = if dir.is_empty() { None } else { std::fs::read(Path::new(dir).join("choices.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()) };
         let saved = Mutex::new(kept.unwrap_or_else(|| Saved::fresh(&device)));
         Chooser { dir: dir.into(), device, saved, working: Mutex::new(None) }
+    }
+
+    /// The coding tools he uses, by id, the one he uses most first.
+    pub(crate) fn tools(&self) -> Vec<String> {
+        self.saved().tools
     }
 
     fn saved(&self) -> Saved {
@@ -791,7 +799,7 @@ mod tests {
         use airband_core::radio::ReadsOffer;
         let offer = |id: &str, login: &str, key: bool, has_key: bool| ReadsOffer { provider: id.into(), offer: "x".into(), label: format!("The {id} one"), login: login.into(), key, has_key, key_name: "API key".into(), preferred: true, ..ReadsOffer::default() };
         let named = |provider: &str, offer: &str| OfferName { provider: provider.into(), offer: offer.into() };
-        let offered = ReadsOffered { now: Some(named("b", "x")), offers: vec![offer("a", "", true, false), offer("b", "", true, true), offer("c", "codex", false, false), offer("d", "opencode", false, false)] };
+        let offered = ReadsOffered { now: Some(named("b", "x")), failed: None, offers: vec![offer("a", "", true, false), offer("b", "", true, true), offer("c", "codex", false, false), offer("d", "opencode", false, false)] };
         let saved = Saved { offered: Some(offered), tools: vec!["codex".into()], ..Saved::default() };
         let all = list(ChoiceJob::Reads, &saved, &facts(HERE, NO_KEYS));
         // his tool's sign-in first, another tool's left out, and the label is the computer's own
@@ -812,7 +820,7 @@ mod tests {
         use airband_core::radio::ReadsOffer;
         // a computer that reads with either of two models of one company
         let offer = |id: &str| ReadsOffer { provider: "maker".into(), offer: id.into(), label: format!("Maker {id}"), key: true, key_name: "Maker key".into(), preferred: true, ..ReadsOffer::default() };
-        let offered = ReadsOffered { now: Some(OfferName { provider: "maker".into(), offer: "small".into() }), offers: vec![offer("small"), offer("large")] };
+        let offered = ReadsOffered { now: Some(OfferName { provider: "maker".into(), offer: "small".into() }), failed: None, offers: vec![offer("small"), offer("large")] };
         let saved = Saved { offered: Some(offered), ..Saved::default() };
         // with no key kept both ask for the one key, by the same name
         let all = list(ChoiceJob::Reads, &saved, &facts(HERE, NO_KEYS));
@@ -828,6 +836,13 @@ mod tests {
         assert!(all.iter().all(|c| c.has_key && c.state == ChoiceState::Ready));
         assert!(asked.lock().unwrap().iter().all(|id| id == "maker"));
         assert_eq!(chosen(&all), vec!["maker/small"]);
+        // his computer says what reads now could not, the last time it was asked: it stays chosen and says
+        // why, and the other one is not blamed
+        let mut failing = saved.clone();
+        failing.offered.as_mut().unwrap().failed = Some("The service did not accept the key.".into());
+        let all = list(ChoiceJob::Reads, &failing, &facts(HERE, &|id| id == "maker"));
+        assert_eq!(chosen(&all), vec!["maker/small"]);
+        assert_eq!(all.iter().map(|c| c.state.clone()).collect::<Vec<_>>(), vec![ChoiceState::Failed { why: "The service did not accept the key.".into() }, ChoiceState::Ready]);
 
         // the same through the desk, for a job done on this device: a key typed for one offer is kept under
         // the provider and is the key the other offer finds

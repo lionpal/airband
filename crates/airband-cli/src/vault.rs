@@ -35,7 +35,7 @@ fn each(doc: &mut Value, f: &mut dyn FnMut(String, &mut Value)) {
             f(name.to_string(), v);
         }
     }
-    for part in ["voice", "ears", "summarizer", "summarizer_fallback"] {
+    for part in ["voice", "ears", "summarizer"] {
         // a key written by its name is not a secret: the key it names is kept below
         if let Some(v) = doc.get_mut(part).and_then(|p| p.get_mut("key")).filter(|v| v.as_str().is_some_and(|k| !k.starts_with("key:"))) {
             f(format!("{part}.key"), v);
@@ -180,7 +180,7 @@ mod file {
     }
 
     /// What this machine calls itself to its own system, the same from one start to the next and different on
-    /// every other machine. Empty where the system has none to give; the salt alone makes the key then.
+    /// every other machine. Empty where the system has none to give: nothing is sealed then (`cipher`).
     fn machine() -> String {
         static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
         ID.get_or_init(|| {
@@ -197,6 +197,11 @@ mod file {
     }
 
     fn cipher(make_salt: bool) -> Result<ChaCha20Poly1305, String> {
+        // the machine's own id is what keeps a copy of the folder from opening anywhere else: without one the
+        // salt beside the file would open it, so nothing is sealed
+        if machine().is_empty() {
+            return Err("this computer gave no id of its own, so airband cannot keep keys on it safely".into());
+        }
         let salt = match std::fs::read(salt_at()) {
             Ok(salt) if salt.len() == 32 => salt,
             _ if make_salt => {
@@ -217,7 +222,7 @@ mod file {
     }
 
     pub fn get() -> Result<Map<String, Value>, String> {
-        let sealed = std::fs::read(sealed_at()).map_err(|_| "the tower's keys are not on this computer".to_string())?;
+        let sealed = std::fs::read(sealed_at()).map_err(|_| "airband's keys are not on this computer".to_string())?;
         if sealed.len() < 12 + 16 {
             return Err("the sealed keys are cut short".into());
         }
@@ -264,11 +269,13 @@ pub fn get() -> Result<Map<String, Value>, String> {
     file::get()
 }
 
-/// Keep the keys. In the keychain where this program can use it; where it cannot (an unsigned build, a shell
-/// with no keychain, another system) in the sealed file. Never anywhere in the clear.
+/// Keep the keys. In the keychain for a signed build on a Mac, and in the sealed file for every other (an
+/// unsigned build, another system). Never anywhere in the clear. A keychain that will not take them is an
+/// error he is told: they are not quietly put somewhere else.
 pub fn put(kept: &Map<String, Value>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
-    if keychain() && mac::put(kept).is_ok() {
+    if keychain() {
+        mac::put(kept).map_err(|why| format!("{why}. Run this at the computer itself, logged in, and not over SSH."))?;
         file::forget();
         return Ok(());
     }

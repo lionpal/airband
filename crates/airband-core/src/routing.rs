@@ -10,6 +10,13 @@ pub struct Callsign {
     pub number: String,
 }
 
+/// The team a folder or a name he gave stands for: its last part, as a callsign writes it. None when there is
+/// nothing in it a team could be called.
+pub fn team_name(text: &str) -> Option<String> {
+    let base = text.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next().unwrap_or("");
+    Some(norm(base)).filter(|name| !name.is_empty())
+}
+
 impl Callsign {
     pub fn text(&self) -> String {
         format!("{} {}", self.project, self.number)
@@ -47,12 +54,9 @@ impl Callsign {
         Some(if own_name(&self.number) && !live.contains(&named) { named } else { Callsign::next_for(&project, live) })
     }
     /// The next free callsign for a session in this folder: the folder's name plus the lowest unused number.
+    /// A folder with no name of its own (the top of a disk) is in the team called "session".
     pub fn next_for(cwd: &str, live: &[Callsign]) -> Callsign {
-        let base = cwd.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next().unwrap_or("");
-        let mut project = norm(base);
-        if project.is_empty() {
-            project = "session".into();
-        }
+        let project = team_name(cwd).unwrap_or_else(|| "session".into());
         let mut n = 1;
         loop {
             let number = WORDS.get(n).map(|w| w.to_string()).unwrap_or_else(|| n.to_string());
@@ -202,11 +206,16 @@ pub fn number_name(n: usize) -> String {
 /// Aloud it is still the word; either form is understood when he says or types it.
 pub fn shown(callsign: &str) -> String {
     match callsign.rsplit_once(' ') {
-        Some((team, last)) => match WORDS.iter().position(|w| *w == last) {
-            Some(n) if n > 0 => format!("{team} {n}"),
-            _ => callsign.to_string(),
-        },
+        Some((team, last)) => format!("{team} {}", shown_number(last)),
         None => callsign.to_string(),
+    }
+}
+
+/// The part of a callsign after its team, as a screen shows it: "three" is "3", "removals" is "removals".
+pub fn shown_number(number: &str) -> String {
+    match WORDS.iter().position(|w| *w == number) {
+        Some(n) if n > 0 => n.to_string(),
+        _ => number.to_string(),
     }
 }
 
@@ -262,6 +271,15 @@ pub fn parse_launch(text: &str, projects: &[String]) -> Option<Launch> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_team_is_named_by_the_last_part_of_a_folder_and_a_callsign_is_shown_with_a_figure() {
+        assert_eq!(team_name("/work/Shop Front/").as_deref(), Callsign::next_for("/work/Shop Front/", &[]).project.as_str().into());
+        assert_eq!(team_name("garden").as_deref(), Some("garden"));
+        // nothing a team could be called
+        assert_eq!((team_name("/"), team_name("  "), team_name("!!")), (None, None, None));
+        assert_eq!((shown_number("three"), shown_number("removals"), shown("shop three")), ("3".to_string(), "removals".to_string(), "shop 3".to_string()));
+    }
+
     #[test]
     fn a_session_takes_the_name_he_gave_it() {
         let c = |p: &str, n: &str| Callsign { project: p.into(), number: n.into() };

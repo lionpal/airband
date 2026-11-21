@@ -39,10 +39,10 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0 0; }
   <p>When your phone is away from your computer's network, messages between them go through our relay. They are end-to-end encrypted with a key that only your phone and your computer hold, so we cannot read them.</p>
   <ul>
     <li>If your computer is off, the relay holds the encrypted messages for it for up to seven days, then deletes them.</li>
-    <li>For each pairing the relay keeps a random channel name and two check values that let it tell your devices from anyone else's.</li>
+    <li>For each pairing the relay keeps a random name for the connection and two codes that let it tell your devices from anyone else's. Neither says who you are.</li>
     <li>To send a notification, your computer hands the relay an encrypted note and your phone's notification address, which the relay passes to Apple. The relay does not keep the address.</li>
     <li>While an agent is waiting for you and the app is closed, your lock screen shows three numbers: how many agents are waiting, how many are working and how many reports are unread. Your computer sends those numbers through the relay and Apple, and they are not encrypted. No name, project or message is ever sent this way.</li>
-    <li>For a request that fails, the relay records the time, the kind of request, its size and the first characters of the channel name. It counts requests by internet address, in memory, to limit abuse.</li>
+    <li>For a request that fails, the relay records the time, the kind of request, its size and the first characters of that random name. It counts requests by internet address, in memory, to limit abuse.</li>
   </ul>
   <p>You can pair your phone straight to your computer and not use the relay at all. You then get no notifications and no lock screen numbers.</p>
 
@@ -52,7 +52,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0 0; }
 
   <h2>This website</h2>
   <ul>
-    <li>If you leave your email for a TestFlight invite, we keep it to send you that invite and news about airband. Ask and we delete it.</li>
+    <li>If you leave your email for a TestFlight invite, we keep it in the relay's database, on our server, to send you that invite and news about airband. Ask and we delete it.</li>
     <li>The page loads its typeface from Google Fonts, so Google sees the request. There are no cookies and no analytics.</li>
   </ul>
 

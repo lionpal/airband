@@ -196,12 +196,10 @@ struct LinkRow: View {
     @Environment(\.openURL) private var openURL
     let m: ChatMessage
 
-    /// What to call a link: "artifact" for one of Claude's, otherwise the site.
+    /// What to call a link: the site it goes to.
     static func label(_ url: URL) -> String {
-        let host = (url.host ?? "link").replacingOccurrences(of: "www.", with: "")
-        if host == "claude.ai", url.path.contains("/artifact") { return "artifact" }
-        if host == "github.com", url.path.contains("/pull/") { return "pull request" }
-        return host
+        let host = url.host ?? "link"
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 
     var body: some View {

@@ -39,7 +39,7 @@ pub(crate) trait Harness: Sync {
     }
     /// What to tell him once its hooks are in place; `changed` when the file was written.
     fn installed(&self, file: &hooks::File, _changed: bool) -> String {
-        format!("Hooks added to {}.", file.path.display())
+        format!("{} now reports to airband (set in {}).", called(self.name()).0, file.path.display())
     }
     /// For a harness that can let something else answer its permission prompts: its notification as the request
     /// to put to him, or nothing when the notification is not one.
@@ -138,7 +138,18 @@ pub(crate) struct AccountBook {
     pub(crate) forget: fn(&str) -> Result<String, String>,
 }
 
-/// Every coding tool with an adapter. A new one is a module and a line here.
+/// What a coding tool's row tells the code that speaks to it (`Tool::with`): the program's name, an address.
+/// Always from the rows this build came with. Empty when the row does not say.
+pub(crate) fn row_says(tool: &str, what: &str) -> String {
+    airband_core::catalog::built().tools.iter().find(|t| t.id == tool).map(|t| t.told(what).to_string()).unwrap_or_default()
+}
+
+/// What a coding tool and its maker are called, as its row has them.
+pub(crate) fn called(tool: &str) -> (String, String) {
+    airband_core::catalog::current().tools.iter().find(|t| t.id == tool).map(|t| (t.name.clone(), t.maker.clone())).unwrap_or_default()
+}
+
+/// Every coding tool with an adapter, by the id its row has. A new one is a module and a line here.
 static HARNESSES: &[&dyn Harness] = &[&claude_code::ClaudeCode, &codex::Codex, &opencode::OpenCode];
 
 fn harness(name: &str) -> Option<&'static dyn Harness> {
@@ -199,7 +210,7 @@ pub fn accounts() -> Accounts {
     Accounts { schema: airband_core::radio::SCHEMA.into(), accounts: all, note: (!notes.is_empty()).then(|| notes.join(" ")), checked_at }
 }
 fn book(harness: &str) -> Result<&'static AccountBook, String> {
-    self::harness(harness).and_then(|h| h.accounts()).ok_or_else(|| format!("{harness} has no accounts to switch between."))
+    self::harness(harness).and_then(|h| h.accounts()).ok_or_else(|| format!("{} has no accounts to switch between.", called(harness).0))
 }
 pub fn use_account(harness: &str, id: &str) -> Result<std::thread::JoinHandle<()>, String> {
     (book(harness)?.switch)(id)
@@ -208,7 +219,7 @@ pub fn use_account(harness: &str, id: &str) -> Result<std::thread::JoinHandle<()
 /// `airband accounts`: list them. `save`, `add`, `use <account>`, `forget <account>`. With a tower running,
 /// listing and switching go through it, so there is one keeper of the saved logins at a time.
 pub fn accounts_command(cfg: &config::Config, args: &[String]) -> Result<(), String> {
-    let harness = HARNESSES.iter().find(|h| h.accounts().is_some()).map(|h| h.name()).ok_or("No harness here has accounts.")?;
+    let harness = HARNESSES.iter().find(|h| h.accounts().is_some()).map(|h| h.name()).ok_or("None of your coding tools has accounts to switch between here.")?;
     let tower = |method: &str, path: &str, body: Option<Value>| -> Option<Result<Accounts, String>> {
         let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(60))).http_status_as_error(false).build().into();
         let url = format!("http://127.0.0.1:{}{path}", cfg.port);
@@ -223,7 +234,7 @@ pub fn accounts_command(cfg: &config::Config, args: &[String]) -> Result<(), Str
         Some(match (res.status().as_u16(), answer["error"].as_str()) {
             (200, Some(why)) => Err(why.to_string()),
             (200, None) => serde_json::from_value(answer).map_err(|e| e.to_string()),
-            _ => Err("The tower refused.".into()),
+            _ => Err("airband refused.".into()),
         })
     };
     let show = |a: &Accounts| {
@@ -389,5 +400,24 @@ pub fn drain_spool(take: impl Fn(AgentEvent) -> bool) {
             None => {}
         }
         let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[cfg(test)]
+mod rows {
+    use super::*;
+
+    #[test]
+    fn every_coding_tool_in_the_catalogue_has_its_adapter_and_every_adapter_its_row() {
+        let rows: Vec<&str> = airband_core::catalog::built().tools.iter().map(|t| t.id.as_str()).collect();
+        let mut adapters: Vec<&str> = HARNESSES.iter().map(|h| h.name()).collect();
+        adapters.sort();
+        let mut sorted = rows.clone();
+        sorted.sort();
+        assert_eq!(adapters, sorted);
+        // each is called something, by its row and not by this code
+        assert!(rows.iter().all(|id| !called(id).0.is_empty()));
+        // and a row that says nothing of a thing says nothing: no name is made up for it
+        assert_eq!(row_says(rows[0], "no such thing"), "");
     }
 }
