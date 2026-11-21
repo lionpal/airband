@@ -163,18 +163,48 @@ pub struct Outgoing {
     /// ([`Radio::discard`]).
     #[serde(default)]
     pub failed: Option<String>,
+    /// How far it has got.
+    #[serde(default)]
+    pub stage: Stage,
+}
+
+/// How far something he typed has got on its way.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum Stage {
+    /// It has not reached his computer or the relay yet.
+    #[default]
+    Trying,
+    /// His computer has it and is working out who it is for. It leaves the list when that is done.
+    Taken,
+    /// The relay is keeping it for his computer, which is away or still catching up.
+    Left,
+}
+
+/// Why something an agent said was not read out to him while he had reading aloud on, in words for him.
+fn not_read(why: airband_core::radio::NotRead) -> &'static str {
+    use airband_core::radio::NotRead;
+    match why {
+        NotRead::Routine => "Not read aloud. There was nothing in it you needed to hear.",
+        NotRead::Superseded => "Not read aloud. The agent said something newer first.",
+        NotRead::Answered => "Not read aloud. You had already answered the agent, or it had gone back to work.",
+        NotRead::Dismissed => "Not read aloud. You let this question go.",
+        NotRead::AgentGone => "Not read aloud. The agent had stopped running.",
+        NotRead::Stale => "Not read aloud. It was said before you turned reading on.",
+        NotRead::PermissionEnded => "Not read aloud. The request was over before its turn came.",
+        NotRead::Unknown => "Not read aloud.",
+    }
 }
 
 impl Outgoing {
     /// Something he has just said, not yet tried.
     pub(crate) fn new(id: String, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, attachments: Vec<String>, others: String) -> Outgoing {
-        Outgoing { id, text, re, at: now_ms(), scope, label, attachments, others, tries: 0, last_tried: 0, trail: Vec::new(), failed: None }
+        Outgoing { id, text, re, at: now_ms(), scope, label, attachments, others, tries: 0, last_tried: 0, trail: Vec::new(), failed: None, stage: Stage::Trying }
     }
 }
 
 fn chat(m: airband_core::radio::Message) -> ChatMessage {
     use airband_core::routing::shown;
-    ChatMessage { seq: m.seq, id: m.id, at: m.at, from: shown(&m.from), group: m.group, to: m.to.iter().map(|t| shown(t)).collect(), needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), text: m.text, long: m.long, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links, agent: m.agent, station: String::new(), open: m.open, badge: String::new(), colour: 0, read: m.read, own_session: m.own_session }
+    ChatMessage { seq: m.seq, id: m.id, at: m.at, from: shown(&m.from), group: m.group, to: m.to.iter().map(|t| shown(t)).collect(), needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), text: m.text, long: m.long, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links, agent: m.agent, station: String::new(), open: m.open, badge: String::new(), colour: 0, read: m.read, own_session: m.own_session, not_read: m.not_read.map(not_read).unwrap_or_default().to_string() }
 }
 
 fn chat_feed(feed: Feed) -> ChatFeed {
@@ -286,6 +316,9 @@ pub struct ChatMessage {
     /// The agent takes this answer only from him in its own session. If the tower does not run that agent,
     /// an answer from here will not count: say so, and offer to take it over.
     pub own_session: bool,
+    /// It was to be read out to him while he had reading aloud on, and was not: why, in a sentence. Empty for
+    /// every other line. Mark the line, and show the sentence when he asks.
+    pub not_read: String,
 }
 
 /// A picture an agent looked at or made for him. The size is known before the picture is fetched, so a host
@@ -427,9 +460,6 @@ pub struct Radio {
     roster: std::sync::atomic::AtomicU64,
     /// Goes up each time a reading aloud is started or stopped: one that finds it changed leaves off.
     reading: std::sync::atomic::AtomicU64,
-    /// The chat is not in front of him (the app is behind another, or the screen is off): the tower is told, so
-    /// that following the chat meanwhile does not count as him having seen it.
-    away: AtomicBool,
 }
 
 #[uniffi::export]
@@ -442,7 +472,9 @@ impl Radio {
         let store = Arc::new(Store::open(&data_dir));
         let me = store.saved.lock().unwrap().radio.clone();
         let me = if me.is_empty() { store.change(|s| { s.radio = format!("radio-{}", random_hex(4)); s.radio.clone() }) } else { me };
-        let link = Pairing::parse(&link).and_then(|p| Link::new(p, &me)).map_err(|reason| RadioError::BadLink { reason })?;
+        // the record of what failed is kept beside the saved chat, on this device
+        let trail = (!data_dir.is_empty()).then(|| std::path::Path::new(&data_dir).join("trail.json"));
+        let link = Pairing::parse(&link).and_then(|p| Link::new(p, &me, trail)).map_err(|reason| RadioError::BadLink { reason })?;
         let (tx, rx) = channel();
         let stop = Arc::new(AtomicBool::new(false));
         let link = Arc::new(link);
@@ -462,7 +494,7 @@ impl Radio {
             let (link, store, host, stop, wake) = (link.clone(), store.clone(), host.clone(), stop.clone(), wake.clone());
             thread::spawn(move || deliver_outbox(link, store, host, stop, wake));
         }
-        Ok(Arc::new(Radio { jobs: Mutex::new(tx), stop, calling, link, store, host, wake, roster: std::sync::atomic::AtomicU64::new(0), reading: std::sync::atomic::AtomicU64::new(0), away: AtomicBool::new(false) }))
+        Ok(Arc::new(Radio { jobs: Mutex::new(tx), stop, calling, link, store, host, wake, roster: std::sync::atomic::AtomicU64::new(0), reading: std::sync::atomic::AtomicU64::new(0) }))
     }
 
     /// Chat, for a bad connection: take what he typed and keep trying until the tower has it. Returns at
@@ -552,7 +584,7 @@ impl Radio {
         let waiting = self.store.change(|s| {
             if let Some(i) = s.outbox.iter().position(|o| o.id == id && o.failed.is_some()) {
                 let was = s.outbox.remove(i);
-                s.outbox.push(Outgoing { at: now_ms(), tries: 0, last_tried: 0, trail: Vec::new(), failed: None, ..was });
+                s.outbox.push(Outgoing { at: now_ms(), tries: 0, last_tried: 0, trail: Vec::new(), failed: None, stage: Stage::Trying, ..was });
             }
             s.outbox.clone()
         });
@@ -571,9 +603,13 @@ impl Radio {
         gone
     }
     /// Every request that failed lately and every try at sending what he said, a line each, oldest first.
-    /// Nothing he or an agent said is in it. It is kept in memory on this device and sent nowhere.
+    /// Nothing he or an agent said is in it. It is kept on this device and sent nowhere.
     pub(crate) fn link_trail(&self) -> Vec<String> {
         self.link.trail()
+    }
+    /// How many of each kind of thing the tower is told in passing did not get there, since the app started.
+    pub(crate) fn lost(&self) -> Vec<(String, u32)> {
+        self.link.lost()
     }
     /// How this computer was last reached, or not, each way: through the relay, and at its own address.
     pub(crate) fn reach(&self) -> (Option<String>, Option<String>) {
@@ -597,6 +633,11 @@ impl Radio {
         self.link.armed()
     }
 
+    /// What he typed that has not been dealt with yet: on its way, with the relay, or given up on.
+    pub fn unsent(&self) -> Vec<Outgoing> {
+        self.store.saved.lock().unwrap().outbox.clone()
+    }
+
     /// The recent chat as last seen, from the device: there at once, with or without a connection.
     pub fn history(&self) -> Vec<ChatMessage> {
         self.store.saved.lock().unwrap().history.iter().cloned().map(chat).collect()
@@ -611,15 +652,25 @@ impl Radio {
             (saved.after, saved.rev)
         };
         let roster = self.roster.load(Ordering::SeqCst);
-        let away = if self.away.load(Ordering::SeqCst) { "&away=1" } else { "" };
         // with an address of the tower's still to try, this request does not wait for news: it only finds out
         // whether the tower is there, so the straight path is in use (and shown) within a moment
         let wait = if self.link.untried() { 0 } else { wait_seconds.min(25) };
-        let (status, v) = self.link.request("GET", &format!("/feed?scope=all&since={since}&roster={roster}&wait={wait}{away}"), None)?;
+        let (status, v) = self.link.request("GET", &format!("/feed?scope=all&since={since}&roster={roster}&wait={wait}"), None)?;
         let feed: Feed = (status == 200).then(|| serde_json::from_value(v).ok()).flatten().ok_or(RadioError::Refused)?;
         spoken_alike(&feed)?;
         self.roster.store(feed.roster_rev, Ordering::SeqCst);
         self.link.set_direct(feed.direct.clone());
+        // what has come of things he said: a typed message leaves the outbox, and whoever is waiting on
+        // something said aloud is given its answer
+        for told in &feed.answers {
+            if let airband_core::radio::Outcome::Answered { reply } = &told.outcome {
+                self.link.answered(&told.id, reply);
+            }
+            settle(&self.store, &*self.host, &told.id, told.outcome.clone());
+        }
+        if !feed.answers.is_empty() {
+            self.wake.ring();
+        }
         // the tower's log is behind ours: it was reset. Start over rather than wait for numbers that will not come.
         let reset = feed.seq < after || feed.rev < since;
         self.store.change(|s| {
@@ -650,6 +701,7 @@ impl Radio {
     pub fn set_call_mode(&self, on: bool) {
         self.calling.store(on, Ordering::SeqCst);
         self.wake.ring();
+        self.stands(|p| p.on_call = on);
     }
 
     /// Chat: everything said since `after` in a scope ("all", "group:shop", "agent:shop two"), each message
@@ -668,7 +720,7 @@ impl Radio {
     /// With no tag it goes to whoever spoke last. Returns the tower's one-line answer ("Sent to shop two.").
     /// `re` is the id of the message he is replying to, when he picked one.
     pub fn send(&self, text: String, re: Option<String>) -> Result<String, RadioError> {
-        Ok(self.link.utterance(&text, re, None)?.say)
+        Ok(self.link.utterance(&text, re, None)?.map(|reply| reply.say).unwrap_or_default())
     }
 
     /// The rest of a message: the fuller spoken version, or with `full` exactly what the agent wrote.
@@ -798,7 +850,7 @@ impl Radio {
     /// He has read these in the chat, so call mode will not also read them out.
     pub fn seen(&self, ids: Vec<String>) {
         for id in ids {
-            let _ = self.link.post("/heard", &Heard { id });
+            self.link.tell("/heard", &Heard { id });
         }
     }
 
@@ -826,7 +878,15 @@ impl Drop for Radio {
 impl Radio {
     /// Whether the chat is in front of him, as the host last said.
     pub(crate) fn set_away(&self, away: bool) {
-        self.away.store(away, Ordering::SeqCst);
+        self.stands(|p| p.showing_chat = !away);
+    }
+    /// Where this radio stands has changed, perhaps: every request says so from now on, and when it is news
+    /// the tower is told at once, without waiting for the next thing there is to ask it.
+    fn stands(&self, change: impl FnOnce(&mut airband_core::radio::Presence)) {
+        if self.link.set_presence(change) {
+            let link = self.link.clone();
+            thread::spawn(move || link.say_presence());
+        }
     }
 
     /// Tell the tower where this radio can be woken with a notification (its address at a push service), or
@@ -853,7 +913,8 @@ impl Radio {
             }
             match self.link.utterance_once(&id, &text, Some(re.clone()), None, None, Vec::new(), "").0 {
                 // left with the relay for a computer that is away: it will get there, and he should know it has not yet
-                Ok(reply) if reply.say == AWAY => return Err(RadioError::Told { reason: AWAY.into() }),
+                Ok(Sent::Left { away: true }) => return Err(RadioError::Told { reason: AWAY.into() }),
+                // his computer has it: that is the answer given
                 Ok(_) => return Ok(()),
                 // it cannot be sent however often it is tried: he is told why, and nothing is left to try again
                 Err(e) if e.retry() == Retry::Never => return Err(e.into()),

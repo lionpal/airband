@@ -45,6 +45,13 @@ def start_tower():
 def send(text, timeout=120):
     r = subprocess.run([BIN, "send", text, "--keep-trying", "--link", link], env=phone_env, capture_output=True, text=True, timeout=timeout)
     return r.stdout.strip()
+def outbox():
+    """What the phone still holds of what he typed: [(words, stage)] (crates/airband-radio/src/store.rs)."""
+    path = os.path.join(client, ".airband", "radio", "radio.json")
+    return [(o["text"], o["stage"]) for o in json.load(open(path))["outbox"]] if os.path.exists(path) else []
+def status():
+    req = urllib.request.Request(f"http://127.0.0.1:{TOWER_PORT}/v1/status", headers={"authorization": "Bearer own"})
+    with urllib.request.urlopen(req, timeout=10) as res: return json.loads(res.read())
 def received():
     return open(got).read() if os.path.exists(got) else ""
 def derive(secret):
@@ -105,6 +112,17 @@ try:
     check("what he says goes through the relay to the agent", "Delivered." in send("the first thing") and "the first thing" in received(), received()[-200:])
     logged = lambda name: open(os.path.join(work, name)).read()
     check("the tower writes one line for it: how it came, what became of it and how long it took", " by the relay: answered in " in logged("tower.log"), logged("tower.log")[-400:])
+    check("and the phone lets go of it once the tower has said what came of it", outbox() == [], outbox())
+
+    print("Whether he is there")
+    # a radio says where it stands inside each sealed request; the tower reads that, and nothing else
+    check("a radio that only types is not on a call", "test" not in status()["radios"], status()["radios"])
+    on_call = subprocess.Popen([BIN, "radio", "--quiet", "--link", link], env=phone_env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(40):
+        if "test" in status()["radios"]: break
+        time.sleep(0.25)
+    check("one that turns reading aloud on says so through the relay, and is on a call", "test" in status()["radios"], status()["radios"])
+    on_call.terminate(); on_call.wait(10)
 
     print("Only the channel's own radio")
     refused = post("queue", None, os.urandom(8).hex())
@@ -120,6 +138,7 @@ try:
     said = send("the second thing")
     check("he is told his computer is away and that it will get it", "Your computer is away" in said, said)
     send("the third thing")
+    check("the phone keeps both as with the relay, until the computer says what came of them", outbox() == [("the second thing", "Left"), ("the third thing", "Left")], outbox())
     if not LIVE: check("the relay keeps both, sealed, in the order they came", len(kept()) == 2 and len(kept_bytes()) > 100 and b"second" not in kept_bytes(), kept())
     check("and the agent has not had them yet", "second" not in received())
     if not LIVE:
@@ -145,6 +164,7 @@ try:
     check("and the tower's log says they came late, from what the relay kept", " by the relay, kept while the tower was away: answered in " in logged("tower.log"), logged("tower.log")[-600:])
     if not LIVE: check("the relay keeps nothing once it is handed over, the unreadable one included", not kept(), kept())
     check("and what he says now goes straight through again", "Delivered." in send("the fourth thing") and received().count("the fourth thing") == 1)
+    check("with the computer's word on each, the phone holds none of them any more", outbox() == [], outbox())
     if not LIVE:
         print("Without the relay")
         # a radio that has heard where the tower is talks to it straight: the relay can go and the chat goes on

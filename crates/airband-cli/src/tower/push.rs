@@ -222,7 +222,7 @@ mod tests {
         inner.call("phone").has = rev;
         assert!(there(inner.calls.get("phone"), rev));
         // on a call it is read out
-        inner.call("car").presence.polls();
+        inner.call("car").presence.says(airband_core::radio::Presence { on_call: true, showing_chat: false });
         assert!(there(inner.calls.get("car"), rev));
     }
 

@@ -51,8 +51,9 @@ pub struct Speech {
 
 impl Speech {
     /// Start making speech for `text` and return its id at once, or nothing when the phone is to use its own
-    /// voice. The same text with the same voice is made once.
-    pub(super) fn start(&self, voice: &Voice, text: &str) -> Option<String> {
+    /// voice. The same text with the same voice is made once. `about` is the id of the line or the utterance
+    /// the words belong to: a voice that fails says which.
+    pub(super) fn start(&self, voice: &Voice, about: &str, text: &str) -> Option<String> {
         let synth = synth_for(voice)?;
         let text = text.trim().to_string();
         if text.is_empty() {
@@ -83,6 +84,7 @@ impl Speech {
             clip
         };
         // a plain thread: the voice service is read with blocking I/O, a piece at a time
+        let about = about.to_string();
         std::thread::spawn(move || {
             let started = Instant::now();
             let mut first: Option<Duration> = None;
@@ -119,11 +121,11 @@ impl Speech {
                 Ok(()) if c.samples > 0 => log(format!("voice: {:.1} s of speech, first sound after {:.2} s, all after {:.2} s", c.samples as f32 / c.rate as f32, first.unwrap_or_default().as_secs_f32(), started.elapsed().as_secs_f32())),
                 Ok(()) => {
                     c.failed = true;
-                    log("voice: the service sent no audio");
+                    log(format!("voice: the service sent no audio (for {about})"));
                 }
                 Err(e) => {
                     c.failed = c.samples == 0; // what was already spoken is still worth playing
-                    log(format!("voice: {e}"));
+                    log(format!("voice: {e} (for {about})"));
                 }
             }
         });

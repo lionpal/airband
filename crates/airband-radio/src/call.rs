@@ -82,7 +82,7 @@ pub(crate) fn work(jobs: Receiver<Job>, link: Arc<Link>, host: Arc<dyn RadioHost
             // He turned reading aloud off: what was on its way is not read, and what is being read stops at
             // once. It is all in the chat.
             Job::Transmission(_) if !calling.load(Ordering::SeqCst) => {
-                let _ = link.post(&format!("/ready{}", crate::mouth::asking()), &serde_json::json!({}));
+                link.tell(&format!("/ready{}", crate::mouth::asking()), &serde_json::json!({}));
             }
             Job::Transmission(t) => {
                 host.status(RadioStatus::Speaking { callsign: t.callsign.clone() });
@@ -91,16 +91,16 @@ pub(crate) fn work(jobs: Receiver<Job>, link: Arc<Link>, host: Arc<dyn RadioHost
                 // times. What made no sound was not heard: the tower is told why and keeps it.
                 match heard {
                     voice::Said::Aloud => {
-                        let _ = link.post("/heard", &Heard { id: t.id.clone() });
+                        link.tell("/heard", &Heard { id: t.id.clone() });
                     }
                     voice::Said::Nothing(why) => {
-                        let _ = link.post("/unheard", &serde_json::json!({ "id": t.id, "why": why }));
+                        link.tell("/unheard", &serde_json::json!({ "id": t.id, "why": why }));
                     }
                 }
                 // A question is read to him and then waits in the chat, where he answers it when he chooses, by
                 // its own buttons or its microphone. The microphone never opens by itself: he may be in the
                 // middle of saying something to someone else.
-                let _ = link.post(&format!("/ready{}", crate::mouth::asking()), &serde_json::json!({}));
+                link.tell(&format!("/ready{}", crate::mouth::asking()), &serde_json::json!({}));
             }
             Job::Talk(re, scope) => {
                 let _here = still_here(&link, &calling);
@@ -136,7 +136,7 @@ fn still_here(link: &Arc<Link>, calling: &Arc<AtomicBool>) -> impl Drop {
                 thread::sleep(Duration::from_millis(500));
                 waited += 1;
                 if waited % 30 == 0 {
-                    let _ = link.post("/busy", &serde_json::json!({}));
+                    link.say_presence();
                 }
             }
         });
@@ -151,7 +151,9 @@ pub(crate) fn converse(link: &Arc<Link>, host: &dyn RadioHost, ears: &ears::Ears
         let Listened::Said(text) = ears.hear(link, host, false) else { return };
         host.status(RadioStatus::Sending);
         let reply = match link.utterance(&text, re.take(), scope.clone()) {
-            Ok(r) => r,
+            Ok(Some(reply)) => reply,
+            // his computer has it and has not said what came of it yet: that is in the chat when it does
+            Ok(None) => return,
             Err(e) => {
                 // said in the device's own voice, with what went wrong: the tower's voice cannot be fetched either
                 if host.own_voice() {

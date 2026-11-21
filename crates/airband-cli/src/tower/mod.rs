@@ -86,6 +86,9 @@ pub(crate) const RADIO_HEADER: &str = "x-airband-radio";
 /// The header the tower's own link puts on a radio's request to say how it came: `the relay`, `his own
 /// network`, or `the relay, kept while the tower was away`. Only for the log.
 pub(crate) const VIA_HEADER: &str = "x-airband-via";
+/// The header a radio says where it stands in, as JSON (`airband.radio/1`'s `Presence`). A radio that comes
+/// through the relay says it inside the sealed request, and the relay link puts it here.
+pub(crate) const PRESENCE_HEADER: &str = "x-airband-presence";
 
 /// How long `GET next` is held open.
 const HOLD: Duration = Duration::from_secs(25);
@@ -359,11 +362,6 @@ pub fn run(cfg: Config) -> Result<(), String> {
         log(format!("the tower stopped itself after an internal failure: {info}"));
         std::process::exit(101);
     }));
-    // what an agent's tool could not hand over while the tower was away is taken now, and whenever more is left
-    std::thread::spawn(|| loop {
-        crate::adapters::drain_spool();
-        std::thread::sleep(Duration::from_secs(5));
-    });
     // a newer catalogue, now and twice a day: what a phone is offered for this computer comes from it
     std::thread::spawn(|| loop {
         let (changed, lines) = crate::catalog::refresh();
@@ -436,6 +434,19 @@ pub fn run(cfg: Config) -> Result<(), String> {
                     }),
                     holds: Box::new(move |session| held::holds(&holding.inner.lock().unwrap(), session)),
                 }
+            });
+        }
+        // what an agent's tool could not hand over while the tower was away is taken now, and whenever more is
+        // left: read from the folder and taken as any event is, with no request to itself
+        {
+            let (app, runtime) = (app.clone(), tokio::runtime::Handle::current());
+            std::thread::spawn(move || loop {
+                crate::adapters::drain_spool(|event| {
+                    let _here = runtime.enter();
+                    app.store.event(&serde_json::to_value(&event).unwrap_or_default());
+                    http::take_event(&app, event).is_ok()
+                });
+                std::thread::sleep(Duration::from_secs(5));
             });
         }
         relay_link::start(app.clone(), router.clone(), tokio::runtime::Handle::current());

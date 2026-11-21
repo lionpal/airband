@@ -1,56 +1,87 @@
 //! Getting his typed messages to the tower over a connection that may be slow, dropping or absent.
 use super::*;
 
+/// How often the tower is asked again about something it has taken and not yet told the outcome of. The
+/// outcome usually comes by the feed first; this is for when it does not (the tower restarted, the feed is behind).
+const ASK_AGAIN: Duration = Duration::from_secs(15);
+/// How often the same is asked about something left with the relay.
+const ASK_AFTER_LEFT: Duration = Duration::from_secs(60);
+
 /// Sends his typed messages in order, for as long as it takes. A slow or dropping connection (a plane, a
 /// tunnel) only delays them; each carries an id, so one that got through but whose answer was lost is not
 /// delivered twice when it is tried again.
+///
+/// A message is in the list until the tower says what came of it. The tower takes it at once and says so
+/// (`Taken`); the outcome comes by the feed ([`settle`]) or to this asking again. The next message waits for
+/// that, so his words reach his agents in the order he said them. One the relay is keeping for a computer
+/// that is away (`Left`) holds up nothing: what he says next is left behind it.
 pub(crate) fn deliver_outbox(link: Arc<Link>, store: Arc<Store>, host: Arc<dyn RadioHost>, stop: Arc<AtomicBool>, wake: Arc<Wake>) {
     let mut wait = 1;
+    // when each message the tower has, or the relay keeps, is next asked after
+    let mut ask_at: std::collections::HashMap<String, std::time::Instant> = Default::default();
     while !stop.load(Ordering::SeqCst) {
-        // the oldest that is still being tried: one given up on stays in the list for him and holds up nothing
-        let Some(next) = store.saved.lock().unwrap().outbox.iter().find(|o| o.failed.is_none()).cloned() else {
-            // nothing to send: sleep until something is queued
-            wake.wait(Duration::from_secs(30));
+        let outbox = store.saved.lock().unwrap().outbox.clone();
+        ask_at.retain(|id, _| outbox.iter().any(|o| o.id == *id));
+        let now = std::time::Instant::now();
+        let due = |o: &&Outgoing| ask_at.get(&o.id).is_none_or(|at| now >= *at);
+        // the one whose turn it is: the oldest that is still being tried and is not with the relay. Failing
+        // that, one the relay keeps that is due to be asked after.
+        let in_turn = outbox.iter().find(|o| o.failed.is_none() && o.stage != Stage::Left);
+        let Some(next) = in_turn.filter(due).or_else(|| outbox.iter().filter(|o| o.failed.is_none() && o.stage == Stage::Left).find(due)).cloned() else {
+            // nothing to do now: sleep until something is queued or settled, or the next is due
+            let soonest = ask_at.values().map(|at| at.saturating_duration_since(now)).min().unwrap_or(Duration::from_secs(30));
+            wake.wait(soonest.clamp(Duration::from_millis(200), Duration::from_secs(30)));
             continue;
-        };
-        // it went, or went elsewhere: it leaves the list
-        let done = |note: Option<String>| {
-            let waiting = store.change(|s| {
-                s.outbox.retain(|o| o.id != next.id);
-                s.outbox.clone()
-            });
-            host.outbox(waiting, note);
         };
         // it did not go and is not tried any more: it stays in the list with the reason, for him to send
         // again or let go. He is told once, wherever he is looking.
-        let gave_up = |why: String| {
-            let waiting = store.change(|s| {
+        let gave_up = |why: String| fail(&store, &*host, &next.id, why);
+        let staged = |stage: Stage| {
+            store.change(|s| {
                 if let Some(o) = s.outbox.iter_mut().find(|o| o.id == next.id) {
-                    o.failed = Some(why.clone());
+                    o.stage = stage;
                 }
                 s.outbox.clone()
-            });
-            host.outbox(waiting, Some(format!("Not sent: “{}”. {why}", opening(&next.text))));
+            })
         };
-        if now_ms().saturating_sub(next.at) > OUTBOX_EXPIRY_MS {
+        match next.stage {
             // with how the last try went, when there was one: "no connection" alone tells him nothing
-            gave_up(expired(&next.trail));
-            continue;
+            Stage::Trying if now_ms().saturating_sub(next.at) > OUTBOX_EXPIRY_MS => {
+                gave_up(expired(&next.trail));
+                continue;
+            }
+            Stage::Left if now_ms().saturating_sub(next.at) > airband_core::relay::HELD_FOR_MS => {
+                gave_up("Your computer was away for more than a week, and the relay keeps a message that long.".into());
+                continue;
+            }
+            _ => {}
         }
         let (got, steps) = link.utterance_once(&next.id, &next.text, next.re.clone(), next.scope.clone(), next.label.clone(), next.attachments.clone(), &next.others);
+        // It went straight to his computer while the relay still keeps earlier words of his for it: these
+        // arrive first. Worth a line, for whoever wonders about the order.
+        let kept = outbox.iter().filter(|o| o.stage == Stage::Left && o.failed.is_none() && o.id != next.id).count();
+        if kept > 0 && got.is_ok() && steps.last().is_some_and(|s| s.way == Way::Near && s.outcome.is_ok()) {
+            link.remark(format!("something he said went straight to his computer ahead of {kept} the relay still keeps for it"));
+        }
         match got {
-            // not delivered: it is for an agent on another computer, or the tower cannot tell who it is for.
-            // The host takes it from here; it has left this radio's list either way
-            Ok(reply) if reply.elsewhere.is_some() || !reply.ask.is_empty() => {
+            Ok(Sent::Answered(reply)) => {
                 wait = 1;
-                done(None);
-                // names as the screen shows them
-                host.unplaced(next.clone(), reply.elsewhere.map(|c| airband_core::routing::shown(&c)), reply.ask.iter().map(|c| airband_core::routing::shown(c)).collect());
+                settle(&store, &*host, &next.id, airband_core::radio::Outcome::Answered { reply });
             }
-            Ok(reply) => {
+            Ok(Sent::Taken) => {
                 wait = 1;
-                // what was done as he asked shows as his own line in the chat; anything else he has to see
-                done((!reply.say.is_empty() && !reply.done).then_some(reply.say));
+                if next.stage != Stage::Taken {
+                    host.outbox(staged(Stage::Taken), None);
+                }
+                ask_at.insert(next.id.clone(), now + ASK_AGAIN);
+            }
+            Ok(Sent::Left { away }) => {
+                wait = 1;
+                if next.stage != Stage::Left {
+                    // said once, when it is first left: it will get there, and it has not yet
+                    host.outbox(staged(Stage::Left), away.then(|| AWAY.to_string()));
+                }
+                ask_at.insert(next.id.clone(), now + ASK_AFTER_LEFT);
             }
             Err(e) => {
                 // how this try went, each way it was tried, stays with the message for him to see
@@ -62,22 +93,76 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, store: Arc<Store>, host: Arc<dyn R
                     s.outbox.clone()
                 });
                 host.outbox(waiting, None);
-                match (e.retry(), &e) {
+                match (e.retry(), next.stage) {
+                    // his computer has it, or the relay does: this was only asking after it
+                    (_, Stage::Taken) => {
+                        ask_at.insert(next.id.clone(), now + ASK_AGAIN);
+                    }
+                    (_, Stage::Left) => {
+                        ask_at.insert(next.id.clone(), now + ASK_AFTER_LEFT);
+                    }
                     // it cannot be sent however often it is tried
-                    (Retry::Never, _) => {
+                    (Retry::Never, Stage::Trying) => {
                         wait = 1;
                         gave_up(sentence(&e.told()));
                     }
-                    // his computer has it and is still answering: ask again shortly, as often as it takes
-                    (_, LinkError::Working) => wake.wait(Duration::from_secs(2)),
-                    (Retry::Soon, _) => {
+                    (Retry::Soon, Stage::Trying) => {
                         wake.wait(Duration::from_secs(wait));
                         wait = (wait * 2).min(20);
                     }
-                    (Retry::Later, _) => wake.wait(Duration::from_secs(60)),
+                    (Retry::Later, Stage::Trying) => wake.wait(Duration::from_secs(60)),
                 }
             }
         }
+    }
+}
+
+/// It is not tried any more, and why: it stays in the list for him to send again or let go, and he is told.
+fn fail(store: &Store, host: &dyn RadioHost, id: &str, why: String) {
+    let (text, waiting) = store.change(|s| {
+        let text = s.outbox.iter_mut().find(|o| o.id == id).map(|o| {
+            o.failed = Some(why.clone());
+            o.text.clone()
+        });
+        (text, s.outbox.clone())
+    });
+    if let Some(text) = text {
+        host.outbox(waiting, Some(format!("Not sent: “{}”. {why}", opening(&text))));
+    }
+}
+
+/// The tower has said what came of something he said: by the feed, or to the outbox asking. A message that
+/// is not in the list (it was settled already, or was never typed) is nothing to do.
+pub(crate) fn settle(store: &Store, host: &dyn RadioHost, id: &str, outcome: airband_core::radio::Outcome) {
+    use airband_core::radio::Outcome;
+    let Some(was) = store.saved.lock().unwrap().outbox.iter().find(|o| o.id == id).cloned() else { return };
+    let gone = || {
+        store.change(|s| {
+            s.outbox.retain(|o| o.id != id);
+            s.outbox.clone()
+        })
+    };
+    match outcome {
+        Outcome::Taken => {}
+        // not delivered: it is for an agent on another computer, or the tower cannot tell who it is for.
+        // The host takes it from here; it has left this radio's list either way
+        Outcome::Answered { reply } if reply.elsewhere.is_some() || !reply.ask.is_empty() => {
+            host.outbox(gone(), None);
+            // names as the screen shows them
+            host.unplaced(was, reply.elsewhere.map(|c| airband_core::routing::shown(&c)), reply.ask.iter().map(|c| airband_core::routing::shown(c)).collect());
+        }
+        // what was done as he asked shows as his own line in the chat; anything else he has to see
+        Outcome::Answered { reply } => host.outbox(gone(), (!reply.say.is_empty() && !reply.done).then_some(reply.say)),
+        Outcome::Rejected { why } => fail(store, host, id, rejected(why).into()),
+    }
+}
+
+/// Why his computer would not take something, in words for him.
+fn rejected(why: airband_core::radio::Rejected) -> &'static str {
+    use airband_core::radio::Rejected;
+    match why {
+        Rejected::TooOld => "Your computer got it more than a week after you said it, and did nothing with it.",
+        Rejected::Unknown => "Your computer would not take it.",
     }
 }
 
@@ -136,7 +221,9 @@ mod tests {
         fn own_voice(&self) -> bool {
             false
         }
-        fn unplaced(&self, _: Outgoing, _: Option<String>, _: Vec<String>) {}
+        fn unplaced(&self, message: Outgoing, _: Option<String>, ask: Vec<String>) {
+            self.0.lock().unwrap().push((vec![message], Some(format!("unplaced: {}", ask.join(", ")))));
+        }
         fn speak(&self, _: String) {}
         fn listen(&self) -> Option<String> {
             None
@@ -198,5 +285,45 @@ mod tests {
         // one still being tried is not let go that way
         assert!(radio.discard(&first).is_none());
         radio.stop();
+    }
+
+    #[test]
+    fn a_message_stays_until_the_tower_says_what_came_of_it() {
+        use airband_core::radio::{Outcome, Rejected};
+        let host = Watching::default();
+        let store = Store::open("");
+        let put = |id: &str, stage: Stage| {
+            store.change(|s| s.outbox.push(Outgoing { stage, ..Outgoing::new(id.into(), format!("words of {id}"), None, None, None, Vec::new(), String::new()) }));
+        };
+        let ids = || store.saved.lock().unwrap().outbox.iter().map(|o| o.id.clone()).collect::<Vec<_>>();
+        let last = || host.0.lock().unwrap().last().cloned().unwrap();
+        for (id, stage) in [("a", Stage::Taken), ("b", Stage::Taken), ("c", Stage::Left), ("d", Stage::Taken), ("e", Stage::Left)] {
+            put(id, stage);
+        }
+        // the tower has it and nothing more: it stays
+        settle(&store, &host, "a", Outcome::Taken);
+        assert_eq!(ids(), ["a", "b", "c", "d", "e"]);
+        // done as he asked: it leaves the list, and there is nothing to tell him
+        settle(&store, &host, "a", Outcome::Answered { reply: Reply { say: "Sent to shop two.".into(), done: true, ..Reply::default() } });
+        assert_eq!((ids(), last().1), (vec!["b".to_string(), "c".into(), "d".into(), "e".into()], None));
+        // not done as he asked: it leaves the list and he is told what the tower said
+        settle(&store, &host, "b", Outcome::Answered { reply: Reply { say: "Nobody has stopped.".into(), ..Reply::default() } });
+        assert_eq!(last().1.as_deref(), Some("Nobody has stopped."));
+        // one the relay kept, answered when his computer came back: the same
+        settle(&store, &host, "c", Outcome::Answered { reply: Reply { say: "Sent to shop two.".into(), done: true, ..Reply::default() } });
+        assert_eq!(ids(), ["d", "e"]);
+        // the tower cannot tell who it is for: it leaves this list and the host asks him
+        settle(&store, &host, "d", Outcome::Answered { reply: Reply { ask: vec!["shop two".into(), "shop one".into()], ..Reply::default() } });
+        assert_eq!((ids(), last().1.as_deref()), (vec!["e".to_string()], Some("unplaced: shop 2, shop 1")));
+        // one his computer got too late: it stays, with the reason, to send again or let go, and he is told
+        settle(&store, &host, "e", Outcome::Rejected { why: Rejected::TooOld });
+        let kept = store.saved.lock().unwrap().outbox.clone();
+        assert_eq!(kept[0].failed.as_deref(), Some("Your computer got it more than a week after you said it, and did nothing with it."));
+        assert!(last().1.unwrap().starts_with("Not sent: “words of e”. Your computer got it more than a week"));
+        // an outcome told twice, or for something this radio never typed, is nothing to do
+        let before = host.0.lock().unwrap().len();
+        settle(&store, &host, "a", Outcome::Answered { reply: Reply::default() });
+        settle(&store, &host, "zz", Outcome::Rejected { why: Rejected::TooOld });
+        assert_eq!(host.0.lock().unwrap().len(), before);
     }
 }

@@ -57,9 +57,11 @@ results = []
 def check(name, ok, detail=""):
     results.append((name, bool(ok)))
     print(("  ok    " if ok else "  FAIL  ") + name + (f"   [{detail}]" if detail and not ok else ""), flush=True)
-def http(method, path, body=None, token=RADIO, radio="phone", timeout=40):
+def http(method, path, body=None, token=RADIO, radio="phone", timeout=40, showing=False):
+    """`showing`: the radio says the chat is in front of him, as every request of a radio's says whether it is."""
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", method=method, data=None if body is None else json.dumps(body).encode(),
-                                 headers={"authorization": f"Bearer {token}", "content-type": "application/json", "x-airband-radio": radio})
+                                 headers={"authorization": f"Bearer {token}", "content-type": "application/json", "x-airband-radio": radio,
+                                          "x-airband-presence": json.dumps({"on_call": False, "showing_chat": showing})})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             raw = r.read()
@@ -115,7 +117,7 @@ try:
         check("at the address of the banner that is up, quietly", a["to"] == UPDATE and a["event"] == "update" and a["urgent"] is False and a["counts"]["waiting"] == 2 and a["counts"]["unread"] == 1, shown(1))
 
     print("He lets both questions go, with the app not in front")
-    for m in [m for m in http("GET", "/v1/radio/feed?since=0&away=1")[1]["messages"] if m.get("open")]:
+    for m in [m for m in http("GET", "/v1/radio/feed?since=0")[1]["messages"] if m.get("open")]:
         http("POST", "/v1/radio/dismiss", {"message": m["id"]})
     check("the banner comes down", changed(3))
     if len(asked) > 2:
@@ -128,7 +130,7 @@ try:
     def show_chat():
         rev = 0
         while not showing.is_set():
-            got = http("GET", f"/v1/radio/feed?since={rev}&wait=2")[1]
+            got = http("GET", f"/v1/radio/feed?since={rev}&wait=2", showing=True)[1]
             rev = got["rev"] if got else rev
     reader = threading.Thread(target=show_chat); reader.start()
     time.sleep(1)

@@ -193,8 +193,8 @@ pub fn run(cfg: &Config, args: &[String]) -> Result<(), String> {
     }
 }
 
-/// Says nothing; the flag is set when the outbox has emptied.
-struct Silent(Arc<AtomicBool>);
+/// Says nothing but what he has to be told about something he sent.
+struct Silent;
 impl RadioHost for Silent {
     fn told(&self, _: String) {}
     fn speak(&self, _: String) {}
@@ -210,12 +210,9 @@ impl RadioHost for Silent {
     }
     fn record_stop(&self) {}
     fn status(&self, _: RadioStatus) {}
-    fn outbox(&self, waiting: Vec<Outgoing>, note: Option<String>) {
-        if let Some(n) = note {
+    fn outbox(&self, _: Vec<Outgoing>, note: Option<String>) {
+        if let Some(n) = note.filter(|n| !n.is_empty()) {
             println!("{n}");
-        }
-        if waiting.is_empty() {
-            self.0.store(true, Ordering::SeqCst);
         }
     }
     fn hearing(&self, _text: String) {}
@@ -244,7 +241,7 @@ fn link_from(cfg: &Config, args: &[String]) -> String {
 
 /// `airband feed [all | <group> | "<callsign>"] [--once]`: the chat, in a terminal. Each message is the short version.
 pub fn feed(cfg: &Config, args: &[String]) -> Result<(), String> {
-    let radio = Radio::start(link_from(cfg, args), String::new(), Arc::new(Silent(Default::default()))).map_err(|e| e.to_string())?;
+    let radio = Radio::start(link_from(cfg, args), String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
     let once = args.iter().any(|a| a == "--once");
     let named = args.iter().find(|a| !a.starts_with("--") && !a.starts_with("airband://")).cloned().unwrap_or_else(|| "all".into());
     let scope = match named.as_str() {
@@ -281,19 +278,36 @@ pub fn send(cfg: &Config, args: &[String]) -> Result<(), String> {
         return Err("say what to send: airband send \"@shop2 leave them\"  (@group and @all work too)".into());
     }
     let words: Vec<&str> = words.into_iter().filter(|w| *w != "--keep-trying").collect();
-    let sent = Arc::new(AtomicBool::new(false));
     if args.iter().any(|a| a == "--keep-trying") {
         // what the phone app does: hand it over and let the radio get it through whenever it can
         let dir = crate::config::dir().join("radio");
-        let radio = Radio::start(link_from(cfg, args), dir.display().to_string(), Arc::new(Silent(sent.clone()))).map_err(|e| e.to_string())?;
-        radio.queue(words.join(" "), None, None, None);
-        while !sent.load(Ordering::SeqCst) {
-            std::thread::sleep(Duration::from_millis(200));
+        let radio = Radio::start(link_from(cfg, args), dir.display().to_string(), Arc::new(Silent)).map_err(|e| e.to_string())?;
+        // the tower says what came of it in the feed, which the radio follows as the app does
+        {
+            let radio = radio.clone();
+            std::thread::spawn(move || loop {
+                if radio.follow(25).is_err() {
+                    std::thread::sleep(Duration::from_secs(1));
+                }
+            });
         }
-        println!("Delivered.");
-        return Ok(());
+        radio.queue(words.join(" "), None, None, None);
+        let id = radio.unsent().last().map(|o| o.id.clone()).unwrap_or_default();
+        // until there is nothing more for this command to wait for: his computer has dealt with it, the relay
+        // is keeping it for a computer that is away (he has been told), or it was given up on
+        loop {
+            match radio.unsent().into_iter().find(|o| o.id == id) {
+                None => {
+                    println!("Delivered.");
+                    return Ok(());
+                }
+                Some(o) if o.failed.is_some() => return Err(o.failed.unwrap_or_default()),
+                Some(o) if o.stage == airband_radio::Stage::Left => return Ok(()),
+                Some(_) => std::thread::sleep(Duration::from_millis(200)),
+            }
+        }
     }
-    let radio = Radio::start(link_from(cfg, args), String::new(), Arc::new(Silent(sent))).map_err(|e| e.to_string())?;
+    let radio = Radio::start(link_from(cfg, args), String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
     println!("{}", radio.send(words.join(" "), None).map_err(|e| e.to_string())?);
     Ok(())
 }

@@ -366,6 +366,14 @@ pub fn status(cfg: &Config) {
     for p in j["pending"].as_array().cloned().unwrap_or_default() {
         println!("  waiting to be heard: {} ({})", p["callsign"].as_str().unwrap_or("?"), p["kind"].as_str().unwrap_or("not yet read"));
     }
+    // the last changes to what is read out, each with what it was and what it became: why something was not read
+    let aloud = j["aloud"].as_array().cloned().unwrap_or_default();
+    if !aloud.is_empty() {
+        println!("  read aloud, lately:");
+        for line in aloud {
+            println!("    {}", line.as_str().unwrap_or_default());
+        }
+    }
 }
 
 #[cfg(test)]

@@ -837,6 +837,12 @@ private struct Speaker: View {
             HStack(spacing: 7) {
                 if !m.badge.isEmpty { Badge(text: m.badge, colour: m.colour, size: 20) }
                 Text(m.station.isEmpty ? m.from : "\(m.from) · \(m.station)").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.quiet)
+                // it was to be read to him while he was listening, and was not: a small mark. Why is one
+                // long press away, in the line's menu.
+                if !m.notRead.isEmpty {
+                    Image(systemName: "speaker.slash.fill").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.dim)
+                        .accessibilityLabel(m.notRead)
+                }
             }
         }
         .buttonStyle(.plain).accessibilityLabel("\(m.from). Show only this agent.")
@@ -889,9 +895,25 @@ struct Report: View {
         .padding(.horizontal, 6).padding(.vertical, picked ? 8 : 0)
         .background(picked ? Palette.card : .clear, in: RoundedRectangle(cornerRadius: 16))
         .padding(.horizontal, picked ? -4 : 0)
-        .contextMenu {
-            Button { UIPasteboard.general.string = model.full[m.id] ?? m.text } label: { Label("Copy", systemImage: "doc.on.doc") }
+        .contextMenu { LineMenu(m: m) }
+    }
+}
+
+/// What a long press on something an agent said offers: its words to copy and, for one that was not read
+/// aloud while he was listening, why.
+private struct LineMenu: View {
+    @EnvironmentObject var model: RadioModel
+    let m: ChatMessage
+
+    var body: some View {
+        if !m.notRead.isEmpty {
+            Section(m.notRead) { copy }
+        } else {
+            copy
         }
+    }
+    private var copy: some View {
+        Button { UIPasteboard.general.string = model.full[m.id] ?? m.text } label: { Label("Copy", systemImage: "doc.on.doc") }
     }
 }
 
@@ -949,6 +971,7 @@ struct Question: View {
                 .padding(.trailing, 4)
             }
         }
+        .contextMenu { LineMenu(m: m) }
         .sheet(isPresented: $showContext) { ContextView(m: m).environmentObject(model) }
         #if DEBUG
         // development only: `-airband.devContext <callsign>` opens that agent's question, for a screenshot,
@@ -1604,6 +1627,8 @@ struct Unsent: View {
                     Button("Send again") { model.sendAgain(o) }.foregroundStyle(Palette.ink)
                 }
                 .font(.system(size: 14, weight: .semibold)).buttonStyle(.plain)
+            } else if o.stage == .left {
+                Text("With the relay. Your computer gets it when it is back.").font(.system(size: 13)).foregroundStyle(Palette.quiet).multilineTextAlignment(.trailing)
             } else if let trying {
                 Text(trying).font(.system(size: 13)).foregroundStyle(Palette.quiet).multilineTextAlignment(.trailing)
             }
@@ -1615,7 +1640,7 @@ struct Unsent: View {
 }
 
 /// How each computer was last reached, and the record to copy when something is wrong. All of it is what this
-/// phone saw itself and kept in memory. Nothing here is sent anywhere.
+/// phone saw itself and kept. Nothing here is sent anywhere.
 struct ConnectionPage: View {
     @EnvironmentObject var model: RadioModel
     @State private var reach: [DeskReach] = []

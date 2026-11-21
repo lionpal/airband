@@ -313,7 +313,9 @@ restart. Events, receipts and deliveries go after a month; the newest 5,000 mess
 
 Whether he has heard a message is kept on the message (`aloud`), not in a second list, and changes through one
 function that logs each change with its reason (`Inner::set_aloud`). Whether a radio is there is one record
-per radio read by one clock (`Presence`, `THERE`). On the phone, every failed request ends in one named cause
+per radio, which is what the radio itself last said (on a call or not, showing the chat or not, with every
+request), read by one clock (`Presence`, `THERE`). Something he says is answered at once with "taken" and its
+outcome arrives in the feed, so no request waits on a model. On the phone, every failed request ends in one named cause
 (`LinkError`), and the trail of them stays on the phone. No log, trail or diagnostic is uploaded anywhere; the
 relay logs only its own failed calls, with no content and six characters of the channel. `docs/protocols.md`,
 "What is written down, and where it stays".
