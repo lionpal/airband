@@ -77,7 +77,8 @@ pub struct PhoneModel {
     /// Its maker and its name.
     pub name: String,
     pub job: Job,
-    /// The program in the app that runs it. A build offers only the models it has the program for.
+    /// The program that runs it, by name: one in the app's core or one its host has. A model is offered only
+    /// where its engine is.
     pub engine: String,
     /// Which set of files this is. Each version is kept in a folder of its own on the device, and a version
     /// once published never changes: new files are a new version.
@@ -97,8 +98,11 @@ pub struct PhoneModel {
     #[serde(default)]
     pub credit: String,
     /// What its engine is told about this model, so that another model for the same engine is a row and no
-    /// code: for a voice, the `rate` it speaks at, its `lang` and its `quant`. And `prepare`: when the
-    /// device has work of its own to do before the model first runs, the sentence to show while it does.
+    /// code: for a voice, the `rate` it speaks at, its `lang`, the `quant` its numbers are in and the `device`
+    /// it runs on. And two things for any model. `prepare`: when the device has work of its own to do before
+    /// the model first runs, the sentence to show while it does. `min_os`: where it runs only on some
+    /// systems, each by name with the earliest major version (`{"ios": 18}`); a system not named cannot run
+    /// it.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub with: std::collections::BTreeMap<String, Value>,
 }

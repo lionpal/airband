@@ -10,23 +10,16 @@
 //! (`choices.rs`) lists them beside the services; a host names none itself.
 use super::*;
 use airband_core::providers::{Job, Offer};
+use crate::engines::HostDevice;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 
 pub(crate) use airband_core::catalog::PhoneModel as Model;
 
-/// The programs in this build that run a model, by the name a row gives its `engine`. `ptts` is the voice
-/// engine compiled in with the `phonon` feature; `host-transcribe` is the host's own (`DeskHost::transcribe`).
-const ENGINES: &[&str] = &[
-    #[cfg(feature = "phonon")]
-    "ptts",
-    "host-transcribe",
-];
-
-/// The models in the catalogue that this build can run. Each says which version of its files it is: that is
-/// the folder they are kept in.
-pub(crate) fn models() -> impl Iterator<Item = &'static Model> {
-    airband_core::catalog::current().models.iter().filter(|m| ENGINES.contains(&m.engine.as_str()) && !m.version.is_empty())
+/// The models in the catalogue that this build can run on this device (`engines::runs`). Each says which
+/// version of its files it is: that is the folder they are kept in.
+pub(crate) fn models(device: &HostDevice) -> impl Iterator<Item = &'static Model> + '_ {
+    airband_core::catalog::current().models.iter().filter(move |m| crate::engines::runs(m, device) && !m.version.is_empty())
 }
 
 /// The name a copy of the catalogue is kept under, by the form of the document.
@@ -110,8 +103,8 @@ pub fn refresh_catalog(dir: String) -> bool {
     changed
 }
 
-pub(crate) fn model(kind: &str) -> Option<&'static Model> {
-    models().find(|m| m.kind == kind)
+pub(crate) fn model(kind: &str, device: &HostDevice) -> Option<&'static Model> {
+    models(device).find(|m| m.kind == kind)
 }
 
 /// Everything of one model on this device, under the app's folder: a folder for each version of it.
@@ -180,9 +173,8 @@ pub(crate) fn local_model_progress() -> u32 {
 
 /// Fetch a model. Blocks until it is all here: call it off the main thread. Files already here are kept, so
 /// one that was cut short goes on from the last whole file.
-pub(crate) fn fetch_local_model(dir: String, kind: String) -> Result<(), RadioError> {
+pub(crate) fn fetch_local_model(dir: String, m: &Model) -> Result<(), RadioError> {
     let told = |reason: &str| RadioError::Told { reason: reason.into() };
-    let m = model(&kind).ok_or_else(|| told("This app has no such model."))?;
     let _one = FETCHING.lock().unwrap_or_else(|e| e.into_inner());
     let folder = version_folder(&dir, m);
     GOT.store(0, Ordering::SeqCst);
@@ -247,6 +239,8 @@ mod tests {
 
     #[test]
     fn every_model_says_what_to_fetch_and_who_made_it() {
+        // every model in the catalogue, whoever can run it
+        let models = || airband_core::catalog::current().models.iter();
         for m in models() {
             assert!(!m.files.is_empty() && !m.credit.is_empty() && m.base.starts_with("https://"), "{}", m.kind);
             assert!(m.files.iter().all(|(to, size, sha)| !to.starts_with('/') && *size > 0 && sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_hexdigit())), "{}", m.kind);
@@ -311,8 +305,10 @@ mod tests {
     fn fetches_a_model_whole() {
         let (dir, kind) = (std::env::var("AIRBAND_MODEL_DIR").unwrap(), std::env::var("AIRBAND_MODEL").unwrap());
         let began = std::time::Instant::now();
-        fetch_local_model(dir.clone(), kind.clone()).unwrap();
-        let m = model(&kind).unwrap();
+        // a phone that has every engine the catalogue names
+        let device = HostDevice { engines: airband_core::catalog::current().models.iter().map(|m| m.engine.clone()).collect(), os: "ios".into(), os_version: u32::MAX };
+        let m = model(&kind, &device).unwrap();
+        fetch_local_model(dir.clone(), m).unwrap();
         assert!(fetched(&dir, m) && local_model_progress() == 100);
         println!("{kind}: fetched to {} in {:.0} s", folder(&dir, m).display(), began.elapsed().as_secs_f32());
     }

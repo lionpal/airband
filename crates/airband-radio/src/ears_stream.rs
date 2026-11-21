@@ -267,7 +267,7 @@ impl RadioHost for Tape {
         false
     }
     fn unplaced(&self, _: Outgoing, _: Option<String>, _: Vec<String>) {}
-    fn transcribe(&self, _: String, _: Vec<u8>) -> Option<String> {
+    fn run_model(&self, _: String, _: String, _: ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
         None
     }
     fn hearing(&self, text: String) {

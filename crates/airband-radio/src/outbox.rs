@@ -151,7 +151,7 @@ mod tests {
         }
         fn record_stop(&self) {}
         fn hearing(&self, _: String) {}
-        fn transcribe(&self, _: String, _: Vec<u8>) -> Option<String> {
+        fn run_model(&self, _: String, _: String, _: ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
             None
         }
     }

@@ -124,7 +124,7 @@ impl RadioHost for Terminal {
     fn hearing(&self, _text: String) {}
     // a terminal prints what is said and takes a typed line as what he said
     fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
-    fn transcribe(&self, _: String, _: Vec<u8>) -> Option<String> {
+    fn run_model(&self, _: String, _: String, _: airband_radio::ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
         None
     }
     fn own_voice(&self) -> bool {
@@ -220,7 +220,7 @@ impl RadioHost for Silent {
     }
     fn hearing(&self, _text: String) {}
     fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
-    fn transcribe(&self, _: String, _: Vec<u8>) -> Option<String> {
+    fn run_model(&self, _: String, _: String, _: airband_radio::ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
         None
     }
     fn own_voice(&self) -> bool {
