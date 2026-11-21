@@ -16,7 +16,7 @@
 //!   airband send "@shop2 ..."    say something; @group and @all work too
 //!   airband launch <project> <task>
 //!                              start a new agent in a project the tower knows (`airband status` lists them)
-//!   airband hook <harness>       adapter run by a harness's own hooks (claude-code)
+//!   airband hook <harness>       adapter run by a harness's own hooks (claude-code, codex)
 //!   airband report ...           put any other agent on the radio from a script (see `airband report` with no arguments)
 //!   airband --version            which version this is
 #[cfg(unix)]
@@ -38,7 +38,7 @@ fn main() {
     // The catalogue: the newest signed copy this computer has kept, for everything but the small commands a
     // harness runs many times a minute. Where he is about to choose from it, a newer one is fetched first.
     match args.first().map(String::as_str) {
-        Some("hook" | "report" | "hold" | "acp" | "catalog" | "deliver") => {}
+        Some("hook" | "report" | "hold" | "catalog" | "deliver") => {}
         Some("setup" | "model" | "voice" | "ears") => {
             catalog::load();
             catalog::refresh();
@@ -47,12 +47,10 @@ fn main() {
     }
     let result = match args.first().map(String::as_str) {
         Some("--version" | "-V" | "version") => Ok(println!("airband {}", env!("CARGO_PKG_VERSION"))),
-        Some("hook") => adapters::hook(args.get(1).map(String::as_str).unwrap_or("claude-code")),
+        Some("hook") => adapters::hook(args.get(1).map(String::as_str)),
         Some("report") => adapters::report::run(&args[1..]),
         #[cfg(unix)]
         Some("hold") => hold::run(&args[1..]),
-        #[cfg(unix)]
-        Some("acp") => acp::run(&args[1..]),
         None | Some("run") => tower::run(config::load()),
         Some("install") => install::install(),
         // what a new computer runs: start the tower, keep it running, and show the code a phone scans. What
@@ -77,12 +75,9 @@ fn main() {
         Some("lan") => install::lan(config::load(), &args[1..]),
         Some("keys") => setup::keys(&args[1..]),
         Some("catalog") => catalog::command(&args[1..]),
-        // what the tower runs to hand his words to a tool that takes them through a server of its own
-        Some("deliver") => match (args.get(1).map(String::as_str), args.get(2)) {
-            (Some("opencode"), Some(session)) => adapters::opencode::deliver(session),
-            (Some("codex"), Some(session)) => adapters::codex::deliver(session),
-            _ => Err("usage: airband deliver <opencode|codex> <session>".into()),
-        },
+        // his words, on standard input, into a session of a tool's own: how an agent that checked in under an
+        // earlier version is reached
+        Some("deliver") => adapters::deliver_command(&args[1..]),
         Some("setup") => setup::setup(config::load(), !args.iter().any(|a| a == "--no-start")),
         Some("model") => install::model(config::load(), &args[1..]),
         Some("voice") => install::voice(config::load(), &args[1..]),

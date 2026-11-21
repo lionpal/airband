@@ -1,5 +1,6 @@
 //! Getting his words to an agent, by whichever way that agent said it can be reached (`Deliver` in
-//! airband-core). A new way to reach an agent is a new variant there and a new arm here.
+//! airband-core). A new way to reach an agent is a new variant there and a new arm here; a new tool that
+//! takes his words in a way of its own is none of that, only its adapter (`Deliver::Harness`).
 use super::*;
 
 pub(super) async fn deliver(app: &Arc<App>, how: &Deliver, agent_id: &str, content: &str) -> Result<(), String> {
@@ -41,6 +42,11 @@ pub(super) async fn deliver(app: &Arc<App>, how: &Deliver, agent_id: &str, conte
                     }
                 }
                 Ok(())
+            }
+            // by the tool's own way into a session that is already open, which its adapter knows
+            Deliver::Harness { name, session } => {
+                let (name, session, words) = (name.clone(), session.clone(), content.to_string());
+                tokio::task::spawn_blocking(move || crate::adapters::deliver(&name, &session, &words)).await.map_err(|e| e.to_string())?
             }
             Deliver::Unknown => Err("this tower does not know its kind of delivery".into()),
         }

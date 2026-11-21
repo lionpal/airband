@@ -91,6 +91,18 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
             s.subagents = if done { s.subagents.saturating_sub(1) } else { s.subagents + 1 };
         }
         Event::Notice { text } => enqueue(&mut inner, &id, true, format!("Needs you at the keyboard: {text}"), Some(Kind::NeedsYou), Vec::new()),
+        // its turn is over with nothing said: it is waiting, like after anything it says. A turn that failed
+        // is something he must know, in the tool's own words.
+        Event::Stopped { why } => {
+            let s = inner.session(&id).unwrap();
+            s.waiting = true;
+            s.doing = None;
+            s.subagents = 0;
+            if let Some(why) = why.map(|w| w.trim().to_string()).filter(|w| !w.is_empty()) {
+                log(format!("{callsign}: its turn failed: {}", why.chars().take(200).collect::<String>()));
+                enqueue(&mut inner, &id, true, format!("My turn failed and I have stopped. {why}"), Some(Kind::NeedsYou), Vec::new());
+            }
+        }
         Event::Checkin | Event::Signoff | Event::Unknown => {}
     }
     app.save(&inner);
