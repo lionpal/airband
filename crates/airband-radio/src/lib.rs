@@ -485,7 +485,6 @@ impl Radio {
         match (status, v["error"].as_str()) {
             (200, Some(why)) => Err(RadioError::Told { reason: why.into() }),
             (200, None) => Ok(()),
-            (404, _) => Err(RadioError::Told { reason: "Update airband on this computer first.".into() }),
             _ => Err(RadioError::Refused),
         }
     }
@@ -611,13 +610,12 @@ impl Radio {
             let saved = self.store.saved.lock().unwrap();
             (saved.after, saved.rev)
         };
-        // `since` is what a current tower answers; `after` is there for one from before change counts
         let roster = self.roster.load(Ordering::SeqCst);
         let away = if self.away.load(Ordering::SeqCst) { "&away=1" } else { "" };
         // with an address of the tower's still to try, this request does not wait for news: it only finds out
         // whether the tower is there, so the straight path is in use (and shown) within a moment
         let wait = if self.link.untried() { 0 } else { wait_seconds.min(25) };
-        let (status, v) = self.link.request("GET", &format!("/feed?scope=all&since={since}&after={after}&roster={roster}&wait={wait}{away}"), None)?;
+        let (status, v) = self.link.request("GET", &format!("/feed?scope=all&since={since}&roster={roster}&wait={wait}{away}"), None)?;
         let feed: Feed = (status == 200).then(|| serde_json::from_value(v).ok()).flatten().ok_or(RadioError::Refused)?;
         spoken_alike(&feed)?;
         self.roster.store(feed.roster_rev, Ordering::SeqCst);
@@ -685,7 +683,6 @@ impl Radio {
         let (status, v) = self.link.request("GET", if fresh { "/accounts?fresh=1" } else { "/accounts" }, None)?;
         match status {
             200 => serde_json::from_value(v).map(|a| StationAccounts::from(&station, a)).map_err(|_| RadioError::Refused),
-            404 => Err(RadioError::Told { reason: "Update airband on this computer to see its accounts.".into() }),
             _ => Err(RadioError::Refused),
         }
     }
@@ -708,7 +705,6 @@ impl Radio {
         match (status, v["error"].as_str(), v["callsign"].as_str(), v["team"].as_str()) {
             (200, Some(why), _, _) => Err(RadioError::Told { reason: why.into() }),
             (200, None, Some(callsign), Some(team)) => Ok(vec![callsign.to_string(), team.to_string()]),
-            (404, _, _, _) => Err(RadioError::Told { reason: "Update airband on this computer to move its agents.".into() }),
             _ => Err(RadioError::Refused),
         }
     }
@@ -750,7 +746,6 @@ impl Radio {
         match (status, v["error"].as_str()) {
             (200, Some(why)) => Err(RadioError::Told { reason: why.into() }),
             (200, None) => serde_json::from_value(v).map_err(|_| RadioError::Refused),
-            (404, _) => Err(RadioError::Told { reason: "Update airband on this computer first.".into() }),
             _ => Err(RadioError::Refused),
         }
     }
@@ -770,7 +765,6 @@ impl Radio {
         match (status, v["error"].as_str()) {
             (200, Some(why)) => Err(RadioError::Told { reason: why.into() }),
             (200, None) => Ok(()),
-            (404, _) => Err(RadioError::Told { reason: "Update airband on this computer first.".into() }),
             _ => Err(RadioError::Refused),
         }
     }

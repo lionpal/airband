@@ -21,6 +21,11 @@ struct OnboardingView: View {
     private let tick = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
 
     private static let command = "brew install lionpal/airband/airband && airband start"
+    /// The same, for a computer that is to be reached with no relay between.
+    private static let straight = "brew install lionpal/airband/airband && airband relay off && airband start"
+    /// He asked for the pairing with no relay.
+    @State private var noRelay = false
+    private var command: String { noRelay ? Self.straight : Self.command }
     /// The steps: the coding agent, each job, then the computer.
     private var jobs: [ChoiceJob] { model.jobs }
     private var last: Int { jobs.count + 1 }
@@ -112,19 +117,32 @@ struct OnboardingView: View {
             headline("Last, your computer.")
             Text("airband runs on the Mac where your agents work. Open Terminal there and paste this.").font(.system(size: 16)).foregroundStyle(Palette.soft)
             VStack(alignment: .leading, spacing: 14) {
-                Text(Self.command).font(.system(size: 14, weight: .medium, design: .monospaced)).foregroundStyle(Palette.signal).textSelection(.enabled)
+                Text(command).font(.system(size: 14, weight: .medium, design: .monospaced)).foregroundStyle(Palette.signal).textSelection(.enabled)
                 HStack(spacing: 10) {
                     Button {
-                        UIPasteboard.general.string = Self.command
+                        UIPasteboard.general.string = command
                         copied = true
                     } label: { tile(copied ? "Copied" : "Copy") }
-                    ShareLink(item: Self.command) { tile("AirDrop or share") }
+                    ShareLink(item: command) { tile("AirDrop or share") }
                 }
                 .buttonStyle(.plain)
             }
             .padding(16).background(Palette.card, in: RoundedRectangle(cornerRadius: 16))
             .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Palette.raised, lineWidth: 1))
             Text("It installs airband, keeps it running after a restart, and shows a code on the screen.").font(.system(size: 15)).foregroundStyle(Palette.soft)
+            // the quiet second way: nothing of his passes through airband's relay
+            VStack(alignment: .leading, spacing: 6) {
+                Button(noRelay ? "Use the relay" : "Pair without the relay") {
+                    withAnimation(.snappy(duration: 0.2)) { noRelay.toggle() }
+                    copied = false
+                }
+                .font(.system(size: 15, weight: .medium)).foregroundStyle(Palette.quiet).buttonStyle(.plain)
+                if noRelay {
+                    Text("Your phone then talks straight to your computer, on the same network or over Tailscale. Notifications need the relay, so you get none this way.")
+                        .font(.system(size: 14)).foregroundStyle(Palette.quiet).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.top, 4)
         }
     }
     private func tile(_ text: String) -> some View {

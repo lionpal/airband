@@ -30,7 +30,7 @@ pub(crate) fn models() -> impl Iterator<Item = &'static Model> {
 }
 
 /// The name a copy of the catalogue is kept under, by the form of the document.
-const KEPT: &str = "catalog.2.json";
+const KEPT: &str = "catalog.json";
 
 /// What to write in a log about a copy of the catalogue that was just looked at: what it holds that this
 /// build cannot use, so an offer that vanished is never a mystery. `speaks` says whether this program has the
