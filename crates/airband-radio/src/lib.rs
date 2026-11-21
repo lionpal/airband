@@ -38,6 +38,7 @@ mod models;
 mod mouth;
 pub mod net;
 mod outbox;
+pub mod prose;
 mod store;
 mod voice;
 pub mod voices;

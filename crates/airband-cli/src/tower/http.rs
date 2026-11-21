@@ -637,7 +637,8 @@ async fn message(State(app): State<Arc<App>>, Path(id): Path<String>, Query(q): 
                 };
                 format!("{}. {short}{choices}", airband_core::routing::shown(&e.from))
             }
-            _ => spoken(&e.full).chars().take(3000).collect(),
+            // the whole of it, read from its blocks: no mark is said, a table goes row by row, code is passed over
+            _ => airband_radio::prose::said(&e.full).chars().take(3000).collect(),
         });
         if form == Some("spoken") {
             return match text {
