@@ -27,8 +27,9 @@ pub(super) enum Routed {
 /// A typed command to start an agent: `/launch shop with opus: …`. It says what it is; everything he says in
 /// his own words is the model's to read.
 fn new_by_command(app: &App, text: &str, projects: &[String]) -> Option<Idea> {
-    let (models, efforts) = app.cfg.launchers.get(&app.cfg.launcher).map(|l| (l.models.keys().cloned().collect::<Vec<_>>(), l.efforts.clone())).unwrap_or_default();
     let l = airband_core::routing::parse_launch(text, projects)?;
+    // the models and efforts that can be named are the ones of the tool the command names, or of the usual one
+    let (models, efforts) = app.cfg.launcher_for(l.tool.as_deref()).map(|(_, l)| (l.models.keys().cloned().collect::<Vec<_>>(), l.efforts.clone())).unwrap_or_default();
     Some(match airband_core::routing::parse_with(&l.task, &models, &efforts).filter(|w| !w.rest.is_empty()) {
         Some(w) => Idea { tool: l.tool, project: l.project, model: Some(w.model), effort: w.effort, task: w.rest },
         None => Idea { tool: l.tool, project: l.project, model: None, effort: None, task: l.task },
@@ -130,7 +131,9 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                     };
                     let tools = app.cfg.tools();
                     let tool = if tools.len() > 1 { format!("\"tool\" is one of {} when he asked for that tool by name (\"start a codex agent\", \"have codex look into…\"), else null. ", tools.join(", ")) } else { "\"tool\" is null. ".to_string() };
-                    let offered = |what: &str, names: Vec<String>| if names.is_empty() { format!("\"{what}\" is null. ") } else { format!("\"{what}\" is one of {} when he named one, else null. ", names.join(", ")) };
+                    // what he named is passed on as he named it: one that cannot be had is refused in words,
+                    // never quietly swapped for another
+                    let offered = |what: &str, names: Vec<String>| if names.is_empty() { format!("\"{what}\" is null. ") } else { format!("\"{what}\" is the one he named when he named one: one of {} when it is one of those, else his own word for it; null when he named none. ", names.join(", ")) };
                     format!(
                         "\n\nOr he is not talking to any of them: he wants a NEW agent started. Decide this first. He says so \
                          outright (\"new idea: …\", \"start an agent to…\", \"launch…\", \"spin up…\": words like these always \
@@ -213,19 +216,31 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                 };
             };
             if let Some(new) = judged.new.take().filter(|_| can_start) {
-                // only what exists is taken from the model: a project the tower knows, a model and an effort the
-                // launcher offers. Anything else it wrote is dropped, not passed to a command line.
+                // What he named is matched to what exists, by name. Something he named that does not exist is
+                // kept as he named it, so that starting it is refused in words (`launch`): nothing is started on a
+                // guess at what he meant, and nothing the model wrote reaches a command line unmatched.
                 let same = |a: &str, b: &str| a.replace(' ', "").eq_ignore_ascii_case(&b.replace(' ', ""));
-                let known = |said: Option<String>, names: Vec<String>| said.and_then(|x| names.into_iter().find(|n| same(n, x.trim())));
-                // the tool he named, if a launcher starts it; its models and efforts are then the ones that count
+                let named = |said: Option<String>| said.map(|x| x.trim().to_string()).filter(|x| !x.is_empty());
+                let known = |said: Option<String>, names: Vec<String>| named(said).map(|x| names.into_iter().find(|n| same(n, &x)).unwrap_or(x));
+                // the tool he named; its models and efforts are then the ones that count
                 let tool = known(new.tool, app.cfg.tools());
-                let launcher = tool.as_deref().and_then(|t| app.cfg.launcher_for(Some(t))).map(|(_, l)| l).or(launcher);
+                let launcher = match &tool {
+                    Some(t) => app.cfg.launcher_for(Some(t)).map(|(_, l)| l),
+                    None => launcher,
+                };
+                let project = match named(new.project) {
+                    // one he named that the tower does not know is not swapped for another: he is asked which
+                    Some(said) => projects.iter().find(|p| same(p, &said)).cloned(),
+                    // he named none, and there is one place it could be
+                    None => (projects.len() == 1).then(|| projects[0].clone()),
+                };
                 return Routed::New(Idea {
                     tool,
-                    project: known(new.project, projects.clone()).or_else(|| (projects.len() == 1).then(|| projects[0].clone())),
+                    project,
                     model: known(new.model, launcher.map(|l| l.models.keys().cloned().collect()).unwrap_or_default()),
                     effort: known(new.effort, launcher.map(|l| l.efforts.clone()).unwrap_or_default()),
-                    task: if new.task.trim().is_empty() { rest.to_string() } else { new.task.trim().to_string() },
+                    // with no work named it is started with nothing to do yet, or he is asked what it should do
+                    task: new.task.trim().to_string(),
                 });
             }
             if all.is_empty() {
@@ -590,6 +605,10 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, uid: Option<&str>,
                     deliver(app, &Deliver::Held, &t.agent.id, &words).await
                 }
             }
+            // One reached through its own tool takes his words as a turn of his own too, and the tool keeps
+            // them in order itself while the agent is busy.
+            Some(how @ Deliver::Harness { .. }) => deliver(app, how, &t.agent.id, &format!("{about}{}{files}", parsed.rest)).await,
+            // Anything else gets them from outside, as a message: one line in front says who they are from.
             Some(how) => deliver(app, how, &t.agent.id, &content).await,
             None => Err("its harness gave no way to reach it".into()),
         };

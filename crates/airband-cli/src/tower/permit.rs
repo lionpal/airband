@@ -29,7 +29,7 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
     // one request at a time from each agent: an earlier one it has moved on from is withdrawn
     let earlier: Vec<String> = inner.permits.iter().filter(|(_, p)| p.agent_id == agent_id && p.decided.is_none()).map(|(id, _)| id.clone()).collect();
     for id in earlier {
-        inner.close_permit(&id);
+        inner.close_permit(&id, Ended::Replaced);
     }
     inner.no_longer_waiting(&agent_id);
     let (id, entry_id) = (config::random_hex(8), config::random_hex(8));
@@ -86,8 +86,21 @@ pub(super) async fn state(app: &Arc<App>, id: &str, wait: u64) -> PermissionStat
 /// can answer from here.
 pub(super) fn withdraw(app: &App, id: &str) {
     let mut inner = app.inner.lock().unwrap();
-    inner.close_permit(id);
+    inner.close_permit(id, Ended::AtKeyboard);
     app.save(&inner);
+    app.kick.notify_one();
+}
+
+/// How a request ended (`Inner::close_permit`).
+pub(super) enum Ended {
+    /// He answered: yes or no, and his reason with a no.
+    Answered(bool, String),
+    /// The harness stopped waiting for the phone and is asking at its keyboard.
+    AtKeyboard,
+    /// The same agent asked something newer.
+    Replaced,
+    /// Nobody asks after it any more: it was answered at the keyboard, or the agent has gone.
+    Gone,
 }
 
 
@@ -121,7 +134,7 @@ pub(super) fn asked_leave(app: &App, re: Option<&str>) -> Leave {
     match inner.permits.iter().find(|(_, p)| p.entry == entry && p.decided.is_none()).map(|(id, p)| (id.clone(), p.live())) {
         Some((_, true)) => Leave::Waiting,
         Some((id, false)) => {
-            inner.close_permit(&id);
+            inner.close_permit(&id, Ended::Gone);
             app.save(&inner);
             Leave::Over
         }
@@ -148,24 +161,9 @@ pub(super) fn answer(app: &App, text: &str, re: Option<&str>, verdict: Option<bo
         Some(allow) => (allow, String::new()),
         None => (false, text.trim().to_string()),
     };
-    let agent_id = {
-        let permit = inner.permits.get_mut(&id).unwrap();
-        permit.decided = Some((allow, reason.clone()));
-        permit.agent_id.clone()
-    };
-    let entry = inner.permits[&id].entry.clone();
-    if let Some(e) = inner.log.iter_mut().find(|e| e.id == entry) {
-        e.permit = None;
-        // answered: the line offers nothing more
-        if e.leave {
-            e.options.clear();
-        }
-    }
-    if inner.log.iter().any(|e| e.id == entry && e.aloud.unheard()) {
-        inner.set_aloud(&entry, Aloud::Dropped { why: Dropped::Answered });
-    }
+    let (agent_id, entry) = (inner.permits[&id].agent_id.clone(), inner.permits[&id].entry.clone());
+    inner.close_permit(&id, Ended::Answered(allow, reason.clone()));
     let Some(session) = inner.find(&agent_id).cloned() else { return say("That agent has gone.") };
-    inner.session(&agent_id).unwrap().waiting = false;
     log(format!("← radio: \"{text}\" → {} is {} {}", session.callsign.text(), if question { "answered" } else if allow { "allowed" } else { "refused" }, if reason.is_empty() || question { String::new() } else { "with his reason".into() }));
     let shown = if allow { ALLOW.to_string() } else if reason.is_empty() { DENY.into() } else { reason };
     inner.record(Entry::his(config::random_hex(8), &[session.clone()], shown));

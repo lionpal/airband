@@ -359,8 +359,6 @@ pub fn run(cfg: Config) -> Result<(), String> {
         crate::adapters::drain_spool();
         std::thread::sleep(Duration::from_secs(5));
     });
-    // tools that have no hooks and are watched: OpenCode's server, when it is running on this computer
-    std::thread::spawn(crate::adapters::opencode::watch);
     // a newer catalogue, now and twice a day: what a phone is offered for this computer comes from it
     std::thread::spawn(|| loop {
         let (changed, lines) = crate::catalog::refresh();
@@ -420,6 +418,22 @@ pub fn run(cfg: Config) -> Result<(), String> {
         tokio::spawn(progress_loop(app.clone()));
         tokio::spawn(activity_loop(app.clone()));
         held::carry_on(&app).await;
+        // tools that have no hooks and are watched (a server of the tool's own): each adapter that watches is
+        // started, and tells the tower what it sees the same way an event over HTTP is taken
+        {
+            let (app, runtime) = (app.clone(), tokio::runtime::Handle::current());
+            crate::adapters::watch_all(move || {
+                let (taking, runtime, holding) = (app.clone(), runtime.clone(), app.clone());
+                crate::adapters::Tower {
+                    event: Box::new(move |event| {
+                        let _here = runtime.enter();
+                        taking.store.event(&serde_json::to_value(&event).unwrap_or_default());
+                        http::take_event(&taking, event).is_ok()
+                    }),
+                    holds: Box::new(move |session| held::holds(&holding.inner.lock().unwrap(), session)),
+                }
+            });
+        }
         relay_link::start(app.clone(), router.clone(), tokio::runtime::Handle::current());
         {
             let app = app.clone();

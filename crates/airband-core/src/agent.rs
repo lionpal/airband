@@ -63,6 +63,9 @@ pub enum Deliver {
     Held,
     /// Type the message into a tmux pane and press Enter: works for any harness that runs in a terminal.
     Tmux { target: String },
+    /// Through the agent's own tool, by whatever way that tool takes a turn of his into a session that is
+    /// already open (its queue, its server). The tower's adapter for `name` knows how.
+    Harness { name: String, session: String },
     /// A kind this tower does not know yet.
     #[serde(other)]
     Unknown,
@@ -168,6 +171,13 @@ pub enum Event {
         name: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         effort: Option<String>,
+    },
+    /// Its turn is over and it wrote nothing: it was stopped, it had nothing to say, or the turn failed. It
+    /// is waiting from now, like after anything it says. `why` is set when the turn failed, in the tool's own
+    /// words, and he is told.
+    Stopped {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        why: Option<String>,
     },
     /// It is gone.
     Signoff,
