@@ -504,7 +504,7 @@ fn judge_later(app: &Arc<App>, entries: Vec<Entry>) {
                 let _slot = limit.acquire().await;
                 let j = judge_entry(&app, e.clone()).await;
                 let mut inner = app.inner.lock().unwrap();
-                inner.fill(&e.id, j.kind, &j.say, &j.options, j.recommended, j.read.as_deref(), j.background, j.own_session);
+                inner.fill(&e.id, &j);
                 push::consider(&app, &mut inner, &e.id);
                 app.save(&inner);
             });
@@ -608,7 +608,7 @@ async fn feed(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
             let done = tasks.join_all().await;
             let mut inner = app.inner.lock().unwrap();
             for (id, j) in done {
-                inner.fill(&id, j.kind, &j.say, &j.options, j.recommended, j.read.as_deref(), j.background, j.own_session);
+                inner.fill(&id, &j);
                 push::consider(&app, &mut inner, &id);
             }
             app.save(&inner);

@@ -62,12 +62,6 @@ pub fn prose(text: String) -> Vec<ProseBlock> {
     blocks(&text)
 }
 
-/// What an agent wrote, as words to say: no marks, a table row by row, code named and passed over.
-#[uniffi::export]
-pub fn prose_said(text: String) -> String {
-    said(&text)
-}
-
 pub fn blocks(text: &str) -> Vec<ProseBlock> {
     let options = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let mut reader = Reader { events: Parser::new_ext(text, options).collect(), at: 0 };
@@ -263,6 +257,7 @@ fn words(spans: &[ProseSpan]) -> String {
     spans.iter().map(|span| span.text.as_str()).collect::<String>()
 }
 
+/// What an agent wrote, as words to say: no marks, a table row by row, code named and passed over.
 pub fn said(text: &str) -> String {
     let mut out = Vec::new();
     say(&blocks(text), &mut out);

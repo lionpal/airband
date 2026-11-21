@@ -114,8 +114,7 @@ impl Dynamo {
 
     async fn creds(&self) -> Result<Creds, Failed> {
         let mut have = self.creds.lock().await;
-        if let Some((creds, when)) = have.as_ref().filter(|(_, when)| when.elapsed() < Duration::from_secs(900)) {
-            let _ = when;
+        if let Some((creds, _)) = have.as_ref().filter(|(_, when)| when.elapsed() < Duration::from_secs(900)) {
             return Ok(creds.clone());
         }
         let fresh = match (var("AWS_ACCESS_KEY_ID"), var("AWS_SECRET_ACCESS_KEY")) {

@@ -22,8 +22,7 @@ async fn read() -> Accounts {
 /// make one check.
 pub(super) async fn list(app: &Arc<App>, fresh: bool) -> Accounts {
     let mut kept = app.accounts.0.lock().await;
-    if let Some((at, value)) = kept.as_ref().filter(|(at, _)| at.elapsed() < if fresh { FRESH_AFTER } else { GOOD_FOR }) {
-        let _ = at;
+    if let Some((_, value)) = kept.as_ref().filter(|(at, _)| at.elapsed() < if fresh { FRESH_AFTER } else { GOOD_FOR }) {
         return value.clone();
     }
     let value = read().await;

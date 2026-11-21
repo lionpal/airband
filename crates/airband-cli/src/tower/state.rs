@@ -863,20 +863,20 @@ impl Inner {
         }
     }
     /// The short version of a message is ready: for the call queue and for the chat alike.
-    pub(super) fn fill(&mut self, id: &str, kind: Kind, say: &str, options: &[String], recommended: Option<u32>, read: Option<&str>, background: bool, own_session: bool) {
+    pub(super) fn fill(&mut self, id: &str, j: &judge::Judged) {
         self.judging.remove(id);
         if let Some(e) = self.log.iter_mut().find(|e| e.id == id) {
-            e.kind = Some(kind);
-            e.short = Some(airband_core::redact::redact(say));
-            e.options = options.to_vec();
-            e.recommended = recommended;
-            e.read = read.map(String::from);
-            e.background = background;
-            e.own_session = own_session;
+            e.kind = Some(j.kind);
+            e.short = Some(airband_core::redact::redact(&j.say));
+            e.options = j.options.clone();
+            e.recommended = j.recommended;
+            e.read = j.read.clone();
+            e.background = j.background;
+            e.own_session = j.own_session;
             self.touch(id);
         }
         // not worth his ears: it stays in the chat, dimmed, and is not read out
-        if kind == Kind::Fyi && self.log.iter().any(|e| e.id == id && e.aloud.unheard()) {
+        if j.kind == Kind::Fyi && self.log.iter().any(|e| e.id == id && e.aloud.unheard()) {
             self.set_aloud(id, Aloud::dropped(Dropped::Routine));
         }
     }
@@ -1381,7 +1381,7 @@ mod tests {
         inner.check_in(&agent("b", "/x/backoffice", None));
         // routine: the judge found nothing for his ears
         let routine = queued(&mut inner, "a", Kind::Report, "Still going.");
-        inner.fill(&routine, Kind::Fyi, "Still going.", &[], None, None, false, false);
+        inner.fill(&routine, &judge::Judged { kind: Kind::Fyi, say: "Still going.".into(), options: Vec::new(), recommended: None, read: None, background: false, own_session: false });
         assert_eq!(aloud(&inner, &routine), dropped(Dropped::Routine));
         // dismissed, and a request for leave that is over
         let leave = asks_leave(&mut inner, "a", "p1", "run `make`");

@@ -33,11 +33,16 @@ pub(super) async fn pump(app: &Arc<App>) {
     let done = tasks.join_all().await;
 
     let mut inner = app.inner.lock().unwrap();
+    let read = !done.is_empty();
     for (id, j) in done {
         // what is not worth his ears leaves the queue here, and stays in the chat, dimmed
-        inner.fill(&id, j.kind, &j.say, &j.options, j.recommended, j.read.as_deref(), j.background, j.own_session);
+        inner.fill(&id, &j);
         // a radio on a call hears it; another that is neither on a call nor showing the chat is woken
         push::consider(app, &mut inner, &id);
+    }
+    // what was just read is written down now, whatever follows: with no radio free the rest returns early
+    if read {
+        app.save(&inner);
     }
     // read out under what its agent is called now, or was called when it said it, if it has gone
     let name = |inner: &Inner, e: &Entry| inner.sender(e).map(|s| s.callsign.text()).unwrap_or_else(|| e.from.clone());

@@ -8,9 +8,9 @@
 //!   airband model [<provider>]   what reads your agents' messages (listening and voice are chosen on the phone)
 //!   airband pair [name]          print the link that sets up a radio (default name: phone)
 //!   airband unpair <name>        cut a paired radio off
-//!   airband radio [--quiet] [--link <pairing link>]
+//!   airband radio [--link <pairing link>]
 //!                              a radio in this terminal: transmissions are printed, typed lines are replies
-//!                              (it makes no sound, with or without --quiet: voice is the phone's)
+//!                              (it makes no sound: voice is the phone's)
 //!   airband feed [all|<group>|"<callsign>"] [--once]
 //!                              the chat in this terminal: every message, cut to a line or two
 //!   airband send "@shop2 ..."    say something; @group and @all work too
@@ -88,7 +88,7 @@ fn main() {
         Some("progress") => tower::progress(config::load()),
         Some("feed") => terminal::feed(&config::load(), &args[1..]),
         Some("send") => terminal::send(&config::load(), &args[1..]),
-        Some(other) => Err(format!("unknown command \"{other}\": start, setup, install, uninstall, status, keys, relay, lan, model, pair, unpair, quick, accounts, radio, feed, send, launch, hook, report, run")),
+        Some(other) => Err(format!("unknown command \"{other}\": start, setup, install, uninstall, status, keys, relay, lan, model, pair, unpair, quick, accounts, catalog, radio, feed, send, launch, triage, progress, hook, report, run")),
     };
     if let Err(e) = result {
         eprintln!("airband: {e}");

@@ -23,8 +23,8 @@ pub trait DeskHost: Send + Sync {
     fn record_stop(&self);
     /// What the desk shows has changed: ask for [`Desk::view`] again.
     fn changed(&self);
-    /// For a call screen: what is happening. `saying` is always empty: nothing is said with the device's own voice.
-    fn status(&self, status: RadioStatus, saying: String);
+    /// For a call screen: what is happening.
+    fn status(&self, status: RadioStatus);
     /// Something he must be told: a message could not be placed, or expired unsent.
     fn note(&self, text: String);
     /// What he has said so far, while he is still speaking, revised as more is heard. Empty when he has stopped.
@@ -496,7 +496,7 @@ impl RadioHost for StationHost {
             }
         }
         if self.shared.floor.release(self.index, ends) {
-            self.shared.host.status(status, String::new());
+            self.shared.host.status(status);
         }
     }
     fn hearing(&self, text: String) {
@@ -1738,7 +1738,7 @@ mod tests {
         }
         fn record_stop(&self) {}
         fn changed(&self) {}
-        fn status(&self, _: RadioStatus, _: String) {}
+        fn status(&self, _: RadioStatus) {}
         fn note(&self, _: String) {}
         fn hearing(&self, _: String) {}
         fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
@@ -1770,7 +1770,7 @@ mod tests {
             }
             fn record_stop(&self) {}
             fn changed(&self) {}
-            fn status(&self, _: RadioStatus, _: String) {}
+            fn status(&self, _: RadioStatus) {}
             fn note(&self, text: String) {
                 self.0.lock().unwrap().push(text);
             }

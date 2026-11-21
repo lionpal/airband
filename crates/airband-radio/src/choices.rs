@@ -946,7 +946,7 @@ mod tests {
         }
         fn record_stop(&self) {}
         fn changed(&self) {}
-        fn status(&self, _: RadioStatus, _: String) {}
+        fn status(&self, _: RadioStatus) {}
         fn note(&self, text: String) {
             self.notes.lock().unwrap().push(text);
         }
