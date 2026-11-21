@@ -20,6 +20,7 @@
 //!   GET  /v1/channels/{c}/pull        tower: the next sealed request, held up to 25 s (204 when none)
 //!   POST /v1/channels/{c}/reply/{id}  tower: the sealed answer to request id
 //!   POST /v1/channels/{c}/push        tower: a sealed notification for a push service to wake the phone with (push.rs)
+//!   POST /v1/channels/{c}/banner      tower: three numbers for the banner on the phone's lock screen (push.rs)
 //!   POST /v1/channels/{c}/call        radio: a sealed request; the response is the sealed answer (Bearer radio token)
 //!   POST /v1/channels/{c}/queue       radio: a sealed message to keep for a tower that is away (x-airband-id names it)
 //!   POST /v1/waitlist                 the homepage's sign-up: {"email": "…"} (airband.dev only, by CORS)
@@ -34,7 +35,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{Notify, oneshot};
-use airband_core::relay::{HELD, HELD_FOR_MS, HELD_MOST, MAX_MESSAGE, PUSH_MOST, PushAnswer, PushRequest, random_hex, token_hash};
+use airband_core::relay::{HELD, HELD_FOR_MS, HELD_MOST, MAX_MESSAGE, BannerRequest, PUSH_MOST, PushAnswer, PushRequest, banner_slot, random_hex, token_hash};
 
 /// How long a tower's pull is held open.
 const HOLD: Duration = Duration::from_secs(25);
@@ -60,6 +61,8 @@ struct Channel {
     radio_hash: String,
     /// How many notifications it has sent lately, and since when.
     pushed: Option<(Instant, u32)>,
+    /// The same for changes to a banner.
+    bannered: Option<(Instant, u32)>,
 }
 
 impl Channel {
@@ -68,7 +71,7 @@ impl Channel {
         Channel::from(store::Saved { pull_hash, radio_hash })
     }
     fn from(saved: store::Saved) -> Channel {
-        Channel { pull_hash: saved.pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, holding: None, radio_hash: saved.radio_hash, pushed: None }
+        Channel { pull_hash: saved.pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, holding: None, radio_hash: saved.radio_hash, pushed: None, bannered: None }
     }
 }
 
@@ -138,6 +141,8 @@ const KEPT_A_MINUTE: u32 = 60;
 const PASSES_A_MINUTE: u32 = 30;
 /// Notifications asked for from one address in ten minutes, across its channels (`push::PUSHES` is one channel's).
 const PUSHES_AN_ADDRESS: u32 = push::PUSHES * 4;
+/// The same for changes to a banner (`push::BANNERS` is one channel's).
+const BANNERS_AN_ADDRESS: u32 = push::BANNERS * 4;
 
 /// New channels: how many one internet address may open in a day, and how many the relay opens in an hour
 /// whoever asks. A channel is a pairing of one computer with one phone, so a person opens a handful in all;
@@ -149,6 +154,7 @@ struct Limits {
     /// For each of [`Asks`]: by channel, then by address.
     radio: [(Limiter, Limiter); 3],
     push_by_address: Limiter,
+    banner_by_address: Limiter,
     opened_by_address: Limiter,
     opened: Limiter,
 }
@@ -156,7 +162,7 @@ struct Limits {
 impl Limits {
     fn new() -> Limits {
         let pair = |most: u32| (Limiter::new(most, 60), Limiter::new(most * 2, 60));
-        Limits { radio: [pair(CALLS_A_MINUTE), pair(KEPT_A_MINUTE), pair(PASSES_A_MINUTE)], push_by_address: Limiter::new(PUSHES_AN_ADDRESS, 600), opened_by_address: Limiter::new(OPENED_AN_ADDRESS_A_DAY, 86_400), opened: Limiter::new(OPENED_AN_HOUR, 3600) }
+        Limits { radio: [pair(CALLS_A_MINUTE), pair(KEPT_A_MINUTE), pair(PASSES_A_MINUTE)], push_by_address: Limiter::new(PUSHES_AN_ADDRESS, 600), banner_by_address: Limiter::new(BANNERS_AN_ADDRESS, 600), opened_by_address: Limiter::new(OPENED_AN_ADDRESS_A_DAY, 86_400), opened: Limiter::new(OPENED_AN_HOUR, 3600) }
     }
     fn channel(&mut self, asks: Asks, channel: &str, now: Instant) -> bool {
         self.radio[asks as usize].0.allow(channel, now)
@@ -593,7 +599,7 @@ async fn wake_phone(State(relay): State<Arc<Relay>>, Path(channel): Path<String>
             Ok(ch) => ch,
             Err(r) => return r,
         };
-        if !push::allow(&mut ch.pushed, Instant::now()) {
+        if !push::allow(&mut ch.pushed, push::PUSHES, Instant::now()) {
             return answer(StatusCode::TOO_MANY_REQUESTS, false, false, "too many notifications from this channel; try again later");
         }
     }
@@ -613,6 +619,44 @@ async fn wake_phone(State(relay): State<Arc<Relay>>, Path(channel): Path<String>
         }
         Some(push::Outcome::Failed(why)) => {
             eprintln!("airband-relay: a notification could not be sent: {why}");
+            answer(StatusCode::BAD_GATEWAY, false, false, &why)
+        }
+    }
+}
+
+/// A tower asks for the banner on its phone to be changed: put up, given new numbers, or taken down. A banner's
+/// contents reach the phone unsealed, so a tower can say only what [`BannerRequest`] can hold, which is three
+/// numbers. Only the channel's own tower may ask, each channel only so often, and neither the address nor the
+/// numbers are logged or kept.
+async fn change_banner(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, headers: HeaderMap, body: Bytes) -> Response {
+    let answer = |code: StatusCode, sent: bool, gone: bool, reason: &str| (code, axum::Json(PushAnswer { sent, gone, reason: reason.into() })).into_response();
+    if !relay.limits.lock().unwrap().banner_by_address.allow(&caller(&headers), Instant::now()) {
+        return answer(StatusCode::TOO_MANY_REQUESTS, false, false, "too many banner changes from this address; try again later");
+    }
+    {
+        let mut channels = relay.channels.lock().unwrap();
+        let ch = match relay.as_tower(&mut channels, &channel, &headers) {
+            Ok(ch) => ch,
+            Err(r) => return r,
+        };
+        if !push::allow(&mut ch.bannered, push::BANNERS, Instant::now()) {
+            return answer(StatusCode::TOO_MANY_REQUESTS, false, false, "too many banner changes from this channel; try again later");
+        }
+    }
+    let Ok(ask) = serde_json::from_slice::<BannerRequest>(&body) else { return answer(StatusCode::BAD_REQUEST, false, false, "not a banner request") };
+    if ask.to.is_empty() || ask.to.len() > 512 || !ask.to.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return answer(StatusCode::BAD_REQUEST, false, false, "the address is not the right shape");
+    }
+    match relay.push.banner(&ask.provider, &ask.to, ask.event, ask.counts, banner_slot(&channel), ask.urgent).await {
+        None => answer(StatusCode::SERVICE_UNAVAILABLE, false, false, "this relay has no such push service"),
+        Some(push::Outcome::Sent) => answer(StatusCode::OK, true, false, ""),
+        Some(push::Outcome::Gone(why)) => answer(StatusCode::GONE, false, true, &why),
+        Some(push::Outcome::Refused(why)) => {
+            eprintln!("airband-relay: the push service refused a banner change: {why}");
+            answer(StatusCode::BAD_GATEWAY, false, false, &why)
+        }
+        Some(push::Outcome::Failed(why)) => {
+            eprintln!("airband-relay: a banner change could not be sent: {why}");
             answer(StatusCode::BAD_GATEWAY, false, false, &why)
         }
     }
@@ -657,6 +701,7 @@ fn routes(relay: Arc<Relay>) -> Router {
         .route("/v1/channels/{channel}/call", post(call))
         .route("/v1/channels/{channel}/queue", post(hold))
         .route("/v1/channels/{channel}/push", post(wake_phone))
+        .route("/v1/channels/{channel}/banner", post(change_banner))
         .route("/v1/waitlist", post(waitlist).options(waitlist_preflight))
         .route("/healthz", get(|| async { "ok" }))
         .layer(DefaultBodyLimit::max(MAX_MESSAGE))
@@ -916,6 +961,83 @@ mod tests {
         relay.channels.lock().unwrap().get_mut(&keys.channel).unwrap().pushed = Some((Instant::now(), push::PUSHES));
         assert_eq!(ask(&keys.pull_token, "apns", "aa11").await.0, 429);
         assert_eq!(seen.load(Ordering::SeqCst), 3);
+    }
+
+    /// The banner route, with the same stand-in for Apple: what reaches Apple is the three numbers under the
+    /// banner's own topic and kind, a banner is put up with the fixed words and the channel's number, only the
+    /// channel's tower may ask, and a channel is held to so many.
+    #[tokio::test]
+    async fn a_tower_changes_the_banner_on_its_phone_with_numbers_only() {
+        use airband_core::relay::{BannerEvent, Counts};
+        let (key, public) = push::tests::test_key();
+        let got: Arc<Mutex<Vec<(String, String, serde_json::Value)>>> = Arc::default();
+        let apple = {
+            let got = got.clone();
+            Router::new().route(
+                "/3/device/{to}",
+                post(move |Path(to): Path<String>, headers: HeaderMap, body: Bytes| {
+                    let (public, got) = (public.clone(), got.clone());
+                    async move {
+                        let head = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+                        let good = push::tests::pass_is_good(head("authorization").strip_prefix("bearer ").unwrap_or(""), &public, "KEY123", "TEAM456") && head("apns-topic") == "dev.example.app.push-type.liveactivity" && head("apns-push-type") == "liveactivity";
+                        if !good {
+                            return (StatusCode::FORBIDDEN, axum::Json(serde_json::json!({ "reason": "InvalidProviderToken" })));
+                        }
+                        got.lock().unwrap().push((to.clone(), head("apns-priority"), serde_json::from_slice(&body).unwrap_or_default()));
+                        if to == "bb22" { (StatusCode::GONE, axum::Json(serde_json::json!({ "reason": "Unregistered" }))) } else { (StatusCode::OK, axum::Json(serde_json::json!({}))) }
+                    }
+                }),
+            )
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let at = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, apple).await });
+
+        let keys = Keys::derive(&airband_core::relay::new_secret()).unwrap();
+        let apns = push::Apns::new(&key, "KEY123", "TEAM456", "dev.example.app", &format!("http://{at}")).unwrap();
+        let folder = std::env::temp_dir().join(format!("airband-relay-test-{}", random_hex(6)));
+        let relay = Arc::new(Relay::new(push::Push::with_apns(apns), HashMap::from([(keys.channel.clone(), Channel::new(token_hash(&keys.pull_token), token_hash(&keys.radio_token)))]), store::Store::Folder(folder), None));
+        let counts = Counts { waiting: 2, working: 3, unread: 1 };
+        let ask = |token: &str, to: &str, event: BannerEvent, urgent: bool| {
+            let (relay, channel) = (relay.clone(), keys.channel.clone());
+            let mut headers = HeaderMap::new();
+            headers.insert("authorization", format!("Bearer {token}").parse().unwrap());
+            let body = serde_json::to_vec(&BannerRequest { provider: "apns".into(), to: to.into(), event, counts, urgent }).unwrap();
+            async move {
+                let res = change_banner(State(relay), Path(channel), headers, Bytes::from(body)).await;
+                let status = res.status().as_u16();
+                let answer: PushAnswer = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), 1 << 16).await.unwrap()).unwrap_or_default();
+                (status, answer.gone)
+            }
+        };
+        assert_eq!(ask("someone-else", "aa11", BannerEvent::Update, false).await.0, 403);
+        assert!(got.lock().unwrap().is_empty());
+        assert_eq!(ask(&keys.pull_token, "aa11", BannerEvent::Update, false).await, (200, false));
+        assert_eq!(ask(&keys.pull_token, "aa11", BannerEvent::Update, true).await, (200, false));
+        assert_eq!(ask(&keys.pull_token, "cc33", BannerEvent::Start, false).await, (200, false));
+        assert_eq!(ask(&keys.pull_token, "aa11", BannerEvent::End, false).await, (200, false));
+        // a banner that is no longer up
+        assert_eq!(ask(&keys.pull_token, "bb22", BannerEvent::Update, false).await, (410, true));
+        assert_eq!(ask(&keys.pull_token, "aa11/../x", BannerEvent::Update, false).await.0, 400);
+        {
+            let got = got.lock().unwrap();
+            let numbers = serde_json::json!({ "waiting": 2, "working": 3, "unread": 1 });
+            assert_eq!(got.len(), 5);
+            assert!(got.iter().all(|(_, _, body)| body["aps"]["content-state"] == numbers && body.as_object().unwrap().len() == 1));
+            // quiet unless more are waiting, or one is put up
+            assert_eq!(got.iter().map(|(_, priority, _)| priority.as_str()).collect::<Vec<_>>(), ["5", "10", "10", "5", "5"]);
+            assert_eq!(got.iter().map(|(_, _, body)| body["aps"]["event"].as_str().unwrap_or("")).collect::<Vec<_>>(), ["update", "update", "start", "end", "update"]);
+            assert_eq!(got[2].2["aps"]["attributes"], serde_json::json!({ "slot": banner_slot(&keys.channel) }));
+            assert_eq!(got[2].2["aps"]["attributes-type"], "StatusAttributes");
+        }
+        // only so many from one channel, counted apart from notifications
+        relay.channels.lock().unwrap().get_mut(&keys.channel).unwrap().bannered = Some((Instant::now(), push::BANNERS));
+        assert_eq!(ask(&keys.pull_token, "aa11", BannerEvent::Update, false).await.0, 429);
+        assert_eq!(got.lock().unwrap().len(), 5);
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", format!("Bearer {}", keys.pull_token).parse().unwrap());
+        let body = serde_json::to_vec(&PushRequest { provider: "carrier-pigeon".into(), to: "aa11".into(), sealed: "c2VhbGVk".into(), question: true }).unwrap();
+        assert_eq!(wake_phone(State(relay.clone()), Path(keys.channel.clone()), headers, Bytes::from(body)).await.status().as_u16(), 503);
     }
 
     #[test]

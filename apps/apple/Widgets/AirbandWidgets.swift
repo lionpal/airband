@@ -9,6 +9,7 @@ struct AirbandWidgets: WidgetBundle {
     var body: some Widget {
         TalkTile()
         NeedsYouBanner()
+        StatusBanner()
     }
 }
 
@@ -94,6 +95,68 @@ struct NeedsYouBanner: Widget {
                 Image(systemName: "mic.fill").foregroundStyle(ask)
             }
             .widgetURL(OpenWith.answer(context.attributes.callsign))
+        }
+    }
+}
+
+// MARK: the banner while the app is asleep
+
+/// A number in the same square an agent's letters go in.
+private struct CountBadge: View {
+    let count: Int
+    var size: CGFloat = 36
+    var body: some View {
+        Text("\(count)").font(.system(size: size * 0.5, weight: .bold, design: .rounded)).monospacedDigit().foregroundStyle(ground)
+            .frame(width: size, height: size).background(ask, in: RoundedRectangle(cornerRadius: size * 0.28))
+    }
+}
+
+private extension StatusAttributes.ContentState {
+    var headline: String { waiting == 1 ? "1 agent needs you" : "\(waiting) agents need you" }
+    /// The rest, leaving out what is nought: "3 working, 1 report unread".
+    var rest: String {
+        var parts: [String] = []
+        if working > 0 { parts.append("\(working) working") }
+        if unread > 0 { parts.append(unread == 1 ? "1 report unread" : "\(unread) reports unread") }
+        return parts.joined(separator: ", ")
+    }
+}
+
+struct StatusBanner: Widget {
+    var body: some WidgetConfiguration {
+        ActivityConfiguration(for: StatusAttributes.self) { context in
+            HStack(spacing: 12) {
+                CountBadge(count: context.state.waiting, size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(context.state.headline).font(.system(size: 15, weight: .bold)).foregroundStyle(ink).lineLimit(1)
+                    // numbers with no news for an hour may be old: say so, in place of them
+                    let second = context.isStale ? "Open airband for the latest" : context.state.rest
+                    if !second.isEmpty { Text(second).font(.system(size: 14)).foregroundStyle(ink.opacity(0.8)).lineLimit(1) }
+                }
+                Spacer(minLength: 8)
+                Text("Open").font(.system(size: 15, weight: .bold)).foregroundStyle(ground)
+                    .padding(.horizontal, 14).frame(minHeight: 36).background(ink, in: Capsule())
+            }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            .activityBackgroundTint(ground)
+            .widgetURL(OpenWith.chat)
+        } dynamicIsland: { context in
+            DynamicIsland {
+                DynamicIslandExpandedRegion(.leading) { CountBadge(count: context.state.waiting) }
+                DynamicIslandExpandedRegion(.center) {
+                    Text(context.state.headline).font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                }
+                DynamicIslandExpandedRegion(.bottom) {
+                    Text(context.state.rest).font(.system(size: 13)).foregroundStyle(ink.opacity(0.8)).lineLimit(1)
+                }
+            } compactLeading: {
+                CountBadge(count: context.state.waiting, size: 22)
+            } compactTrailing: {
+                Image(systemName: "bubble.left.fill").foregroundStyle(ask)
+            } minimal: {
+                CountBadge(count: context.state.waiting, size: 20)
+            }
+            .widgetURL(OpenWith.chat)
         }
     }
 }

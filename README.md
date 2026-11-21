@@ -74,8 +74,8 @@ airband install         # restart the tower; run it after `brew upgrade airband`
 airband uninstall       # run it before `brew uninstall airband`
 ```
 
-Pair again after changing the relay. Without one there are no notifications: they need the relay to reach
-Apple.
+Pair again after changing the relay. Without one there are no notifications and no numbers on the lock
+screen: they need the relay to reach Apple.
 
 Or build it yourself, with Rust:
 

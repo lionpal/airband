@@ -135,6 +135,17 @@ impl Store {
         Self::warn("saving where phones can be woken", db.execute("insert into state (key, value) values ('push', ?1) on conflict (key) do update set value = excluded.value", params![serde_json::to_string(targets).unwrap()]));
     }
 
+    /// Where each paired radio's banner can be changed, by the radio's name. Kept as the notification addresses are.
+    pub(super) fn banner_addresses(&self) -> BTreeMap<String, super::banner::Addresses> {
+        let db = self.db.lock().unwrap();
+        let text = db.query_row("select value from state where key = 'banner'", [], |r| r.get::<_, String>(0)).optional().ok().flatten();
+        text.and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    }
+    pub(super) fn save_banner_addresses(&self, addresses: &BTreeMap<String, super::banner::Addresses>) {
+        let db = self.db.lock().unwrap();
+        Self::warn("saving where banners can be changed", db.execute("insert into state (key, value) values ('banner', ?1) on conflict (key) do update set value = excluded.value", params![serde_json::to_string(addresses).unwrap()]));
+    }
+
     /// Write new messages, and messages whose short or fuller version has just been made.
     pub(super) fn put_messages(&self, entries: &[Entry]) {
         if entries.is_empty() {
