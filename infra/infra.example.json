@@ -24,7 +24,6 @@
   "dbSecretArn": "\u2026",
   "rulePriority": 50,
   "albIngressNote": "load balancer to the airband relay task",
-  "speechRegion": "eastus",
   "us": {
     "region": "us-east-2",
     "zone": "us-east-2a",
