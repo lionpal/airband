@@ -1,0 +1,87 @@
+//! Files he adds to what he says: sent to a computer ahead of his words, and shown in the tray meanwhile.
+use super::*;
+
+pub(super) struct Upload {
+    pub(super) shown: DeskUpload,
+    /// Which computer it is going to: what he sends next goes there too.
+    pub(super) station: usize,
+    /// He took it off, or it is being sent somewhere else instead: stop sending.
+    pub(super) dropped: Arc<AtomicBool>,
+    /// The file on the device and what to call it, kept so it can be sent to another computer if his words turn
+    /// out to be for an agent there.
+    pub(super) file_path: String,
+    pub(super) name: String,
+}
+/// Send one attached file to a computer, keeping the tray's picture of it up to date. When it is there it is
+/// armed on that computer's radio: the next thing he sends there takes it along.
+pub(super) fn send_file(shared: Arc<Shared>, radio: Arc<Radio>, id: String, file_path: String, name: String, dropped: Arc<AtomicBool>) {
+    thread::spawn(move || {
+        let last_told = Mutex::new(std::time::Instant::now());
+        let step = |sent: u64, _total: u64| {
+            if dropped.load(Ordering::SeqCst) {
+                return false;
+            }
+            if let Some(u) = shared.state.lock().unwrap().uploads.iter_mut().find(|u| u.shown.id == id && Arc::ptr_eq(&u.dropped, &dropped)) {
+                u.shown.sent = sent;
+            }
+            // the screen is told a few times a second at most, however fast the parts land
+            let mut told = last_told.lock().unwrap();
+            if told.elapsed() > Duration::from_millis(250) {
+                *told = std::time::Instant::now();
+                drop(told);
+                shared.host.changed();
+            }
+            true
+        };
+        let outcome = radio.upload(&id, &file_path, &name, step);
+        {
+            let mut state = shared.state.lock().unwrap();
+            // only if this is still the sending that counts: it may have been taken off, or started again elsewhere
+            if let Some(u) = state.uploads.iter_mut().find(|u| u.shown.id == id && Arc::ptr_eq(&u.dropped, &dropped)) {
+                u.shown.state = if outcome.is_ok() { "ready".into() } else { "failed".into() };
+                if outcome.is_ok() {
+                    radio.arm(id.clone());
+                }
+            }
+        }
+        shared.host.changed();
+    });
+}
+#[uniffi::export]
+impl Desk {
+    /// Attach a file from the device (a photo, a video): it starts on its way to the computer at once, and goes
+    /// to whoever his next words go to. `name` is what to call it there; its extension says what it is. Returns
+    /// its id straight away; [`DeskView::uploads`] shows how far it has got.
+    pub fn attach(&self, file_path: String, name: String, re: Option<String>, room: Option<String>, agent: Option<String>) -> String {
+        let id = random_hex(12);
+        let dropped = Arc::new(AtomicBool::new(false));
+        let total = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
+        let radio = {
+            let mut state = self.shared.state.lock().unwrap();
+            if state.stations.is_empty() {
+                return id;
+            }
+            // everything attached to one message goes to one computer: the first file's
+            let station = state.uploads.first().map(|u| u.station).unwrap_or_else(|| pick_station(&state, "", re.as_deref(), room.as_deref(), agent.as_deref()));
+            state.uploads.push(Upload { shown: DeskUpload { id: id.clone(), name: name.clone(), sent: 0, total, state: "sending".into() }, station, dropped: dropped.clone(), file_path: file_path.clone(), name: name.clone() });
+            state.stations[station].radio.clone()
+        };
+        self.shared.host.changed();
+        send_file(self.shared.clone(), radio, id.clone(), file_path, name, dropped);
+        id
+    }
+    /// Take an attached file off again before it is sent.
+    pub fn detach(&self, id: String) {
+        let radio = {
+            let mut state = self.shared.state.lock().unwrap();
+            let Some(i) = state.uploads.iter().position(|u| u.shown.id == id) else { return };
+            let gone = state.uploads.remove(i);
+            gone.dropped.store(true, Ordering::SeqCst);
+            state.stations.get(gone.station).map(|s| s.radio.clone())
+        };
+        if let Some(radio) = radio {
+            radio.disarm(id);
+        }
+        self.shared.host.changed();
+    }
+}
