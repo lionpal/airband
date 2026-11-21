@@ -181,8 +181,16 @@ the service does (reading, speaking, listening), through which interface, and wh
 to show where he chooses it: its maker and model, its price and the day that price was read, whether it is one
 of the few shown first, and for a voice a few voices with their makers' sample clips. `airband
 setup`, `airband model`, `airband voice` and `airband ears` are driven by the table, and so are the calls. A
-setting in use is `{"kind": <row id>, "key": …, <what differs from the row>}`. What can read on a tower is
-the tower's to say: `GET reads` lists its own offers and which one reads now, by id.
+setting in use is `{"kind": <row id>, "offer": <offer id>, "key": …, <what differs from the offer>}`. A
+provider can do one job more than one way (two voice models): each is an offer with an id of its own, and
+the key is the provider's, asked for once. How a key is presented to a service on a common interface is in
+the row too (`by.with.auth`: the header and what stands before the key). What can read on a tower is the
+tower's to say: `GET reads` lists its own offers and which one reads now, by provider and offer.
+
+The catalogue in use is one shared value (`catalog::current()`, an `Arc`), replaced when a newer signed
+copy is taken; the tower and the app load and fetch it with the same code (`airband_radio::catalog_load`,
+`catalog_refresh`). A later copy can add an offer to a provider a build knows only when it is reached
+exactly as one of that provider's compiled-in offers is; any other is left out and logged.
 
 The interfaces, and what adding one touches:
 

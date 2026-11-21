@@ -46,7 +46,7 @@ pub fn synth(voice: &Use) -> Made {
         return Err("No voice is set.".into());
     }
     let (_, offer) = voice.offer(Job::Voice).ok_or("This version of airband has no such voice service.")?;
-    let voicing = VOICES.iter().find(|v| v.is.fits(offer)).ok_or("This version of airband cannot speak through that voice service yet. Update airband.")?;
+    let voicing = VOICES.iter().find(|v| v.is.fits(&offer)).ok_or("This version of airband cannot speak through that voice service yet. Update airband.")?;
     (voicing.make)(voice, &offer.by)
 }
 
@@ -68,21 +68,21 @@ mod tests {
             for o in p.offers.iter().filter(|o| o.job == Job::Voice) {
                 assert!(speaks(o), "{}: nothing here speaks \"{}\", or its row does not tell it what it needs", p.id, o.by.interface);
                 // and it can be made ready with nothing but the row's usual settings
-                assert!(synth(&Use::of(&p.id)).is_ok(), "{}", p.id);
+                assert!(synth(&Use::of(&p.id, &o.id)).is_ok(), "{}", p.id);
             }
         }
     }
 
     #[test]
     fn a_voice_this_build_cannot_speak_is_not_offered_and_says_why() {
-        let offer: Offer = serde_json::from_value(serde_json::json!({ "job": "voice", "by": { "interface": "something-new" }, "label": "New" })).unwrap();
+        let offer: Offer = serde_json::from_value(serde_json::json!({ "id": "new", "job": "voice", "by": { "interface": "something-new" }, "label": "New" })).unwrap();
         assert!(!speaks(&offer));
         // an interface it has, asked for something it cannot do yet, or not told what it needs
-        let needs: Offer = serde_json::from_value(serde_json::json!({ "job": "voice", "by": { "interface": "speech" }, "label": "New", "needs": ["word-timings"] })).unwrap();
-        let untold: Offer = serde_json::from_value(serde_json::json!({ "job": "voice", "by": { "interface": "gemini" }, "label": "New" })).unwrap();
+        let needs: Offer = serde_json::from_value(serde_json::json!({ "id": "new", "job": "voice", "by": { "interface": "speech" }, "label": "New", "needs": ["word-timings"] })).unwrap();
+        let untold: Offer = serde_json::from_value(serde_json::json!({ "id": "new", "job": "voice", "by": { "interface": "gemini" }, "label": "New" })).unwrap();
         assert!(!speaks(&needs) && !speaks(&untold));
         // a rate that is not one is said, not replaced with a guess
-        let odd = Use { kind: "local".into(), key: String::new(), set: [("rate".to_string(), serde_json::json!("fast"))].into_iter().collect() };
+        let odd = Use { kind: "local".into(), offer: "voice-server".into(), key: String::new(), set: [("rate".to_string(), serde_json::json!("fast"))].into_iter().collect() };
         assert!(synth(&odd).is_err_and(|why| why.contains("rate")));
     }
 }

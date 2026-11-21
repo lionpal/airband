@@ -91,7 +91,8 @@ pub use airband_core::tools::{Held, Launcher};
 /// The launchers that come with airband: every coding tool's, in the order the tools are listed, each tool's
 /// preferred one first.
 fn built_in() -> impl Iterator<Item = &'static Launcher> {
-    airband_core::catalog::current().tools.iter().flat_map(|t| t.launchers.iter())
+    // always this build's own: a catalogue taken later never brings or changes a program to run
+    airband_core::catalog::built().tools.iter().flat_map(|t| t.launchers.iter())
 }
 /// The settings as read from the file, made whole: his own launchers, and the ones that come with airband.
 fn with_built_in(own: BTreeMap<String, Launcher>) -> BTreeMap<String, Launcher> {
@@ -175,7 +176,7 @@ pub struct PairedRadio {
 
 /// What reads when nothing else was chosen: Claude Code on this computer, as a command.
 fn default_summarizer() -> Summarizer {
-    Use::of("claude")
+    Use::of("claude", "haiku")
 }
 /// airband's own relay. It is open to anyone, sees only sealed messages, and limits how much each may ask.
 pub const RELAY: &str = "https://relay.airband.dev";

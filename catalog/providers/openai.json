@@ -7,11 +7,16 @@
   },
   "offers": [
     {
+      "id": "luna",
       "job": "summary",
       "by": {
         "interface": "chat",
         "with": {
-          "shaped": true
+          "shaped": true,
+          "auth": {
+            "header": "authorization",
+            "prefix": "Bearer "
+          }
         }
       },
       "label": "OpenAI GPT-6 Luna",
@@ -33,9 +38,16 @@
       ]
     },
     {
+      "id": "mini-tts",
       "job": "voice",
       "by": {
-        "interface": "speech"
+        "interface": "speech",
+        "with": {
+          "auth": {
+            "header": "authorization",
+            "prefix": "Bearer "
+          }
+        }
       },
       "label": "OpenAI GPT-4o mini TTS",
       "voices": [
@@ -80,9 +92,16 @@
       ]
     },
     {
+      "id": "transcribe",
       "job": "ears",
       "by": {
-        "interface": "transcribe"
+        "interface": "transcribe",
+        "with": {
+          "auth": {
+            "header": "authorization",
+            "prefix": "Bearer "
+          }
+        }
       },
       "label": "OpenAI GPT Transcribe",
       "preferred": true,

@@ -7,11 +7,16 @@
   },
   "offers": [
     {
+      "id": "gpt-oss",
       "job": "summary",
       "by": {
         "interface": "chat",
         "with": {
-          "cold": true
+          "cold": true,
+          "auth": {
+            "header": "authorization",
+            "prefix": "Bearer "
+          }
         }
       },
       "label": "Groq GPT-OSS 120B",
@@ -32,9 +37,16 @@
       ]
     },
     {
+      "id": "whisper",
       "job": "ears",
       "by": {
-        "interface": "transcribe"
+        "interface": "transcribe",
+        "with": {
+          "auth": {
+            "header": "authorization",
+            "prefix": "Bearer "
+          }
+        }
       },
       "label": "Groq Whisper Large v3 Turbo",
       "price": "About $0.04 per hour of speech",
