@@ -100,8 +100,8 @@ Outbound and inbound are set separately (`airband setup`, or `airband voice …`
 | | Interface | Where | Providers |
 |---|---|---|---|
 | Outbound: text to audio | `Synth` (text in, PCM out a piece at a time), one file for each under `airband-radio/src/voices/` | `tower/speech.rs` makes the calls | Any service that speaks OpenAI's `/audio/speech` (a row); Gemini, Microsoft and ElevenLabs by their own routes |
-| Outbound, made on the phone | a file in `catalog/models/` | `airband-radio/src/models.rs`, run by `mouth.rs` | Phonon (Gradium, open weights, no key) |
-| Inbound, on the phone | a file in `catalog/models/` | `airband-radio/src/models.rs`, run by the host (`transcribe`) | Phonon 2.5 English (Fermion Research, open weights, no key) |
+| Outbound, made on the phone | a file in `catalog/models/` | `airband-radio/src/models.rs`, run by its engine (`engines/ptts.rs`) | Phonon (Gradium, open weights, no key) |
+| Inbound, on the phone | a file in `catalog/models/` | `airband-radio/src/models.rs`, run by the host's engine `phonon-coreml` (`run_model`) | Phonon 2.5 English (Fermion Research, open weights, no key) |
 | Inbound, live as he speaks | a dialect: a file under `airband-radio/src/ears/` and a line of `LISTENERS` | `airband-radio/src/ears.rs` | Microsoft, Google, ElevenLabs |
 | Inbound, a finished recording | `transcribe` (a WAV in, words out), a line of `UPLOADS` | `airband-radio/src/hears.rs` | Any service that speaks OpenAI's `/audio/transcriptions` (a row) |
 
@@ -125,13 +125,16 @@ nothing else listens or speaks in its place. Summaries are written on his comput
 computer's own (`GET reads`), with the one in use named by its id. The app draws one `ChoicePicker(job:)`
 on the first run and in Settings alike.
 
-The phone can also do both jobs itself, with a model on the device (`models.rs`). The program for it is in the
-app and the model is not: he chooses it on the Voice or Listening page and only then is it fetched, once, from
+The phone can also do both jobs itself, with a model on the device (`models.rs`). The program for it (its
+`engine`, named by the model's row) is in the app and the model is not. An engine is either in the core
+(`engines.rs`, one module each) or the host's own, which the host names in `device()` and runs when asked
+through `run_model`; a model is listed only where its engine is and on a system its row allows. What is chosen
+and loaded belongs to the desk (`Senses`), not to the process. The model is fetched late: he chooses it on the Voice or Listening page and only then is it fetched, once, from
 `airband.dev/models/<name>/<version>/`, already in the form the phone runs, each file checked against its
 hash. `scripts/host-model.sh` puts a model there. The voice (Gradium's Phonon, 65 MB) runs in the core and
 stays loaded while it is chosen; the radio asks for `next?voice=own` and the tower sends words and makes no
 speech. The listening model (Fermion Research's Phonon 2.5 English, 345 MB, iOS 18) runs on the Neural Engine
-through the host (`transcribe`): the core records, has the recording so far read again about twice a second
+through the host (`run_model`): the core records, has the recording so far read again about twice a second
 to show his words as he talks, and has all of it read once more when he stops.
 
 A call starts from when he joins: what was said before is in the chat and is not read out. The microphone never
@@ -193,7 +196,7 @@ The interfaces, and what adding one touches:
 | Reading | `on-this-computer`: a model the tower fetches and runs itself | a row naming the model and the program that runs it, compiled in | |
 | Speaking | `speech`: OpenAI's speech endpoint (`POST {url}/audio/speech`, raw PCM) | a row | a file under `airband-radio/src/voices/` and a line of `VOICES`; an app and a tower release |
 | Speaking | `gemini`, `azure`, `elevenlabs`: a route of its own, for what the common one lacks (ElevenLabs' word timings, Microsoft's own route). The row says where it is reached | a row | |
-| Speaking or listening, on the phone | a file in `catalog/models/` | the row and the files under `airband.dev/models/<name>/<version>/` | the code that runs the model; an app release |
+| Speaking or listening, on the phone | a file in `catalog/models/` | the row, with what its engine is told (`with`: rate, language, form, device, the system it needs, what to say while it is made ready), and the files under `airband.dev/models/<name>/<version>/` | a new engine: one module and one row of `HERE` in `airband-radio/src/engines.rs`, or one entry in the host's own table (`RadioModel.engines`), and an app release |
 | Listening, a finished recording | `transcribe`: OpenAI's transcription endpoint (`POST {url}/audio/transcriptions`) | a row | a function and a line of `UPLOADS` in `airband-radio/src/hears.rs` |
 | Listening, live as he speaks | `azure`, `gemini`, `elevenlabs`: no common interface exists, so each is a dialect the phone speaks | a row naming it | a file under `airband-radio/src/ears/` and a line of `LISTENERS`; an app release, because the phone talks to the service itself |
 

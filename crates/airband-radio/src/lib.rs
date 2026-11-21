@@ -31,6 +31,7 @@ mod choices;
 mod desk;
 mod ears;
 mod ears_stream;
+mod engines;
 pub mod hears;
 mod link;
 mod models;
@@ -47,12 +48,21 @@ pub use desk::*;
 pub use ears::try_listening;
 pub use models::{catalog_load, catalog_refresh};
 pub use models::VoiceChoice;
-pub use mouth::{CodingTool, ServiceAsk, VoiceSample, coding_tools, own_voice_sample};
+pub use mouth::{CodingTool, ServiceAsk, VoiceSample, coding_tools};
+pub use engines::HostDevice;
 use link::*;
 use outbox::*;
 use store::*;
 
 uniffi::setup_scaffolding!();
+
+/// What he chose to listen and speak with on this device itself, and the models loaded for it. A desk has
+/// one, and every radio of the desk's uses it; nothing of it is kept in the process at large.
+#[derive(Default)]
+pub(crate) struct Senses {
+    pub(crate) mouth: mouth::Mouth,
+    pub(crate) ears: ears::Chosen,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum RadioStatus {
@@ -101,10 +111,13 @@ pub trait RadioHost: Send + Sync {
     /// `text`, as more of a long clip's timings arrive. For showing the words as they are spoken; a clip with no
     /// timings is not announced at all.
     fn words(&self, text: String, starts: Vec<u32>, at_ms: Vec<u32>);
-    /// Turn a recording into words with a model the host runs on the device. `folder` is where the model's
-    /// files are; `pcm` is 16-bit little-endian mono at 16 kHz. Nothing when the host cannot: it has no way
-    /// to run such a model, or the model would not load. Blocks while it works.
-    fn transcribe(&self, folder: String, pcm: Vec<u8>) -> Option<String>;
+    /// Run a model with an engine the host has. `engine` is the name the model's row gives, `folder` is where
+    /// the model's files are. For listening `input` is a recording (16-bit little-endian mono PCM at 16 kHz)
+    /// and the answer is the words, as UTF-8. For a voice it is the words, as UTF-8, then a line feed and the
+    /// name of the voice, and the answer is the sound (16-bit little-endian mono PCM at the rate the row
+    /// gives). Nothing when the host cannot: it has no such engine, or the model would not load. Blocks while
+    /// it works.
+    fn run_model(&self, engine: String, folder: String, job: ChoiceJob, input: Vec<u8>) -> Option<Vec<u8>>;
     /// Are this host's own `speak` and `listen` worth using? A terminal's are (it prints, and a typed line is
     /// what he "said"). A phone's are not: its own recognition and voice are too poor to hand him, so with no
     /// listening service there is no listening, and with no audio from the tower nothing is spoken.
@@ -423,6 +436,8 @@ pub struct Radio {
     store: Arc<Store>,
     host: Arc<dyn RadioHost>,
     wake: Arc<Wake>,
+    /// What he chose to listen and speak with on this device.
+    senses: Arc<Senses>,
     /// The roster as last seen, by the tower's number for it: sent back so a wait also ends when it changes.
     roster: std::sync::atomic::AtomicU64,
     /// Goes up each time a reading aloud is started or stopped: one that finds it changed leaves off.
@@ -439,30 +454,8 @@ impl Radio {
     /// unsent messages and the recent chat are kept across restarts; empty keeps nothing.
     #[uniffi::constructor]
     pub fn start(link: String, data_dir: String, host: Arc<dyn RadioHost>) -> Result<Arc<Self>, RadioError> {
-        let store = Arc::new(Store::open(&data_dir));
-        let me = store.saved.lock().unwrap().radio.clone();
-        let me = if me.is_empty() { store.change(|s| { s.radio = format!("radio-{}", random_hex(4)); s.radio.clone() }) } else { me };
-        let link = Pairing::parse(&link).and_then(|p| Link::new(p, &me)).map_err(|reason| RadioError::BadLink { reason })?;
-        let (tx, rx) = channel();
-        let stop = Arc::new(AtomicBool::new(false));
-        let link = Arc::new(link);
-        let busy = Arc::new(AtomicBool::new(false));
-        let calling = Arc::new(AtomicBool::new(false));
-        let wake = Arc::new(Wake::default());
-        {
-            let (link, host, stop, busy, calling) = (link.clone(), host.clone(), stop.clone(), busy.clone(), calling.clone());
-            thread::spawn(move || work(rx, link, host, stop, busy, calling));
-        }
-        {
-            let (tx, stop, link, calling, host, wake) = (tx.clone(), stop.clone(), link.clone(), calling.clone(), host.clone(), wake.clone());
-            thread::spawn(move || poll(tx, link, host, stop, busy, calling, wake));
-        }
-        store.prune_pictures();
-        {
-            let (link, store, host, stop, wake) = (link.clone(), store.clone(), host.clone(), stop.clone(), wake.clone());
-            thread::spawn(move || deliver_outbox(link, store, host, stop, wake));
-        }
-        Ok(Arc::new(Radio { jobs: Mutex::new(tx), stop, calling, link, store, host, wake, roster: std::sync::atomic::AtomicU64::new(0), reading: std::sync::atomic::AtomicU64::new(0), away: AtomicBool::new(false) }))
+        // on its own, with nothing chosen on the device: his computer listens and speaks
+        Self::start_with(link, data_dir, host, Arc::default())
     }
 
     /// Chat, for a bad connection: take what he typed and keep trying until the tower has it. Returns at
@@ -479,6 +472,34 @@ impl Radio {
 }
 
 impl Radio {
+    /// As [`Radio::start`], listening and speaking with what he chose on this device.
+    pub(crate) fn start_with(link: String, data_dir: String, host: Arc<dyn RadioHost>, senses: Arc<Senses>) -> Result<Arc<Self>, RadioError> {
+        let store = Arc::new(Store::open(&data_dir));
+        let me = store.saved.lock().unwrap().radio.clone();
+        let me = if me.is_empty() { store.change(|s| { s.radio = format!("radio-{}", random_hex(4)); s.radio.clone() }) } else { me };
+        let link = Pairing::parse(&link).and_then(|p| Link::new(p, &me)).map_err(|reason| RadioError::BadLink { reason })?;
+        let (tx, rx) = channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        let link = Arc::new(link);
+        let busy = Arc::new(AtomicBool::new(false));
+        let calling = Arc::new(AtomicBool::new(false));
+        let wake = Arc::new(Wake::default());
+        {
+            let (link, host, stop, busy, calling, senses) = (link.clone(), host.clone(), stop.clone(), busy.clone(), calling.clone(), senses.clone());
+            thread::spawn(move || work(rx, link, host, stop, busy, calling, senses));
+        }
+        {
+            let (tx, stop, link, calling, host, wake, senses) = (tx.clone(), stop.clone(), link.clone(), calling.clone(), host.clone(), wake.clone(), senses.clone());
+            thread::spawn(move || poll(tx, link, host, stop, busy, calling, wake, senses));
+        }
+        store.prune_pictures();
+        {
+            let (link, store, host, stop, wake) = (link.clone(), store.clone(), host.clone(), stop.clone(), wake.clone());
+            thread::spawn(move || deliver_outbox(link, store, host, stop, wake));
+        }
+        Ok(Arc::new(Radio { jobs: Mutex::new(tx), stop, calling, link, store, host, wake, senses, roster: std::sync::atomic::AtomicU64::new(0), reading: std::sync::atomic::AtomicU64::new(0), away: AtomicBool::new(false) }))
+    }
+
     /// A request whose answer is nothing or a reason in words.
     fn ask(&self, path: &str, body: Value) -> Result<(), RadioError> {
         let (status, v) = self.link.request("POST", path, Some(body))?;
@@ -508,10 +529,10 @@ impl Radio {
         let mine = self.reading.fetch_add(1, Ordering::SeqCst) + 1;
         // With a voice of the device's own, the tower is asked for the words and they are said here. When that
         // voice cannot speak he is told why, and nothing else reads it in its place.
-        if mouth::ready() {
+        if self.senses.mouth.ready() {
             let Ok((200, v)) = self.link.request("GET", &format!("/message/{id}?form=spoken{part}"), None) else { return false };
             let Some(text) = v["text"].as_str() else { return false };
-            return match mouth::say(&*self.host, text, &|| self.reading.load(Ordering::SeqCst) != mine) {
+            return match self.senses.mouth.say(&*self.host, text, &|| self.reading.load(Ordering::SeqCst) != mine) {
                 Ok(()) => true,
                 Err(why) => {
                     self.host.told(why);

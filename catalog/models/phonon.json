@@ -61,5 +61,5 @@
     ]
   ],
   "credit": "Phonon by Gradium, Apache 2.0.",
-  "with": {"rate": 24000, "lang": "en", "quant": "q80"}
+  "with": {"rate": 24000, "lang": "en", "quant": "q80", "device": "cpu"}
 }
