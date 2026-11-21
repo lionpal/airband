@@ -19,6 +19,8 @@ ul { margin: 0; padding-left: 20px; }
 code { font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--card); border-radius: 5px; padding: 1px 5px; color: var(--ink); }
 .lead { font-size: 19px; color: var(--soft); }
 .fig { margin: 18px 0 8px; border: 1px solid var(--line); border-radius: 16px; background: #0E0F10; overflow-x: auto; }
+figure.fig { padding: 8px 8px 0; }
+figure.fig .cap { padding: 6px 12px 14px; margin: 0; }
 .fig svg { display: block; width: 100%; min-width: 640px; height: auto; }
 .cap { font-size: 14px; color: var(--quiet); margin: 0 0 12px; }
 .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 14px 0; }
@@ -80,57 +82,57 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 48px 0 0; }
     </div>
   </div>
 
-  <div class="fig">
-  <svg viewBox="0 0 700 330" role="img" aria-label="With the relay. On your computer, Claude Code, Codex and OpenCode report to airband. airband reaches your phone two ways: straight, when the phone is on your network, and through the relay, encrypted, when it is away. The relay also hands notifications to Apple.">
-    <text x="20" y="26" fill="#3DDB96" font-size="13" font-weight="600" letter-spacing="0.5">WITH THE RELAY</text>
-    <rect x="20" y="44" width="330" height="262" rx="16" fill="none" stroke="#26292A"/>
-    <text x="36" y="68" fill="#8E8E93" font-size="13">Your computer</text>
-    <g font-size="14" fill="#F4F4F0">
-      <rect x="36" y="86" width="118" height="36" rx="9" fill="#141716" stroke="#26292A"/><text x="95" y="109" text-anchor="middle">Claude Code</text>
-      <rect x="36" y="134" width="118" height="36" rx="9" fill="#141716" stroke="#26292A"/><text x="95" y="157" text-anchor="middle">Codex</text>
-      <rect x="36" y="182" width="118" height="36" rx="9" fill="#141716" stroke="#26292A"/><text x="95" y="205" text-anchor="middle">OpenCode</text>
-      <rect x="206" y="112" width="128" height="80" rx="12" fill="#141716" stroke="#F4F4F0"/><text x="270" y="148" text-anchor="middle" font-weight="600">airband</text><text x="270" y="168" text-anchor="middle" font-size="12" fill="#8E8E93">chat, summaries</text>
-    </g>
-    <g stroke="#8E8E93" stroke-width="1.5" fill="none"><path d="M154 104 L206 136"/><path d="M154 152 L206 152"/><path d="M154 200 L206 168"/></g>
-    <rect x="206" y="236" width="128" height="50" rx="9" fill="#141716" stroke="#26292A"/><text x="270" y="258" text-anchor="middle" font-size="13" fill="#F4F4F0">Summary model</text><text x="270" y="275" text-anchor="middle" font-size="11.5" fill="#8E8E93">the one you chose</text>
-    <path d="M270 192 L270 236" stroke="#8E8E93" stroke-width="1.5"/>
-    <rect x="400" y="44" width="150" height="62" rx="12" fill="#141716" stroke="#3DDB96"/><text x="475" y="70" text-anchor="middle" font-size="14" font-weight="600" fill="#F4F4F0">Relay</text><text x="475" y="89" text-anchor="middle" font-size="11.5" fill="#8E8E93">cannot read what it carries</text>
-    <rect x="590" y="44" width="92" height="38" rx="9" fill="#141716" stroke="#26292A"/><text x="636" y="68" text-anchor="middle" font-size="13" fill="#F4F4F0">Apple</text>
-    <rect x="560" y="124" width="122" height="162" rx="16" fill="#141716" stroke="#F4F4F0"/><text x="621" y="150" text-anchor="middle" font-size="14" font-weight="600" fill="#F4F4F0">Your phone</text>
-    <g font-size="12.5" fill="#C9C9C5" text-anchor="middle"><text x="621" y="182">chat</text><text x="621" y="206">listening</text><text x="621" y="230">speaking</text><text x="621" y="262" fill="#8E8E93" font-size="11.5">on-phone models, or</text><text x="621" y="277" fill="#8E8E93" font-size="11.5">a service you chose</text></g>
-    <path d="M334 132 C 380 132, 380 76, 400 76" stroke="#3DDB96" stroke-width="2" fill="none"/>
-    <path d="M520 106 C 520 140, 540 150, 560 150" stroke="#3DDB96" stroke-width="2" fill="none"/>
-    <text x="334" y="92" font-size="11.5" fill="#3DDB96">encrypted</text>
-    <path d="M550 64 L590 64" stroke="#8E8E93" stroke-width="1.5" stroke-dasharray="4 4"/><path d="M636 82 L636 124" stroke="#8E8E93" stroke-width="1.5" stroke-dasharray="4 4"/>
-    <text x="628" y="107" font-size="11.5" fill="#8E8E93" text-anchor="end">notification</text>
-    <path d="M334 172 L560 210" stroke="#F4F4F0" stroke-width="2" fill="none"/>
-    <text x="446" y="182" font-size="11.5" fill="#F4F4F0" text-anchor="middle" transform="rotate(9.5 446 182)">straight, when on your network</text>
+  <figure class="fig">
+  <svg viewBox="0 0 760 320" role="img" aria-label="With the relay. Claude Code, Codex and OpenCode report to airband on your computer. Two paths join airband and your phone. The top one is straight, used when the phone is on your network. The bottom one goes through the relay, encrypted, used when the phone is away. The relay also asks Apple to deliver notifications to the phone.">
+    <defs><marker id="rh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8E8E93"/></marker><marker id="rw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#F4F4F0"/></marker><marker id="rg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#3DDB96"/></marker></defs>
+    <rect x="20" y="20" width="304" height="224" rx="18" fill="none" stroke="#2E3233"/>
+    <text x="40" y="50" font-size="13" fill="#8E8E93">Your computer</text>
+    <rect x="40" y="72" width="120" height="40" rx="10" fill="#141716" stroke="#2E3233"/><text x="100" y="97" text-anchor="middle" font-size="14" fill="#F4F4F0">Claude Code</text><path d="M160 92 H198" stroke="#8E8E93" stroke-width="1.5" marker-end="url(#rh)"/><rect x="40" y="128" width="120" height="40" rx="10" fill="#141716" stroke="#2E3233"/><text x="100" y="153" text-anchor="middle" font-size="14" fill="#F4F4F0">Codex</text><path d="M160 148 H198" stroke="#8E8E93" stroke-width="1.5" marker-end="url(#rh)"/><rect x="40" y="184" width="120" height="40" rx="10" fill="#141716" stroke="#2E3233"/><text x="100" y="209" text-anchor="middle" font-size="14" fill="#F4F4F0">OpenCode</text><path d="M160 204 H198" stroke="#8E8E93" stroke-width="1.5" marker-end="url(#rh)"/>
+    <rect x="200" y="72" width="104" height="152" rx="12" fill="#141716" stroke="#F4F4F0" stroke-width="1.5"/>
+    <text x="252" y="144" text-anchor="middle" font-size="15" font-weight="600" fill="#F4F4F0">airband</text>
+    <text x="252" y="164" text-anchor="middle" font-size="12" fill="#8E8E93">chat, summaries</text>
+    <rect x="616" y="72" width="124" height="152" rx="18" fill="#141716" stroke="#F4F4F0" stroke-width="1.5"/>
+    <text x="678" y="134" text-anchor="middle" font-size="15" font-weight="600" fill="#F4F4F0">Your phone</text>
+    <text x="678" y="156" text-anchor="middle" font-size="12" fill="#8E8E93">chat, listening,</text>
+    <text x="678" y="172" text-anchor="middle" font-size="12" fill="#8E8E93">speaking</text>
+    <path d="M308 104 H612" stroke="#F4F4F0" stroke-width="2" marker-start="url(#rw)" marker-end="url(#rw)"/>
+    <text x="460" y="94" text-anchor="middle" font-size="13" fill="#F4F4F0">on your network: straight</text>
+    <path d="M308 192 H396" stroke="#3DDB96" stroke-width="2" marker-start="url(#rg)" marker-end="url(#rg)"/>
+    <path d="M524 192 H612" stroke="#3DDB96" stroke-width="2" marker-start="url(#rg)" marker-end="url(#rg)"/>
+    <rect x="400" y="164" width="120" height="56" rx="12" fill="#141716" stroke="#3DDB96" stroke-width="1.5"/>
+    <text x="460" y="188" text-anchor="middle" font-size="14" font-weight="600" fill="#F4F4F0">Relay</text>
+    <text x="460" y="206" text-anchor="middle" font-size="12" fill="#8E8E93">cannot read it</text>
+    <text x="460" y="150" text-anchor="middle" font-size="13" fill="#3DDB96">away: through the relay, encrypted</text>
+    <path d="M460 220 V264" stroke="#8E8E93" stroke-width="1.5" stroke-dasharray="5 5" marker-end="url(#rh)"/>
+    <rect x="400" y="268" width="120" height="36" rx="10" fill="#141716" stroke="#2E3233"/>
+    <text x="460" y="291" text-anchor="middle" font-size="13" fill="#F4F4F0">Apple</text>
+    <path d="M520 286 H678 V228" fill="none" stroke="#8E8E93" stroke-width="1.5" stroke-dasharray="5 5" marker-end="url(#rh)"/>
+    <text x="600" y="278" text-anchor="middle" font-size="12" fill="#8E8E93">notification</text>
   </svg>
-  </div>
+  <figcaption class="cap"><b style="color:#3DDB96">With the relay.</b> Two paths. The phone uses the straight one whenever your computer is on the same network, and the relay otherwise.</figcaption>
+  </figure>
 
-  <div class="fig">
-  <svg viewBox="0 0 700 330" role="img" aria-label="Without the relay. The same computer and phone, with one path between them: straight, on the same network or over Tailscale. There is no relay and nothing goes to Apple.">
-    <text x="20" y="26" fill="#F4F4F0" font-size="13" font-weight="600" letter-spacing="0.5">WITHOUT THE RELAY</text>
-    <rect x="20" y="44" width="330" height="262" rx="16" fill="none" stroke="#26292A"/>
-    <text x="36" y="68" fill="#8E8E93" font-size="13">Your computer</text>
-    <g font-size="14" fill="#F4F4F0">
-      <rect x="36" y="86" width="118" height="36" rx="9" fill="#141716" stroke="#26292A"/><text x="95" y="109" text-anchor="middle">Claude Code</text>
-      <rect x="36" y="134" width="118" height="36" rx="9" fill="#141716" stroke="#26292A"/><text x="95" y="157" text-anchor="middle">Codex</text>
-      <rect x="36" y="182" width="118" height="36" rx="9" fill="#141716" stroke="#26292A"/><text x="95" y="205" text-anchor="middle">OpenCode</text>
-      <rect x="206" y="112" width="128" height="80" rx="12" fill="#141716" stroke="#F4F4F0"/><text x="270" y="148" text-anchor="middle" font-weight="600">airband</text><text x="270" y="168" text-anchor="middle" font-size="12" fill="#8E8E93">chat, summaries</text>
-    </g>
-    <g stroke="#8E8E93" stroke-width="1.5" fill="none"><path d="M154 104 L206 136"/><path d="M154 152 L206 152"/><path d="M154 200 L206 168"/></g>
-    <rect x="206" y="236" width="128" height="50" rx="9" fill="#141716" stroke="#26292A"/><text x="270" y="258" text-anchor="middle" font-size="13" fill="#F4F4F0">Summary model</text><text x="270" y="275" text-anchor="middle" font-size="11.5" fill="#8E8E93">the one you chose</text>
-    <path d="M270 192 L270 236" stroke="#8E8E93" stroke-width="1.5"/>
-    <rect x="400" y="44" width="150" height="62" rx="12" fill="none" stroke="#26292A" stroke-dasharray="5 5"/><text x="475" y="80" text-anchor="middle" font-size="13" fill="#5A5D60">no relay</text>
-    <rect x="560" y="124" width="122" height="162" rx="16" fill="#141716" stroke="#F4F4F0"/><text x="621" y="150" text-anchor="middle" font-size="14" font-weight="600" fill="#F4F4F0">Your phone</text>
-    <g font-size="12.5" fill="#C9C9C5" text-anchor="middle"><text x="621" y="182">chat</text><text x="621" y="206">listening</text><text x="621" y="230">speaking</text><text x="621" y="262" fill="#8E8E93" font-size="11.5">on-phone models, or</text><text x="621" y="277" fill="#8E8E93" font-size="11.5">a service you chose</text></g>
-    <path d="M334 172 L560 210" stroke="#F4F4F0" stroke-width="2" fill="none"/>
-    <text x="446" y="182" font-size="11.5" fill="#F4F4F0" text-anchor="middle" transform="rotate(9.5 446 182)">straight: same Wi-Fi, or Tailscale</text>
-    <text x="446" y="228" font-size="11.5" fill="#8E8E93" text-anchor="middle" transform="rotate(9.5 446 228)">still encrypted with the pairing's key</text>
+  <figure class="fig">
+  <svg viewBox="0 0 760 264" role="img" aria-label="Without the relay. The same computer and phone with one path between them, straight, on the same Wi-Fi or over Tailscale. There is no relay and no path to Apple.">
+    <defs><marker id="nh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8E8E93"/></marker><marker id="nw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#F4F4F0"/></marker><marker id="ng" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#3DDB96"/></marker></defs>
+    <rect x="20" y="20" width="304" height="224" rx="18" fill="none" stroke="#2E3233"/>
+    <text x="40" y="50" font-size="13" fill="#8E8E93">Your computer</text>
+    <rect x="40" y="72" width="120" height="40" rx="10" fill="#141716" stroke="#2E3233"/><text x="100" y="97" text-anchor="middle" font-size="14" fill="#F4F4F0">Claude Code</text><path d="M160 92 H198" stroke="#8E8E93" stroke-width="1.5" marker-end="url(#nh)"/><rect x="40" y="128" width="120" height="40" rx="10" fill="#141716" stroke="#2E3233"/><text x="100" y="153" text-anchor="middle" font-size="14" fill="#F4F4F0">Codex</text><path d="M160 148 H198" stroke="#8E8E93" stroke-width="1.5" marker-end="url(#nh)"/><rect x="40" y="184" width="120" height="40" rx="10" fill="#141716" stroke="#2E3233"/><text x="100" y="209" text-anchor="middle" font-size="14" fill="#F4F4F0">OpenCode</text><path d="M160 204 H198" stroke="#8E8E93" stroke-width="1.5" marker-end="url(#nh)"/>
+    <rect x="200" y="72" width="104" height="152" rx="12" fill="#141716" stroke="#F4F4F0" stroke-width="1.5"/>
+    <text x="252" y="144" text-anchor="middle" font-size="15" font-weight="600" fill="#F4F4F0">airband</text>
+    <text x="252" y="164" text-anchor="middle" font-size="12" fill="#8E8E93">chat, summaries</text>
+    <rect x="616" y="72" width="124" height="152" rx="18" fill="#141716" stroke="#F4F4F0" stroke-width="1.5"/>
+    <text x="678" y="134" text-anchor="middle" font-size="15" font-weight="600" fill="#F4F4F0">Your phone</text>
+    <text x="678" y="156" text-anchor="middle" font-size="12" fill="#8E8E93">chat, listening,</text>
+    <text x="678" y="172" text-anchor="middle" font-size="12" fill="#8E8E93">speaking</text>
+    <path d="M308 104 H612" stroke="#F4F4F0" stroke-width="2" marker-start="url(#nw)" marker-end="url(#nw)"/>
+    <text x="460" y="94" text-anchor="middle" font-size="13" fill="#F4F4F0">same Wi-Fi or Tailscale: straight</text>
+    <rect x="400" y="164" width="120" height="56" rx="12" fill="none" stroke="#2E3233" stroke-dasharray="5 5"/>
+    <text x="460" y="197" text-anchor="middle" font-size="13" fill="#5F6366">no relay</text>
   </svg>
-  </div>
-  <p class="cap">In both, the summary model and your coding agents talk to their own providers from your computer, and a listening or voice service you chose is called from your phone. None of that passes through airband's servers.</p>
+  <figcaption class="cap"><b style="color:#F4F4F0">Without the relay.</b> One path. Nothing passes through our servers, and there are no notifications.</figcaption>
+  </figure>
+  <p class="cap">Both paths are encrypted with a key only your phone and computer hold. In both, the summary model and your coding agents talk to their own providers from your computer, and a listening or voice service you chose is called from your phone. None of that passes through airband's servers.</p>
 
   <h2>One question, start to finish</h2>
   <p>An agent stops and asks you something. Here is every step until your answer is back in its session.</p>
