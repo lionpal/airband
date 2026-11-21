@@ -70,9 +70,17 @@ pub fn watch() {
         let Some(list) = get("/api/session?limit=40") else { continue };
         let Some(sessions) = list["data"].as_array() else { continue };
         let now = sessions.iter().filter_map(|s| s["time"]["updated"].as_u64()).max().unwrap_or(0);
+        // sessions the tower started itself are reported by the program that runs them (`airband acp`)
+        #[cfg(unix)]
+        let ours = crate::acp::owned();
+        #[cfg(not(unix))]
+        let ours: Vec<String> = Vec::new();
         let send = |id: &str, cwd: Option<&str>, event: Event| super::post(&AgentEvent { schema: SCHEMA.into(), agent: agent(id, cwd), event });
         for s in sessions {
             let (Some(id), time) = (s["id"].as_str(), &s["time"]) else { continue };
+            if ours.iter().any(|o| o == id) {
+                continue;
+            }
             let (busy, idle, updated) = (time["busy"].as_u64().unwrap_or(0), time["idle"].as_u64().unwrap_or(0), time["updated"].as_u64().unwrap_or(0));
             let cwd = s["location"]["directory"].as_str();
             match seen.get(id).copied() {

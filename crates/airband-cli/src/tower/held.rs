@@ -63,14 +63,15 @@ async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<(), String> {
     let launcher = app.cfg.launchers.get(&kept.launcher).ok_or_else(|| format!("no launcher called {} is configured", kept.launcher))?;
     let held = launcher.held.as_ref().ok_or_else(|| format!("the launcher {} does not hold its agents", kept.launcher))?;
     let session: Vec<String> = if fresh { &held.fresh } else { &held.resume }.iter().map(|a| a.replace("{id}", &kept.id)).collect();
-    let argv: Vec<String> = launcher.argv.iter().flat_map(|a| if a == "{options}" { kept.options.clone() } else { vec![a.replace("{cwd}", &kept.cwd).replace("{id}", &kept.id)] }).chain(session).collect();
+    let me = std::env::current_exe().map_err(|e| e.to_string())?;
+    // `{airband}` is this program, wherever it is installed
+    let argv: Vec<String> = launcher.argv.iter().flat_map(|a| if a == "{options}" { kept.options.clone() } else { vec![a.replace("{cwd}", &kept.cwd).replace("{id}", &kept.id).replace("{airband}", &me.display().to_string())] }).chain(session).collect();
     let sock = socket(&kept.id);
     if let Some(dir) = sock.parent() {
         use std::os::unix::fs::PermissionsExt;
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
     }
-    let me = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut holder = std::process::Command::new(me);
     holder
         .arg("hold")
@@ -137,7 +138,7 @@ pub(super) async fn flush(app: &Arc<App>, id: &str) {
         let Some(s) = inner.session(id).filter(|s| s.waiting && !s.queue.is_empty()) else { return };
         s.waiting = false;
         let waiting = std::mem::take(&mut s.queue);
-        inner.drop_pending(id, None);
+        inner.no_longer_waiting(id);
         waiting
     };
     let words = waiting.iter().map(|(_, text)| text.as_str()).collect::<Vec<_>>().join("\n\n");

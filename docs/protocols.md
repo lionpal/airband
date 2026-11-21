@@ -276,22 +276,20 @@ with the hash it holds, in constant time.
 | Who | Routes | Token |
 |---|---|---|
 | The tower | `PUT /v1/channels/<channel>` (open), `GET …/pull` (held 25 s), `POST …/reply/<id>`, `POST …/push`, `DELETE` (close; `airband unpair` sends it) | The pull token. Opening a channel the relay does not know also takes the relay's admission key (`x-airband-admission`), if it has one. 403 with another channel's token. |
-| The radio | `POST …/call`, `POST …/queue`, `GET …/ears` | The radio token. 401 without it, with a wrong one, or on a channel that does not exist: the same answer for all three. |
-| A tower with the admission key | `POST /v1/speech/pass` | `x-airband-admission`. |
+| The radio | `POST …/call`, `POST …/queue` | The radio token. 401 without it, with a wrong one, or on a channel that does not exist: the same answer for all three. |
 
 The tower gives the relay the radio token's hash in `x-airband-radio-hash` when it opens the channel and with
 every pull.
 
 For phones from before radios sent their token, a channel starts unproven: `call` and `queue` are taken without
 a token (never with a wrong one). The first that carries the right token proves the channel for good, and from
-then on both are refused without it. `ears` always needs the token.
+then on both are refused without it.
 
-`GET …/ears` and `POST /v1/speech/pass` answer `{ kind, token, set }` (`set` holds the region and language): a ten-minute pass to the
-relay's own speech service, for a radio whose computer cannot be reached and for a tower with no speech service
-of its own. 404 from a relay with no speech service or no admission key.
+The relay has no speech service and lends none: what speaks and what listens is a model on the phone, a key
+of his own on the phone, or a service set on his computer.
 
-Limits, each answered with 429. Per channel in a minute: 3000 calls, 60 messages left in `queue`, 30 passes from
-`ears`; from one internet address, twice that across all channels. At most 16 calls wait for an answer on a
+Limits, each answered with 429. Per channel in a minute: 3000 calls and 60 messages left in `queue`;
+from one internet address, twice that across all channels. At most 16 calls wait for an answer on a
 channel at once. No message is larger than 256 KB.
 
 ### Notifications

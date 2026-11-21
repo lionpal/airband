@@ -21,6 +21,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// A callsign: show just that agent.
     @Published var only: String? { didSet { refresh() } }
     @Published var full: [String: String] = [:] // message id → exactly what the agent wrote
+    /// He reads everything each agent wrote, not the short form, unless he closes one.
+    @Published var showWhole = UserDefaults.standard.bool(forKey: "airband.show.whole") { didSet { UserDefaults.standard.set(showWhole, forKey: "airband.show.whole") } }
     @Published var pictureFiles: [String: String] = [:] // picture id → the file it was fetched into
     @Published var replyingTo: ChatMessage?
     /// Something he must be told. It goes by itself after a few seconds; a tap takes it away sooner.
@@ -170,7 +172,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
         // a room that has gone (its last agent left) is not somewhere he can stay
         if let room, view.online, !view.rooms.contains(where: { $0.name == room }) { self.room = nil }
-        if full.count > 60 { full.removeAll() } // opened long ago: fetched again if he looks again
+        if full.count > (showWhole ? 400 : 60) { full.removeAll() } // opened long ago: fetched again if he looks again
         sendPendingReads()
         syncBanners()
     }

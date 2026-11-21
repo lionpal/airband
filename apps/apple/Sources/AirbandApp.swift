@@ -843,8 +843,12 @@ private struct Speaker: View {
 struct Report: View {
     @EnvironmentObject var model: RadioModel
     let m: ChatMessage
+    /// He turned this one the other way from his usual: opened it when he reads the short form, or closed it
+    /// when he reads everything.
     @State private var expanded = false
     private var picked: Bool { model.replyingTo?.id == m.id }
+    /// Showing everything it wrote, and not the short form.
+    private var whole: Bool { expanded != model.showWhole }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -856,21 +860,24 @@ struct Report: View {
             // finger. Seeing all of what it wrote is the small button beside it.
             HStack(alignment: .bottom, spacing: 6) {
                 Button { model.replyingTo = picked ? nil : m } label: {
-                    Prose(text: expanded ? (model.full[m.id] ?? m.text) : m.text)
+                    Prose(text: whole ? (model.full[m.id] ?? m.text) : m.text)
                 }
                 .buttonStyle(.plain)
                 .accessibilityHint(picked ? "Stop answering this one" : "Answer this agent: what you say or type next goes to it")
                 if m.long {
                     Button {
                         expanded.toggle()
-                        if expanded { model.loadFull(m) }
+                        if whole { model.loadFull(m) }
                     } label: {
-                        Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.system(size: 11, weight: .bold)).foregroundStyle(Palette.quiet)
+                        Image(systemName: whole ? "chevron.up" : "chevron.down").font(.system(size: 11, weight: .bold)).foregroundStyle(Palette.quiet)
                             .frame(width: 30, height: 30).background(Palette.field, in: Circle())
                     }
-                    .buttonStyle(.plain).accessibilityLabel(expanded ? "Show the short version" : "Show everything it wrote")
+                    .buttonStyle(.plain).accessibilityLabel(whole ? "Show the short version" : "Show everything it wrote")
                 }
             }
+            // when he reads everything by default, the whole of it is fetched as the line comes on screen
+            .onAppear { if whole { model.loadFull(m) } }
+            .onChange(of: model.showWhole) { _, _ in if whole { model.loadFull(m) } }
             if !m.pictures.isEmpty { PictureStrip(m: m, height: 150).padding(.top, 3) }
             if !m.links.isEmpty { LinkRow(m: m).padding(.top, 3) }
         }
@@ -1548,6 +1555,11 @@ struct SetupView: View {
                     NavigationLink { ChoicePage(title: "Summaries", headline: Headline.reads) { ReadsPicker(mode: .settings) }.environmentObject(model) } label: { row("Summaries", model.pendingReads != nil ? "Waiting for your computer" : model.view.reads) }
                     NavigationLink { ChoicePage(title: "Listening", headline: Headline.ears) { EarsPicker(mode: .settings) }.environmentObject(model) } label: { row("Listening", listensWith) }
                     NavigationLink { ChoicePage(title: "Voice", headline: Headline.voice) { VoicePicker(mode: .settings) }.environmentObject(model) } label: { row("Voice", speaksWith) }
+                }
+                Section {
+                    Toggle("Show whole messages", isOn: $model.showWhole)
+                } footer: {
+                    Text("Off, you see the short version of what each agent wrote and can open any one. On, you see all of it. What is read aloud is the short version either way.")
                 }
                 if !model.view.stations.filter({ !$0.isEmpty }).isEmpty {
                     Section("Computers") {

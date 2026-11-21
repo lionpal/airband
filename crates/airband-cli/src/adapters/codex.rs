@@ -26,9 +26,9 @@ fn agent_of(hook: &Value) -> Option<Agent> {
         meta.insert("model".into(), Value::String(model));
     }
     Some(Agent {
-        // What he says is queued for the session by Codex's own command, which the session takes as his turn.
-        // The words go to that command on its standard input and are handed on whole, as one argument.
-        deliver: if env("AIRBAND_HELD").is_some() { Some(Deliver::Held) } else { Some(Deliver::Command { argv: ["sh", "-c", "exec codex queue --thread \"$1\" --resume --message \"$(cat)\"", "sh", &id].iter().map(|s| s.to_string()).collect() }) },
+        // What he says is handed to this program (`airband deliver codex <session>`), which queues it for the
+        // session with Codex's own command. The session takes it as a turn of his.
+        deliver: if env("AIRBAND_HELD").is_some() { Some(Deliver::Held) } else { Some(Deliver::Command { argv: vec![std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "airband".into()), "deliver".into(), NAME.into(), id.clone()] }) },
         id,
         harness: NAME.into(),
         cwd: text("cwd"),
@@ -93,6 +93,14 @@ pub fn permission_answer(_ask: &PermissionAsk, allow: bool, reason: &str) -> Str
         json!({ "behavior": "deny", "message": if reason.is_empty() { "He said no from his phone.".to_string() } else { format!("He said no from his phone: {reason}") } })
     };
     json!({ "hookSpecificOutput": { "hookEventName": "PermissionRequest", "decision": decision } }).to_string()
+}
+
+/// `airband deliver codex <session>`: his words, on standard input, into that session as a turn of his own.
+pub fn deliver(session: &str) -> Result<(), String> {
+    let mut words = String::new();
+    std::io::Read::read_to_string(&mut std::io::stdin(), &mut words).map_err(|e| e.to_string())?;
+    let done = std::process::Command::new("codex").args(["queue", "--thread", session, "--resume", "--message", words.trim()]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped()).output().map_err(|e| format!("Codex could not be started: {e}"))?;
+    if done.status.success() { Ok(()) } else { Err(format!("Codex did not take it: {}", String::from_utf8_lossy(&done.stderr).trim().chars().take(200).collect::<String>())) }
 }
 
 // ---- setting Codex up to report: its hooks, in its own hooks file ----
@@ -183,7 +191,7 @@ mod tests {
         assert_eq!(glance(&e.agent).model.as_deref(), Some("gpt-6-luna"));
         // his words go to Codex's own queue for that session, whole, as one argument
         match e.agent.deliver {
-            Some(Deliver::Command { argv }) => assert!(argv[2].contains("codex queue --thread \"$1\"") && argv.last().map(String::as_str) == Some("t1")),
+            Some(Deliver::Command { argv }) => assert_eq!(&argv[1..], ["deliver", "codex", "t1"]),
             other => panic!("{other:?}"),
         }
         assert_eq!(events(&json!({ "session_id": "t1", "hook_event_name": "SessionEnd" }))[0].event, Event::Signoff);

@@ -228,12 +228,12 @@ pub fn lan(mut cfg: Config, args: &[String]) -> Result<(), String> {
 
 /// What speaks to him on a call. Separate from `ears`.
 pub fn voice(cfg: Config, args: &[String]) -> Result<(), String> {
-    provider_for(cfg, crate::providers::Job::Voice, "voice", "Voice", "The relay's is used when it lends one; without, nothing is spoken.", args)
+    provider_for(cfg, crate::providers::Job::Voice, "voice", "Voice", "Without one the tower speaks nothing; a phone can speak with a voice of its own.", args)
 }
 
 /// What turns his speech into text on a call. Separate from `voice`.
 pub fn ears(cfg: Config, args: &[String]) -> Result<(), String> {
-    provider_for(cfg, crate::providers::Job::Ears, "ears", "Ears", "The relay's are used when it lends them; without, he types.", args)
+    provider_for(cfg, crate::providers::Job::Ears, "ears", "Ears", "Without them the tower hears nothing; a phone can listen with a model or a key of its own.", args)
 }
 
 pub fn pair(mut cfg: Config, name: &str) -> Result<(), String> {

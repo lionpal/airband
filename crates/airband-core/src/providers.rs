@@ -8,8 +8,8 @@
 //! - reading: OpenAI's Chat Completions (`POST {url}/chat/completions`), which nearly every model service and
 //!   every local model server accepts; or a command, for a model reached through a program on this computer.
 //! - speaking: OpenAI's speech endpoint (`POST {url}/audio/speech`), which several services and most local
-//!   voice servers accept. Services with something that endpoint lacks (word timings, a pass the relay can
-//!   lend) keep an interface of their own.
+//!   voice servers accept. Services with something that endpoint lacks (word timings) keep an interface of
+//!   their own.
 //! - listening: for a finished recording, OpenAI's transcription endpoint (`POST {url}/audio/transcriptions`),
 //!   which several services and most local speech servers accept. For speech while it is spoken there is no
 //!   common interface, so each such service is a dialect the phone speaks (`airband-radio/src/ears.rs`),
@@ -47,8 +47,8 @@ pub enum By {
     Speech,
     /// Google's own speech route.
     GeminiVoice,
-    /// Microsoft's own speech route, by key, or by a short-lived pass in place of the key.
-    AzureVoice { pass: bool },
+    /// Microsoft's own speech route.
+    AzureVoice,
     /// ElevenLabs' own route, which says when each word is spoken.
     ElevenlabsVoice,
     /// A listening dialect the phone speaks while he talks, by its name there. The service gives a
@@ -120,8 +120,6 @@ impl Offer {
 /// names another is left out when the catalogue is read: it is for a newer build.
 pub const DIALECTS: &[&str] = &["azure", "gemini", "elevenlabs"];
 
-pub const LENT: &str = "relay-pass";
-pub const LENT_LISTENER: &str = "azure";
 /// What a pass says when the phone is to send its recording to the tower, which holds the key.
 pub const BY_TOWER: &str = "tower";
 /// What it says when nothing listens.
@@ -221,7 +219,7 @@ mod tests {
                 // each kind of job is done through an interface for that job
                 let fits = match o.by {
                     By::Chat { .. } | By::Command(_) | By::OnThisComputer(_) => o.job == Job::Summary,
-                    By::Speech | By::GeminiVoice | By::AzureVoice { .. } | By::ElevenlabsVoice => o.job == Job::Voice,
+                    By::Speech | By::GeminiVoice | By::AzureVoice | By::ElevenlabsVoice => o.job == Job::Voice,
                     By::Listener(_) | By::Transcribe => o.job == Job::Ears,
                 };
                 assert!(fits, "{}: {:?} is not a way to do {:?}", p.id, o.by, o.job);

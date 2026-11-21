@@ -19,6 +19,8 @@
 //!   airband hook <harness>       adapter run by a harness's own hooks (claude-code)
 //!   airband report ...           put any other agent on the radio from a script (see `airband report` with no arguments)
 //!   airband --version            which version this is
+#[cfg(unix)]
+mod acp;
 mod adapters;
 mod catalog;
 mod config;
@@ -36,7 +38,7 @@ fn main() {
     // The catalogue: the newest signed copy this computer has kept, for everything but the small commands a
     // harness runs many times a minute. Where he is about to choose from it, a newer one is fetched first.
     match args.first().map(String::as_str) {
-        Some("hook" | "report" | "hold" | "catalog" | "deliver") => {}
+        Some("hook" | "report" | "hold" | "acp" | "catalog" | "deliver") => {}
         Some("setup" | "model" | "voice" | "ears") => {
             catalog::load();
             catalog::refresh();
@@ -49,6 +51,8 @@ fn main() {
         Some("report") => adapters::report::run(&args[1..]),
         #[cfg(unix)]
         Some("hold") => hold::run(&args[1..]),
+        #[cfg(unix)]
+        Some("acp") => acp::run(&args[1..]),
         None | Some("run") => tower::run(config::load()),
         Some("install") => install::install(),
         // what a new computer runs: start the tower, keep it running, and show the code a phone scans. What
@@ -76,7 +80,8 @@ fn main() {
         // what the tower runs to hand his words to a tool that takes them through a server of its own
         Some("deliver") => match (args.get(1).map(String::as_str), args.get(2)) {
             (Some("opencode"), Some(session)) => adapters::opencode::deliver(session),
-            _ => Err("usage: airband deliver opencode <session>".into()),
+            (Some("codex"), Some(session)) => adapters::codex::deliver(session),
+            _ => Err("usage: airband deliver <opencode|codex> <session>".into()),
         },
         Some("setup") => setup::setup(config::load(), !args.iter().any(|a| a == "--no-start")),
         Some("model") => install::model(config::load(), &args[1..]),
