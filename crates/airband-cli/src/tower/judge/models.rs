@@ -46,7 +46,7 @@ pub(in crate::tower) async fn set_reader(wanted: airband_core::radio::SetReads) 
     use crate::providers::{Job, Use};
     // one of this tower's own list, named by its provider and its own id
     let (p, offer) = crate::providers::in_order(Job::Summary).into_iter().find(|(p, o)| p.id == wanted.kind && o.id == wanted.offer).ok_or("That is not something that can be chosen to read here.")?;
-    let mut cfg = config::read().filter(|_| config::keyless().is_none()).ok_or("This computer's settings cannot be read right now.")?;
+    let mut cfg = config::read_keyed().ok_or("This computer's settings cannot be read right now.")?;
     let key = match (p.key, wanted.key.trim()) {
         (false, _) => String::new(),
         (true, "") => cfg.key_of(&p.id).ok_or_else(|| format!("{} needs a key.", p.name))?,
@@ -55,16 +55,18 @@ pub(in crate::tower) async fn set_reader(wanted: airband_core::radio::SetReads) 
     // only the settings its row asks for
     let set = wanted.set.into_iter().filter(|(field, value)| !value.trim().is_empty() && offer.asks.iter().any(|a| a.field == *field)).map(|(f, v)| (f, Value::String(v.trim().to_string()))).collect();
     let using = Use { kind: p.id.clone(), offer: offer.id.clone(), key: key.clone(), set };
-    // a model on this computer is fetched the first time it is chosen: wait through that
-    super::local::wait_for_it(true);
-    let tried = ask(&using, READY.into(), None).await;
-    super::local::wait_for_it(false);
-    tried.map_err(|Failed(trouble, more)| {
+    let said = |Failed(trouble, more): Failed| {
         if !more.is_empty() {
             log(format!("trying {} to read: {more}", p.name));
         }
         trouble.said(&offer.label)
-    })?;
+    };
+    // a model on this computer is fetched the first time it is chosen: this call waits through that, and only
+    // this one (every other is told it is not ready yet, and gives the message as written)
+    if let Some((model, server)) = local_model(&using) {
+        tokio::task::spawn_blocking(move || super::local::ensure(&model, &server, true)).await.map_err(|e| e.to_string())?.map_err(|more| said(Failed(Trouble::Program, more)))?;
+    }
+    ask(&using, READY.into(), None).await.map_err(said)?;
     if p.key {
         // a provider has one key here: a new one takes the place of the one before
         cfg.keep_key(&p.id, key);
@@ -75,10 +77,26 @@ pub(in crate::tower) async fn set_reader(wanted: airband_core::radio::SetReads) 
     if local_model(&using).is_none() {
         super::local::stop();
     }
-    *READER.lock().unwrap() = Some(using);
+    chosen(using, p.key);
     log(format!("a radio chose what reads: {}", offer.label));
     Ok(offer.label.to_string())
 }
+
+/// What reads from now on, just tried and kept: the radios are offered it as chosen, with its key kept when it
+/// has one, and the last failure is over, since it has just answered.
+fn chosen(using: Summarizer, keyed: bool) {
+    answered(&using.kind, keyed);
+    *READER.lock().unwrap() = Some(using);
+}
+fn answered(provider: &str, keyed: bool) {
+    if keyed {
+        KEYED.lock().unwrap().insert(provider.to_string());
+    }
+    *FAILED.lock().unwrap() = None;
+}
+
+/// The providers a key has been kept for since this tower started, beside the ones its settings had then.
+static KEYED: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 
 /// Why what reads could not, the last time it was asked: said to him on his phone, and gone when it next
 /// answers. Nothing else is asked in its place.
@@ -186,7 +204,7 @@ pub(super) async fn on_this_computer(_model: &Summarizer, by: &By, prompt: Strin
     let (name, server) = (by.text("model").to_string(), by.text("server").to_string());
     let url = {
         let name = name.clone();
-        tokio::task::spawn_blocking(move || super::local::ensure(&name, &server)).await.map_err(|e| Failed(Trouble::Program, e.to_string()))?.map_err(|e| Failed(Trouble::Program, e))?
+        tokio::task::spawn_blocking(move || super::local::ensure(&name, &server, false)).await.map_err(|e| Failed(Trouble::Program, e.to_string()))?.map_err(|e| Failed(Trouble::Program, e))?
     };
     let mut body = json!({ "model": name, "messages": [{ "role": "user", "content": prompt }], "temperature": 0, "max_tokens": 400 });
     if let Some(shape) = shape {
@@ -273,7 +291,7 @@ pub(super) async fn command(model: &Summarizer, by: &By, prompt: String, shape: 
 pub(in crate::tower) fn offered(cfg: &Config) -> airband_core::radio::ReadsOffered {
     use airband_core::radio::{ReadsAsk, ReadsOffer, ReadsOffered};
     let now = reader(cfg);
-    let kept: std::collections::HashSet<String> = cfg.keys.values().map(|k| k.provider.clone()).collect();
+    let kept: BTreeSet<String> = cfg.keys.values().map(|k| k.provider.clone()).chain(KEYED.lock().unwrap().iter().cloned()).collect();
     let offers = crate::providers::in_order(Job::Summary)
         .into_iter()
         .map(|(p, o)| ReadsOffer {
@@ -293,4 +311,20 @@ pub(in crate::tower) fn offered(cfg: &Config) -> airband_core::radio::ReadsOffer
         })
         .collect();
     ReadsOffered { now: (!now.is_none()).then(|| airband_core::radio::OfferName { provider: now.kind.clone(), offer: now.offer.clone() }), failed: failed(), offers }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_reader_just_chosen_is_offered_with_its_key_kept_and_no_old_failure() {
+        let cfg: Config = serde_json::from_str(r#"{"token":"own","radio_token":"radio"}"#).unwrap();
+        let (p, _) = crate::providers::in_order(Job::Summary).into_iter().find(|(p, _)| p.key).expect("a provider with a key");
+        *FAILED.lock().unwrap() = Some(Trouble::Unreachable);
+        answered(&p.id, true);
+        let now = offered(&cfg);
+        assert_eq!(now.failed, None);
+        assert!(now.offers.iter().filter(|o| o.provider == p.id).all(|o| o.has_key));
+    }
 }

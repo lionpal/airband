@@ -12,21 +12,15 @@
 use super::*;
 use std::path::PathBuf;
 use std::process::{Child, Command};
-use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
+use std::sync::atomic::{AtomicU16, Ordering};
 
 /// Where the server listens: ten ports up from the tower's own, on the loopback address only.
 static PORT: AtomicU16 = AtomicU16::new(7383);
-/// Set by a command a person is watching (`airband setup`, `airband model test`): wait through the first
-/// download. The tower itself never waits on it: a message that arrives meanwhile is given as written.
-static PATIENT: AtomicBool = AtomicBool::new(false);
 /// The server this run started, and the model it has.
 static RUNNING: Mutex<Option<(String, Child)>> = Mutex::new(None);
 
 pub(crate) fn listen_after(tower_port: u16) {
     PORT.store(tower_port.saturating_add(10), Ordering::SeqCst);
-}
-pub(crate) fn wait_for_it(patient: bool) {
-    PATIENT.store(patient, Ordering::SeqCst);
 }
 
 fn dir() -> PathBuf {
@@ -119,7 +113,7 @@ pub(crate) fn stop() {
 /// The address to speak to `model` at, starting its server if it is not running. The first time, the
 /// program and then the model are fetched, which takes minutes: a patient caller waits through that, and any
 /// other is told it is not ready yet. Blocks.
-pub(crate) fn ensure(model: &str, server: &str) -> Result<String, String> {
+pub(crate) fn ensure(model: &str, server: &str, patient: bool) -> Result<String, String> {
     let server = server_row(server)?;
     {
         let mut running = RUNNING.lock().unwrap();
@@ -155,7 +149,7 @@ pub(crate) fn ensure(model: &str, server: &str) -> Result<String, String> {
             *running = Some((model.to_string(), child));
         }
     }
-    let until = Instant::now() + if PATIENT.load(Ordering::SeqCst) { Duration::from_secs(45 * 60) } else { Duration::from_secs(2) };
+    let until = Instant::now() + if patient { Duration::from_secs(45 * 60) } else { Duration::from_secs(2) };
     loop {
         if healthy() {
             return Ok(format!("{}/v1", address()));
