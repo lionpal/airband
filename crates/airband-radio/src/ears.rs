@@ -13,7 +13,7 @@
 //! choose. Nothing here or in the app names a service.
 use super::*;
 use airband_core::audio::{Endpointer, Heard, samples};
-use airband_core::providers::{By, Interface, Job, Offer, Provider, Trouble, Use};
+use airband_core::providers::{By, Interface, Job, Offer, Provider, Use};
 use std::collections::BTreeMap;
 use std::sync::mpsc::sync_channel;
 use std::time::Instant;
