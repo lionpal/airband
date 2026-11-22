@@ -1,7 +1,8 @@
 //! The commands that change how this computer's tower is set up, and say how it is: `relay`, `model`, `lan`,
 //! `pair`, `unpair`, `quick`, `status`.
 use crate::config::{self, Config};
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::json;
 use airband_core::pairing::Pairing;
 
 /// `airband relay <url> [--admission <key>]` / `airband relay off`
@@ -209,35 +210,42 @@ pub(crate) fn quick(mut cfg: Config, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// A state or a kind as the wire writes it ("waiting", "needs-you").
+fn word<T: Serialize>(t: &T) -> String {
+    serde_json::to_value(t).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default()
+}
+
 pub(crate) fn status(cfg: &Config) {
-    let res = crate::config::taken(crate::config::Tower::here(cfg, std::time::Duration::from_secs(5)).get("/v1/status").call());
-    let Some(j) = res.and_then(|mut r| r.body_mut().read_json::<Value>().ok()) else {
-        println!("airband is not running.");
+    let res = crate::adapters::taken(crate::adapters::TowerHere::here(cfg, std::time::Duration::from_secs(5)).get("/v1/status").call());
+    let Some(status) = res.and_then(|mut r| r.body_mut().read_json::<crate::tower::Status>().ok()) else {
+        println!("airband is not running, or is a version that says how it stands another way.");
         return;
     };
-    println!("airband is running. Phone {}{}.", if j["phone"].as_bool() == Some(true) { "connected" } else { "not connected" }, if j["held"].as_bool() == Some(true) { " (standing by)" } else { "" });
-    let sessions = j["sessions"].as_array().cloned().unwrap_or_default();
-    for s in &sessions {
-        println!("  {:<26} {:<8} {}", s["callsign"].as_str().unwrap_or(""), s["state"].as_str().unwrap_or(""), s["cwd"].as_str().unwrap_or(""));
+    println!("airband is running. Phone {}{}.", if status.phone { "connected" } else { "not connected" }, if status.held { " (standing by)" } else { "" });
+    for s in &status.sessions {
+        println!("  {:<26} {:<8} {}", s.callsign, word(&s.state), s.cwd.as_deref().unwrap_or("no folder"));
     }
-    if sessions.is_empty() {
+    if status.sessions.is_empty() {
         println!("  no sessions have checked in yet");
     }
-    if let Some(kept) = j.get("kept") {
-        println!("  kept: {} messages, {} raw events", kept["messages"], kept["events"]);
+    match &status.kept {
+        Some(kept) => println!("  kept: {} messages, {} raw events", kept.messages, kept.events),
+        None => println!("  the database could not say how much it keeps"),
     }
-    if let Some(projects) = j["projects"].as_object().filter(|p| !p.is_empty()) {
-        println!("  can launch in: {}", projects.keys().cloned().collect::<Vec<_>>().join(", "));
+    if !status.projects.is_empty() {
+        println!("  can launch in: {}", status.projects.keys().cloned().collect::<Vec<_>>().join(", "));
     }
-    for p in j["pending"].as_array().cloned().unwrap_or_default() {
-        println!("  waiting to be heard: {} ({})", p["callsign"].as_str().unwrap_or("?"), p["kind"].as_str().unwrap_or("not yet read"));
+    for p in &status.pending {
+        match p.kind {
+            Some(kind) => println!("  waiting to be heard: {} ({})", p.callsign, word(&kind)),
+            None => println!("  waiting to be heard: {}, not read yet", p.callsign),
+        }
     }
     // the last changes to what is read out, each with what it was and what it became: why something was not read
-    let aloud = j["aloud"].as_array().cloned().unwrap_or_default();
-    if !aloud.is_empty() {
+    if !status.aloud.is_empty() {
         println!("  read aloud, lately:");
-        for line in aloud {
-            println!("    {}", line.as_str().unwrap_or_default());
+        for line in &status.aloud {
+            println!("    {line}");
         }
     }
 }

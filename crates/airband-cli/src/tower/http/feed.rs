@@ -125,13 +125,13 @@ pub(super) async fn message(State(app): State<Arc<App>>, Path(id): Path<String>,
         let inner = app.read();
         let text: Option<String> = inner.log.iter().find(|e| e.id == id).map(|e| match q.part {
             Some(airband_core::radio::Part::Asked) => {
-                let short = e.short.clone().unwrap_or_else(|| spoken(&e.full).chars().take(600).collect());
+                let short = spoken(&e.line());
                 let choices = match e.options.as_slice() {
                     [] => String::new(),
                     [one] => format!(" You can say {one}, or answer in your own words."),
                     [first @ .., last] => format!(" You can say {}, or {last}, or answer in your own words.", first.join(", ")),
                 };
-                format!("{}. {short}{choices}", inner.sender(e).map(|s| s.callsign.text()).unwrap_or_else(|| e.from.clone()))
+                format!("{}. {short}{choices}", inner.sender_name(e))
             }
             // the whole of it, read from its blocks: no mark is said, a table goes row by row, code is passed over
             None => spoken(&e.full).chars().take(3000).collect(),
@@ -175,24 +175,6 @@ pub(super) async fn reads(Json(wanted): Json<airband_core::radio::SetReads>) -> 
     })
 }
 
-pub(super) async fn status(State(app): State<Arc<App>>) -> Json<Value> {
-    let mut inner = app.passing();
-    inner.reap();
-    let callsign_of = |id: &str| inner.sessions.iter().find(|s| s.agent.id == id).map(|s| s.callsign.text());
-    let open = inner.open_ids();
-    Json(json!({
-        "phone": inner.connected(),
-        "held": inner.calls.values().any(|c| c.held),
-        "radios": inner.calls.iter().filter(|(_, c)| c.connected()).map(|(id, _)| id.clone()).collect::<Vec<_>>(),
-        "answering": inner.answering.len(),
-        "projects": inner.launchable(),
-        "kept": { "messages": app.store.counts().0, "events": app.store.counts().1 },
-        "sessions": inner.sessions.iter().map(|s| json!({
-            "callsign": s.callsign.text(), "harness": s.agent.harness, "cwd": s.agent.cwd,
-            "state": inner.state_of(s, &open), "reachable": s.agent.deliver.is_some(), "meta": s.agent.meta,
-        })).collect::<Vec<_>>(),
-        "pending": inner.unheard().map(|e| json!({ "callsign": e.agent.as_deref().and_then(callsign_of).unwrap_or_else(|| e.from.clone()), "kind": e.kind, "say": e.short, "aloud": e.aloud })).collect::<Vec<_>>(),
-        // the last changes to what is read out, each with what it was, what it became and why
-        "aloud": inner.aloud_trail,
-    }))
+pub(super) async fn status(State(app): State<Arc<App>>) -> Json<Status> {
+    Json(Status::of(&app))
 }

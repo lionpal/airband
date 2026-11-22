@@ -38,13 +38,22 @@ pub(super) async fn next(State(app): State<Arc<App>>, Extension(RadioId(radio)):
     StatusCode::NO_CONTENT.into_response()
 }
 
+/// What a radio says when no sound came of a line it was handed: the line, and why when it knows.
+#[derive(Deserialize)]
+pub(super) struct Unheard {
+    id: String,
+    #[serde(default)]
+    why: Option<String>,
+}
+
 /// A radio was handed something to read out and no sound came of it. It goes back in the queue, the reason is
 /// written down, and that radio is handed nothing more for a minute.
-pub(super) async fn unheard(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Json(u): Json<Value>) -> Json<Value> {
+pub(super) async fn unheard(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Json(u): Json<Unheard>) -> Json<Value> {
     let mut inner = app.change();
-    let id = u["id"].as_str().unwrap_or_default();
-    let who = inner.log.iter().find(|e| e.id == id).map(|e| e.from.clone()).unwrap_or_default();
-    log(format!("{radio} could not read {who} aloud ({}); it stays queued (line {id}), and nothing more goes to that radio for a minute", u["why"].as_str().unwrap_or("no reason given")));
+    let id = u.id.as_str();
+    let who = inner.log.iter().find(|e| e.id == id).map(|e| inner.sender_name(e)).unwrap_or_else(|| "a line it no longer has".to_string());
+    let why = u.why.as_deref().map(|w| format!(": {w}")).unwrap_or_else(|| ", and did not say why".to_string());
+    log(format!("{radio} could not read {who} aloud{why}; it stays queued (line {id}), and nothing more goes to that radio for a minute"));
     if inner.log.iter().any(|e| e.id == id && matches!(&e.aloud, Aloud::Handed { radio: r, .. } if *r == radio)) {
         inner.set_aloud(id, Aloud::Waiting);
     }

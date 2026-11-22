@@ -72,6 +72,28 @@ struct Out {
     new: Option<New>,
 }
 
+/// The shape of [`Out`], as the model is held to it.
+fn out_shape() -> Value {
+    let number = json!({ "type": ["integer", "null"] });
+    let word = json!({ "type": ["string", "null"] });
+    let new = json!({
+        "type": "object",
+        "properties": {
+            "tool": number, "tool_said": word, "project": number, "project_said": word,
+            "model": number, "model_said": word, "effort": number, "effort_said": word,
+            "task": { "type": "string" }
+        },
+        "required": ["tool", "tool_said", "project", "project_said", "model", "model_said", "effort", "effort_said", "task"],
+        "additionalProperties": false
+    });
+    json!({
+        "type": "object",
+        "properties": { "to": { "type": "array", "items": { "type": "integer" } }, "all": { "type": "boolean" }, "sure": { "type": "boolean" }, "new": { "anyOf": [new, { "type": "null" }] } },
+        "required": ["to", "all", "sure", "new"],
+        "additionalProperties": false
+    })
+}
+
 pub(in crate::tower) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&str>, scope: Option<&str>, others: &[airband_core::radio::Other]) -> Routed {
     // the room he was looking at, when he was in one: only its agents can be meant
     let room = scope.map(str::to_string);
@@ -82,7 +104,7 @@ pub(in crate::tower) async fn route(app: &Arc<App>, radio: &str, rest: &str, re:
     // what a new agent could be started in and on, if anything
     // any tool this computer can start will do for knowing that one can be: which one is settled when it starts
     let launcher = app.cfg.launchers.values().next();
-    let projects: Vec<String> = app.read().launchable().into_keys().collect();
+    let projects: Vec<Place> = app.read().launchable();
     // with agents of another computer on his screen there is always more than one it could be for
     let can_start = (launcher.is_some() && !projects.is_empty()) || !others.is_empty();
     let launcher = launcher.filter(|_| !projects.is_empty());
@@ -103,7 +125,7 @@ pub(in crate::tower) async fn route(app: &Arc<App>, radio: &str, rest: &str, re:
         Some(_) => starting(app, &menus, &projects, room.as_deref()),
     };
     let prompt = prompt(app, &lines, &last_said(&scene.focus, now), rest, &starting, can_start);
-    let Ok(judged) = judge::ask_json::<Out>(&app.cfg, "routing", prompt, None).await else {
+    let Ok(judged) = judge::ask_json::<Out>(&app.cfg, "routing", prompt, Some(out_shape())).await else {
         return no_answer(app, &scene.all, can_start);
     };
     answered(judged, &scene, &listed, &menus, &projects, can_start)
@@ -203,15 +225,15 @@ fn numbered(names: &[String]) -> String {
 /// The part of the question about starting a new agent: when his words ask for one, and what it is started with.
 /// Each list is numbered, and the model answers with a number from it, or with his own word for something he
 /// named that is on none of them.
-fn starting(app: &App, menus: &Menus, projects: &[String], room: Option<&str>) -> String {
+fn starting(app: &App, menus: &Menus, projects: &[Place], room: Option<&str>) -> String {
     let lately: Vec<String> = {
         let inner = app.read();
         projects
             .iter()
             .enumerate()
             .map(|(i, p)| {
-                let said: Vec<String> = inner.lately(p);
-                format!("{}. {p}{}", i + 1, if said.is_empty() { String::new() } else { format!(": lately, {}", said.join(" / ")) })
+                let said: Vec<String> = inner.lately(&p.folder);
+                format!("{}. {}{}", i + 1, p.name, if said.is_empty() { String::new() } else { format!(": lately, {}", said.join(" / ")) })
             })
             .collect()
     };
@@ -301,7 +323,7 @@ fn no_answer(app: &App, all: &[Session], can_start: bool) -> Routed {
 }
 
 /// What the model's numbers come to.
-fn answered(mut judged: Out, scene: &Scene, listed: &[Listed], menus: &Menus, projects: &[String], can_start: bool) -> Routed {
+fn answered(mut judged: Out, scene: &Scene, listed: &[Listed], menus: &Menus, projects: &[Place], can_start: bool) -> Routed {
     if let Some(new) = judged.new.take().filter(|_| can_start) {
         // The model answers with the number a thing is listed under, and that is the thing. Something he named
         // that is on no list comes as his own word, kept as he said it so that starting it is refused in words
@@ -312,7 +334,7 @@ fn answered(mut judged: Out, scene: &Scene, listed: &[Listed], menus: &Menus, pr
             tool: at(new.tool, &menus.tools).or(own(new.tool_said)),
             // one he named that the tower does not know is not swapped for another: he is asked which. He named
             // none, and there is one place it could be: that one.
-            project: at(new.project, projects).or_else(|| (own(new.project_said).is_none() && projects.len() == 1).then(|| projects[0].clone())),
+            project: judge::listed(new.project, projects).cloned().or_else(|| (own(new.project_said).is_none() && projects.len() == 1).then(|| projects[0].clone())),
             model: at(new.model, &menus.models).map(Pick::Listed).or(own(new.model_said).map(Pick::Said)),
             effort: at(new.effort, &menus.efforts).map(Pick::Listed).or(own(new.effort_said).map(Pick::Said)),
             // with no work named it is started with nothing to do yet, or he is asked what it should do
@@ -341,4 +363,40 @@ fn answered(mut judged: Out, scene: &Scene, listed: &[Listed], menus: &Menus, pr
     let mut likely: Vec<Session> = here;
     everyone.take(3).for_each(|s| if !likely.iter().any(|l| l.agent.id == s.agent.id) { likely.push(s.clone()) });
     Routed::Ask(likely)
+}
+
+/// He was asked who something he said was for, and has said something more. The agents his words name, or
+/// nothing when they are not an answer to that (or no model said): then they are a message of their own.
+pub(super) async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope: Option<&str>) -> Option<Vec<Session>> {
+    let all: Vec<Session> = app.read().sessions.iter().filter(|s| scope.is_none_or(|g| s.team == g)).cloned().collect();
+    let letters = |s: &Session| s.callsign.badge();
+    let prompt = format!(
+        "{name} said this to his coding agents: \"{first}\"\nIt was not clear who it was for, and he was asked. The agents:\n{list}\n\n\
+         He now says: \"{said}\"\n\n\
+         Does that answer the question, and if so who does he mean? An answer does little more than name who: a \
+         callsign, an agent's letters, a number (speech may write these apart or as words that sound like them), \
+         \"the first one\", \"both\", all of them, perhaps with a word or two around it. Anything that asks for \
+         work, gives an instruction or says something of its own is a new message and not an answer, even when it \
+         is about what one of the agents is working on.\n\
+         Reply with one line of JSON and nothing else: {{\"to\":[the number each agent he means is listed under],\"all\":true or false}}\n\
+         \"all\" is true when he means all of them. \"to\" is empty if he names nobody listed, or has gone on to say something else.",
+        name = app.cfg.name,
+        list = all.iter().enumerate().map(|(i, s)| format!("{}. {} (letters {})", i + 1, s.callsign.text(), letters(s))).collect::<Vec<_>>().join("\n"),
+    );
+    #[derive(Deserialize)]
+    struct Out {
+        #[serde(default)]
+        to: Vec<usize>,
+        #[serde(default)]
+        all: bool,
+    }
+    let shape = json!({
+        "type": "object",
+        "properties": { "to": { "type": "array", "items": { "type": "integer" } }, "all": { "type": "boolean" } },
+        "required": ["to", "all"],
+        "additionalProperties": false
+    });
+    let judged: Out = judge::ask_json(&app.cfg, "who he meant", prompt, Some(shape)).await.ok()?;
+    let meant: Vec<Session> = if judged.all { all } else { judged.to.iter().filter_map(|n| judge::listed(Some(*n), &all).cloned()).collect() };
+    (!meant.is_empty()).then_some(meant)
 }
