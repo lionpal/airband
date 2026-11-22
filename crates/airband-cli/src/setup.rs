@@ -6,7 +6,6 @@
 //!
 //! A key is kept once, with the provider it is for (`Config::keys`): one key per provider, found by that
 //! provider (`Config::key_of`). The settings file writes a use of it as the key's name.
-#![allow(clippy::disallowed_methods, reason = "setup writes the first settings file")]
 use crate::config::{self, Config};
 use crate::providers::{self, Job, Provider, Use};
 use std::io::{BufRead, IsTerminal, Write};
@@ -204,7 +203,7 @@ pub(crate) fn keys(args: &[String]) -> Result<(), String> {
             Ok(true) => println!("The keys are out of the keychain and kept in an encrypted file. Install the new copy of airband now: it puts them back in the keychain."),
             Ok(false) => println!("There is nothing in the keychain to move."),
             Err(why) => {
-                std::fs::write(crate::vault::carry_asked(), "").map_err(|e| e.to_string())?;
+                airband_io::files::write_atomic(&crate::vault::carry_asked(), "").map_err(|e| e.to_string())?;
                 println!("The keychain cannot be read from here ({why}).\nairband moves the keys the next time it starts:  airband install");
             }
         },

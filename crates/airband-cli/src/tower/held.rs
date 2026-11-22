@@ -12,7 +12,6 @@
 //! and its input open and listens on a socket. The tower writes there. So an agent goes on working while the
 //! tower is restarted or updated; the tower that starts finds the socket again. Every one is also remembered,
 //! so one whose holder has gone (the computer was restarted) is carried on from where its session was.
-#![allow(clippy::disallowed_methods, reason = "the held agents' socket folder")]
 use super::*;
 #[cfg(unix)]
 use tokio::io::AsyncReadExt;
@@ -200,11 +199,9 @@ async fn spawn_with(app: &Arc<App>, procs: &dyn edges::procs::Procs, kept: &Kept
     let sock = socket(&kept.id);
     let (holder, program) = holder_run(&app.cfg(), me, &sock, kept, fresh)?;
     if let Some(dir) = sock.parent() {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| format!("cannot make {} private: {e}", dir.display()))?;
+        airband_io::files::private_folder(dir).map_err(|e| format!("cannot make {} private: {e}", dir.display()))?;
     }
-    std::fs::remove_file(&sock).ok();
+    airband_io::files::remove(&sock).ok();
     procs.start_apart(holder).map_err(|e| format!("its holder did not start: {e}"))?;
     let called = program.first().cloned().unwrap_or_default();
     let until = Instant::now() + STARTS_WITHIN;

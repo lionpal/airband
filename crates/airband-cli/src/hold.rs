@@ -19,7 +19,6 @@
 //! To "how are you" it answers where it has got to ([`State`]): still starting, ready, or failed and why, with
 //! the last of what the program printed as an error. The tower tells him an agent is there only once it is.
 #![cfg(unix)]
-#![allow(clippy::disallowed_methods, reason = "the holder's socket and its program's folder")]
 use serde_json::Value;
 use std::io::{BufRead, Read, Write};
 use std::os::unix::net::UnixListener;
@@ -232,7 +231,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         *state.lock().unwrap() = State::Failed { why: why.clone() };
         std::thread::sleep(Duration::from_secs(15));
     }
-    std::fs::remove_file(&sock).ok();
+    airband_io::files::remove(std::path::Path::new(&sock)).ok();
     end_group();
     outcome
 }
@@ -241,7 +240,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
 /// The socket the tower talks to it through, open to this user only: asked how it stands, it says; told
 /// something for the agent, it passes it on.
 fn listen(sock: &str, state: Arc<Mutex<State>>, tx: mpsc::Sender<Msg>) -> Result<(), String> {
-    std::fs::remove_file(sock).ok();
+    airband_io::files::remove(std::path::Path::new(sock)).ok();
     let listener = UnixListener::bind(sock).map_err(|e| format!("cannot open {sock}: {e}"))?;
     {
         use std::os::unix::fs::PermissionsExt;

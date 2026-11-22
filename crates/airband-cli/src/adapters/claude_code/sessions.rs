@@ -1,6 +1,5 @@
 //! The sessions Claude Code keeps a record of: which are open now, where their transcripts are, and the folders
 //! it has worked in.
-#![allow(clippy::disallowed_methods, reason = "reads the tool's own session files")]
 use super::*;
 
 /// Is the process a session's record names still that session? Its number alone could have been given to
@@ -25,7 +24,7 @@ pub(super) fn record(claude: &std::path::Path, pid: &str) -> Option<Value> {
     if !pid.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    std::fs::read(claude.join("sessions").join(format!("{pid}.json"))).ok().and_then(|b| serde_json::from_slice(&b).ok())
+    airband_io::files::read_bytes(&claude.join("sessions").join(format!("{pid}.json"))).ok().flatten().and_then(|b| serde_json::from_slice(&b).ok())
 }
 
 /// The sessions he has open in a terminal, from the record Claude Code keeps of each while it runs
@@ -34,7 +33,7 @@ pub(super) fn record(claude: &std::path::Path, pid: &str) -> Option<Value> {
 /// have a record too, with another `entrypoint`: those are not his to talk to and are left out.
 pub(super) fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> bool) -> Option<Vec<super::super::Open>> {
     let dir = claude.join("sessions");
-    let read = |path: &std::path::Path| std::fs::read(path).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok());
+    let read = |path: &std::path::Path| airband_io::files::read_bytes(path).ok().flatten().and_then(|b| serde_json::from_slice::<Value>(&b).ok());
     let files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir).ok()?.flatten().map(|f| f.path()).collect();
     let mut open = Vec::new();
     for path in files.iter().filter(|p| p.extension().is_some_and(|e| e == "json")) {

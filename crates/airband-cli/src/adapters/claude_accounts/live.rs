@@ -1,6 +1,5 @@
 //! The live login: the keychain item Claude Code keeps it in (JSON, with the claude.ai login under
 //! the key its row names beside the MCP logins), the account record in its account file, and which account it is.
-#![allow(clippy::disallowed_methods, reason = "reads and writes the tool's own account file")]
 use super::{login_key, saved, service, tool, Here, Res};
 use serde_json::{Map, Value};
 use std::path::Path;
@@ -28,7 +27,7 @@ pub(super) fn token(here: &Here) -> Option<String> {
 
 /// The account record in Claude Code's account file.
 pub(super) fn oauth_account(file: &Path) -> Option<Value> {
-    let d: Value = serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()?;
+    let d: Value = serde_json::from_str(&airband_io::files::read_text(file).ok()??).ok()?;
     d.get("oauthAccount").cloned()
 }
 /// Set `oauthAccount`, reading the file again just before writing so nothing else in it is lost.
@@ -38,7 +37,7 @@ pub(super) fn set_oauth_account(file: &Path, acct: &Value) -> Res<()> {
 /// The account file as it is now with `oauthAccount` set, to be written: an error, before anything is changed,
 /// when it cannot be read.
 pub(super) fn with_oauth_account(file: &Path, acct: &Value) -> Res<String> {
-    let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let text = airband_io::files::read_text(file).map_err(|e| format!("{}: {e}", file.display()))?.ok_or_else(|| format!("{} is not there", file.display()))?;
     let mut d: Value = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", file.display()))?;
     d.as_object_mut().ok_or_else(|| format!("{} is not in the form expected", file.display()))?.insert("oauthAccount".into(), acct.clone());
     serde_json::to_string_pretty(&d).map_err(|e| e.to_string())
