@@ -55,7 +55,7 @@ impl Book {
             Err(why) => {
                 log(format!("links: {why}"));
                 // one that could not be read and is still there could not be moved aside: nothing is written over it
-                Book { unwritable: path.exists(), ..Book::default() }
+                Book { unwritable: !why.set_aside, ..Book::default() }
             }
         };
         let oldest = airband_core::clock::now_secs().saturating_sub(KEPT_FOR);

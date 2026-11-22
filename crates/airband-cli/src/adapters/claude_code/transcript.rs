@@ -55,7 +55,7 @@ pub(super) fn new_lines(transcript: &str, session: &str, note: &str, first: Firs
     // and this transcript is not read until it can be
     let mut kept = match airband_core::kept::load::<serde_json::Map<String, Value>>(&path) {
         Ok(found) => Value::Object(found.unwrap_or_default()),
-        Err(why) if path.exists() => {
+        Err(why) if !why.set_aside => {
             eprintln!("airband: {why}");
             return None;
         }
