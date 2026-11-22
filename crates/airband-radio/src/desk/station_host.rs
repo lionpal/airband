@@ -54,8 +54,10 @@ impl RadioHost for ComputerHost {
     fn unplaced(&self, message: Outgoing, elsewhere: Option<String>, ask: Vec<String>) {
         {
             let mut state = self.shared.state.lock().unwrap();
-            // it was not delivered here: it is not on its way to this computer's chat
-            let Some(s) = state.live(&self.station, self.epoch) else { return };
+            // it was not delivered here: it is not on its way to this computer's chat. It left the outbox every
+            // connection of this computer shares, so an old connection's report of it still counts: dropping it
+            // would lose the message
+            let Some(s) = state.paired(&self.station) else { return };
             s.landing.retain(|(o, _)| o.id != message.id);
             // the tower read his words as for an agent another computer has: they go there, addressed to it
             let there = elsewhere.as_ref().filter(|c| state.with_agent(c).is_some_and(|s| s.id() != self.station)).cloned();
@@ -120,7 +122,8 @@ impl RadioHost for ComputerHost {
     fn outbox(&self, waiting: Vec<Outgoing>, note: Option<String>) {
         {
             let mut state = self.shared.state.lock().unwrap();
-            let Some(s) = state.live(&self.station, self.epoch) else { return };
+            // the outbox is the computer's, shared by its connections: what an old one reports of it is still so
+            let Some(s) = state.paired(&self.station) else { return };
             // What has left the list was sent. It stays on screen as on its way until the chat has it (the
             // tower gives the message the same id), so it never vanishes for a moment in between. Not when
             // there is something to tell him about it: then it did not go.

@@ -63,6 +63,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     let voice = Voice()
     var desk: Desk!
     private var links: [String] = []
+    /// Whether the kept pairing links have been read. Until they are, nothing is written over them.
+    private var linksRead = false
     var fetching: Set<String> = []
     /// Fetching full text and pictures: a few at a time on shared threads, not a thread each.
     let fetch = DispatchQueue(label: "dev.airband.fetch", qos: .userInitiated, attributes: .concurrent)
@@ -84,7 +86,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         // development only: `-airband.devTools '("codex")'` opens as someone who uses those coding tools, for a screenshot
         if let tools = Dev.list("devTools") { desk.setTools(tools: tools) }
         #endif
-        var links = Keychain.links()
+        var links: [String]? = readLinks()
         #if DEBUG
         // development only: `xcrun simctl launch <sim> dev.airband.app -airband.devLink <pairing link>` pairs without the
         // system's "Open in airband?" prompt, which a script cannot tap
@@ -114,8 +116,25 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
         center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in self?.wentAway() }
         center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.setFront(false) }
-        connect(links)
+        // links that could not be read before the phone was first unlocked are read once it is
+        center.addObserver(forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self, !self.linksRead, let links = self.readLinks() else { return }
+            self.connect(links)
+        }
+        if let links { connect(links) }
     }
+
+    /// The kept pairing links, or nil when the Keychain could not be read: then nothing is connected and nothing
+    /// is written, and he is told.
+    private func readLinks() -> [String]? {
+        switch Keychain.links() {
+        case .found(let links): linksRead = true; return links
+        case .none: linksRead = true; return []
+        case .failed: problem = RadioModel.linksUnread; return nil
+        }
+    }
+    static let linksUnread = "Can't read your pairings yet. Unlock your phone."
+    static let keysUnread = "Can't read your keys yet. Unlock your phone and try again."
 
     /// The app was put away. Reading messages aloud goes on only where that is wanted with the screen off:
     /// through headphones or a car. From the phone's own speaker it stops.
@@ -140,11 +159,15 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
             problem = "That is not a pairing link. Run airband pair on your computer."
             return
         }
+        guard linksRead else { problem = RadioModel.linksUnread; return }
         guard !links.contains(link) else { return }
         connect(links + [link])
     }
 
-    func forgetAll() { connect([]) }
+    func forgetAll() {
+        guard linksRead else { problem = RadioModel.linksUnread; return }
+        connect([])
+    }
 
     /// Where this phone can be woken, as Apple gave it: every paired computer is told.
     func pushAddress(_ token: String) { desk.setPush(provider: .apns, token: token) }
@@ -203,7 +226,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     private func connect(_ wanted: [String]) {
         links = desk.setLinks(links: wanted)
         if links.count < wanted.count { problem = "One pairing link is not valid and was skipped." }
-        Keychain.keepLinks(links)
+        if linksRead && !Keychain.keepLinks(links) { problem = "Couldn't save your pairings on this phone." }
         refresh()
         // paired: this is when notifications are worth asking for, and when a new computer needs the phone's address
         if !links.isEmpty { DispatchQueue.main.async { Push.shared.setUp() } }
@@ -289,7 +312,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     }
 
     /// The picture he chose for each of his computers, by its id: a system symbol's name.
-    @Published var computerIcons: [String: String] = Stored.settings.load("airband.computers.icons.byid", or: [:])
+    @Published var computerIcons: [String: String] = Stored.setting("airband.computers.icons.byid", or: [:])
     /// The pictures a computer can have.
     static let computerSymbols = ["laptopcomputer", "macmini", "desktopcomputer", "macstudio", "macpro.gen3", "server.rack", "pc"]
 
@@ -302,7 +325,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     }
     func setIcon(_ symbol: String, of computer: String) {
         computerIcons[computer] = symbol
-        Stored.settings.keep("airband.computers.icons.byid", computerIcons)
+        Stored.keepSetting("airband.computers.icons.byid", computerIcons)
     }
 
     /// Goes up when a newer catalogue of services and models has been taken: what the choosers list is read again.

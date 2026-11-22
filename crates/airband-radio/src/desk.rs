@@ -212,6 +212,11 @@ impl State {
     pub(super) fn computer(&self, id: &StationId) -> Option<&Computer> {
         self.computers.iter().find(|s| s.id() == *id)
     }
+    /// A computer by its id, whatever its connection now: for what an old connection reports about the outbox
+    /// every connection of the computer shares, which stays true after a reconnect.
+    fn paired(&mut self, id: &StationId) -> Option<&mut Computer> {
+        self.computers.iter_mut().find(|s| s.id() == *id)
+    }
     /// A computer by its id, while `epoch` is still its connection: for the threads of one connection.
     fn live(&mut self, id: &StationId, epoch: u64) -> Option<&mut Computer> {
         self.computers.iter_mut().find(|s| s.epoch == epoch && s.id() == *id)

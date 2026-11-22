@@ -5,57 +5,93 @@ import Security
 import UIKit
 import UserNotifications
 
-/// The pairing links are kept in a Keychain group the app and its notification extension share, so the
-/// extension can open a sealed notification while the app is not running.
+/// What a Keychain read found. A read that failed (the phone still locked since it started, or any other error)
+/// is never taken as "nothing kept": what is kept is then never written over.
+enum KeychainRead<T> {
+    case found(T)
+    case none
+    case failed(OSStatus)
+}
+
+/// The pairing links and team colours are kept in a Keychain group the app and its notification extension share,
+/// so the extension can open a sealed notification while the app is not running. His service keys are kept in a
+/// group only the app can read. Everything is kept on this phone only: never in a backup, never restored elsewhere.
 enum Keychain {
     /// The shared group, from the Info.plist (the team's prefix is filled in when the app is built).
     static let group = Bundle.main.object(forInfoDictionaryKey: "AirbandKeychainGroup") as? String
+    /// The app's own group: only the app has it (the extension's Info.plist does not name one).
+    static let privateGroup = Bundle.main.object(forInfoDictionaryKey: "AirbandKeychainPrivate") as? String
 
-    static func write(_ key: String, _ value: String) {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key]
-        // wherever it was: builds before notifications kept it in the app's own group, where the extension cannot look
-        SecItemDelete(query as CFDictionary)
-        var add = query
-        add[kSecValueData as String] = Data(value.utf8)
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock // readable with the screen locked, while driving
-        if let group, !group.isEmpty {
-            var shared = add
-            shared[kSecAttrAccessGroup as String] = group
-            if SecItemAdd(shared as CFDictionary, nil) == errSecSuccess { return }
-        }
-        // a build with no shared group still keeps the links: the app works, notifications show their plain form
-        SecItemAdd(add as CFDictionary, nil)
+    /// Which group an item lives in.
+    enum Place { case shared, appOnly }
+    private static func named(_ place: Place) -> String? {
+        let name = place == .shared ? group : privateGroup
+        return name.flatMap { $0.isEmpty ? nil : $0 }
     }
-    static func read(_ key: String) -> String? {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key, kSecReturnData as String: true]
+
+    /// Keeps `value` under `key`: the item is changed in place, so a failed write never leaves nothing kept.
+    /// Returns whether it was kept.
+    @discardableResult
+    static func write(_ key: String, _ value: String, in place: Place) -> Bool {
+        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key]
+        if let name = named(place) { query[kSecAttrAccessGroup as String] = name }
+        let fields: [String: Any] = [
+            kSecValueData as String: Data(value.utf8),
+            // readable with the screen locked, while driving; on this phone only
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        let changed = SecItemUpdate(query as CFDictionary, fields as CFDictionary)
+        if changed == errSecSuccess { return true }
+        guard changed == errSecItemNotFound else { return false }
+        return SecItemAdd(query.merging(fields) { $1 } as CFDictionary, nil) == errSecSuccess
+    }
+    static func read(_ key: String, in place: Place) -> KeychainRead<String> {
+        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key, kSecReturnData as String: true]
+        if let name = named(place) { query[kSecAttrAccessGroup as String] = name }
         var out: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        let status = SecItemCopyMatching(query as CFDictionary, &out)
+        if status == errSecItemNotFound { return .none }
+        guard status == errSecSuccess, let data = out as? Data, let text = String(data: data, encoding: .utf8) else { return .failed(status) }
+        return .found(text)
     }
     /// Every computer's pairing link.
-    static func links() -> [String] { Stored.keychain.load("airband.links", or: []) }
-    static func keepLinks(_ links: [String]) { Stored.keychain.keep("airband.links", links) }
+    static func links() -> KeychainRead<[String]> { Stored.load("airband.links", in: .shared) }
+    @discardableResult
+    static func keepLinks(_ links: [String]) -> Bool { Stored.keep("airband.links", links, in: .shared) }
     /// Each team's colour as the phone chose it, kept where the notification extension can read it. Not a secret:
     /// it is here because this is the one store the app and its extension share.
-    static func teamColours() -> [String: UInt8] { Stored.keychain.load("airband.teamColours", or: [:]) }
-    static func keepTeamColours(_ colours: [String: UInt8]) { Stored.keychain.keep("airband.teamColours", colours) }
+    static func teamColours() -> [String: UInt8] {
+        if case .found(let colours) = Stored.load("airband.teamColours", in: .shared) as KeychainRead<[String: UInt8]> { return colours }
+        return [:]
+    }
+    static func keepTeamColours(_ colours: [String: UInt8]) { Stored.keep("airband.teamColours", colours, in: .shared) }
 }
 
-/// Something kept as JSON text: in the Keychain, or in the app's own settings. The one way either is read and
+/// Something kept as JSON text, in the Keychain or in the app's own settings. The one way either is read and
 /// written.
 enum Stored {
-    case keychain, settings
-
-    func load<T: Decodable>(_ key: String, or empty: T) -> T {
-        let text = self == .keychain ? Keychain.read(key) : UserDefaults.standard.string(forKey: key)
-        return text.flatMap { try? JSONDecoder().decode(T.self, from: Data($0.utf8)) } ?? empty
-    }
-    func keep<T: Encodable>(_ key: String, _ value: T) {
-        guard let data = try? JSONEncoder().encode(value), let text = String(data: data, encoding: .utf8) else { return }
-        switch self {
-        case .keychain: Keychain.write(key, text)
-        case .settings: UserDefaults.standard.set(text, forKey: key)
+    /// From the Keychain. Text that is there but does not read as `T` is a failed read, never "nothing kept".
+    static func load<T: Decodable>(_ key: String, in place: Keychain.Place) -> KeychainRead<T> {
+        switch Keychain.read(key, in: place) {
+        case .none: return .none
+        case .failed(let status): return .failed(status)
+        case .found(let text):
+            guard let value = try? JSONDecoder().decode(T.self, from: Data(text.utf8)) else { return .failed(errSecDecode) }
+            return .found(value)
         }
+    }
+    @discardableResult
+    static func keep<T: Encodable>(_ key: String, _ value: T, in place: Keychain.Place) -> Bool {
+        guard let data = try? JSONEncoder().encode(value), let text = String(data: data, encoding: .utf8) else { return false }
+        return Keychain.write(key, text, in: place)
+    }
+    /// From the app's own settings: what is not there, or does not read, is `empty`. Nothing secret is kept here.
+    static func setting<T: Decodable>(_ key: String, or empty: T) -> T {
+        UserDefaults.standard.string(forKey: key).flatMap { try? JSONDecoder().decode(T.self, from: Data($0.utf8)) } ?? empty
+    }
+    static func keepSetting<T: Encodable>(_ key: String, _ value: T) {
+        guard let data = try? JSONEncoder().encode(value), let text = String(data: data, encoding: .utf8) else { return }
+        UserDefaults.standard.set(text, forKey: key)
     }
 }
 

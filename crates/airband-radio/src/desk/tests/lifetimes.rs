@@ -55,15 +55,16 @@ fn asking_a_computer_afresh_replaces_only_its_connection() {
     desk.reconnect();
     let (online, name, epoch) = desk.shared.state.lock().unwrap().computers.first().map(|s| (s.online, s.name.clone(), s.epoch)).unwrap();
     let after = radio_of(&desk, &link(1));
-    // the old connection's host is now nobody's: what it says changes nothing
+    // the old connection's host still speaks for the outbox both connections share: a message it found no one
+    // for is put to him, never dropped (audit 6, P-B1)
     let old = ComputerHost { shared: desk.shared.clone(), station, epoch: old_epoch };
     old.unplaced(Outgoing::of("late".into()), None, vec![]);
-    let asking = desk.shared.state.lock().unwrap().asking.is_some();
+    let asking = desk.shared.state.lock().unwrap().asking.as_ref().map(|a| a.message.text.clone());
     desk.stop();
     assert!(!Arc::ptr_eq(&before, &after), "it was not asked afresh");
     assert_ne!(epoch, old_epoch);
     assert!(online && name == "studio", "what was seen of it was dropped with the old connection");
-    assert!(!asking, "an old connection still changed what he sees");
+    assert_eq!(asking.as_deref(), Some("late"), "a message the tower could not place vanished after a reconnect");
 }
 
 #[test]
