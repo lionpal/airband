@@ -85,6 +85,7 @@ pub fn prose(text: String) -> Vec<prose::ProseBlock> {
 pub(crate) struct Senses {
     pub(crate) mouth: mouth::Mouth,
     pub(crate) ears: ears::Chosen,
+    pub(crate) passes: ears::Passes,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]

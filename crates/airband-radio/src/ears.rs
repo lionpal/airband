@@ -191,31 +191,37 @@ enum Mic {
     Live { with: &'static Listener },
 }
 
+/// The passes a live listening service gave, kept once on the device for every computer's radio: one pass
+/// serves them all while it is good.
+#[derive(Default)]
+pub(crate) struct Passes {
+    /// The last pass, when, and what he had chosen it for (the service, its settings and his key): one is good
+    /// for a few minutes, and only for that.
+    pass: Mutex<Option<(Pass, Instant, Use)>>,
+    /// Why the last pass could not be had, in words for him: what he is told when listening could not start.
+    refused: Mutex<Option<String>>,
+}
+
 #[derive(Clone)]
 pub(crate) struct Ears {
-    /// The last pass a live service gave, when, and what he had chosen it for (the service, its settings and
-    /// his key): one is good for a few minutes, and only for that.
-    pass: Arc<Mutex<Option<(Pass, Instant, Use)>>>,
-    /// Why the last pass could not be had, in words for him: what he is told when listening could not start.
-    refused: Arc<Mutex<Option<String>>>,
-    /// What he chose on the device.
+    /// What he chose on the device, and the passes kept for it.
     chosen: Arc<Senses>,
 }
 
 impl Ears {
     pub(crate) fn new(chosen: Arc<Senses>) -> Ears {
-        Ears { pass: Default::default(), refused: Default::default(), chosen }
+        Ears { chosen }
     }
 
     /// The pass kept for exactly this choice, while it is still good.
     fn kept(&self, with: &Use) -> Option<Pass> {
-        self.pass.lock().unwrap().clone().filter(|(p, when, made)| made == with && when.elapsed() < PASS_LIFE && !once(&p.dialect)).map(|(p, _, _)| p)
+        self.chosen.passes.pass.lock().unwrap().clone().filter(|(p, when, made)| made == with && when.elapsed() < PASS_LIFE && !once(&p.dialect)).map(|(p, _, _)| p)
     }
     fn keep(&self, pass: &Pass, with: &Use) {
-        *self.pass.lock().unwrap() = Some((pass.clone(), Instant::now(), with.clone()));
+        *self.chosen.passes.pass.lock().unwrap() = Some((pass.clone(), Instant::now(), with.clone()));
     }
     fn forget(&self) {
-        *self.pass.lock().unwrap() = None;
+        *self.chosen.passes.pass.lock().unwrap() = None;
     }
 
     fn way(&self) -> Way {
@@ -247,11 +253,11 @@ impl Ears {
             Ok(token) => {
                 let pass = Pass { dialect: l.is.name.into(), token, set, phrases, by: offer.by.clone() };
                 self.keep(&pass, &with);
-                *self.refused.lock().unwrap() = None;
+                *self.chosen.passes.refused.lock().unwrap() = None;
                 Some(pass)
             }
             Err(why) => {
-                *self.refused.lock().unwrap() = Some(why);
+                *self.chosen.passes.refused.lock().unwrap() = Some(why);
                 None
             }
         }
@@ -299,7 +305,7 @@ impl Ears {
                         said(text)
                     }
                     // the model would not run: it stays the one he chose, and he is told
-                    Err(()) => fail(host, format!("{name} did not run on this device. Nothing else listened in its place.")),
+                    Err(why) => fail(host, format!("{name} did not run on this device: {why}. Nothing else listened in its place.")),
                 }
             }
             // The recording is made here and sent off whole, to the service, with his own key.
@@ -339,7 +345,7 @@ impl Ears {
                         // the service or the line failed: ask for a fresh pass next time. When it was the pass he is
                         // told the service's reason
                         self.forget();
-                        let why = self.refused.lock().unwrap().take();
+                        let why = self.chosen.passes.refused.lock().unwrap().take();
                         fail(host, why.unwrap_or_else(|| "The listening service you chose could not be reached. Nothing else listened in its place.".into()))
                     }
                 }
@@ -403,15 +409,16 @@ fn record_with(host: &dyn RadioHost, manual: bool, so_far: &mut dyn FnMut(&[i16]
 /// words while he talks the recording so far is read again about twice a second, on a thread of its own: the
 /// microphone is never kept waiting, and a reading that is still going when the next is due is let finish
 /// and the next one skipped. When he stops, all of it is read once more, and that is what he said.
-fn by_model(host: &dyn RadioHost, held: &crate::engines::Held, chosen: &Chosen, manual: bool) -> Result<Option<String>, ()> {
-    let read = |pcm: Vec<u8>| held.with(|m| m.hear(&|engine, folder, job, input| host.run_model(engine.into(), folder.into(), job, input), pcm)).and_then(|heard| heard).ok();
+fn by_model(host: &dyn RadioHost, held: &crate::engines::Held, chosen: &Chosen, manual: bool) -> Result<Option<String>, String> {
+    let read = |pcm: Vec<u8>| held.with(|m| m.hear(&|engine, folder, job, input| host.run_model(engine.into(), folder.into(), job, input), pcm)).and_then(|heard| heard);
     let bytes = |pcm: &[i16]| pcm.iter().flat_map(|s| s.to_le_bytes()).collect::<Vec<u8>>();
     let clip = thread::scope(|scope| {
         let (tx, rx) = sync_channel::<Vec<u8>>(1);
         let read = &read;
         scope.spawn(move || {
             while let Ok(pcm) = rx.recv() {
-                if let Some(now) = read(pcm) {
+                // what he has said so far: a reading that did not work shows nothing new, and the last one says why
+                if let Ok(now) = read(pcm) {
                     host.hearing(now);
                 }
             }
@@ -428,10 +435,10 @@ fn by_model(host: &dyn RadioHost, held: &crate::engines::Held, chosen: &Chosen, 
     host.status(RadioStatus::Sending);
     let began = Instant::now();
     let heard = read(bytes(&pcm));
-    if heard.is_some() {
+    if heard.is_ok() {
         *chosen.last.lock().unwrap_or_else(|e| e.into_inner()) = Some((pcm.len() as f32 / RATE as f32, began.elapsed().as_secs_f32()));
     }
-    heard.map(|text| Some(text.trim().to_string()).filter(|t| !t.is_empty())).ok_or(())
+    heard.map(|text| Some(text.trim().to_string()).filter(|t| !t.is_empty()))
 }
 
 #[cfg(test)]
@@ -449,7 +456,7 @@ mod tests {
         let ears = Ears::new(senses);
         // nothing is asked of the service here: the pass is asked for once the microphone is open
         assert!(matches!(ears.way(), Way::Mic(Mic::Live { .. })));
-        assert!(ears.refused.lock().unwrap().is_none());
+        assert!(ears.chosen.passes.refused.lock().unwrap().is_none());
     }
 
     #[test]
