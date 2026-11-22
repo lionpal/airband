@@ -59,7 +59,7 @@ pub(in crate::tower) async fn on_utterance(app: &Arc<App>, radio: &str, text: &s
     if control == Some(Control::Poke) {
         let stopped = app.read().stalled();
         let room = said.scope.as_deref();
-        to.targets = stopped.into_iter().filter(|s| if to.named.is_empty() { room.is_none_or(|g| s.team == g) } else { to.named.iter().any(|n| n.agent.id == s.agent.id) }).collect();
+        to.targets = stopped.into_iter().filter(|s| if to.named.is_empty() { room.is_none_or(|g| s.team.as_str() == g) } else { to.named.iter().any(|n| n.agent.id == s.agent.id) }).collect();
         if to.targets.is_empty() {
             return say("Nobody has stopped.".into());
         }
