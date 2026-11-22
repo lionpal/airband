@@ -702,3 +702,50 @@ fn an_agent_started_under_a_name_no_team_can_have_goes_in_its_folders_team() {
     a.name = Some("a name far longer than any team may have".into());
     assert_eq!(inner.check_in(&a).map(|c| c.text()).as_deref(), Some("shop one"));
 }
+
+#[test]
+fn a_team_is_let_go_only_when_nothing_is_in_it_and_its_folder_is_gone() {
+    let here = std::env::temp_dir().join(format!("airband-unused-{}", config::random_hex(6)));
+    let folder = |name: &str| {
+        std::fs::create_dir_all(here.join(name)).unwrap();
+        here.join(name).display().to_string()
+    };
+    let (kept, gone, talked) = (folder("kept"), folder("gone"), folder("talked"));
+    let mut inner = Inner::default();
+    let ids: Vec<String> = [&kept, &gone, &talked].iter().map(|f| inner.folder_team(f).unwrap()).collect();
+    joins(&mut inner, &agent("a", &talked, None));
+    says(&mut inner, "a", Kind::Report, "done");
+    inner.remove("a");
+    let named = inner.new_team("errands", true).unwrap();
+    std::fs::remove_dir_all(here.join("gone")).unwrap();
+    std::fs::remove_dir_all(here.join("talked")).unwrap();
+    assert!(inner.drop_unused_teams());
+    // a folder still there keeps its team; one whose chat lines remain keeps it; a team with no folder and
+    // nothing in it goes, as does the one whose folder went
+    assert!(inner.teams.contains_key(&ids[0]));
+    assert!(!inner.teams.contains_key(&ids[1]));
+    assert!(inner.teams.contains_key(&ids[2]));
+    assert!(!inner.teams.contains_key(&named));
+    assert!(!inner.drop_unused_teams());
+    let _ = std::fs::remove_dir_all(&here);
+}
+
+#[test]
+fn no_way_of_naming_a_team_gives_it_a_name_another_team_has() {
+    let here = std::env::temp_dir().join(format!("airband-samename-{}", config::random_hex(6)));
+    let folder = |name: &str| {
+        std::fs::create_dir_all(here.join(name)).unwrap();
+        here.join(name).display().to_string()
+    };
+    let (shop, back) = (folder("shop"), folder("back"));
+    let mut inner = Inner::default();
+    let shop_id = inner.folder_team(&shop).unwrap();
+    let back_id = inner.folder_team(&back).unwrap();
+    // a name kept by an older tower as his for one team, which another team already has, is not given
+    let old: BTreeMap<String, String> = [("shop".to_string(), back.clone())].into();
+    inner.settle_teams(old, ["shop".to_string()].into());
+    assert_eq!(inner.team_name(&shop_id), Some("shop"));
+    assert_eq!(inner.team_name(&back_id), Some("back"));
+    assert!(inner.rename_team(&back_id, "shop").is_err());
+    let _ = std::fs::remove_dir_all(&here);
+}

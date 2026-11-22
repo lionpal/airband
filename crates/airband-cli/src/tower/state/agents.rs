@@ -30,7 +30,8 @@ impl Inner {
         }
         // a radio not heard from in a day has nothing worth keeping
         self.calls.retain(|_, c| c.seen.is_some_and(|t| t.elapsed() < Duration::from_secs(86_400)));
-        !dead.is_empty() || !over.is_empty()
+        let teams = self.drop_unused_teams();
+        !dead.is_empty() || !over.is_empty() || teams
     }
     /// What an agent is doing.
     ///

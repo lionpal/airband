@@ -69,59 +69,15 @@ pub(super) async fn recent(State(app): State<Arc<App>>) -> Answer<at::Recent> {
 pub(super) async fn project(State(app): State<Arc<App>>, Sent(new): Sent<at::Project>) -> Answer<at::Project> {
     // a team's name is part of what its agents are called, and is said aloud: short, and written as a
     // callsign is
-    let mut name = match TeamName::new(&new.name) {
-        Ok(name) => name.into_string(),
-        Err(why) => return Err(no(why)),
-    };
-    let folder = if new.make {
-        // the new folder is called exactly as he wrote the name: one part of a path, not hidden
-        let called = std::path::Path::new(new.name.trim());
-        let one_part = matches!(called.components().collect::<Vec<_>>().as_slice(), [std::path::Component::Normal(_)]);
-        match (folder_at(&new.folder), called.file_name().filter(|n| one_part && !n.to_string_lossy().starts_with('.'))) {
-            (Ok(parent), Some(last)) => {
-                let made = parent.join(last);
-                if let Err(e) = std::fs::create_dir(&made)
-                    && !made.is_dir() {
-                        return Err(no(format!("That folder could not be made: {e}")));
-                    }
-                Ok(made)
-            }
-            (Err(why), _) => Err(why),
-            (Ok(_), None) => Err("That is not a name for a folder.".to_string()),
-        }
-    } else if new.folder.trim().is_empty() {
-        Err("Choose a folder for it to work in.".to_string())
-    } else {
-        folder_at(&new.folder)
-    };
-    let folder = folder.map_err(no)?;
+    let name = TeamName::new(&new.name).map_err(no)?;
+    let folder = project_folder(&new).map_err(no)?;
     // a tool he named that this computer cannot start is refused before anything is made
     let launcher = held::launcher_for(&app, new.tool.as_deref());
     if new.tool.is_some() && launcher.is_none() {
         return Err(no("This computer cannot start that tool."));
     }
     let at = folder.display().to_string();
-    let id = {
-        let mut inner = app.change();
-        match inner.team_at(&at) {
-            // a folder that has a team: another agent joins it
-            Some(team) => {
-                if let Some(called) = inner.team_name(&team) {
-                    name = called.to_string();
-                }
-                team
-            }
-            None => match inner.chosen_team(&name, None) {
-                Err(why) => return Err(no(why)),
-                // the name came from his radio, so he chose it, even where it is the one the folder would give,
-                // and it stays his
-                Ok(chosen) => {
-                    log(format!("a radio made the team {chosen}, in {at}"));
-                    inner.new_folder_team(&at, chosen, true)
-                }
-            },
-        }
-    };
+    let (id, name) = project_team(&app, &at, name).map_err(no)?;
     // its first agent, with nothing to do yet, when the tower runs agents itself: the team is then there to see
     if !launcher.is_some_and(|(_, l)| l.held.is_some()) {
         return Ok(Json(airband_core::radio::ProjectMade { say: format!("{name} is ready. Say launch {name}, then what it should do."), team: name, id }));
@@ -129,4 +85,37 @@ pub(super) async fn project(State(app): State<Arc<App>>, Sent(new): Sent<at::Pro
     let place = Place { name: name.clone(), folder: at };
     let reply = launch::launch(&app, &place, &Idea { tool: new.tool.clone(), project: Some(place.clone()), model: None, effort: None, task: String::new() }).await;
     Ok(Json(airband_core::radio::ProjectMade { say: reply.say, team: name, id }))
+}
+
+/// The folder a new team works in: one he made, called exactly as he wrote the name (one part of a path, not
+/// hidden), or one he chose.
+fn project_folder(new: &airband_core::radio::NewProject) -> Result<std::path::PathBuf, String> {
+    if !new.make {
+        return if new.folder.trim().is_empty() { Err("Choose a folder for it to work in.".to_string()) } else { folder_at(&new.folder) };
+    }
+    let called = std::path::Path::new(new.name.trim());
+    let one_part = matches!(called.components().collect::<Vec<_>>().as_slice(), [std::path::Component::Normal(_)]);
+    let last = called.file_name().filter(|n| one_part && !n.to_string_lossy().starts_with('.')).ok_or("That is not a name for a folder.")?;
+    let made = folder_at(&new.folder)?.join(last);
+    if let Err(e) = std::fs::create_dir(&made)
+        && !made.is_dir() {
+            return Err(format!("That folder could not be made: {e}"));
+        }
+    Ok(made)
+}
+
+/// The team a new one in this folder is: the one that already works there (another agent joins it), or a new
+/// one with his name for it. Its id and what it is called.
+fn project_team(app: &App, at: &str, name: TeamName) -> Result<(String, String), String> {
+    let mut inner = app.change();
+    if let Some(team) = inner.team_at(at) {
+        let called = inner.team_name(&team).map_or_else(|| name.to_string(), String::from);
+        return Ok((team, called));
+    }
+    // the name came from his radio, so he chose it, even where it is the one the folder would give, and it
+    // stays his
+    let chosen = inner.chosen_team(name.as_str(), None)?;
+    log(format!("a radio made the team {chosen}, in {at}"));
+    let called = chosen.to_string();
+    Ok((inner.new_folder_team(at, chosen, true), called))
 }
