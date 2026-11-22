@@ -59,11 +59,6 @@ pub(super) async fn unsend(State(app): State<Arc<App>>, Sent(to): Sent<at::Unsen
     done()
 }
 
-/// End an agent the tower runs itself (`airband end <id>`).
-pub(super) async fn held_end(State(app): State<Arc<App>>, Path(id): Path<String>) -> Answer<at::HeldEnd> {
-    if held::end(&app, &id).await { done() } else { Err(No(Refusal::Gone)) }
-}
-
 pub(super) async fn permission_ask(State(app): State<Arc<App>>, Sent(ask): Sent<at::Permission>) -> Answer<at::Permission> {
     Ok(Json(permit::ask(&app, ask)))
 }

@@ -136,9 +136,16 @@ async fn new_agent(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
     if let Some(Unplaced { question, idea }) = held_idea {
         match named_project(app, &idea.task, text, projects).await {
             Ok(Some(place)) => {
-                app.change().call(radio).resolve_unplaced(&question);
                 log(format!("← radio: \"{text}\" → launch in {}", place.name));
-                return Some(launch(app, &place, &idea).await);
+                // the idea is let go only once an agent has started with it: a launch that refuses leaves it
+                // waiting, and he can answer again
+                return Some(match launch(app, &place, &idea).await {
+                    Ok(reply) => {
+                        app.change().call(radio).resolve_unplaced(&question);
+                        reply
+                    }
+                    Err(refused) => Reply { listen: true, question: Some(question.to_string()), ..refused },
+                });
             }
             Ok(None) => app.change().call(radio).resolve_unplaced(&question),
             Err(why) => {

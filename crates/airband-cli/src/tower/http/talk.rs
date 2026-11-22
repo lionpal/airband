@@ -117,27 +117,26 @@ pub(super) async fn utterance(State(app): State<Arc<App>>, RadioId(radio): Radio
     if u.id.is_empty() {
         return Err(bad("what he said has to come with an id"));
     }
-    {
-        // the id is taken before anything is done, under the one lock, so the same utterance arriving twice
-        // (a retry, or two ways at once) is taken once, whether or not the tower restarted in between
-        let mut inner = app.change();
-        if inner.answering.contains(&u.id) {
-            log(format!("utterance {} from {radio} by {via}: asked after, still being answered", u.id));
-            return Ok(Json(Outcome::Taken));
+    // The id is taken before anything is done: held among those being answered under the state's lock, so the
+    // same utterance arriving twice (a retry, or two ways at once) is taken once. The record is then read
+    // with that lock let go, so the database never holds up the rest of the tower; one that turns out to be
+    // answered already, or cannot be read, lets the id go again.
+    if !app.change().answering.insert(u.id.clone()) {
+        log(format!("utterance {} from {radio} by {via}: asked after, still being answered", u.id));
+        return Ok(Json(Outcome::Taken));
+    }
+    match app.store.begin_receipt(&u.id) {
+        Receipt::Begun => {}
+        Receipt::Done(reply) => {
+            app.change().answering.remove(&u.id);
+            log(format!("utterance {} from {radio} by {via}: already answered, the same answer given again", u.id));
+            return Ok(Json(Outcome::Answered { reply }));
         }
-        match app.store.begin_receipt(&u.id) {
-            Receipt::Done(reply) => {
-                log(format!("utterance {} from {radio} by {via}: already answered, the same answer given again", u.id));
-                return Ok(Json(Outcome::Answered { reply }));
-            }
-            Receipt::Begun => {
-                inner.answering.insert(u.id.clone());
-            }
-            // the radio keeps it and sends it again: answered now, it might be answered twice
-            Receipt::Unknown(why) => {
-                log(format!("utterance {} from {radio} by {via}: whether it was answered could not be read ({why})", u.id));
-                return Err(No(Refusal::NotNow { reason: "This computer could not check its records just now. It is sent again in a moment.".into() }));
-            }
+        // the radio keeps it and sends it again: answered now, it might be answered twice
+        Receipt::Unknown(why) => {
+            app.change().answering.remove(&u.id);
+            log(format!("utterance {} from {radio} by {via}: whether it was answered could not be read ({why})", u.id));
+            return Err(No(Refusal::NotNow { reason: "This computer could not check its records just now. It is sent again in a moment.".into() }));
         }
     }
     // answered in the order it came from this radio: several can arrive in one moment (what the relay kept
@@ -168,8 +167,12 @@ pub(super) async fn utterance(State(app): State<Arc<App>>, RadioId(radio): Radio
         // became of it and how long that took
         let took = began.elapsed();
         log(format!("utterance {} from {radio} by {via}: answered in {:.1} s{}{}", u.id, took.as_secs_f32(), if reply.say.is_empty() { String::new() } else { format!(" (\"{}\")", airband_core::prose::clip(&reply.say, 80)) }, if took > SLOW { ", which is slow" } else { "" }));
-        // the line is written before the answer can be read back, so it is there whenever the answer is
-        app.store.finish_receipt(&u.id, &reply);
+        // The answer is handed to the saver after the lines that came of it, and written with them in one go,
+        // so it is never on record while they are not. The id stays among those being answered until it is
+        // written: the same words sent again meanwhile are told they are taken, never answered a second time.
+        app.change().answered.push((u.id.clone(), reply.clone()));
+        let written = app.clone();
+        tokio::task::spawn_blocking(move || written.saver.flush()).await.ok();
         let mut inner = app.change();
         inner.answering.remove(&u.id);
         inner.settle(&radio, &u.id, Outcome::Answered { reply });

@@ -55,10 +55,19 @@ pub(super) struct Session {
     #[serde(default)]
     pub(super) turn: Option<String>,
 }
+/// How many placements are remembered.
+const PLACED_KEEP: usize = 400;
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub(super) enum Mover {
     Him,
     Tower,
+}
+/// Which team an agent was put in, by whom, and when (in milliseconds): the oldest are let go first.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub(super) struct Placed {
+    pub(super) team: TeamId,
+    pub(super) by: Mover,
+    pub(super) at: u64,
 }
 /// The callsign the name he gave an agent's session makes, in this team.
 fn titled(team_name: &str, agent: &Agent, title: &str) -> Option<Callsign> {
@@ -73,7 +82,7 @@ impl Inner {
         if let Some(s) = self.find(&agent.id) {
             return Some(s.team.clone());
         }
-        if let Some((team, _)) = self.placed.get(&agent.id).filter(|(team, _)| self.teams.contains_key(team)) {
+        if let Some(Placed { team, .. }) = self.placed.get(&agent.id).filter(|p| self.teams.contains_key(&p.team)) {
             return Some(team.clone());
         }
         if let Some(name) = &agent.name {
@@ -88,12 +97,15 @@ impl Inner {
         }
         self.folder_team(agent.cwd.as_deref()?)
     }
-    /// Write down which team an agent was put in, by whom. Only the latest few hundred are remembered.
+    /// Write down which team an agent was put in, by whom. Only the latest few hundred are remembered: the one
+    /// placed longest ago is let go first.
     pub(super) fn put(&mut self, id: &str, team: &TeamId, by: Mover) {
-        self.placed.insert(AgentId::new(id), (team.clone(), by));
-        while self.placed.len() > 400 {
-            let Some(first) = self.placed.keys().next().cloned() else { break };
-            self.placed.remove(&first);
+        // later than any before it, though the clock was set back
+        let at = self.placed.values().map(|p| p.at + 1).max().unwrap_or(0).max(now_ms());
+        self.placed.insert(AgentId::new(id), Placed { team: team.clone(), by, at });
+        while self.placed.len() > PLACED_KEEP {
+            let Some(oldest) = self.placed.iter().min_by_key(|(_, p)| p.at).map(|(id, _)| id.clone()) else { break };
+            self.placed.remove(&oldest);
         }
     }
     pub(super) fn remove(&mut self, agent_id: &str) {
@@ -132,7 +144,7 @@ impl Inner {
             log(format!("{} checked in ({}, {})", callsign.text(), agent.harness, agent.cwd.as_deref().unwrap_or("no folder")));
             self.sessions.push(Session { agent: agent.clone(), callsign, team: team.clone(), waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false, hooked: false, turn: None });
             // one that was moved to another team before it went away is back there, by whoever put it there
-            if let Some(by) = self.placed.get(&agent.id).filter(|(placed, _)| *placed == team).map(|(_, by)| *by)
+            if let Some(by) = self.placed.get(&agent.id).filter(|p| p.team == team).map(|p| p.by)
                 && let Some(s) = self.session(&agent.id) {
                     s.moved = Some(by);
                 }
@@ -232,5 +244,23 @@ impl Inner {
     }
     pub(super) fn callsigns(&self) -> Vec<Callsign> {
         self.sessions.iter().map(|s| s.callsign.clone()).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_placement_let_go_is_the_oldest_whatever_its_id() {
+        let mut inner = Inner::default();
+        let team = TeamId::new("t1");
+        // ids that sort the other way from the order they were placed in
+        for n in (0..PLACED_KEEP + 1).rev() {
+            inner.put(&format!("agent-{n:04}"), &team, Mover::Tower);
+        }
+        assert_eq!(inner.placed.len(), PLACED_KEEP);
+        assert!(!inner.placed.contains_key(&AgentId::new(format!("agent-{PLACED_KEEP:04}"))), "the first one placed is let go");
+        assert!(inner.placed.contains_key(&AgentId::new("agent-0000")), "the last one placed is kept, though its id sorts first");
     }
 }

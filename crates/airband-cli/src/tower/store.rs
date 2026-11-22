@@ -101,6 +101,7 @@ impl Store {
                 menus: Self::kept(&db, "menus")?,
                 tools: Self::kept(&db, "tools")?,
                 placed: Self::kept(&db, "placed")?,
+                links: Self::kept(&db, "links")?,
                 ..Saved::default()
             }
         } else {
@@ -185,6 +186,10 @@ impl Store {
         for e in &batch.messages {
             Self::put_one(&tx, e)?;
         }
+        for (id, reply) in &batch.receipts {
+            let reply = serde_json::to_string(reply).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            tx.execute("update receipts set reply = ?2 where id = ?1", params![id, reply])?;
+        }
         tx.commit()
     }
 
@@ -201,7 +206,7 @@ impl Store {
     /// Write new messages, and messages whose short or fuller version has just been made.
     #[cfg(test)]
     pub(super) fn put_messages(&self, entries: &[Entry]) {
-        self.write(&Batch { tables: Vec::new(), messages: entries.to_vec() }).unwrap();
+        self.write(&Batch { messages: entries.to_vec(), ..Batch::default() }).unwrap();
     }
 
     fn put_one(db: &Connection, e: &Entry) -> rusqlite::Result<usize> {
@@ -286,11 +291,6 @@ impl Store {
         }
     }
 
-    pub(super) fn finish_receipt(&self, id: &str, reply: &Reply) {
-        let db = self.db.lock().unwrap();
-        Self::warn("closing a receipt", db.execute("update receipts set reply = ?2 where id = ?1", params![id, serde_json::to_string(reply).unwrap()]));
-    }
-
     /// `utterance` is the id the radio gave what he said, when it gave one.
     pub(super) fn delivery(&self, message: &str, utterance: Option<&str>, callsign: &str, outcome: &Result<(), String>) {
         let db = self.db.lock().unwrap();
@@ -357,8 +357,11 @@ mod tests {
     fn an_utterance_is_taken_once() {
         let (s, path) = store("receipts");
         assert!(matches!(s.begin_receipt("u1"), Receipt::Begun));
-        s.finish_receipt("u1", &Reply { say: "Sent to shop one.".into(), listen: false, ..Reply::default() });
+        // the answer is written with the line that came of it, in one go
+        let line = Entry { seq: 9, id: "said".into(), ..Entry::default() };
+        s.write(&Batch { messages: vec![line], receipts: vec![("u1".into(), Reply { say: "Sent to shop one.".into(), listen: false, ..Reply::default() })], ..Batch::default() }).unwrap();
         assert!(matches!(s.begin_receipt("u1"), Receipt::Done(r) if r.say == "Sent to shop one."));
+        assert_eq!(s.load(10).unwrap().1.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["said"]);
         let _ = std::fs::remove_file(path);
     }
 
@@ -399,7 +402,7 @@ mod tests {
     #[test]
     fn a_kept_table_that_cannot_be_read_is_set_aside_alone() {
         let (s, path) = store("one-table");
-        s.write(&Batch { tables: vec![("sessions", "[]".into()), ("teams", "not json".into()), ("tools", r#"["codex"]"#.into())], messages: Vec::new() }).unwrap();
+        s.write(&Batch { tables: vec![("sessions", "[]".into()), ("teams", "not json".into()), ("tools", r#"["codex"]"#.into())], ..Batch::default() }).unwrap();
         let (saved, _) = s.load(10).unwrap();
         assert!(saved.teams.is_empty(), "the unreadable table starts empty");
         assert_eq!(saved.tools, ["codex"], "the others are read");

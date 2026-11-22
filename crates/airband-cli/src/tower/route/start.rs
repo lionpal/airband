@@ -55,7 +55,7 @@ pub(super) async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, p
         }
     };
     log(format!("← radio: \"{text}\" → launch in {}", place.name));
-    launch(app, &place, &idea).await
+    launch(app, &place, &idea).await.unwrap_or_else(|refused| refused)
 }
 
 /// The question when the place a new agent is for is not known.

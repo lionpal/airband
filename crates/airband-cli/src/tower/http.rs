@@ -160,7 +160,6 @@ async fn presence_said(State(app): State<Arc<App>>, req: Request, next: Next) ->
 pub(super) fn router(app: Arc<App>) -> Router {
     let r = Router::new();
     let r = serve::<at::Events, _, _>(r, events);
-    let r = serve::<at::HeldEnd, _, _>(r, held_end);
     let r = serve::<at::Permission, _, _>(r, permission_ask);
     let r = serve::<at::PermissionAnswer, _, _>(r, permission_state);
     let r = serve::<at::PermissionWithdraw, _, _>(r, permission_withdraw);

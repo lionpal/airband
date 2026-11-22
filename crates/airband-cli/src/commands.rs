@@ -6,28 +6,34 @@ use serde::Serialize;
 use airband_core::pairing::Pairing;
 
 /// `airband relay <url> [--admission <key>]` / `airband relay off`
-pub(crate) fn relay(mut cfg: Config, args: &[String]) -> Result<(), String> {
+pub(crate) fn relay(cfg: Config, args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         None => println!("{}", cfg.relay.as_deref().map(|r| format!("Your phone reaches this computer through {r}.")).unwrap_or("No relay: your phone reaches this computer at its own addresses, on the same network or over a private network.".into())),
         Some("off") => {
-            cfg.relay = None;
-            cfg.relay_admission = None;
-            config::save(&cfg)?;
+            config::change(|now| {
+                now.relay = None;
+                now.relay_admission = None;
+                Ok(())
+            })?;
             println!("No relay from now on. A phone paired through it must be paired again:  airband pair");
         }
         Some("on") => {
-            cfg.relay = Some(config::RELAY.into());
-            cfg.relay_admission = None;
-            config::save(&cfg)?;
+            config::change(|now| {
+                now.relay = Some(config::RELAY.into());
+                now.relay_admission = None;
+                Ok(())
+            })?;
             println!("Relay set to {}. A phone paired without it must be paired again:  airband pair", config::RELAY);
         }
         Some(url) => {
             if airband_core::links::web(url).is_none() {
                 return Err(format!("a relay address is a web address, like {}", config::RELAY));
             }
-            cfg.relay = Some(url.trim_end_matches('/').to_string());
-            cfg.relay_admission = crate::option(args, "--admission");
-            config::save(&cfg)?;
+            config::change(|now| {
+                now.relay = Some(url.trim_end_matches('/').to_string());
+                now.relay_admission = crate::option(args, "--admission");
+                Ok(())
+            })?;
             println!("Relay set to {url}. If airband is running it picks this up within ten seconds. Next: airband pair");
         }
     }
@@ -45,7 +51,7 @@ pub(crate) fn relay(mut cfg: Config, args: &[String]) -> Result<(), String> {
 /// A key is never given on the command line, where the shell and other programs can see it: it comes from an
 /// environment variable, or is one already kept for that provider (`airband keys`). What reads decides what
 /// of each agent's message is worth showing, and who his words are for.
-pub(crate) fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
+pub(crate) fn model(cfg: Config, args: &[String]) -> Result<(), String> {
     use crate::providers::{self, Use};
     let (job, cmd, what, without) = (providers::Job::Summary, "model", "Model", "You get every message in full, and with several agents you are asked who yours is for.");
     let offered = || providers::offering(job).iter().map(|p| p.id.clone()).collect::<Vec<_>>().join(", ");
@@ -84,9 +90,6 @@ pub(crate) fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
                     // one he already gave for this provider will do
                     None => cfg.key_of(&p.id).ok_or_else(|| format!("{} needs a key: --key-env <VARIABLE>, or give one first with  airband keys add {id}", p.name))?,
                 };
-                if cfg.key_of(&p.id).as_ref() != Some(&u.key) {
-                    cfg.keep_key(&p.id, u.key.clone());
-                }
             }
             for a in &o.asks {
                 if let Some(said) = crate::option(args, &format!("--{}", a.field)) {
@@ -96,45 +99,56 @@ pub(crate) fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
             u
         }
     };
-    cfg.summarizer = chosen;
-    config::save(&cfg)?;
+    config::change(|now| {
+        if !chosen.key.is_empty() && now.key_of(&chosen.kind).as_ref() != Some(&chosen.key) {
+            now.keep_key(&chosen.kind, chosen.key.clone());
+        }
+        now.summarizer = chosen;
+        Ok(())
+    })?;
     // the tower reads its settings again whenever the file changes
     println!("Saved. airband uses it from now on.");
     Ok(())
 }
 
 /// `airband lan [on | off]`: whether a paired phone on the same network may reach this computer straight.
-pub(crate) fn lan(mut cfg: Config, args: &[String]) -> Result<(), String> {
+pub(crate) fn lan(cfg: Config, args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         None => {
             println!("{}", if cfg.lan { "On: a paired phone on the same network reaches this computer directly, encrypted. Away from that network it goes through the relay." } else { "Off: a paired phone always goes through the relay." });
             println!("Change it:  airband lan on  |  airband lan off");
             return Ok(());
         }
-        Some("on") => cfg.lan = true,
-        Some("off") => cfg.lan = false,
+        Some("on" | "off") => {}
         Some(other) => return Err(format!("airband lan takes on or off, not \"{other}\"")),
     }
-    config::save(&cfg)?;
+    let on = args.first().map(String::as_str) == Some("on");
+    config::change(|now| {
+        now.lan = on;
+        Ok(())
+    })?;
     println!("Saved. If airband is running it uses this from its next start: airband install");
     Ok(())
 }
 
-pub(crate) fn pair(mut cfg: Config, name: &str) -> Result<(), String> {
+pub(crate) fn pair(cfg: Config, name: &str) -> Result<(), String> {
     // a slip like `airband pair --help` must not make a pairing called "--help"
     if name.starts_with('-') {
         return Err(format!("\"{name}\" is not a name for a phone. Use:  airband pair [name]"));
     }
     // one secret for a radio, whichever way it reaches the tower
-    let secret = match cfg.pairings.iter().find(|p| p.name == name) {
-        Some(p) => p.secret.clone(),
-        None => {
-            let secret = airband_core::relay::new_secret();
-            cfg.pairings.push(config::PairedRadio { name: name.into(), secret: secret.clone() });
-            config::save(&cfg)?;
-            secret
-        }
-    };
+    // read and, for a new one, added while the file is held: a pairing made meanwhile elsewhere is kept, and
+    // two made at once under one name share one secret
+    let secret = config::change(|now| {
+        Ok(match now.pairings.iter().find(|p| p.name == name) {
+            Some(p) => p.secret.clone(),
+            None => {
+                let secret = airband_core::relay::new_secret();
+                now.pairings.push(config::PairedRadio { name: name.into(), secret: secret.clone() });
+                secret
+            }
+        })
+    })?;
     let pairing = match &cfg.relay {
         Some(relay) => {
             println!("Pairing \"{name}\", through the relay at {relay}. Works from any network.");
@@ -164,13 +178,13 @@ pub(crate) fn pair(mut cfg: Config, name: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn unpair(mut cfg: Config, name: Option<&str>) -> Result<(), String> {
+pub(crate) fn unpair(cfg: Config, name: Option<&str>) -> Result<(), String> {
     let name = name.ok_or_else(|| format!("which one? paired: {}", cfg.pairings.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")))?;
-    let Some(gone) = cfg.pairings.iter().find(|p| p.name == name).cloned() else {
-        return Err(format!("no phone is paired as \"{name}\""));
-    };
-    cfg.pairings.retain(|p| p.name != name);
-    config::save(&cfg)?;
+    let gone = config::change(|now| {
+        let gone = now.pairings.iter().find(|p| p.name == name).cloned().ok_or_else(|| format!("no phone is paired as \"{name}\""))?;
+        now.pairings.retain(|p| p.name != name);
+        Ok(gone)
+    })?;
     // tell the relay the channel is finished with, so it does not keep it on record for ever. If the relay
     // cannot be reached the radio is cut off all the same: the tower no longer answers on that channel.
     if let (Some(relay), Ok(keys)) = (&cfg.relay, airband_core::relay::Keys::derive(&gone.secret)) {
@@ -189,7 +203,7 @@ pub(crate) fn unpair(mut cfg: Config, name: Option<&str>) -> Result<(), String> 
 ///   airband quick add "Make no mistakes"           the label is also what is sent
 ///   airband quick add "Anti-AI" "Reread the writing style guide and fix what breaks it."
 ///   airband quick remove "Make no mistakes"
-pub(crate) fn quick(mut cfg: Config, args: &[String]) -> Result<(), String> {
+pub(crate) fn quick(cfg: Config, args: &[String]) -> Result<(), String> {
     match (args.first().map(String::as_str), args.get(1)) {
         (None, _) => {
             for q in airband_core::radio::quick_defaults().iter().chain(&cfg.quick) {
@@ -199,19 +213,19 @@ pub(crate) fn quick(mut cfg: Config, args: &[String]) -> Result<(), String> {
         }
         (Some("add"), Some(label)) => {
             let text = args.get(2).cloned().unwrap_or_else(|| format!("{}.", label.trim_end_matches('.')));
-            cfg.quick.retain(|q| q.label != *label);
-            cfg.quick.push(airband_core::radio::Quick { label: label.clone(), text });
+            config::change(|now| {
+                now.quick.retain(|q| q.label != *label);
+                now.quick.push(airband_core::radio::Quick { label: label.clone(), text });
+                Ok(())
+            })?;
         }
-        (Some("remove"), Some(label)) => {
-            let before = cfg.quick.len();
-            cfg.quick.retain(|q| q.label != *label);
-            if cfg.quick.len() == before {
-                return Err(format!("no quick message of yours is called \"{label}\""));
-            }
-        }
+        (Some("remove"), Some(label)) => config::change(|now| {
+            let before = now.quick.len();
+            now.quick.retain(|q| q.label != *label);
+            if now.quick.len() == before { Err(format!("no quick message of yours is called \"{label}\"")) } else { Ok(()) }
+        })?,
         _ => return Err("airband quick  |  airband quick add \"<label>\" [\"<what to send>\"]  |  airband quick remove \"<label>\"".into()),
     }
-    config::save(&cfg)?;
     println!("Saved. Your phone shows it within a moment.");
     Ok(())
 }

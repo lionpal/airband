@@ -84,7 +84,7 @@ pub(super) async fn project(State(app): State<Arc<App>>, Sent(new): Sent<at::Pro
         return Ok(Json(airband_core::radio::ProjectMade { say: format!("{name} is ready. Say launch {name}, then what it should do."), team: name, id: id.into() }));
     }
     let place = Place { name: name.clone(), folder: at };
-    let reply = launch::launch(&app, &place, &Idea { tool: new.tool.clone(), project: Some(place.clone()), model: None, effort: None, task: String::new() }).await;
+    let reply = launch::launch(&app, &place, &Idea { tool: new.tool.clone(), project: Some(place.clone()), model: None, effort: None, task: String::new() }).await.unwrap_or_else(|refused| refused);
     Ok(Json(airband_core::radio::ProjectMade { say: reply.say, team: name, id: id.into() }))
 }
 

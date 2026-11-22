@@ -45,25 +45,26 @@ fn chosen(asked: Option<&Pick>, launcher: &LauncherId, choices: &[airband_core::
     }
 }
 
-pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Reply {
+/// Start a new agent in `place`. `Ok` once it has started, with what to tell him; `Err` with why nothing started.
+pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Result<Reply, Reply> {
     let task = idea.task.as_str();
     let say = |s: String| Reply { say: s, listen: false, ..Reply::default() };
     let (project, cwd) = (place.name.as_str(), place.folder.clone());
     if !std::path::Path::new(&cwd).is_dir() {
-        return say(format!("The folder for {project} is gone."));
+        return Err(say(format!("The folder for {project} is gone.")));
     }
     // the tool he asked for, when he named one; otherwise the usual launcher
     let Some((named, launcher)) = held::launcher_for(app, idea.tool.as_deref()) else {
-        return say(match &idea.tool {
+        return Err(say(match &idea.tool {
             Some(tool) => format!("This computer is not set up to start {tool} agents."),
             None => "Which coding agent should start it? Choose the ones you use on your phone, in Settings, under Coding agents, or name one when you ask.".to_string(),
-        });
+        }));
     };
     let launcher = &launcher;
     // An agent the tower runs can be started with nothing to do yet: it is there at once, waiting for his first
     // word. One that is handed off needs its task to start with.
     if task.is_empty() && launcher.held.is_none() {
-        return Reply { say: format!("What should it do? Say launch {project}, then the task."), listen: true, ..Reply::default() };
+        return Err(Reply { say: format!("What should it do? Say launch {project}, then the task."), listen: true, ..Reply::default() });
     }
     // The model and effort he asked for. One this launcher does not offer is not left out and the agent
     // started without it: he is told, and nothing is started.
@@ -81,11 +82,11 @@ pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Reply 
     let chosen = |asked: Option<&Pick>, choices: &[airband_core::tools::Choice]| chosen(asked, &launcher_id, choices, agent_says);
     let model = match chosen(idea.model.as_ref(), &menu.models) {
         Ok(model) => model,
-        Err(m) => return say(format!("I cannot start one on {m}. {}", offers("a model", &menu.models))),
+        Err(m) => return Err(say(format!("I cannot start one on {m}. {}", offers("a model", &menu.models)))),
     };
     let effort = match chosen(idea.effort.as_ref(), &menu.efforts) {
         Ok(effort) => effort,
-        Err(e) => return say(format!("I cannot start one at {e} effort. {}", offers("an effort", &menu.efforts))),
+        Err(e) => return Err(say(format!("I cannot start one at {e} effort. {}", offers("an effort", &menu.efforts)))),
     };
     // as its tool takes them
     let (model_id, effort_id) = (model.as_ref().map(|c| c.id.clone()), effort.as_ref().map(|c| c.id.clone()));
@@ -100,15 +101,15 @@ pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Reply 
         return match held::start(app, &named, &cwd, model_id, effort_id, task).await {
             Ok(_) if task.is_empty() => {
                 log(format!("started {named}{with} in {project}, held by the tower, with nothing to do yet"));
-                say(format!("A new agent is ready in {project}{with}."))
+                Ok(say(format!("A new agent is ready in {project}{with}.")))
             }
             Ok(id) => {
                 log(format!("started {named}{with} in {project}, held by the tower: {task}"));
-                say(launched(app, place, &with, task, Some(id)))
+                Ok(say(launched(app, place, &with, task, Some(id))))
             }
             Err(e) => {
                 log(format!("launch in {project} failed: {e}"));
-                say(format!("Could not launch in {project}: {}", airband_core::prose::clip(&spoken(&e), 120)))
+                Err(say(format!("Could not launch in {project}: {}", airband_core::prose::clip(&spoken(&e), 120))))
             }
         };
     }
@@ -116,24 +117,24 @@ pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Reply 
     let session = format!("airband-{}-{stamp}", project.replace(' ', "-"));
     let fill = |a: &String| a.replace("{cwd}", &cwd).replace("{task}", task).replace("{project}", project).replace("{session}", &session);
     let argv = launcher.command(model_id.as_deref(), effort_id.as_deref(), fill);
-    let Some((program, args)) = argv.split_first() else { return say("The launcher command is empty.".into()) };
+    let Some((program, args)) = argv.split_first() else { return Err(say("The launcher command is empty.".into())) };
     // AIRBAND_INTERNAL must not leak in: the new agent has to report to the tower
     let run = tokio::process::Command::new(program).args(args).current_dir(&cwd).env_remove("AIRBAND_INTERNAL").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).kill_on_drop(false).output();
     match tokio::time::timeout(Duration::from_secs(20), run).await {
         Ok(Ok(out)) if out.status.success() => {
             log(format!("launched {named}{with} in {project} ({session}): {task}"));
             // handed off to a program of its own: nothing says which agent it becomes when it reports in
-            say(launched(app, place, &with, task, None))
+            Ok(say(launched(app, place, &with, task, None)))
         }
         Ok(Ok(out)) => {
             log(format!("launch in {project} failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
-            say(format!("Could not launch in {project}: {}", airband_core::prose::clip(&spoken(String::from_utf8_lossy(&out.stderr).trim()), 120)))
+            Err(say(format!("Could not launch in {project}: {}", airband_core::prose::clip(&spoken(String::from_utf8_lossy(&out.stderr).trim()), 120))))
         }
         Ok(Err(e)) => {
             log(format!("launch in {project} failed: cannot run {program}: {e}"));
-            say(format!("Could not launch in {project}: {program} did not start."))
+            Err(say(format!("Could not launch in {project}: {program} did not start.")))
         }
-        Err(_) => say(format!("Launching in {project} did not finish within twenty seconds.")),
+        Err(_) => Err(say(format!("Launching in {project} did not finish within twenty seconds."))),
     }
 }
 

@@ -782,3 +782,14 @@ fn of_two_free_radios_the_one_he_showed_was_there_last_takes_it_never_the_first_
     inner.call("zed");
     assert_eq!(inner.free_radio().as_deref(), Some("zed"));
 }
+
+#[test]
+fn a_kept_team_whose_name_another_team_has_now_gets_a_name_of_its_own() {
+    let mut inner = Inner::default();
+    inner.new_folder_team("/x/shop", TeamName::new("shop").unwrap(), false);
+    let old: BTreeMap<String, String> = [("shop".to_string(), "/y/work/shop".to_string())].into();
+    inner.settle_teams(old, BTreeSet::new());
+    let mut names: Vec<String> = inner.teams.values().map(|t| t.name.to_string()).collect();
+    names.sort();
+    assert_eq!(names, ["shop", "work shop"], "two teams never share a name");
+}

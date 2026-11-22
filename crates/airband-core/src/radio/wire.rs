@@ -263,8 +263,6 @@ pub mod at {
         Tools: Post "/v1/radio/tools", Nothing, UsesTools => Done;
         /// An agent's reporter: one event.
         Events: Post "/v1/agent/events", Nothing, AgentEvent => Done;
-        /// A held agent's program is gone.
-        HeldEnd: Delete "/v1/agent/held/{id}", Nothing, Nothing => Done;
         Permission: Post "/v1/agent/permission", Nothing, PermissionAsk => PermissionState;
         PermissionAnswer: Get "/v1/agent/permission/{id}", WaitQuery, Nothing => PermissionState;
         PermissionWithdraw: Delete "/v1/agent/permission/{id}", Nothing, Nothing => Done;

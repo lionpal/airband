@@ -139,13 +139,14 @@ pub(in crate::tower) async fn route(app: &Arc<App>, radio: &str, rest: &str, re:
     // any tool this computer can start will do for knowing that one can be: which one is settled when it starts
     let any_launcher = !app.cfg().launchers.is_empty();
     let projects: Vec<Place> = app.read().launchable();
+    // a new agent can be started here only with a launcher and a place to start it in
+    let can_start = any_launcher && !projects.is_empty();
     // with agents of another computer on his screen there is always more than one it could be for
-    let can_start = (any_launcher && !projects.is_empty()) || !others.is_empty();
-    let launcher = any_launcher && !projects.is_empty();
+    let more_than_these = can_start || !others.is_empty();
     match scene.all.as_slice() {
-        [] if !can_start => return Routed::Ask(Vec::new()),
+        [] if !more_than_these => return Routed::Ask(Vec::new()),
         // only one agent it could be, and nothing else it could mean
-        [only] if !can_start => return Routed::Sure(vec![only.clone()]),
+        [only] if !more_than_these => return Routed::Sure(vec![only.clone()]),
         _ => {}
     }
     // More than one agent could be meant. His words decide, read against what each has been saying: "ship the
@@ -154,7 +155,7 @@ pub(in crate::tower) async fn route(app: &Arc<App>, radio: &str, rest: &str, re:
     let (listed, lines) = listing(&scene, others, now);
     let menus = menus(app);
     // the other thing his words can be: a request for a new agent, on a model and at an effort he may name
-    let starting = if launcher { starting(app, &menus, &projects, room.as_deref()) } else { String::new() };
+    let starting = if can_start { starting(app, &menus, &projects, room.as_deref()) } else { String::new() };
     let prompt = prompt(app, &lines, &last_said(&scene.focus, now), rest, &starting, can_start);
     let Ok(judged) = judge::ask_json::<Out>(&app.settings, "routing", prompt, Some(out_shape())).await else {
         return no_answer(app, &scene.all, can_start);
