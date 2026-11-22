@@ -129,10 +129,7 @@ impl Inner {
                 self.teams.get(&id).and_then(|t| t.folder.clone()).and_then(|f| self.name_for_folder(&f))
             };
             match to {
-                Some(to) => {
-                    self.set_team_name(&id, &to);
-                    renamed = true;
-                }
+                Some(to) => renamed |= self.set_team_name(&id, &to),
                 None => log(format!("the team {name} has the name of a team on another computer, and no other name is free for it: rename one of them")),
             }
         }
@@ -151,7 +148,9 @@ impl Inner {
             return Err("That team is not on this computer any more.".into());
         };
         let to = self.chosen_team(to, Some(team))?;
-        self.set_team_name(team, &to);
+        if !self.set_team_name(team, &to) {
+            return Err(format!("There is already a team called {to}, here or on another of your computers."));
+        }
         if let Some(t) = self.teams.get_mut(team) {
             t.named = true;
         }
@@ -160,10 +159,17 @@ impl Inner {
     }
     /// A team is called something else: its agents take the new name, the numbers and the names he gave them
     /// staying as they were, and every line of the team is sent to the radios again.
-    fn set_team_name(&mut self, team: &str, to: &TeamName) {
-        let Some(t) = self.teams.get_mut(team) else { return };
+    ///
+    /// A name another team of his has, here or on another computer, is refused and said, so no two teams ever
+    /// share one whichever way the name came. Returns whether it was given.
+    fn set_team_name(&mut self, team: &str, to: &TeamName) -> bool {
+        if !self.name_free(to.as_str(), Some(team)) {
+            log(format!("the team {team} was not called {to}: another team of yours has that name"));
+            return false;
+        }
+        let Some(t) = self.teams.get_mut(team) else { return false };
         if &t.name == to {
-            return;
+            return true;
         }
         t.name = to.clone();
         // each keeps its number or the name he gave it under the new name when nobody else has that, else the next free
@@ -178,6 +184,7 @@ impl Inner {
         for line in lines {
             self.touch(&line);
         }
+        true
     }
     /// His teams as a start finds them: what an older tower kept (`old`, `named`) settled first, so a name he
     /// gave a team the configuration lists stays his; then the configuration's teams (`listed`).
@@ -216,9 +223,11 @@ impl Inner {
             };
             match self.teams.get_mut(&id) {
                 // a team already there takes the name he gave it
-                Some(team) if is_named => {
-                    team.name = name;
-                    team.named = true;
+                Some(_) if is_named => {
+                    if self.set_team_name(&id, &name)
+                        && let Some(team) = self.teams.get_mut(&id) {
+                            team.named = true;
+                        }
                 }
                 Some(_) => {}
                 None => {
@@ -269,6 +278,29 @@ impl Inner {
                 }
             }
         }
+    }
+    /// Teams nothing uses any more are let go. A team is kept while any of these holds, all facts the tower
+    /// keeps: an agent is in it; an agent that went away was put in it; a line in the chat is of it; its folder
+    /// is still on disk. So a folder's team lasts as long as its folder, and a team with no folder (one he named)
+    /// lasts while it has agents or lines. Returns whether any was let go.
+    pub(super) fn drop_unused_teams(&mut self) -> bool {
+        let unused: Vec<String> = self
+            .teams
+            .iter()
+            .filter(|(id, t)| {
+                t.live_folder().is_none()
+                    && !self.sessions.iter().any(|s| &s.team == *id)
+                    && !self.placed.values().any(|(team, _)| team == *id)
+                    && !self.log.iter().any(|e| &e.team == *id)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &unused {
+            if let Some(t) = self.teams.remove(id) {
+                log(format!("the team {} is let go: nothing is in it and its folder is gone", t.name));
+            }
+        }
+        !unused.is_empty()
     }
     /// His teams that have a folder, by what each is called, with the folder: what the configuration lists
     /// and wherever agents have been seen. A team whose folder has gone is not offered.
