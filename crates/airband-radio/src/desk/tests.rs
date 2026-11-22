@@ -322,7 +322,7 @@ fn a_message_goes_to_the_computer_that_has_who_it_is_for() {
     assert_eq!(pick_station(&state, "go", None, None, Some("backoffice login fix")), Some(0));
     // nothing says, and he has not chosen a main computer: there is no answer, and he is asked
     assert_eq!(pick_station(&state, "go", None, None, None), None);
-    state.read.main = Some(state.stations[1].name.clone());
+    state.read.main = Some(state.stations[1].id());
     assert_eq!(pick_station(&state, "go", None, None, None), Some(1));
 }
 
