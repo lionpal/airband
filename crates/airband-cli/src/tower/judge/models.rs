@@ -10,7 +10,7 @@ pub(crate) const READY: &str = "Reply with the one word: ready";
 /// value there, as its row says; a service with no key (one on his own computer) is sent none.
 pub(super) async fn ask_api(url: String, auth: Option<(String, String)>, body: Value, check: Option<airband_core::providers::Check>) -> Result<String, Trouble> {
     tokio::task::spawn_blocking(move || {
-        let mut req = airband_core::net::agent(Duration::from_secs(60)).post(&url);
+        let mut req = airband_io::http::agent(Duration::from_secs(60)).post(&url);
         if let Some((header, value)) = auth {
             req = req.header(header, value);
         }

@@ -1,70 +1,43 @@
-//! The files the phone keeps, read and written one way. A file that is there and cannot be read is told apart
-//! from one that is not there yet: core's `kept::load` sets it aside, never written over as if it had been
-//! empty, and this says so in the device's log. A save that fails says why, for him to be told.
-use serde::Serialize;
+//! The files the phone keeps, through `airband_io::kept`: what happens to one that is damaged is decided there,
+//! once (set aside, or left as it is with every save refused). This says so in the device's log, and puts a save
+//! that failed in words for him.
+use airband_io::kept::{Keeper, Saved};
 use serde::de::DeserializeOwned;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-/// Files that could not be read and could not be moved aside either: nothing is written over them while the
-/// app runs, so what was in them can still be had back.
-static UNWRITABLE: std::sync::Mutex<Vec<std::path::PathBuf>> = std::sync::Mutex::new(Vec::new());
-
-/// What `path` holds, or the default for a file that is not there. One that cannot be read is set aside by
-/// core's `kept::load`, and the default is used in its place; one that could not be set aside is never saved over.
-pub(crate) fn load_or_set_aside<T: DeserializeOwned + Default>(path: &Path) -> T {
-    airband_core::kept::load(path).unwrap_or_else(|why| {
-        eprintln!("airband: {why}");
-        if !why.set_aside {
-            UNWRITABLE.lock().unwrap_or_else(|e| e.into_inner()).push(path.to_path_buf());
-        }
-        None
-    })
-    .unwrap_or_default()
+/// The file `name` in the host's folder `dir`: none when the host keeps nothing (a test).
+pub(crate) fn file(dir: &str, name: &str) -> Option<PathBuf> {
+    (!dir.is_empty()).then(|| Path::new(dir).join(name))
 }
 
-/// Keep `value` at `path`, whole or not at all. Err says, in words for him, that it was not kept.
-pub(crate) fn save<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<(), String> {
-    if UNWRITABLE.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|p| p == path) {
-        return Err("This phone could not read what it had kept there, so it is not written over.".into());
+/// What `path` holds, or the default, and where to keep it. One that could not be read is told in the log.
+pub(crate) fn open<T: DeserializeOwned + Default>(path: Option<PathBuf>) -> (T, Keeper) {
+    let (value, keeper, loaded) = Keeper::open(path);
+    if let Some(trouble) = loaded.trouble() {
+        eprintln!("airband: {trouble}");
     }
-    airband_core::kept::save(path, value).map_err(|e| format!("This phone could not keep it: {e}."))
+    (value, keeper)
 }
 
-/// A file kept again and again (the saved chat, the team colours, what he has read): he is told when it
-/// stops being kept, once, and again only after it has been kept since.
-#[derive(Default)]
-pub(crate) struct Keeping(std::sync::atomic::AtomicBool);
-impl Keeping {
-    /// Keep `value` at `path`. The words to tell him when this is the first save to fail: why, then `lost`,
-    /// what that costs him.
-    pub(crate) fn save<T: Serialize + ?Sized>(&self, path: &Path, value: &T, lost: &str) -> Option<String> {
-        use std::sync::atomic::Ordering;
-        match save(path, value) {
-            Ok(()) => {
-                self.0.store(false, Ordering::SeqCst);
-                None
-            }
-            Err(why) => (!self.0.swap(true, Ordering::SeqCst)).then(|| format!("{why} {lost}")),
-        }
-    }
+/// The words for him when a save failed: why, in words for him.
+pub(crate) fn not_kept(why: &str) -> String {
+    format!("This phone could not keep it: {why}.")
+}
+
+/// For a file kept again and again (the saved chat, the team colours, what he has read): the words to tell him
+/// when this save is the first in a row to fail, with `lost`, what that costs him.
+pub(crate) fn told(saved: Saved, lost: &str) -> Option<String> {
+    saved.news().map(|why| format!("{} {lost}", not_kept(why)))
+}
+
+/// For a save he asked for: Err in words for him whenever it failed.
+pub(crate) fn said(saved: Saved) -> Result<(), String> {
+    saved.into_result().map_err(|why| not_kept(&why))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn an_unreadable_file_is_set_aside_and_not_written_over() {
-        let dir = std::env::temp_dir().join(format!("airband-kept-{}", airband_core::encode::random_hex(4)));
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("radio.json");
-        std::fs::write(&file, b"{ half written").unwrap();
-        let got: Vec<String> = load_or_set_aside(&file);
-        assert!(got.is_empty() && !file.exists());
-        let aside = std::fs::read_dir(&dir).unwrap().flatten().find(|e| e.file_name().to_string_lossy().starts_with("radio.json.unreadable")).unwrap();
-        assert_eq!(std::fs::read(aside.path()).unwrap(), b"{ half written");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 
     #[cfg(unix)]
     #[test]
@@ -75,9 +48,9 @@ mod tests {
         let file = dir.join("radio.json");
         std::fs::write(&file, b"{ half written").unwrap();
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
-        let got: Vec<String> = load_or_set_aside(&file);
+        let (got, keeper): (Vec<String>, _) = open(Some(file.clone()));
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let saved = save(&file, &vec!["new".to_string()]);
+        let saved = said(keeper.save(&vec!["new".to_string()]));
         let left = std::fs::read(&file).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(got.is_empty());

@@ -20,9 +20,7 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
 
 mod check;
 mod form;
@@ -36,7 +34,7 @@ pub use programs::*;
 use rows::*;
 
 /// Where the signed copy is kept.
-pub(crate) const ADDRESS: &str = "https://airband.dev/catalog/catalog.json";
+pub const ADDRESS: &str = "https://airband.dev/catalog/catalog.json";
 
 /// The public half of the key that signs the hosted copy.
 const SIGNED_BY: [u8; 32] = include!("catalog.key.in");
@@ -333,15 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn a_kept_copy_that_cannot_be_read_is_said_and_a_copy_without_an_end_is_refused_as_such() {
-        let dir = std::env::temp_dir().join(format!("airband-kept-catalog-{}", crate::encode::random_hex(4)));
-        std::fs::create_dir_all(&dir).unwrap();
-        // nothing kept: nothing said
-        assert!(load_kept(&dir, &|_| true).is_empty());
-        // a copy kept without its signature: said, never passed over unseen
-        std::fs::write(dir.join(kept::KEPT), b"{}").unwrap();
-        assert_eq!(load_kept(&dir, &|_| true).len(), 1);
-        let _ = std::fs::remove_dir_all(&dir);
+    fn a_copy_without_an_end_is_refused_as_such() {
         // a copy that does not say when it ends is told as that, never as one that has run out
         let said = offered(&|d| {
             d.as_object_mut().unwrap().remove("expires");

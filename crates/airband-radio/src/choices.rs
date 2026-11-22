@@ -23,7 +23,6 @@ use airband_core::providers::Job;
 use airband_core::radio::{OfferName, ReadsOffered, SetReads};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
 
 mod desk;
 mod list;
@@ -141,6 +140,7 @@ struct Work {
 pub(crate) struct Chooser {
     /// The app's folder: `choices.json` is here, and the models under `models/`.
     dir: String,
+    keeper: airband_io::kept::Keeper,
     /// What this device can run, as its host said when the desk was made.
     device: HostDevice,
     saved: Mutex<Saved>,
@@ -160,9 +160,9 @@ pub(crate) fn told(reason: impl Into<String>) -> RadioError {
 impl Chooser {
     /// What was kept in `dir`, or a new install's choices. With no folder (a test), nothing is kept.
     pub(crate) fn open(dir: &str, device: HostDevice) -> Chooser {
-        let kept: Option<Saved> = if dir.is_empty() { None } else { crate::kept::load_or_set_aside(&Path::new(dir).join("choices.json")) };
+        let (kept, keeper) = crate::kept::open::<Option<Saved>>(crate::kept::file(dir, "choices.json"));
         let saved = Mutex::new(kept.unwrap_or_else(|| Saved::fresh(&device)));
-        Chooser { dir: dir.into(), device, saved, working: Mutex::new(None) }
+        Chooser { dir: dir.into(), keeper, device, saved, working: Mutex::new(None) }
     }
 
     /// The coding tools he uses, by id, the one he uses most first.
@@ -178,10 +178,7 @@ impl Chooser {
     fn change(&self, with: impl FnOnce(&mut Saved)) -> Result<(), RadioError> {
         let mut saved = self.saved.lock().unwrap_or_else(|e| e.into_inner());
         with(&mut saved);
-        if self.dir.is_empty() {
-            return Ok(());
-        }
-        crate::kept::save(&Path::new(&self.dir).join("choices.json"), &*saved).map_err(|why| told(format!("{why} It holds until the app closes.")))
+        crate::kept::said(self.keeper.save(&*saved)).map_err(|why| told(format!("{why} It holds until the app closes.")))
     }
 
     /// A model this device can run, by its kind.

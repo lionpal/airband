@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 infer = { version = "0.19", default-features = false, features = ["std"] }
 airband-core = { path = "../airband-core" }
+airband-io = { path = "../airband-io" }
 # the terminal radio; the phone's own voice model is left out of this program
 airband-radio = { path = "../airband-radio", default-features = false }
 serde.workspace = true

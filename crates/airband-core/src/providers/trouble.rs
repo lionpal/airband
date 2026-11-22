@@ -39,14 +39,18 @@ impl Answering {
     pub fn of(provider: &Provider) -> Answering {
         Answering { name: provider.name.clone(), check: provider.check.clone() }
     }
-    /// A request to it, sent: what came back when it answered 200, else what went wrong, in words for him.
-    /// The one place a listening or voice service's reach and status are read.
-    pub fn sent(&self, res: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<ureq::http::Response<ureq::Body>, String> {
-        let res = res.map_err(|_| Trouble::Unreachable.said(&self.name))?;
-        match res.status().as_u16() {
-            200 => Ok(res),
+    /// What it answered with `status`: Ok for a 200, else what went wrong, in words for him. With
+    /// [`Answering::unreachable`], the one place a listening or voice service's reach and status are read
+    /// (`airband_io::http::sent` hands it a response).
+    pub fn status(&self, status: u16) -> Result<(), String> {
+        match status {
+            200 => Ok(()),
             code => Err(Trouble::of_status(code, self.check.as_ref()).said(&self.name)),
         }
+    }
+    /// It could not be reached.
+    pub fn unreachable(&self) -> String {
+        Trouble::Unreachable.said(&self.name)
     }
     /// It answered, with nothing that can be used.
     pub fn no_answer(&self) -> String {

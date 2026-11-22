@@ -53,20 +53,17 @@ pub(super) fn new_lines(transcript: &str, session: &str, note: &str, first: Firs
     let path = super::super::claude_accounts::dir().join(format!("{session}.{note}"));
     // a note that cannot be read is set aside and started again; one that cannot even be moved is left as it is,
     // and this transcript is not read until it can be
-    let mut kept = match airband_core::kept::load::<serde_json::Map<String, Value>>(&path) {
-        Ok(found) => Value::Object(found.unwrap_or_default()),
-        Err(why) if !why.set_aside => {
-            eprintln!("airband: {why}");
-            return None;
-        }
-        Err(why) => {
-            eprintln!("airband: {why}");
-            serde_json::json!({})
-        }
-    };
+    let (note, keeper, loaded) = airband_io::kept::Keeper::open::<serde_json::Map<String, Value>>(Some(path));
+    if let Some(trouble) = loaded.trouble() {
+        eprintln!("airband: {trouble}");
+    }
+    if matches!(loaded, airband_io::kept::Loaded::LeftInPlace { .. }) {
+        return None;
+    }
+    let mut kept = Value::Object(note);
     let keep = |kept: &Value| {
-        if let Err(e) = airband_core::kept::save(&path, kept) {
-            eprintln!("airband: {} could not be written ({e})", path.display());
+        if let Some(why) = keeper.save(kept).news() {
+            eprintln!("airband: {why}");
         }
     };
     let Ok(file) = std::fs::File::open(transcript) else {

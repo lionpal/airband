@@ -93,7 +93,7 @@ fn transcriptions(with: &Use, provider: &Provider, by: &By, wav: &[u8], phrases:
     }
     // what went wrong is worded once, for every service, by the service's own row and name
     let service = airband_core::providers::Answering::of(provider);
-    let v: Value = service.sent(req.send(&body[..]))?.body_mut().read_json().map_err(|_| service.no_answer())?;
+    let v: Value = airband_io::http::sent(&service, req.send(&body[..]))?.body_mut().read_json().map_err(|_| service.no_answer())?;
     // an answer with no text in it is no answer, not silence
     v["text"].as_str().map(|t| t.trim().to_string()).ok_or_else(|| service.no_answer())
 }

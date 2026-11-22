@@ -35,7 +35,7 @@ fn service() -> Option<(String, String)> {
 }
 
 fn client() -> ureq::Agent {
-    airband_core::net::agent(Duration::from_secs(4))
+    airband_io::http::agent(Duration::from_secs(4))
 }
 
 /// The sessions the server lists that may be on the radio: the newest few.

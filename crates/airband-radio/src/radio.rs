@@ -385,7 +385,7 @@ impl Radio {
             }
             from = part.next;
         }
-        airband_core::kept::write_atomic(&file, &bytes).map_err(|_| RadioError::here("keep that picture"))?;
+        airband_io::files::write_atomic(&file, &bytes).map_err(|_| RadioError::here("keep that picture"))?;
         Ok(file.display().to_string())
     }
 

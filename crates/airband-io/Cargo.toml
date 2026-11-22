@@ -1,0 +1,17 @@
+[package]
+name = "airband-io"
+description = "The edges every airband process shares: files kept whole and never written over when unreadable, another tool's files, the HTTP client, and the published catalogue fetched and kept"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+airband-core = { path = "../airband-core" }
+serde.workspace = true
+serde_json.workspace = true
+ureq.workspace = true
+
+# telling a failure to read that passes from one that stays (kept.rs)
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

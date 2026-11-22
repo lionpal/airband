@@ -13,11 +13,11 @@ static HELD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// channels.json: each channel's [`Saved`]. A file that is there but cannot be read is an error, never "no
 /// channels": taken for empty, the next change would write that back and lose every pairing.
 fn read_channels(dir: &Path) -> Result<HashMap<String, Saved>, String> {
-    airband_core::kept::read(&dir.join("channels.json")).map(Option::unwrap_or_default)
+    airband_io::kept::read(&dir.join("channels.json")).map(Option::unwrap_or_default)
 }
 fn write_channels(dir: &Path, all: &HashMap<String, Saved>) -> Result<(), String> {
     let file = dir.join("channels.json");
-    airband_core::kept::save(&file, all).map_err(|e| format!("cannot save {}: {e}", file.display()))
+    airband_io::kept::save(&file, all).map_err(|e| format!("cannot save {}: {e}", file.display()))
 }
 
 /// What a channel's folder keeps, in the order it came: each by the number it is kept under and the id the
@@ -39,7 +39,7 @@ pub(super) fn held_dir(dir: &Path, channel: &str) -> PathBuf {
     dir.join("held").join(channel)
 }
 pub(super) fn held_list(held: &Path) -> Result<HeldList, String> {
-    airband_core::kept::read(&held.join("list.json")).map(Option::unwrap_or_default)
+    airband_io::kept::read(&held.join("list.json")).map(Option::unwrap_or_default)
 }
 impl HeldItem {
     /// Still within the time a kept message waits for its tower.
@@ -70,7 +70,7 @@ fn remove_body(held: &Path, seq: u64) {
     }
 }
 pub(super) fn held_keep(held: &Path, list: &HeldList) -> Result<(), String> {
-    airband_core::kept::save(&held.join("list.json"), list).map_err(|e| e.to_string())
+    airband_io::kept::save(&held.join("list.json"), list).map_err(|e| e.to_string())
 }
 
 pub(super) fn load(dir: &Path) -> Result<HashMap<String, Saved>, String> {
@@ -88,7 +88,7 @@ pub(super) fn join_waitlist(dir: &Path, email: &str) -> Result<(), String> {
     if have.lines().any(|l| l == email) {
         return Ok(());
     }
-    airband_core::kept::write_private(&file, format!("{have}{email}\n")).map_err(|e| format!("cannot save {}: {e}", file.display()))
+    airband_io::files::write_private(&file, format!("{have}{email}\n")).map_err(|e| format!("cannot save {}: {e}", file.display()))
 }
 pub(super) fn remove(dir: &Path, channel: &str) -> Result<(), String> {
     let _one = LISTS.lock().unwrap();
@@ -116,7 +116,7 @@ pub(super) fn hold(dir: &Path, channel: &str, id: &str, sealed: &[u8], most: usi
     }
     // in the order they came: a number that only goes up
     let seq = list.items.iter().map(|h| h.seq).max().map_or(1, |n| n + 1);
-    airband_core::kept::write_atomic(&held.join(seq.to_string()), sealed).map_err(|e| e.to_string())?;
+    airband_io::files::write_atomic(&held.join(seq.to_string()), sealed).map_err(|e| e.to_string())?;
     list.items.push(HeldItem { seq, id: id.to_string(), at: airband_core::clock::now_secs() });
     held_keep(&held, &list).map(|_| true)
 }

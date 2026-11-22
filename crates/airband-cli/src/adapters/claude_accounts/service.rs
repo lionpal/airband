@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use std::time::Duration;
 
 fn http() -> ureq::Agent {
-    airband_core::net::agent(Duration::from_secs(20))
+    airband_io::http::agent(Duration::from_secs(20))
 }
 
 /// One question to the account service with a login's token: its status and its answer's text.

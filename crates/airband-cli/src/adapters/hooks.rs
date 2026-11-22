@@ -5,6 +5,7 @@
 use airband_core::agent::{Agent, AgentEvent, Event, PermissionAsk, SCHEMA};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
+use airband_io::foreign::Foreign;
 
 /// A field of an event as text: trimmed, and nothing when it is absent, not text, or empty.
 pub(crate) fn text(v: &Value, key: &str) -> Option<String> {
@@ -127,18 +128,14 @@ pub(crate) struct File {
 }
 
 impl File {
-    fn read(&self) -> Result<Value, String> {
-        match std::fs::read_to_string(&self.path) {
-            Ok(t) => serde_json::from_str(&t).map_err(|e| format!("{} is not valid JSON; fix it first ({e})", self.path.display())),
-            // only a file that is not there is an empty one: one that cannot be read is never written over
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
-            Err(e) => Err(format!("{} cannot be read ({e}), so nothing was changed", self.path.display())),
+    /// The tool's file, to change: his, so one that cannot be read is never written over (`airband_io::foreign`).
+    /// One that is not there is an empty object.
+    fn open(&self) -> Result<Foreign<Value>, String> {
+        let mut file = Foreign::<Value>::open(&self.path)?;
+        if file.value.is_null() {
+            file.value = json!({});
         }
-    }
-    /// Whole or not at all, so the tool never reads half of one, and with the permissions the file had: it is
-    /// his file, and may hold more than hooks.
-    fn write(&self, v: &Value) -> Result<(), String> {
-        airband_core::kept::write_atomic(&self.path, format!("{}\n", serde_json::to_string_pretty(v).unwrap())).map_err(|e| e.to_string())
+        Ok(file)
     }
     /// The command a hook of ours runs: this program, as `hook <name>`, with the mark that says airband put it
     /// there. The mark is what knows it again, wherever the program is installed and whatever it is called.
@@ -171,9 +168,10 @@ impl File {
     /// Put our hooks in, replacing any from an earlier install and leaving everyone else's as they were.
     /// Returns whether the file changed: a tool that asks him to trust its hooks asks again only then.
     pub(crate) fn install(&self, exe: &Path) -> Result<bool, String> {
-        let mut file = self.read()?;
+        let mut kept = self.open()?;
+        let file = &mut kept.value;
         let before = file.clone();
-        self.strip(&mut file, exe);
+        self.strip(file, exe);
         let whole = file.as_object_mut().ok_or_else(|| format!("{} is not a JSON object", self.path.display()))?;
         let hooks = whole.entry("hooks").or_insert_with(|| json!({})).as_object_mut().ok_or_else(|| format!("\"hooks\" in {} is not an object", self.path.display()))?;
         let command = self.command(exe);
@@ -185,19 +183,19 @@ impl File {
             }
             list.push(group);
         }
-        if file == before {
+        if *file == before {
             return Ok(false);
         }
-        self.write(&file).map(|()| true)
+        kept.write().map(|()| true)
     }
     pub(crate) fn uninstall(&self, exe: &Path) -> Result<(), String> {
         if !self.path.is_file() {
             return Ok(());
         }
-        let mut file = self.read()?;
-        let before = file.clone();
-        self.strip(&mut file, exe);
-        if file == before { Ok(()) } else { self.write(&file) }
+        let mut kept = self.open()?;
+        let before = kept.value.clone();
+        self.strip(&mut kept.value, exe);
+        if kept.value == before { Ok(()) } else { kept.write() }
     }
 }
 

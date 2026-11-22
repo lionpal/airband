@@ -46,6 +46,7 @@ name = "airband-cli"
 version = "0.7.0"
 dependencies = [
  "airband-core",
+ "airband-io",
  "airband-radio",
  "axum",
  "chacha20poly1305",
@@ -77,15 +78,24 @@ dependencies = [
  "ed25519-dalek",
  "getrandom 0.3.4",
  "hkdf",
- "libc",
  "linkify",
  "pulldown-cmark",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "uniffi",
- "ureq",
  "url",
+]
+
+[[package]]
+name = "airband-io"
+version = "0.7.0"
+dependencies = [
+ "airband-core",
+ "libc",
+ "serde",
+ "serde_json",
+ "ureq",
 ]
 
 [[package]]
@@ -93,6 +103,7 @@ name = "airband-radio"
 version = "0.7.0"
 dependencies = [
  "airband-core",
+ "airband-io",
  "getrandom 0.3.4",
  "ptts",
  "rustls",
@@ -111,6 +122,7 @@ name = "airband-relay"
 version = "0.7.0"
 dependencies = [
  "airband-core",
+ "airband-io",
  "axum",
  "reqwest",
  "ring",

@@ -54,7 +54,7 @@ pub(super) fn ask_pass(by: &By, service: &Provider, set: &BTreeMap<String, Strin
     let url = airband_core::providers::fill(by.text("pass"), &|field| set.get(field).cloned().unwrap_or_default())?;
     let auth = by.auth().ok_or("This version of airband was not told how that listening service takes its key.")?;
     let req = crate::net::agent(Duration::from_secs(8)).post(&url).header(auth.header.as_str(), auth.value(key.trim()).as_str());
-    airband_core::providers::Answering::of(service).sent(match body {
+    airband_io::http::sent(&airband_core::providers::Answering::of(service), match body {
         Some(body) => req.send_json(&body),
         None => req.header("Content-Length", "0").send_empty(),
     })
