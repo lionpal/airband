@@ -44,7 +44,10 @@ fn file() -> std::path::PathBuf {
 
 impl Book {
     pub(super) fn load() -> Book {
-        let mut book: Book = airband_core::kept::load(&file()).unwrap_or_default();
+        let mut book: Book = airband_core::kept::load(&file()).unwrap_or_else(|why| {
+            log(format!("links: {why}"));
+            None
+        }).unwrap_or_default();
         let oldest = airband_core::clock::now_secs().saturating_sub(KEPT_FOR);
         book.known.retain(|_, k| k.at >= oldest);
         book

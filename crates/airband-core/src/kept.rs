@@ -68,9 +68,21 @@ pub fn write_private(path: &Path, bytes: impl AsRef<[u8]>) -> std::io::Result<()
     write(path, bytes.as_ref(), Leave::Private)
 }
 
-/// What a kept file holds, as JSON. Nothing when there is no file or it cannot be read as that.
-pub fn load<T: DeserializeOwned>(path: &Path) -> Option<T> {
-    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+/// What a kept file holds, as JSON, for a keeper that goes on with nothing when the file cannot be read. A file
+/// that is not there is `Ok(None)`. One that is there and cannot be read, or is not the value, is first moved
+/// aside (beside it, under `<name>.unreadable-<random>`), so whatever is written to the path next writes over
+/// nothing; the error says why and where it went. Nothing kept is ever lost by being taken for empty.
+pub fn load<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, String> {
+    let why = match read(path) {
+        Ok(found) => return Ok(found),
+        Err(why) => why,
+    };
+    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let aside = path.with_file_name(format!("{name}.unreadable-{}", crate::encode::random_hex(4)));
+    match std::fs::rename(path, &aside) {
+        Ok(()) => Err(format!("{why}; it was kept as {}", aside.display())),
+        Err(e) => Err(format!("{why}; it could not be moved aside ({e}), so nothing will be written over it")),
+    }
 }
 
 /// A kept value where "not there yet" and "there but unreadable" must not be taken for each other: a file that
@@ -113,19 +125,48 @@ mod tests {
     }
 
     #[test]
+    fn an_unreadable_file_is_kept_so_nothing_writes_over_it() {
+        let dir = folder();
+        let half = dir.join("half.json");
+        std::fs::write(&half, "[1, 2").unwrap();
+        let _ = load::<Vec<u32>>(&half);
+        save(&half, &vec![9]).unwrap();
+        let kept = std::fs::read_dir(&dir).unwrap().flatten().any(|e| std::fs::read_to_string(e.path()).unwrap_or_default() == "[1, 2");
+        assert!(kept, "what was there was written over");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+
+    #[test]
     fn a_file_is_replaced_whole_and_nothing_is_left_beside_it() {
         let dir = folder();
         let file = dir.join("deep").join("marks.json");
         // its folder is made; a value comes back as it went in
         save(&file, &vec![1, 2, 3]).unwrap();
-        assert_eq!(load::<Vec<u32>>(&file), Some(vec![1, 2, 3]));
+        assert_eq!(load::<Vec<u32>>(&file), Ok(Some(vec![1, 2, 3])));
         save(&file, &vec![4]).unwrap();
-        assert_eq!(load::<Vec<u32>>(&file), Some(vec![4]));
+        assert_eq!(load::<Vec<u32>>(&file), Ok(Some(vec![4])));
         assert_eq!(std::fs::read_dir(file.parent().unwrap()).unwrap().count(), 1);
-        // no file, or one that is not that: nothing
-        assert_eq!(load::<Vec<u32>>(&dir.join("none.json")), None);
-        std::fs::write(dir.join("half.json"), "[1, 2").unwrap();
-        assert_eq!(load::<Vec<u32>>(&dir.join("half.json")), None);
+        // no file: nothing, and no error
+        assert_eq!(load::<Vec<u32>>(&dir.join("none.json")), Ok(None));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unreadable_file_is_an_error_and_is_kept_aside_so_nothing_writes_over_it() {
+        let dir = folder();
+        let half = dir.join("half.json");
+        std::fs::write(&half, "[1, 2").unwrap();
+        let said = load::<Vec<u32>>(&half).unwrap_err();
+        assert!(said.contains("kept as"), "{said}");
+        // the path is free, and what was there is beside it, as it was
+        assert!(!half.exists());
+        let aside: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).collect();
+        assert_eq!(aside.len(), 1);
+        assert_eq!(std::fs::read_to_string(&aside[0]).unwrap(), "[1, 2");
+        // so what the keeper writes next takes the free name and leaves it alone
+        save(&half, &vec![9]).unwrap();
+        assert_eq!(std::fs::read_to_string(&aside[0]).unwrap(), "[1, 2");
         // a write that cannot finish leaves the old file as it was, and no part of a new one
         let taken = dir.join("taken");
         std::fs::create_dir_all(taken.join("in-the-way")).unwrap();

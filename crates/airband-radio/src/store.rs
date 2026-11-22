@@ -30,10 +30,19 @@ pub(crate) struct Store {
     pub(crate) saved: Mutex<Saved>,
 }
 
+/// What a file this device keeps holds, or nothing. One that cannot be read has been moved aside by the core
+/// (so writing a fresh one loses nothing), and that is said in the device's log.
+pub(crate) fn kept<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Option<T> {
+    airband_core::kept::load(path).unwrap_or_else(|why| {
+        eprintln!("airband: {why}");
+        None
+    })
+}
+
 impl Store {
     pub(crate) fn open(data_dir: &str) -> Store {
         let file = (!data_dir.is_empty()).then(|| std::path::Path::new(data_dir).join("radio.json"));
-        let saved = file.as_deref().and_then(airband_core::kept::load).unwrap_or_default();
+        let saved = file.as_deref().and_then(kept).unwrap_or_default();
         Store { file, saved: Mutex::new(saved) }
     }
     /// Where fetched pictures are kept: beside the saved chat, or in the system's temporary folder when the

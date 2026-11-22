@@ -18,7 +18,7 @@ pub(super) struct ReadMarks {
 }
 impl ReadMarks {
     pub(super) fn load(dir: &str) -> Self {
-        let kept = if dir.is_empty() { None } else { airband_core::kept::load(&std::path::Path::new(dir).join("read.json")) };
+        let kept = if dir.is_empty() { None } else { crate::store::kept(&std::path::Path::new(dir).join("read.json")) };
         kept.unwrap_or_else(|| ReadMarks { since: airband_core::clock::now_ms(), upto: HashMap::new(), main: None })
     }
     pub(super) fn keep(&self, dir: &str) {

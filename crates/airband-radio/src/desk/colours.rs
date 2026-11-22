@@ -18,7 +18,7 @@ pub(crate) struct Colours {
 impl Colours {
     pub(crate) fn open(dir: &str) -> Colours {
         let path = (!dir.is_empty()).then(|| std::path::Path::new(dir).join("colours.json"));
-        let by_team = path.as_deref().and_then(airband_core::kept::load).unwrap_or_default();
+        let by_team = path.as_deref().and_then(crate::store::kept).unwrap_or_default();
         Colours { path, by_team }
     }
     /// Teams seen in a computer's chat: one seen for the first time is given the colour the fewest teams have,
