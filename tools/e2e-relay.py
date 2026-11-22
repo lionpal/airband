@@ -27,7 +27,9 @@ work = tempfile.mkdtemp(prefix="airband-relay-e2e-")
 home, client, data, project, got = (os.path.join(work, d) for d in ("tower", "phone", "relay", "shop", "got.txt"))
 for d in (os.path.join(home, ".airband"), os.path.join(client, ".airband"), data, project):
     os.makedirs(d)
-config = {"port": TOWER_PORT, "token": "own", "radio_token": "radio", "name": "Charles", "station": "e2e", "relay": LIVE or f"http://127.0.0.1:{RELAY_PORT}", "summarizer": {"kind": "none"}}
+config = {"port": TOWER_PORT, "token": "own", "radio_token": "radio", "name": "Charles", "station": "e2e", "relay": LIVE or f"http://127.0.0.1:{RELAY_PORT}", "summarizer": {"kind": "none"},
+          # through the relay only: on a computer whose own network the phone reaches, it would otherwise go straight
+          "lan": False}
 if os.environ.get("AIRBAND_E2E_ADMISSION"):
     config["relay_admission"] = os.environ["AIRBAND_E2E_ADMISSION"]
 json.dump(config, open(os.path.join(home, ".airband", "config.json"), "w"))
