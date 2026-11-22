@@ -493,34 +493,36 @@ fn lines_kept_on_the_phone_are_in_their_room_before_any_computer_answers() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A radio host that keeps what it was told.
+struct Telling(Mutex<Vec<String>>);
+impl RadioHost for Telling {
+    fn told(&self, text: String) {
+        self.0.lock().unwrap().push(text);
+    }
+    fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
+    fn unplaced(&self, _: Outgoing, _: Option<String>, _: Vec<String>) {}
+    fn speak(&self, _: String) {}
+    fn listen(&self) -> Option<String> {
+        None
+    }
+    fn status(&self, _: RadioStatus) {}
+    fn play(&self, _: u32, _: Vec<u8>, _: bool) {}
+    fn record_start(&self, _: u32) -> bool {
+        false
+    }
+    fn record_read(&self) -> Vec<u8> {
+        Vec::new()
+    }
+    fn record_stop(&self) {}
+    fn outbox(&self, _: Vec<Outgoing>, _: Option<String>) {}
+    fn hearing(&self, _: String) {}
+    fn run_model(&self, _: String, _: String, _: ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
+        None
+    }
+}
+
 #[test]
 fn a_message_that_cannot_be_fetched_to_read_aloud_says_why() {
-    struct Telling(Mutex<Vec<String>>);
-    impl RadioHost for Telling {
-        fn told(&self, text: String) {
-            self.0.lock().unwrap().push(text);
-        }
-        fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
-        fn unplaced(&self, _: Outgoing, _: Option<String>, _: Vec<String>) {}
-        fn speak(&self, _: String) {}
-        fn listen(&self) -> Option<String> {
-            None
-        }
-        fn status(&self, _: RadioStatus) {}
-        fn play(&self, _: u32, _: Vec<u8>, _: bool) {}
-        fn record_start(&self, _: u32) -> bool {
-            false
-        }
-        fn record_read(&self) -> Vec<u8> {
-            Vec::new()
-        }
-        fn record_stop(&self) {}
-        fn outbox(&self, _: Vec<Outgoing>, _: Option<String>) {}
-        fn hearing(&self, _: String) {}
-        fn run_model(&self, _: String, _: String, _: ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
-            None
-        }
-    }
     let host = Arc::new(Telling(Mutex::new(Vec::new())));
     let radio = Radio::start("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t".into(), String::new(), host.clone()).unwrap();
     radio.stop();
@@ -528,4 +530,21 @@ fn a_message_that_cannot_be_fetched_to_read_aloud_says_why() {
     radio.senses.mouth.set(Some(crate::mouth::Own::Service(crate::services::service_of("gemini", "flash-lite-tts", "k", HashMap::new()))));
     assert!(!radio.read_aloud("m1"));
     assert_eq!(host.0.lock().unwrap().as_slice(), ["That could not be read aloud: cannot reach your computer."]);
+}
+
+#[test]
+fn what_he_said_that_the_phone_could_not_keep_is_told_once() {
+    let dir = temp_dir("unkept");
+    let host = Arc::new(Telling(Mutex::new(Vec::new())));
+    let radio = Radio::start("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t".into(), dir.display().to_string(), host.clone()).unwrap();
+    radio.stop();
+    // the folder the chat is kept in can no longer be written
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    radio.queue("one".into(), None, None, None);
+    radio.queue("two".into(), None, None, None);
+    let told: Vec<String> = host.0.lock().unwrap().iter().filter(|t| t.starts_with("This phone could not keep it")).cloned().collect();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(told.len(), 1, "{told:?}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

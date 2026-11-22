@@ -304,7 +304,7 @@ mod tests {
     fn a_message_stays_until_the_tower_says_what_came_of_it() {
         use airband_core::radio::{Outcome, Rejected};
         let host = Watching::default();
-        let store = Store::open("");
+        let store = Store::open("", None);
         let put = |id: &str, stage: Stage| {
             store.change(|s| s.outbox.push(Outgoing { stage, ..Outgoing::new(id.into(), format!("words of {id}"), None, None, None, Vec::new(), String::new()) }));
         };

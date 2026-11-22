@@ -21,7 +21,7 @@ pub(crate) struct Colours {
 impl Colours {
     pub(crate) fn open(dir: &str) -> Colours {
         let path = (!dir.is_empty()).then(|| std::path::Path::new(dir).join("colours.json"));
-        let by_team = path.as_deref().and_then(airband_core::kept::load).unwrap_or_default();
+        let by_team = path.as_deref().map(crate::kept::load_or_set_aside).unwrap_or_default();
         Colours { path, by_team, seen: Default::default() }
     }
     /// Teams seen in a computer's chat: one seen for the first time is given the colour the fewest teams on
@@ -42,7 +42,8 @@ impl Colours {
             changed = true;
         }
         if changed && let Some(path) = &self.path {
-            let _ = airband_core::kept::save(path, &self.by_team);
+            // a colour that could not be kept is chosen again the next time the app opens
+            let _ = crate::kept::save(path, &self.by_team);
         }
     }
     /// A room's colour: its place in the host's list of team colours. Nothing for one not seen yet.

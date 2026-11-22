@@ -79,7 +79,7 @@ impl Radio {
 impl Radio {
     /// As [`Radio::start`], listening and speaking with what he chose on this device.
     pub(crate) fn start_with(link: String, data_dir: String, host: Arc<dyn RadioHost>, senses: Arc<Senses>) -> Result<Arc<Self>, RadioError> {
-        let store = Arc::new(Store::open(&data_dir));
+        let store = Arc::new(Store::open(&data_dir, Some(host.clone())));
         let me = store.saved.lock().unwrap().radio.clone();
         let me = if me.is_empty() { store.change(|s| { s.radio = format!("radio-{}", random_hex(4)); s.radio.clone() }) } else { me };
         // the record of what failed is kept beside the saved chat, on this device

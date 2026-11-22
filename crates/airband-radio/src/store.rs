@@ -28,13 +28,16 @@ pub(crate) struct Saved {
 pub(crate) struct Store {
     file: Option<std::path::PathBuf>,
     pub(crate) saved: Mutex<Saved>,
+    /// Who is told when what he said could not be kept, once until it can be again.
+    host: Option<Arc<dyn RadioHost>>,
+    failing: AtomicBool,
 }
 
 impl Store {
-    pub(crate) fn open(data_dir: &str) -> Store {
+    pub(crate) fn open(data_dir: &str, host: Option<Arc<dyn RadioHost>>) -> Store {
         let file = (!data_dir.is_empty()).then(|| std::path::Path::new(data_dir).join("radio.json"));
-        let saved = file.as_deref().and_then(airband_core::kept::load).unwrap_or_default();
-        Store { file, saved: Mutex::new(saved) }
+        let saved = file.as_deref().map(crate::kept::load_or_set_aside).unwrap_or_default();
+        Store { file, saved: Mutex::new(saved), host, failing: AtomicBool::new(false) }
     }
     /// Where fetched pictures are kept: beside the saved chat, or in the system's temporary folder when the
     /// host keeps nothing.
@@ -49,7 +52,15 @@ impl Store {
         let mut saved = self.saved.lock().unwrap();
         let out = f(&mut saved);
         if let Some(file) = &self.file {
-            let _ = airband_core::kept::save(file, &*saved);
+            match crate::kept::save(file, &*saved) {
+                Ok(()) => self.failing.store(false, Ordering::SeqCst),
+                Err(why) if !self.failing.swap(true, Ordering::SeqCst) => {
+                    if let Some(host) = &self.host {
+                        host.told(format!("{why} What you send and the chat are lost if the app closes."));
+                    }
+                }
+                Err(_) => {}
+            }
         }
         out
     }

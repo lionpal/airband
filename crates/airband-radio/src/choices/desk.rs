@@ -92,31 +92,26 @@ impl Desk {
             };
             // no computer to ask: it waits for one
             if radios.is_empty() {
-                chooser.change(|s| s.reads = Some(Waiting { id: provider, offer, set, his: true, taken: Vec::new() }));
-                return done(Ok(()));
+                return done(chooser.change(|s| s.reads = Some(Waiting { id: provider, offer, set, his: true, taken: Vec::new() })));
             }
             chooser.work(job, &id, "Asking your computer to switch", false);
             host.changed();
             let wanted = SetReads { kind: provider.clone(), offer: offer.clone(), key: the_key(), set: set.clone() };
             let sent = switch_all(&radios, &wanted);
-            // computers not reached now take it when they are
-            if let Ok(switched) = &sent {
-                if switched.len() < everyone {
-                    chooser.change(|s| s.reads = Some(Waiting { id: provider.clone(), offer: offer.clone(), set: set.clone(), his: true, taken: switched.clone() }));
+            let switched = match sent {
+                Ok(switched) => switched,
+                Err(e) => return done(Err(e)),
+            };
+            // what is offered and in use is the main computer's: the one he chose, or the only one
+            let main = { let state = self.shared.state.lock().unwrap(); state.main().map(|i| state.stations[i].radio.clone()) };
+            let offered = main.and_then(|radio| radio.reads_offered());
+            return done(chooser.change(|s| {
+                // computers not reached now take it when they are
+                s.reads = (switched.len() < everyone).then(|| Waiting { id: provider.clone(), offer: offer.clone(), set: set.clone(), his: true, taken: switched.clone() });
+                if offered.is_some() {
+                    s.offered = offered;
                 }
-                // what is offered and in use is the main computer's: the one he chose, or the only one
-                let main = { let state = self.shared.state.lock().unwrap(); state.main().map(|i| state.stations[i].radio.clone()) };
-                let offered = main.and_then(|radio| radio.reads_offered());
-                chooser.change(|s| {
-                    if switched.len() == everyone {
-                        s.reads = None;
-                    }
-                    if offered.is_some() {
-                        s.offered = offered;
-                    }
-                });
-            }
-            return done(sent.map(|_| ()));
+            }));
         }
         let pick = match choice.place {
             ChoicePlace::Service => {
@@ -148,11 +143,10 @@ impl Desk {
                 Pick { place: ChoicePlace::Phone, voice: before.filter(|b| b.place == ChoicePlace::Phone && b.id == id).map(|b| b.voice).unwrap_or_default(), id, offer: String::new(), set: BTreeMap::new() }
             }
         };
-        chooser.change(|s| match job {
+        done(chooser.change(|s| match job {
             ChoiceJob::Ears => s.ears = Some(pick),
             _ => s.voice = Some(pick),
-        });
-        done(Ok(()))
+        }))
     }
 
     /// A sentence in the device's own voice as it is now set, for a "hear it" button. Blocks while it is made.
@@ -172,7 +166,7 @@ impl Desk {
                     if let Some(p) = s.voice.as_mut() {
                         p.voice = name;
                     }
-                });
+                })?;
                 chooser.apply(&*self.shared.host, &self.shared.senses);
                 self.shared.host.changed();
                 Ok(())
@@ -222,7 +216,9 @@ impl Desk {
     pub fn set_tools(&self, tools: Vec<String>) {
         let known: Vec<String> = tools.into_iter().filter(|t| airband_core::catalog::current().tools.iter().any(|k| k.id == *t)).collect();
         if !known.is_empty() {
-            self.shared.chooser.change(|s| s.use_tools(known));
+            if let Err(e) = self.shared.chooser.change(|s| s.use_tools(known)) {
+                self.shared.host.note(e.to_string());
+            }
             self.shared.host.changed();
         }
     }
@@ -259,7 +255,7 @@ pub(crate) fn computer_reached(shared: &Shared, radio: &Radio) {
         let wanted = SetReads { kind: waiting.id.clone(), offer: waiting.offer.clone(), key: shared.host.secret(waiting.id.clone()).unwrap_or_default(), set: waiting.set.clone() };
         // what changes is the choice that was sent: one he made meanwhile is left as it is
         let went = radio.set_reads(&wanted);
-        chooser.change(|s| {
+        let kept = chooser.change(|s| {
             let Some(now) = s.reads.as_mut().filter(|w| w.same(&waiting)) else { return };
             match &went {
                 Ok(()) => now.taken.push(me.clone()),
@@ -272,7 +268,7 @@ pub(crate) fn computer_reached(shared: &Shared, radio: &Radio) {
                 s.reads = None;
             }
         });
-        if let Err(RadioError::Told { reason }) = went {
+        if let Err(RadioError::Told { reason }) = went.and(kept) {
             shared.host.note(reason);
         }
     }
@@ -280,7 +276,9 @@ pub(crate) fn computer_reached(shared: &Shared, radio: &Radio) {
     // does not stand in for the main one's
     let is_main = { let state = shared.state.lock().unwrap(); state.main().is_some_and(|i| std::ptr::eq(&*state.stations[i].radio, radio)) };
     if is_main && let Some(offered) = radio.reads_offered() {
-        chooser.change(|s| s.offered = Some(offered));
+        if let Err(e) = chooser.change(|s| s.offered = Some(offered)) {
+            shared.host.note(e.to_string());
+        }
     }
     shared.host.changed();
 }

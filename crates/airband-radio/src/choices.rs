@@ -152,7 +152,7 @@ fn told(reason: impl Into<String>) -> RadioError {
 impl Chooser {
     /// What was kept in `dir`, or a new install's choices. With no folder (a test), nothing is kept.
     pub(crate) fn open(dir: &str, device: HostDevice) -> Chooser {
-        let kept: Option<Saved> = if dir.is_empty() { None } else { airband_core::kept::load(&Path::new(dir).join("choices.json")) };
+        let kept: Option<Saved> = if dir.is_empty() { None } else { crate::kept::load_or_set_aside(&Path::new(dir).join("choices.json")) };
         let saved = Mutex::new(kept.unwrap_or_else(|| Saved::fresh(&device)));
         Chooser { dir: dir.into(), device, saved, working: Mutex::new(None) }
     }
@@ -166,13 +166,14 @@ impl Chooser {
         self.saved.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    /// Change what is kept, and keep it.
-    fn change(&self, with: impl FnOnce(&mut Saved)) {
+    /// Change what is kept, and keep it. Err when it could not be kept: it holds until the app closes.
+    fn change(&self, with: impl FnOnce(&mut Saved)) -> Result<(), RadioError> {
         let mut saved = self.saved.lock().unwrap_or_else(|e| e.into_inner());
         with(&mut saved);
-        if !self.dir.is_empty() {
-            let _ = airband_core::kept::save(&Path::new(&self.dir).join("choices.json"), &*saved);
+        if self.dir.is_empty() {
+            return Ok(());
         }
+        crate::kept::save(&Path::new(&self.dir).join("choices.json"), &*saved).map_err(|why| told(format!("{why} It holds until the app closes.")))
     }
 
     /// A model this device can run, by its kind.
@@ -434,6 +435,20 @@ mod tests {
     }
 
     #[test]
+    fn a_choice_the_phone_could_not_keep_says_so() {
+        let dir = std::env::temp_dir().join(format!("airband-choices-{}", random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let chooser = Chooser::open(&dir.display().to_string(), HostDevice::default());
+        // the folder choices are kept in can no longer be written
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let went = chooser.change(|s| s.tools = vec!["codex".into()]);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(matches!(went, Err(RadioError::Told { .. })), "{went:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_kept_choice_this_build_cannot_read_is_nothing_chosen_and_says_where_to_choose() {
         // kept by a build that let his computer listen and speak for the phone
         let dir = std::env::temp_dir().join(format!("airband-choices-{}", random_hex(4)));
@@ -479,7 +494,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("airband-choices-{}", random_hex(4)));
         let at = dir.display().to_string();
         let chooser = Chooser::open(&at, phone());
-        chooser.change(|s| s.voice = Some(Pick { place: ChoicePlace::Service, id: "gemini".into(), offer: "flash-lite-tts".into(), set: BTreeMap::from([("voice".to_string(), "Leda".to_string())]), voice: String::new() }));
+        chooser.change(|s| s.voice = Some(Pick { place: ChoicePlace::Service, id: "gemini".into(), offer: "flash-lite-tts".into(), set: BTreeMap::from([("voice".to_string(), "Leda".to_string())]), voice: String::new() })).unwrap();
         let again = Chooser::open(&at, phone());
         assert_eq!(again.saved(), chooser.saved());
         // and no key is in it
