@@ -30,6 +30,7 @@ for d in (os.path.join(home, ".airband"), os.path.join(client, ".airband"), data
     os.makedirs(d)
 config = {"port": TOWER_PORT, "token": "own", "radio_token": "radio", "name": "Charles", "station": "e2e", "relay": LIVE or f"http://127.0.0.1:{RELAY_PORT}", "summarizer": {"kind": "none"},
           # through the relay only: on a computer whose own network the phone reaches, it would otherwise go straight
+          # (the last check, with the relay gone, turns it on for itself)
           "lan": False}
 if os.environ.get("AIRBAND_E2E_ADMISSION"):
     config["relay_admission"] = os.environ["AIRBAND_E2E_ADMISSION"]
@@ -174,7 +175,13 @@ try:
     check("with the computer's word on each, the phone holds none of them any more", outbox() == [], outbox())
     if not LIVE:
         print("Without the relay")
-        # a radio that has heard where the tower is talks to it straight: the relay can go and the chat goes on
+        # a radio that has heard where the tower is talks to it straight: the relay can go and the chat goes on.
+        # Only a tower that listens on its own network says where it is, so for this one check the same tower
+        # (same keys, same pairing) comes back with the local network on; everything above went by the relay.
+        tower.terminate(); tower.wait(10)
+        live = os.path.join(home, ".airband", "config.json")  # as the tower keeps it now, the pairing included
+        json.dump(dict(json.load(open(live)), lan=True), open(live + ".new", "w")); os.replace(live + ".new", live)
+        tower = start_tower()
         say = lambda words: subprocess.run([BIN, "report", "--id", "a1", "--harness", "script", "--cwd", project, "said", words], env=tower_env)
         watch = subprocess.Popen([BIN, "feed", "--link", link], env=phone_env, stdout=open(os.path.join(work, "feed.out"), "w"), stderr=subprocess.STDOUT)
         seen = lambda words: words in open(os.path.join(work, "feed.out")).read()
