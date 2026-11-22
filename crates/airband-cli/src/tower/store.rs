@@ -48,9 +48,14 @@ impl Store {
         // what a request for leave asked and where it stands; a database made before this has no such column
         // columns added since the table was first made: what a request for leave asked and where it stands,
         // and what airband says around the tool's words
-        for (column, kind) in [("request", "text"), ("note", "text")] {
+        for (column, kind) in [("request", "text"), ("note", "text"), ("his", "integer")] {
             if db.prepare(&format!("select {column} from messages limit 0")).is_err() {
                 db.execute_batch(&format!("alter table messages add column {column} {kind};")).map_err(|e| format!("cannot prepare {}: {e}", path.display()))?;
+                // Kept from before whether a line is his had its own column: his lines were the ones written
+                // under his label. Read so once, here, and kept in the column from then on.
+                if column == "his" {
+                    db.execute("update messages set his = (sender = ?1)", params![HIM]).map_err(|e| format!("cannot prepare {}: {e}", path.display()))?;
+                }
             }
         }
         Ok(Store { db: Mutex::new(db) })
@@ -76,7 +81,7 @@ impl Store {
             }
         };
         let mut entries = Vec::new();
-        if let Some(mut q) = Self::warn("reading messages", db.prepare("select seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note from messages order by seq desc limit ?1")) {
+        if let Some(mut q) = Self::warn("reading messages", db.prepare("select seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his from messages order by seq desc limit ?1")) {
             let rows = q.query_map(params![keep as i64], |r| {
                 Ok(Entry {
                     seq: r.get::<_, i64>(0)? as u64,
@@ -93,8 +98,7 @@ impl Store {
                     recommended: r.get::<_, Option<i64>>(11)?.map(|n| n as u32),
                     pictures: r.get::<_, Option<String>>(12)?.and_then(|p| serde_json::from_str(&p).ok()).unwrap_or_default(),
                     agent: r.get(13)?,
-                    // how the sender column keeps it: his own lines are written under the one label
-                    his: r.get::<_, String>(3)? == HIM,
+                    his: r.get::<_, Option<bool>>(25)?.unwrap_or(false),
                     to_agents: r.get::<_, Option<String>>(14)?.and_then(|p| serde_json::from_str(&p).ok()).unwrap_or_default(),
                     rev: r.get::<_, Option<i64>>(15)?.unwrap_or(0) as u64,
                     read: r.get(16)?,
@@ -155,9 +159,9 @@ impl Store {
             Self::warn(
                 "saving a message",
                 db.execute(
-                    "insert into messages (seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
-                     on conflict (seq) do update set kind = excluded.kind, short = excluded.short, full = excluded.full, detail = excluded.detail, options = excluded.options, recommended = excluded.recommended, rev = excluded.rev, read = excluded.read, waiting = excluded.waiting, seen = excluded.seen, leave = excluded.leave, request = excluded.request, own_session = excluded.own_session, aloud = excluded.aloud",
-                    params![e.seq as i64, e.id, e.at as i64, e.from, e.team, serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, Held::of(e).map(Held::word), e.seen.map(|t| t as i64), e.leave.is_some() as i64, e.own_session as i64, serde_json::to_string(&e.aloud).unwrap(), e.notice as i64, e.leave.as_ref().map(|r| serde_json::to_string(r).unwrap()), e.note.and_then(|n| serde_json::to_value(n).ok()).and_then(|v| v.as_str().map(String::from))],
+                    "insert into messages (seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
+                     on conflict (seq) do update set grp = excluded.grp, kind = excluded.kind, short = excluded.short, full = excluded.full, detail = excluded.detail, options = excluded.options, recommended = excluded.recommended, rev = excluded.rev, read = excluded.read, waiting = excluded.waiting, seen = excluded.seen, leave = excluded.leave, request = excluded.request, own_session = excluded.own_session, aloud = excluded.aloud",
+                    params![e.seq as i64, e.id, e.at as i64, e.from, e.team, serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, Held::of(e).map(Held::word), e.seen.map(|t| t as i64), e.leave.is_some() as i64, e.own_session as i64, serde_json::to_string(&e.aloud).unwrap(), e.notice as i64, e.leave.as_ref().map(|r| serde_json::to_string(r).unwrap()), e.note.and_then(|n| serde_json::to_value(n).ok()).and_then(|v| v.as_str().map(String::from)), e.his],
                 ),
             );
         }
@@ -251,6 +255,19 @@ mod tests {
         let path = std::env::temp_dir().join(format!("airband-store-{name}-{}.db", std::process::id()));
         let _ = std::fs::remove_file(&path);
         (Store::open(&path).unwrap(), path)
+    }
+
+    #[test]
+    fn whether_a_line_is_his_is_kept_as_itself_and_never_read_from_the_sender() {
+        let (s, path) = store("his");
+        // an agent that calls itself what his lines are labelled, and a line of his
+        s.put_messages(&[Entry { seq: 1, id: "a".into(), from: HIM.into(), team: "/w/shop".into(), ..Entry::default() }, Entry { seq: 2, id: "b".into(), from: HIM.into(), his: true, ..Entry::default() }]);
+        let (_, kept) = s.load(10);
+        assert_eq!(kept.iter().map(|e| (e.id.as_str(), e.his)).collect::<Vec<_>>(), [("a", false), ("b", true)]);
+        // a line saved again under its team's id is kept under it
+        s.put_messages(&[Entry { seq: 1, id: "a".into(), team: "/w/garden".into(), ..Entry::default() }]);
+        assert_eq!(s.load(10).1[0].team, "/w/garden");
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
