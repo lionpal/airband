@@ -37,12 +37,6 @@ pub(crate) fn check(check: &Check, key: &str, settings: &BTreeMap<String, String
     }
 }
 
-/// What he is told when a key did not pass, for each way it can go, in the words every failure of a service
-/// is told in (`Trouble`). Nothing for one that did.
-pub(crate) fn said(outcome: &KeyCheck, p: &Provider) -> Option<String> {
-    outcome.said(&p.name)
-}
-
 /// What he is told after a key passed a test the service charges for.
 pub(crate) fn charged(p: &Provider) -> String {
     format!("{} has no free way to test a key, so one small request it charges for was made.", p.name)
@@ -114,7 +108,7 @@ mod tests {
         let unset = check(&row("https://{region}.example/models"), "good", &set);
         assert!(matches!(&unset, KeyCheck::BadSetting { why } if why.contains("region")), "{unset:?}");
         let p = airband_core::catalog::current().providers[0].clone();
-        assert!(!said(&unset, &p).unwrap().contains("connection"));
+        assert!(!unset.said(&p.name).unwrap().contains("connection"));
     }
 
     #[test]
@@ -129,8 +123,8 @@ mod tests {
                 let asked: BTreeMap<String, String> = o.asks.iter().map(|a| (a.field.clone(), if a.usual.is_empty() { "x".to_string() } else { a.usual.clone() })).collect();
                 assert!(c.address(&asked).is_ok(), "{} {}: the check names a setting this offer does not have", p.id, o.id);
             }
-            let all = [KeyCheck::WrongKey, KeyCheck::Refused, KeyCheck::Unreachable, KeyCheck::Unexpected { status: 500 }].map(|o| said(&o, p).unwrap());
-            assert!(all.iter().all(|a| all.iter().filter(|b| *b == a).count() == 1) && said(&KeyCheck::Good { paid: false }, p).is_none());
+            let all = [KeyCheck::WrongKey, KeyCheck::Refused, KeyCheck::Unreachable, KeyCheck::Unexpected { status: 500 }].map(|o| o.said(&p.name).unwrap());
+            assert!(all.iter().all(|a| all.iter().filter(|b| *b == a).count() == 1) && KeyCheck::Good { paid: false }.said(&p.name).is_none());
         }
         assert!(catalog.providers.iter().filter(|p| !p.key).all(|p| p.check.is_none()));
     }

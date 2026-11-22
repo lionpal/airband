@@ -23,11 +23,6 @@ impl Desk {
     pub fn full(&self, message_id: String) -> Result<String, RadioError> {
         self.radio_of(&message_id).ok_or(RadioError::Refused)?.more(message_id, true)
     }
-    /// Read a whole message aloud, in the voice he chose on this device. Blocks until it has been heard or
-    /// [`Desk::stop_reading`] is called: call it off the main thread. False when it was not read (he is told why).
-    pub fn read_aloud(&self, message_id: String) -> bool {
-        self.radio_of(&message_id).is_some_and(|radio| radio.read_aloud(&message_id))
-    }
     /// Read a question to him before he answers it: who is asking, its short form, and the answers it offers,
     /// in the voice he chose on this device. Blocks until it has been heard or [`Desk::stop_reading`] is
     /// called. False when it was not read.

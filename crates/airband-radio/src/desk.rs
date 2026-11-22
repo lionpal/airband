@@ -378,15 +378,16 @@ impl Desk {
             self.set_links(links);
         }
     }
+}
+
+impl Desk {
     /// Stop for good.
-    pub fn stop(&self) {
+    #[cfg(test)]
+    pub(crate) fn stop(&self) {
         let mut state = self.shared.state.lock().unwrap();
         state.generation += 1;
         state.stations.drain(..).for_each(|s| s.radio.stop());
     }
-}
-
-impl Desk {
     /// The computer called this. With no name it is the one computer he has; with several he has to say
     /// which, and none is picked for him.
     fn station_radio(&self, computer: &str) -> Result<Arc<Radio>, RadioError> {

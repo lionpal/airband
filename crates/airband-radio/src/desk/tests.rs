@@ -573,7 +573,7 @@ fn a_message_that_cannot_be_fetched_to_read_aloud_says_why() {
     radio.stop();
     // a voice is chosen, so it is the fetching that fails
     radio.senses.mouth.set(Some(crate::mouth::Own::Service(crate::services::service_of("gemini", "flash-lite-tts", "k", HashMap::new()))));
-    assert!(!radio.read_aloud("m1"));
+    assert!(!radio.read_question("m1"));
     assert_eq!(host.0.lock().unwrap().as_slice(), ["That could not be read aloud: cannot reach your computer."]);
 }
 

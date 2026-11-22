@@ -40,7 +40,7 @@ impl Colours {
                 continue;
             }
             let on_screen = |c: &u8| self.seen.iter().filter(|t| self.by_team.get(*t) == Some(c)).count();
-            let next = (0..COLOURS).min_by_key(on_screen).unwrap_or(0);
+            let next = (0..COLOURS).min_by_key(on_screen).expect("a host has colours");
             self.by_team.insert(team, next);
             changed = true;
         }

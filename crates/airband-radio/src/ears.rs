@@ -171,6 +171,17 @@ pub(crate) fn check(with: &Use) -> Result<(), String> {
 /// ([`Ears::way`]) and only carried out by [`Ears::hear`].
 #[derive(Clone)]
 enum Way {
+    /// Through the microphone, one of these ways.
+    Mic(Mic),
+    /// A line he types, taken by the host: a radio in a terminal.
+    Host,
+    /// Nothing can listen, and why: nothing is chosen, or what he chose cannot. Nothing else is asked.
+    Nothing(String),
+}
+
+/// The ways of hearing him through the microphone.
+#[derive(Clone)]
+enum Mic {
     /// By the model on the device.
     Model(Arc<crate::engines::Held>),
     /// In one upload to a service, with the key of his own that is already here.
@@ -178,10 +189,6 @@ enum Way {
     /// Live, as he speaks, in a dialect this build has. Its pass is asked for once the microphone is open
     /// ([`Ears::pass`]).
     Live { with: &'static Listener },
-    /// A line he types, taken by the host: a radio in a terminal.
-    Host,
-    /// Nothing can listen, and why: nothing is chosen, or what he chose cannot. Nothing else is asked.
-    Nothing(String),
 }
 
 #[derive(Clone)]
@@ -214,12 +221,12 @@ impl Ears {
     fn way(&self) -> Way {
         match self.chosen.ears.using() {
             None => Way::Nothing(NOTHING_CHOSEN.into()),
-            Some(Own::Model(held)) => Way::Model(held),
+            Some(Own::Model(held)) => Way::Mic(Mic::Model(held)),
             Some(Own::Cannot(why)) => Way::Nothing(why),
             Some(Own::Host) => Way::Host,
             Some(Own::Service(with)) => match with.offer(Job::Ears).map(|(_, o)| (live(&o), crate::hears::by_upload(&with))) {
-                Some((Some(l), _)) => Way::Live { with: l },
-                Some((None, true)) => Way::OwnUpload { phrases: self.chosen.ears.phrases.lock().unwrap().clone(), with },
+                Some((Some(l), _)) => Way::Mic(Mic::Live { with: l }),
+                Some((None, true)) => Way::Mic(Mic::OwnUpload { phrases: self.chosen.ears.phrases.lock().unwrap().clone(), with }),
                 _ => Way::Nothing("This version of airband cannot listen with the service you chose.".into()),
             },
         }
@@ -253,7 +260,7 @@ impl Ears {
     /// Ask for the pass now, so it is there before he next opens the microphone. Nothing is asked of anyone
     /// when what he chose needs no pass.
     pub(crate) fn warm(&self) {
-        if matches!(self.way(), Way::Live { .. }) {
+        if matches!(self.way(), Way::Mic(Mic::Live { .. })) {
             let _ = self.pass();
         }
     }
@@ -265,20 +272,24 @@ impl Ears {
     /// when he stops talking.
     pub(crate) fn hear(&self, host: &dyn RadioHost, manual: bool) -> Listened {
         let said = |t: Option<String>| t.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).map(Listened::Said).unwrap_or(Listened::Nothing);
-        let way = self.way();
-        // a radio in a terminal: there is no microphone, and what he says is the line he types
-        if matches!(way, Way::Host) {
-            return said(host.listen());
-        }
+        let fail = |host: &dyn RadioHost, why: String| self.chosen.ears.fail(host, why);
+        let mic = match self.way() {
+            // a radio in a terminal: there is no microphone, and what he says is the line he types
+            Way::Host => return said(host.listen()),
+            // nothing can listen: say why, and stop there
+            Way::Nothing(why) => {
+                self.forget();
+                return fail(host, why);
+            }
+            Way::Mic(mic) => mic,
+        };
         if !host.record_start(RATE) {
             host.told("The microphone could not be opened. Check that airband may use it, in Settings.".into());
             return Listened::Cannot;
         }
         let heard_well = || *self.chosen.ears.failed.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        let fail = |host: &dyn RadioHost, why: String| self.chosen.ears.fail(host, why);
-        match way {
-            Way::Host => Listened::Cannot,
-            Way::Model(held) => {
+        match mic {
+            Mic::Model(held) => {
                 let name = held.m.name.clone();
                 let heard = by_model(host, &held, &self.chosen.ears, manual);
                 host.record_stop();
@@ -292,13 +303,12 @@ impl Ears {
                 }
             }
             // The recording is made here and sent off whole, to the service, with his own key.
-            Way::OwnUpload { with, phrases } => {
+            Mic::OwnUpload { with, phrases } => {
                 let clip = record(host, manual);
                 host.record_stop();
                 match clip {
-                    Ok(None) => Listened::Nothing,
-                    Err(()) => Listened::Cannot,
-                    Ok(Some(pcm)) => {
+                    None => Listened::Nothing,
+                    Some(pcm) => {
                         host.status(RadioStatus::Sending);
                         match crate::hears::transcribe(&with, &crate::hears::wav(RATE, &pcm), &phrases) {
                             Ok(text) => {
@@ -310,7 +320,7 @@ impl Ears {
                     }
                 }
             }
-            Way::Live { with, .. } => {
+            Mic::Live { with } => {
                 // a fresh pass whenever the connection asks for one: the same way, worked out again
                 let again: Arc<dyn Fn() -> Option<Pass> + Send + Sync> = {
                     let ears = self.clone();
@@ -334,24 +344,18 @@ impl Ears {
                     }
                 }
             }
-            Way::Nothing(why) => {
-                host.record_stop();
-                self.forget();
-                // say why, and stop there
-                fail(host, why)
-            }
         }
     }
 }
 
-/// The microphone until he stops, as samples: for a service that takes a finished recording. Ok(None) when he
+/// The microphone until he stops, as samples: for a service that takes a finished recording. None when he
 /// said nothing. A little from before he was judged to be speaking is kept, so the first word is not clipped.
-fn record(host: &dyn RadioHost, manual: bool) -> Result<Option<Vec<i16>>, ()> {
+fn record(host: &dyn RadioHost, manual: bool) -> Option<Vec<i16>> {
     record_with(host, manual, &mut |_| {})
 }
 
 /// The same, telling `so_far` what has been kept each time more is, while he is still talking.
-fn record_with(host: &dyn RadioHost, manual: bool, so_far: &mut dyn FnMut(&[i16])) -> Result<Option<Vec<i16>>, ()> {
+fn record_with(host: &dyn RadioHost, manual: bool, so_far: &mut dyn FnMut(&[i16])) -> Option<Vec<i16>> {
     let mut end = Endpointer::new(RATE);
     let mut lead: std::collections::VecDeque<Vec<i16>> = std::collections::VecDeque::new();
     let mut kept: Vec<i16> = Vec::new();
@@ -388,11 +392,11 @@ fn record_with(host: &dyn RadioHost, manual: bool, so_far: &mut dyn FnMut(&[i16]
         }
         match verdict {
             Heard::Finished => break,
-            Heard::Silence => return Ok(None),
+            Heard::Silence => return None,
             _ => {}
         }
     }
-    Ok((speaking && !kept.is_empty()).then_some(kept))
+    (speaking && !kept.is_empty()).then_some(kept)
 }
 
 /// Listen with a model on the device, run by its engine. The model takes a whole recording, so to show his
@@ -419,7 +423,7 @@ fn by_model(host: &dyn RadioHost, held: &crate::engines::Held, chosen: &Chosen, 
                 read_at = kept.len();
             }
         })
-    })?;
+    });
     let Some(pcm) = clip else { return Ok(None) };
     host.status(RadioStatus::Sending);
     let began = Instant::now();
@@ -444,7 +448,7 @@ mod tests {
         senses.ears.set(Some(Own::Service(scribe("k"))));
         let ears = Ears::new(senses);
         // nothing is asked of the service here: the pass is asked for once the microphone is open
-        assert!(matches!(ears.way(), Way::Live { .. }));
+        assert!(matches!(ears.way(), Way::Mic(Mic::Live { .. })));
         assert!(ears.refused.lock().unwrap().is_none());
     }
 

@@ -151,17 +151,11 @@ impl Radio {
         self.link.is_direct()
     }
 
-    /// Read a whole message aloud in the voice he chose on this device. Blocks until it has been heard or
-    /// [`Radio::hush`] is called. False when it was not read: he is told why.
-    pub(crate) fn read_aloud(&self, id: &str) -> bool {
-        self.read(id, None)
-    }
     /// Read a question to him as he would be asked it on a call: who is asking, its short form, and the
-    /// answers it offers. Blocks the same way.
+    /// answers it offers, in the voice he chose on this device. Blocks until it has been heard or
+    /// [`Radio::hush`] is called. False when it was not read: he is told why.
     pub(crate) fn read_question(&self, id: &str) -> bool {
-        self.read(id, Some(airband_core::radio::Part::Asked))
-    }
-    fn read(&self, id: &str, part: Option<airband_core::radio::Part>) -> bool {
+        let part = Some(airband_core::radio::Part::Asked);
         let mine = self.reading.fetch_add(1, Ordering::SeqCst) + 1;
         // With no voice chosen nothing can read it: he is told where to choose one, before anything is asked
         // of his computer.
@@ -295,8 +289,9 @@ impl Radio {
         let roster = self.roster.load(Ordering::SeqCst);
         // with an address of the tower's still to try, this request does not wait for news: it only finds out
         // whether the tower is there, so the straight path is in use (and shown) within a moment
-        let wait = if self.link.untried() { 0 } else { wait_seconds.min(25) };
-        let feed: Feed = self.asked(Method::Get, &with_query("/feed", &[("since", &since.to_string()), ("roster", &roster.to_string()), ("wait", &wait.to_string())]), None)?;
+        let wait = if self.link.untried() { 0 } else { wait_seconds };
+        let ask = airband_core::radio::FeedAsk { since: Some(since), roster: Some(roster), wait, ..Default::default() };
+        let feed: Feed = self.asked(Method::Get, &format!("/feed?{}", ask.query()), None)?;
         spoken_alike(&feed)?;
         self.roster.store(feed.roster_rev, Ordering::SeqCst);
         self.link.set_direct(feed.direct.clone());
@@ -349,11 +344,8 @@ impl Radio {
     /// each message cut to a line or two. Waits up to `wait_seconds` (25 at most) for something new. Blocks:
     /// call it off the main thread.
     pub fn feed(&self, team: Option<String>, agent: Option<String>, after: u64, wait_seconds: u32) -> Result<ChatFeed, RadioError> {
-        let (after, wait) = (after.to_string(), wait_seconds.min(25).to_string());
-        let mut query = vec![("after", after.as_str()), ("wait", wait.as_str())];
-        team.iter().for_each(|t| query.push(("team", t)));
-        agent.iter().for_each(|a| query.push(("agent", a)));
-        let feed: Feed = self.asked(Method::Get, &with_query("/feed", &query), None)?;
+        let ask = airband_core::radio::FeedAsk { team, agent, after, wait: wait_seconds, ..Default::default() };
+        let feed: Feed = self.asked(Method::Get, &format!("/feed?{}", ask.query()), None)?;
         spoken_alike(&feed)?;
         self.link.set_direct(feed.direct.clone());
         Ok(chat_feed(feed))

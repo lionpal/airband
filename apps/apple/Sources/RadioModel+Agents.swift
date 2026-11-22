@@ -1,7 +1,5 @@
 // What he does with his agents and their messages: answering, sending, stopping and starting agents, teams,
 // accounts, and the full text and pictures of a message.
-import AVFoundation
-import PhononCoreML
 import Foundation
 import SwiftUI
 import UIKit

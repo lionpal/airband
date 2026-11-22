@@ -75,7 +75,7 @@ impl Desk {
             host.changed();
             let Some(check) = p.check.as_ref() else { return done(Err(told("This version of airband cannot test that key."))) };
             let outcome = (self.shared.key_test)(check, &with.key, &with.settings(job.job()));
-            if let Some(why) = crate::keys::said(&outcome, p) {
+            if let Some(why) = outcome.said(&p.name) {
                 return done(Err(told(why)));
             }
             if outcome == (airband_core::providers::KeyCheck::Good { paid: true }) {
