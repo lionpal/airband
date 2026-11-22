@@ -189,6 +189,15 @@ struct NewAgentSheet: View {
                 name = first.name
                 if dev == "start" { start() }
             }
+            // `make` asks for a new folder in his home folder, called as the team is, and starts an agent there
+            if dev == "make" {
+                model.folders(on: computer, under: "") { home, _ in
+                    guard let home else { return }
+                    place = Place(folder: home.path, shown: home.shown, make: true)
+                    name = "attic"
+                    start()
+                }
+            }
             #endif
         }
     }

@@ -137,16 +137,27 @@ fn folder_at(path: &str) -> Result<std::path::PathBuf, String> {
     Ok(at)
 }
 
-/// The folders inside one of his, for choosing where a new team works.
+/// The folders inside one of his, for choosing where a new team works. A Mac asks him, at the Mac, the first
+/// time a program opens some of his folders (the desktop, his documents, another disk), and the read waits for
+/// his answer: so it is done to one side and given a few seconds, and he is told when it is the Mac that is
+/// in the way.
 async fn folders(Json(ask): Json<airband_core::radio::FoldersAsk>) -> Json<Value> {
-    let listed = folder_at(&ask.under).and_then(|at| {
-        let mut inside: Vec<String> = std::fs::read_dir(&at).map_err(|_| "That folder cannot be opened from here.".to_string())?.flatten().filter(|e| e.path().is_dir()).filter_map(|e| e.file_name().into_string().ok()).filter(|n| !n.starts_with('.')).collect();
-        inside.sort_by_key(|n| n.to_lowercase());
-        Ok(airband_core::radio::Folders { path: at.display().to_string(), shown: shown(&at), up: at.parent().map(|p| p.display().to_string()), folders: inside })
+    let read = tokio::task::spawn_blocking(move || {
+        folder_at(&ask.under).and_then(|at| {
+            let entries = std::fs::read_dir(&at).map_err(|e| match e.kind() {
+                std::io::ErrorKind::PermissionDenied => "Your Mac does not let airband open this folder. To allow it, open System Settings on the Mac, then Privacy & Security, then Files and Folders.".to_string(),
+                _ => "That folder cannot be opened from here.".to_string(),
+            })?;
+            let mut inside: Vec<String> = entries.flatten().filter(|e| e.path().is_dir()).filter_map(|e| e.file_name().into_string().ok()).filter(|n| !n.starts_with('.')).collect();
+            inside.sort_by_key(|n| n.to_lowercase());
+            Ok(airband_core::radio::Folders { path: at.display().to_string(), shown: shown(&at), up: at.parent().map(|p| p.display().to_string()), folders: inside })
+        })
     });
-    Json(match listed {
-        Ok(f) => serde_json::to_value(f).unwrap(),
-        Err(why) => json!({ "error": why }),
+    Json(match tokio::time::timeout(Duration::from_secs(5), read).await {
+        Ok(Ok(Ok(f))) => serde_json::to_value(f).unwrap(),
+        Ok(Ok(Err(why))) => json!({ "error": why }),
+        Ok(Err(_)) => json!({ "error": "That folder cannot be opened from here." }),
+        Err(_) => json!({ "error": "This folder is taking too long to open. Your Mac may be asking whether airband can open it. Answer at the Mac, then try again." }),
     })
 }
 
