@@ -9,7 +9,7 @@
 //! what to show, what to fetch, where it goes and what its engine is told about it. Where he chooses
 //! (`choices.rs`) lists them beside the services; a host names none itself.
 use super::*;
-use airband_core::providers::{Job, Offer};
+use airband_core::providers::Job;
 use crate::engines::HostDevice;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
@@ -22,27 +22,18 @@ pub(crate) fn models(device: &HostDevice) -> impl Iterator<Item = Arc<Model>> + 
     airband_core::catalog::current().models.clone().into_iter().filter(move |m| crate::engines::runs(m, device) && !m.version.is_empty())
 }
 
-/// What this device does itself is speaking and listening; reading is his computer's.
-pub(crate) fn this_device_speaks(offer: &Offer) -> bool {
-    match offer.job {
-        Job::Voice => crate::voices::speaks(offer),
-        Job::Ears => crate::hears::listens(offer),
-        Job::Summary => true,
-    }
-}
-
 /// Use the newest catalogue this device has kept (in `dir`, a folder of the app's own), if it is newer than
 /// the one built in. Nothing is fetched. Call once at the start.
 #[uniffi::export]
 pub fn load_catalog(dir: String) {
-    airband_core::catalog::load_kept(Path::new(&dir), &this_device_speaks).iter().for_each(|line| eprintln!("{line}"));
+    airband_core::catalog::load_kept(Path::new(&dir), &crate::can_use).iter().for_each(|line| eprintln!("{line}"));
 }
 
 /// Fetch the published catalogue and, if it is airband's and newer, use it and keep it in `dir`. True when
 /// what a chooser lists may have changed. Blocks for a few seconds at most; does nothing with no network.
 #[uniffi::export]
 pub fn refresh_catalog(dir: String) -> bool {
-    let (changed, lines) = airband_core::catalog::refresh(Path::new(&dir), &this_device_speaks);
+    let (changed, lines) = airband_core::catalog::refresh(Path::new(&dir), &crate::can_use);
     lines.iter().for_each(|line| eprintln!("{line}"));
     changed
 }

@@ -262,7 +262,8 @@ impl Chooser {
             let held = crate::engines::Held::of(m, crate::models::folder(&self.dir, m));
             let by: crate::engines::ByHost = &|engine, folder, job, input| host.run_model(engine.into(), folder.into(), job, input);
             let ran = held.with(|loaded| match m.job {
-                Job::Voice => loaded.speak(by, m.voices.first().map(|v| v.0.as_str()).unwrap_or_default(), "Ready.", &mut |_| {}, &|| false),
+                // in the voice he picked, or the one its row names as usual: never just the first it lists
+                Job::Voice => loaded.speak(by, m.voice(&self.saved().pick(ChoiceJob::Voice).filter(|p| p.id == m.kind).map(|p| p.voice).unwrap_or_default()), "Ready.", &mut |_| {}, &|| false),
                 _ => loaded.hear(by, vec![0u8; 32000]).map(|_| ()),
             });
             ran.and_then(|ran| ran).map_err(|why| told(format!("{} did not load on this phone: {why}.", m.name)))?;

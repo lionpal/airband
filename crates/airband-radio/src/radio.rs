@@ -93,8 +93,8 @@ impl Radio {
         let wake = Arc::new(Wake::default());
         let session = Arc::new(Session::default());
         {
-            let (link, session, host, stop, busy, calling, senses) = (link.clone(), session.clone(), host.clone(), stop.clone(), busy.clone(), calling.clone(), senses.clone());
-            thread::spawn(move || work(call::Working { jobs: rx, link, session, host, stop, busy, calling, senses }));
+            let (link, host, stop, busy, calling, senses) = (link.clone(), host.clone(), stop.clone(), busy.clone(), calling.clone(), senses.clone());
+            thread::spawn(move || work(call::Working { jobs: rx, link, host, stop, busy, calling, senses }));
         }
         {
             let (tx, stop, link, calling, host, wake, senses) = (tx.clone(), stop.clone(), link.clone(), calling.clone(), host.clone(), wake.clone(), senses.clone());
@@ -111,7 +111,7 @@ impl Radio {
     /// Ask this computer something and read its answer. A reason it gives in words (`error`) is told to him
     /// as it is; anything else that is not the answer asked for is a refusal. Every request but his own words
     /// goes through here.
-    fn asked<T: serde::de::DeserializeOwned>(&self, method: &str, path: &str, body: Option<Value>) -> Result<T, RadioError> {
+    fn asked<T: serde::de::DeserializeOwned>(&self, method: Method, path: &str, body: Option<Value>) -> Result<T, RadioError> {
         let (status, v) = self.link.request(method, path, body)?;
         match (status, v["error"].as_str()) {
             (200, Some(why)) => Err(RadioError::Told { reason: why.into() }),
@@ -120,9 +120,9 @@ impl Radio {
         }
     }
 
-    /// A request whose answer is nothing or a reason in words.
-    fn ask(&self, path: &str, body: Value) -> Result<(), RadioError> {
-        self.asked::<serde::de::IgnoredAny>("POST", path, Some(body)).map(|_| ())
+    /// A request whose answer is nothing or a reason in words. `body` is one of the tower's own request types.
+    fn ask(&self, path: &str, body: &impl serde::Serialize) -> Result<(), RadioError> {
+        self.asked::<serde::de::IgnoredAny>(Method::Post, path, Some(serde_json::to_value(body).expect("a request type writes as JSON"))).map(|_| ())
     }
 
     /// Is this computer being reached straight, on its own network, and not through the relay?
@@ -154,7 +154,7 @@ impl Radio {
         struct Words {
             text: String,
         }
-        let words: Words = match self.asked("GET", &format!("/message/{id}?{}", airband_core::radio::MessageAsk { form: Some(airband_core::radio::Form::Spoken), part }.query()), None) {
+        let words: Words = match self.asked(Method::Get, &format!("/message/{id}?{}", airband_core::radio::MessageAsk { form: Some(airband_core::radio::Form::Spoken), part }.query()), None) {
             Ok(words) => words,
             Err(e) => {
                 self.host.told(match e {
@@ -270,7 +270,7 @@ impl Radio {
         // with an address of the tower's still to try, this request does not wait for news: it only finds out
         // whether the tower is there, so the straight path is in use (and shown) within a moment
         let wait = if self.link.untried() { 0 } else { wait_seconds.min(25) };
-        let feed: Feed = self.asked("GET", &format!("/feed?since={since}&roster={roster}&wait={wait}"), None)?;
+        let feed: Feed = self.asked(Method::Get, &with_query("/feed", &[("since", &since.to_string()), ("roster", &roster.to_string()), ("wait", &wait.to_string())]), None)?;
         spoken_alike(&feed)?;
         self.roster.store(feed.roster_rev, Ordering::SeqCst);
         self.link.set_direct(feed.direct.clone());
@@ -323,10 +323,11 @@ impl Radio {
     /// each message cut to a line or two. Waits up to `wait_seconds` (25 at most) for something new. Blocks:
     /// call it off the main thread.
     pub fn feed(&self, team: Option<String>, agent: Option<String>, after: u64, wait_seconds: u32) -> Result<ChatFeed, RadioError> {
-        let mut query = url::form_urlencoded::Serializer::new(String::new());
-        team.iter().for_each(|t| { query.append_pair("team", t); });
-        agent.iter().for_each(|a| { query.append_pair("agent", a); });
-        let feed: Feed = self.asked("GET", &format!("/feed?{}&after={after}&wait={}", query.finish(), wait_seconds.min(25)), None)?;
+        let (after, wait) = (after.to_string(), wait_seconds.min(25).to_string());
+        let mut query = vec![("after", after.as_str()), ("wait", wait.as_str())];
+        team.iter().for_each(|t| query.push(("team", t)));
+        agent.iter().for_each(|a| query.push(("agent", a)));
+        let feed: Feed = self.asked(Method::Get, &with_query("/feed", &query), None)?;
         spoken_alike(&feed)?;
         self.link.set_direct(feed.direct.clone());
         Ok(chat_feed(feed))
@@ -358,7 +359,7 @@ impl Radio {
         }
         let (mut bytes, mut from) = (Vec::new(), 0u32);
         loop {
-            let part: airband_core::radio::PicturePart = self.asked("GET", &format!("/picture/{id}?from={from}"), None)?;
+            let part: airband_core::radio::PicturePart = self.asked(Method::Get, &format!("/picture/{id}?from={from}"), None)?;
             bytes.extend(airband_core::encode::unbase64(&part.data).ok_or(RadioError::Refused)?);
             // a part that moves nothing forward would loop for ever
             if part.done || part.next <= from {
@@ -375,13 +376,6 @@ impl Radio {
         for id in ids {
             self.link.tell("/heard", &Heard { id });
         }
-    }
-
-    /// He wants to say something unprompted (a button, Siri, a shortcut): open the microphone when free. `re` is
-    /// the id of the message he means to answer, when he picked one; without it the tower works out who it is for.
-    /// `scope` is the team whose room he is looking at, by name, which narrows that; nothing for all agents.
-    pub fn talk(&self, re: Option<String>, scope: Option<String>) {
-        let _ = self.jobs.lock().unwrap().send(Job::Talk(re, scope));
     }
 
     /// Stop for good. A transmission already being spoken finishes.

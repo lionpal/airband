@@ -274,6 +274,14 @@ pub enum RadioError {
     Told { reason: String },
 }
 
+/// An address with its query, each value encoded: the one way an address with a query is put together, for
+/// a service and for the tower alike.
+pub(crate) fn with_query(base: &str, pairs: &[(&str, &str)]) -> String {
+    let mut q = url::form_urlencoded::Serializer::new(String::new());
+    q.extend_pairs(pairs);
+    format!("{base}?{}", q.finish())
+}
+
 /// A tower that speaks another version of the radio protocol is told apart from one that cannot be reached:
 /// he is asked to update, not left looking at a chat that half works. One that says no version is not taken
 /// to speak this one.
@@ -308,12 +316,13 @@ impl From<LinkError> for RadioError {
     }
 }
 
-/// Does the phone's core have the code for what this listening or voice offer names? For whoever checks a
-/// catalogue before it is published.
+/// Does the phone's core have the code for what this offer names? Speaking and listening are this device's
+/// own; reading is his computer's, so nothing here stands in the way of a summary offer. The one rule, for
+/// the catalogue this device keeps and for whoever checks a catalogue before it is published.
 pub fn can_use(offer: &airband_core::providers::Offer) -> bool {
     match offer.job {
         airband_core::providers::Job::Voice => voices::speaks(offer),
         airband_core::providers::Job::Ears => hears::listens(offer),
-        airband_core::providers::Job::Summary => false,
+        airband_core::providers::Job::Summary => true,
     }
 }

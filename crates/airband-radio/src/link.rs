@@ -93,8 +93,24 @@ pub(crate) use airband_core::clock::now_ms;
 
 /// The way an answer came: the last way its request was tried, as its steps were written down. Every way that
 /// brings an answer writes its step before handing the answer back, so an answer always has one.
-fn went(steps: &[Step]) -> Way {
-    steps.last().map_or(Way::Relay, |s| s.way)
+/// How a request is made of the tower.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Method {
+    Get,
+    Post,
+}
+impl Method {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Method::Get => "GET",
+            Method::Post => "POST",
+        }
+    }
+}
+impl std::fmt::Display for Method {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 impl Link {
@@ -149,8 +165,8 @@ impl Link {
 
     /// A request as it is sealed for the tower: made now, under an id of its own, saying where this radio
     /// stands.
-    fn call(&self, method: &str, path: &str, body: Value) -> Call {
-        Call { t: now_ms(), id: random_hex(12), method: method.into(), path: path.into(), body, schema: airband_core::radio::SCHEMA.into(), presence: self.presence() }
+    fn call(&self, method: Method, path: &str, body: Value) -> Call {
+        Call { t: now_ms(), id: random_hex(12), method: method.as_str().into(), path: path.into(), body, schema: airband_core::radio::SCHEMA.into(), presence: self.presence() }
     }
 
     /// Add a line to the trail, and to its file.
@@ -225,12 +241,16 @@ impl Link {
     pub(crate) fn by_relay(&self) -> bool {
         matches!(self.route, Route::Relay { .. })
     }
+    /// The way the last step of a request went; with none taken, the way this pairing reaches the tower.
+    fn went(&self, steps: &[Step]) -> Way {
+        steps.last().map_or(if self.by_relay() { Way::Relay } else { Way::Paired }, |s| s.way)
+    }
 
     /// Make a request straight to the tower, sealed exactly as it would be for the relay. `None` when there is
     /// nothing to try: the tower has given no address, or none of them answered a moment ago (he is away from
     /// its network), which is remembered for a while so the relay is not kept waiting behind a dead address
     /// each time.
-    fn straight(&self, keys: &Keys, method: &str, path: &str, body: &Option<Value>, ordered: bool, steps: &mut Vec<Step>) -> Option<Result<(u16, Value), LinkError>> {
+    fn straight(&self, keys: &Keys, method: Method, path: &str, body: &Option<Value>, ordered: bool, steps: &mut Vec<Step>) -> Option<Result<(u16, Value), LinkError>> {
         let tries: Vec<String> = {
             let d = self.direct.lock().unwrap();
             if d.addrs.is_empty() || d.rest_until.is_some_and(|t| std::time::Instant::now() < t) {
@@ -273,24 +293,23 @@ impl Link {
 
     /// One `airband.radio/2` request. `path` is what follows `/v1/radio`. An answer from the tower comes back
     /// with its status, whatever that is; an error is a request the tower never answered.
-    pub(crate) fn request(&self, method: &str, path: &str, body: Option<Value>) -> Result<(u16, Value), LinkError> {
+    pub(crate) fn request(&self, method: Method, path: &str, body: Option<Value>) -> Result<(u16, Value), LinkError> {
         self.request_as(method, path, body, false, &mut Vec::new())
     }
 
     /// `ordered`: this is something he said, which must reach the tower after anything of his the relay is still
     /// holding for it. The relay turns it back (`Behind`) while there is, and it is left with the relay too.
     /// `steps` is given each way it was tried and how that went.
-    fn request_as(&self, method: &str, path: &str, body: Option<Value>, ordered: bool, steps: &mut Vec<Step>) -> Result<(u16, Value), LinkError> {
+    fn request_as(&self, method: Method, path: &str, body: Option<Value>, ordered: bool, steps: &mut Vec<Step>) -> Result<(u16, Value), LinkError> {
         let path = format!("{}{}", airband_core::radio::PATH.trim_end_matches('/'), path);
         let what = format!("{method} {path}");
         match &self.route {
             Route::Direct { url, auth, radio } => {
                 let began = std::time::Instant::now();
                 let presence = serde_json::to_string(&self.presence()).unwrap();
-                let res = if method == "GET" {
-                    self.agent.get(format!("{url}{path}")).header("authorization", auth).header(airband_core::radio::RADIO_HEADER, radio).header(airband_core::radio::PRESENCE_HEADER, &presence).call()
-                } else {
-                    self.agent.post(format!("{url}{path}")).header("authorization", auth).header(airband_core::radio::RADIO_HEADER, radio).header(airband_core::radio::PRESENCE_HEADER, &presence).send_json(body.unwrap_or_else(|| serde_json::json!({})))
+                let res = match method {
+                    Method::Get => self.agent.get(format!("{url}{path}")).header("authorization", auth).header(airband_core::radio::RADIO_HEADER, radio).header(airband_core::radio::PRESENCE_HEADER, &presence).call(),
+                    Method::Post => self.agent.post(format!("{url}{path}")).header("authorization", auth).header(airband_core::radio::RADIO_HEADER, radio).header(airband_core::radio::PRESENCE_HEADER, &presence).send_json(body.unwrap_or_else(|| serde_json::json!({}))),
                 };
                 let got = match res {
                     Err(e) => Err(unsent(&e, Way::Paired)),
@@ -368,13 +387,13 @@ impl Link {
     /// one this radio got, so a tower that gave it another since, in an answer that never arrived, gives it
     /// that one again. What comes back is words: this radio makes the sound.
     pub(crate) fn next(&self, joined: bool, have: &str) -> Result<Option<Transmission>, LinkError> {
-        let mut query = vec![format!("have={have}")];
+        let mut query = vec![("have", have)];
         if joined {
-            query.push("joined=1".into());
+            query.push(("joined", "1"));
         }
         let mut steps = Vec::new();
-        match self.request_as("GET", &format!("/next?{}", query.join("&")), None, false, &mut steps)? {
-            (200, v) => serde_json::from_value(v).map(Some).map_err(|_| LinkError::Unreadable(went(&steps))),
+        match self.request_as(Method::Get, &crate::with_query("/next", &query), None, false, &mut steps)? {
+            (200, v) => serde_json::from_value(v).map(Some).map_err(|_| LinkError::Unreadable(self.went(&steps))),
             (204, _) => Ok(None),
             (status, v) => Err(Self::no(status, &v)),
         }
@@ -386,7 +405,7 @@ impl Link {
         let Route::Relay { relay, keys } = &self.route else { return Err(LinkError::Unreachable(Way::Paired)) };
         let id = &u.id;
         let began = std::time::Instant::now();
-        let sealed = keys.seal_call(&self.call("POST", "/v1/radio/utterance", serde_json::to_value(u).unwrap()));
+        let sealed = keys.seal_call(&self.call(Method::Post, "/v1/radio/utterance", serde_json::to_value(u).unwrap()));
         let kept = match self.agent.post(format!("{relay}/v1/channels/{}/queue", keys.channel)).header("authorization", format!("Bearer {}", keys.radio_token)).header("content-type", "application/octet-stream").header(airband_core::relay::ID_HEADER, id).send(&sealed[..]) {
             Err(e) => Err(unsent(&e, Way::Kept)),
             Ok(res) if res.status().as_u16() == 202 => Ok(202),
@@ -403,8 +422,8 @@ impl Link {
     }
 
     fn say_ordered(&self, u: &Utterance, steps: &mut Vec<Step>) -> Result<airband_core::radio::Outcome, LinkError> {
-        match self.request_as("POST", "/utterance", Some(serde_json::to_value(u).unwrap()), true, steps)? {
-            (200, v) => serde_json::from_value(v).map_err(|_| LinkError::Unreadable(went(steps))),
+        match self.request_as(Method::Post, "/utterance", Some(serde_json::to_value(u).unwrap()), true, steps)? {
+            (200, v) => serde_json::from_value(v).map_err(|_| LinkError::Unreadable(self.went(steps))),
             (status, v) => Err(Self::no(status, &v)),
         }
     }
@@ -426,7 +445,7 @@ impl Link {
     }
 
     pub(crate) fn post<T: serde::Serialize>(&self, path: &str, body: &T) -> Result<Value, LinkError> {
-        match self.request("POST", path, Some(serde_json::to_value(body).unwrap()))? {
+        match self.request(Method::Post, path, Some(serde_json::to_value(body).unwrap()))? {
             (200, v) => Ok(v),
             (status, v) => Err(Self::no(status, &v)),
         }
@@ -572,7 +591,7 @@ mod tests {
     #[test]
     fn a_question_is_asked_straight_first_and_only_its_failures_are_kept() {
         let link = nowhere();
-        assert!(link.request("GET", "/feed?since=0", None).is_err());
+        assert!(link.request(Method::Get, "/feed?since=0", None).is_err());
         let trail = link.trail();
         // straight first, then the relay; what follows a `?` is not kept
         assert!(trail.len() == 2 && trail[0].contains("GET /v1/radio/feed by own network") && trail[1].contains("GET /v1/radio/feed by relay"), "{trail:?}");
@@ -582,7 +601,7 @@ mod tests {
     fn what_he_says_goes_straight_first_unless_the_relay_still_keeps_earlier_words() {
         let ways = |link: &Link| -> Vec<Way> {
             let mut steps = Vec::new();
-            let _ = link.request_as("POST", "/utterance", None, true, &mut steps);
+            let _ = link.request_as(Method::Post, "/utterance", None, true, &mut steps);
             steps.iter().map(|s| s.way).collect()
         };
         // nothing kept: his own network first, the relay when the computer is not on it
@@ -610,7 +629,7 @@ mod probe {
         for (what, ordered) in [("as a question (by the relay or straight)", false), ("as something he said (by the relay first)", true)] {
             let began = std::time::Instant::now();
             let mut steps = Vec::new();
-            let got = link.request_as("GET", "/feed?since=0&limit=1", None, ordered, &mut steps);
+            let got = link.request_as(Method::Get, "/feed?since=0&limit=1", None, ordered, &mut steps);
             println!("{what}: {} in {:.1} s", match &got { Ok((status, body)) => format!("{} answered {status}", body["station"].as_str().unwrap_or("?")), Err(e) => e.told() }, began.elapsed().as_secs_f32());
             steps.iter().for_each(|s| println!("    {}", s.line()));
         }

@@ -56,7 +56,7 @@ pub(crate) fn services(job: airband_core::providers::Job) -> Vec<Service> {
         .into_iter()
         // what this build has the code for. Reading is his computer's job: every one is listed, and the
         // computer says no to one it cannot use.
-        .filter(|(_, o)| crate::models::this_device_speaks(o))
+        .filter(|(_, o)| crate::can_use(o))
         .map(|(p, o)| Service {
             kind: p.id.clone(),
             offer: o.id.clone(),
