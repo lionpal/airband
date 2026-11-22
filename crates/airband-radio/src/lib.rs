@@ -276,6 +276,16 @@ pub enum RadioError {
     Refused,
     /// The tower answered, said no, and said why in words for him.
     Told { reason: String },
+    /// It did not go now, and is kept on this phone and sent when it can be: why, and that, in words for him.
+    Kept { reason: String },
+}
+
+impl RadioError {
+    /// Something on this phone itself failed (a file it could not read or keep): said as that, never as his
+    /// computer refusing.
+    pub(crate) fn here(what: &str) -> RadioError {
+        RadioError::Told { reason: format!("This phone could not {what}.") }
+    }
 }
 
 /// An address with its query, each value encoded: the one way an address with a query is put together, for
@@ -302,7 +312,7 @@ impl std::fmt::Display for RadioError {
             RadioError::BadLink { reason } => write!(f, "{reason}"),
             RadioError::Offline => write!(f, "cannot reach your computer"),
             RadioError::Refused => write!(f, "your computer refused that"),
-            RadioError::Told { reason } => write!(f, "{reason}"),
+            RadioError::Told { reason } | RadioError::Kept { reason } => write!(f, "{reason}"),
         }
     }
 }
@@ -312,6 +322,8 @@ impl From<LinkError> for RadioError {
         match e {
             // his computer's own reason, when it gave one, is what he should read
             LinkError::Tower { error, .. } if !error.is_empty() => RadioError::Told { reason: error },
+            // trouble of its own, which may pass, is not a no
+            e @ LinkError::Tower { status: 500..=599, .. } => RadioError::Told { reason: e.said() },
             LinkError::Tower { .. } => RadioError::Refused,
             // it will not go however often it is tried: he is told why, never that it goes when it can
             e if e.retry() == Retry::Never => RadioError::Told { reason: e.said() },

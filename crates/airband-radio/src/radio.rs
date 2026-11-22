@@ -135,9 +135,9 @@ impl Radio {
     fn asked<T: serde::de::DeserializeOwned>(&self, method: Method, path: &str, body: Option<Value>) -> Result<T, RadioError> {
         let (status, v) = self.link.request(method, path, body)?;
         match (status, v["error"].as_str()) {
-            (200, Some(why)) => Err(RadioError::Told { reason: why.into() }),
             (200, None) => serde_json::from_value(v).map_err(|_| RadioError::Refused),
-            _ => Err(RadioError::Refused),
+            // a no, with its reason when it gave one: read the one way every refusal is ([`LinkError::Tower`])
+            (status, error) => Err(LinkError::Tower { status, error: error.unwrap_or_default().into() }.into()),
         }
     }
 
@@ -393,7 +393,7 @@ impl Radio {
             }
             from = part.next;
         }
-        airband_core::kept::write_atomic(&file, &bytes).map_err(|_| RadioError::Refused)?;
+        airband_core::kept::write_atomic(&file, &bytes).map_err(|_| RadioError::here("keep that picture"))?;
         Ok(file.display().to_string())
     }
 
@@ -468,7 +468,7 @@ impl Radio {
         });
         self.wake.ring();
         self.host.outbox(waiting, None);
-        Err(failed.into())
+        Err(RadioError::Kept { reason: format!("{} It is on this phone and goes when it can.", failed.said()) })
     }
 
     /// Send a file to the tower in parts, under `id`. `sent` is told how far it has got after each part and
@@ -480,12 +480,13 @@ impl Radio {
         // Every part is a round trip to his computer and back, so they go several at once: a video is hundreds
         // of them. The first goes alone: a file his computer will not take is refused before the rest is sent.
         const AT_ONCE: usize = 6;
-        let total = std::fs::metadata(path).map_err(|_| RadioError::Refused)?.len();
+        let unread = |_| RadioError::here("read that file");
+        let total = std::fs::metadata(path).map_err(unread)?.len();
         let part_at = |from: u64| -> Result<airband_core::radio::AttachmentPart, RadioError> {
-            let mut file = std::fs::File::open(path).map_err(|_| RadioError::Refused)?;
-            file.seek(SeekFrom::Start(from)).map_err(|_| RadioError::Refused)?;
+            let mut file = std::fs::File::open(path).map_err(unread)?;
+            file.seek(SeekFrom::Start(from)).map_err(unread)?;
             let mut buf = Vec::with_capacity(PART as usize);
-            file.take(PART).read_to_end(&mut buf).map_err(|_| RadioError::Refused)?;
+            file.take(PART).read_to_end(&mut buf).map_err(unread)?;
             Ok(airband_core::radio::AttachmentPart { id: id.into(), name: name.into(), from, data: airband_core::encode::base64(&buf), total })
         };
         // a part lost on a bad connection is sent again, to the same place, a few times before giving up

@@ -650,3 +650,45 @@ fn a_question_he_opens_the_microphone_for_still_waits_until_his_words_go() {
     desk.cancel_talk();
     assert!(!desk.shared.state.lock().unwrap().answered.contains("q1"));
 }
+
+/// A computer on this machine that answers every request with `status` and `body`. Its port.
+fn tower_saying(status: u16, body: &'static str) -> u16 {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut buf = [0u8; 65536];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(format!("HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()).as_bytes());
+        }
+    });
+    port
+}
+fn radio_at(port: u16) -> Arc<Radio> {
+    let radio = Radio::start(format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A{port}&token=t"), String::new(), Arc::new(Quiet)).unwrap();
+    radio.stop();
+    radio
+}
+
+#[test]
+fn a_no_with_a_reason_is_told_with_its_reason_whatever_its_status() {
+    let radio = radio_at(tower_saying(400, r#"{"error":"That folder is gone."}"#));
+    assert!(matches!(radio.recent(), Err(RadioError::Told { reason }) if reason == "That folder is gone."));
+}
+
+#[test]
+fn an_answer_kept_after_his_computer_had_trouble_is_told_as_kept() {
+    let radio = radio_at(tower_saying(503, "{}"));
+    let e = radio.answer_now("yes".into(), "q1".into(), None).unwrap_err();
+    assert!(matches!(&e, RadioError::Kept { reason } if reason.ends_with("It is on this phone and goes when it can.")), "{e:?}");
+    assert_eq!(radio.unsent().len(), 1);
+}
+
+#[test]
+fn a_file_the_phone_cannot_read_is_not_told_as_his_computer_refusing() {
+    let radio = radio_at(9);
+    let e = radio.upload("f1", "/nonexistent/airband-test.mov", "a.mov", |_, _| true).unwrap_err();
+    assert!(matches!(&e, RadioError::Told { reason } if reason == "This phone could not read that file."), "{e:?}");
+}

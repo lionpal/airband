@@ -340,7 +340,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// reached when it cannot, and otherwise `fallback`, which says what did not happen.
     static func words(for error: Error, else fallback: String) -> String {
         switch error {
-        case RadioError.Told(let reason): return reason
+        case RadioError.Told(let reason), RadioError.Kept(let reason): return reason
         case RadioError.Offline: return unreached
         default: return fallback
         }

@@ -84,6 +84,8 @@ impl LinkError {
             LinkError::Unreadable(Way::Near | Way::Paired) => "your computer sent an answer that could not be read".into(),
             LinkError::Unreadable(_) => "an answer came through the relay that could not be read".into(),
             LinkError::Tower { error, .. } if !error.is_empty() => format!("your computer refused it: {error}"),
+            // trouble of its own, which may pass: not a no
+            LinkError::Tower { status: status @ 500..=599, .. } => format!("your computer ran into trouble with it ({status})"),
             LinkError::Tower { status, .. } => format!("your computer refused it ({status})"),
             LinkError::Rejected(airband_core::radio::Rejected::TooOld) => "your computer got it more than a week after you said it, and did nothing with it".into(),
             LinkError::Rejected(airband_core::radio::Rejected::Unknown) => "your computer would not take it".into(),

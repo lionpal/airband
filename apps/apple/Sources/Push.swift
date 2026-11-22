@@ -84,8 +84,8 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
             do { try RadioModel.shared.answerNow(station: station, message: message, text: text, tapped: tapped) }
             catch RadioError.Told(let reason) { failure.set(reason) }
             catch RadioError.Refused { failure.set("That computer refused it.") }
-            // only this one is kept and sent later; anything that will never go comes as Told, with why
-            catch RadioError.Offline { failure.set("No connection. It goes when there is one.") }
+            // kept on the phone and sent later, with why it did not go now; anything that will never go comes as Told
+            catch RadioError.Kept(let reason) { failure.set(reason) }
             catch { failure.set("It was not sent. Open airband to send it again.") }
             finished.signal()
         }
