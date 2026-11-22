@@ -104,10 +104,8 @@ impl Store {
                     read: r.get(16)?,
                     own_session: r.get::<_, Option<i64>>(20)?.unwrap_or(0) != 0,
                     background: false,
-                    dismissed: held(r)? == Some(Held::Dismissed),
+                    held: held(r)?,
                     seen: r.get::<_, Option<i64>>(18)?.map(|t| t as u64),
-                    queued: held(r)? == Some(Held::Queued),
-                    cancelled: held(r)? == Some(Held::Cancelled),
                     permit: None,
                     // a request kept before what it asked was written down is still known as one, so a late
                     // answer to it is never passed on as words
@@ -161,7 +159,7 @@ impl Store {
                 db.execute(
                     "insert into messages (seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
                      on conflict (seq) do update set grp = excluded.grp, kind = excluded.kind, short = excluded.short, full = excluded.full, detail = excluded.detail, options = excluded.options, recommended = excluded.recommended, rev = excluded.rev, read = excluded.read, waiting = excluded.waiting, seen = excluded.seen, leave = excluded.leave, request = excluded.request, own_session = excluded.own_session, aloud = excluded.aloud",
-                    params![e.seq as i64, e.id, e.at as i64, e.from, e.team, serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, Held::of(e).map(Held::word), e.seen.map(|t| t as i64), e.leave.is_some() as i64, e.own_session as i64, serde_json::to_string(&e.aloud).unwrap(), e.notice as i64, e.leave.as_ref().map(|r| serde_json::to_string(r).unwrap()), e.note.as_ref().and_then(word), e.his],
+                    params![e.seq as i64, e.id, e.at as i64, e.from, e.team, serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, e.held.as_ref().and_then(word), e.seen.map(|t| t as i64), e.leave.is_some() as i64, e.own_session as i64, serde_json::to_string(&e.aloud).unwrap(), e.notice as i64, e.leave.as_ref().map(|r| serde_json::to_string(r).unwrap()), e.note.as_ref().and_then(word), e.his],
                 ),
             );
         }
@@ -304,25 +302,6 @@ mod tests {
     }
 }
 
-/// Where a line stands, as the `waiting` column keeps it.
-#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum Held {
-    /// He let this question go.
-    Dismissed,
-    /// His words, waiting for the agent to stop.
-    Queued,
-    /// His words, taken back before they went.
-    Cancelled,
-}
-impl Held {
-    fn of(e: &Entry) -> Option<Held> {
-        if e.cancelled { Some(Held::Cancelled) } else if e.queued { Some(Held::Queued) } else if e.dismissed { Some(Held::Dismissed) } else { None }
-    }
-    fn word(self) -> String {
-        word(&self).unwrap_or_default()
-    }
-}
 pub(super) use airband_core::encode::word;
 fn held(r: &rusqlite::Row) -> rusqlite::Result<Option<Held>> {
     Ok(r.get::<_, Option<String>>(17)?.and_then(|t| serde_json::from_value(Value::String(t)).ok()))

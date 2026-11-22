@@ -56,14 +56,10 @@ pub(super) struct Entry {
     /// For his words: when the agent took them in, once its harness shows that.
     #[serde(default)]
     pub(super) seen: Option<u64>,
-    /// He let this question go without answering it.
+    /// Where it stands when it is held back: a question he let go, or his words waiting for the agent to stop,
+    /// or taken back before they went. Only one at a time.
     #[serde(default)]
-    pub(super) dismissed: bool,
-    /// His words, waiting for the agent to stop what it is doing; and whether he took them back first.
-    #[serde(default)]
-    pub(super) queued: bool,
-    #[serde(default)]
-    pub(super) cancelled: bool,
+    pub(super) held: Option<Held>,
     /// Pictures that go with it.
     #[serde(default)]
     pub(super) pictures: Vec<airband_core::radio::Picture>,
@@ -93,6 +89,17 @@ pub(super) struct Entry {
     /// What airband says about the agent around the tool's words (`full`), when it says something.
     #[serde(default)]
     pub(super) note: Option<airband_core::radio::Note>,
+}
+/// Where a line stands, as the `waiting` column keeps it.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum Held {
+    /// He let this question go.
+    Dismissed,
+    /// His words, waiting for the agent to stop.
+    Queued,
+    /// His words, taken back before they went.
+    Cancelled,
 }
 impl Entry {
     /// The line in a few words: its summary, else the opening of what it says.
@@ -153,7 +160,7 @@ impl Inner {
         // under, and the lines that delivery carried are marked read. Nothing is told from the words.
         for t in told.iter().filter(|t| !t.his) {
             for line in self.receipts.remove(&t.id).unwrap_or_default() {
-                if let Some(e) = self.log.iter_mut().find(|e| e.id == line && e.seen.is_none() && !e.cancelled) {
+                if let Some(e) = self.log.iter_mut().find(|e| e.id == line && e.seen.is_none() && e.held != Some(Held::Cancelled)) {
                     e.seen = Some(t.at);
                     self.touch(&line);
                 }
@@ -265,8 +272,8 @@ impl Inner {
             read: e.read.clone(),
             own_session: e.own_session,
             seen: e.seen,
-            queued: e.queued,
-            cancelled: e.cancelled,
+            queued: e.held == Some(Held::Queued),
+            cancelled: e.held == Some(Held::Cancelled),
             // a question put through the same door is an ordinary question to him: any answer will do
             // only while the harness is still waiting on it
             permission: e.leave.is_some() && e.permit.as_ref().is_some_and(|id| self.permits.get(id).is_some_and(|p| p.decided.is_none())),
@@ -302,7 +309,7 @@ impl Inner {
         for e in &self.log {
             if let Some(agent) = e.agent.as_deref() {
                 if e.kind == Some(Kind::NeedsYou) {
-                    if e.dismissed {
+                    if e.held == Some(Held::Dismissed) {
                         latest.remove(agent);
                     } else {
                         latest.insert(agent, (&e.id, e.at, 0));

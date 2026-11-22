@@ -335,7 +335,7 @@ fn kept(app: &App, radio: &str, to: &Addressed, message_id: String, sent: Vec<Se
         // a quick message shows as the button he tapped; the whole instruction is still what was sent and kept
         // what he sees of his own message is his words, without the list of file paths that the agent got
         let entry = Entry::his(message_id, &sent, to.rest.clone());
-        inner.record(Entry { short: shown.or(entry.short.clone()), pictures: shown_files, queued: !queued.is_empty(), ..entry });
+        inner.record(Entry { short: shown.or(entry.short.clone()), pictures: shown_files, held: (!queued.is_empty()).then_some(Held::Queued), ..entry });
     }
     let sent_names: Vec<String> = sent.iter().map(|s| s.callsign.text()).collect();
     let reply = say(match (sent_names.len(), failed.len()) {

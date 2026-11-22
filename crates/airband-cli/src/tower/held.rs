@@ -286,8 +286,8 @@ pub(super) async fn flush(app: &Arc<App>, id: &str) {
     match told {
         Ok(()) => {
             for (line, _) in &waiting {
-                if let Some(e) = inner.log.iter_mut().find(|e| e.id == *line) {
-                    e.queued = false;
+                if let Some(e) = inner.log.iter_mut().find(|e| e.id == *line && e.held == Some(Held::Queued)) {
+                    e.held = None;
                 }
                 inner.touch(line);
             }
@@ -356,8 +356,7 @@ pub(super) fn unsend(app: &App, line: &str) -> Result<(), String> {
         return Err("It has already been delivered.".into());
     }
     if let Some(e) = inner.log.iter_mut().find(|e| e.id == line) {
-        e.queued = false;
-        e.cancelled = true;
+        e.held = Some(Held::Cancelled);
     }
     inner.touch(line);
     inner.tell();

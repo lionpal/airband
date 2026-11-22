@@ -47,7 +47,7 @@ pub(super) async fn taken(State(app): State<Arc<App>>, Json(t): Json<airband_cor
 pub(super) async fn dismiss(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::Dismiss>) -> Json<Value> {
     let mut inner = app.change();
     let Some(e) = inner.log.iter_mut().find(|e| e.id == to.message) else { return Json(refused("That message is gone.")) };
-    e.dismissed = true;
+    e.held = Some(Held::Dismissed);
     // it is not read out either
     if e.aloud.unheard() {
         inner.set_aloud(&to.message, Aloud::dropped(Dropped::Dismissed));
