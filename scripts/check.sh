@@ -2,9 +2,10 @@
 # The checks, run on this computer: what CI ran on every push, without spending build minutes on it.
 #
 #   scripts/check.sh           the linter, then the unit tests of every crate (under a minute once built)
-#   scripts/check.sh --full    those, then the three end-to-end suites: the relay and its queue (25 checks), agents
-#                              the tower runs itself (77), and the whole tower with real model calls (135, a few
-#                              minutes, and it needs `claude` signed in)
+#   scripts/check.sh --full    those, then the end-to-end suites: the relay and its queue (25 checks), agents the
+#                              tower runs itself (84), links (10), the paths the audits keep finding faults in
+#                              (e2e-scenarios), and the whole tower with real model calls (139, a few minutes, and
+#                              it needs `claude` signed in)
 #
 # `git push` runs the first form by itself (.githooks/pre-push, turned on once with
 # `git config core.hooksPath .githooks`). CI on GitHub runs on every push too: every system the tower is meant
@@ -20,4 +21,5 @@ cargo build -q --release -p airband-cli -p airband-relay
 python3 tools/e2e-relay.py
 python3 tools/e2e-held.py
 python3 tools/e2e-links.py
+python3 tools/e2e-scenarios.py
 python3 tools/e2e.py --claude

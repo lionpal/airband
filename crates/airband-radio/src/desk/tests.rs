@@ -561,3 +561,5 @@ fn an_unnamed_computer_can_be_chosen_as_main_by_its_id() {
     assert_eq!(desk.shared.state.lock().unwrap().main(), Some(1));
     assert_eq!(desk.view(None, None).main_computer, Some(shown[1].id.clone()));
 }
+
+mod scenarios;
