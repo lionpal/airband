@@ -301,6 +301,19 @@ mod tests {
     }
 
     #[test]
+    fn a_team_whose_every_name_is_taken_keeps_none_that_clashes() {
+        let theirs = |team: &str| Callsign { project: team.into(), number: "one".into(), named: false };
+        let mut inner = Inner { here: "Laptop".into(), ..Inner::default() };
+        inner.check_in(&agent("a", "/x/shop", None));
+        let shop = inner.team_at("/x/shop").unwrap();
+        // every name its folder could have, with or without this computer's name, is a team elsewhere
+        inner.taken_elsewhere(&[theirs("shop"), theirs("x shop"), theirs("laptop shop"), theirs("laptop x shop")]);
+        assert_eq!(inner.team_name(&shop), "shop");
+        // no name is free for its folder: none is made up
+        assert!(inner.name_for_folder("/x/shop").is_none());
+    }
+
+    #[test]
     fn an_agent_taken_over_keeps_its_name_and_the_radios_are_told() {
         let mut inner = Inner::default();
         let first = inner.check_in(&agent("a", "/x/shop", None));

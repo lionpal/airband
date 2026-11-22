@@ -96,7 +96,10 @@ impl Inner {
                 return Some(on);
             }
         }
-        names.iter().find(|n| !here(n) && !there(n)).cloned().or_else(|| names.last().map(|n| airband_core::routing::team_on(&self.here, n)))
+        // every name the folder's path gives, then each with this computer's name in front; the first that no
+        // other team of his has. None when all are taken: the caller says so, and no clash is kept.
+        let on_here: Vec<String> = names.iter().map(|n| airband_core::routing::team_on(&self.here, n)).collect();
+        names.iter().chain(on_here.iter()).find(|n| !here(n) && !there(n)).cloned()
     }
     /// Has a team on this computer this name, other than the team `except` (by id)?
     fn taken_here(&self, name: &str, except: Option<&str>) -> bool {
@@ -296,12 +299,15 @@ impl Inner {
             let name = self.team_name(&id);
             let on = airband_core::routing::team_on(&self.here, &name);
             let to = if self.name_free(&on, Some(&id)) {
-                on
+                Some(on)
             } else {
                 // this computer's name is not enough: the folder's own path, as for any new team
-                self.teams.get(&id).and_then(|t| t.folder.clone()).and_then(|f| self.name_for_folder(&f)).unwrap_or(name)
+                self.teams.get(&id).and_then(|t| t.folder.clone()).and_then(|f| self.name_for_folder(&f))
             };
-            self.set_team_name(&id, &to);
+            match to {
+                Some(to) => self.set_team_name(&id, &to),
+                None => log(format!("the team {name} has the name of a team on another computer, and no other name is free for it: rename one of them")),
+            }
         }
         let clashing: Vec<String> = self.sessions.iter().filter(|s| s.callsign.numbered() && there.contains(&s.callsign)).map(|s| s.agent.id.clone()).collect();
         for id in &clashing {
