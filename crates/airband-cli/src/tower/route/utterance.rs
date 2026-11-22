@@ -146,7 +146,7 @@ async fn new_agent(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
     }
     let Some(Act::Launch(new)) = &said.act else { return None };
     // the team he picked, by its id, and the folder it works in
-    let Some(place) = app.read().team_place(&new.team) else {
+    let Some(place) = app.read().team_place(new.team.as_ref()) else {
         return Some(say("That team is not on this computer any more, or its folder is gone.".into()));
     };
     let idea = Idea { tool: new.tool.clone(), project: Some(place), model: new.model.clone().map(Pick::Id), effort: new.effort.clone().map(Pick::Id), task: format!("{}{files}", new.task) };

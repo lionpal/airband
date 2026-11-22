@@ -9,7 +9,7 @@ pub(super) async fn team(State(app): State<Arc<App>>, Sent(to): Sent<at::Team>) 
 /// He renamed one of his teams, from a radio.
 pub(super) async fn team_rename(State(app): State<Arc<App>>, Sent(to): Sent<at::RenameTeam>) -> Answer<at::RenameTeam> {
     let mut inner = app.change();
-    let team = inner.rename_team(&TeamId::new(to.team.as_str()), &to.to).map_err(no)?;
+    let team = inner.rename_team(&to.team, &to.to).map_err(no)?;
     inner.tell();
     Ok(Json(airband_core::radio::TeamRenamed { team: team.into_string() }))
 }

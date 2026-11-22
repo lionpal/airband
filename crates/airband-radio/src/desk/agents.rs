@@ -46,7 +46,7 @@ impl Desk {
             Some(tool) => format!("New {} agent in {name}", tool.name),
             None => format!("New agent in {name}"),
         };
-        let launch = airband_core::radio::Launch { team, tool: tool.map(|t| t.id), ..Default::default() };
+        let launch = airband_core::radio::Launch { team: team.into(), tool: tool.map(|t| t.id), ..Default::default() };
         radio.queue_as(Outgoing::of(shown).with_act(Some(&Act::Launch(launch))), Carry::Nothing);
     }
     /// Every paired computer's accounts, in the order the computers were paired. A computer that cannot be
@@ -107,7 +107,7 @@ impl Desk {
             for s in state.computers.iter_mut().filter(|s| s.agents.iter().any(|a| a.id == agent)) {
                 for a in s.agents.iter_mut().filter(|a| a.id == agent) {
                     a.call(now.callsign.clone());
-                    a.team = now.team.clone();
+                    a.team = now.team.to_string();
                 }
                 s.settle_rooms();
             }

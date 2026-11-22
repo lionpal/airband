@@ -368,7 +368,7 @@ impl Radio {
     /// one-line answer.
     pub fn launch(&self, team: String, tool: Option<String>, model: Option<String>, effort: Option<String>, task: String) -> Result<String, RadioError> {
         let shown = "New agent".to_string();
-        Ok(self.session.say(&self.link, &shown, None, None, Some(Act::Launch(airband_core::radio::Launch { team, tool, model, effort, task })))?.map(|reply| reply.say).unwrap_or_default())
+        Ok(self.session.say(&self.link, &shown, None, None, Some(Act::Launch(airband_core::radio::Launch { team: team.into(), tool, model, effort, task })))?.map(|reply| reply.say).unwrap_or_default())
     }
 
     /// A picture, as a JPEG file on the device: fetched from the tower the first time and kept, so it is there

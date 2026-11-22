@@ -34,7 +34,7 @@ pub struct Other {
     pub group: String,
     /// Its team's id on the computer that has it: what is kept and sent about the team. `group` is only shown.
     #[serde(default)]
-    pub team: String,
+    pub team: crate::ids::TeamId,
     /// Its two characters, as that computer gave them.
     #[serde(default)]
     pub badge: String,
@@ -65,7 +65,7 @@ pub struct Notice {
     pub group: String,
     /// Its team's id on that computer. `group` is only shown.
     #[serde(default)]
-    pub team: String,
+    pub team: crate::ids::TeamId,
     /// What this computer is called.
     #[serde(default)]
     pub station: String,
@@ -132,7 +132,7 @@ pub struct Message {
     pub group: String,
     /// That team's id on this computer: what views and colours go by. Empty when `group` is.
     #[serde(default)]
-    pub team: String,
+    pub team: crate::ids::TeamId,
     /// For his messages: the callsigns it went to, as a screen shows them.
     #[serde(default)]
     pub to: Vec<String>,
@@ -259,7 +259,7 @@ pub struct RosterEntry {
     /// Its team's id on this computer: what views, colours, moves and renames go by. The callsign's team name
     /// is only shown.
     #[serde(default)]
-    pub team: String,
+    pub team: crate::ids::TeamId,
     pub harness: String,
     /// Finished a turn and waiting on him.
     pub waiting: bool,

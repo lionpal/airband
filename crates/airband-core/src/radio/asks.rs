@@ -91,7 +91,7 @@ pub struct MoveAgent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Moved {
     pub callsign: crate::routing::Callsign,
-    pub team: String,
+    pub team: crate::ids::TeamId,
 }
 
 /// Which team an agent goes to: one of his teams on that computer, by its id, or a new one he named.
@@ -228,7 +228,7 @@ pub const DENY: &str = "Deny";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RenameTeam {
     /// The team's id on that computer.
-    pub team: String,
+    pub team: crate::ids::TeamId,
     pub to: String,
 }
 

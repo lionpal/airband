@@ -268,7 +268,7 @@ impl Inner {
             to_agents: e.to_agents.clone(),
             // a line whose team has gone has no team name to show
             group: self.team_name(&self.line_team(e)).unwrap_or_default().to_string(),
-            team: self.line_team(e).into_string(),
+            team: self.line_team(e),
             to,
             kind: e.kind,
             long: spoken(&e.full) != text,

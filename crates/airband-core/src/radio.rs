@@ -165,7 +165,7 @@ pub enum Act {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Launch {
     /// The team it joins, by the team's id on that computer.
-    pub team: String,
+    pub team: crate::ids::TeamId,
     /// The coding tool, by id. Nothing is the computer's usual one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool: Option<String>,
