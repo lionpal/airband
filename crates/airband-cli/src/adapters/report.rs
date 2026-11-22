@@ -63,7 +63,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         return Err("--id is required: any name that stays the same for this agent's session".into());
     }
     if agent.harness.is_empty() {
-        return Err("--harness is required: the coding tool the agent runs in, by its id (claude-code, codex, opencode, or your own)".into());
+        return Err(format!("--harness is required: the coding tool the agent runs in, by its id ({}, or your own)", super::names().join(", ")));
     }
     let body = || -> Result<String, String> {
         let words = rest[1..].join(" ");
