@@ -439,6 +439,9 @@ async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, projects: &[
 /// `uid` is the utterance's own id, when the radio gave one: deliveries are recorded against it, so a retry after
 /// a crash can tell that the message already reached its agent.
 /// `label` is the button's words when this is a quick message: the chat shows those, and the agent gets `text`.
+/// What an agent is told when he sent it files and said nothing: the tower's note, not his words.
+const WORDLESS: &str = "(He sent this with no words.)";
+
 pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: &airband_core::radio::Utterance) -> Reply {
     let (uid, re, scope, label, attached, others) = (Some(said.id.as_str()), said.re.as_deref(), said.scope.as_deref(), said.label.as_deref(), said.attachments.as_slice(), said.others.as_slice());
     // an answer to a request for permission goes back to the harness that asked, not to the agent as a message
@@ -593,7 +596,10 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
         // a poke became an ordinary message above
         Some(Control::Poke) | None => {}
     }
-    if parsed.rest.is_empty() {
+    // files with no words: the files are the message. The agent is told so by the tower, in the tower's
+    // own voice; no words are put in his mouth, and the chat shows the files alone.
+    let wordless = parsed.rest.is_empty() && !files.is_empty();
+    if parsed.rest.is_empty() && !wordless {
         return match named.as_slice() {
             [one] => ask(format!("{}, go ahead.", one.callsign.spoken())),
             _ => say(String::new()),
@@ -604,7 +610,8 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
     }
     // His words as he said them, with one line in front that says who they are from and how to answer.
     let many = if targets.len() > 1 { format!(" Sent to {} agents.", targets.len()) } else { String::new() };
-    let content = format!("From {name}, on his phone through Airband.{many}\n\n{rest}{files}", name = app.cfg.name, rest = parsed.rest);
+    let rest = if wordless { WORDLESS } else { parsed.rest.as_str() };
+    let content = format!("From {name}, on his phone through Airband.{many}\n\n{rest}{files}", name = app.cfg.name);
     // The line in the chat takes the id the radio gave what he said, when it gave one and it is not in use: the
     // radio can then tell that the message it is still showing as on its way has arrived, and swap one for the
     // other without a gap.
@@ -630,7 +637,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
             // One the tower runs itself gets his words as his own turn, with nothing in front. If it is in the
             // middle of something they wait here, where he can still take them back, until it stops.
             Some(Deliver::Held) => {
-                let words = format!("{about}{}{files}", parsed.rest);
+                let words = format!("{about}{rest}{files}");
                 let busy = {
                     let mut inner = app.passing();
                     match inner.session(&t.agent.id).filter(|s| !s.waiting) {
@@ -650,7 +657,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
             }
             // One reached through its own tool takes his words as a turn of his own too, and the tool keeps
             // them in order itself while the agent is busy.
-            Some(how @ Deliver::Harness { .. }) => deliver(app, how, &t.agent.id, &format!("{about}{}{files}", parsed.rest), std::slice::from_ref(&message_id)).await,
+            Some(how @ Deliver::Harness { .. }) => deliver(app, how, &t.agent.id, &format!("{about}{rest}{files}"), std::slice::from_ref(&message_id)).await,
             // Anything else gets them from outside, as a message: one line in front says who they are from.
             Some(how) => deliver(app, how, &t.agent.id, &content, std::slice::from_ref(&message_id)).await,
             None => Err("it was started in a way that gives airband nowhere to send it messages".into()),

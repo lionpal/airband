@@ -418,7 +418,7 @@ try:
         clip = os.path.join(work, "clip.mp4")
         subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=duration=3:size=320x240:rate=10", "-pix_fmt", "yuv420p", clip], check=True)
         video = attach(clip, "clip.mp4")
-        check("a video goes too, and with nothing said the agent is asked to look at it", say("", re=p["id"], attachments=[video]) == "Sent to catalog part page." and "(a video" in received("page") and "Look at what I attached." in received("page"), received("page")[-400:])
+        check("a video goes too, and with nothing said the agent is asked to look at it", say("", re=p["id"], attachments=[video]) == "Sent to catalog part page." and "(a video" in received("page") and "(He sent this with no words.)" in received("page"), received("page")[-400:])
         check("with a frame from each second pulled out for the agent to look at", len(os.listdir(os.path.join(home, ".airband", "attachments", video, "frames"))) == 3 and "frames" in received("page"))
 
     print("Poke")

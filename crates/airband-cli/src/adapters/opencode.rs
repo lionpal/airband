@@ -131,7 +131,8 @@ fn current(sessions: &[Value], now: u64) -> Vec<&Value> {
 /// The sessions open now, as the server lists them. Nothing when OpenCode is not running.
 fn open() -> Option<Vec<super::Open>> {
     let list = get("/api/session?limit=40")?;
-    Some(current(list["data"].as_array()?, airband_core::clock::now_ms()).into_iter().filter_map(|s| Some(super::Open { agent: agent(s["id"].as_str()?, s["location"]["directory"].as_str()), idle: s["time"]["idle"].as_u64().unwrap_or(0) >= s["time"]["busy"].as_u64().unwrap_or(0) })).collect())
+    Some(current(list["data"].as_array()?, airband_core::clock::now_ms()).into_iter().filter_map(|s| Some(super::Open { agent: agent(s["id"].as_str()?, s["location"]["directory"].as_str()), // idle only when its own clocks say so: one with no idle time is not taken to be idle
+        idle: s["time"]["idle"].as_u64().is_some_and(|idle| s["time"]["busy"].as_u64().is_none_or(|busy| idle >= busy)) })).collect())
 }
 
 /// The folders OpenCode has had sessions in, as its server lists them. Nothing when it is not running.

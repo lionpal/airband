@@ -429,9 +429,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     func send(_ text: String) {
         let target = replyingTo
         replyingTo = nil
-        // with nothing typed there is still something to send when files are attached: the files themselves
-        let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        desk.send(text: words.isEmpty && !tray.isEmpty ? "Look at what I attached." : text, re: target?.id, room: room, agent: only)
+        // with nothing typed there is still something to send when files are attached: the core sends the files alone
+        desk.send(text: text, re: target?.id, room: room, agent: only)
     }
 
     /// Try the computers again, now.

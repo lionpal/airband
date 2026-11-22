@@ -179,12 +179,10 @@ impl Desk {
 /// the words are for one of those.
 pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>, re: Option<String>, room: Option<String>, agent: Option<String>) {
     let text = text.trim().to_string();
-    if text.is_empty() {
-        return;
-    }
     let (radio, text, re, scope, others, to) = {
         let mut state = shared.state.lock().unwrap();
-        if state.stations.is_empty() {
+        // nothing typed is still something to send when files are attached: the files themselves
+        if state.stations.is_empty() || (text.is_empty() && state.uploads.is_empty()) {
             return;
         }
         // something new said: whatever was waiting to be placed is let go

@@ -35,10 +35,11 @@ pub(super) enum What {
     Video,
     Other,
 }
+/// What a file is, by what its own first bytes say it is. Its name says nothing.
 fn what(path: &Path) -> What {
-    match path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase().as_str() {
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "heic" => What::Image,
-        "mp4" | "mov" | "m4v" | "webm" => What::Video,
+    match infer::get_from_path(path).ok().flatten().map(|kind| kind.matcher_type()) {
+        Some(infer::MatcherType::Image) => What::Image,
+        Some(infer::MatcherType::Video) => What::Video,
         _ => What::Other,
     }
 }
@@ -205,6 +206,18 @@ mod tests {
         assert_eq!(safe("...."), "file");
         assert_eq!(safe(""), "file");
         assert!(hex("a1b2c3d4e5f6") && !hex("../x") && !hex("abc"));
-        assert_eq!((what(Path::new("a.JPG")), what(Path::new("a.mov")), what(Path::new("a.pdf"))), (What::Image, What::Video, What::Other));
+        // a file is what its bytes say, whatever it is called
+        let dir = std::env::temp_dir().join(format!("airband-what-{}", config::random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = |name: &str, bytes: &[u8]| {
+            let path = dir.join(name);
+            std::fs::write(&path, bytes).unwrap();
+            path
+        };
+        let png = file("a.txt", b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR");
+        let mp4 = file("b.png", b"\0\0\0\x18ftypmp42\0\0\0\0mp42isom");
+        let text = file("c.jpg", b"only words");
+        assert_eq!((what(&png), what(&mp4), what(&text)), (What::Image, What::Video, What::Other));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

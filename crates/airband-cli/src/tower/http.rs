@@ -474,10 +474,9 @@ async fn utterance(State(app): State<Arc<App>>, headers: HeaderMap, Json(u): Jso
     let _ = line.send(Box::pin(async move {
         let app = app_;
         let began = Instant::now();
-        // a file with no words still says something: look at it
+        // files with no words are still something sent
         let text = match (u.text.trim(), u.attachments.is_empty()) {
             ("", true) => None,
-            ("", false) => Some("Look at what I attached."),
             (said, _) => Some(said),
         };
         let reply = match text {
