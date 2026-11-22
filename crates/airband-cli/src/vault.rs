@@ -139,10 +139,11 @@ mod mac {
         if !at_home() {
             return false;
         }
-        let Ok(me) = std::env::current_exe() else { return false };
-        std::process::Command::new("/usr/bin/codesign").args(["-d", "--verbose=2"]).arg(me).output().is_ok_and(|o| {
-            String::from_utf8_lossy(&o.stderr).lines().any(|l| l.strip_prefix("TeamIdentifier=").is_some_and(|team| team != "not set" && !team.is_empty()))
-        })
+        // asked of the system in its own code-requirement language: signed by a certificate Apple issued that
+        // names a team (its subject's organisational unit), which an ad-hoc or unsigned build is not
+        use security_framework::os::macos::code_signing::{Flags, SecCode, SecRequirement};
+        let Ok(team) = "anchor apple generic and certificate leaf[subject.OU] exists".parse::<SecRequirement>() else { return false };
+        SecCode::for_self(Flags::NONE).is_ok_and(|me| me.check_validity(Flags::NONE, &team).is_ok())
     }
 }
 
@@ -175,11 +176,29 @@ mod file {
     fn machine() -> String {
         static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
         ID.get_or_init(|| {
-            let said = |program: &str, args: &[&str]| std::process::Command::new(program).args(args).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
-            if cfg!(target_os = "macos") {
-                said("/usr/sbin/ioreg", &["-rd1", "-c", "IOPlatformExpertDevice"]).lines().find(|l| l.contains("IOPlatformUUID")).and_then(|l| l.split('"').nth(3)).unwrap_or_default().to_string()
-            } else if cfg!(windows) {
-                said("reg", &["query", r"HKLM\SOFTWARE\Microsoft\Cryptography", "/v", "MachineGuid"]).split_whitespace().last().unwrap_or_default().to_string()
+            #[cfg(target_os = "macos")]
+            {
+                // the hardware's own id, from the system call for it (the IOPlatformUUID), as upper-case hex
+                // in the usual 8-4-4-4-12 groups so what was sealed before still opens
+                let mut id = [0u8; 16];
+                let wait = libc::timespec { tv_sec: 5, tv_nsec: 0 };
+                // SAFETY: gethostuuid writes exactly 16 bytes into `id` and reads `wait`; both outlive the call.
+                if unsafe { libc::gethostuuid(id.as_mut_ptr(), &wait) } != 0 {
+                    return String::new();
+                }
+                let hex: String = id.iter().map(|b| format!("{b:02X}")).collect();
+                format!("{}-{}-{}-{}-{}", &hex[0..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..32])
+            }
+            #[cfg(not(target_os = "macos"))]
+            if cfg!(windows) {
+                // the value alone, as PowerShell's Get-ItemPropertyValue gives it, not read out of a table
+                std::process::Command::new("powershell")
+                    .args(["-NoProfile", "-NonInteractive", "-Command", r"Get-ItemPropertyValue -Path 'HKLM:\SOFTWARE\Microsoft\Cryptography' -Name MachineGuid"])
+                    .output()
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_default()
             } else {
                 ["/etc/machine-id", "/var/lib/dbus/machine-id"].iter().find_map(|p| std::fs::read_to_string(p).ok()).unwrap_or_default().trim().to_string()
             }
