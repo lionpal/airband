@@ -218,8 +218,7 @@ struct NewAgentSheet: View {
         model.newTeam(place.make ? name : team, on: computer, folder: place.folder, make: place.make, tool: tool.isEmpty ? nil : tool) { made, problem in
             starting = false
             if let made {
-                model.only = nil
-                model.room = made
+                model.open(made: made)
                 dismiss()
             } else {
                 wrong = problem

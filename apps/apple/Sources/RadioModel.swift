@@ -159,6 +159,13 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         self.room = room
         only = agent
     }
+    /// A team he has just made, waiting for its first agent to show: it is not in the list yet.
+    private var madeRoom: String?
+    /// Open a team he has just made. It is shown, empty, until its first agent comes.
+    func open(made room: String) {
+        madeRoom = room
+        look(room: room)
+    }
 
     /// He tapped a notification: show that agent.
     func show(room: String, agent: String) {
@@ -224,7 +231,9 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
             tray.removeAll { item in gone.contains { $0.id == item.id } }
         }
         // a room that has gone (its last agent left) is not somewhere he can stay
-        if let room, view.online, !view.rooms.contains(where: { $0.id == room }) { self.room = nil }
+        // (one he has just made is there once its first agent is: it stays open until then)
+        if let made = madeRoom, view.rooms.contains(where: { $0.id == made }) { madeRoom = nil }
+        if let room, view.online, room != madeRoom, !view.rooms.contains(where: { $0.id == room }) { self.room = nil }
         if full.count > (showWhole ? 400 : 60) { full.removeAll() } // opened long ago: fetched again if he looks again
         refreshChoices()
         syncBanners()
@@ -257,9 +266,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         guard let found = member(id) else { return }
         let (agent, team) = found
         // look at that agent, so the question is in view and his words go to it
-        replyingTo = nil
-        room = team.id
-        only = id
+        look(room: team.id, agent: id)
         let question = view.feed.last { $0.id == agent.questionId }
         guard !agent.questionId.isEmpty else {
             openMic()

@@ -61,7 +61,7 @@ extension RadioModel {
 
     /// End an agent its computer runs: it finishes and leaves the radio.
     func end(_ agent: DeskMember) {
-        tell("It did not end.", { try self.desk.endAgent(agent: agent.id) }) { if self.only == agent.id { self.only = nil } }
+        tell("It did not end.", { try self.desk.endAgent(agent: agent.id) }) { if self.only == agent.id { self.look(room: self.room) } }
     }
 
     /// Start a new agent in a team. It appears in the list at once, with nothing to do until he speaks to it.
