@@ -71,13 +71,13 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
         }
         None => {
             log(format!("{}: asks permission to {what}", session.callsign.text()));
-            let line = format!("Wants to {what}.{ASKS}");
+            let line = Request { what: Some(what.to_string()), at_keyboard: false }.line().unwrap_or_default();
             let detail = if ask.detail.trim().is_empty() { line.clone() } else { ask.detail.clone() };
             (line, vec![ALLOW.into(), DENY.into()], detail)
         }
     };
     // on a call it is read out like any other question
-    inner.record(Entry { short: Some(line), options, permit: Some(id.clone()), leave: ask.question.is_none(), aloud: Aloud::Waiting, ..Entry::said(entry_id.clone(), &session, Some(Kind::NeedsYou), detail) });
+    inner.record(Entry { short: Some(line), options, permit: Some(id.clone()), leave: ask.question.is_none().then(|| Request { what: Some(what.to_string()), at_keyboard: false }), aloud: Aloud::Waiting, ..Entry::said(entry_id.clone(), &session, Some(Kind::NeedsYou), detail) });
     inner.permits.insert(id.clone(), Permit { agent_id, entry: entry_id.clone(), decided: None, asked: Instant::now(), polled: Instant::now(), question: ask.question.is_some() });
     // he had the chat open a moment ago and may have put the phone down since: it is woken if so
     push::consider(app, &mut inner, &entry_id);
@@ -129,8 +129,24 @@ pub(super) enum Ended {
 /// What the Allow and Deny buttons send: the two answers that need no reading.
 pub(super) use airband_core::radio::{ALLOW, DENY};
 /// How the line of a request for leave ends while it waits, and what takes its place once it is over.
-pub(super) const ASKS: &str = " Allow?";
-pub(super) const MOVED: &str = " It is asking at the keyboard now.";
+const ASKS: &str = " Allow?";
+const MOVED: &str = " It is asking at the keyboard now.";
+
+/// A line that is, or was, a request for leave: what it asked to do, and whether it has gone back to the
+/// keyboard. The line's words are made from this, so its ending is never read back out of its text.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(super) struct Request {
+    /// What it asked leave to do. Nothing for a line kept before this was written down.
+    pub(super) what: Option<String>,
+    /// The request is over and the agent asks at its own keyboard now.
+    pub(super) at_keyboard: bool,
+}
+impl Request {
+    /// The line he sees for it, when what it asked is known.
+    pub(super) fn line(&self) -> Option<String> {
+        self.what.as_ref().map(|what| format!("Wants to {what}.{}", if self.at_keyboard { MOVED } else { ASKS }))
+    }
+}
 
 /// What `re` is, as far as permission goes.
 pub(super) enum Leave {
@@ -150,7 +166,7 @@ pub(super) enum Leave {
 pub(super) fn asked_leave(app: &App, re: Option<&str>) -> Leave {
     let mut inner = app.change();
     let Some(entry) = re else { return Leave::No };
-    if !inner.log.iter().any(|e| e.id == entry && e.leave) {
+    if !inner.log.iter().any(|e| e.id == entry && e.leave.is_some()) {
         return Leave::No;
     }
     match inner.permits.iter().find(|(_, p)| p.entry == entry && p.decided.is_none()).map(|(id, p)| (id.clone(), p.live())) {
@@ -209,7 +225,7 @@ impl Inner {
         match ended {
             // answered: a request for leave offers nothing more
             permit::Ended::Answered(..) => self.end_line(&entry, Dropped::Answered, |e| {
-                if e.leave {
+                if e.leave.is_some() {
                     e.options.clear();
                 }
             }),
@@ -222,7 +238,7 @@ impl Inner {
     /// At start: no harness is waiting on anything asked before the tower stopped, so every request for leave
     /// still offering an answer is over.
     pub(super) fn close_requests_from_before(&mut self) {
-        let open: Vec<String> = self.log.iter().filter(|e| e.leave && !e.options.is_empty()).map(|e| e.id.clone()).collect();
+        let open: Vec<String> = self.log.iter().filter(|e| e.leave.is_some() && !e.options.is_empty()).map(|e| e.id.clone()).collect();
         for id in open {
             self.close_line(&id);
         }
@@ -231,8 +247,11 @@ impl Inner {
     pub(super) fn close_line(&mut self, entry: &str) {
         self.end_line(entry, Dropped::PermissionEnded, |e| {
             e.options.clear();
-            if e.leave {
-                e.short = e.short.as_ref().map(|s| s.strip_suffix(permit::ASKS).map(|line| format!("{line}{}", permit::MOVED)).unwrap_or_else(|| s.clone()));
+            if let Some(request) = e.leave.as_mut() {
+                request.at_keyboard = true;
+                if let Some(line) = request.line() {
+                    e.short = Some(line);
+                }
             }
         });
     }

@@ -79,7 +79,7 @@ pub(super) struct Entry {
     /// This line is, or was, a request for leave to do something on his computer. It stays true after the
     /// request has ended, so a late answer to it is known for what it is and never goes to the agent as words.
     #[serde(default)]
-    pub(super) leave: bool,
+    pub(super) leave: Option<super::permit::Request>,
     /// When this line last changed, as a count that only goes up across the whole log. A radio asks for
     /// everything changed since the count it last saw.
     #[serde(default)]
@@ -239,7 +239,7 @@ impl Inner {
             cancelled: e.cancelled,
             // a question put through the same door is an ordinary question to him: any answer will do
             // only while the harness is still waiting on it
-            permission: e.leave && e.permit.as_ref().is_some_and(|id| self.permits.get(id).is_some_and(|p| p.decided.is_none())),
+            permission: e.leave.is_some() && e.permit.as_ref().is_some_and(|id| self.permits.get(id).is_some_and(|p| p.decided.is_none())),
             pictures: e.pictures.clone(),
             links: if e.his { Vec::new() } else { self.links.links(&airband_core::catalog::current().links, &e.id, &e.full) },
             agent: e.agent.clone(),

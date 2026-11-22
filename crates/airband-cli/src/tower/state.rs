@@ -269,8 +269,9 @@ mod tests {
     fn asks_leave(inner: &mut Inner, agent_id: &str, permit: &str, what: &str) -> String {
         let s = inner.find(agent_id).unwrap().clone();
         let id = format!("m{}", inner.seq + 1);
-        let line = format!("Wants to {what}.{}", permit::ASKS);
-        inner.record(Entry { short: Some(line.clone()), options: vec![permit::ALLOW.into(), permit::DENY.into()], permit: Some(permit.into()), leave: true, ..Entry::said(id.clone(), &s, Some(Kind::NeedsYou), line) });
+        let request = permit::Request { what: Some(what.into()), at_keyboard: false };
+        let line = request.line().unwrap();
+        inner.record(Entry { short: Some(line.clone()), options: vec![permit::ALLOW.into(), permit::DENY.into()], permit: Some(permit.into()), leave: Some(request), ..Entry::said(id.clone(), &s, Some(Kind::NeedsYou), line) });
         inner.permits.insert(permit.into(), Permit { agent_id: agent_id.into(), entry: id.clone(), decided: None, asked: Instant::now(), polled: Instant::now(), question: false });
         id
     }
@@ -289,9 +290,9 @@ mod tests {
         inner.reap();
         let over = card(&inner, &line);
         assert!(!over.permission && over.options.is_empty() && inner.permits.is_empty());
-        assert_eq!(over.text, format!("Wants to run `make`.{}", permit::MOVED));
+        assert_eq!(over.text, permit::Request { what: Some("run `make`".into()), at_keyboard: true }.line().unwrap());
         // it is still known as a request for leave, so a late answer is not taken for words to the agent
-        assert!(inner.log.iter().any(|e| e.id == line && e.leave));
+        assert!(inner.log.iter().any(|e| e.id == line && e.leave.is_some()));
     }
 
     #[test]
@@ -310,12 +311,12 @@ mod tests {
         inner.close_permit("p1", permit::Ended::Answered(true, String::new()));
         assert_eq!(inner.permits["p1"].decided, Some((true, String::new())));
         assert!(card(&inner, &line).options.is_empty() && !card(&inner, &line).permission && inner.unheard().next().is_none() && !waits(&mut inner));
-        assert_eq!(card(&inner, &line).text, format!("Wants to run `make`.{}", permit::ASKS));
+        assert_eq!(card(&inner, &line).text, permit::Request { what: Some("run `make`".into()), at_keyboard: false }.line().unwrap());
         // the harness gave up waiting and asks at its keyboard: the line says so, and the agent still waits
         let line = open(&mut inner, "p2");
         inner.close_permit("p2", permit::Ended::AtKeyboard);
         assert!(card(&inner, &line).options.is_empty() && !inner.permits.contains_key("p2") && inner.unheard().next().is_none() && waits(&mut inner));
-        assert_eq!(card(&inner, &line).text, format!("Wants to run `make`.{}", permit::MOVED));
+        assert_eq!(card(&inner, &line).text, permit::Request { what: Some("run `make`".into()), at_keyboard: true }.line().unwrap());
         // it asked something newer: the older line is closed
         let line = open(&mut inner, "p3");
         inner.close_permit("p3", permit::Ended::Replaced);
@@ -340,7 +341,7 @@ mod tests {
         inner.close_requests_from_before();
         let c = card(&inner, &line);
         assert!(!c.permission && c.options.is_empty(), "{c:?}");
-        assert!(inner.log.iter().any(|e| e.id == line && e.leave));
+        assert!(inner.log.iter().any(|e| e.id == line && e.leave.is_some()));
     }
 
     #[test]
