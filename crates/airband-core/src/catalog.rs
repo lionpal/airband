@@ -12,7 +12,7 @@
 //! (`expires`), and when it stays inside what a later copy may do ([`allowed`], [`check`]).
 //!
 //! What a row cannot do is add a way of calling a service. Those are code, in a table for each job where the
-//! job is done, and a row names one ([`By`]). Every row that reads is kept here; the program that lists or
+//! job is done, and a row names one ([`crate::providers::By`]). Every row that reads is kept here; the program that lists or
 //! calls leaves out a row naming an interface it has no code for, so an old build reads a new catalogue and
 //! shows what it can use.
 use crate::providers::{Job, Offer, Provider};

@@ -72,8 +72,8 @@ pub(crate) fn start(app: Arc<App>, router: Router, handle: Handle) {
                 }
                 if !keep {
                     stop.store(true, Ordering::SeqCst);
-                    if let Ok(keys) = Keys::derive(&key.1.secret) {
-                        app.served.0.lock().unwrap().remove(&keys.channel);
+                    if let Some(channel) = super::push::channel_of(&key.1) {
+                        app.served.0.lock().unwrap().remove(&channel);
                     }
                     log(format!("\"{}\" is no longer served", key.1.name));
                 }
@@ -119,7 +119,7 @@ struct Serve {
 impl Serve {
     /// Whether the settings now still hold this pairing, read again from the file when it has changed.
     fn still_paired(&self) -> bool {
-        self.app.cfg().pairings.iter().any(|p| Keys::derive(&p.secret).is_ok_and(|k| k.channel == self.keys.channel))
+        self.app.cfg().pairings.iter().any(|p| super::push::channel_of(p).as_ref() == Some(&self.keys.channel))
     }
 
     fn run(self) {

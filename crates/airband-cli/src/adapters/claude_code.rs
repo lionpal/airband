@@ -122,8 +122,6 @@ pub(crate) fn events(hook: &Value) -> Vec<AgentEvent> {
     super::hooks::from_agent(agent_of(hook), made.into_iter().chain(events).collect())
 }
 
-// ---- setting Claude Code up to report: its hooks, in its own settings file ----
-
 /// The page the Artifact tool just published, from the tool's own answer. The tool says which of its actions
 /// it was asked for (publishing is the one it does when none is named); reading a page, listing them or
 /// adding a file to one publishes nothing.
@@ -138,7 +136,6 @@ fn made_artifact(hook: &Value) -> Option<Event> {
     Some(Event::Made { address: address.to_string(), title, kind: Some(super::row_says(HARNESS, "artifact_link")) })
 }
 
-/// Where Claude Code keeps its settings and sessions, as its row has it.
 /// Is this a script calling `claude -p`? Those have nobody waiting on them, unless he asked to hear them or the
 /// tower runs it.
 fn headless() -> bool {
@@ -150,7 +147,9 @@ fn file_safe(session: &str) -> bool {
     !session.is_empty() && session.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
-/// Where Claude Code keeps its settings, sessions and transcripts.
+// ---- setting Claude Code up to report: its hooks, in its own settings file ----
+
+/// Where Claude Code keeps its settings, sessions and transcripts, as its row has it.
 fn claude_home() -> std::path::PathBuf {
     super::tool_home(HARNESS)
 }

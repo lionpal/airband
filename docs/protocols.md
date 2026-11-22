@@ -56,8 +56,6 @@ pairing link carries, opens `/v1/radio/` only.
 | `harness` | Through the agent's own tool, by `name`, into its `session`: whatever way that tool takes a turn of his into a session already open (Codex's queue, OpenCode's server). The tower's adapter for the tool knows how. |
 | none | The agent can be heard but not answered. |
 
-`DELETE /v1/agent/held/<id>` ends an agent the tower runs.
-
 ### Asking permission
 
 A harness that stops to ask before its agent does something (run a command, write outside the project) can put
@@ -81,9 +79,8 @@ the question to him on the radio.
 
 The rules are the tower's and hold for every harness. Only he can turn `pending` into `allow`, and waiting
 never becomes a yes. Only an utterance whose `re` is the request answers it; a "yes" said to anyone else
-answers nothing. The Allow and Deny buttons send the texts `Allow` and `Deny`
-(`airband_core::radio::ALLOW`, `DENY`), which the tower takes without reading. Any other words are read by a
-model: a plain yes to exactly what was asked allows it; a no, a condition or another instruction refuses it and
+answers nothing. The Allow and Deny buttons send `Act::Verdict` (see "What he says"), which the tower takes
+without reading. Words of his own are read by a model: a plain yes to exactly what was asked allows it; a no, a condition or another instruction refuses it and
 goes back as `message`; words that settle nothing, or no answer from the model, leave it `pending` and he is
 told it needs a yes or a no. The message for a request carries `permission: true`, and a client offers its two
 answers only.
@@ -136,15 +133,17 @@ One transmission is out at a time; questions go before reports; each agent has a
 
 An `Utterance` is `{ text, id, re, scope, label, attachments, others }`. `id` is random and the same on every
 retry: the tower takes each id once. `re` is the message he is answering, when he picked one. `scope` is the
-room he was in (the team's name). `label` is the button's words when it is a quick message. `attachments` are
+room he was in (the team's id). `label` is the button's words when it is a quick message. `attachments` are
 ids of files sent with `POST attachment`. `others` are the agents on his screen that another of his computers
-has, each `{ callsign, group, said, ago }`.
+has, each `{ id, callsign, group, team, badge, said, ago }`. `to` is the agents he picked on his screen, by id;
+`act` is what a button did (see "What he says"); `answers` is the id of the `question` it answers.
 
-A `Reply` is `{ say, done, listen, ask, elsewhere }`. `done` says that what he asked was done whole and
+A `Reply` is `{ say, done, listen, ask, elsewhere, question }`. `done` says that what he asked was done whole and
 `say` only confirms it: a radio with a screen already shows his words in the chat, so it shows `say` only when
 `done` is not set. `say` is spoken back and `listen` asks for the
-microphone again. `ask` lists the agents his words could be for, likeliest first, when the tower could not
-tell. `elsewhere` is the callsign of one of `others`: the radio sends his words to that computer.
+microphone again. `ask` lists the agents his words could be for when the tower could not tell. `elsewhere` is the id of one
+of `others`: the radio sends his words to that computer. `question` is the id of something the tower asked
+him back ("Which project is that for?"); what he says next carries it as `answers`.
 
 Chat mode and the rest:
 
@@ -157,11 +156,11 @@ Chat mode and the rest:
 | `POST /v1/radio/dismiss` | `{ message }` → `Done`, or a refusal | He does not mean to answer this question. It stops being open. The agent is told nothing. |
 | `POST /v1/radio/unsend` | `{ message }` → `Done`, or a refusal | Take back something he said that is still `queued`. |
 | `POST /v1/radio/taken` | `{ callsigns }` → `Done` | The names agents go by on his other computers, as his radio shows them ("shop 1"). The tower moves any of its own agents with one of those numbered names to the next free number. A radio tells only the later of two computers. |
-| `POST /v1/radio/team` | `{ agent, team }` → `{ callsign, team }`, or a refusal | Put an agent in another team, one that exists or a new one. A name he gave the agent goes with it; a number is replaced by the next free one there. |
+| `POST /v1/radio/team` | `{ agent, to }` → `{ callsign, team }`, or a refusal (`to` is `{ team: { id } }` or `{ new: { name } }`) | Put an agent in another team, one that exists or a new one. A name he gave the agent goes with it; a number is replaced by the next free one there. |
 | `POST /v1/radio/team/rename` | `{ team, to }` → `{ team }`, or a refusal | Rename one of his teams, by its id. `team` is the name as the tower writes it. |
 | `POST /v1/radio/folders` | `{ under }` → `{ path, shown, up, folders }`, or a refusal | The folders inside one on this computer, by name and without the hidden ones, for choosing where a new agent works. `under` empty is his home folder, where the walk starts; `up` is the folder above, and is left out at the top of the disk. Any folder can be walked to, on any disk. |
-| `GET /v1/radio/recent` | → `{ folders: [{ folder, shown, name, team, tools, at }] }` | The folders the coding tools on this computer have had sessions in, newest first, read from each tool's own records, then his teams no tool has a record of. `name` is the team an agent started there is in, `team` whether one works there already, `tools` the tools by id, `at` when the last session was. Folders that are gone, and ones in the temporary folders, are left out. |
-| `POST /v1/radio/project` | `{ name, folder, make, tool }` → `{ say, team }`, or a refusal | Start an agent in a folder: in a new team of this name, or as another agent of the team that already works there. The name is written as a callsign is (letters and numbers, 24 at most); `make` makes the folder first; `team` is the name as the tower writes it. |
+| `GET /v1/radio/recent` | → `{ folders: [{ folder, shown, name, team, tools, at }] }` | The folders the coding tools on this computer have had sessions in, newest first, read from each tool's own records, then his teams no tool has a record of. `name` is the team an agent started there is in, `team` the id of the team that works there, if one does, `tools` the tools by id, `at` when the last session was. Folders that are gone, and ones in the temporary folders, are left out. |
+| `POST /v1/radio/project` | `{ name, folder, make, tool }` → `{ say, team, id }`, or a refusal | Start an agent in a folder: in a new team of this name, or as another agent of the team that already works there. The name is written as a callsign is (letters and numbers, 24 at most); `make` makes the folder first; `team` is the name as the tower writes it, `id` the team's id. |
 | `POST /v1/radio/takeover` | `{ agent }` → `Done`, or a refusal | Have the tower take over an agent he started in a terminal: that session ends there and carries on under a held launcher of the agent's own harness. Refused while it is in the middle of something. |
 | `GET /v1/radio/reads` | `{ now: { provider, offer }, offers: [{ provider, offer, label, about, price, preferred, free, login, key, has_key, key_name, keys_at, asks }] }` | What can read the agents' messages on this tower, from the tower's own catalogue and in the order to show it, and which one reads now (`now` is absent when none does). `has_key` says only that the tower keeps a key for that provider; one key serves all a provider's offers. |
 | `POST /v1/radio/reads` | `{ kind, offer, key, set }` → `{ reads }`, or a refusal | Choose what reads, by a `provider` (as `kind`) and `offer` from `GET reads`. `key` empty uses one the tower keeps. The tower tries it with a real call before keeping it. A radio cannot name a command to run. |
@@ -174,22 +173,23 @@ Chat mode and the rest:
 
 ### The feed
 
-A `Feed` is `{ schema, rev, messages, roster, roster_rev, seq, open, projects, quick, colours, station, direct }`.
+A `Feed` is `{ schema, rev, messages, roster, roster_rev, seq, open, quick, station, direct, reads, reads_failed, answers }`.
 
 - `open`: the id of every message that needs him and is unanswered, whether or not it is in `messages`.
-- `projects`: the names a new agent can be launched in.
 - `quick`: the quick messages to offer, each `{ label, text }`: six standard ones, then his own
   (`airband quick add`). Sending one is an utterance with that `text` and `label`; the chat shows the label.
-- `colours`: for each team, its place in the client's own list of team colours. Given once and kept.
 - `station`: what this computer is called.
 - `direct`: addresses where a paired radio may reach this tower without the relay, `http://<address>:<port>`:
   its local network addresses when `airband lan` is on, and its Tailscale addresses (see The sealed route).
+- `reads`: what reads the agents' messages on this tower, in words; `reads_failed`: why the last reading did
+  not work, when it did not.
+- `answers`: what came of things this radio said (see "What he says").
 
-A message is `{ seq, id, at, from, group, to, kind, text, long, options, recommended, read, own_session, queued,
-seen, cancelled, permission, pictures, links, agent, rev, open }`.
+A message is `{ seq, id, at, from, badge, his, group, team, to, to_agents, kind, text, long, options, recommended,
+read, own_session, queued, seen, cancelled, permission, pictures, agent, rev, links, open, not_read, note }`.
 
 - `agent` is the id of the agent that said it, the same as `id` in the roster; `from` is only what it is called
-  now. A message from `you` is something he said: through a radio, or typed to an agent at its own keyboard
+  now. A message with `his` set is something he said: through a radio, or typed to an agent at its own keyboard
   (with any pictures he pasted), which the tower adds with the time he typed it. So a radio orders messages by
   `at`.
 - `kind` is `needs-you`, `report`, `fyi` or `stalled`; a client shows a kind it does not know as a report.
@@ -208,7 +208,6 @@ seen, cancelled, permission, pictures, links, agent, rev, open }`.
   reach it as his own. No `options` come with it.
 - `queued`: he said it to an agent the tower runs, which is busy; it waits until the agent stops. `seen` is
   when the agent took it in. `cancelled`: he took it back.
-- `links`: up to four web links the agent wrote, which the short text leaves out.
 - `links`: the web addresses that go with the message, each `{ address, host, kind, name, symbol, title }`: the
   ones in the agent's words, and what its tool said it made. `kind`, `name` ("Pull request") and `title` are
   there only when the tool that made the thing said so in its own records (a `made` event); what each kind is
@@ -220,10 +219,10 @@ seen, cancelled, permission, pictures, links, agent, rev, open }`.
   that asked, he dismisses it, the agent asks a newer one or speaks past it three times, or six hours pass. A
   permission request is open while its harness waits.
 
-A roster entry is `{ id, callsign, group, harness, waiting, state, subagents, reachable, doing, held, model,
+A roster entry is `{ id, callsign, team, harness, waiting, state, subagents, doing, held, terminal, ends, model,
 effort }`. `state` is `working`, `asking`, `stalled` or `idle`. `doing` is what a working agent is doing right
 now, asked of its adapter every two seconds while a radio is reading the feed. `held` marks an agent the tower
-runs.
+runs; `terminal` one he started in a terminal; `ends` one the tower can end.
 
 ### The reading queue
 
@@ -232,7 +231,7 @@ out (`aloud` in the `messages` table): `waiting`, `handed` to a radio, `heard` o
 reason: `routine` (the judge found nothing for his ears), `superseded` (its agent said something newer),
 `answered` (it was waiting on him and he spoke to the agent, or it went back to work), `dismissed`,
 `agent_gone`, `stale` (said long before he turned reading aloud on), `permission_ended`. One function changes
-it (`Inner::set_aloud`, `tower/state.rs`), and every change is a line in the tower's log:
+it (`Inner::set_aloud`, `tower/aloud.rs`), and every change is a line in the tower's log:
 `aloud: shop two (9a41…) waiting → dropped (superseded)`. `airband status` and `GET /v1/status` list what is
 unheard and the last twenty changes. A report whose agent has gone is still read out; a question it was
 waiting on is not.
@@ -261,8 +260,8 @@ and shows the reason when he asks.
 
 Nothing is decided by matching his words.
 
-- A leading tag or callsign names who it is for: typed tags (`@shop2`, `@shop` for the group, `@all`), or a
-  spoken callsign ("shop two, …", "all shop, …", "everyone, …").
+- A leading tag names who it is for: `@shop2`, `@shop` for the group, `@all`. Spoken names are not read by
+  rule; the model reads them.
 - With `re`, it goes to the agent that said that message.
 - Otherwise a model reads his words against the last thing each agent said, among the agents in `scope` or all
   of them, and against the projects, tools, models and efforts a new agent could be started with. It picks an
@@ -278,7 +277,7 @@ What a button does is never sent as words. An utterance carries it in `act`, as 
   or refuses outright; words of his own in reply to a request are read by a model, and only a plain yes allows.
 - `{"kind":"control","control":"poke"|"more"|"repeat"|"status"|"skip"|"hold"|"resume"}`: a control the tower
   answers itself. A poke sends "Keep going." to every stalled agent, within `scope` if one is given.
-- `{"kind":"launch","project":…,"tool":…,"model":…,"effort":…,"task":…}`: start a new agent. Each is an id from
+- `{"kind":"launch","team":…,"tool":…,"model":…,"effort":…,"task":…}`: start a new agent. Each is an id from
   a list the tower gave.
 - `{"kind":"option","index":n}`: he tapped the nth answer the message `re` offered; `text` is its words.
 
@@ -358,7 +357,7 @@ A radio that has given the tower an address (`POST push`) is woken for a message
 on a call or showing the chat: such a radio asks for what follows a message within a moment of getting it, and
 one that follows without showing it says so (`showing_chat: false` in its `Presence`).
 
-The notification is `{ id, from, group, colour, station, text, kind, options, permission }` (`Notice` in
+The notification is `{ id, from, agent, badge, group, team, station, text, kind, options, permission }` (`Notice` in
 `radio.rs`). The tower seals it with a third key from the pairing secret (direction `push`) and asks the relay
 to pass it on:
 
@@ -415,8 +414,9 @@ Nothing is uploaded: no log, no trail and no diagnostic leaves the device it was
 Forward secrecy. Recorded traffic plus a later-stolen pairing secret can be read; `airband unpair` and pairing
 again makes a new secret. Details and tests: `crates/airband-core/src/relay.rs`.
 
-The pairing link (`crates/airband-core/src/pairing.rs`) is `airband://pair?relay=…&secret=…` or, with no
-relay, `airband://pair?url=…&token=…`.
+The pairing link (`crates/airband-core/src/pairing.rs`) is `airband://pair?relay=…&secret=…`; with no relay,
+`airband://pair?secret=…&at=…` (sealed the same way, straight to the tower at the addresses given); and for a
+tower on the same machine, `airband://pair?url=…&token=…` (not sealed).
 
 ## The model that reads everything
 

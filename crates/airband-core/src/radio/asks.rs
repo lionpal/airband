@@ -79,7 +79,7 @@ pub struct UseAccount {
 
 /// `POST team`: put an agent in another team, one that exists or a new one. The agent keeps a name he gave it
 /// and takes the next free number otherwise; the answer is [`Moved`] (what it is called now, and the id of the team
-/// it is in), or `{error}`.
+/// it is in), or a [`wire::Refusal`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MoveAgent {
     /// The agent's id, as the roster gives it.
@@ -164,7 +164,7 @@ pub struct RecentFolder {
 
 /// `POST project`: make a new team, or start another agent in one that is there. Agents started in it work
 /// in `folder` (a whole path, anywhere on the computer), which is made first when `make` is set. The tower then starts an agent there with
-/// nothing to do yet, if it runs agents itself. The answer is a [`ProjectMade`], or `{error}`.
+/// nothing to do yet, if it runs agents itself. The answer is a [`ProjectMade`], or a [`wire::Refusal`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewProject {
     /// The team's name as he wrote it; the tower makes it a team's name. With `make`, the new folder is
@@ -197,21 +197,21 @@ pub struct ProjectMade {
 
 /// `POST takeover`: have the tower take over an agent he started in a terminal of his own. That terminal's
 /// session is ended and the same conversation carried on in a process the tower holds, so his words reach it
-/// as his own. The answer is `{}` or `{error}`.
+/// as his own. The answer is `Done`, or a [`wire::Refusal`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TakeOver {
     pub agent: String,
 }
 
 /// `POST stop`: stop what an agent is doing, now. Only for one the tower runs itself (`held`). Whatever he said
-/// to it meanwhile, and has not taken back, it then reads together as its next turn. `{}` or `{error}`.
+/// to it meanwhile, and has not taken back, it then reads together as its next turn. `Done`, or a [`wire::Refusal`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StopAgent {
     pub agent: String,
 }
 
 /// `POST end`: end an agent the tower runs itself. Its input is closed and it finishes and signs off; what it
-/// has done stays done. `{}` or `{error}`.
+/// has done stays done. `Done`, or a [`wire::Refusal`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EndAgent {
     pub agent: String,
@@ -224,7 +224,7 @@ pub const ALLOW: &str = "Allow";
 pub const DENY: &str = "Deny";
 
 /// `POST team/rename`: he renamed one of his teams on this computer. Only what it is called changes: its agents,
-/// folder and colour stay with it. `{team}` (the name it now has) or `{error}`.
+/// folder and colour stay with it. [`TeamRenamed`] (the name it now has), or a [`wire::Refusal`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RenameTeam {
     /// The team's id on that computer.
@@ -242,13 +242,13 @@ pub struct Taken {
 }
 
 /// `POST dismiss`: he does not mean to answer this question. It stops being open: it no longer waits on him
-/// in the chat, on its team or aloud. The agent is told nothing. `{}` or `{error}`.
+/// in the chat, on its team or aloud. The agent is told nothing. `Done`, or a [`wire::Refusal`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Dismiss {
     pub message: String,
 }
 
-/// `POST unsend`: take back something he said that is still `queued`. `{}`, or `{error}` when it has gone.
+/// `POST unsend`: take back something he said that is still `queued`. `Done`, or a [`wire::Refusal`] when it has gone.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Unsend {
     pub message: String,

@@ -7,7 +7,9 @@
 //! to whoever spoke last. The tower delivers it the way that agent said it can be reached.
 //!
 //! Radios reach it through a relay (relay_link.rs), sealed end to end, or directly: it listens on 127.0.0.1
-//! and this machine's address on a private network laid over the internet, if it has one (`config::overlay_addrs`), and every direct request needs the token.
+//! and this machine's address on a private network laid over the internet, if it has one
+//! (`config::overlay_addrs`), where every request needs the token; and with `airband lan` on its local network
+//! addresses, which take only sealed requests (`relay_link::sealed_router`), so the pairing key is what opens them.
 //!
 //! Where things are:
 //! - this file: the pieces every module shares; `serve` starts the tower up and runs its background loops
