@@ -155,4 +155,12 @@ pub(super) mod tests {
         assert_eq!(res.status(), StatusCode::BAD_REQUEST);
         assert!(!app.read().calls.contains_key("radio"));
     }
+
+    #[tokio::test]
+    async fn a_feed_asked_with_a_number_that_is_not_one_is_refused_and_not_read_as_none() {
+        let app = app("feed-query");
+        let ask = |query: &str| Request::builder().method("GET").uri(format!("/v1/radio/feed?{query}")).header("authorization", "Bearer radio").extension(RadioId("phone".into())).body(axum::body::Body::empty()).unwrap();
+        assert_eq!(router(app.clone()).oneshot(ask("after=0&wait=0")).await.unwrap().status(), 200);
+        assert_eq!(router(app.clone()).oneshot(ask("after=seven&wait=0")).await.unwrap().status(), 400);
+    }
 }

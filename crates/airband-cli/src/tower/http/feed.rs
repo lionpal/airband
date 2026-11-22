@@ -12,6 +12,23 @@ impl Drop for Reading {
     }
 }
 
+/// What a radio asks of the feed.
+#[derive(Deserialize)]
+pub(super) struct FeedQuery {
+    team: Option<String>,
+    agent: Option<String>,
+    since: Option<u64>,
+    /// The position after which lines are wanted; from the start when it is not given.
+    #[serde(default)]
+    after: u64,
+    limit: Option<usize>,
+    /// How many seconds to wait for something new, at most 25; none when it is not given.
+    #[serde(default)]
+    wait: u64,
+    /// The roster this radio last saw, if it says: then a change to the roster alone also ends the wait.
+    roster: Option<u64>,
+}
+
 /// Chat mode: the log, each message cut to a line or two.
 ///
 /// `since=<rev>` is how a radio follows it: everything new or changed after that change count, oldest change
@@ -19,10 +36,10 @@ impl Drop for Reading {
 /// renamed, so a radio always ends up with the current form of every line. `since=0` is a radio starting from
 /// nothing: it gets the newest lines.
 /// With no `since`, `after=<seq>` gives the lines added after that position, and never a change to an earlier one.
-pub(super) async fn feed(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Query(q): Query<HashMap<String, String>>) -> Json<Feed> {
-    // all of it, or one team's (`team`), or one agent's (`agent`, its id)
-    let (team, agent) = (q.get("team").cloned(), q.get("agent").cloned());
-    let since: Option<u64> = q.get("since").and_then(|v| v.parse().ok());
+/// A query with a number that is not one is refused, never read as none.
+pub(super) async fn feed(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Query(q): Query<FeedQuery>) -> Json<Feed> {
+    // all of it, or one team's (`team`, its id), or one agent's (`agent`, its id)
+    let FeedQuery { team, agent, since, after, limit, wait, roster: roster_seen } = q;
     // A radio that is showing the chat has everything up to the change count it asks from: nothing up to there
     // needs a notification on that radio. One that says the chat is not in front of him is following it
     // without showing it, and is told nothing by that.
@@ -40,11 +57,8 @@ pub(super) async fn feed(State(app): State<Arc<App>>, Extension(RadioId(radio)):
         app.passing().readers += 1;
         Reading(app.clone())
     });
-    let after: u64 = q.get("after").and_then(|v| v.parse().ok()).unwrap_or(0);
-    let limit: usize = q.get("limit").and_then(|v| v.parse().ok()).unwrap_or(if since.is_some() { 200 } else { 50 }).clamp(1, 200);
-    let until = Instant::now() + Duration::from_secs(q.get("wait").and_then(|v| v.parse().ok()).unwrap_or(0).min(25));
-    // the roster this radio last saw, if it says: then a change to the roster alone also ends the wait
-    let roster_seen: Option<u64> = q.get("roster").and_then(|v| v.parse().ok());
+    let limit = limit.unwrap_or(if since.is_some() { 200 } else { 50 }).clamp(1, 200);
+    let until = Instant::now() + Duration::from_secs(wait.min(25));
     loop {
         // the lines to send, and the change count this answer is good up to
         let (hits, upto, roster_same, settled): (Vec<Entry>, u64, bool, bool) = {

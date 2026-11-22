@@ -21,7 +21,10 @@ use airband_core::relay::{Answer, Call, FRESH_MS, Keys, fresh};
 
 
 /// What a radio whose clock is wrong is told.
-const WRONG_CLOCK: &str = "the clocks of your phone and your computer are more than two minutes apart";
+/// Why a request too far from this computer's clock is refused, said from the limit itself.
+fn wrong_clock() -> String {
+    format!("the clocks of your phone and your computer are more than {} minutes apart", FRESH_MS / 60_000)
+}
 
 /// Every pairing being served, by its channel: a request that comes straight to the tower is answered by the
 /// same code, with the same key, as one pulled from the relay.
@@ -210,7 +213,7 @@ impl Serve {
         let call = self.keys.open_call(sealed)?;
         let now = now_ms();
         let (status, body) = if !fresh(call.t, now) {
-            self.refused(&call, "his own network", 408, WRONG_CLOCK)
+            self.refused(&call, "his own network", 408, &wrong_clock())
         } else {
             if !self.first_time(&call.id, now) {
                 return None;
@@ -250,7 +253,7 @@ impl Serve {
             }
         } else if !fresh(call.t, now) {
             // answered, not dropped, so a phone with a wrong clock is told why nothing works
-            self.refused(&call, "the relay", 408, WRONG_CLOCK)
+            self.refused(&call, "the relay", 408, &wrong_clock())
         } else {
             if !self.first_time(&call.id, now) {
                 return log(format!("dropped a replayed request on \"{}\"'s channel", self.name));

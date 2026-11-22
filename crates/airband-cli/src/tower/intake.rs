@@ -168,7 +168,7 @@ fn typed_at_keyboard(app: &App, ev: &AgentEvent) -> Option<(Vec<crate::adapters:
     let known = app.read().find(&ev.agent.id).map(|s| (s.agent.clone(), s.told_upto));
     known.filter(|_| matches!(ev.event, Event::Working | Event::Said { .. })).map(|(agent, upto)| crate::adapters::told(&agent, upto)).map(|(told, upto)| {
         // pictures he pasted in with them, kept before anything is locked
-        let with: Vec<Vec<airband_core::radio::Picture>> = told.iter().map(|t| if t.his { t.images.iter().filter_map(|bytes| pictures::keep_bytes(bytes)).collect() } else { Vec::new() }).collect();
+        let with = pictures::pasted(&told);
         (told, with, upto)
     })
 }

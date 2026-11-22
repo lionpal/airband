@@ -251,7 +251,7 @@ pub(super) async fn tell(app: &Arc<App>, id: &str, text: &str, lines: &[String])
     Ok(())
 }
 async fn told_under(app: &Arc<App>, id: &str, text: &str, receipt: &str) -> Result<(), String> {
-    let kept = app.read().held.iter().find(|k| k.id == id).cloned().ok_or("airband is no longer running this agent")?;
+    let kept = app.read().kept_held(id).ok_or("airband is no longer running this agent")?;
     #[cfg(unix)]
     {
         let words = || crate::hold::Tell::Say(text.to_string(), receipt.to_string());
@@ -312,7 +312,7 @@ pub(super) async fn stop(app: &Arc<App>, id: &str) -> Result<(), String> {
         if s.agent.deliver != Some(Deliver::Held) {
             return Err("Only an agent airband runs can be stopped from here. Take it over first.".into());
         }
-        let kept = inner.held.iter().find(|k| k.id == id).cloned().ok_or("airband is no longer running this agent.")?;
+        let kept = inner.kept_held(id).ok_or("airband is no longer running this agent.")?;
         // a program that reads lines can be stopped only if its launcher says what line stops it
         if matches!(app.cfg.launchers.get(&kept.launcher).and_then(|l| l.held.as_ref()), None | Some(config::Held::Lines { stop: None, .. })) {
             return Err("Its launcher has no way to stop it.".into());
@@ -361,6 +361,13 @@ pub(super) fn unsend(app: &App, line: &str) -> Result<(), String> {
     inner.touch(line);
     inner.tell();
     Ok(())
+}
+
+impl Inner {
+    /// What is kept about an agent the tower runs, by its id.
+    pub(super) fn kept_held(&self, id: &str) -> Option<Kept> {
+        self.held.iter().find(|k| k.id == id).cloned()
+    }
 }
 
 /// Start a new held agent in `cwd` and give it its task. It returns once the agent is there, and not before:
@@ -413,7 +420,7 @@ pub(super) async fn carry_on(app: &Arc<App>) {
 
 /// Let a held agent go: its input is closed, and it ends by itself and signs off.
 pub(super) async fn end(app: &Arc<App>, id: &str) -> bool {
-    let kept = app.read().held.iter().find(|k| k.id == id).cloned();
+    let kept = app.read().kept_held(id);
     #[cfg(unix)]
     let was = match &kept {
         Some(kept) => tell_holder(kept, crate::hold::Tell::End).await.is_ok(),
