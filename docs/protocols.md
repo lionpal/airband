@@ -40,7 +40,7 @@ pairing link carries, opens `/v1/radio/` only.
 | `said` | It finished a turn; `text` is what it wrote. Optional `kind`: `question` (blocked until answered) or `report`; left out, the tower works it out. |
 | `notice` | It needs him at the keyboard (a login, a prompt the radio cannot answer). |
 | `picture` | A picture file on the tower's machine (`path`: PNG, JPEG, GIF or WebP). The tower copies it only with `shown: true`, which means the agent sent it to him, and attaches the copy to the next `said`. A picture file named in the text of a `said` is attached too, when it is in the agent's `cwd` or a temporary folder. |
-| `made` | Its tool made something that lives at a web address (`address`, and optionally `title` and `kind`, the id of a row in `catalog/links/`): a published page, a preview. Shown as a card with the next thing the agent says. |
+| `made` | Its tool made something that lives at a web address (`address`, and optionally `title` and `kind`, the id of a row in `catalog/links/`): a pull request, a published page. Shown as a card with the next thing the agent says. |
 | `subagent` | It started a subagent (`done: false`) or one finished (`done: true`); `what` says what it is for. Only counted. |
 | `activity` | What it is doing right now, in a few words (`text`). Shown small while it works, never kept, never read aloud. |
 | `model` | The model it runs on and how hard it is set to think (`name`, `effort`), as a person would say them: "Opus 4.7", "high". |
@@ -196,12 +196,11 @@ seen, cancelled, permission, pictures, links, agent, rev, open }`.
 - `queued`: he said it to an agent the tower runs, which is busy; it waits until the agent stops. `seen` is
   when the agent took it in. `cancelled`: he took it back.
 - `links`: up to four web links the agent wrote, which the short text leaves out.
-- `links`: the things at web addresses that go with the message, each `{ address, kind, name, symbol, label, title, state }`.
-  They are the addresses in the agent's words and what its tool said it made. `kind` and `name` ("Pull request")
-  come from the tool itself or from the shape of the address (`catalog/links/`, one file per kind), never from
-  the words around it; an address no row fits has neither. `title` and `state` (`{ name, tone }`) are there once
-  known: the tool said, or the tower asked the program the row names (`gh`, signed in as him) while the message
-  is recent. `label` is a few words from the address to show until then.
+- `links`: the web addresses that go with the message, each `{ address, host, kind, name, symbol, title }`: the
+  ones in the agent's words, and what its tool said it made. `kind`, `name` ("Pull request") and `title` are
+  there only when the tool that made the thing said so in its own records (a `made` event); what each kind is
+  called is one file in `catalog/links/`. Nothing is read from how an address is spelled, so an address no tool
+  said anything about has only its `host`, and a client shows it as a plain link.
 - `pictures`: up to four of `{ id, width, height, bytes }`. A copy is a JPEG, 1600 pixels at most on its long
   side. Nothing is sent until a client asks for it.
 - `open`: it needs him and nothing has answered it. A question stays open until he says something to the agent

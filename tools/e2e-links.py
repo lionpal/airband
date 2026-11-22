@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
-"""End to end, for the things an agent makes that live at a web address (a pull request, an issue, an artifact).
+"""End to end, for the things an agent makes that live at a web address (a pull request, a published page).
 
-    cargo build --release -p airband-cli && tools/e2e-links.py          about two minutes, no model, no network
-    tools/e2e-links.py --real <owner>/<repo>                             the same against GitHub, signed in as you
+    cargo build --release -p airband-cli && tools/e2e-links.py          a few seconds, no model, no network
 
-A real tower in a throwaway home. By default `gh` is a stand-in on the tower's path that answers from a file,
-so what the tower asks, and that a card follows the thing as it changes, are checked with nothing outside this
-computer. With --real the tower asks the real `gh` about a pull request and an issue this script opens in the
-repository named (one you can write to; use a private throwaway), then merges and closes them and watches the
-cards follow. A published page is reported the way Claude Code's own hook reports one.
+A real tower in a throwaway home. A Claude Code session is played to it through `airband hook claude-code`,
+with hook payloads and transcript lines in the shapes Claude Code really writes (taken from real sessions; see
+the adapter's tests for the captured ones). Checked: a pull request the session opened and a page it published
+are cards, from Claude Code's own records and nothing else; an address no tool said anything about is a plain
+link by its site, however it reads; each is reported once; and it is all kept when the tower starts again.
 """
 import json, os, shutil, subprocess, sys, tempfile, time, urllib.request, urllib.error
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target")), "release", "airband")
 PORT = 7396
-REAL = sys.argv[sys.argv.index("--real") + 1] if "--real" in sys.argv else None
 work = tempfile.mkdtemp(prefix="airband-links-")
 home, shop, tools = os.path.join(work, "home"), os.path.join(work, "code", "shop"), os.path.join(work, "bin")
 for d in (os.path.join(home, ".airband"), shop, tools):
@@ -24,21 +22,6 @@ OWN, RADIO = "links-own-token", "links-radio-token"
 json.dump({"port": PORT, "token": OWN, "radio_token": RADIO, "relay": None, "name": "Charles", "station": "links"}, open(os.path.join(home, ".airband", "config.json"), "w"))
 env = dict(os.environ, HOME=home)
 env.pop("AIRBAND_INTERNAL", None)
-ANSWERS, ASKED = os.path.join(work, "answers.json"), os.path.join(work, "asked.log")
-if not REAL:
-    # a stand-in for `gh`: it writes down what it was asked and answers from a file this script changes
-    open(os.path.join(tools, "gh"), "w").write(f"""#!/usr/bin/env python3
-import json, sys
-open({ASKED!r}, "a").write(json.dumps(sys.argv[1:]) + "\\n")
-answers = json.load(open({ANSWERS!r}))
-said = answers.get(" ".join(sys.argv[1:4]))
-if said is None: sys.exit(1)
-print(json.dumps(said))
-""")
-    os.chmod(os.path.join(tools, "gh"), 0o755)
-    env["PATH"] = tools + ":" + env["PATH"]
-    json.dump({}, open(ANSWERS, "w"))
-
 results = []
 def check(name, ok, detail=""):
     results.append(ok)
@@ -65,75 +48,56 @@ def until(what, seconds=100):
         if got: return got
         time.sleep(0.5)
     return None
-def gh(*args):
-    return subprocess.run(["gh", *args], capture_output=True, text=True, cwd=shop)
-
 tower = subprocess.Popen([BIN, "run"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 try:
     check("the tower started", until(lambda: http("GET", "/v1/radio/feed?since=0") is not None, 20) is not None)
 
-    if REAL:
-        print(f"Against GitHub: {REAL}")
-        subprocess.run(["gh", "repo", "clone", REAL, shop, "--", "-q"], capture_output=True)
-        branch = f"links-{os.urandom(3).hex()}"
-        for c in (["git", "checkout", "-q", "-b", branch], ["sh", "-c", f"echo {branch} >> README.md"], ["git", "-c", "user.name=airband", "-c", "user.email=links@airband.dev", "commit", "-qam", "A line for the links check"],
-                  ["git", "-c", "credential.helper=!gh auth git-credential", "push", "-q", "-u", "origin", branch]):
-            subprocess.run(c, cwd=shop, capture_output=True)
-        pull = gh("pr", "create", "--title", "Stop the retry charging twice", "--body", "Made by tools/e2e-links.py.").stdout.strip().splitlines()[-1]
-        issue = gh("issue", "create", "--title", "Refund emails go out twice", "--body", "Made by tools/e2e-links.py.").stdout.strip().splitlines()[-1]
-        check("a pull request and an issue were opened", pull.startswith("https://github.com/") and "/issues/" in issue, f"{pull} {issue}")
-    else:
-        pull, issue = "https://github.com/acme/shop/pull/12", "https://github.com/acme/shop/issues/7"
-        json.dump({"pr view 12": {"title": "Stop the retry charging twice", "state": "OPEN"}, "issue view 7": {"title": "Refund emails go out twice", "state": "OPEN"}}, open(ANSWERS, "w"))
-    page = "https://claude.ai/artifact/linkscheck123"
+    pull, page, plain, unsaid = "https://github.com/acme/shop/pull/12", "https://claude.ai/artifact/linkscheck123", "https://docs.example.com/retries?x=1", "https://github.com/acme/shop/pull/99"
+    transcript = os.path.join(work, "transcript.jsonl")
+    base = {"session_id": "0a25b62f-4e7b-428f-a854-073b3dd9fe98", "cwd": shop, "transcript_path": transcript, "permission_mode": "default"}
+    def wrote(entry):
+        open(transcript, "a").write(json.dumps(entry) + "\n")
+    def stop(words):
+        hook({**base, "hook_event_name": "Stop", "stop_hook_active": False, "last_assistant_message": words})
 
-    print("A message with a pull request, an issue, a plain link, and a page its tool published")
-    # the page is reported as Claude Code's own hook reports the Artifact tool: its answer says where and what
-    hook({"session_id": "a1", "cwd": shop, "hook_event_name": "PostToolUse", "tool_name": "Artifact", "tool_input": {"file_path": os.path.join(shop, "plan.html")},
-          "tool_response": {"url": page, "title": "Refund plan", "seq": 1, "audience": "owner"}})
-    report("a1", "said", f"The fix is up at {pull} and I filed {issue}. Background: https://docs.example.com/retries. The plan is published.")
-    cards = until(lambda: (lambda l: l if len(l) == 4 else None)(links_of("The fix is up")), 20) or {}
-    check("each address in the message is a card, and so is the page the agent did not write out", set(cards) == {pull, issue, "https://docs.example.com/retries", page}, str(list(cards)))
-    check("the pull request and the issue are known by the shape of their addresses", (cards.get(pull, {}).get("name"), cards.get(issue, {}).get("name")) == ("Pull request", "Issue"), str(cards.get(pull)))
-    check("the page is what its tool said it is, with the title the tool gave", (cards.get(page, {}).get("name"), cards.get(page, {}).get("title")) == ("Artifact", "Refund plan"), str(cards.get(page)))
-    plain = cards.get("https://docs.example.com/retries", {})
-    check("an address no row fits is a plain link called by its site", (plain.get("kind"), plain.get("label"), plain.get("title")) == (None, "docs.example.com", None), str(plain))
+    print("A Claude Code session opens a pull request and publishes a page")
+    wrote({"type": "pr-link", "prNumber": 3, "prUrl": "https://github.com/acme/shop/pull/3", "prRepository": "acme/shop"})  # from before anyone was watching
+    hook({**base, "hook_event_name": "SessionStart", "source": "startup"})
+    hook({**base, "hook_event_name": "UserPromptSubmit", "prompt": "fix the duplicate charges"})
+    # as Claude Code writes them: the pull request into its transcript (twice, as it does), the page as its tool's answer
+    for _ in range(2):
+        wrote({"type": "pr-link", "prNumber": 12, "prUrl": pull, "prRepository": "acme/shop", "sessionId": base["session_id"], "timestamp": "2026-11-22T00:09:45.224Z"})
+    hook({**base, "hook_event_name": "PostToolUse", "tool_name": "Artifact", "tool_input": {"file_path": os.path.join(shop, "plan.html"), "icon": "test"},
+          "tool_response": {"url": page, "path": os.path.join(shop, "plan.html"), "artifact_id": "1687a527-01d7-4833-9328-96aa99574dec", "title": "Refund plan", "updated": False, "owned": True, "audience": "owner", "seq": 1}})
+    stop(f"The fix is up for review. Background: {plain}. See also {unsaid}. The plan is published.")
+    cards = until(lambda: (lambda l: l if len(l) == 4 else None)(links_of("The fix is up")), 20) or links_of("The fix is up")
+    check("the pull request it opened is a card, though it did not write the address out", (cards.get(pull, {}).get("name"), cards.get(pull, {}).get("title")) == ("Pull request", "acme/shop #12"), str(cards))
+    check("the page it published is a card with the title its tool gave", (cards.get(page, {}).get("name"), cards.get(page, {}).get("title")) == ("Artifact", "Refund plan"), str(cards.get(page)))
+    check("an address no tool said anything about is a plain link by its site", (cards.get(plain, {}).get("kind"), cards.get(plain, {}).get("host"), cards.get(plain, {}).get("title")) == (None, "docs.example.com", None), str(cards.get(plain)))
+    check("so is one that reads like a pull request", (cards.get(unsaid, {}).get("kind"), cards.get(unsaid, {}).get("name"), cards.get(unsaid, {}).get("host")) == (None, None, "github.com"), str(cards.get(unsaid)))
+    check("a pull request from before the tower was watching is not shown", "https://github.com/acme/shop/pull/3" not in cards)
 
-    print("What each is called and how it stands is asked on this computer")
-    known = until(lambda: (lambda l: l if l.get(pull, {}).get("state") and l.get(issue, {}).get("state") else None)(links_of("The fix is up")), 60) or {}
-    check("the pull request has its title and is open", (known.get(pull, {}).get("title"), known.get(pull, {}).get("state", {}).get("name")) == ("Stop the retry charging twice", "Open"), str(known.get(pull)))
-    check("the issue has its title and is open", (known.get(issue, {}).get("title"), known.get(issue, {}).get("state", {}).get("name")) == ("Refund emails go out twice", "Open"), str(known.get(issue)))
-    if not REAL:
-        asked = [json.loads(l) for l in open(ASKED)]
-        check("the program was given the parts of the address and nothing else of the message", ["pr", "view", "12", "--repo", "acme/shop"] in [a[:5] for a in asked] and not any("The fix" in " ".join(a) for a in asked), str(asked[:2]))
-    check("nothing was asked about the page or the plain link, which no program knows", "state" not in known.get(page, {}) and "state" not in plain)
+    print("Each is reported once")
+    hook({**base, "hook_event_name": "UserPromptSubmit", "prompt": "thanks"})
+    stop("Glad to help with that.")
+    time.sleep(1)
+    check("the next thing it says has no cards", links_of("Glad to help") == {}, str(links_of("Glad to help")))
+    hook({**base, "hook_event_name": "UserPromptSubmit", "prompt": "where is it"})
+    stop(f"Again, it is at {pull} for you.")
+    again = until(lambda: links_of("Again, it is at"), 10) or {}
+    check("when it writes the address out later, that is the same card", again.get(pull, {}).get("title") == "acme/shop #12", str(again))
 
-    print("A card follows the thing as it changes")
-    if REAL:
-        merged = gh("pr", "merge", pull, "--squash", "--delete-branch")
-        gh("issue", "close", issue, "--reason", "not planned")
-        check("the pull request was merged and the issue closed", merged.returncode == 0, merged.stderr[-200:])
-    else:
-        json.dump({"pr view 12": {"title": "Stop the retry charging twice", "state": "MERGED"}, "issue view 7": {"title": "Refund emails go out twice", "state": "NOT_PLANNED"}}, open(ANSWERS, "w"))
-    after = until(lambda: (lambda l: l if l.get(pull, {}).get("state", {}).get("name") == "Merged" and l.get(issue, {}).get("state", {}).get("name") == "Closed" else None)(links_of("The fix is up")), 100) or {}
-    check("the pull request's card says merged", after.get(pull, {}).get("state") == {"name": "Merged", "tone": "done"}, str(links_of("The fix is up").get(pull)))
-    check("the issue's card says closed", after.get(issue, {}).get("state") == {"name": "Closed", "tone": "stopped"}, str(links_of("The fix is up").get(issue)))
-    if not REAL:
-        # merged will not change again: it is not asked about any more, while the issue (which can be reopened) is
-        time.sleep(70)
-        late = [json.loads(l) for l in open(ASKED)][-2:]
-        check("a merged pull request is not asked about again", all(a[0] == "issue" for a in late), str(late))
-        json.dump({}, open(ANSWERS, "w"))
-        report("a2", "said", "Have a look at https://github.com/acme/shop/pull/99 when you can.")
-        time.sleep(20)
-        unknown = links_of("Have a look").get("https://github.com/acme/shop/pull/99", {})
-        check("one the program cannot say anything about shows only what its address says", (unknown.get("name"), unknown.get("label"), unknown.get("title"), unknown.get("state")) == ("Pull request", "shop #99", None, None), str(unknown))
+    print("Any tool can say what it made")
+    report("b1", "made", "https://preview.example.com/build/7", "Checkout preview")
+    report("b1", "said", "The preview is ready.")
+    said = until(lambda: links_of("The preview is ready"), 10) or {}
+    check("a thing reported with `airband report made` is shown by the title given", (said.get("https://preview.example.com/build/7", {}).get("title"), said.get("https://preview.example.com/build/7", {}).get("kind")) == ("Checkout preview", None), str(said))
 
     print("It is kept when the tower starts again")
     tower.terminate(); tower.wait(timeout=20)
     tower = subprocess.Popen([BIN, "run"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    again = until(lambda: links_of("The fix is up"), 20) or {}
-    check("the cards are as they were, the page with its title too", again.get(page, {}).get("title") == "Refund plan" and again.get(pull, {}).get("state", {}).get("name") == "Merged", str(again.get(page)))
+    kept = until(lambda: links_of("The fix is up"), 20) or {}
+    check("the cards are as they were", (kept.get(page, {}).get("title"), kept.get(pull, {}).get("name")) == ("Refund plan", "Pull request"), str(kept))
 finally:
     tower.terminate()
     if "--keep" not in sys.argv:

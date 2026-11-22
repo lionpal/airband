@@ -17,8 +17,6 @@ enum Palette {
     static let quiet = Color(red: 0.557, green: 0.557, blue: 0.576)
     static let soft = Color(red: 0.788, green: 0.788, blue: 0.773)
     static let dim = Color(red: 0.333, green: 0.341, blue: 0.353)
-    /// Red: something has gone wrong with a thing an agent made (its checks fail).
-    static let trouble = Color(red: 1.0, green: 0.42, blue: 0.37)
     /// Light blue: something to read in full.
     static let read = Color(red: 0.36, green: 0.80, blue: 0.95)
     /// A colour for each team, in the order the tower hands them out: blue, orange, violet, magenta, and last the

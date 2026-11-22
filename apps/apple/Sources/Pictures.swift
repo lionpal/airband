@@ -191,51 +191,32 @@ private struct Zoomable: View {
     }
 }
 
-/// The things at web addresses that go with a message (a pull request, an artifact, a plain link), one card
-/// each: what it is called, what kind of thing it is, and how it stands. Every kind is drawn the same way from
-/// what the core says about it; there is no list of kinds here. A tap opens the address, which the phone hands
-/// to the app that owns such addresses when it is installed, and to the browser otherwise.
+/// The web addresses that go with a message. One whose maker's tool said what it is (a pull request, a
+/// published page) is a card: what it is called and what kind of thing it is. Any other is a small button
+/// called by the site it goes to. Every kind is drawn the same way from what the core says; there is no list
+/// of kinds here. A tap opens the address, which the phone hands to the app that owns such addresses when it
+/// is installed, and to the browser otherwise.
 struct LinkRow: View {
     @Environment(\.openURL) private var openURL
     let m: ChatMessage
 
-    static func colour(_ tone: LinkTone) -> Color {
-        switch tone {
-        case .good: return Palette.signal
-        case .done: return Palette.read
-        case .trouble: return Palette.trouble
-        case .waiting: return Palette.ask
-        case .stopped, .plain: return Palette.quiet
-        }
-    }
-
-    /// What a card is read out as: "Stop the retry charging twice, Pull request, Open".
-    static func spoken(_ link: ChatLink) -> String {
-        [link.title, link.kind, link.state].filter { !$0.isEmpty }.joined(separator: ", ")
-    }
+    private var made: [ChatLink] { m.links.filter { !$0.kind.isEmpty || !$0.title.isEmpty } }
+    private var plain: [ChatLink] { m.links.filter { $0.kind.isEmpty && $0.title.isEmpty } }
+    private func open(_ link: ChatLink) { if let url = URL(string: link.address) { openURL(url) } }
 
     var body: some View {
-        VStack(spacing: 8) {
-            ForEach(m.links, id: \.address) { link in
-                Button { if let url = URL(string: link.address) { openURL(url) } } label: {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(made, id: \.address) { link in
+                let title = link.title.isEmpty ? link.host : link.title
+                Button { open(link) } label: {
                     HStack(spacing: 11) {
                         if !link.symbol.isEmpty {
                             Image(systemName: link.symbol).font(.system(size: 15, weight: .medium)).foregroundStyle(Palette.soft)
                                 .frame(width: 32, height: 32).background(Palette.field, in: RoundedRectangle(cornerRadius: 9))
                         }
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(link.title).font(.system(size: 15, weight: .semibold)).foregroundStyle(Palette.ink).lineLimit(1)
-                            if !link.kind.isEmpty {
-                                HStack(spacing: 6) {
-                                    Text(link.kind).foregroundStyle(Palette.quiet)
-                                    if !link.state.isEmpty {
-                                        Text("\u{00B7}").foregroundStyle(Palette.dim)
-                                        Circle().fill(LinkRow.colour(link.tone)).frame(width: 7, height: 7)
-                                        Text(link.state).foregroundStyle(LinkRow.colour(link.tone))
-                                    }
-                                }
-                                .font(.system(size: 13)).lineLimit(1)
-                            }
+                            Text(title).font(.system(size: 15, weight: .semibold)).foregroundStyle(Palette.ink).lineLimit(1)
+                            if !link.kind.isEmpty { Text(link.kind).font(.system(size: 13)).foregroundStyle(Palette.quiet).lineLimit(1) }
                         }
                         Spacer(minLength: 4)
                         Image(systemName: "arrow.up.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Palette.quiet)
@@ -243,7 +224,24 @@ struct LinkRow: View {
                     .padding(.horizontal, 12).padding(.vertical, 9).frame(minHeight: 44)
                     .background(Palette.raised, in: RoundedRectangle(cornerRadius: 14))
                 }
-                .buttonStyle(.plain).accessibilityLabel("Open \(LinkRow.spoken(link))")
+                .buttonStyle(.plain).accessibilityLabel("Open \([title, link.kind].filter { !$0.isEmpty }.joined(separator: ", "))")
+            }
+            if !plain.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(plain, id: \.address) { link in
+                            Button { open(link) } label: {
+                                HStack(spacing: 6) {
+                                    Text(link.host.isEmpty ? "Link" : link.host).font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                                    Image(systemName: "arrow.up.right").font(.system(size: 12, weight: .bold))
+                                }
+                                .foregroundStyle(Palette.ink).padding(.horizontal, 14).frame(minHeight: 44)
+                                .background(Palette.raised, in: Capsule())
+                            }
+                            .buttonStyle(.plain).accessibilityLabel("Open \(link.host.isEmpty ? "the link" : link.host)")
+                        }
+                    }
+                }
             }
         }
     }

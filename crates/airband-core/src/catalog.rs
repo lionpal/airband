@@ -47,8 +47,8 @@ pub struct Catalog {
     pub models: Vec<Arc<PhoneModel>>,
     /// Programs the tower fetches to run a model on his computer. Always the ones compiled in.
     pub servers: Vec<Server>,
-    /// The kinds of thing an agent makes that live at a web address (`links.rs`). A row can name a program
-    /// to ask about one, so these are always the ones compiled in.
+    /// The kinds of thing an agent's tool can say it made (`links.rs`): what to call each. The tools that
+    /// name them are this build's own, so these are always the ones compiled in.
     pub links: Vec<crate::links::LinkKind>,
     /// Words of the trade that a recogniser otherwise hears as everyday ones ("sync" as "sink").
     pub phrases: Vec<String>,

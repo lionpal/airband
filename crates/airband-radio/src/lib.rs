@@ -331,48 +331,26 @@ pub struct ChatMessage {
     pub not_read: String,
 }
 
-/// Something at a web address, as a card shows it. A host draws every kind the same way from these fields:
-/// it has no list of kinds of its own.
+/// Something at a web address that goes with a message. One whose maker's tool said what it is has a `kind`
+/// and usually a `title`: show it as a card. One nothing was said about has neither: show it as a small
+/// button called by its `host`. A host draws every kind the same way; it has no list of kinds of its own.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ChatLink {
-    /// Where a tap goes. Opened as an ordinary address, the phone sends it to the app that owns such
+    /// Where a tap goes. Opened as an ordinary address, the phone hands it to the app that owns such
     /// addresses when one is installed, and to the browser otherwise.
     pub address: String,
-    /// What kind of thing it is, in his words ("Pull request"). Empty for a plain link.
+    /// What kind of thing it is, in his words ("Pull request"). Empty when no tool said.
     pub kind: String,
-    /// The name of the mark to show beside it, in the platform's symbol set. Empty for a plain link.
+    /// The name of the mark to show beside it, in the platform's symbol set. Empty when no tool said.
     pub symbol: String,
-    /// What to call it: its title when that is known, and otherwise a few words from its address.
+    /// What it is called, as the tool that made it said. Empty when it did not.
     pub title: String,
-    /// How it stands ("Merged"). Empty when that is not known, or it is not a thing that has a state.
-    pub state: String,
-    /// How that state should look.
-    pub tone: LinkTone,
-}
-
-/// How a state should look: a host picks a colour by it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum LinkTone {
-    Plain,
-    Good,
-    Done,
-    Stopped,
-    Trouble,
-    Waiting,
+    /// The site it is at: "github.com".
+    pub host: String,
 }
 
 fn chat_link(l: airband_core::links::Link) -> ChatLink {
-    use airband_core::links::Tone;
-    let (state, tone) = l.state.map(|s| (s.name, s.tone)).unwrap_or_default();
-    let tone = match tone {
-        Tone::Plain => LinkTone::Plain,
-        Tone::Good => LinkTone::Good,
-        Tone::Done => LinkTone::Done,
-        Tone::Stopped => LinkTone::Stopped,
-        Tone::Trouble => LinkTone::Trouble,
-        Tone::Waiting => LinkTone::Waiting,
-    };
-    ChatLink { address: l.address, kind: l.name, symbol: l.symbol, title: l.title.unwrap_or(l.label), state, tone }
+    ChatLink { address: l.address, kind: l.name, symbol: l.symbol, title: l.title.unwrap_or_default(), host: l.host }
 }
 
 /// A picture an agent looked at or made for him. The size is known before the picture is fetched, so a host

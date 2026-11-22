@@ -388,7 +388,6 @@ pub fn run(cfg: Config) -> Result<(), String> {
         tokio::spawn(accounts::keep_alive(app.clone()));
         tokio::spawn(progress_loop(app.clone()));
         tokio::spawn(activity_loop(app.clone()));
-        tokio::spawn(links::keep_asking(app.clone()));
         held::carry_on(&app).await;
         // tools that have no hooks and are watched (a server of the tool's own): each adapter that watches is
         // started, and tells the tower what it sees the same way an event over HTTP is taken
