@@ -81,8 +81,9 @@ pub(in crate::tower) fn read_worked(app: &App) {
 pub(super) async fn project(State(app): State<Arc<App>>, Json(new): Json<airband_core::radio::NewProject>) -> Json<Value> {
     // a team's name is part of what its agents are called, and is said aloud: short, and written as a
     // callsign is
-    let Some(mut name) = airband_core::routing::team_name(&new.name).filter(|n| n.chars().count() <= 24) else {
-        return Json(json!({ "error": "A team\u{2019}s name is letters and numbers, 24 at most." }));
+    let mut name = match airband_core::routing::chosen_team_name(&new.name) {
+        Ok(name) => name,
+        Err(why) => return Json(json!({ "error": why })),
     };
     let folder = if new.make {
         // the new folder is called exactly as he wrote the name: one part of a path, not hidden

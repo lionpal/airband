@@ -95,6 +95,10 @@ pub(super) struct Entry {
     pub(super) note: Option<airband_core::radio::Note>,
 }
 impl Entry {
+    /// The line in a few words: its summary, else the opening of what it says.
+    pub(super) fn line(&self) -> String {
+        self.short.clone().unwrap_or_else(|| opening(&self.said_whole()))
+    }
     /// The words as they are read and shown: the tool's, after airband's own note when there is one.
     pub(super) fn said_whole(&self) -> String {
         self.note.map_or_else(|| self.full.clone(), |n| n.said(&self.full))
@@ -226,9 +230,14 @@ impl Inner {
         let teams: HashSet<&String> = e.to_agents.iter().filter_map(|id| self.find(id)).map(|s| &s.team).collect();
         if teams.len() == 1 && e.to_agents.iter().all(|id| self.find(id).is_some()) { teams.into_iter().next().unwrap().clone() } else { e.team.clone() }
     }
+    /// What a team's agents last said, newest first, in a few words each: for a model choosing where new work goes.
+    pub(super) fn lately(&self, team: &str) -> Vec<String> {
+        let Some(id) = self.team_called(team) else { return Vec::new() };
+        self.log.iter().rev().filter(|e| e.team == id && !e.his && e.kind != Some(Kind::Fyi)).take(2).map(Entry::line).collect()
+    }
     /// A logged line as a radio sees it. The sender's name is what it is called now, if it is still here.
     pub(super) fn message(&self, e: &Entry) -> Message {
-        let text = e.short.clone().unwrap_or_else(|| opening(&e.said_whole()));
+        let text = e.line();
         let sender = self.sender(e);
         // a callsign is shown from its parts while its agent is here; one that has gone keeps what it was called
         let to = if e.to_agents.is_empty() { e.to.clone() } else { e.to_agents.iter().zip(&e.to).map(|(id, was)| self.find(id).map(|s| s.callsign.shown()).unwrap_or_else(|| was.clone())).collect() };

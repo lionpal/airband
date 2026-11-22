@@ -28,7 +28,7 @@ pub(super) async fn place_idea(app: &Arc<App>, idea: &str, projects: &[String]) 
             .iter()
             .enumerate()
             .map(|(i, p)| {
-                let lately: Vec<String> = inner.log.iter().rev().filter(|e| inner.team_called(p).is_some_and(|t| e.team == t) && !e.his && e.kind != Some(Kind::Fyi)).take(2).map(|e| e.short.clone().unwrap_or_else(|| opening(&e.full))).collect();
+                let lately: Vec<String> = inner.lately(p);
                 format!("{}. {p} (folder {}){}", i + 1, folders.get(p).map(String::as_str).unwrap_or("?"), if lately.is_empty() { String::new() } else { format!(": lately, {}", lately.join(" / ")) })
             })
             .collect()

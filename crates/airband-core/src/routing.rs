@@ -14,6 +14,15 @@ pub struct Callsign {
     pub named: bool,
 }
 
+/// The most characters a team's name may have: it is part of what its agents are called, and is said aloud.
+pub const TEAM_NAME_MOST: usize = 24;
+
+/// A name he chose for a team (a new one, or a rename), as it is kept: [`team_name`], and short. The one check
+/// every place he names a team goes through.
+pub fn chosen_team_name(text: &str) -> Result<String, &'static str> {
+    team_name(text).filter(|n| n.chars().count() <= TEAM_NAME_MOST).ok_or("A team\u{2019}s name is letters and numbers, 24 at most.")
+}
+
 /// A name he gave a team, written the way a callsign writes it. Only written so: no part of it is taken for a
 /// path ("shop/front" is "shop front"). None when it has no letters or numbers.
 pub fn team_name(text: &str) -> Option<String> {

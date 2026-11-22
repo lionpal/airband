@@ -146,7 +146,7 @@ fn listing<'a>(scene: &'a Scene, others: &'a [airband_core::radio::Other], now: 
     // each with the two letters the app shows for it: he may say those and not the name
     let letters = |s: &Session| s.callsign.badge();
     let line = |n: usize, s: &Session, e: &Entry, since: bool| {
-        format!("{n}. {} (letters {}; {} ago{}{}): {}", s.callsign.text(), letters(s), ago(now.saturating_sub(e.at)), if since { "" } else { ", before he last spoke" }, if e.kind == Some(Kind::NeedsYou) { ", waiting on him" } else { "" }, e.short.clone().unwrap_or_else(|| opening(&e.full)))
+        format!("{n}. {} (letters {}; {} ago{}{}): {}", s.callsign.text(), letters(s), ago(now.saturating_sub(e.at)), if since { "" } else { ", before he last spoke" }, if e.kind == Some(Kind::NeedsYou) { ", waiting on him" } else { "" }, e.line())
     };
     // past the first dozen an agent is listed by its name alone: he can still name it
     let bare = |n: usize, s: &Session| format!("{n}. {} (letters {})", s.callsign.text(), letters(s));
@@ -210,7 +210,7 @@ fn starting(app: &App, menus: &Menus, projects: &[String], room: Option<&str>) -
             .iter()
             .enumerate()
             .map(|(i, p)| {
-                let said: Vec<String> = inner.log.iter().rev().filter(|e| inner.team_called(p).is_some_and(|t| e.team == t) && !e.his && e.kind != Some(Kind::Fyi)).take(2).map(|e| e.short.clone().unwrap_or_else(|| opening(&e.full))).collect();
+                let said: Vec<String> = inner.lately(p);
                 format!("{}. {p}{}", i + 1, if said.is_empty() { String::new() } else { format!(": lately, {}", said.join(" / ")) })
             })
             .collect()

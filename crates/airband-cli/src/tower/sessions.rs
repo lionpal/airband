@@ -295,7 +295,7 @@ impl Inner {
         for id in clashing_teams {
             let name = self.team_name(&id);
             let on = airband_core::routing::team_on(&self.here, &name);
-            let to = if !self.taken_here(&on, Some(&id)) && !self.taken_there(&on) {
+            let to = if self.name_free(&on, Some(&id)) {
                 on
             } else {
                 // this computer's name is not enough: the folder's own path, as for any new team
@@ -314,14 +314,12 @@ impl Inner {
     /// He renamed a team, by its id. Only what it is called changes: its agents, its folder and its colour stay
     /// with it. Returns the name it now has.
     pub(super) fn rename_team(&mut self, team: &str, to: &str) -> Result<String, String> {
-        let Some(to) = airband_core::routing::team_name(to).filter(|n| n.chars().count() <= 24) else {
-            return Err("A team\u{2019}s name has to say something, and be short.".into());
-        };
+        let to = airband_core::routing::chosen_team_name(to)?;
         let Some(was) = self.teams.get(team).map(|t| t.name.clone()) else {
             return Err("That team is not on this computer any more.".into());
         };
         if to != was && !self.name_free(&to, Some(team)) {
-            return Err(format!("There is already a team called {to}."));
+            return Err(format!("There is already a team called {to}, here or on another of your computers."));
         }
         self.set_team_name(team, &to);
         if let Some(t) = self.teams.get_mut(team) {
