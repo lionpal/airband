@@ -131,8 +131,8 @@ pub trait RadioHost: Send + Sync {
     fn words(&self, text: String, starts: Vec<u32>, at_ms: Vec<u32>);
     /// Run a model with an engine the host has. `engine` is the name the model's row gives, `folder` is where
     /// the model's files are. For listening `input` is a recording (16-bit little-endian mono PCM at 16 kHz)
-    /// and the answer is the words, as UTF-8. For a voice it is the words, as UTF-8, then a line feed and the
-    /// name of the voice, and the answer is the sound (16-bit little-endian mono PCM at the rate the row
+    /// and the answer is the words, as UTF-8. For a voice it is JSON, `{"text": the words, "voice": the
+    /// voice's name}`, and the answer is the sound (16-bit little-endian mono PCM at the rate the row
     /// gives). Nothing when the host cannot: it has no such engine, or the model would not load. Blocks while
     /// it works.
     fn run_model(&self, engine: String, folder: String, job: ChoiceJob, input: Vec<u8>) -> Option<Vec<u8>>;

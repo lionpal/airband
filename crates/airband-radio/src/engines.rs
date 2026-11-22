@@ -70,7 +70,7 @@ struct Hosted {
 
 impl Loaded for Hosted {
     fn speak(&mut self, host: ByHost, voice: &str, text: &str, sink: &mut dyn FnMut(&[u8]), _: &dyn Fn() -> bool) -> Result<(), String> {
-        let pcm = host(&self.engine, &self.folder, ChoiceJob::Voice, format!("{text}\n{voice}").into_bytes()).ok_or("this device could not run it")?;
+        let pcm = host(&self.engine, &self.folder, ChoiceJob::Voice, serde_json::to_vec(&serde_json::json!({ "text": text, "voice": voice })).expect("words write as JSON")).ok_or("this device could not run it")?;
         sink(&pcm);
         Ok(())
     }
@@ -154,7 +154,9 @@ mod tests {
         assert_eq!(sound, [1, 0, 2, 0]);
         let asked = asked.into_inner().unwrap();
         assert_eq!(asked[0], ("host-new".into(), "/models/tiny/1".into(), ChoiceJob::Ears, vec![0, 0]));
-        assert_eq!(asked[1], ("host-new".into(), "/models/tiny/1".into(), ChoiceJob::Voice, b"Hello.\nZoey".to_vec()));
+        assert_eq!((&asked[1].0, &asked[1].2), (&"host-new".to_string(), &ChoiceJob::Voice));
+        // words with a line in them reach the host whole, beside the voice
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&asked[1].3).unwrap(), serde_json::json!({ "text": "Hello.", "voice": "Zoey" }));
         // a host that cannot says so, and nothing is made up in its place
         assert!(held.with(|m| m.hear(&|_, _, _, _| None, vec![0, 0])).unwrap().is_err());
     }
