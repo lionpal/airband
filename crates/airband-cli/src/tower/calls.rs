@@ -40,12 +40,13 @@ pub(super) struct Call {
     pub(super) handed: Option<Transmission>,
     /// When this radio last did anything at all: a radio that only reads the feed and types never polls.
     pub(super) seen: Option<Instant>,
-    /// Words he said that the tower could not place, with their files, held under the id of the question it
-    /// asked him back ("Who is that for?"). Only an utterance that answers that id takes them.
-    pub(super) asked: Option<Asked>,
-    /// An idea for a new agent whose project the tower could not work out, held under the id of the question
-    /// it asked him back ("Which project?").
-    pub(super) unplaced_idea: Option<Unplaced>,
+    /// Words he said that the tower could not place, with their files, each held under the id of the question
+    /// it asked him back ("Who is that for?"). Only an utterance that answers that id takes them; a later
+    /// question never puts an earlier one out.
+    asked: Vec<Asked>,
+    /// Ideas for a new agent whose project the tower could not work out, each held under the id of the
+    /// question it asked him back ("Which project?").
+    unplaced: Vec<Unplaced>,
     /// How far this radio has the chat on screen: the highest change count it has asked for what follows of,
     /// while it was showing the chat. A line changed after this is one he may not have seen.
     pub(super) has: u64,
@@ -88,27 +89,38 @@ impl Presence {
         !was && self.on_call()
     }
 }
+/// How many questions put back to him one radio holds answers open for. Past that the oldest is let go.
+const OPEN_QUESTIONS: usize = 8;
+
 impl Call {
+    /// Hold words he said under the question asked about them.
+    pub(super) fn ask(&mut self, asked: Asked) {
+        self.asked.push(asked);
+        let extra = self.asked.len().saturating_sub(OPEN_QUESTIONS);
+        self.asked.drain(..extra);
+    }
     /// The words held for "Who is that for?" when these words answer that question, by its id. Read, not
     /// taken: they stay until what he said is settled ([`Call::resolve_asked`]).
     pub(super) fn asked_for(&self, answers: Option<&str>) -> Option<Asked> {
-        self.asked.as_ref().filter(|a| answers == Some(a.question.as_str())).cloned()
+        self.asked.iter().find(|a| answers == Some(a.question.as_str())).cloned()
     }
-    /// The question is settled: what it held is let go, if it is still that question.
+    /// The question is settled: what it held is let go.
     pub(super) fn resolve_asked(&mut self, question: &airband_core::ids::QuestionId) {
-        if self.asked.as_ref().is_some_and(|a| a.question == *question) {
-            self.asked = None;
-        }
+        self.asked.retain(|a| a.question != *question);
+    }
+    /// Hold an idea under the question asked about where it goes.
+    pub(super) fn hold_unplaced(&mut self, unplaced: Unplaced) {
+        self.unplaced.push(unplaced);
+        let extra = self.unplaced.len().saturating_sub(OPEN_QUESTIONS);
+        self.unplaced.drain(..extra);
     }
     /// The idea held for "Which project?" when these words answer that question, by its id. Read, not taken.
     pub(super) fn unplaced_for(&self, answers: Option<&str>) -> Option<Unplaced> {
-        self.unplaced_idea.as_ref().filter(|u| answers == Some(u.question.as_str())).cloned()
+        self.unplaced.iter().find(|u| answers == Some(u.question.as_str())).cloned()
     }
-    /// The question is settled: the idea is let go, if it is still that question.
+    /// The question is settled: the idea is let go.
     pub(super) fn resolve_unplaced(&mut self, question: &airband_core::ids::QuestionId) {
-        if self.unplaced_idea.as_ref().is_some_and(|u| u.question == *question) {
-            self.unplaced_idea = None;
-        }
+        self.unplaced.retain(|u| u.question != *question);
     }
     pub(super) fn connected(&self) -> bool {
         self.presence.on_call()
@@ -179,5 +191,27 @@ impl Inner {
     /// most lately, never one picked by the order of their names.
     pub(super) fn free_radio(&self) -> Option<String> {
         self.calls.iter().filter(|(_, c)| c.can_send()).max_by_key(|(_, c)| c.seen).map(|(id, _)| id.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use airband_core::ids::QuestionId;
+
+    #[test]
+    fn a_later_question_never_puts_out_one_still_waiting_for_his_answer() {
+        let mut call = Call::default();
+        let idea = |task: &str| Idea { tool: None, project: None, model: None, effort: None, task: task.into() };
+        call.hold_unplaced(Unplaced { question: QuestionId::new("q1"), idea: idea("fix login") });
+        call.hold_unplaced(Unplaced { question: QuestionId::new("q2"), idea: idea("write docs") });
+        assert_eq!(call.unplaced_for(Some("q1")).unwrap().idea.task, "fix login", "the first is still there to answer");
+        call.resolve_unplaced(&QuestionId::new("q1"));
+        assert!(call.unplaced_for(Some("q1")).is_none());
+        assert_eq!(call.unplaced_for(Some("q2")).unwrap().idea.task, "write docs");
+        call.ask(Asked { question: QuestionId::new("a1"), words: "ship it".into(), files: String::new() });
+        call.ask(Asked { question: QuestionId::new("a2"), words: "hold on".into(), files: String::new() });
+        assert_eq!(call.asked_for(Some("a1")).unwrap().words, "ship it");
+        assert!(call.asked_for(None).is_none(), "words that answer no question take nothing");
     }
 }

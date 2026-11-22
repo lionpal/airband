@@ -55,6 +55,13 @@ pub(super) struct Session {
     #[serde(default)]
     pub(super) turn: Option<String>,
 }
+impl Session {
+    /// It is in the room he was looking at, or he was in none.
+    pub(super) fn in_room(&self, room: Option<&str>) -> bool {
+        room.is_none_or(|g| self.team.as_str() == g)
+    }
+}
+
 /// How many placements are remembered.
 const PLACED_KEEP: usize = 400;
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]

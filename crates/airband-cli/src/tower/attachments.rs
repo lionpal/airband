@@ -77,8 +77,10 @@ fn take_in(root: &Path, part: AttachmentPart) -> Result<u64, String> {
     };
     let path = dir.join(name);
     let bytes = airband_core::encode::unbase64(&part.data).ok_or("that part could not be read")?;
+    // where this part ends, as a number that cannot wrap round: a part said to start past any file's end is refused
+    let end = part.from.checked_add(bytes.len() as u64).ok_or("a part runs past the end of the file")?;
     let mut file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&path).map_err(|e| e.to_string())?;
-    if part.from + bytes.len() as u64 > MOST || part.total > MOST {
+    if end > MOST || part.total > MOST {
         std::fs::remove_dir_all(&dir).ok();
         return Err("that file is too large".into());
     }
@@ -87,7 +89,7 @@ fn take_in(root: &Path, part: AttachmentPart) -> Result<u64, String> {
         // written where it belongs, and what has come is kept beside the file until all of it has.
         {
             let total = part.total;
-            if part.from + bytes.len() as u64 > total {
+            if end > total {
                 return Err("a part runs past the end of the file".into());
             }
             file.seek(SeekFrom::Start(part.from)).map_err(|e| e.to_string())?;
@@ -275,6 +277,14 @@ mod tests {
         let dir = root.join("a1b2c3d4e5f6");
         assert_eq!(std::fs::read(dir.join("photo.png")).unwrap(), b"abcdef");
         assert!(!dir.join("other.png").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_part_said_to_start_past_any_end_is_refused_never_wrapped_round() {
+        let root = std::env::temp_dir().join(format!("airband-parts-{}", config::random_hex(4)));
+        let part = AttachmentPart { id: "a1b2c3d4e5f7".into(), name: "x.png".into(), from: u64::MAX - 1, total: 6, data: airband_core::encode::base64(b"abc") };
+        assert_eq!(take_in(&root, part), Err("a part runs past the end of the file".to_string()));
         let _ = std::fs::remove_dir_all(&root);
     }
 }

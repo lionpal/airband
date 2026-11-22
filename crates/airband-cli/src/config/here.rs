@@ -28,6 +28,18 @@ pub(crate) fn overlay_addrs() -> Vec<std::net::Ipv4Addr> {
         .collect()
 }
 
+/// Where a phone may reach this computer straight, in the one order every list of them is in: its private
+/// network's addresses first, then (with `lan`) its own network's. With each, whether only a paired radio's
+/// sealed requests are served there: on its own network, anyone on it could knock.
+pub(crate) fn direct_addrs(lan: bool) -> Vec<(std::net::Ipv4Addr, bool)> {
+    overlay_addrs().into_iter().map(|a| (a, false)).chain(lan_addrs().into_iter().filter(|_| lan).map(|a| (a, true))).collect()
+}
+
+/// The address a phone is given for one of them.
+pub(crate) fn direct_url(addr: std::net::Ipv4Addr, port: u16) -> String {
+    format!("http://{addr}:{port}")
+}
+
 /// This computer's name for a phone paired with several: the configured one, else the short host name. Empty
 /// when the system gives none: a phone knows each computer by its id, and shows no name rather than a made-up one.
 pub(crate) fn station(cfg: &Config) -> String {
@@ -44,4 +56,16 @@ pub(crate) fn station(cfg: &Config) -> String {
         given.or_else(|| said(crate::platform::HOSTNAME, &["-s"])).unwrap_or_default()
     })
     .clone()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_direct_addresses_are_the_private_networks_first_and_the_own_network_only_when_allowed() {
+        let all = super::direct_addrs(true);
+        let first_own = all.iter().position(|(_, own)| *own).unwrap_or(all.len());
+        assert!(all[first_own..].iter().all(|(_, own)| *own), "the private network's come first");
+        assert!(super::direct_addrs(false).iter().all(|(_, own)| !own), "none of its own network's without lan");
+        assert_eq!(super::direct_url(std::net::Ipv4Addr::new(100, 64, 0, 1), 7800), "http://100.64.0.1:7800");
+    }
 }

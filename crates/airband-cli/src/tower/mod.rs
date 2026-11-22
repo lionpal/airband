@@ -130,6 +130,22 @@ const READY_TIMEOUT: Duration = Duration::from_secs(120);
 /// rule: no tool says whether that work is still running.
 const STILL_ITS_OWN_WORK_MS: u64 = 20 * 60 * 1000;
 
+/// What he is told when the agent his words or his tap were for has gone.
+const NOT_RUNNING: &str = "That agent is no longer running.";
+/// The variable an agent airband itself runs (a model on this computer) carries: whatever starts an agent for
+/// him takes it out, so the new agent reports to the tower.
+const INTERNAL_ENV: &str = "AIRBAND_INTERNAL";
+
+/// An answer that says `s`, and waits for his next words when `listen`.
+fn reply(s: impl Into<String>, listen: bool) -> Reply {
+    Reply { say: s.into(), listen, ..Reply::default() }
+}
+
+/// The first eight characters of an id, for the log.
+fn short_id(id: &str) -> &str {
+    id.get(..8).unwrap_or(id)
+}
+
 /// One radio's line: what it said is worked on in the order it was put here.
 type Line = tokio::sync::mpsc::UnboundedSender<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>;
 

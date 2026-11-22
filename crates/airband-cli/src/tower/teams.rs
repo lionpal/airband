@@ -142,7 +142,8 @@ impl Inner {
         let Some(was) = self.teams.get(team).map(|t| t.name.clone()) else {
             return Err("That team is not on this computer any more.".into());
         };
-        let to = self.chosen_team(to, Some(team))?;
+        // whether another team has the name is asked once, as it is given
+        let to = TeamName::new(to)?;
         if !self.set_team_name(team, &to) {
             return Err(format!("There is already a team called {to}, here or on another of your computers."));
         }

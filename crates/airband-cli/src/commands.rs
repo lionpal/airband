@@ -156,7 +156,7 @@ pub(crate) fn pair(cfg: Config, name: &str) -> Result<(), String> {
         }
         None => {
             // where a radio can find this computer: its private network, and its own when that is allowed
-            let at: Vec<String> = config::overlay_addrs().into_iter().chain(config::lan_addrs().into_iter().filter(|_| cfg.lan)).map(|a| format!("http://{a}:{}", cfg.port)).collect();
+            let at: Vec<String> = config::direct_addrs(cfg.lan).into_iter().map(|(a, _)| config::direct_url(a, cfg.port)).collect();
             if at.is_empty() {
                 return Err("with no relay a phone must reach this computer itself, and it has no address a phone could use: join a network (and `airband lan on`), join a private network that the phone is on too, or `airband relay on`".into());
             }

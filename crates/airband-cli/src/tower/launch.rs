@@ -48,7 +48,7 @@ fn chosen(asked: Option<&Pick>, launcher: &LauncherId, choices: &[airband_core::
 /// Start a new agent in `place`. `Ok` once it has started, with what to tell him; `Err` with why nothing started.
 pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Result<Reply, Reply> {
     let task = idea.task.as_str();
-    let say = |s: String| Reply { say: s, listen: false, ..Reply::default() };
+    let say = |s: String| reply(s, false);
     let (project, cwd) = (place.name.as_str(), place.folder.clone());
     if !std::path::Path::new(&cwd).is_dir() {
         return Err(say(format!("The folder for {project} is gone.")));
@@ -73,7 +73,7 @@ pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Result
     // turn on the model, and the tower has only what one last said. So what he asked for goes to its holder
     // as he named it, by the tool's own word where the tower knows it, and an agent that has no such one does
     // not start and says so.
-    let agent_says = matches!(launcher.held, Some(config::Held::Acp { .. }));
+    let agent_says = launcher.says_its_settings();
     let offers = |what: &str, choices: &[airband_core::tools::Choice]| match choices {
         [] => format!("Agents started this way cannot be given {what}."),
         choices => format!("It can be {}.", either(&choices.iter().map(|c| c.name.as_str()).collect::<Vec<_>>())),
@@ -119,7 +119,7 @@ pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Result
     let argv = launcher.command(model_id.as_deref(), effort_id.as_deref(), fill);
     let Some((program, args)) = argv.split_first() else { return Err(say("The launcher command is empty.".into())) };
     // AIRBAND_INTERNAL must not leak in: the new agent has to report to the tower
-    let run = tokio::process::Command::new(program).args(args).current_dir(&cwd).env_remove("AIRBAND_INTERNAL").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).kill_on_drop(false).output();
+    let run = tokio::process::Command::new(program).args(args).current_dir(&cwd).env_remove(INTERNAL_ENV).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).kill_on_drop(false).output();
     match tokio::time::timeout(Duration::from_secs(20), run).await {
         Ok(Ok(out)) if out.status.success() => {
             log(format!("launched {named}{with} in {project} ({session}): {task}"));
@@ -193,5 +193,15 @@ mod tests {
         let line = inner.log.last().unwrap();
         assert_eq!(line.team, Some(edges::folders::Folders::real(&edges::folders::Disk, &folder).into()));
         assert_eq!(line.team.as_ref().and_then(|t| inner.team_name(t)), Some("shop"));
+    }
+
+    #[tokio::test]
+    async fn a_launch_that_starts_nothing_says_so_as_a_refusal() {
+        let app = crate::tower::http::tests::app("launch-refused");
+        let place = Place { name: "gone".into(), folder: "/nowhere/airband-gone".into() };
+        let idea = Idea { project: Some(place.clone()), task: "fix it".into(), ..Idea::default() };
+        // the idea waiting for "which project" is kept on this, so he can answer again
+        let refused = launch(&app, &place, &idea).await.expect_err("nothing started in a folder that is gone");
+        assert_eq!(refused.say, "The folder for gone is gone.");
     }
 }

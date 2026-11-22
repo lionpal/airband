@@ -55,6 +55,12 @@ impl Launcher {
         self.argv.iter().flat_map(|a| if a == "{options}" { options.clone() } else { vec![fill(a)] }).collect()
     }
 
+    /// Its agents say for themselves what they can be set to (they speak the Agent Client Protocol): what one
+    /// last said is offered, and what he names goes to the agent as he said it.
+    pub fn says_its_settings(&self) -> bool {
+        matches!(self.held, Some(Held::Acp { .. }))
+    }
+
     /// What this launcher's own row says its agents can be started on.
     pub fn offers(&self) -> Offers {
         Offers {

@@ -245,8 +245,7 @@ async fn serve(app: Arc<App>, router: Router, port: u16) -> Result<(), String> {
     let lan = app.cfg().lan;
     let mut bound = HashSet::new();
     loop {
-        let wanted = config::overlay_addrs().into_iter().map(|a| (a, false)).chain(config::lan_addrs().into_iter().filter(|_| lan).map(|a| (a, true)));
-        for (addr, sealed_only) in wanted {
+        for (addr, sealed_only) in config::direct_addrs(lan) {
             if bound.contains(&addr) {
                 continue;
             }

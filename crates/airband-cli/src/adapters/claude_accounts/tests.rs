@@ -326,3 +326,34 @@ fn a_saved_login_the_keychain_will_not_delete_stays_listed() {
     assert!(saved::forget(&b.here, "a@x").is_err());
     assert_eq!(saved::resolve(&b.here, "a@x").unwrap(), "a@x", "still listed, as the keychain still has it");
 }
+
+/// A keychain in which the running tool refreshes its login once, just as the outgoing one is being kept.
+struct RefreshedMeanwhile(vault::Memory, std::sync::atomic::AtomicBool);
+impl vault::Vault for RefreshedMeanwhile {
+    fn read(&self, service: &str, account: &str) -> Res<Option<String>> {
+        self.0.read(service, account)
+    }
+    fn write(&self, service: &str, account: &str, data: &str) -> Res<()> {
+        self.0.write(service, account, data)?;
+        if service == "saved" && account == "a@x" && !self.1.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            self.0.write("live", "me", &json!({ "claudeAiOauth": login("a-access3", "r-a3", true), "mcpOAuth": { "kept": "beside it" } }).to_string())?;
+        }
+        Ok(())
+    }
+    fn delete(&self, service: &str, account: &str) -> Res<()> {
+        self.0.delete(service, account)
+    }
+}
+
+#[test]
+fn a_login_the_tool_refreshes_while_switching_is_the_one_kept() {
+    let mut b = bench(Service { tokens: HashMap::from([("a-access".into(), "a@x".into()), ("b-access".into(), "b@x".into())]), ..Default::default() });
+    b.here.vault = Box::new(RefreshedMeanwhile(vault::Memory::default(), Default::default()));
+    put_live(&b, login("a-access", "r-a2", true));
+    put_saved(&b, "b@x", login("b-access", "r-b", true));
+    switch_in(&b.here, "b@x").unwrap();
+    // the refresh token the tool moved on to is the one kept for that account, never the one it threw away
+    assert_eq!(saved::refresh_token_of(&b.here, "a@x").as_deref(), Some("r-a3"));
+    let live: Value = serde_json::from_str(&b.here.vault.read("live", "me").unwrap().unwrap()).unwrap();
+    assert_eq!(live["claudeAiOauth"]["accessToken"], "b-access");
+}

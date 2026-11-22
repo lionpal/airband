@@ -41,7 +41,7 @@ pub(super) async fn named_project(app: &Arc<App>, idea: &str, said: &str, projec
 /// the model chose, or, with one place, that one. With none, he is asked which, and the idea is kept for his
 /// answer.
 pub(super) async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, projects: &[Place]) -> Reply {
-    let say = |s: String, listen: bool| Reply { say: s, listen, ..Reply::default() };
+    let say = |s: String, listen: bool| reply(s, listen);
     let place = match (&idea.project, projects) {
         (Some(place), _) => place.clone(),
         (None, _) if idea.task.is_empty() => return say("What should it do? Say new idea, then the idea.".into(), true),
@@ -49,7 +49,7 @@ pub(super) async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, p
         (None, [only]) => only.clone(),
         (None, _) => {
             let question = airband_core::ids::QuestionId::new(config::random_hex(8));
-            app.change().call(radio).unplaced_idea = Some(Unplaced { question: question.clone(), idea });
+            app.change().call(radio).hold_unplaced(Unplaced { question: question.clone(), idea });
             log(format!("← radio: \"{text}\" → a new agent, project not clear"));
             return Reply { say: which_project(projects), listen: true, question: Some(question.to_string()), ..Reply::default() };
         }

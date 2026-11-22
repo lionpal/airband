@@ -196,7 +196,7 @@ pub(super) async fn command(model: &Summarizer, by: &By, prompt: String, shape: 
         .current_dir(&folder)
         // some tools take the folder they are in from this, not from where they were started
         .env("PWD", &folder)
-        .env("AIRBAND_INTERNAL", "1")
+        .env(INTERNAL_ENV, "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
