@@ -123,10 +123,13 @@ fn a_team_that_has_gone_is_let_go_of_and_one_just_made_stays_open_until_its_firs
     desk.set_links(vec![link(1)]);
     assert!(answered(&desk, &link(1)), "the stand-in tower was never heard");
     desk.look(Some("gone-room".into()), Some("gone-agent".into()));
+    desk.shown();
     let gone = desk.view().focus;
     desk.shared.state.lock().unwrap().focus = Focus { room: Some("made-room".into()), agent: None, made: Some("made-room".into()) };
+    desk.shown();
     let made = desk.view().focus;
     desk.look(None, None);
+    desk.shown();
     let after = desk.view().focus;
     let still_made = desk.shared.state.lock().unwrap().focus.made.clone();
     desk.stop();

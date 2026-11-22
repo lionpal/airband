@@ -29,6 +29,8 @@ impl RadioHost for Quiet {
 /// What the desk shows once he looks at a team, an agent, or everyone.
 pub(super) fn looked(desk: &Desk, room: Option<String>, agent: Option<String>) -> DeskView {
     desk.look(room, agent);
+    // as the app draws a screen: what it shows is marked read, then it is shown
+    desk.shown();
     desk.view()
 }
 fn msg(id: &str, seq: u64, from: &str, group: &str, needs: bool) -> ChatMessage {

@@ -54,6 +54,8 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, station: StationId,
                     // the radio keeps the chat itself, each line in its current form
                     computer.messages = radio.history();
                     computer.settle_rooms();
+                    // a team or agent he was looking at that has gone is let go
+                    state.keep_focus();
                     // on screen in front of him now: read, so a call started later does not read it out
                     if !calling && shared.host.watching() {
                         seen = feed.messages.iter().filter(|m| !m.his && !m.needs_you).map(|m| m.id.clone()).collect();
@@ -72,16 +74,8 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, station: StationId,
                     }
                 }
             }
-            // the teams this computer has are given their colours here, beside every other computer's
-            if got.is_ok()
-                && let Some(computer) = state.computer(&station) {
-                let rooms: Vec<String> = computer.agents.iter().map(|a| a.room.clone()).chain(computer.messages.iter().map(|m| m.room.clone())).collect();
-                colours_lost = state.colours.see(rooms);
-                // once every paired computer has answered, a colour kept for a team none of them has is let go
-                if state.computers.iter().all(|c| c.answered_at.is_some()) {
-                    let all: std::collections::BTreeSet<String> = state.computers.iter().flat_map(|c| c.agents.iter().map(|a| a.room.clone()).chain(c.messages.iter().map(|m| m.room.clone()))).filter(|r| !r.is_empty()).collect();
-                    colours_lost = colours_lost.or(state.colours.keep_only(&all));
-                }
+            if got.is_ok() {
+                colours_lost = colour_teams(&mut state, &station);
             }
             // once the tower agrees a message is answered, stop tracking it here
             let now_open: HashSet<String> = state.computers.iter().flat_map(|s| s.open.iter().cloned()).collect();
@@ -116,24 +110,42 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, station: StationId,
                 busy.store(false, std::sync::atomic::Ordering::SeqCst);
             });
         }
-        // Two computers number their agents without knowing of each other. The later one in his list is told
-        // the names the earlier ones use, whenever those change, and keeps off them.
         if got.is_ok() {
-            let (first, elsewhere): (bool, Vec<airband_core::routing::Callsign>) = {
-                let state = shared.state.lock().unwrap();
-                let mut names: Vec<airband_core::routing::Callsign> = Vec::new();
-                // the computers before this one in his list, as it is now
-                let before: Vec<&Computer> = state.computers.iter().take_while(|s| s.id() != station).collect();
-                before.iter().flat_map(|s| s.agents.iter().map(|a| a.parts())).for_each(|c| if !names.contains(&c) { names.push(c) });
-                (before.is_empty(), names)
-            };
-            if !first && told_taken.as_ref() != Some(&elsewhere) && radio.taken(&elsewhere) {
-                told_taken = Some(elsewhere);
-            }
+            tell_taken(&shared, &radio, &station, &mut told_taken);
         }
         if got.is_err() {
             let fails = shared.state.lock().unwrap().computer(&station).map(|s| s.fails).unwrap_or(1);
             thread::sleep(Duration::from_millis(if fails <= 1 { 300 } else { 2500 }));
         }
+    }
+}
+
+/// The teams this computer has are given their colours, beside every other computer's. Once every paired
+/// computer has answered, a colour kept for a team none of them has is let go. The words for him when the
+/// colours could not be kept.
+fn colour_teams(state: &mut State, station: &StationId) -> Option<String> {
+    let computer = state.computer(station)?;
+    let rooms: Vec<String> = computer.agents.iter().map(|a| a.room.clone()).chain(computer.messages.iter().map(|m| m.room.clone())).collect();
+    let lost = state.colours.see(rooms);
+    if !state.computers.iter().all(|c| c.answered_at.is_some()) {
+        return lost;
+    }
+    let all: std::collections::BTreeSet<String> = state.computers.iter().flat_map(|c| c.agents.iter().map(|a| a.room.clone()).chain(c.messages.iter().map(|m| m.room.clone()))).filter(|r| !r.is_empty()).collect();
+    lost.or(state.colours.keep_only(&all))
+}
+
+/// Two computers number their agents without knowing of each other. The later one in his list is told the
+/// names the earlier ones use, whenever those change, and keeps off them. `told` is what it was told last.
+fn tell_taken(shared: &Shared, radio: &Radio, station: &StationId, told: &mut Option<Vec<airband_core::routing::Callsign>>) {
+    let (earliest, elsewhere): (bool, Vec<airband_core::routing::Callsign>) = {
+        let state = shared.state.lock().unwrap();
+        let mut names: Vec<airband_core::routing::Callsign> = Vec::new();
+        // the computers before this one in his list, as it is now
+        let before: Vec<&Computer> = state.computers.iter().take_while(|s| s.id() != *station).collect();
+        before.iter().flat_map(|s| s.agents.iter().map(|a| a.parts())).for_each(|c| if !names.contains(&c) { names.push(c) });
+        (before.is_empty(), names)
+    };
+    if !earliest && told.as_ref() != Some(&elsewhere) && radio.taken(&elsewhere) {
+        *told = Some(elsewhere);
     }
 }

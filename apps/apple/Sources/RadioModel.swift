@@ -243,6 +243,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     }
 
     func refresh() {
+        // what the screen shows is in front of him: read, before it is drawn
+        desk.shown()
         // only when something he can see has changed: the chat is not laid out again for nothing
         let now = desk.view()
         if now != view {
