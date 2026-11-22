@@ -148,14 +148,45 @@ fn told(held: &Held, tell: Tell, line: &str, stop: Option<&str>) {
     }
 }
 
+/// How a holder drives its program: the two kinds a launcher's row can name (`airband_core::tools::Held`), by
+/// the word that row's `by` uses. The one place the word on the command line is read or written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum By {
+    Lines,
+    Acp,
+}
+impl By {
+    /// The kind a row of this shape names.
+    pub(crate) fn of(held: &airband_core::tools::Held) -> By {
+        match held {
+            airband_core::tools::Held::Lines { .. } => By::Lines,
+            airband_core::tools::Held::Acp { .. } => By::Acp,
+        }
+    }
+    /// As `--by` gives it: the row's own word for the kind.
+    pub(crate) fn word(self) -> &'static str {
+        match self {
+            By::Lines => "lines",
+            By::Acp => "acp",
+        }
+    }
+    fn read(word: &str) -> Option<By> {
+        [By::Lines, By::Acp].into_iter().find(|by| by.word() == word)
+    }
+}
+
 /// Run a coding tool's program held for the tower (`airband hold --sock … --by … -- program args`), driving it
 /// as `--by` says until it ends.
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
-    let (named, argv) = flags(args)?;
+    let crate::Words { flags: named, rest: stray, after: argv } = crate::words("hold", args, &["--sock", "--cwd", "--id", "--harness", "--by", "--line", "--stop", "--session", "--mode", "--model", "--effort"])?;
+    if let Some(word) = stray.first() {
+        return Err(format!("airband hold does not take \"{word}\""));
+    }
     let sock = named.get("sock").cloned().ok_or("airband hold needs --sock")?;
     let (program, rest) = argv.split_first().ok_or("airband hold needs a program after --")?;
     // which of the two drivers: the tower always says, and nothing is assumed when it does not
     let by = named.get("by").map(String::as_str).ok_or("airband hold needs --by")?;
+    let by = By::read(by).ok_or_else(|| format!("this version of airband does not drive a program by \"{by}\""))?;
     // a terminal closing, or the tower that started this going away, must not take the agent with it
     unsafe {
         libc::signal(libc::SIGHUP, libc::SIG_IGN);
@@ -169,20 +200,19 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     command.args(rest).current_dir(&cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     // A program whose holder reports for it stays quiet itself, hooks and all: two reports of the same thing
     // would be read to him twice.
-    if by == "acp" {
+    if by == By::Acp {
         command.env("AIRBAND_INTERNAL", "1");
     }
     let errors = Arc::new(Mutex::new(String::new()));
     let outcome = match command.spawn() {
         Err(e) => Err(format!("{program} did not start: {e}")),
         Ok(mut child) => {
-            pass_output(&mut child, tx, by == "acp");
+            pass_output(&mut child, tx, by == By::Acp);
             keep_errors(&mut child, errors.clone());
             let held = Held { id: named.get("id").cloned().unwrap_or_default(), harness: named.get("harness").cloned().unwrap_or_default(), cwd, rx, to_program: Arc::new(Mutex::new(child.stdin.take())), state: state.clone(), errors };
             let done = match by {
-                "lines" => lines(&held, named.get("line").ok_or("airband hold --by lines needs --line")?, named.get("stop").map(String::as_str)),
-                "acp" => crate::acp::run(&held, named.get("session").cloned(), named.get("mode").map(String::as_str), crate::acp::Asked { model: named.get("model").cloned(), effort: named.get("effort").cloned() }),
-                other => Err(format!("this version of airband does not drive a program by \"{other}\"")),
+                By::Lines => lines(&held, named.get("line").ok_or("airband hold --by lines needs --line")?, named.get("stop").map(String::as_str)),
+                By::Acp => crate::acp::run(&held, named.get("session").cloned(), named.get("mode").map(String::as_str), crate::acp::Asked { model: named.get("model").cloned(), effort: named.get("effort").cloned() }),
             };
             held.close_input();
             end(&mut child);
@@ -199,22 +229,6 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     outcome
 }
 
-/// The flags it was given, by name, and the program and its arguments after `--`.
-fn flags(args: &[String]) -> Result<(std::collections::BTreeMap<&str, String>, Vec<String>), String> {
-    let mut it = args.iter();
-    let mut named: std::collections::BTreeMap<&str, String> = Default::default();
-    let mut argv: Vec<String> = Vec::new();
-    while let Some(a) = it.next() {
-        match a.as_str() {
-            "--" => argv = it.by_ref().cloned().collect(),
-            flag @ ("--sock" | "--cwd" | "--id" | "--harness" | "--by" | "--line" | "--stop" | "--session" | "--mode" | "--model" | "--effort") => {
-                named.insert(&flag[2..], it.next().cloned().ok_or_else(|| format!("airband hold: {flag} needs a value"))?);
-            }
-            other => return Err(format!("airband hold does not take \"{other}\"")),
-        }
-    }
-    Ok((named, argv))
-}
 
 /// The socket the tower talks to it through, open to this user only: asked how it stands, it says; told
 /// something for the agent, it passes it on.
@@ -297,5 +311,17 @@ fn end_group() {
             libc::signal(libc::SIGTERM, libc::SIG_IGN);
             libc::kill(0, libc::SIGTERM);
         }
+    }
+}
+
+#[cfg(test)]
+mod by_tests {
+    use super::*;
+
+    #[test]
+    fn the_holder_kind_is_read_back_as_the_row_named_it() {
+        let lines = airband_core::tools::Held::Lines { fresh: Vec::new(), resume: Vec::new(), line: "{text}".into(), stop: None };
+        assert_eq!(By::read(By::of(&lines).word()), Some(By::Lines));
+        assert_eq!(By::read("lines "), None);
     }
 }

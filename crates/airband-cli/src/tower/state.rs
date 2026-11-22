@@ -78,12 +78,10 @@ pub(super) struct Team {
     pub(super) name: String,
     #[serde(default)]
     pub(super) folder: Option<String>,
-    /// He gave it this name. It keeps it though a team on another of his computers has it.
+    /// He chose this name (renamed it, made it from a radio, started an agent under it). It keeps it though a
+    /// team on another of his computers has it. A name the tower, the configuration or a model gave is not his.
     #[serde(default)]
     pub(super) named: bool,
-    /// The configuration lists it. Never kept: read from the configuration at the start.
-    #[serde(skip)]
-    pub(super) configured: bool,
 }
 #[derive(Serialize, Deserialize, Default)]
 pub(crate) struct Saved {
@@ -115,6 +113,11 @@ impl Inner {
     /// The agent that said a logged message, if it is still on the radio.
     pub(super) fn sender(&self, e: &Entry) -> Option<&Session> {
         e.agent.as_deref().and_then(|id| self.find(id))
+    }
+    /// What the one who said a logged message is called now, as it is said: its callsign while it is here, and
+    /// what the line was written down as coming from after it has gone.
+    pub(super) fn sender_name(&self, e: &Entry) -> String {
+        self.sender(e).map(|s| s.callsign.text()).unwrap_or_else(|| e.from.clone())
     }
     pub(super) fn reap(&mut self) -> bool {
         let dead: Vec<(String, String)> = self.sessions.iter().filter(|s| s.agent.deliver != Some(Deliver::Held) && s.agent.pid.is_some_and(|p| !alive(p))).map(|s| (s.agent.id.clone(), s.callsign.text())).collect();
@@ -189,6 +192,10 @@ mod tests {
     fn agent(id: &str, cwd: &str, title: Option<&str>) -> Agent {
         Agent { id: id.into(), harness: "test".into(), cwd: Some(cwd.into()), name: None, title: title.map(String::from), pid: None, deliver: None, meta: Default::default() }
     }
+    /// An agent reports in, and is taken in.
+    fn joins(inner: &mut Inner, agent: &Agent) -> Callsign {
+        inner.check_in(agent).expect("taken in")
+    }
     fn says(inner: &mut Inner, agent_id: &str, kind: Kind, text: &str) -> String {
         let s = inner.find(agent_id).unwrap().clone();
         let id = format!("m{}", inner.seq + 1);
@@ -208,7 +215,7 @@ mod tests {
         };
         let (shop, back, other_shop) = (folder("shop"), folder("back-office"), folder("elsewhere/shop"));
         let mut inner = Inner::default();
-        inner.check_in(&agent("a", &shop, None));
+        joins(&mut inner, &agent("a", &shop, None));
         inner.worked = vec![(back.clone(), vec!["codex".into()], 9), (other_shop.clone(), vec!["claude-code".into()], 7), (shop.clone(), vec!["claude-code".into(), "codex".into()], 5)];
         let recent = inner.recent();
         let listed: Vec<(&str, &str, bool, u64)> = recent.iter().map(|r| (r.name.as_str(), r.folder.as_str(), r.team, r.at)).collect();
@@ -216,7 +223,7 @@ mod tests {
         // another folder called as his team is would be a team of its own, its parent's name in front
         assert_eq!(listed, [("back office", back.as_str(), false, 9), ("elsewhere shop", other_shop.as_str(), false, 7), ("shop", shop.as_str(), true, 5)]);
         // by name: his team keeps its name, and a folder that is only recent never takes it
-        let launchable = inner.launchable();
+        let launchable: BTreeMap<String, String> = inner.launchable().into_iter().map(|p| (p.name, p.folder)).collect();
         assert_eq!(launchable.get("shop").map(|f| real_folder(f)), Some(real_folder(&shop)));
         assert_eq!(launchable.get("elsewhere shop"), Some(&other_shop));
         assert_eq!(launchable.get("back office"), Some(&back));
@@ -230,14 +237,14 @@ mod tests {
     #[test]
     fn a_team_is_a_folder_and_two_folders_that_read_alike_are_two_teams_called_apart() {
         let mut inner = Inner { here: "Laptop".into(), ..Inner::default() };
-        assert_eq!(inner.check_in(&agent("a", "/a/work/shop", None)).text(), "shop one");
+        assert_eq!(joins(&mut inner, &agent("a", "/a/work/shop", None)).text(), "shop one");
         // another folder of the same name: its parent's name goes in front, so the two are never said alike
-        assert_eq!(inner.check_in(&agent("b", "/b/work/shop", None)).text(), "work shop one");
+        assert_eq!(joins(&mut inner, &agent("b", "/b/work/shop", None)).text(), "work shop one");
         // and a third goes up one more
-        assert_eq!(inner.check_in(&agent("c", "/c/work/shop", None)).text(), "c work shop one");
+        assert_eq!(joins(&mut inner, &agent("c", "/c/work/shop", None)).text(), "c work shop one");
         // a second agent in a folder joins that folder's team, however the path is written
-        assert_eq!(inner.check_in(&agent("d", "/b/work/shop/", None)).text(), "work shop two");
-        assert_eq!(inner.check_in(&agent("e", "/a/work/shop", None)).text(), "shop two");
+        assert_eq!(joins(&mut inner, &agent("d", "/b/work/shop/", None)).text(), "work shop two");
+        assert_eq!(joins(&mut inner, &agent("e", "/a/work/shop", None)).text(), "shop two");
         let named = |inner: &Inner, folder: &str| inner.team_name(&inner.team_at(folder).unwrap());
         assert_eq!(named(&inner, "/b/work/shop"), "work shop");
         let d = inner.folder_team("/d/shop").unwrap();
@@ -250,9 +257,9 @@ mod tests {
         let mut inner = Inner { here: "Laptop".into(), ..Inner::default() };
         // told first: a new folder's team keeps off the name
         inner.taken_elsewhere(&[theirs("shop")]);
-        assert_eq!(inner.check_in(&agent("a", "/x/shop", None)).text(), "laptop shop one");
+        assert_eq!(joins(&mut inner, &agent("a", "/x/shop", None)).text(), "laptop shop one");
         // told after: a team here that has the name is renamed, and its agents go with it
-        assert_eq!(inner.check_in(&agent("b", "/x/garden", None)).text(), "garden one");
+        assert_eq!(joins(&mut inner, &agent("b", "/x/garden", None)).text(), "garden one");
         assert!(inner.taken_elsewhere(&[theirs("shop"), theirs("garden")]));
         assert_eq!(names(&inner), ["laptop shop one", "laptop garden one"]);
         let garden = inner.team_at("/x/garden").unwrap();
@@ -269,7 +276,7 @@ mod tests {
     fn a_team_whose_every_name_is_taken_keeps_none_that_clashes() {
         let theirs = |team: &str| Callsign { project: team.into(), number: "one".into(), named: false };
         let mut inner = Inner { here: "Laptop".into(), ..Inner::default() };
-        inner.check_in(&agent("a", "/x/shop", None));
+        joins(&mut inner, &agent("a", "/x/shop", None));
         let shop = inner.team_at("/x/shop").unwrap();
         // every name its folder could have, with or without this computer's name, is a team elsewhere
         inner.taken_elsewhere(&[theirs("shop"), theirs("x shop"), theirs("laptop shop"), theirs("laptop x shop")]);
@@ -281,7 +288,7 @@ mod tests {
     #[test]
     fn an_agent_taken_over_keeps_its_name_and_the_radios_are_told() {
         let mut inner = Inner::default();
-        let first = inner.check_in(&agent("a", "/x/shop", None));
+        let first = joins(&mut inner, &agent("a", "/x/shop", None));
         let s = inner.find("a").cloned().unwrap();
         inner.record(Entry::said("m1".into(), &s, None, "done".into()));
         // back from a new process under another number, as checking in again can give it
@@ -291,7 +298,7 @@ mod tests {
         assert_eq!(inner.find("a").unwrap().callsign, first);
         assert!(inner.rev > rev && inner.log.iter().find(|e| e.id == "m1").unwrap().rev > rev);
         // a name someone else has taken meanwhile is not taken from them
-        inner.check_in(&agent("b", "/x/shop", None));
+        joins(&mut inner, &agent("b", "/x/shop", None));
         let b = inner.find("b").unwrap().callsign.clone();
         assert!(!inner.keep_name("a", b));
     }
@@ -299,15 +306,15 @@ mod tests {
     #[test]
     fn renaming_a_team_changes_only_what_it_is_called() {
         let mut inner = Inner::default();
-        inner.check_in(&agent("a", "/x/shop", Some("refunds")));
-        inner.check_in(&agent("b", "/x/shop", None));
+        joins(&mut inner, &agent("a", "/x/shop", Some("refunds")));
+        joins(&mut inner, &agent("b", "/x/shop", None));
         let shop = inner.team_at("/x/shop").unwrap();
         assert_eq!(inner.rename_team(&shop, "Store Front"), Ok("store front".to_string()));
         assert_eq!(names(&inner), ["store front refunds", "store front one"]);
         // its folder is still its folder: a new agent there joins it
-        assert_eq!(inner.check_in(&agent("c", "/x/shop", None)).text(), "store front two");
+        assert_eq!(joins(&mut inner, &agent("c", "/x/shop", None)).text(), "store front two");
         // a name another team has, or none, is refused in words
-        inner.check_in(&agent("d", "/x/garden", None));
+        joins(&mut inner, &agent("d", "/x/garden", None));
         let garden = inner.team_at("/x/garden").unwrap();
         assert_eq!(inner.rename_team(&garden, "store front"), Err("There is already a team called store front, here or on another of your computers.".to_string()));
         assert!(inner.rename_team(&garden, "!!").is_err());
@@ -318,7 +325,7 @@ mod tests {
     #[test]
     fn a_renamed_team_keeps_its_lines_its_folder_and_its_id() {
         let mut inner = Inner { here: "Laptop".into(), ..Inner::default() };
-        inner.check_in(&agent("a", "/x/shop", None));
+        joins(&mut inner, &agent("a", "/x/shop", None));
         let shop = inner.team_at("/x/shop").unwrap();
         says(&mut inner, "a", Kind::Report, "done");
         // its agent goes away; what it said stays in the team's view after the team is renamed
@@ -329,7 +336,7 @@ mod tests {
         let m = inner.message(&line);
         assert_eq!((m.team.as_str(), m.group.as_str()), (shop.as_str(), "store"));
         // renamed by the tower (another computer has the name): the id, and so the phone's room and colour, stay
-        inner.check_in(&agent("b", "/x/garden", None));
+        joins(&mut inner, &agent("b", "/x/garden", None));
         let garden = inner.team_at("/x/garden").unwrap();
         let theirs = Callsign { project: "garden".into(), number: "one".into(), named: false };
         assert!(inner.taken_elsewhere(&[theirs]));
@@ -355,7 +362,7 @@ mod tests {
         inner.configure_teams(&listed);
         assert_eq!(inner.folder_teams().into_keys().collect::<Vec<_>>(), ["store"]);
         // an agent that starts there joins it
-        assert_eq!(inner.check_in(&agent("a", &folder, None)).text(), "store one");
+        assert_eq!(joins(&mut inner, &agent("a", &folder, None)).text(), "store one");
         let _ = std::fs::remove_dir_all(&here);
     }
 
@@ -382,20 +389,20 @@ mod tests {
     fn one_found_by_its_tools_list_goes_to_the_team_it_was_started_under_when_it_says_so() {
         let mut inner = Inner::default();
         // first heard of from its tool's list: no name, so it is in its folder's team
-        assert_eq!(inner.check_in(&agent("a", "/x/shop", None)).text(), "shop one");
+        assert_eq!(joins(&mut inner, &agent("a", "/x/shop", None)).text(), "shop one");
         // its own first report has the name it was started under
         let mut named = agent("a", "/x/shop", None);
         named.name = Some("garden".into());
-        assert_eq!(inner.check_in(&named).text(), "garden one");
+        assert_eq!(joins(&mut inner, &named).text(), "garden one");
         // and stays there on every report after
-        assert_eq!(inner.check_in(&named).text(), "garden one");
+        assert_eq!(joins(&mut inner, &named).text(), "garden one");
         // one he moved himself is left where he put it
-        inner.check_in(&agent("b", "/x/shop", None));
-        let orchard = inner.named_team("orchard").unwrap();
+        joins(&mut inner, &agent("b", "/x/shop", None));
+        let orchard = inner.new_team("orchard", true).unwrap();
         inner.move_to("b", &orchard, Mover::Him);
         let mut late = agent("b", "/x/shop", None);
         late.name = Some("garden".into());
-        assert_eq!(inner.check_in(&late).project, "orchard");
+        assert_eq!(joins(&mut inner, &late).project, "orchard");
     }
 
     /// A request for leave from `agent_id`, as `permit::ask` records it.
@@ -415,7 +422,7 @@ mod tests {
     #[test]
     fn a_request_for_leave_offers_an_answer_only_while_the_harness_waits() {
         let mut inner = Inner::default();
-        inner.check_in(&agent("a", "/x/shop", None));
+        joins(&mut inner, &agent("a", "/x/shop", None));
         let line = asks_leave(&mut inner, "a", "p1", "run `make`");
         assert!(card(&inner, &line).permission && card(&inner, &line).options.len() == 2);
         // the harness stopped asking after it: the next sweep closes it, and the line says where it went
@@ -431,7 +438,7 @@ mod tests {
     #[test]
     fn every_way_a_request_ends_closes_its_line_and_says_whether_the_agent_waits() {
         let mut inner = Inner::default();
-        inner.check_in(&agent("a", "/x/shop", None));
+        joins(&mut inner, &agent("a", "/x/shop", None));
         let waits = |inner: &mut Inner| inner.session("a").unwrap().waiting;
         let open = |inner: &mut Inner, permit: &str| {
             let line = asks_leave(inner, "a", permit, "run `make`");
@@ -466,7 +473,7 @@ mod tests {
     #[test]
     fn a_request_from_before_the_tower_started_is_over() {
         let mut inner = Inner::default();
-        inner.check_in(&agent("a", "/x/shop", None));
+        joins(&mut inner, &agent("a", "/x/shop", None));
         let line = asks_leave(&mut inner, "a", "p1", "run `make`");
         // what a restart leaves: the line as saved, and no record of anyone waiting
         inner.permits.clear();
@@ -480,28 +487,28 @@ mod tests {
     #[test]
     fn numbers_in_order_and_a_name_he_gave_takes_its_number() {
         let mut inner = Inner::default();
-        inner.check_in(&agent("a", "/x/shop", None));
-        inner.check_in(&agent("b", "/x/shop", None));
+        joins(&mut inner, &agent("a", "/x/shop", None));
+        joins(&mut inner, &agent("b", "/x/shop", None));
         assert_eq!(names(&inner), ["shop one", "shop two"]);
         // he named a third session "shop 2": it takes two, and the one that had it by arrival moves on
-        inner.check_in(&agent("c", "/x/shop", Some("shop 2")));
+        joins(&mut inner, &agent("c", "/x/shop", Some("shop 2")));
         assert_eq!(names(&inner), ["shop one", "shop three", "shop two"]);
         // the same name again changes nothing; a new name renames
-        inner.check_in(&agent("c", "/x/shop", Some("shop 2")));
-        inner.check_in(&agent("c", "/x/shop", Some("questions")));
+        joins(&mut inner, &agent("c", "/x/shop", Some("shop 2")));
+        joins(&mut inner, &agent("c", "/x/shop", Some("questions")));
         assert_eq!(names(&inner), ["shop one", "shop three", "shop questions"]);
         // a name another session was given by him is not taken from it
-        inner.check_in(&agent("d", "/x/shop", Some("shop questions")));
+        joins(&mut inner, &agent("d", "/x/shop", Some("shop questions")));
         assert_eq!(names(&inner)[3], "shop two");
     }
 
     #[test]
     fn a_question_stays_open_through_a_rename_and_follows_the_agent() {
         let mut inner = Inner::default();
-        inner.check_in(&agent("a", "/x/backoffice", None));
+        joins(&mut inner, &agent("a", "/x/backoffice", None));
         let q = says(&mut inner, "a", Kind::NeedsYou, "Ship it?");
         let before = inner.rev;
-        inner.check_in(&agent("a", "/x/backoffice", Some("backoffice login fix")));
+        joins(&mut inner, &agent("a", "/x/backoffice", Some("backoffice login fix")));
         assert!(inner.open_ids().contains(&q));
         let m = inner.message(&inner.log[0]);
         // the room is the project, however many words the name has
@@ -513,10 +520,10 @@ mod tests {
     #[test]
     fn a_dead_agents_question_does_not_pass_to_whoever_takes_its_callsign() {
         let mut inner = Inner::default();
-        inner.check_in(&agent("old", "/x/shop", None));
+        joins(&mut inner, &agent("old", "/x/shop", None));
         let q = says(&mut inner, "old", Kind::NeedsYou, "Rewrite them?");
         inner.remove("old");
-        inner.check_in(&agent("new", "/x/shop", None));
+        joins(&mut inner, &agent("new", "/x/shop", None));
         assert_eq!(names(&inner), ["shop one"]);
         assert!(inner.open_ids().is_empty());
         // the old line still says who asked, and is nobody's now
@@ -526,8 +533,8 @@ mod tests {
     #[test]
     fn open_means_asked_and_not_yet_answered() {
         let mut inner = Inner::default();
-        inner.check_in(&agent("a", "/x/shop", None));
-        inner.check_in(&agent("b", "/x/backoffice", None));
+        joins(&mut inner, &agent("a", "/x/shop", None));
+        joins(&mut inner, &agent("b", "/x/backoffice", None));
         let qa = says(&mut inner, "a", Kind::NeedsYou, "Rewrite them?");
         let qb = says(&mut inner, "b", Kind::NeedsYou, "Ship it?");
         says(&mut inner, "a", Kind::Fyi, "Still here.");
@@ -554,7 +561,7 @@ mod tests {
     fn what_an_agent_is_doing() {
         let mut inner = Inner::default();
         for id in ["w", "q", "s", "d"] {
-            inner.check_in(&agent(id, &format!("/x/{id}"), None));
+            joins(&mut inner, &agent(id, &format!("/x/{id}"), None));
         }
         let q = says(&mut inner, "q", Kind::NeedsYou, "Ship it?");
         says(&mut inner, "s", Kind::Stalled, "Two done. I'll do the third next.");
@@ -579,7 +586,7 @@ mod tests {
         }
         inner.call("desk").held = true;
         assert_eq!(inner.free_radio().as_deref(), Some("phone"));
-        inner.check_in(&agent("a", "/x/shop", None));
+        joins(&mut inner, &agent("a", "/x/shop", None));
         let t = queued(&mut inner, "a", Kind::NeedsYou, "Ship it?");
         inner.call("phone").outbox = Some(Transmission { id: t.clone(), agent: String::new(), callsign: "shop one".into(), kind: Kind::NeedsYou, say: String::new(), waiting: 0 });
         inner.call("phone").ready = false;
@@ -605,7 +612,7 @@ mod tests {
     #[test]
     fn a_report_he_has_not_heard_is_kept_when_he_speaks_to_its_agent_and_its_question_is_not() {
         let mut inner = Inner::default();
-        inner.check_in(&agent("a", "/x/shop", None));
+        joins(&mut inner, &agent("a", "/x/shop", None));
         let report = queued(&mut inner, "a", Kind::Report, "Shipped.");
         let question = queued(&mut inner, "a", Kind::NeedsYou, "Ship the next one?");
         inner.no_longer_waiting("a");
@@ -619,8 +626,8 @@ mod tests {
     #[test]
     fn every_way_out_of_the_reading_queue_is_written_down_with_its_reason() {
         let mut inner = Inner::default();
-        inner.check_in(&agent("a", "/x/shop", None));
-        inner.check_in(&agent("b", "/x/backoffice", None));
+        joins(&mut inner, &agent("a", "/x/shop", None));
+        joins(&mut inner, &agent("b", "/x/backoffice", None));
         // routine: the judge found nothing for his ears
         let routine = queued(&mut inner, "a", Kind::Report, "Still going.");
         inner.fill(&routine, &judge::Judged { kind: Kind::Fyi, say: "Still going.".into(), options: Vec::new(), recommended: None, read: None, background: false, own_session: false });
@@ -650,7 +657,7 @@ mod tests {
     #[test]
     fn a_line_dropped_while_he_was_listening_is_marked_as_missed_with_its_reason() {
         let mut inner = Inner::default();
-        inner.check_in(&agent("a", "/x/shop", None));
+        joins(&mut inner, &agent("a", "/x/shop", None));
         // nobody on a call: a report replaced by a newer one was never going to be read, and is not marked
         let early = queued(&mut inner, "a", Kind::Report, "Half done.");
         inner.set_aloud(&early, Aloud::dropped(Dropped::Superseded));
@@ -681,7 +688,7 @@ mod tests {
     fn a_radio_is_where_it_says_it_is() {
         use airband_core::radio::Presence as Said;
         let mut inner = Inner::default();
-        inner.check_in(&agent("a", "/x/shop", None));
+        joins(&mut inner, &agent("a", "/x/shop", None));
         // it says it is showing the chat and not on a call: there is someone to ask, and nobody to read to
         inner.radio_says("phone", Said { on_call: false, showing_chat: true });
         assert!(inner.following() && !inner.connected() && inner.call("phone").presence.showing_chat());
@@ -719,7 +726,7 @@ mod tests {
     #[test]
     fn what_a_radio_took_and_did_not_hear_goes_back_in_the_queue() {
         let mut inner = Inner::default();
-        inner.check_in(&agent("a", "/x/shop", None));
+        joins(&mut inner, &agent("a", "/x/shop", None));
         let report = queued(&mut inner, "a", Kind::Report, "Shipped.");
         inner.set_aloud(&report, Aloud::Handed { radio: "phone".into(), at: 1 });
         inner.call("phone").handed = Some(Transmission { id: report.clone(), agent: String::new(), callsign: "shop one".into(), kind: Kind::Report, say: String::new(), waiting: 0 });
@@ -736,8 +743,8 @@ mod tests {
     #[test]
     fn at_start_a_gone_agents_question_goes_and_its_recent_report_stays() {
         let mut inner = Inner::default();
-        inner.check_in(&agent("a", "/x/shop", None));
-        inner.check_in(&agent("b", "/x/backoffice", None));
+        joins(&mut inner, &agent("a", "/x/shop", None));
+        joins(&mut inner, &agent("b", "/x/backoffice", None));
         let live = queued(&mut inner, "a", Kind::NeedsYou, "Ship it?");
         let report = queued(&mut inner, "b", Kind::Report, "Refunds sent.");
         let old = queued(&mut inner, "b", Kind::Report, "Started.");
@@ -753,10 +760,90 @@ mod tests {
     #[test]
     fn a_radio_that_only_reads_and_types_keeps_who_it_was_talking_to() {
         let mut inner = Inner::default();
-        inner.check_in(&agent("a", "/x/shop", None));
+        joins(&mut inner, &agent("a", "/x/shop", None));
         // never on a call: it has not polled for anything to play
         inner.call("phone").focus = Some("a".into());
         inner.reap();
         assert_eq!(inner.calls.get("phone").and_then(|c| c.focus.as_deref()), Some("a"));
+    }
+
+    fn kept_session(id: &str, cwd: Option<&str>, project: &str) -> Session {
+        Session { agent: Agent { cwd: cwd.map(String::from), ..agent(id, "", None) }, callsign: Callsign { project: project.into(), number: "one".into(), named: false }, team: String::new(), waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false, hooked: false, turn: None }
+    }
+
+    #[test]
+    fn an_agent_no_team_can_be_found_for_is_not_taken_in_under_a_made_up_team() {
+        let mut inner = Inner::default();
+        // no name it was started under, and a folder with no name in its path
+        let _ = inner.check_in(&agent("a", "/", None));
+        assert!(inner.sessions.is_empty());
+        assert!(inner.teams.is_empty());
+    }
+
+    #[test]
+    fn a_kept_agent_whose_team_is_gone_goes_to_its_folders_team_or_is_let_go() {
+        let mut inner = Inner { sessions: vec![kept_session("a", Some("/x/shop"), "gone"), kept_session("b", None, "!!")], ..Inner::default() };
+        inner.settle_teams(BTreeMap::new(), BTreeSet::new());
+        // no team is made from a name nothing has, and nobody is left in no team
+        assert_eq!(inner.teams.values().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["shop"]);
+        assert_eq!(inner.sessions.iter().map(|s| (s.agent.id.as_str(), s.team.as_str())).collect::<Vec<_>>(), [("a", "/x/shop")]);
+    }
+
+    #[test]
+    fn an_agent_started_under_a_name_comes_back_to_its_team_after_he_renames_it() {
+        let mut inner = Inner::default();
+        let mut garden = agent("a", "/x/shop", None);
+        garden.name = Some("garden".into());
+        assert_eq!(joins(&mut inner, &garden).text(), "garden one");
+        let team = inner.team_called("garden").unwrap();
+        inner.rename_team(&team, "orchard").unwrap();
+        // it goes away and checks in again, still started under the old name
+        inner.remove("a");
+        assert_eq!(joins(&mut inner, &garden).text(), "orchard one");
+        assert_eq!(inner.teams.len(), 1);
+    }
+
+    #[test]
+    fn a_name_an_agent_is_started_under_keeps_team_names_distinct_and_short() {
+        let mut inner = Inner { here: "Laptop".into(), elsewhere: vec![Callsign { project: "garden".into(), number: "one".into(), named: false }], ..Inner::default() };
+        let mut a = agent("a", "/x/shop", None);
+        a.name = Some("garden".into());
+        let _ = inner.check_in(&a);
+        let mut b = agent("b", "/x/shop", None);
+        b.name = Some("a name far longer than any team may have".into());
+        let _ = inner.check_in(&b);
+        // neither is a team here: one is the name of a team on another computer, the other is too long
+        assert!(inner.teams.values().all(|t| t.name != "garden" && t.name.chars().count() <= 24), "{:?}", inner.teams);
+    }
+
+    #[test]
+    fn a_clash_with_another_computer_that_no_name_settles_is_not_said_to_be_a_rename() {
+        let mut inner = Inner { here: "Laptop".into(), ..Inner::default() };
+        let shop = inner.folder_team("/shop").unwrap();
+        let theirs = |t: &str| Callsign { project: t.into(), number: "nine".into(), named: false };
+        assert!(!inner.taken_elsewhere(&[theirs("shop"), theirs("laptop shop")]));
+        assert_eq!(inner.team_name(&shop), "shop");
+    }
+
+    #[test]
+    fn a_new_team_is_never_an_old_one_by_its_name_and_a_models_name_is_not_his() {
+        let mut inner = Inner::default();
+        inner.folder_team("/x/shop").unwrap();
+        assert!(inner.new_team("shop", false).is_err());
+        assert_eq!(inner.teams.len(), 1);
+        let orchard = inner.new_team("orchard", false).unwrap();
+        assert!(!inner.teams[&orchard].named);
+    }
+
+    #[test]
+    fn a_start_keeps_the_name_he_gave_a_configured_team_and_makes_no_ghost() {
+        let old: BTreeMap<String, String> = [("garden".to_string(), "/x/shop".to_string())].into();
+        let listed: BTreeMap<String, String> = [("shop".to_string(), "/x/shop".to_string())].into();
+        let mut inner = Inner { sessions: vec![kept_session("a", Some("/x/shop"), "garden")], ..Inner::default() };
+        inner.log.push(Entry { id: "l1".into(), team: "garden".into(), ..Entry::default() });
+        inner.teams_at_start(old, ["garden".to_string()].into(), &listed);
+        assert_eq!(inner.teams.iter().map(|(id, t)| (id.as_str(), t.name.as_str(), t.named)).collect::<Vec<_>>(), [("/x/shop", "garden", true)]);
+        assert_eq!(inner.sessions[0].callsign.text(), "garden one");
+        assert_eq!(inner.log[0].team, "/x/shop");
     }
 }

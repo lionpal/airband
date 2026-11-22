@@ -31,15 +31,19 @@ pub(super) fn folder_at(path: &str) -> Result<std::path::PathBuf, String> {
     Ok(at)
 }
 
-/// The folders inside one of his, for choosing where a new team works. A Mac asks him, at the Mac, the first
-/// time a program opens some of his folders (the desktop, his documents, another disk), and the read waits for
-/// his answer: so it is done to one side and given a few seconds, and he is told when it is the Mac that is
-/// in the way.
+/// What he is told when the computer refuses airband a folder: the system said so, and its settings decide it.
+const FOLDER_REFUSED: &str = "This computer does not let airband open this folder. Its privacy settings decide which folders airband can open.";
+/// What he is told when a folder does not open in time. Nothing says why, so he is told only that.
+const FOLDER_SLOW: &str = "This folder did not open within five seconds.";
+
+/// The folders inside one of his, for choosing where a new team works. Some computers ask him, at the computer,
+/// the first time a program opens some of his folders, and the read waits for his answer: so it is done to one
+/// side and given five seconds.
 pub(super) async fn folders(State(app): State<Arc<App>>, Json(ask): Json<airband_core::radio::FoldersAsk>) -> Json<Value> {
     let read = tokio::task::spawn_blocking(move || {
         folder_at(&ask.under).and_then(|at| {
             let entries = std::fs::read_dir(&at).map_err(|e| match e.kind() {
-                std::io::ErrorKind::PermissionDenied => "Your Mac does not let airband open this folder. To allow it, open System Settings on the Mac, then Privacy & Security, then Files and Folders.".to_string(),
+                std::io::ErrorKind::PermissionDenied => FOLDER_REFUSED.to_string(),
                 _ => "That folder cannot be opened from here.".to_string(),
             })?;
             let mut inside: Vec<airband_core::radio::Folder> = entries.flatten().filter(|e| e.path().is_dir())
@@ -60,7 +64,7 @@ pub(super) async fn folders(State(app): State<Arc<App>>, Json(ask): Json<airband
         }
         Ok(Ok(Err(why))) => refused(why),
         Ok(Err(_)) => refused("That folder cannot be opened from here."),
-        Err(_) => refused("This folder is taking too long to open. Your Mac may be asking whether airband can open it. Answer at the Mac, then try again."),
+        Err(_) => refused(FOLDER_SLOW),
     })
 }
 
@@ -103,26 +107,24 @@ pub(super) async fn project(State(app): State<Arc<App>>, Json(new): Json<airband
         Ok(f) => f,
         Err(why) => return Json(refused(why)),
     };
+    let at = folder.display().to_string();
     let id = {
         let mut inner = app.change();
-        let at = folder.display().to_string();
         match inner.team_at(&at) {
             // a folder that has a team: another agent joins it
             Some(team) => {
                 name = inner.team_name(&team);
                 team
             }
-            None if !inner.name_free(&name, None) => {
-                return Json(refused(format!("There is already a team called {name}, here or on another of your computers.")));
-            }
-            None => {
+            None => match inner.chosen_team(&name, None) {
+                Err(why) => return Json(refused(why)),
                 // the name came from his radio, so he chose it, even where it is the one the folder would give,
                 // and it stays his
-                let id = sessions::real_folder(&at);
-                inner.teams.insert(id.clone(), Team { name: name.clone(), folder: Some(id.clone()), named: true, configured: false });
-                log(format!("a radio made the team {name}, in {at}"));
-                id
-            }
+                Ok(chosen) => {
+                    log(format!("a radio made the team {chosen}, in {at}"));
+                    inner.new_folder_team(&at, chosen, true)
+                }
+            },
         }
     };
     // its first agent, with nothing to do yet, when the tower runs agents itself: the team is then there to see
@@ -130,6 +132,7 @@ pub(super) async fn project(State(app): State<Arc<App>>, Json(new): Json<airband
     if !held {
         return Json(json!({ "say": format!("{name} is ready. Say launch {name}, then what it should do."), "team": name, "id": id }));
     }
-    let reply = launch::launch(&app, &name, &Idea { tool: new.tool.clone(), project: Some(name.clone()), model: None, effort: None, task: String::new() }).await;
+    let place = Place { name: name.clone(), folder: at };
+    let reply = launch::launch(&app, &place, &Idea { tool: new.tool.clone(), project: Some(place.clone()), model: None, effort: None, task: String::new() }).await;
     Json(json!({ "say": reply.say, "team": name, "id": id }))
 }

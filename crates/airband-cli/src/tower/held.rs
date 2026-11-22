@@ -145,9 +145,10 @@ async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Started, Stri
     holder.arg("hold").arg("--sock").arg(&sock).arg("--cwd").arg(&kept.cwd).arg("--id").arg(&kept.id).arg("--harness").arg(&launcher.harness);
     // whether the program was started under the id the tower chose: one that was reports under it by itself
     let mut given_id = false;
+    holder.arg("--by").arg(crate::hold::By::of(held).word());
     let program: Vec<String> = match held {
         config::Held::Lines { fresh: new, resume, line, stop } => {
-            holder.arg("--by").arg("lines").arg("--line").arg(line);
+            holder.arg("--line").arg(line);
             if let Some(stop) = stop {
                 holder.arg("--stop").arg(stop);
             }
@@ -160,7 +161,6 @@ async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Started, Stri
             argv.into_iter().chain(session).collect()
         }
         config::Held::Acp { program, mode } => {
-            holder.arg("--by").arg("acp");
             if let Some(mode) = mode {
                 holder.arg("--mode").arg(mode);
             }
@@ -477,7 +477,9 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
     let mut agent = session.agent.clone();
     agent.deliver = Some(Deliver::Held);
     agent.pid = None;
-    inner.check_in(&agent);
+    if inner.check_in(&agent).is_none() {
+        return Err("It has no team airband can put it in.".into());
+    }
     if !inner.keep_name(id, session.callsign.clone()) {
         log(format!("{} was taken while it moved, so it keeps the name it came back with", session.callsign.text()));
     }
