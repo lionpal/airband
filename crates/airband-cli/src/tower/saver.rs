@@ -17,6 +17,20 @@ pub(crate) struct Saver {
     jobs: mpsc::Sender<Job>,
 }
 
+/// Asks the writer to finish, and waits at most so long: the writer may be what failed.
+pub(crate) struct Flusher {
+    jobs: Mutex<mpsc::Sender<Job>>,
+}
+impl Flusher {
+    pub(super) fn flush_within(&self, most: std::time::Duration) {
+        let (done, wait) = mpsc::sync_channel(1);
+        let Ok(jobs) = self.jobs.try_lock() else { return };
+        if jobs.send(Job::Flush(done)).is_ok() {
+            wait.recv_timeout(most).ok();
+        }
+    }
+}
+
 impl Saver {
     /// Start writing to `store`, on a thread of its own.
     pub(super) fn start(store: Arc<Store>) -> Saver {
@@ -93,6 +107,11 @@ impl Saver {
         }
     }
 
+    /// A way to ask for what is handed over to be written, for the tower's failure hook.
+    pub(super) fn flusher(&self) -> Flusher {
+        Flusher { jobs: Mutex::new(self.jobs.clone()) }
+    }
+
     /// Wait until everything handed over so far is written: before the tower stops, and in tests.
     pub(super) fn flush(&self) {
         let (done, wait) = mpsc::sync_channel(1);
@@ -123,6 +142,21 @@ mod tests {
         // what an agent is doing this minute is not kept, so it writes nothing
         inner.session("a").unwrap().doing = Some("reading".into());
         assert!(inner.changes().tables.is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_failure_hook_writes_what_was_handed_over_and_never_waits_long_on_a_writer_that_is_stuck() {
+        let app = crate::tower::http::tests::app("saver-hook");
+        app.change().check_in(&agent("a")).unwrap();
+        app.saver.flusher().flush_within(Duration::from_secs(3));
+        assert_eq!(app.store.load(10).unwrap().0.sessions.len(), 1);
+        // the writer held up: the hook gives up in its time
+        let busy = app.store.hold();
+        app.change().check_in(&agent("b")).unwrap();
+        let began = std::time::Instant::now();
+        app.saver.flusher().flush_within(Duration::from_millis(200));
+        assert!(began.elapsed() < Duration::from_secs(2));
+        drop(busy);
     }
 
     #[tokio::test]

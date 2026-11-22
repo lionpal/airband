@@ -69,14 +69,21 @@ fn settle_keys() {
 
 /// A tower with one part dead answers nothing and looks alive. Anything that goes wrong badly enough to stop a
 /// thread stops the tower, which is then started again (launchd, systemd), whole.
+/// What has been handed to the database's writer is written first, as far as it can be in a moment: a receipt
+/// already answered must not lose its chat line.
 fn stop_whole_on_failure() {
     let usual = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         usual(info);
         log(format!("the tower stopped itself after an internal failure: {info}"));
+        if let Some(saver) = SAVER.get() {
+            saver.flush_within(Duration::from_secs(3));
+        }
         std::process::exit(101);
     }));
 }
+/// The tower's writer, for the failure hook to finish with.
+static SAVER: std::sync::OnceLock<saver::Flusher> = std::sync::OnceLock::new();
 
 /// A newer catalogue, now and twice a day: what a phone is offered for this computer comes from it.
 fn keep_catalogue_fresh() {
@@ -125,6 +132,7 @@ fn open(cfg: Config) -> Result<Arc<App>, String> {
     inner.settle_reading();
     let push = push::Wake::load(&store, &cfg.pairings)?;
     let saver = saver::Saver::start(store.clone());
+    SAVER.set(saver.flusher()).ok();
     let app = Arc::new(App { push, settings: Settings::new(cfg), store, saver, inner: Mutex::new(inner), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default(), reviving: Default::default(), listening: Default::default() });
     // what was changed while starting (a credential masked in a kept message) is written now, not at the next
     // thing an agent says
