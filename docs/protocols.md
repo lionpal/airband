@@ -51,7 +51,7 @@ pairing link carries, opens `/v1/radio/` only.
 |---|---|
 | `socket` | A socket at `path` on the tower's machine that takes a turn as one line of JSON, after a line showing `token` when it asks for one. Claude Code's per-session inbox is one. |
 | `command` | Runs `argv` with the message on standard input and `AIRBAND_AGENT_ID` in the environment. |
-| `keys` | Types the message into the terminal pane `tmux` and presses Enter. Works for anything in a terminal. |
+| `keys` | Types the message into a terminal's `pane` and presses Enter, as the terminal's row in `catalog/terminals/` says. Works for anything in a terminal. |
 | `held` | The tower runs this agent and holds its input: his words are written there as his own turn. |
 | `harness` | Through the agent's own tool, by `name`, into its `session`: whatever way that tool takes a turn of his into a session already open (Codex's queue, OpenCode's server). The tower's adapter for the tool knows how. |
 | none | The agent can be heard but not answered. |
@@ -90,7 +90,7 @@ answers only.
 
 ### Putting another harness on the radio
 
-- No code: `airband report --id "$SESSION" --harness codex --tmux "$TMUX_PANE" said "$LAST_MESSAGE"`, from
+- No code: `airband report --id "$SESSION" --harness codex --terminal tmux --pane "$TMUX_PANE" said "$LAST_MESSAGE"`, from
   whatever the harness can run. `… permission "run \`$COMMAND\`"` waits for him and exits 0 for yes, 1 for no
   (his reason on standard output), 2 for no answer.
 - An adapter: a module in `crates/airband-cli/src/adapters/`, selected as `airband hook <harness>`.

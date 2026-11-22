@@ -44,13 +44,14 @@ pub(super) async fn deliver(app: &Arc<App>, how: &Deliver, agent_id: &str, conte
                 let status = child.wait().await.map_err(|e| e.to_string())?;
                 if status.success() { Ok(()) } else { Err(format!("{program} exited with {status}")) }
             }
-            Deliver::Keys { tmux: target } => {
+            Deliver::Keys { terminal, pane } => {
+                let Some(row) = airband_core::catalog::terminal(terminal) else { return Err(format!("no terminal called \"{terminal}\" is known")) };
                 // a newline typed into a terminal would send the message early
                 let line = content.split_whitespace().collect::<Vec<_>>().join(" ");
-                for args in [vec!["send-keys", "-t", target, "-l", "--", &line], vec!["send-keys", "-t", target, "Enter"]] {
-                    let out = tokio::process::Command::new("tmux").args(&args).output().await.map_err(|e| format!("cannot run tmux: {e}"))?;
+                for args in row.runs(pane, &line) {
+                    let out = tokio::process::Command::new(&row.program).args(&args).output().await.map_err(|e| format!("cannot run {}: {e}", row.program))?;
                     if !out.status.success() {
-                        return Err(format!("tmux: {}", String::from_utf8_lossy(&out.stderr).trim()));
+                        return Err(format!("{}: {}", row.program, String::from_utf8_lossy(&out.stderr).trim()));
                     }
                 }
                 Ok(())

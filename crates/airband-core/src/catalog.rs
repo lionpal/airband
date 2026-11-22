@@ -55,6 +55,9 @@ pub struct Catalog {
     /// The shapes credentials come in (`redact.rs`), one row an issuer's shape: what is kept out of the chat's
     /// copy of what is said. Always the ones compiled in, so no later copy can take one away.
     pub secrets: Vec<crate::redact::Shape>,
+    /// Terminals a message can be typed into (`catalog/terminals/`): the program, and the words that type a
+    /// line into one of its panes and press Enter. Always the ones compiled in: they are programs run.
+    pub terminals: Vec<Terminal>,
     /// Words of the trade that a recogniser otherwise hears as everyday ones ("sync" as "sink").
     pub phrases: Vec<String>,
     /// Providers that are no more, by id. One this build has compiled in and a later copy neither lists nor
@@ -301,6 +304,7 @@ fn weigh_against(text: &str, now: u64, have: &Catalog, built: &Catalog) -> Resul
     newer.servers = built.servers.clone();
     newer.links = built.links.clone();
     newer.secrets = built.secrets.clone();
+    newer.terminals = built.terminals.clone();
     // How a coding tool is started is a program to run, and is this build's own for every tool it knows. What
     // a later copy says about that is not kept: a tool new to this build comes with no way to start it.
     for t in newer.tools.iter_mut() {
@@ -472,6 +476,8 @@ struct Document {
     #[serde(default)]
     secrets: Vec<Value>,
     #[serde(default)]
+    terminals: Vec<Value>,
+    #[serde(default)]
     phrases: Vec<String>,
     #[serde(default)]
     retired: Vec<String>,
@@ -560,6 +566,7 @@ fn read(text: &str) -> Result<Catalog, String> {
     }
     let servers = doc.servers.into_iter().filter_map(|row| serde_json::from_value::<Server>(row).ok()).collect();
     let links = doc.links.into_iter().filter_map(|row| serde_json::from_value::<crate::links::LinkKind>(row).ok()).collect();
+    let terminals = doc.terminals.into_iter().filter_map(|row| serde_json::from_value::<Terminal>(row).ok()).collect();
     let secrets = doc.secrets.into_iter().filter_map(|row| serde_json::from_value::<crate::redact::Shape>(row).ok()).collect();
     let tools = doc
         .tools
@@ -570,7 +577,31 @@ fn read(text: &str) -> Result<Catalog, String> {
             Tool { id: t.id, name: t.name, maker: t.maker, first: t.first, launchers, with: t.with }
         })
         .collect();
-    Ok(Catalog { rev: doc.rev, hash: doc.hash, providers, tools, models, servers, links, secrets, phrases: doc.phrases, retired: doc.retired, left_out })
+    Ok(Catalog { rev: doc.rev, hash: doc.hash, providers, tools, models, servers, links, secrets, terminals, phrases: doc.phrases, retired: doc.retired, left_out })
+}
+
+/// A terminal a message can be typed into, as its row has it. In `type` and `enter`, `{pane}` is the pane and
+/// `{line}` the words; each is one argument, never read by a shell.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct Terminal {
+    pub id: String,
+    pub program: String,
+    #[serde(rename = "type")]
+    pub type_line: Vec<String>,
+    pub enter: Vec<String>,
+}
+
+impl Terminal {
+    /// The two runs of the program that type `line` into `pane` and press Enter.
+    pub fn runs(&self, pane: &str, line: &str) -> [Vec<String>; 2] {
+        let fill = |words: &[String]| words.iter().map(|w| if w == "{pane}" { pane.to_string() } else if w == "{line}" { line.to_string() } else { w.clone() }).collect();
+        [fill(&self.type_line), fill(&self.enter)]
+    }
+}
+
+/// The terminal a row by this id describes.
+pub fn terminal(id: &str) -> Option<Terminal> {
+    current().terminals.iter().find(|t| t.id == id).cloned()
 }
 
 // ── a copy kept on this device, and the published one ──

@@ -120,7 +120,7 @@ airband quick add "Make no mistakes"   # add a one-tap message
 Claude Code, Codex and OpenCode work out of the box. Anything else that can run a command can join with one line:
 
 ```sh
-airband report --id "$SESSION" --harness codex --tmux "$TMUX_PANE" said "$LAST_MESSAGE"
+airband report --id "$SESSION" --harness codex --terminal tmux --pane "$TMUX_PANE" said "$LAST_MESSAGE"
 ```
 
 A deeper integration is one file. See [ARCHITECTURE.md](ARCHITECTURE.md).

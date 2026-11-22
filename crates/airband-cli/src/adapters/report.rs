@@ -6,7 +6,7 @@ use std::io::Read;
 
 /// `airband report`: the adapter for everything else. Any script can put an agent on the radio:
 ///
-///   airband report --id build-7 --harness codex --cwd . --tmux %3 said "Tests pass. Ship it?"
+///   airband report --id build-7 --harness codex --cwd . --terminal tmux --pane %3 said "Tests pass. Ship it?"
 ///   echo "long message" | airband report --id build-7 --harness codex said -
 ///   airband report --id build-7 --harness codex show chart.png      (a picture for him, shown with what it says next)
 ///   airband report --id build-7 --harness codex permission "run the production migration"   (waits for his yes or no)
@@ -17,6 +17,7 @@ use std::io::Read;
 pub fn run(args: &[String]) -> Result<(), String> {
     let mut agent = Agent { id: String::new(), harness: "custom".into(), cwd: std::env::current_dir().ok().map(|p| p.display().to_string()), name: None, title: None, pid: None, deliver: None, meta: Default::default() };
     let mut rest = Vec::new();
+    let (mut terminal, mut pane) = (None, None);
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = |flag: &str| it.next().cloned().ok_or(format!("{flag} needs a value"));
@@ -32,12 +33,24 @@ pub fn run(args: &[String]) -> Result<(), String> {
                 let (k, v) = pair.split_once('=').ok_or("--meta takes key=value")?;
                 agent.meta.insert(k.to_string(), v.into());
             }
-            "--tmux" => agent.deliver = Some(Deliver::Keys { tmux: value("--tmux")? }),
+            "--terminal" => terminal = Some(value("--terminal")?),
+            "--pane" => pane = Some(value("--pane")?),
             // the tower started this agent and holds its input
             "--held" => agent.deliver = Some(Deliver::Held),
             "--deliver-command" => agent.deliver = Some(Deliver::Command { argv: value("--deliver-command")?.split_whitespace().map(String::from).collect() }),
             _ => rest.push(a.clone()),
         }
+    }
+    match (terminal, pane) {
+        (Some(terminal), Some(pane)) => {
+            if airband_core::catalog::terminal(&terminal).is_none() {
+                let known: Vec<String> = airband_core::catalog::current().terminals.iter().map(|t| t.id.clone()).collect();
+                return Err(format!("no terminal called \"{terminal}\" is known; these are: {}", known.join(", ")));
+            }
+            agent.deliver = Some(Deliver::Keys { terminal, pane });
+        }
+        (None, None) => {}
+        _ => return Err("--terminal and --pane go together: the terminal, and its pane".into()),
     }
     if agent.id.is_empty() {
         return Err("--id is required: any name that stays the same for this agent's session".into());
