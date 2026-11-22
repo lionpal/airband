@@ -40,9 +40,18 @@ async fn events(State(app): State<Arc<App>>, body: String) -> Response {
         Ok(ev) => ev,
         Err(e) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": format!("not an airband.agent/1 event: {e}") }))).into_response(),
     };
+    let from = ev.agent.id.clone();
     // an event with a picture is slow to take in (the picture is shrunk); the other requests must not wait behind it
     match tokio::task::block_in_place(|| take_event(&app, ev)) {
-        Ok(()) => Json(json!({})).into_response(),
+        Ok(()) => {
+            // it came from outside the tower, so this session's hooks report
+            let mut inner = app.inner.lock().unwrap();
+            if let Some(s) = inner.session(&from).filter(|s| !s.hooked) {
+                s.hooked = true;
+                app.save(&inner);
+            }
+            Json(json!({})).into_response()
+        }
         Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response(),
     }
 }

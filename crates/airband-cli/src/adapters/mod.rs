@@ -140,6 +140,8 @@ pub struct Tower {
     /// The sessions of a harness on the tower's roster that its tool has listed as open, now or before the
     /// tower last stopped. One of these the tool no longer lists has gone.
     pub listed: Listed,
+    /// Has this session reported by its tool's hooks? One that has asks for leave by its hook.
+    pub hooked: Box<dyn Fn(&str) -> bool + Send>,
 }
 
 /// Something he said to an agent directly, at its keyboard.
@@ -556,6 +558,7 @@ mod finding {
                     true
                 }),
                 holds: Box::new(|session| session == "held"),
+                hooked: Box::new(|_| false),
                 found: Box::new(move |agent, _idle| {
                     found.lock().unwrap().push(agent.id.clone());
                     marks.lock().unwrap().push(agent.id);

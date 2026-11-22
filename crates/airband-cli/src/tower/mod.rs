@@ -393,7 +393,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
             let (app, runtime) = (app.clone(), tokio::runtime::Handle::current());
             let tower = move || {
                 let (taking, runtime, holding, having) = (app.clone(), runtime.clone(), app.clone(), app.clone());
-                let (finding, entering) = (app.clone(), runtime.clone());
+                let (finding, entering, hooking) = (app.clone(), runtime.clone(), app.clone());
                 crate::adapters::Tower {
                     event: Box::new(move |event| {
                         let _here = runtime.enter();
@@ -420,6 +420,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
                         true
                     }),
                     // one the tower runs itself is reported by its own driver, whatever its tool lists
+                    hooked: Box::new(move |session| hooking.inner.lock().unwrap().find(session).is_some_and(|s| s.hooked)),
                     listed: Box::new(move |harness| having.inner.lock().unwrap().sessions.iter().filter(|s| s.agent.harness == harness && s.listed && s.agent.deliver != Some(Deliver::Held)).map(|s| s.agent.id.clone()).collect()),
                 }
             };

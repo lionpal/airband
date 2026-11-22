@@ -187,6 +187,113 @@ fn turn_event(turn: &Value) -> Option<Event> {
     })
 }
 
+/// Is this thread stopped at a request for leave, as the server describes it?
+fn waits_for_leave(thread: &Value) -> bool {
+    thread["status"]["activeFlags"].as_array().is_some_and(|flags| flags.iter().any(|f| f == "waitingOnApproval"))
+}
+
+/// A request of Codex's server to run a command, as he is asked it: the command whole, where it runs, and the
+/// reason Codex gave. Any other kind of request (a change to files, which the server describes only by a
+/// reference) is not put to him from here: it stays at Codex's keyboard.
+fn leave_of(agent: Agent, request: &Value) -> Option<PermissionAsk> {
+    if request["method"] != "item/commandExecution/requestApproval" {
+        return None;
+    }
+    let params = &request["params"];
+    let command = params["command"].as_str().filter(|c| !c.trim().is_empty())?;
+    let mut input = serde_json::Map::new();
+    input.insert("command".into(), command.into());
+    for key in ["cwd", "reason"] {
+        if let Some(said) = params[key].as_str().filter(|s| !s.is_empty()) {
+            input.insert(key.into(), said.into());
+        }
+    }
+    super::hooks::leave(agent, "shell", format!("run `{command}`"), &Value::Object(input), " The rest is at the keyboard.", None)
+}
+
+/// Sessions with a request for leave that the tower is putting to him, or has.
+#[derive(Default)]
+struct Asking {
+    /// Being put to him now.
+    busy: std::collections::HashSet<String>,
+    /// Put to him and left where it was, at the keyboard: not asked again while the session still waits on it.
+    passed: std::collections::HashSet<String>,
+    /// Found nobody there to ask: tried again, no sooner than this.
+    again: std::collections::HashMap<String, std::time::Instant>,
+}
+
+/// Put a session's pending request for leave to him and give Codex his answer. The server sends a request to
+/// every client that follows the thread and takes the first answer, so the keyboard can still answer it
+/// meanwhile: then the server says it is settled and the question is taken back from the phone. Nothing is
+/// answered unless he answered. Runs for as long as he takes.
+#[cfg(unix)]
+fn put_to_him(agent: Agent, asking: std::sync::Arc<std::sync::Mutex<Asking>>) {
+    use std::cell::{Cell, RefCell};
+    let thread = agent.id.clone();
+    let outcome = (|| {
+        let mut server = Server::connect()?;
+        // following the thread is what makes the server send its pending request here too
+        server.socket.send(tungstenite::Message::text(serde_json::json!({ "jsonrpc": "2.0", "id": 1_000_000, "method": "thread/resume", "params": { "threadId": thread, "excludeTurns": true } }).to_string())).ok()?;
+        let mut request = None;
+        for _ in 0..200 {
+            let tungstenite::Message::Text(text) = server.socket.read().ok()? else { continue };
+            let said: Value = serde_json::from_str(text.as_str()).ok()?;
+            if said["id"] == 1_000_000 && said.get("error").is_some() {
+                return None;
+            }
+            if said["params"]["threadId"] == thread.as_str() && !said["id"].is_null() && said["method"].as_str().is_some_and(|m| m.ends_with("/requestApproval")) {
+                request = Some(said);
+                break;
+            }
+        }
+        let request = request?;
+        let Some(ask) = leave_of(agent.clone(), &request) else { return Some(super::Answer::Unanswered) };
+        let _ = server.socket.get_ref().set_read_timeout(Some(std::time::Duration::from_millis(200)));
+        let (server, settled) = (RefCell::new(server), Cell::new(false));
+        // read what the server has said since: it says so when the request was answered somewhere else
+        let still = || {
+            loop {
+                match server.borrow_mut().socket.read() {
+                    Ok(tungstenite::Message::Text(text)) => {
+                        let said: Value = serde_json::from_str(text.as_str()).unwrap_or_default();
+                        if said["method"] == "serverRequest/resolved" && said["params"]["requestId"] == request["id"] {
+                            settled.set(true);
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(tungstenite::Error::Io(e)) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => break,
+                    Err(_) => {
+                        settled.set(true);
+                        break;
+                    }
+                }
+            }
+            !settled.get()
+        };
+        let answer = super::ask_him_while(&ask, Some(&still));
+        if let super::Answer::Said(allow, _) = &answer {
+            if !settled.get() {
+                let _ = server.borrow_mut().socket.send(tungstenite::Message::text(serde_json::json!({ "jsonrpc": "2.0", "id": request["id"], "result": { "decision": if *allow { "accept" } else { "decline" } } }).to_string()));
+                let _ = server.borrow_mut().socket.flush();
+            }
+        }
+        Some(answer)
+    })();
+    let mut asking = asking.lock().unwrap();
+    asking.busy.remove(&thread);
+    match outcome {
+        // nobody there to ask, or the server could not be followed just now: tried again in a while
+        Some(super::Answer::Nobody) | None => {
+            asking.again.insert(thread, std::time::Instant::now() + std::time::Duration::from_secs(20));
+        }
+        // answered, here or at the keyboard, or left: not asked again while the session waits on the same one
+        Some(_) => {
+            asking.again.remove(&thread);
+            asking.passed.insert(thread);
+        }
+    }
+}
+
 /// Watch Codex's server for as long as the tower runs: what each open session's newest turn has come to.
 /// Which sessions there are is not this watcher's to say (`open`, which every tool has). A session whose
 /// hooks report says the same turns by them; the tower takes each once. Blocks: run it on a thread of its
@@ -196,12 +303,30 @@ fn watch(tower: super::Tower) {
     // each thread seen: its newest turn as far as the tower has been told, and whether that turn was over.
     // Something the tower did not take is not marked, and is told again on the next look.
     let mut heard: std::collections::HashMap<String, Option<(String, bool)>> = Default::default();
+    let asking: std::sync::Arc<std::sync::Mutex<Asking>> = Default::default();
+    let asking_for_threads = asking.clone();
     loop {
         std::thread::sleep(std::time::Duration::from_secs(if home().join("app-server-control").join("app-server-control.sock").exists() { 2 } else { 20 }));
         let Some(mut server) = Server::connect() else { continue };
         let Some(threads) = threads(&mut server) else { continue };
         // not the ones the tower runs itself: their driver reports for them
-        let here: Vec<Agent> = threads.iter().filter_map(open_of).map(|o| o.agent).filter(|a| !(tower.holds)(&a.id)).collect();
+        let found: Vec<(Agent, bool)> = threads.iter().filter_map(|t| Some((open_of(t)?.agent, waits_for_leave(t)))).filter(|(a, _)| !(tower.holds)(&a.id)).collect();
+        // A request for leave of a session whose hooks do not report (they were not trusted, or it was open
+        // before they were written) is put to him from here. One whose hooks report asks by its hook, and is
+        // not asked a second time this way.
+        {
+            let mut asking = asking.lock().unwrap();
+            asking.passed.retain(|id| found.iter().any(|(a, waits)| a.id == *id && *waits));
+            for (agent, _) in found.iter().filter(|(a, waits)| *waits && !(tower.hooked)(&a.id)) {
+                if asking.busy.contains(&agent.id) || asking.passed.contains(&agent.id) || asking.again.get(&agent.id).is_some_and(|at| *at > std::time::Instant::now()) {
+                    continue;
+                }
+                asking.busy.insert(agent.id.clone());
+                let (agent, asking) = (agent.clone(), asking_for_threads.clone());
+                std::thread::spawn(move || put_to_him(agent, asking));
+            }
+        }
+        let here: Vec<Agent> = found.into_iter().map(|(a, _)| a).collect();
         for agent in &here {
             let Some(page) = server.ask("thread/turns/list", serde_json::json!({ "threadId": agent.id, "limit": 1, "itemsView": "full" })) else { continue };
             let turn = &page["data"][0];
@@ -378,5 +503,21 @@ mod tests {
         assert!(super::super::Harness::permission_answer(&Codex, &ask, true, "").contains("\"behavior\":\"allow\""));
         assert!(super::super::Harness::permission_answer(&Codex, &ask, false, "not now").contains("not now"));
         assert!(permission(&json!({ "session_id": "t1", "hook_event_name": "Stop" })).is_none());
+    }
+
+    #[test]
+    fn a_request_to_run_a_command_from_codexs_server_is_put_to_him_whole_and_no_other_kind_is() {
+        let agent = open_of(&json!({ "id": "01a1", "parentThreadId": null, "ephemeral": false, "status": { "type": "active", "activeFlags": ["waitingOnApproval"] }, "cwd": "/x/shop" })).unwrap().agent;
+        assert!(waits_for_leave(&json!({ "status": { "type": "active", "activeFlags": ["waitingOnApproval"] } })));
+        assert!(!waits_for_leave(&json!({ "status": { "type": "active", "activeFlags": [] } })) && !waits_for_leave(&json!({ "status": { "type": "idle" } })));
+        // as Codex 0.171 sends one
+        let request = json!({ "method": "item/commandExecution/requestApproval", "id": 0, "params": { "kind": "command", "threadId": "01a1", "turnId": "t1", "itemId": "call_1", "reason": "It needs to write a file.", "command": "/bin/zsh -lc 'touch made.txt'", "cwd": "/x/shop" } });
+        let ask = leave_of(agent.clone(), &request).unwrap();
+        assert_eq!(ask.what, "run `/bin/zsh -lc 'touch made.txt'`");
+        assert!(ask.detail.contains("/x/shop") && ask.detail.contains("It needs to write a file."));
+        // a change to files comes as a reference to it, not as what will change: that one stays at the keyboard
+        assert!(leave_of(agent.clone(), &json!({ "method": "item/fileChange/requestApproval", "id": 1, "params": { "threadId": "01a1", "itemId": "call_2" } })).is_none());
+        // and a command with nothing in it is not asked
+        assert!(leave_of(agent, &json!({ "method": "item/commandExecution/requestApproval", "id": 2, "params": { "threadId": "01a1", "command": " " } })).is_none());
     }
 }
