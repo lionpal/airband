@@ -368,27 +368,54 @@ impl Dyn {
 
 /// Sealed requests kept for a tower that is away, to hand over in the order they came once it is back. The relay
 /// cannot read them. Each has an id of the radio's choosing, so one sent twice is kept once.
+/// What a channel's folder keeps, in the order it came: each by the number it is kept under and the id the
+/// radio gave it. Written whole (`kept`), so what is kept is read from here and never worked out from the names
+/// of the files, and a half-written file in the folder counts for nothing.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct HeldList {
+    items: Vec<HeldItem>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+struct HeldItem {
+    seq: u64,
+    id: String,
+    /// When it was kept, in seconds since 1970: what a tower never came back for is dropped after a while.
+    at: u64,
+}
+
+/// One change to a folder's list at a time: two requests for one channel must not each read it and write it.
+static HELD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 impl Store {
     fn held_dir(dir: &std::path::Path, channel: &str) -> PathBuf {
         dir.join("held").join(channel)
+    }
+    fn held_list(held: &std::path::Path) -> Result<HeldList, String> {
+        airband_core::kept::read(&held.join("list.json")).map(Option::unwrap_or_default)
+    }
+    fn held_keep(held: &std::path::Path, list: &HeldList) -> Result<(), String> {
+        airband_core::kept::save(&held.join("list.json"), list).map_err(|e| e.to_string())
     }
 
     /// Keep one. False when the channel already has as many as it may; true when it is kept, now or before.
     pub async fn hold(&self, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<bool, String> {
         match self {
             Store::Folder(dir) => {
+                let _one = HELD.lock().unwrap();
                 let held = Self::held_dir(dir, channel);
                 std::fs::create_dir_all(&held).map_err(|e| e.to_string())?;
-                let names: Vec<String> = std::fs::read_dir(&held).map_err(|e| e.to_string())?.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
-                if names.iter().any(|n| n.split_once('-').is_some_and(|(_, rest)| rest == id)) {
+                let mut list = Self::held_list(&held)?;
+                if list.items.iter().any(|h| h.id == id) {
                     return Ok(true);
                 }
-                if names.len() >= most {
+                if list.items.len() >= most {
                     return Ok(false);
                 }
-                // in the order they came: a number that only goes up, then the id
-                let next = names.iter().filter_map(|n| n.split_once('-')?.0.parse::<u64>().ok()).max().map_or(1, |n| n + 1);
-                airband_core::kept::write_atomic(&held.join(format!("{next:012}-{id}")), sealed).map(|_| true).map_err(|e| e.to_string())
+                // in the order they came: a number that only goes up
+                let seq = list.items.iter().map(|h| h.seq).max().map_or(1, |n| n + 1);
+                airband_core::kept::write_atomic(&held.join(seq.to_string()), sealed).map_err(|e| e.to_string())?;
+                list.items.push(HeldItem { seq, id: id.to_string(), at: airband_core::clock::now_secs() });
+                Self::held_keep(&held, &list).map(|_| true)
             }
             Store::Dynamo(d) => d.hold(channel, id, sealed, most).await,
             Store::Postgres(pg) => {
@@ -410,10 +437,12 @@ impl Store {
     pub async fn held_next(&self, channel: &str) -> Result<Option<(String, Vec<u8>)>, String> {
         match self {
             Store::Folder(dir) => {
+                let _one = HELD.lock().unwrap();
                 let held = Self::held_dir(dir, channel);
-                let mut names: Vec<String> = std::fs::read_dir(&held).map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| !n.starts_with('.')).collect()).unwrap_or_default();
-                names.sort();
-                Ok(names.first().and_then(|n| Some((n.split_once('-')?.1.to_string(), std::fs::read(held.join(n)).ok()?))))
+                let list = Self::held_list(&held)?;
+                let Some(first) = list.items.iter().min_by_key(|h| h.seq) else { return Ok(None) };
+                let sealed = std::fs::read(held.join(first.seq.to_string())).map_err(|e| e.to_string())?;
+                Ok(Some((first.id.clone(), sealed)))
             }
             Store::Dynamo(d) => d.held_next(channel).await,
             Store::Postgres(pg) => {
@@ -428,12 +457,13 @@ impl Store {
     pub async fn held_done(&self, channel: &str, id: &str) -> Result<(), String> {
         match self {
             Store::Folder(dir) => {
+                let _one = HELD.lock().unwrap();
                 let held = Self::held_dir(dir, channel);
-                for e in std::fs::read_dir(&held).map_err(|e| e.to_string())?.flatten() {
-                    if e.file_name().to_string_lossy().split_once('-').is_some_and(|(_, rest)| rest == id) {
-                        let _ = std::fs::remove_file(e.path());
-                    }
-                }
+                let mut list = Self::held_list(&held)?;
+                let gone: Vec<u64> = list.items.iter().filter(|h| h.id == id).map(|h| h.seq).collect();
+                list.items.retain(|h| h.id != id);
+                Self::held_keep(&held, &list)?;
+                gone.iter().for_each(|seq| { let _ = std::fs::remove_file(held.join(seq.to_string())); });
                 Ok(())
             }
             Store::Dynamo(d) => d.held_done(channel, id).await,
@@ -448,11 +478,18 @@ impl Store {
     pub async fn held_purge(&self, days: u64) -> Result<(), String> {
         match self {
             Store::Folder(dir) => {
+                let _one = HELD.lock().unwrap();
                 let Ok(channels) = std::fs::read_dir(dir.join("held")) else { return Ok(()) };
-                for file in channels.flatten().filter_map(|c| std::fs::read_dir(c.path()).ok()).flat_map(|d| d.flatten()) {
-                    if file.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age.as_secs() > days * 86_400) {
-                        let _ = std::fs::remove_file(file.path());
+                let now = airband_core::clock::now_secs();
+                for held in channels.flatten().map(|c| c.path()) {
+                    let Ok(mut list) = Self::held_list(&held) else { continue };
+                    let old: Vec<u64> = list.items.iter().filter(|h| now.saturating_sub(h.at) > days * 86_400).map(|h| h.seq).collect();
+                    if old.is_empty() {
+                        continue;
                     }
+                    list.items.retain(|h| !old.contains(&h.seq));
+                    Self::held_keep(&held, &list)?;
+                    old.iter().for_each(|seq| { let _ = std::fs::remove_file(held.join(seq.to_string())); });
                 }
                 Ok(())
             }
@@ -489,6 +526,27 @@ impl Pg {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_folder_keeps_each_id_once_in_order_by_its_list_and_no_more_than_a_channel_may_have() {
+        let dir = std::env::temp_dir().join(format!("airband-relay-held-{}", airband_core::encode::random_hex(6)));
+        let store = Store::Folder(dir.clone());
+        assert_eq!(store.hold("c", "a-1", b"one", 2).await, Ok(true));
+        // the same id again is kept once; an id with a dash in it is still found by its record
+        assert_eq!(store.hold("c", "a-1", b"one", 2).await, Ok(true));
+        assert_eq!(store.hold("c", "b", b"two", 2).await, Ok(true));
+        assert_eq!(store.hold("c", "c", b"three", 2).await, Ok(false));
+        // a stray file in the folder (a write that never finished) is not something kept
+        std::fs::write(Store::held_dir(&dir, "c").join(".tmp-half"), b"x").unwrap();
+        assert_eq!(store.held_next("c").await, Ok(Some(("a-1".into(), b"one".to_vec()))));
+        store.held_done("c", "a-1").await.unwrap();
+        assert_eq!(store.held_next("c").await, Ok(Some(("b".into(), b"two".to_vec()))));
+        assert_eq!(store.hold("c", "c", b"three", 2).await, Ok(true));
+        store.held_done("c", "b").await.unwrap();
+        store.held_done("c", "c").await.unwrap();
+        assert_eq!(store.held_next("c").await, Ok(None));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[tokio::test]
     async fn an_unreadable_channels_file_is_refused_and_never_written_over() {
