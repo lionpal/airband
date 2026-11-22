@@ -28,6 +28,7 @@ mod catalog;
 mod config;
 #[cfg(unix)]
 mod hold;
+mod commands;
 mod install;
 mod providers;
 mod terminal;
@@ -69,7 +70,7 @@ fn main() {
             let cfg = config::load();
             if cfg.pairings.is_empty() {
                 println!("\nOpen airband on your phone and scan this.");
-                install::pair(cfg, "phone")
+                commands::pair(cfg, "phone")
             } else {
                 println!("\nA phone is already paired. To pair another:  airband pair <a name for it>");
                 Ok(())
@@ -77,19 +78,19 @@ fn main() {
         }),
         Some("uninstall") => install::uninstall(),
         Some("status") => {
-            install::status(&config::load());
+            commands::status(&config::load());
             Ok(())
         },
-        Some("pair") => install::pair(config::load(), args.get(1).map(String::as_str).unwrap_or("phone")),
-        Some("unpair") => install::unpair(config::load(), args.get(1).map(String::as_str)),
-        Some("quick") => install::quick(config::load(), &args[1..]),
+        Some("pair") => commands::pair(config::load(), args.get(1).map(String::as_str).unwrap_or("phone")),
+        Some("unpair") => commands::unpair(config::load(), args.get(1).map(String::as_str)),
+        Some("quick") => commands::quick(config::load(), &args[1..]),
         Some("accounts") => adapters::accounts_command(&config::load(), &args[1..]),
-        Some("relay") => install::relay(config::load(), &args[1..]),
-        Some("lan") => install::lan(config::load(), &args[1..]),
+        Some("relay") => commands::relay(config::load(), &args[1..]),
+        Some("lan") => commands::lan(config::load(), &args[1..]),
         Some("keys") => setup::keys(&args[1..]),
         Some("catalog") => catalog::command(&args[1..]),
         Some("setup") => setup::setup(config::load(), !args.iter().any(|a| a == "--no-start")),
-        Some("model") => install::model(config::load(), &args[1..]),
+        Some("model") => commands::model(config::load(), &args[1..]),
         Some("radio") => terminal::run(&config::load(), &args[1..]),
         Some("launch") => terminal::launch(&config::load(), &args[1..]),
         Some("triage") => tower::triage(config::load()),

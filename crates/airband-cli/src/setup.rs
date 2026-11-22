@@ -141,7 +141,7 @@ pub(crate) fn setup(mut cfg: Config, start: bool) -> Result<(), String> {
     crate::install::install()?;
     if cfg.pairings.is_empty() {
         println!("\nNow your phone: open airband on it and scan this.");
-        crate::install::pair(config::load(), "phone")?;
+        crate::commands::pair(config::load(), "phone")?;
     } else {
         println!("\nYour phone is already paired. To pair another:  airband pair <a name for it>");
     }
