@@ -18,14 +18,14 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
     // what he typed to it at its own keyboard, read before anything is locked. It goes in ahead of this event,
     // so his words come before the answer to them
     let typed = {
-        let known = app.inner.lock().unwrap().find(&ev.agent.id).map(|s| (s.agent.clone(), s.told_upto));
+        let known = app.read().find(&ev.agent.id).map(|s| (s.agent.clone(), s.told_upto));
         known.filter(|_| matches!(ev.event, Event::Working | Event::Said { .. })).map(|(agent, upto)| crate::adapters::told(&agent, upto)).map(|(told, upto)| {
             // pictures he pasted in with them, kept before anything is locked
             let with: Vec<Vec<airband_core::radio::Picture>> = told.iter().map(|t| if t.his { t.images.iter().filter_map(|bytes| pictures::keep_bytes(bytes)).collect() } else { Vec::new() }).collect();
             (told, with, upto)
         })
     };
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.change();
     let id = ev.agent.id.clone();
     if let Some((told, with, upto)) = typed {
         inner.told(&id, told, with, upto);
@@ -36,7 +36,6 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
         }
         inner.remove(&id);
         held::forget(&mut inner, &id);
-        app.save(&inner);
         return Ok(());
     }
     let callsign = inner.check_in(&ev.agent).text();
@@ -60,7 +59,6 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
             let short = |t: String| -> Option<String> { Some(t.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(32).collect::<String>()).filter(|t| !t.is_empty()) };
             let s = inner.session(&id).unwrap();
             (s.model, s.effort) = (short(name), effort.and_then(short));
-            app.save(&inner);
             return Ok(());
         }
         Event::Said { text, kind, turn } => {
@@ -108,8 +106,7 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
         }
         Event::Checkin | Event::Signoff | Event::Unknown => {}
     }
-    app.save(&inner);
-    app.kick.notify_one();
+    inner.tell();
     Ok(())
 }
 

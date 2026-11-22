@@ -241,7 +241,7 @@ impl Serve {
                 // Nobody is waiting on this answer. Something he said that came too late is told to his
                 // radio, in its feed, under the id it was said with: he was told it would get here.
                 if said {
-                    self.app.inner.lock().unwrap().settle(&self.name, call.body["id"].as_str().unwrap_or_default(), airband_core::radio::Outcome::Rejected { why: airband_core::radio::Rejected::TooOld });
+                    self.app.passing().settle(&self.name, call.body["id"].as_str().unwrap_or_default(), airband_core::radio::Outcome::Rejected { why: airband_core::radio::Rejected::TooOld });
                 }
                 self.refused(&call, "the relay, kept while the tower was away", 400, "only something he said, sent in the last week, is taken late")
             }

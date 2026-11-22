@@ -29,7 +29,7 @@ pub(super) enum Routed {
 fn new_by_command(app: &App, text: &str, projects: &[String]) -> Option<Idea> {
     let l = airband_core::routing::parse_launch(text, projects)?;
     // the models and efforts that can be named are the ones of the tool the command names, or of the usual one
-    let menu = held::launcher_for(app, l.tool.as_deref()).map(|(name, l)| held::offers(&app.inner.lock().unwrap(), &name, &l)).unwrap_or_default();
+    let menu = held::launcher_for(app, l.tool.as_deref()).map(|(name, l)| held::offers(&app.read(), &name, &l)).unwrap_or_default();
     let (models, efforts) = (menu.model_words(), menu.effort_words());
     Some(match airband_core::routing::parse_with(&l.task, &models, &efforts).filter(|w| !w.rest.is_empty()) {
         Some(w) => Idea { tool: l.tool, project: l.project, model: Some(w.model), effort: w.effort, task: w.rest },
@@ -46,7 +46,7 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
     let within = |s: &Session| room.as_ref().is_none_or(|g| s.callsign.project == *g);
     // candidates: every agent that has said something since he last spoke, newest first
     let (candidates, focus, all, quiet) = {
-        let inner = app.inner.lock().unwrap();
+        let inner = app.read();
         // he picked the message he is answering: it goes to the agent that said it, whatever that agent is
         // called now, and to nobody if that agent has gone
         if let Some(target) = re.and_then(|id| inner.log.iter().find(|e| e.id == id)).and_then(|e| inner.sender(e)) {
@@ -78,7 +78,7 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
     // what a new agent could be started in and on, if anything
     // any tool this computer can start will do for knowing that one can be: which one is settled when it starts
     let launcher = app.cfg.launchers.values().next();
-    let projects: Vec<String> = app.inner.lock().unwrap().launchable(&app.cfg).into_keys().collect();
+    let projects: Vec<String> = app.read().launchable(&app.cfg).into_keys().collect();
     // with agents of another computer on his screen there is always more than one it could be for
     let can_start = (launcher.is_some() && !projects.is_empty()) || !others.is_empty();
     let launcher = launcher.filter(|_| !projects.is_empty());
@@ -135,7 +135,7 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
             let tools = app.cfg.tools();
             let (models, efforts): (Vec<String>, Vec<String>) = {
                 // every model and effort any of the tools offers: which tool he means is settled after
-                let inner = app.inner.lock().unwrap();
+                let inner = app.read();
                 let menus: Vec<airband_core::tools::Offers> = app.cfg.launchers.iter().map(|(name, l)| held::offers(&inner, name, l)).collect();
                 let across = |of: fn(&airband_core::tools::Offers) -> &Vec<airband_core::tools::Choice>| {
                     let mut all: Vec<String> = Vec::new();
@@ -149,7 +149,7 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                 None => String::new(),
                 Some(_) => {
                     let lately: Vec<String> = {
-                        let inner = app.inner.lock().unwrap();
+                        let inner = app.read();
                         projects
                             .iter()
                             .enumerate()
@@ -342,7 +342,7 @@ async fn place_idea(app: &Arc<App>, idea: &str, projects: &[String]) -> Result<S
         _ => {}
     }
     let lines: Vec<String> = {
-        let inner = app.inner.lock().unwrap();
+        let inner = app.read();
         let folders = inner.launchable(&app.cfg);
         projects
             .iter()
@@ -393,7 +393,7 @@ async fn named_project(app: &Arc<App>, idea: &str, said: &str, projects: &[Strin
 /// nothing when they are not an answer to that (or no model said): then they are a message of their own.
 async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope: Option<&str>) -> Option<Vec<Session>> {
     let room = scope.and_then(|s| s.strip_prefix("group:"));
-    let all: Vec<Session> = app.inner.lock().unwrap().sessions.iter().filter(|s| room.is_none_or(|g| s.callsign.project == g)).cloned().collect();
+    let all: Vec<Session> = app.read().sessions.iter().filter(|s| room.is_none_or(|g| s.callsign.project == g)).cloned().collect();
     let letters = |s: &Session| airband_core::routing::badge(&s.callsign.project, &s.callsign.text());
     let prompt = format!(
         "{name} said this to his coding agents: \"{first}\"\nIt was not clear who it was for, and he was asked. The agents:\n{list}\n\n\
@@ -429,7 +429,7 @@ async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, projects: &[
             Ok(project) => project,
             Err(reply) => {
                 if reply.listen {
-                    app.inner.lock().unwrap().call(radio).unplaced_idea = Some((idea, Instant::now()));
+                    app.passing().call(radio).unplaced_idea = Some((idea, Instant::now()));
                 }
                 log(format!("← radio: \"{text}\" → a new agent, project not clear"));
                 return reply;
@@ -437,7 +437,7 @@ async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, projects: &[
         },
         (None, false) if idea.task.is_empty() || projects.is_empty() => return place_idea(app, &idea.task, projects).await.err().unwrap_or(Reply { say: String::new(), listen: false, ..Reply::default() }),
         (None, false) => {
-            app.inner.lock().unwrap().call(radio).unplaced_idea = Some((idea, Instant::now()));
+            app.passing().call(radio).unplaced_idea = Some((idea, Instant::now()));
             log(format!("← radio: \"{text}\" → a new agent, project not clear"));
             return Reply { say: format!("Which project is that for? {}.", projects.join(", ")), listen: true, ..Reply::default() };
         }
@@ -475,17 +475,17 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
     // pictures to show beside them in the chat
     let (mut files, shown_files) = if attached.is_empty() { (String::new(), Vec::new()) } else { attachments::describe(attached).await };
     // starting a new agent comes next: it is addressed to the tower, not to anyone on the radio
-    let projects: Vec<String> = app.inner.lock().unwrap().launchable(&app.cfg).into_keys().collect();
+    let projects: Vec<String> = app.read().launchable(&app.cfg).into_keys().collect();
     // "Which project?" was just asked about an idea. A model says whether this answers it and with which one.
     // Words that are about something else leave the idea waiting for its answer, for as long as it would have.
-    let held_idea = app.inner.lock().unwrap().call(radio).unplaced_idea.take().filter(|(_, when)| when.elapsed() < Duration::from_secs(90));
+    let held_idea = app.passing().call(radio).unplaced_idea.take().filter(|(_, when)| when.elapsed() < Duration::from_secs(90));
     if let Some((idea, when)) = held_idea {
         if !text.trim_start().starts_with(['/', '@'])
             && let Some(project) = named_project(app, &idea.task, text, &projects).await {
                 log(format!("← radio: \"{text}\" → launch in {project}"));
                 return launch(app, &project, &idea).await;
             }
-        app.inner.lock().unwrap().call(radio).unplaced_idea = Some((idea, when));
+        app.passing().call(radio).unplaced_idea = Some((idea, when));
     }
     // a typed command says what it is and needs no reading
     if text.trim_start().starts_with('/')
@@ -496,7 +496,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
     let say = |s: String| Reply { say: s, ..Reply::default() };
     let ask = |s: String| Reply { say: s, listen: true, ..Reply::default() };
     let (mut parsed, named, roster, names, pending, held) = {
-        let mut inner = app.inner.lock().unwrap();
+        let mut inner = app.passing();
         inner.reap();
         let parsed = parse_utterance(text, &inner.callsigns());
         let named: Vec<Session> = parsed.to.iter().map(|&i| inner.sessions[i].clone()).collect();
@@ -526,7 +526,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
         Vec::new()
     } else if parsed.control.is_some() {
         // "say more" and "repeat" are about whoever he last heard
-        let inner = app.inner.lock().unwrap();
+        let inner = app.read();
         inner.calls.get(radio).and_then(|c| c.focus.clone()).and_then(|f| inner.find(&f).cloned()).or((inner.sessions.len() == 1).then(|| inner.sessions[0].clone())).into_iter().collect()
     } else {
         match route(app, radio, &parsed.rest, re, scope, others).await {
@@ -542,7 +542,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
             Routed::Ask(options) if options.is_empty() => return say("No agents are running.".into()),
             Routed::Ask(options) => {
                 // held with its files, so they go along when he says who it was for
-                app.inner.lock().unwrap().call(radio).asked = Some((parsed.rest.clone(), files.clone(), Instant::now()));
+                app.passing().call(radio).asked = Some((parsed.rest.clone(), files.clone(), Instant::now()));
                 log(format!("← radio: \"{text}\" → unsure; asking between {}", options.join(", ")));
                 return Reply { ask: options.clone(), ..ask(format!("Who is that for? {}.", options.join(", or "))) };
             }
@@ -553,7 +553,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
     let mut shown = label.map(String::from);
     if parsed.control == Some(Control::Poke) {
         let room = scope.and_then(|s| s.strip_prefix("group:"));
-        let stopped = app.inner.lock().unwrap().stalled();
+        let stopped = app.read().stalled();
         targets = stopped.into_iter().filter(|s| if named.is_empty() { room.is_none_or(|g| s.callsign.project == g) } else { named.iter().any(|n| n.agent.id == s.agent.id) }).collect();
         if targets.is_empty() {
             return say("Nobody has stopped.".into());
@@ -569,19 +569,19 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
         Some(Control::Status) => return say(roster),
         Some(Control::Skip) => return say(String::new()),
         Some(Control::Hold) => {
-            app.inner.lock().unwrap().call(radio).held = true;
+            app.passing().call(radio).held = true;
             return say("Standing by.".into());
         }
         Some(Control::Resume) => {
-            app.inner.lock().unwrap().call(radio).held = false;
+            app.passing().call(radio).held = false;
             app.kick.notify_one();
             return say(if pending > 0 { format!("Go ahead. {pending} waiting.") } else { "Go ahead. Nothing waiting.".into() });
         }
         Some(c @ (Control::More | Control::Repeat)) => {
-            let last = targets.first().and_then(|s| s.last_heard.clone().map(|l| (s.clone(), l))).and_then(|(s, id)| app.inner.lock().unwrap().log.iter().find(|e| e.id == id).map(|e| (s, id, e.short.clone().unwrap_or_default())));
+            let last = targets.first().and_then(|s| s.last_heard.clone().map(|l| (s.clone(), l))).and_then(|(s, id)| app.read().log.iter().find(|e| e.id == id).map(|e| (s, id, e.short.clone().unwrap_or_default())));
             let Some((s, last, said)) = last else { return say("Nothing to repeat yet.".into()) };
             let body = if c == Control::Repeat { said } else { detail_of(app, &last).await.unwrap_or_default() };
-            app.inner.lock().unwrap().call(radio).focus = Some(s.agent.id.clone());
+            app.passing().call(radio).focus = Some(s.agent.id.clone());
             return ask(format!("{}. {body}", s.callsign.spoken()));
         }
         // a poke became an ordinary message above
@@ -602,12 +602,12 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
     // The line in the chat takes the id the radio gave what he said, when it gave one and it is not in use: the
     // radio can then tell that the message it is still showing as on its way has arrived, and swap one for the
     // other without a gap.
-    let message_id = uid.map(str::to_string).filter(|id| !id.is_empty() && id.len() <= 40 && id.bytes().all(|b| b.is_ascii_alphanumeric()) && !app.inner.lock().unwrap().log.iter().any(|e| e.id == *id)).unwrap_or_else(|| config::random_hex(8));
+    let message_id = uid.map(str::to_string).filter(|id| !id.is_empty() && id.len() <= 40 && id.bytes().all(|b| b.is_ascii_alphanumeric()) && !app.read().log.iter().any(|e| e.id == *id)).unwrap_or_else(|| config::random_hex(8));
     // An answer to a question the agent has since spoken past (or he has since said other things to it) would
     // reach it with nothing to say what it answers: "Yes", to what? Then the question goes with it. When the
     // question is the last thing between them, the answer needs no help.
     let answers: Option<(String, String)> = re.and_then(|id| {
-        let inner = app.inner.lock().unwrap();
+        let inner = app.read();
         let at = inner.log.iter().position(|e| e.id == id)?;
         let asked = &inner.log[at];
         let agent = asked.agent.clone()?;
@@ -626,7 +626,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
             Some(Deliver::Held) => {
                 let words = format!("{about}{}{files}", parsed.rest);
                 let busy = {
-                    let mut inner = app.inner.lock().unwrap();
+                    let mut inner = app.passing();
                     match inner.session(&t.agent.id).filter(|s| !s.waiting) {
                         Some(s) => {
                             s.queue.push((message_id.clone(), words.clone()));
@@ -658,7 +658,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
             }
         }
     }
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.change();
     for t in &sent {
         let id = t.agent.id.clone();
         if let Some(s) = inner.session(&id) {
@@ -675,7 +675,6 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
         let entry = Entry::his(message_id, &sent, parsed.rest.clone());
         inner.record(Entry { short: shown.or(entry.short.clone()), pictures: shown_files, queued: !queued.is_empty(), ..entry });
     }
-    app.save(&inner);
     let sent_names: Vec<String> = sent.iter().map(|s| s.callsign.text()).collect();
     let reply = say(match (sent_names.len(), failed.len()) {
         (0, _) => format!("Could not reach {}.", list(&failed)),

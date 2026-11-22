@@ -104,7 +104,7 @@ pub(super) fn consider(app: &Arc<App>, inner: &mut Inner, id: &str) {
         tokio::time::sleep(GRACE).await;
         let station = config::station(&app.cfg);
         let (note, to): (Notice, Vec<(String, Vec<PushTarget>)>) = {
-            let inner = app.inner.lock().unwrap();
+            let inner = app.read();
             let Some(e) = inner.log.iter().find(|e| e.id == id).filter(|e| deserves(e, now_ms())) else { return };
             // answered meanwhile, from another radio or at the keyboard: there is nothing left to tell him
             if (card && e.permit.is_none()) || (e.kind == Some(Kind::NeedsYou) && !inner.open_ids().contains(&id)) {

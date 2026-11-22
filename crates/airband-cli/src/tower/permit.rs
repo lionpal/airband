@@ -36,7 +36,7 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
     if ask.schema != agent::SCHEMA || app.cfg.permission_wait == 0 {
         return nobody;
     }
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.change();
     // no radio is following the chat or on a call: there is nobody to ask
     if !inner.following() && !inner.connected() {
         return nobody;
@@ -78,8 +78,7 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
     inner.permits.insert(id.clone(), Permit { agent_id, entry: entry_id.clone(), decided: None, asked: Instant::now(), polled: Instant::now(), question: ask.question.is_some() });
     // he had the chat open a moment ago and may have put the phone down since: it is woken if so
     push::consider(app, &mut inner, &entry_id);
-    app.save(&inner);
-    app.kick.notify_one();
+    inner.tell();
     PermissionState { id, state: "pending".into(), message: String::new(), wait_seconds: app.cfg.permission_wait }
 }
 
@@ -88,7 +87,7 @@ pub(super) async fn state(app: &Arc<App>, id: &str, wait: u64) -> PermissionStat
     let until = Instant::now() + Duration::from_secs(wait.min(25));
     loop {
         {
-            let mut inner = app.inner.lock().unwrap();
+            let mut inner = app.passing();
             let Some(permit) = inner.permits.get_mut(id) else { return PermissionState { id: id.into(), state: "gone".into(), ..PermissionState::default() } };
             permit.polled = Instant::now();
             if let Some((allow, message)) = permit.decided.clone() {
@@ -107,10 +106,9 @@ pub(super) async fn state(app: &Arc<App>, id: &str, wait: u64) -> PermissionStat
 /// The harness has stopped waiting and is asking in its own way. The question in the feed is no longer one he
 /// can answer from here.
 pub(super) fn withdraw(app: &App, id: &str) {
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.change();
     inner.close_permit(id, Ended::AtKeyboard);
-    app.save(&inner);
-    app.kick.notify_one();
+    inner.tell();
 }
 
 /// How a request ended (`Inner::close_permit`).
@@ -147,7 +145,7 @@ pub(super) enum Leave {
 /// harness has stopped asking after it is closed here, so he is never told "Allowed" about one nobody will
 /// collect.
 pub(super) fn asked_leave(app: &App, re: Option<&str>) -> Leave {
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.change();
     let Some(entry) = re else { return Leave::No };
     if !inner.log.iter().any(|e| e.id == entry && e.leave) {
         return Leave::No;
@@ -156,7 +154,6 @@ pub(super) fn asked_leave(app: &App, re: Option<&str>) -> Leave {
         Some((_, true)) => Leave::Waiting,
         Some((id, false)) => {
             inner.close_permit(&id, Ended::Gone);
-            app.save(&inner);
             Leave::Over
         }
         None => Leave::Over,
@@ -167,7 +164,7 @@ pub(super) fn asked_leave(app: &App, re: Option<&str>) -> Leave {
 /// yes, no, or (None) his own words that are not a yes, which refuse it and go back as the reason.
 pub(super) fn answer(app: &App, text: &str, re: Option<&str>, verdict: Option<bool>) -> Option<Reply> {
     let say = |s: &str| Some(Reply { say: s.into(), listen: false, ..Reply::default() });
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.change();
     let waiting = |p: &Permit| p.decided.is_none();
     let on_question = re.and_then(|r| inner.permits.iter().find(|(_, p)| p.entry == r && waiting(p)).map(|(id, _)| id.clone()));
     let id = on_question?;
@@ -184,7 +181,6 @@ pub(super) fn answer(app: &App, text: &str, re: Option<&str>, verdict: Option<bo
     let shown = if allow { ALLOW.to_string() } else if reason.is_empty() { DENY.into() } else { reason };
     inner.record(Entry::his(config::random_hex(8), std::slice::from_ref(&session), shown));
     inner.touch(&entry);
-    app.save(&inner);
     // his answer was taken as he gave it, and is in the chat as his own line: the words only confirm it
     say(if question { "Sent to it." } else if allow { "Allowed." } else { "Refused." }).map(|r| Reply { done: true, ..r })
 }

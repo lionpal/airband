@@ -50,7 +50,7 @@ pub(super) fn launcher_for(app: &App, tool: Option<&str>) -> Option<(String, con
     match tool {
         Some(tool) => found(Some(tool)),
         None => found(None).or_else(|| {
-            let most = app.inner.lock().unwrap().tools.first().cloned();
+            let most = app.read().tools.first().cloned();
             most.and_then(|tool| found(Some(&tool)))
         }),
     }
@@ -243,19 +243,18 @@ async fn spawn(_: &Arc<App>, _: &Kept, _: bool) -> Result<Started, String> {
 /// Carry on a held agent whose holder has gone, and remember what its session is called now.
 async fn revive(app: &Arc<App>, kept: &Kept) -> Result<(), String> {
     let started = spawn(app, kept, false).await?;
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.change();
     if let Some(k) = inner.held.iter_mut().find(|k| k.id == kept.id) {
         k.session = started.session.or(k.session.take());
     }
     learn(app, &mut inner, &kept.launcher, started.offers);
-    app.save(&inner);
     Ok(())
 }
 
 /// Give a held agent one message of his as its next turn. One whose process has gone (the computer restarted,
 /// or it crashed) is carried on first.
 pub(super) async fn tell(app: &Arc<App>, id: &str, text: &str) -> Result<(), String> {
-    let kept = app.inner.lock().unwrap().held.iter().find(|k| k.id == id).cloned().ok_or("airband is no longer running this agent")?;
+    let kept = app.read().held.iter().find(|k| k.id == id).cloned().ok_or("airband is no longer running this agent")?;
     #[cfg(unix)]
     {
         let words = || crate::hold::Tell::Say(text.to_string());
@@ -277,7 +276,7 @@ pub(super) async fn tell(app: &Arc<App>, id: &str, text: &str) -> Result<(), Str
 /// did not take back, goes to it now as one turn, in the order he said it.
 pub(super) async fn flush(app: &Arc<App>, id: &str) {
     let waiting: Vec<(String, String)> = {
-        let mut inner = app.inner.lock().unwrap();
+        let mut inner = app.passing();
         let Some(s) = inner.session(id).filter(|s| s.waiting && !s.queue.is_empty()) else { return };
         s.waiting = false;
         let waiting = std::mem::take(&mut s.queue);
@@ -286,7 +285,7 @@ pub(super) async fn flush(app: &Arc<App>, id: &str) {
     };
     let words = waiting.iter().map(|(_, text)| text.as_str()).collect::<Vec<_>>().join("\n\n");
     let told = tell(app, id, &words).await;
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.change();
     match told {
         Ok(()) => {
             for (line, _) in &waiting {
@@ -305,14 +304,13 @@ pub(super) async fn flush(app: &Arc<App>, id: &str) {
             }
         }
     }
-    app.save(&inner);
-    app.kick.notify_one();
+    inner.tell();
 }
 
 /// Stop what a held agent is doing, now. What he said to it meanwhile is then read together as its next turn.
 pub(super) async fn stop(app: &Arc<App>, id: &str) -> Result<(), String> {
     let (session, kept) = {
-        let inner = app.inner.lock().unwrap();
+        let inner = app.read();
         let s = inner.find(id).cloned().ok_or("That agent is no longer running.")?;
         if s.agent.deliver != Some(Deliver::Held) {
             return Err("Only an agent airband runs can be stopped from here. Take it over first.".into());
@@ -334,13 +332,12 @@ pub(super) async fn stop(app: &Arc<App>, id: &str) -> Result<(), String> {
     log(format!("stopped {}", session.callsign.text()));
     // a harness may or may not report a stopped turn as finished: either way it is waiting from now
     {
-        let mut inner = app.inner.lock().unwrap();
+        let mut inner = app.change();
         if let Some(s) = inner.session(id) {
             s.waiting = true;
             s.doing = None;
             s.subagents = 0;
         }
-        app.save(&inner);
     }
     app.kick.notify_one();
     // let it settle before it is given more
@@ -351,7 +348,7 @@ pub(super) async fn stop(app: &Arc<App>, id: &str) -> Result<(), String> {
 
 /// He took back something he said that had not been delivered yet.
 pub(super) fn unsend(app: &App, line: &str) -> Result<(), String> {
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.change();
     let mut found = false;
     for s in inner.sessions.iter_mut() {
         let before = s.queue.len();
@@ -366,8 +363,7 @@ pub(super) fn unsend(app: &App, line: &str) -> Result<(), String> {
         e.cancelled = true;
     }
     inner.touch(line);
-    app.save(&inner);
-    app.kick.notify_one();
+    inner.tell();
     Ok(())
 }
 
@@ -380,7 +376,7 @@ pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, model: Opti
     let started = spawn(app, &kept, true).await?;
     kept.session = started.session;
     {
-        let mut inner = app.inner.lock().unwrap();
+        let mut inner = app.change();
         learn(app, &mut inner, launcher, started.offers);
         inner.held.push(kept.clone());
         if task.is_empty() {
@@ -390,7 +386,6 @@ pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, model: Opti
                 s.waiting = true;
             }
         }
-        app.save(&inner);
     }
     if task.is_empty() {
         app.kick.notify_one();
@@ -403,10 +398,10 @@ pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, model: Opti
 /// The tower has started: carry on every agent it was holding, so each is there to be spoken to. One whose
 /// session cannot be carried on is let go.
 pub(super) async fn carry_on(app: &Arc<App>) {
-    let kept: Vec<Kept> = app.inner.lock().unwrap().held.clone();
+    let kept: Vec<Kept> = app.read().held.clone();
     for k in kept {
         // only the ones still on the radio: one that signed off is finished
-        if app.inner.lock().unwrap().find(&k.id).is_none() {
+        if app.read().find(&k.id).is_none() {
             continue;
         }
         // its holder outlived the last tower: it is still running, and there is nothing to do
@@ -422,7 +417,7 @@ pub(super) async fn carry_on(app: &Arc<App>) {
 
 /// Let a held agent go: its input is closed, and it ends by itself and signs off.
 pub(super) async fn end(app: &Arc<App>, id: &str) -> bool {
-    let kept = app.inner.lock().unwrap().held.iter().find(|k| k.id == id).cloned();
+    let kept = app.read().held.iter().find(|k| k.id == id).cloned();
     #[cfg(unix)]
     let was = match &kept {
         Some(kept) => tell_holder(kept, crate::hold::Tell::End).await.is_ok(),
@@ -431,12 +426,9 @@ pub(super) async fn end(app: &Arc<App>, id: &str) -> bool {
     #[cfg(not(unix))]
     let was = false;
     let _ = &kept;
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.change();
     let before = inner.held.len();
     inner.held.retain(|k| k.id != id);
-    if inner.held.len() != before {
-        app.save(&inner);
-    }
     was || inner.held.len() != before
 }
 
@@ -449,7 +441,7 @@ pub(super) fn forget(inner: &mut Inner, id: &str) {
 /// one the tower holds. Only for an agent whose process the tower knows, so that two never run one session.
 pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
     let (session, launcher) = {
-        let inner = app.inner.lock().unwrap();
+        let inner = app.read();
         let s = inner.find(id).cloned().ok_or("That agent is no longer running.")?;
         // carried on by a launcher that runs this agent's own harness: never one tool's session under another
         let launcher = app.cfg.launcher_for(Some(&s.agent.harness)).filter(|(_, l)| l.held.is_some()).map(|(name, _)| name.clone());
@@ -481,7 +473,7 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
     // ending it signed it off; it reports in again from the new process, under the same id
     let started = spawn(app, &kept, false).await?;
     kept.session = started.session.or(kept.session);
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.change();
     learn(app, &mut inner, &kept.launcher, started.offers);
     inner.held.retain(|k| k.id != id);
     inner.held.push(kept);
@@ -496,8 +488,7 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
         s.callsign = session.callsign.clone();
         s.waiting = true;
     }
-    app.save(&inner);
-    app.kick.notify_one();
+    inner.tell();
     log(format!("took over {}", session.callsign.text()));
     Ok(())
 }

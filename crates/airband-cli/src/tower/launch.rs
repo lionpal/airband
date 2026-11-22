@@ -22,7 +22,7 @@ pub(super) struct Idea {
 pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply {
     let task = idea.task.as_str();
     let say = |s: String| Reply { say: s, listen: false, ..Reply::default() };
-    let Some(cwd) = app.inner.lock().unwrap().launchable(&app.cfg).get(project).cloned() else {
+    let Some(cwd) = app.read().launchable(&app.cfg).get(project).cloned() else {
         return say(format!("I do not know a project called {project}."));
     };
     if !std::path::Path::new(&cwd).is_dir() {
@@ -43,7 +43,7 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
     }
     // The model and effort he asked for. One this launcher does not offer is not left out and the agent
     // started without it: he is told, and nothing is started.
-    let menu = held::offers(&app.inner.lock().unwrap(), &named, launcher);
+    let menu = held::offers(&app.read(), &named, launcher);
     // An agent that lists its own models and efforts is the one that knows them: which efforts there are can
     // turn on the model, and the tower has only what one last said. So what he asked for goes to its holder
     // as he named it, by the tool's own word where the tower knows it, and an agent that has no such one does
@@ -135,8 +135,7 @@ pub(super) fn launch_label(project: &str) -> String {
 /// A new agent was started with a task: the task is written into the chat as his words to it, and he is
 /// told it is on its way.
 fn launched(app: &App, project: &str, with: &str, task: &str) -> String {
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.change();
     inner.record(Entry { id: config::random_hex(8), from: "you".into(), group: project.into(), to: vec![launch_label(project)], short: Some(task.into()), full: task.into(), ..Entry::default() });
-    app.save(&inner);
     format!("Launching in {project}{with}.")
 }

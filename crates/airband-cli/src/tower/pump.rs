@@ -10,7 +10,7 @@ pub(super) async fn pump_loop(app: Arc<App>) {
 
 pub(super) async fn pump(app: &Arc<App>) {
     let todo: Vec<Item> = {
-        let mut inner = app.inner.lock().unwrap();
+        let mut inner = app.passing();
         if inner.free_radio().is_none() {
             return;
         }
@@ -32,25 +32,22 @@ pub(super) async fn pump(app: &Arc<App>) {
     }
     let done = tasks.join_all().await;
 
-    let mut inner = app.inner.lock().unwrap();
-    let read = !done.is_empty();
+    let mut inner = app.change();
     for (id, j) in done {
         // what is not worth his ears leaves the queue here, and stays in the chat, dimmed
         inner.fill(&id, &j);
         // a radio on a call hears it; another that is neither on a call nor showing the chat is woken
         push::consider(app, &mut inner, &id);
     }
-    // what was just read is written down now, whatever follows: with no radio free the rest returns early
-    if read {
-        app.save(&inner);
-    }
+    // what was just read is written down when this is let go, whatever follows
     // read out under what its agent is called now, or was called when it said it, if it has gone
     let name = |inner: &Inner, e: &Entry| inner.sender(e).map(|s| s.callsign.text()).unwrap_or_else(|| e.from.clone());
     let ready: Vec<Entry> = inner.log.iter().filter(|e| e.aloud == Aloud::Waiting && e.short.is_some()).cloned().collect();
     // one transmission goes to one radio: whichever is on a call and free
     let Some(radio) = inner.free_radio() else { return };
     let Some(next) = ready.iter().min_by_key(|e| (e.kind != Some(Kind::NeedsYou), e.at)) else {
-        return remind(app, &mut inner, &radio);
+        // a reminder is a matter of the call, which is not kept
+        return remind(app, inner.unkept(), &radio);
     };
     let callsign = name(&inner, next);
     let say = next.short.clone().unwrap_or_default();
@@ -60,7 +57,6 @@ pub(super) async fn pump(app: &Arc<App>) {
     let waiting = inner.unheard().count() as u32 - 1;
     inner.set_aloud(&next.id, Aloud::Handed { radio: radio.clone(), at: now_ms() });
     transmit(app, &mut inner, &radio, Transmission { id: next.id.clone(), callsign, kind, say: spoken_line, waiting });
-    app.save(&inner);
 }
 
 /// Hand a radio its next transmission. If it takes it and never says it is ready for another, it is assumed
@@ -75,15 +71,14 @@ fn transmit(app: &Arc<App>, inner: &mut Inner, radio: &str, t: Transmission) {
     let (epoch, app, radio) = (call.epoch, app.clone(), radio.to_string());
     tokio::spawn(async move {
         tokio::time::sleep(READY_TIMEOUT).await;
-        let mut inner = app.inner.lock().unwrap();
+        let mut inner = app.change();
         let call = inner.call(&radio);
         if call.epoch == epoch && !call.ready {
             log(format!("{radio} never said it was ready; carrying on"));
             call.ready = true;
             call.outbox = None;
             inner.give_back(&radio);
-            app.save(&inner);
-            app.kick.notify_one();
+            inner.tell();
         }
     });
 }

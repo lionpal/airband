@@ -271,11 +271,11 @@ fn put_to_him(agent: Agent, asking: std::sync::Arc<std::sync::Mutex<Asking>>) {
             !settled.get()
         };
         let answer = super::ask_him_while(&ask, Some(&still));
-        if let super::Answer::Said(allow, _) = &answer {
-            if !settled.get() {
-                let _ = server.borrow_mut().socket.send(tungstenite::Message::text(serde_json::json!({ "jsonrpc": "2.0", "id": request["id"], "result": { "decision": if *allow { "accept" } else { "decline" } } }).to_string()));
-                let _ = server.borrow_mut().socket.flush();
-            }
+        if let super::Answer::Said(allow, _) = &answer
+            && !settled.get()
+        {
+            let _ = server.borrow_mut().socket.send(tungstenite::Message::text(serde_json::json!({ "jsonrpc": "2.0", "id": request["id"], "result": { "decision": if *allow { "accept" } else { "decline" } } }).to_string()));
+            let _ = server.borrow_mut().socket.flush();
         }
         Some(answer)
     })();

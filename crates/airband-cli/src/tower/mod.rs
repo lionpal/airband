@@ -133,7 +133,7 @@ async fn activity_loop(app: Arc<App>) {
         tokio::time::sleep(Duration::from_secs(2)).await;
         // the ones at work, and any whose model is not known yet (one that has been waiting since the tower started)
         let (looked_at, everyone): (Vec<agent::Agent>, Vec<(agent::Agent, u64)>) = {
-            let inner = app.inner.lock().unwrap();
+            let inner = app.read();
             if !inner.following() {
                 continue;
             }
@@ -158,13 +158,14 @@ async fn activity_loop(app: Arc<App>) {
         })
         .await
         .unwrap_or_default();
-        let mut inner = app.inner.lock().unwrap();
+        let mut inner = app.change();
         let mut learned = !typed.is_empty();
         for ((told, upto), pictures, id, _) in typed {
             inner.told(&id, told, pictures, upto);
         }
         for (seen, id) in found {
-            let Some(s) = inner.session(&id) else { continue };
+            // looked at every couple of seconds: what it is doing is not kept, what it runs on is
+            let Some(s) = inner.unkept().session(&id) else { continue };
             if let Some(doing) = seen.doing.filter(|_| !s.waiting) {
                 s.doing = Some(doing);
             }
@@ -175,7 +176,7 @@ async fn activity_loop(app: Arc<App>) {
             }
         }
         if learned {
-            app.save(&inner);
+            inner.keep();
         }
     }
 }
@@ -194,7 +195,7 @@ async fn progress_loop(app: Arc<App>) {
     loop {
         tokio::time::sleep(Duration::from_secs(60)).await;
         let due: Vec<(agent::Agent, u64)> = {
-            let inner = app.inner.lock().unwrap();
+            let inner = app.read();
             let live: HashSet<&str> = inner.sessions.iter().map(|s| s.agent.id.as_str()).collect();
             looked.retain(|id, _| live.contains(id.as_str()));
             inner
@@ -217,7 +218,7 @@ async fn progress_loop(app: Arc<App>) {
                 continue;
             }
             let Some(note) = judge::progress(&app.cfg, &steps).await else { continue };
-            let mut inner = app.inner.lock().unwrap();
+            let mut inner = app.change();
             // it spoke for itself while the model was reading: its own words are the news
             let Some(s) = inner.find(&agent.id).filter(|s| !s.waiting).cloned() else { continue };
             if inner.log.iter().any(|e| e.agent.as_deref() == Some(agent.id.as_str()) && e.at > since) {
@@ -225,8 +226,7 @@ async fn progress_loop(app: Arc<App>) {
             }
             log(format!("{}: a note on the way ({} steps)", s.callsign.text(), steps.len()));
             inner.record(Entry { short: Some(note.clone()), ..Entry::said(config::random_hex(8), &s, Some(Kind::Fyi), note) });
-            app.save(&inner);
-            app.kick.notify_one();
+            inner.tell();
         }
     }
 }
@@ -261,7 +261,92 @@ fn terminate(pid: u32) {
     let _ = pid;
 }
 
+/// The tower's state, held to change it. When it is let go, what was changed is written down, and whoever
+/// waits on the tower is told if `tell` was asked. So no path through a change can leave without saving:
+/// there is nothing to remember to call.
+struct Changing<'a> {
+    app: &'a App,
+    inner: std::sync::MutexGuard<'a, Inner>,
+    changed: bool,
+    tell: bool,
+}
+
+impl Changing<'_> {
+    /// Those waiting on the tower (a phone holding a request open, the pump) are woken once this is let go.
+    fn tell(&mut self) {
+        self.tell = true;
+    }
+    /// The state, to change something that is not kept (what an agent is doing this minute, a call's place
+    /// in the queue): changing it this way alone writes nothing. For the few places that look often and
+    /// change what is kept only now and then; they say `keep` when they have.
+    fn unkept(&mut self) -> &mut Inner {
+        &mut self.inner
+    }
+    /// What was changed through `unkept` is to be written after all.
+    fn keep(&mut self) {
+        self.changed = true;
+    }
+}
+impl std::ops::Deref for Changing<'_> {
+    type Target = Inner;
+    fn deref(&self) -> &Inner {
+        &self.inner
+    }
+}
+impl std::ops::DerefMut for Changing<'_> {
+    fn deref_mut(&mut self) -> &mut Inner {
+        self.changed = true;
+        &mut self.inner
+    }
+}
+impl Drop for Changing<'_> {
+    fn drop(&mut self) {
+        if self.changed {
+            self.app.save(&self.inner);
+        }
+        if self.tell {
+            self.app.kick.notify_one();
+        }
+    }
+}
+
+/// The tower's state, held for something that is not kept: who is on a call, what a phone is in the middle
+/// of saying, counts for this run. Nothing is written when it is let go.
+struct Passing<'a>(std::sync::MutexGuard<'a, Inner>);
+impl std::ops::Deref for Passing<'_> {
+    type Target = Inner;
+    fn deref(&self) -> &Inner {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for Passing<'_> {
+    fn deref_mut(&mut self) -> &mut Inner {
+        &mut self.0
+    }
+}
+
+/// The tower's state, held to look at.
+struct Reading<'a>(std::sync::MutexGuard<'a, Inner>);
+impl std::ops::Deref for Reading<'_> {
+    type Target = Inner;
+    fn deref(&self) -> &Inner {
+        &self.0
+    }
+}
+
 impl App {
+    /// Look at the tower's state.
+    fn read(&self) -> Reading<'_> {
+        Reading(self.inner.lock().unwrap())
+    }
+    /// Change the tower's state: written down when the hold is let go, if anything was changed.
+    fn change(&self) -> Changing<'_> {
+        Changing { app: self, inner: self.inner.lock().unwrap(), changed: false, tell: false }
+    }
+    /// Change what is not kept from one run of the tower to the next. Nothing is written.
+    fn passing(&self) -> Passing<'_> {
+        Passing(self.inner.lock().unwrap())
+    }
     /// Write what has changed: new and updated messages, and who is on the radio.
     fn save(&self, inner: &Inner) {
         let touched: HashSet<String> = inner.unsaved.borrow_mut().drain().collect();
@@ -377,7 +462,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         // what was changed while starting (a credential masked in a kept message) is written now, not at the
         // next thing an agent says
         {
-            let inner = app.inner.lock().unwrap();
+            let inner = app.read();
             app.save(&inner);
         }
         let router = http::router(app.clone());
@@ -400,28 +485,31 @@ pub fn run(cfg: Config) -> Result<(), String> {
                         taking.store.event(&serde_json::to_value(&event).unwrap_or_default());
                         http::take_event(&taking, event).is_ok()
                     }),
-                    holds: Box::new(move |session| held::holds(&holding.inner.lock().unwrap(), session)),
+                    holds: Box::new(move |session| held::holds(&holding.read(), session)),
                     found: Box::new(move |agent, idle| {
                         let _here = entering.enter();
                         let id = agent.id.clone();
-                        let new = finding.inner.lock().unwrap().find(&id).is_none();
+                        let new = finding.read().find(&id).is_none();
                         let event = AgentEvent { schema: agent::SCHEMA.into(), agent, event: Event::Checkin };
                         finding.store.event(&serde_json::to_value(&event).unwrap_or_default());
                         if http::take_event(&finding, event).is_err() {
                             return false;
                         }
-                        let mut inner = finding.inner.lock().unwrap();
-                        if let Some(s) = inner.session(&id).filter(|s| !s.listed || (new && idle)) {
+                        // asked every few seconds for every open session: only one that is to be marked is changed
+                        if !finding.read().find(&id).is_some_and(|s| !s.listed || (new && idle)) {
+                            return true;
+                        }
+                        let mut inner = finding.change();
+                        if let Some(s) = inner.session(&id) {
                             s.listed = true;
                             // one that is new to the tower and doing nothing is waiting for him, not working
                             s.waiting = s.waiting || (new && idle);
-                            finding.save(&inner);
                         }
                         true
                     }),
                     // one the tower runs itself is reported by its own driver, whatever its tool lists
-                    hooked: Box::new(move |session| hooking.inner.lock().unwrap().find(session).is_some_and(|s| s.hooked)),
-                    listed: Box::new(move |harness| having.inner.lock().unwrap().sessions.iter().filter(|s| s.agent.harness == harness && s.listed && s.agent.deliver != Some(Deliver::Held)).map(|s| s.agent.id.clone()).collect()),
+                    hooked: Box::new(move |session| hooking.read().find(session).is_some_and(|s| s.hooked)),
+                    listed: Box::new(move |harness| having.read().sessions.iter().filter(|s| s.agent.harness == harness && s.listed && s.agent.deliver != Some(Deliver::Held)).map(|s| s.agent.id.clone()).collect()),
                 }
             };
             crate::adapters::watch_all(&tower);
@@ -464,9 +552,10 @@ pub fn run(cfg: Config) -> Result<(), String> {
                         let app = app.clone();
                         tokio::task::spawn_blocking(move || app.store.prune());
                     }
-                    let mut inner = app.inner.lock().unwrap();
-                    if inner.reap() {
-                        app.save(&inner);
+                    let mut inner = app.change();
+                    // looked at often; written only when someone has gone
+                    if inner.unkept().reap() {
+                        inner.keep();
                     }
                 }
             });

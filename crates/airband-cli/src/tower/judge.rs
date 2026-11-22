@@ -620,17 +620,16 @@ pub(super) async fn detail(cfg: &Config, item: &Item) -> String {
 
 /// The fuller spoken version of a logged message, made once and kept.
 pub(super) async fn detail_of(app: &Arc<App>, id: &str) -> Option<String> {
-    let entry = app.inner.lock().unwrap().log.iter().find(|e| e.id == id).cloned()?;
+    let entry = app.read().log.iter().find(|e| e.id == id).cloned()?;
     if let Some(d) = entry.detail {
         return Some(d);
     }
     let item = Item { id: entry.id.clone(), notice: false, full: entry.full.clone(), kind: entry.kind, say: entry.short.clone(), asked: None };
     let d = detail(&app.cfg, &item).await;
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.change();
     if let Some(e) = inner.log.iter_mut().find(|e| e.id == id) {
         e.detail = Some(d.clone());
         inner.unsaved.borrow_mut().insert(id.to_string());
-        app.save(&inner);
     }
     drop(inner);
     Some(d)

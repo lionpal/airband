@@ -26,7 +26,7 @@ async fn auth(State(app): State<Arc<App>>, req: Request, next: Next) -> Response
 async fn presence_said(State(app): State<Arc<App>>, req: Request, next: Next) -> Response {
     if req.uri().path().starts_with("/v1/radio/")
         && let Some(said) = req.headers().get(PRESENCE_HEADER).and_then(|v| v.to_str().ok()).and_then(|v| serde_json::from_str::<airband_core::radio::Presence>(v).ok()) {
-            app.inner.lock().unwrap().radio_says(&radio_of(req.headers()), said);
+            app.passing().radio_says(&radio_of(req.headers()), said);
         }
     next.run(req).await
 }
@@ -45,11 +45,10 @@ async fn events(State(app): State<Arc<App>>, body: String) -> Response {
     match tokio::task::block_in_place(|| take_event(&app, ev)) {
         Ok(()) => {
             // it came from outside the tower, so this session's hooks report
-            let mut inner = app.inner.lock().unwrap();
-            if let Some(s) = inner.session(&from).filter(|s| !s.hooked) {
-                s.hooked = true;
-                app.save(&inner);
-            }
+            if app.read().find(&from).is_some_and(|s| !s.hooked)
+                && let Some(s) = app.change().session(&from) {
+                    s.hooked = true;
+                }
             Json(json!({})).into_response()
         }
         Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response(),
@@ -61,7 +60,7 @@ async fn events(State(app): State<Arc<App>>, body: String) -> Response {
 pub(super) fn take_event(app: &Arc<App>, ev: AgentEvent) -> Result<(), String> {
     // what a turn said is taken once, whichever of its tool's ways of saying it came first
     if let Event::Said { turn: Some(turn), .. } = &ev.event {
-        let mut inner = app.inner.lock().unwrap();
+        let mut inner = app.passing();
         if let Some(s) = inner.session(&ev.agent.id).filter(|s| s.turn.as_ref() == Some(turn)) {
             // that turn is over, whatever was heard of it since by the slower way
             s.waiting = true;
@@ -79,19 +78,19 @@ pub(super) fn take_event(app: &Arc<App>, ev: AgentEvent) -> Result<(), String> {
     // has it read.
     if let Some(id) = spoke.filter(|_| app.push.any()) {
         let unread: Vec<Entry> = {
-            let inner = app.inner.lock().unwrap();
+            let inner = app.read();
             inner.log.iter().rev().take(8).filter(|e| inner.readers == 0 && e.short.is_none() && e.agent.as_deref() == Some(id.as_str())).take(1).cloned().collect()
         };
         judge_later(app, unread);
     }
     if let Some(id) = &ended {
         // one the tower runs has stopped: what he said to it meanwhile goes to it now
-        if app.inner.lock().unwrap().find(id).is_some_and(|s| !s.queue.is_empty()) {
+        if app.read().find(id).is_some_and(|s| !s.queue.is_empty()) {
             let (app, id) = (app.clone(), id.clone());
             tokio::spawn(async move { held::flush(&app, &id).await });
         }
     }
-    if let Some(id) = reported.filter(|id| app.inner.lock().unwrap().find(id).is_some_and(|s| place::due(s.reports))) {
+    if let Some(id) = reported.filter(|id| app.read().find(id).is_some_and(|s| place::due(s.reports))) {
         tokio::spawn(place::look(app.clone(), id));
     }
     Ok(())
@@ -163,14 +162,14 @@ async fn folders(Json(ask): Json<airband_core::radio::FoldersAsk>) -> Json<Value
 
 /// The folders his coding tools have had sessions in, newest first, then his teams no tool has a record of.
 async fn recent(State(app): State<Arc<App>>) -> Json<airband_core::radio::Recent> {
-    Json(airband_core::radio::Recent { folders: app.inner.lock().unwrap().recent(&app.cfg) })
+    Json(airband_core::radio::Recent { folders: app.read().recent(&app.cfg) })
 }
 
 /// Read again which folders his coding tools have had sessions in, and keep the answer. Reads their
 /// records, so it is done off the lock; the tower does it when it starts and every minute after.
 pub(super) fn read_worked(app: &App) {
     let worked = crate::adapters::worked_all();
-    app.inner.lock().unwrap().worked = worked;
+    app.passing().worked = worked;
 }
 
 /// He made a new team from a radio, or asked for another agent in one: a name, and the folder its agents
@@ -208,7 +207,7 @@ async fn project(State(app): State<Arc<App>>, Json(new): Json<airband_core::radi
         Err(why) => return Json(json!({ "error": why })),
     };
     {
-        let mut inner = app.inner.lock().unwrap();
+        let mut inner = app.change();
         // the same folder, however it was written when the team was made
         let same = |has: &String| std::path::Path::new(has).canonicalize().is_ok_and(|has| has == folder);
         match inner.teams(&app.cfg).get(&name) {
@@ -217,7 +216,6 @@ async fn project(State(app): State<Arc<App>>, Json(new): Json<airband_core::radi
             Some(_) => {}
             None => {
                 inner.projects.insert(name.clone(), folder.display().to_string());
-                app.save(&inner);
                 log(format!("a radio made the team {name}, in {}", folder.display()));
             }
         }
@@ -248,7 +246,7 @@ async fn stop_agent(State(app): State<Arc<App>>, Json(to): Json<airband_core::ra
 }
 /// He ended an agent the tower runs.
 async fn end_agent(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::EndAgent>) -> Json<Value> {
-    let reached = app.inner.lock().unwrap().find(&to.agent).map(|s| s.agent.deliver.clone());
+    let reached = app.read().find(&to.agent).map(|s| s.agent.deliver.clone());
     Json(match reached {
         None => json!({ "error": "That agent is no longer running." }),
         Some(Some(Deliver::Held)) if held::end(&app, &to.agent).await => json!({}),
@@ -264,16 +262,15 @@ async fn end_agent(State(app): State<Arc<App>>, Json(to): Json<airband_core::rad
 }
 /// A radio says which names his other computers use.
 async fn taken(State(app): State<Arc<App>>, Json(t): Json<airband_core::radio::Taken>) -> Json<Value> {
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.change();
     if inner.taken_elsewhere(&t.callsigns) {
-        app.save(&inner);
-        app.kick.notify_one();
+        inner.tell();
     }
     Json(json!({}))
 }
 /// He let a question go without answering it.
 async fn dismiss(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::Dismiss>) -> Json<Value> {
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.change();
     let Some(e) = inner.log.iter_mut().find(|e| e.id == to.message) else { return Json(json!({ "error": "That message is gone." })) };
     e.dismissed = true;
     // it is not read out either
@@ -281,8 +278,7 @@ async fn dismiss(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio
         inner.set_aloud(&to.message, Aloud::dropped(Dropped::Dismissed));
     }
     inner.touch(&to.message);
-    app.save(&inner);
-    app.kick.notify_one();
+    inner.tell();
     Json(json!({}))
 }
 /// He took back something he said that was still waiting its turn.
@@ -311,10 +307,9 @@ async fn push_target(State(app): State<Arc<App>>, headers: HeaderMap, Json(targe
 async fn uses_tools(State(app): State<Arc<App>>, Json(said): Json<airband_core::radio::UsesTools>) -> Json<Value> {
     let known = app.cfg.tools();
     let tools: Vec<String> = said.tools.into_iter().filter(|t| known.contains(t)).collect();
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.change();
     if inner.tools != tools {
         inner.tools = tools;
-        app.save(&inner);
     }
     Json(json!({}))
 }
@@ -333,7 +328,7 @@ async fn permission_withdraw(State(app): State<Arc<App>>, Path(id): Path<String>
 async fn next(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>) -> Response {
     let radio = radio_of(&headers);
     {
-        let mut inner = app.inner.lock().unwrap();
+        let mut inner = app.passing();
         // He has just turned reading aloud on, and the radio says so (`joined`). What was said long before is
         // in the chat for him to read: it is not read out now, hours late. A radio that only went quiet for a
         // while and is back says no such thing, and nothing is taken from the queue for it.
@@ -355,7 +350,7 @@ async fn next(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
     let until = Instant::now() + HOLD;
     while Instant::now() < until {
         {
-            let mut inner = app.inner.lock().unwrap();
+            let mut inner = app.passing();
             let call = inner.call(&radio);
             if let Some(t) = call.outbox.take() {
                 call.handed = Some(t.clone());
@@ -371,7 +366,7 @@ async fn next(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
 /// written down, and that radio is handed nothing more for a minute.
 async fn unheard(State(app): State<Arc<App>>, headers: HeaderMap, Json(u): Json<Value>) -> Json<Value> {
     let radio = radio_of(&headers);
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.change();
     let id = u["id"].as_str().unwrap_or_default();
     let who = inner.log.iter().find(|e| e.id == id).map(|e| e.from.clone()).unwrap_or_default();
     log(format!("{radio} could not read {who} aloud ({}); it stays queued (line {id}), and nothing more goes to that radio for a minute", u["why"].as_str().unwrap_or("no reason given")));
@@ -383,21 +378,20 @@ async fn unheard(State(app): State<Arc<App>>, headers: HeaderMap, Json(u): Json<
     call.ready = true;
     call.outbox = None;
     call.handed = None;
-    app.save(&inner);
     Json(json!({}))
 }
 
 /// A radio says where it stands, when that changes and while it has nothing else to ask (he has the
 /// microphone open on a call): so the tower does not take it for gone.
 async fn presence(State(app): State<Arc<App>>, headers: HeaderMap, Json(said): Json<airband_core::radio::Presence>) -> Json<Value> {
-    app.inner.lock().unwrap().radio_says(&radio_of(&headers), said);
+    app.passing().radio_says(&radio_of(&headers), said);
     app.kick.notify_one();
     Json(json!({}))
 }
 
 async fn heard(State(app): State<Arc<App>>, headers: HeaderMap, Json(h): Json<Heard>) -> Json<Value> {
     let radio = radio_of(&headers);
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.change();
     // remember when he was last told, so an unanswered question comes round again later and not at once
     let times = inner.offered.get(&h.id).map(|(n, _)| *n).unwrap_or(0);
     inner.offered.insert(h.id.clone(), (times + 1, Instant::now()));
@@ -412,14 +406,13 @@ async fn heard(State(app): State<Arc<App>>, headers: HeaderMap, Json(h): Json<He
             s.last_heard = Some(h.id.clone());
             inner.call(&radio).focus = Some(agent_id);
         }
-        app.save(&inner);
     }
     Json(json!({}))
 }
 
 async fn ready(State(app): State<Arc<App>>, headers: HeaderMap) -> Json<Value> {
     let waiting = {
-        let mut inner = app.inner.lock().unwrap();
+        let mut inner = app.passing();
         let radio = radio_of(&headers);
         let call = inner.call(&radio);
         call.ready = true;
@@ -450,7 +443,7 @@ async fn utterance(State(app): State<Arc<App>>, headers: HeaderMap, Json(u): Jso
     {
         // the id is taken before anything is done, under the one lock, so the same utterance arriving twice
         // (a retry, or two ways at once) is taken once, whether or not the tower restarted in between
-        let mut inner = app.inner.lock().unwrap();
+        let mut inner = app.passing();
         if inner.answering.contains(&u.id) {
             log(format!("utterance {} from {radio} by {via}: asked after, still being answered", u.id));
             return Json(Outcome::Taken).into_response();
@@ -495,7 +488,7 @@ async fn utterance(State(app): State<Arc<App>>, headers: HeaderMap, Json(u): Jso
         // became of it and how long that took
         let took = began.elapsed();
         log(format!("utterance {} from {radio} by {via}: answered in {:.1} s{}{}", u.id, took.as_secs_f32(), if reply.say.is_empty() { String::new() } else { format!(" (\"{}\")", reply.say.chars().take(80).collect::<String>()) }, if took > SLOW { ", which is slow" } else { "" }));
-        let mut inner = app.inner.lock().unwrap();
+        let mut inner = app.passing();
         inner.answering.remove(&u.id);
         inner.settle(&radio, &u.id, Outcome::Answered { reply });
     }));
@@ -511,7 +504,7 @@ const JUDGE_AT_ONCE: usize = 3;
 /// every radio following the feed is sent it. Nothing is left unjudged because a radio was away when it came in.
 fn judge_later(app: &Arc<App>, entries: Vec<Entry>) {
     let entries: Vec<Entry> = {
-        let mut inner = app.inner.lock().unwrap();
+        let mut inner = app.passing();
         entries.into_iter().filter(|e| inner.judging.insert(e.id.clone())).collect()
     };
     if entries.is_empty() {
@@ -526,10 +519,9 @@ fn judge_later(app: &Arc<App>, entries: Vec<Entry>) {
             tasks.spawn(async move {
                 let _slot = limit.acquire().await;
                 let j = judge_entry(&app, e.clone()).await;
-                let mut inner = app.inner.lock().unwrap();
+                let mut inner = app.change();
                 inner.fill(&e.id, &j);
                 push::consider(&app, &mut inner, &e.id);
-                app.save(&inner);
             });
         }
         tasks.join_all().await;
@@ -537,7 +529,7 @@ fn judge_later(app: &Arc<App>, entries: Vec<Entry>) {
 }
 
 async fn judge_entry(app: &Arc<App>, e: Entry) -> Judged {
-    let item = Item { say: None, ..app.inner.lock().unwrap().item(&e) };
+    let item = Item { say: None, ..app.read().item(&e) };
     prepare(&app.cfg, &item).await
 }
 
@@ -565,7 +557,7 @@ async fn feed(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
     // needs a notification on that radio. One that says the chat is not in front of him is following it
     // without showing it, and is told nothing by that.
     if let Some(since) = since {
-        let mut inner = app.inner.lock().unwrap();
+        let mut inner = app.passing();
         // never past what exists: a count from another tower's chat says nothing about this one's
         let has = since.min(inner.rev);
         let call = inner.call(&radio);
@@ -575,7 +567,7 @@ async fn feed(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
     }
     // while a request for the whole chat is open, what agents say is read by it
     let _reading = (scope == "all").then(|| {
-        app.inner.lock().unwrap().readers += 1;
+        app.passing().readers += 1;
         Reading(app.clone())
     });
     let after: u64 = q.get("after").and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -586,7 +578,7 @@ async fn feed(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
     loop {
         // the lines to send, and the change count this answer is good up to
         let (hits, upto, roster_same, settled): (Vec<Entry>, u64, bool, bool) = {
-            let mut inner = app.inner.lock().unwrap();
+            let mut inner = app.passing();
             inner.reap();
             let roster_same = roster_seen.is_none_or(|seen| seen == inner.roster_rev());
             let settled = !inner.settled_for(&radio, since).is_empty();
@@ -629,14 +621,13 @@ async fn feed(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
                 tasks.spawn(async move { (e.id.clone(), judge_entry(&app, e).await) });
             }
             let done = tasks.join_all().await;
-            let mut inner = app.inner.lock().unwrap();
+            let mut inner = app.change();
             for (id, j) in done {
                 inner.fill(&id, &j);
                 push::consider(&app, &mut inner, &id);
             }
-            app.save(&inner);
         }
-        let inner = app.inner.lock().unwrap();
+        let inner = app.read();
         // if the only changes since this answer was started are to the lines in it (their short versions were
         // just made), it is good up to now, and the radio is not sent the same lines again next time
         let sent: HashSet<&String> = hits.iter().map(|e| &e.id).collect();
@@ -662,7 +653,7 @@ async fn message(State(app): State<Arc<App>>, Path(id): Path<String>, Query(q): 
     if q.get("form").map(String::as_str) == Some("spoken") {
         // `part=asked` is the question as he would be asked it on a call: who is asking, its short form, and
         // the answers it offers, for a radio that reads it to him before he answers
-        let text: Option<String> = app.inner.lock().unwrap().log.iter().find(|e| e.id == id).map(|e| match q.get("part").map(String::as_str) {
+        let text: Option<String> = app.read().log.iter().find(|e| e.id == id).map(|e| match q.get("part").map(String::as_str) {
             Some("asked") => {
                 let short = e.short.clone().unwrap_or_else(|| spoken(&e.full).chars().take(600).collect());
                 let choices = match e.options.as_slice() {
@@ -681,7 +672,7 @@ async fn message(State(app): State<Arc<App>>, Path(id): Path<String>, Query(q): 
         };
     }
     if q.get("form").map(String::as_str) == Some("full") {
-        return match app.inner.lock().unwrap().log.iter().find(|e| e.id == id) {
+        return match app.read().log.iter().find(|e| e.id == id) {
             Some(e) => Json(More { text: e.full.clone() }).into_response(),
             None => StatusCode::NOT_FOUND.into_response(),
         };
@@ -715,7 +706,7 @@ async fn reads(Json(wanted): Json<airband_core::radio::SetReads>) -> Json<Value>
 }
 
 async fn status(State(app): State<Arc<App>>) -> Json<Value> {
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.passing();
     inner.reap();
     let callsign_of = |id: &str| inner.sessions.iter().find(|s| s.agent.id == id).map(|s| s.callsign.text());
     Json(json!({

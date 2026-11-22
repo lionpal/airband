@@ -7,7 +7,7 @@ use super::*;
 
 /// He moved an agent to a team, from a radio. Returns what it is called now and the team it is in.
 pub(super) fn by_him(app: &App, agent: &str, team: &str) -> Result<(String, String), String> {
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.change();
     if inner.find(agent).is_none() {
         return Err("That agent is no longer running.".into());
     }
@@ -15,8 +15,7 @@ pub(super) fn by_him(app: &App, agent: &str, team: &str) -> Result<(String, Stri
         return Err("Give the team a name.".into());
     }
     inner.move_to(agent, team, Mover::Him);
-    app.save(&inner);
-    app.kick.notify_one();
+    inner.tell();
     Ok(inner.find(agent).map(|s| (s.callsign.text(), s.callsign.project.clone())).unwrap_or_default())
 }
 
@@ -32,7 +31,7 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
         return;
     }
     let (session, said, teams, folders) = {
-        let inner = app.inner.lock().unwrap();
+        let inner = app.read();
         // one he placed himself is where he wants it
         let Some(s) = inner.find(&agent_id).filter(|s| s.moved != Some(Mover::Him)).cloned() else { return };
         let said: Vec<String> = inner.log.iter().rev().filter(|e| e.agent.as_deref() == Some(agent_id.as_str()) && e.kind != Some(Kind::Fyi)).take(3).map(|e| e.short.clone().unwrap_or_else(|| opening(&e.full))).collect();
@@ -86,7 +85,7 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
     }
     // one of his teams by the number it was listed under, or a new one by the name the model gave it
     let Some(to) = judge::listed(out.team, &teams).cloned().or(out.new_team.map(|t| t.trim().to_string()).filter(|t| !t.is_empty())) else { return };
-    let mut inner = app.inner.lock().unwrap();
+    let mut inner = app.change();
     // he may have moved it himself while the model was reading
     if inner.find(&agent_id).is_none_or(|s| s.moved == Some(Mover::Him) || s.callsign.project != team) {
         return;
@@ -98,6 +97,5 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
         // a note in the chat under its new name, and not something the agent said: a question it has open stays open
         inner.record(Entry { short: Some(line.clone()), agent: None, ..Entry::said(config::random_hex(8), &s, Some(Kind::Report), line) });
     }
-    app.save(&inner);
-    app.kick.notify_one();
+    inner.tell();
 }
