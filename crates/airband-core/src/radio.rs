@@ -1,11 +1,12 @@
-//! `airband.radio/2`: what goes between the tower and a radio (the app on the phone, in the car, on a desk).
+//! `airband.radio/3` ([`SCHEMA`]): what goes between the tower and a radio (the app on the phone, in the car, on a desk).
 //!
 //! The radio asks; the tower answers. All under `/v1/radio/`. Sent straight to the tower with
 //! `Authorization: Bearer <token>`, or sealed and passed through a relay (`airband.relay/1`):
 //! - `GET next`: held open up to 25 seconds. 200 with a [`Transmission`], or 204 when nothing is waiting.
 //!   A transmission is words: the radio speaks them with the voice he chose on it. The tower makes no sound
 //!   and hears none; what listens and what speaks are the radio's alone.
-//! - `POST heard` [`Heard`]: that transmission was spoken to the end.
+//! - `POST heard` [`Heard`]: that transmission was spoken to the end. `POST unheard` [`Unheard`]: it made no
+//!   sound, and why.
 //! - `POST utterance` [`Utterance`] → [`Outcome`]: what he said. Answered at once: the tower has it. What came
 //!   of it arrives in the feed ([`Feed::answers`]), and asking again under the same id says the same.
 //! - `POST ready`: the radio is free for the next transmission.
@@ -13,11 +14,11 @@
 //!   Said when either changes; every other request carries it too.
 //!
 //! Those are call mode: one transmission at a time, spoken. Chat mode reads the same messages as a feed:
-//! - `GET feed?scope=…&after=<seq>&wait=<seconds>` → [`Feed`]: everything said since `after`, each cut to a
-//!   line or two. `scope` is `all`, `group:<name>` or `agent:<callsign>`.
+//! - `GET feed?…` [`FeedAsk`] → [`Feed`]: what was said, each cut to a line or two; all of it, one team's or
+//!   one agent's.
 //! - `GET message/<id>?form=detail|full` → [`More`]: the fuller spoken version, or exactly what the agent wrote.
 //! - `POST utterance` is also how chat sends: leading `@tags` say who it is for (`@shop2`, `@shop`, `@all`).
-//! - Starting a new agent is an utterance too: one whose `act` is a launch, for a project the feed lists.
+//! - Starting a new agent is `POST project` ([`NewProject`]), in a folder from `GET recent` or `POST folders`.
 use serde::{Deserialize, Serialize};
 
 mod asks;
@@ -30,7 +31,8 @@ pub const SCHEMA: &str = "airband.radio/3";
 /// Where every request of a radio's goes on the tower. A radio's token opens these and nothing else.
 pub const PATH: &str = "/v1/radio/";
 /// The header a radio names itself in, so each has its own place in a call. A radio that comes through the
-/// relay is named by its pairing; one that sends nothing is "radio".
+/// relay is named by its pairing; one that comes straight to the tower must send it, and a request that names
+/// no radio is refused.
 pub const RADIO_HEADER: &str = "x-airband-radio";
 /// The header the tower's own link puts on a radio's request to say how it came: `the relay`, `his own
 /// network`, or `the relay, kept while the tower was away`. Only for the log.
@@ -86,6 +88,14 @@ pub struct Transmission {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Heard {
     pub id: String,
+}
+
+/// `POST unheard`: that transmission made no sound on this radio, and why, in words for the log. The tower keeps
+/// it queued and hands this radio nothing more for a minute.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Unheard {
+    pub id: String,
+    pub why: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -257,19 +267,6 @@ pub struct Reply {
     pub question: Option<String>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_feed_from_a_newer_tower_still_reads() {
-        let feed: Feed = serde_json::from_str(r#"{"messages":[{"seq":1,"id":"a","at":0,"from":"shop one","group":"shop","kind":"celebration","text":"x","mood":"good"}],"roster":[{"callsign":{"project":"shop","number":"one"},"harness":"h","waiting":false,"colour":"red"}],"seq":1,"weather":"fine"}"#).unwrap();
-        assert_eq!(feed.messages[0].kind, Some(Kind::Unknown));
-        let t: Transmission = serde_json::from_str(r#"{"id":"a","callsign":"shop one","kind":"celebration","say":"x"}"#).unwrap();
-        assert_eq!(t.kind, Kind::Unknown);
-    }
-}
-
 /// Which form of a message a radio asks for (`GET message/{id}`).
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -313,3 +310,72 @@ impl MessageAsk {
     }
 }
 
+/// `GET feed`: which part of the chat, from where, and how long to wait for something new. Written into the
+/// address as a query ([`FeedAsk::query`]) and read back from it by the tower, the one form both sides use.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeedAsk {
+    /// Only this team's, by its id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
+    /// Only this agent's, by its id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    /// How a radio follows the chat: everything new or changed after this change count. 0 starts from nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<u64>,
+    /// With no `since`: the lines added after this position.
+    #[serde(default)]
+    pub after: u64,
+    /// The most lines to send.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    /// The roster's change count this radio last saw: a change to the roster alone also ends the wait.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roster: Option<u64>,
+    /// How many seconds to wait for something new; no more than [`FeedAsk::WAIT_MOST`].
+    #[serde(default)]
+    pub wait: u32,
+}
+
+impl FeedAsk {
+    /// The longest a request for the feed is held open, in seconds.
+    pub const WAIT_MOST: u32 = 25;
+
+    /// The query string, as the tower reads it back.
+    pub fn query(&self) -> String {
+        let mut q = url::form_urlencoded::Serializer::new(String::new());
+        let mut add = |k: &str, v: Option<String>| {
+            if let Some(v) = v {
+                q.append_pair(k, &v);
+            }
+        };
+        add("team", self.team.clone());
+        add("agent", self.agent.clone());
+        add("since", self.since.map(|n| n.to_string()));
+        add("after", Some(self.after.to_string()));
+        add("limit", self.limit.map(|n| n.to_string()));
+        add("roster", self.roster.map(|n| n.to_string()));
+        add("wait", Some(self.wait.min(Self::WAIT_MOST).to_string()));
+        q.finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_feed_ask_reads_back_as_it_was_written() {
+        let ask = FeedAsk { team: Some("t 1&x".into()), since: Some(4), after: 9, roster: Some(2), wait: 99, ..Default::default() };
+        let back: FeedAsk = serde_json::from_value(serde_json::Value::Object(url::form_urlencoded::parse(ask.query().as_bytes()).map(|(k, v)| (k.to_string(), v.parse::<u64>().map_or(serde_json::Value::String(v.to_string()), Into::into))).collect())).unwrap();
+        assert_eq!(back, FeedAsk { wait: FeedAsk::WAIT_MOST, ..ask });
+    }
+
+    #[test]
+    fn a_feed_from_a_newer_tower_still_reads() {
+        let feed: Feed = serde_json::from_str(r#"{"messages":[{"seq":1,"id":"a","at":0,"from":"shop one","group":"shop","kind":"celebration","text":"x","mood":"good"}],"roster":[{"callsign":{"project":"shop","number":"one"},"harness":"h","waiting":false,"colour":"red"}],"seq":1,"weather":"fine"}"#).unwrap();
+        assert_eq!(feed.messages[0].kind, Some(Kind::Unknown));
+        let t: Transmission = serde_json::from_str(r#"{"id":"a","callsign":"shop one","kind":"celebration","say":"x"}"#).unwrap();
+        assert_eq!(t.kind, Kind::Unknown);
+    }
+}

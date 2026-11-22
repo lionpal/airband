@@ -6,8 +6,8 @@ pub(crate) const TEAM_NAME_MOST: usize = 24;
 
 /// A name he chose for a team (a new one, or a rename), as it is kept: [`team_name`], and short. The one check
 /// every place he names a team goes through.
-pub fn chosen_team_name(text: &str) -> Result<String, &'static str> {
-    team_name(text).filter(|n| n.chars().count() <= TEAM_NAME_MOST).ok_or("A team\u{2019}s name is letters and numbers, 24 at most.")
+pub fn chosen_team_name(text: &str) -> Result<String, String> {
+    team_name(text).filter(|n| n.chars().count() <= TEAM_NAME_MOST).ok_or_else(|| format!("A team\u{2019}s name is letters and numbers, {TEAM_NAME_MOST} at most."))
 }
 
 /// A name he gave a team, written the way a callsign writes it. Only written so: no part of it is taken for a

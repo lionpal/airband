@@ -78,11 +78,7 @@ impl Radio {
     /// Make a new team on this computer, or start another agent in one that is there. Blocks.
     /// Answers with the team's id on the computer.
     pub(crate) fn new_project(&self, name: String, folder: String, make: bool, tool: Option<String>) -> Result<String, RadioError> {
-        #[derive(serde::Deserialize)]
-        struct Made {
-            id: String,
-        }
-        Ok(self.asked::<Made>("POST", "/project", Some(serde_json::to_value(airband_core::radio::NewProject { name, folder, make, tool }).unwrap()))?.id)
+        Ok(self.asked::<airband_core::radio::ProjectMade>("POST", "/project", Some(serde_json::to_value(airband_core::radio::NewProject { name, folder, make, tool }).unwrap()))?.id)
     }
 
     pub(crate) fn unsend(&self, message: String) -> Result<(), RadioError> {

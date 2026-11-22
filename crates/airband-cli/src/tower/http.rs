@@ -27,15 +27,12 @@ fn refused(why: impl std::fmt::Display) -> Value {
     json!({ "error": why.to_string() })
 }
 
-/// Compare every byte whatever the outcome, so timing says nothing about a token.
-fn same(given: &[u8], want: &[u8]) -> bool {
-    given.len() == want.len() && given.iter().zip(want).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
-}
+use airband_core::token::same;
 
 /// Two tokens. The tower's own opens everything. A radio's opens `/v1/radio/` only: it must not be able to
 /// report as an agent, because an agent can name a command for the tower to run.
 async fn auth(State(app): State<Arc<App>>, req: Request, next: Next) -> Response {
-    let given = req.headers().get("authorization").and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).unwrap_or("").as_bytes();
+    let given = airband_core::token::bearer(req.headers().get("authorization").and_then(|v| v.to_str().ok())).as_bytes();
     let own = same(given, app.cfg.token.as_bytes());
     let radio = same(given, app.cfg.radio_token.as_bytes()) && req.uri().path().starts_with(airband_core::radio::PATH);
     if !(own || radio) {

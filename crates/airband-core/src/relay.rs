@@ -26,16 +26,22 @@ use sha2::{Digest, Sha256};
 pub const SCHEMA: &str = "airband.relay/1";
 /// A request older or newer than this, by the tower's clock, is refused.
 pub const FRESH_MS: u64 = 120_000;
-/// The largest sealed message a relay passes.
+/// The largest sealed message a relay passes, either way: a radio's request, a message kept for a tower, and
+/// a tower's answer. The relay refuses anything larger, and a tower never sends a larger answer
+/// ([`Keys::seal_answer_for_relay`]).
 pub const MAX_MESSAGE: usize = 256 * 1024;
+/// What sealing adds to a message: its nonce and its tag.
+const SEALING: usize = 12 + 16;
 
 /// The hash of the radio's own key, on a tower's opening of a channel: which radio the channel is for.
 pub const RADIO_HASH_HEADER: &str = "x-airband-radio-hash";
 /// The relay's admission key, when the relay asks for one.
 pub const ADMISSION_HEADER: &str = "x-airband-admission";
-/// The id of a request the relay hands a tower, which the tower's answer carries back.
+/// On what the relay hands a tower's pull: the id it gave that request, which the tower answers to in the
+/// address of its reply (`/reply/{id}`).
 pub const REQUEST_HEADER: &str = "x-airband-request";
-/// The same id, on the tower's answer.
+/// On a radio's message for the relay to keep (`/queue`): the radio's own id for it, so one sent twice is kept
+/// once.
 pub const ID_HEADER: &str = "x-airband-id";
 /// On a radio's request: keep it in order behind the ones the relay is keeping for the tower.
 pub const ORDERED_HEADER: &str = "x-airband-ordered";
@@ -86,7 +92,7 @@ pub struct Keys {
 pub fn new_secret() -> String {
     random_hex(32)
 }
-/// What the relay stores for a pull token.
+/// What the relay stores for a token, the tower's pull token and the radio's token alike.
 pub fn token_hash(token: &str) -> String {
     hex(&Sha256::digest(token.as_bytes()))
 }
@@ -132,6 +138,19 @@ impl Keys {
         self.cipher(dir).decrypt(Nonce::from_slice(nonce), Payload { msg: body, aad: &self.bound(dir) }).map_err(|_| "not sealed with this pairing's key".to_string())
     }
 
+    /// This channel's address at a relay, with what follows it (`""`, `/pull`, `/reply/<id>`, `/push`): the one
+    /// place the relay's routes are put together, for the tower and the radio alike.
+    pub fn at(&self, relay: &str, route: &str) -> String {
+        format!("{}/v1/channels/{}{route}", relay.trim_end_matches('/'), self.channel)
+    }
+    /// What a tower shows the relay it is this channel's tower with (`Authorization`).
+    pub fn as_tower(&self) -> String {
+        format!("Bearer {}", self.pull_token)
+    }
+    /// What a radio shows the relay it is this channel's radio with (`Authorization`).
+    pub fn as_radio(&self) -> String {
+        format!("Bearer {}", self.radio_token)
+    }
     /// A request sealed for the tower.
     pub fn seal_call(&self, call: &Call) -> Vec<u8> {
         self.seal(Direction::ToTower, &serde_json::to_vec(call).unwrap_or_default())
@@ -144,6 +163,17 @@ impl Keys {
     pub fn seal_answer(&self, answer: &Answer) -> Vec<u8> {
         self.seal(Direction::ToRadio, &serde_json::to_vec(answer).unwrap_or_default())
     }
+    /// An answer sealed for the radio, to go through a relay: no larger than [`MAX_MESSAGE`]. One that would be
+    /// is not cut short or left for the relay to turn away (the radio would wait and hear nothing); the radio is
+    /// answered 413, saying so, under the same id.
+    pub fn seal_answer_for_relay(&self, answer: &Answer) -> Vec<u8> {
+        let plain = serde_json::to_vec(answer).unwrap_or_default();
+        if plain.len() + SEALING <= MAX_MESSAGE {
+            return self.seal(Direction::ToRadio, &plain);
+        }
+        let told = serde_json::json!({ "error": format!("The answer is larger than a relay passes ({} KB), so it was not sent.", MAX_MESSAGE / 1024) });
+        self.seal_answer(&Answer { id: answer.id.clone(), status: 413, body: told })
+    }
     /// The tower's answer to one request, by the request's id. Nothing for bytes this pairing's key does
     /// not open, and nothing for an answer to some other request: only the tower can make one, and only
     /// the one asked for is this one's.
@@ -152,7 +182,7 @@ impl Keys {
     }
 }
 
-/// What the radio seals and sends: one `airband.radio/2` request.
+/// What the radio seals and sends: one request in the radio protocol ([`crate::radio::SCHEMA`]).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Call {
     /// When it was made, in milliseconds since 1970.
@@ -164,7 +194,7 @@ pub struct Call {
     pub path: String,
     #[serde(default)]
     pub body: serde_json::Value,
-    /// The radio protocol the request is in (`airband.radio/2`). A tower that does not speak it says so, in
+    /// The radio protocol the request is in ([`crate::radio::SCHEMA`]). A tower that does not speak it says so, in
     /// place of guessing. (The relay protocol's own version needs no field: it is part of how the keys are
     /// derived, so two versions cannot read each other at all.)
     pub schema: String,
@@ -211,6 +241,24 @@ pub struct PushRequest {
     pub question: bool,
 }
 
+/// The most characters a phone's address at a push service has.
+const PUSH_ADDRESS_MOST: usize = 256;
+
+/// Is this the shape of a phone's address at a push service: a short run of letters, digits, `-`, `_` and `:`?
+/// The one rule, for the tower taking an address from a radio and the relay passing one on.
+pub fn push_address(to: &str) -> bool {
+    !to.is_empty() && to.len() <= PUSH_ADDRESS_MOST && to.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_:".contains(&b))
+}
+
+impl PushRequest {
+    /// Is it the right shape to pass on: an address ([`push_address`]), and a sealed notification that is
+    /// base64 of no more than [`PUSH_MOST`] bytes?
+    pub fn well_formed(&self) -> bool {
+        let base64 = !self.sealed.is_empty() && self.sealed.bytes().all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b));
+        push_address(&self.to) && base64 && self.sealed.len() <= PUSH_MOST.div_ceil(3) * 4
+    }
+}
+
 /// The relay's answer to a [`PushRequest`]. The HTTP status says the same in a number: 200 sent, 410 the address
 /// is no longer good, 429 too many, 503 this relay has no such push service, 502 the service refused or failed.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -255,6 +303,22 @@ mod tests {
         let mut bent = sealed.clone();
         *bent.last_mut().unwrap() ^= 1;
         assert!(tower.open(Direction::ToTower, &bent).is_err());
+    }
+    #[test]
+    fn an_answer_through_a_relay_is_never_larger_than_the_relay_passes_and_one_too_large_says_so() {
+        let k = Keys::derive(&new_secret()).unwrap();
+        let answer = |n: usize| Answer { id: "abc".into(), status: 200, body: serde_json::Value::String("x".repeat(n)) };
+        let small = k.seal_answer_for_relay(&answer(1000));
+        assert_eq!(k.open_answer(&small, "abc").unwrap().body, answer(1000).body);
+        let large = k.seal_answer_for_relay(&answer(MAX_MESSAGE));
+        assert!(large.len() <= MAX_MESSAGE);
+        let told = k.open_answer(&large, "abc").unwrap();
+        assert_eq!(told.status, 413);
+        assert!(told.body["error"].is_string());
+        // right at the edge: what fits is sent as it is
+        let edge = MAX_MESSAGE - SEALING - serde_json::to_vec(&answer(0)).unwrap().len();
+        let at_edge = k.seal_answer_for_relay(&answer(edge));
+        assert_eq!((at_edge.len(), k.open_answer(&at_edge, "abc").unwrap().status), (MAX_MESSAGE, 200));
     }
     #[test]
     fn same_words_never_seal_the_same_way() {

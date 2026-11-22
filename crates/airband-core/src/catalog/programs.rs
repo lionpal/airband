@@ -1,0 +1,50 @@
+//! Programs a row names for the tower to run: a terminal a message is typed into, and one that pulls frames out
+//! of a video.
+use super::*;
+
+/// A terminal a message can be typed into, as its row has it. In `type` and `enter`, `{pane}` is the pane and
+/// `{line}` the words; each is one argument, never read by a shell.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct Terminal {
+    pub id: String,
+    pub program: String,
+    #[serde(rename = "type")]
+    pub type_line: Vec<String>,
+    pub enter: Vec<String>,
+}
+
+impl Terminal {
+    /// The two runs of the program that type `line` into `pane` and press Enter.
+    pub fn runs(&self, pane: &str, line: &str) -> [Vec<String>; 2] {
+        let fill = |words: &[String]| words.iter().map(|w| if w == "{pane}" { pane.to_string() } else if w == "{line}" { line.to_string() } else { w.clone() }).collect();
+        [fill(&self.type_line), fill(&self.enter)]
+    }
+}
+
+/// A program that pulls a frame a second out of a video, so an agent has pictures it can look at.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct Frames {
+    pub id: String,
+    /// What it is called, for telling an agent which program to use.
+    pub name: String,
+    pub program: String,
+    /// The words it is run with: `{video}` the video, `{frames}` how many at most, `{out}` the folder they go in.
+    pub args: Vec<String>,
+}
+
+impl Frames {
+    /// The words to run it with, for this video, this many frames, into this folder.
+    pub fn run(&self, video: &str, frames: usize, out: &str) -> Vec<String> {
+        self.args.iter().map(|w| w.replace("{video}", video).replace("{frames}", &frames.to_string()).replace("{out}", out)).collect()
+    }
+}
+
+/// The program this build pulls frames out of a video with, when it has one.
+pub fn frames() -> Option<Frames> {
+    current().frames.first().cloned()
+}
+
+/// The terminal a row by this id describes.
+pub fn terminal(id: &str) -> Option<Terminal> {
+    current().terminals.iter().find(|t| t.id == id).cloned()
+}

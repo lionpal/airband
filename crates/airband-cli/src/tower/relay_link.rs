@@ -126,8 +126,8 @@ impl Serve {
             return;
         };
         let agent = airband_core::net::agent(Duration::from_secs(40));
-        let auth = format!("Bearer {}", self.keys.pull_token);
-        let base = format!("{}/v1/channels/{}", relay, self.keys.channel);
+        let auth = self.keys.as_tower();
+        let base = self.keys.at(&relay, "");
         let (mut open, mut wait, mut told) = (false, 1, false);
         let nap = |wait: &mut u64| {
             std::thread::sleep(Duration::from_secs(*wait));
@@ -256,7 +256,7 @@ impl Serve {
             }
             self.dispatch(&call, "the relay", true).await
         };
-        let sealed = self.keys.seal_answer(&Answer { id: call.id, status, body });
+        let sealed = self.keys.seal_answer_for_relay(&Answer { id: call.id, status, body });
         self.send_back(&request_id, kept, Some(sealed)).await;
     }
 
@@ -265,8 +265,8 @@ impl Serve {
     /// request was one the relay kept while the tower was away, said back to it as such.
     async fn send_back(&self, request_id: &str, kept: bool, sealed: Option<Vec<u8>>) {
         let Some(relay) = &self.relay else { return };
-        let url = format!("{}/v1/channels/{}/reply/{request_id}", relay, self.keys.channel);
-        let auth = format!("Bearer {}", self.keys.pull_token);
+        let url = self.keys.at(relay, &format!("/reply/{request_id}"));
+        let auth = self.keys.as_tower();
         // one agent for every answer on this channel: its connection to the relay is kept, not made again each time
         let agent = self.replies.clone();
         let sent = tokio::task::spawn_blocking(move || {
@@ -319,7 +319,10 @@ impl Serve {
         };
         let Ok(res) = self.router.clone().oneshot(req).await;
         let status = res.status().as_u16();
-        let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap_or_default();
-        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+        // an answer too large to read here is said as that, never passed on as an empty one with its status
+        match axum::body::to_bytes(res.into_body(), 1 << 20).await {
+            Ok(bytes) => (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null)),
+            Err(_) => self.refused(call, via, 413, "the answer is too large to send"),
+        }
     }
 }

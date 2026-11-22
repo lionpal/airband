@@ -108,7 +108,7 @@ impl Link {
     /// `trail_file` is where the trail is kept between launches; nothing keeps it in memory only.
     pub(crate) fn new(pairing: Pairing, radio: &str, trail_file: Option<std::path::PathBuf>) -> Result<Self, String> {
         let agent = crate::net::agent(POLL_TIMEOUT);
-        let trail = trail_file.as_deref().and_then(airband_core::kept::load).unwrap_or_default();
+        let trail = trail_file.as_deref().and_then(crate::store::kept).unwrap_or_default();
         let mut at = Vec::new();
         let route = match pairing {
             Pairing::Near { at: given, secret } => {

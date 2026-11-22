@@ -152,7 +152,7 @@ fn told(reason: impl Into<String>) -> RadioError {
 impl Chooser {
     /// What was kept in `dir`, or a new install's choices. With no folder (a test), nothing is kept.
     pub(crate) fn open(dir: &str, device: HostDevice) -> Chooser {
-        let kept: Option<Saved> = if dir.is_empty() { None } else { airband_core::kept::load(&Path::new(dir).join("choices.json")) };
+        let kept: Option<Saved> = if dir.is_empty() { None } else { crate::store::kept(&Path::new(dir).join("choices.json")) };
         let saved = Mutex::new(kept.unwrap_or_else(|| Saved::fresh(&device)));
         Chooser { dir: dir.into(), device, saved, working: Mutex::new(None) }
     }

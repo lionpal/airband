@@ -3,7 +3,7 @@
 //!
 //! Two versioned protocols meet at the tower (docs/protocols.md):
 //! - [`agent`], `airband.agent/1`: how any coding agent, on any harness or model, reports in and is spoken to.
-//! - [`radio`], `airband.radio/2`: how a phone, car or desktop app hears transmissions and sends replies.
+//! - [`radio`], `airband.radio/3`: how a phone, car or desktop app hears transmissions and sends replies.
 //! - [`relay`], `airband.relay/1`: how a radio reaches a tower that is behind a home router, through a relay
 //!   that can read none of it. [`pairing`] is the link that sets a radio up for either route.
 #[cfg(feature = "ffi")]
@@ -24,4 +24,5 @@ pub mod radio;
 pub mod redact;
 pub mod relay;
 pub mod routing;
+pub mod token;
 pub mod tools;

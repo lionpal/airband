@@ -7,8 +7,9 @@ pub use team::*;
 
 const WORDS: [&str; 13] = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
 
-/// A session's name on the radio: its folder's name plus a number word ("shop two"), or plus the name he gave
-/// the session ("warehouse removals"). `number` holds whichever follows the project's name.
+/// An agent's name on the radio: its team's name plus a number word ("shop two"), or plus the name he gave the
+/// agent ("warehouse removals"). `project` is the team's name as the callsign writes it (the team itself is
+/// known by its id, never by this); `number` holds whichever follows it.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Callsign {
     pub project: String,

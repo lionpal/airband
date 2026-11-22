@@ -51,7 +51,7 @@ pub(super) fn new_lines(transcript: &str, session: &str, note: &str, first: Firs
         return None;
     }
     let path = super::super::claude_accounts::dir().join(format!("{session}.{note}"));
-    let mut kept: Value = airband_core::kept::load(&path).filter(Value::is_object).unwrap_or_else(|| serde_json::json!({}));
+    let mut kept: Value = airband_core::kept::load(&path).ok().flatten().filter(Value::is_object).unwrap_or_else(|| serde_json::json!({}));
     let Ok(file) = std::fs::File::open(transcript) else {
         if first == FirstLook::FromEnd && !std::path::Path::new(transcript).exists() && kept.get("at").is_none() {
             kept["at"] = 0.into();
