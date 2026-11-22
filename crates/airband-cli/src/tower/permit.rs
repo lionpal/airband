@@ -66,7 +66,7 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
             let choices: Vec<String> = q.choices.iter().filter(|c| c.chars().count() <= 28).take(4).cloned().collect();
             let all = if q.choices.is_empty() { q.text.clone() } else { format!("{}\n\n{}", q.text, q.choices.iter().map(|c| format!("- {c}")).collect::<Vec<_>>().join("\n")) };
             // a long question is shown by its opening; all of it is one tap away, as for any message
-            let line = if q.text.chars().count() > 220 { format!("{}…", q.text.chars().take(219).collect::<String>().trim_end()) } else { q.text.clone() };
+            let line = airband_core::prose::clip(&q.text, 220);
             (line, if choices.len() == q.choices.len() { choices } else { Vec::new() }, all)
         }
         None => {

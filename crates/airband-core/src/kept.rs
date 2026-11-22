@@ -90,6 +90,18 @@ pub fn save<T: Serialize + ?Sized>(path: &Path, value: &T) -> std::io::Result<()
     write_atomic(path, serde_json::to_vec(value).map_err(std::io::Error::other)?)
 }
 
+/// Remove what in `dir` was last changed longer than `age` ago: files, and folders with all they hold. A folder
+/// that is not there has nothing to remove.
+pub fn prune_older(dir: &Path, age: std::time::Duration) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        if meta.modified().ok().and_then(|t| t.elapsed().ok()).is_some_and(|a| a > age) {
+            let _ = if meta.is_dir() { std::fs::remove_dir_all(entry.path()) } else { std::fs::remove_file(entry.path()) };
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

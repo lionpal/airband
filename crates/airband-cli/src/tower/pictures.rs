@@ -116,12 +116,7 @@ pub(super) fn part(id: &str, from: usize) -> Option<PicturePart> {
 
 /// Drop copies nobody will ask for again.
 pub(super) fn prune() {
-    let Ok(dir) = std::fs::read_dir(folder()) else { return };
-    for entry in dir.flatten() {
-        if entry.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).is_some_and(|age| age > KEEP) {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
+    airband_core::kept::prune_older(&folder(), KEEP);
 }
 
 #[cfg(test)]

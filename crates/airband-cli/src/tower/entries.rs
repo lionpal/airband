@@ -162,7 +162,7 @@ impl Inner {
                 continue;
             }
             // his words as he typed them. Something very long (a pasted log) is shown by its opening and kept whole
-            let short: String = if t.text.chars().count() > 1500 { format!("{}…", t.text.chars().take(1500).collect::<String>().trim_end()) } else { t.text.clone() };
+            let short = airband_core::prose::clip(&t.text, 1500);
             self.record_at(Entry { short: Some(short), pictures, ..Entry::his(id, std::slice::from_ref(&to), t.text) }, t.at);
         }
         if let Some(s) = self.session(agent_id) {

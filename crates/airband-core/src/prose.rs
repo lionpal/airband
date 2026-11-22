@@ -324,6 +324,14 @@ fn words(spans: &[ProseSpan]) -> String {
     }).collect::<String>()
 }
 
+/// `text` at most `most` characters long: cut, with an ellipsis as its last character, when it is longer.
+pub fn clip(text: &str, most: usize) -> String {
+    if text.chars().count() <= most {
+        return text.to_string();
+    }
+    format!("{}\u{2026}", text.chars().take(most.saturating_sub(1)).collect::<String>().trim_end())
+}
+
 /// The first two sentences of what an agent wrote, as words to say, for when no summary of it was made.
 pub fn opening(text: &str) -> String {
     let s = plain(text);

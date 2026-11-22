@@ -330,5 +330,5 @@ pub(super) fn step(tool: &str, input: &Value) -> Option<String> {
         own.replace(['_', '-'], " ")
     };
     let said: String = said.split_whitespace().collect::<Vec<_>>().join(" ");
-    Some(if said.chars().count() > 64 { format!("{}…", said.chars().take(63).collect::<String>().trim_end()) } else { said }).filter(|s| !s.is_empty())
+    Some(airband_core::prose::clip(&said, 64)).filter(|s| !s.is_empty())
 }

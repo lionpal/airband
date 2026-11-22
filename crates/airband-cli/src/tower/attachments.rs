@@ -188,13 +188,7 @@ pub(super) async fn describe(ids: &[String]) -> (String, Vec<airband_core::radio
 
 /// Old attachments are cleared when the tower starts.
 pub(super) fn prune() {
-    let Ok(dirs) = std::fs::read_dir(root()) else { return };
-    for d in dirs.flatten() {
-        let old = d.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > Duration::from_secs(KEEP_DAYS * 86_400));
-        if old {
-            let _ = std::fs::remove_dir_all(d.path());
-        }
-    }
+    airband_core::kept::prune_older(&root(), Duration::from_secs(KEEP_DAYS * 86_400));
 }
 
 #[cfg(test)]

@@ -43,12 +43,7 @@ impl Store {
     }
     /// Drop pictures fetched long ago; one that is wanted again is fetched again.
     pub(crate) fn prune_pictures(&self) {
-        let Ok(dir) = std::fs::read_dir(self.pictures()) else { return };
-        for entry in dir.flatten() {
-            if entry.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).is_some_and(|age| age > PICTURES_KEEP) {
-                let _ = std::fs::remove_file(entry.path());
-            }
-        }
+        airband_core::kept::prune_older(&self.pictures(), PICTURES_KEEP);
     }
     pub(crate) fn change<T>(&self, f: impl FnOnce(&mut Saved) -> T) -> T {
         let mut saved = self.saved.lock().unwrap();

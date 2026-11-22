@@ -177,7 +177,7 @@ fn rejected(why: airband_core::radio::Rejected) -> &'static str {
 
 /// The start of what he said, for a note about it.
 fn opening(text: &str) -> String {
-    if text.chars().count() > 80 { format!("{}…", text.chars().take(79).collect::<String>().trim_end()) } else { text.to_string() }
+    airband_core::prose::clip(text, 80)
 }
 
 /// A cause as a sentence of its own.

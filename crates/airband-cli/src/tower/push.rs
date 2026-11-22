@@ -76,12 +76,11 @@ pub(super) fn there(call: Option<&Call>, rev: u64) -> bool {
 /// The notification for a line, as the phone will open it.
 pub(super) fn notice(inner: &Inner, e: &Entry, station: &str) -> Notice {
     let m = inner.message(e);
-    let short = |t: &str, most: usize| if t.chars().count() > most { format!("{}…", t.chars().take(most - 1).collect::<String>().trim_end()) } else { t.to_string() };
-    let text = short(&m.text, 400);
+    let text = airband_core::prose::clip(&m.text, 400);
     // A request for leave that does not fit is shown by its opening and offers no answer from the lock screen:
     // he opens it, reads all of what would run, and answers there.
     let cut = m.permission && text != m.text;
-    Notice { id: m.id, from: m.from, agent: m.agent, badge: m.badge, group: m.group, team: m.team, station: station.into(), text, kind: m.kind, options: if cut { Vec::new() } else { m.options.iter().take(4).map(|o| short(o, 40)).collect() }, permission: m.permission && !cut }
+    Notice { id: m.id, from: m.from, agent: m.agent, badge: m.badge, group: m.group, team: m.team, station: station.into(), text, kind: m.kind, options: if cut { Vec::new() } else { m.options.iter().take(4).map(|o| airband_core::prose::clip(o, 40)).collect() }, permission: m.permission && !cut }
 }
 
 /// A line's short version has just been made, or a card was put to him: wake whichever phones should know.
@@ -137,7 +136,7 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
         if keep < 20 {
             return log(format!("push: {what} is too long to send to \"{radio}\""));
         }
-        note.text = format!("{}…", note.text.chars().take(keep).collect::<String>().trim_end());
+        note.text = airband_core::prose::clip(&note.text, keep);
         // cut: never an Allow under part of a command
         if note.permission {
             (note.permission, note.options) = (false, Vec::new());
