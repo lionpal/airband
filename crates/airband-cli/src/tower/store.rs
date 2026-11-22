@@ -155,13 +155,13 @@ impl Store {
         }
         let db = self.db.lock().unwrap();
         for e in entries {
-            let kind = e.kind.and_then(|k| serde_json::to_value(k).ok()).and_then(|v| v.as_str().map(String::from));
+            let kind = e.kind.as_ref().and_then(word);
             Self::warn(
                 "saving a message",
                 db.execute(
                     "insert into messages (seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
                      on conflict (seq) do update set grp = excluded.grp, kind = excluded.kind, short = excluded.short, full = excluded.full, detail = excluded.detail, options = excluded.options, recommended = excluded.recommended, rev = excluded.rev, read = excluded.read, waiting = excluded.waiting, seen = excluded.seen, leave = excluded.leave, request = excluded.request, own_session = excluded.own_session, aloud = excluded.aloud",
-                    params![e.seq as i64, e.id, e.at as i64, e.from, e.team, serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, Held::of(e).map(Held::word), e.seen.map(|t| t as i64), e.leave.is_some() as i64, e.own_session as i64, serde_json::to_string(&e.aloud).unwrap(), e.notice as i64, e.leave.as_ref().map(|r| serde_json::to_string(r).unwrap()), e.note.and_then(|n| serde_json::to_value(n).ok()).and_then(|v| v.as_str().map(String::from)), e.his],
+                    params![e.seq as i64, e.id, e.at as i64, e.from, e.team, serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, Held::of(e).map(Held::word), e.seen.map(|t| t as i64), e.leave.is_some() as i64, e.own_session as i64, serde_json::to_string(&e.aloud).unwrap(), e.notice as i64, e.leave.as_ref().map(|r| serde_json::to_string(r).unwrap()), e.note.as_ref().and_then(word), e.his],
                 ),
             );
         }
@@ -320,8 +320,12 @@ impl Held {
         if e.cancelled { Some(Held::Cancelled) } else if e.queued { Some(Held::Queued) } else if e.dismissed { Some(Held::Dismissed) } else { None }
     }
     fn word(self) -> String {
-        serde_json::to_value(self).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default()
+        word(&self).unwrap_or_default()
     }
+}
+/// An enum's word as its serde name writes it: how a kind or a state is kept in a column, and logged.
+pub(super) fn word<T: Serialize>(v: &T) -> Option<String> {
+    serde_json::to_value(v).ok().and_then(|v| v.as_str().map(String::from))
 }
 fn held(r: &rusqlite::Row) -> rusqlite::Result<Option<Held>> {
     Ok(r.get::<_, Option<String>>(17)?.and_then(|t| serde_json::from_value(Value::String(t)).ok()))

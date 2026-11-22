@@ -5,7 +5,7 @@ use super::*;
 pub(super) async fn team(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::MoveAgent>) -> Json<Value> {
     Json(match place::by_him(&app, &to.agent, &to.to) {
         Ok((callsign, team, id)) => json!({ "callsign": callsign, "team": team, "id": id }),
-        Err(why) => json!({ "error": why }),
+        Err(why) => refused(why),
     })
 }
 
@@ -17,7 +17,7 @@ pub(super) async fn team_rename(State(app): State<Arc<App>>, Json(to): Json<airb
             inner.tell();
             json!({ "team": team })
         }
-        Err(why) => json!({ "error": why }),
+        Err(why) => refused(why),
     })
 }
 
@@ -58,22 +58,15 @@ pub(super) async fn folders(State(app): State<Arc<App>>, Json(ask): Json<airband
             f.team = team.map(|id| inner.team_name(&id)).or_else(|| inner.name_for_folder(&f.path)).unwrap_or_default();
             serde_json::to_value(f).unwrap()
         }
-        Ok(Ok(Err(why))) => json!({ "error": why }),
-        Ok(Err(_)) => json!({ "error": "That folder cannot be opened from here." }),
-        Err(_) => json!({ "error": "This folder is taking too long to open. Your Mac may be asking whether airband can open it. Answer at the Mac, then try again." }),
+        Ok(Ok(Err(why))) => refused(why),
+        Ok(Err(_)) => refused("That folder cannot be opened from here."),
+        Err(_) => refused("This folder is taking too long to open. Your Mac may be asking whether airband can open it. Answer at the Mac, then try again."),
     })
 }
 
 /// The folders his coding tools have had sessions in, newest first, then his teams no tool has a record of.
 pub(super) async fn recent(State(app): State<Arc<App>>) -> Json<airband_core::radio::Recent> {
     Json(airband_core::radio::Recent { folders: app.read().recent() })
-}
-
-/// Read again which folders his coding tools have had sessions in, and keep the answer. Reads their
-/// records, so it is done off the lock; the tower does it when it starts and every minute after.
-pub(in crate::tower) fn read_worked(app: &App) {
-    let worked = crate::adapters::worked_all();
-    app.passing().worked = worked;
 }
 
 /// He made a new team from a radio, or asked for another agent in one: a name, and the folder its agents
@@ -83,7 +76,7 @@ pub(super) async fn project(State(app): State<Arc<App>>, Json(new): Json<airband
     // callsign is
     let mut name = match airband_core::routing::chosen_team_name(&new.name) {
         Ok(name) => name,
-        Err(why) => return Json(json!({ "error": why })),
+        Err(why) => return Json(refused(why)),
     };
     let folder = if new.make {
         // the new folder is called exactly as he wrote the name: one part of a path, not hidden
@@ -94,7 +87,7 @@ pub(super) async fn project(State(app): State<Arc<App>>, Json(new): Json<airband
                 let made = parent.join(last);
                 if let Err(e) = std::fs::create_dir(&made)
                     && !made.is_dir() {
-                        return Json(json!({ "error": format!("That folder could not be made: {e}") }));
+                        return Json(refused(format!("That folder could not be made: {e}")));
                     }
                 Ok(made)
             }
@@ -108,7 +101,7 @@ pub(super) async fn project(State(app): State<Arc<App>>, Json(new): Json<airband
     };
     let folder = match folder {
         Ok(f) => f,
-        Err(why) => return Json(json!({ "error": why })),
+        Err(why) => return Json(refused(why)),
     };
     let id = {
         let mut inner = app.change();
@@ -120,7 +113,7 @@ pub(super) async fn project(State(app): State<Arc<App>>, Json(new): Json<airband
                 team
             }
             None if !inner.name_free(&name, None) => {
-                return Json(json!({ "error": format!("There is already a team called {name}, here or on another of your computers.") }));
+                return Json(refused(format!("There is already a team called {name}, here or on another of your computers.")));
             }
             None => {
                 // the name came from his radio, so he chose it, even where it is the one the folder would give,

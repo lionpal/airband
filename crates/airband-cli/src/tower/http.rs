@@ -14,8 +14,6 @@ use feed::*;
 use settings::*;
 use talk::*;
 use teams::*;
-pub(super) use events::take_event;
-pub(super) use teams::read_worked;
 
 /// Which radio is asking: the name of its pairing, exactly as the pairing has it. A request the relay link or
 /// the near listener opened carries it from the pairing whose key opened it; one on the plain direct route says
@@ -23,6 +21,11 @@ pub(super) use teams::read_worked;
 /// goes by this one value.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RadioId(pub String);
+
+/// The answer for a request airband would not do: why, in words for him.
+fn refused(why: impl std::fmt::Display) -> Value {
+    json!({ "error": why.to_string() })
+}
 
 /// Compare every byte whatever the outcome, so timing says nothing about a token.
 fn same(given: &[u8], want: &[u8]) -> bool {
@@ -36,7 +39,7 @@ async fn auth(State(app): State<Arc<App>>, req: Request, next: Next) -> Response
     let own = same(given, app.cfg.token.as_bytes());
     let radio = same(given, app.cfg.radio_token.as_bytes()) && req.uri().path().starts_with("/v1/radio/");
     if !(own || radio) {
-        return (StatusCode::UNAUTHORIZED, Json(json!({ "error": "bad token" }))).into_response();
+        return (StatusCode::UNAUTHORIZED, Json(refused("bad token"))).into_response();
     }
     let mut req = req;
     // A radio must say which one it is. The computer's own command line (the tower's token) is no radio: it
@@ -47,7 +50,7 @@ async fn auth(State(app): State<Arc<App>>, req: Request, next: Next) -> Response
             Some(name) => {
                 req.extensions_mut().insert(RadioId(name));
             }
-            None => return (StatusCode::BAD_REQUEST, Json(json!({ "error": "the request does not say which radio it is from" }))).into_response(),
+            None => return (StatusCode::BAD_REQUEST, Json(refused("the request does not say which radio it is from"))).into_response(),
         }
     }
     next.run(req).await

@@ -54,7 +54,7 @@ impl Aloud {
             Aloud::Waiting => "waiting".into(),
             Aloud::Handed { radio, .. } => format!("handed to {radio}"),
             Aloud::Heard { radio, .. } => format!("heard on {radio}"),
-            Aloud::Dropped { why, .. } => format!("dropped ({})", serde_json::to_value(why).ok().and_then(|v| v.as_str().map(|w| w.replace('_', " "))).unwrap_or_default()),
+            Aloud::Dropped { why, .. } => format!("dropped ({})", super::store::word(why).map(|w| w.replace('_', " ")).unwrap_or_default()),
         }
     }
 }

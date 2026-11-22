@@ -53,7 +53,7 @@ pub(super) async fn pump(app: &Arc<App>) {
     let say = next.short.clone().unwrap_or_default();
     let kind = next.kind.unwrap_or(Kind::Unjudged);
     log(format!("→ {radio}: {callsign} ({kind:?}): {say}"));
-    let spoken_line = format!("{}. {say}", cap(&callsign));
+    let spoken_line = format!("{}. {say}", airband_core::prose::capital(&callsign));
     let waiting = inner.unheard().count() as u32 - 1;
     inner.set_aloud(&next.id, Aloud::Handed { radio: radio.clone(), at: now_ms() });
     transmit(app, &mut inner, &radio, Transmission { id: next.id.clone(), agent: next.agent.clone().unwrap_or_default(), callsign, kind, say: spoken_line, waiting });
@@ -111,11 +111,7 @@ fn remind(app: &Arc<App>, inner: &mut Inner, radio: &str) {
     let say = e.short.clone().unwrap_or_default();
     let from = inner.sender(&e).map(|s| s.callsign.text()).unwrap_or_else(|| e.from.clone());
     log(format!("→ {radio}: {from} ({}): {say}", if first { "waiting" } else { "reminder" }));
-    let spoken_line = if first { format!("{} is waiting. {say}", cap(&from)) } else { format!("Still waiting: {from}. {say}") };
+    let spoken_line = if first { format!("{} is waiting. {say}", airband_core::prose::capital(&from)) } else { format!("Still waiting: {from}. {say}") };
     transmit(app, inner, radio, Transmission { id: e.id.clone(), agent: e.agent.clone().unwrap_or_default(), callsign: from, kind: Kind::NeedsYou, say: spoken_line, waiting: 0 });
 }
 
-fn cap(t: &str) -> String {
-    let mut c = t.chars();
-    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
-}

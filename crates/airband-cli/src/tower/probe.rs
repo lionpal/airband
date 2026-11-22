@@ -7,7 +7,7 @@ pub fn triage(cfg: Config) -> Result<(), String> {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
     let item = Item { id: String::new(), notice: false, full: full.trim().to_string(), kind: None, say: None, asked: None };
     let j = rt.block_on(prepare(&cfg, &item));
-    println!("{}\t{}\t{}", serde_json::to_value(j.kind).unwrap().as_str().unwrap_or(""), j.say, j.options.iter().enumerate().map(|(i, o)| if j.recommended == Some(i as u32) { format!("[{o}]") } else { o.clone() }).collect::<Vec<_>>().join(" | "));
+    println!("{}\t{}\t{}", super::store::word(&j.kind).unwrap_or_default(), j.say, j.options.iter().enumerate().map(|(i, o)| if j.recommended == Some(i as u32) { format!("[{o}]") } else { o.clone() }).collect::<Vec<_>>().join(" | "));
     Ok(())
 }
 
@@ -21,7 +21,7 @@ pub fn try_model(cfg: &Config) -> Result<String, String> {
         println!("  Fetching the model and starting it. The first time this is a few gigabytes and takes a while.");
     }
     println!("  Asking it something…");
-    let answered = rt.block_on(judge::ask_model(cfg, "Reply with the one word: ready".into())).map(|_| "It answers.".into());
+    let answered = rt.block_on(judge::ask_model(cfg, judge::READY.into())).map(|_| "It answers.".into());
     // a model this command started on this computer is stopped again: the tower starts its own
     local::stop();
     answered

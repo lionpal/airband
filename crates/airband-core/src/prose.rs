@@ -324,6 +324,12 @@ fn words(spans: &[ProseSpan]) -> String {
     }).collect::<String>()
 }
 
+/// `text` with its first letter a capital, as the start of a sentence.
+pub fn capital(text: &str) -> String {
+    let mut c = text.chars();
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+}
+
 /// `text` at most `most` characters long: cut, with an ellipsis as its last character, when it is longer.
 pub fn clip(text: &str, most: usize) -> String {
     if text.chars().count() <= most {

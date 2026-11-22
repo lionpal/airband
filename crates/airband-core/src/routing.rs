@@ -67,9 +67,7 @@ impl Callsign {
     }
     /// Capitalised, to start a sentence.
     pub fn spoken(&self) -> String {
-        let t = self.text();
-        let mut c = t.chars();
-        c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+        crate::prose::capital(&self.text())
     }
     /// The callsign a session's own name asks for, in this team: "shop 2" → shop two, "removals" or
     /// "warehouse removals" → warehouse removals. Nothing when the name says nothing beyond the project.

@@ -124,8 +124,7 @@ fn watch_tools(app: &Arc<App>) {
         crate::adapters::Tower {
             event: Box::new(move |event| {
                 let _here = runtime.enter();
-                taking.store.event(&serde_json::to_value(&event).unwrap_or_default());
-                http::take_event(&taking, event).is_ok()
+                intake::record_and_take(&taking, event)
             }),
             holds: Box::new(move |session| held::holds(&holding.read(), session)),
             found: Box::new(move |agent, idle| {
@@ -147,8 +146,7 @@ fn found(app: &Arc<App>, agent: Agent, idle: bool) -> bool {
     let id = agent.id.clone();
     let new = app.read().find(&id).is_none();
     let event = AgentEvent { schema: agent::SCHEMA.into(), agent, event: Event::Checkin, via: None };
-    app.store.event(&serde_json::to_value(&event).unwrap_or_default());
-    if http::take_event(app, event).is_err() {
+    if !intake::record_and_take(app, event) {
         return false;
     }
     // asked every few seconds for every open session: only one that is to be marked is changed
@@ -168,7 +166,9 @@ fn found(app: &Arc<App>, agent: Agent, idle: bool) -> bool {
 fn read_worked_folders(app: &Arc<App>) {
     let app = app.clone();
     std::thread::spawn(move || loop {
-        http::read_worked(&app);
+        // their records are read off the lock
+        let worked = crate::adapters::worked_all();
+        app.passing().worked = worked;
         std::thread::sleep(Duration::from_secs(60));
     });
 }
@@ -180,8 +180,7 @@ fn drain_spool(app: &Arc<App>) {
     std::thread::spawn(move || loop {
         crate::adapters::drain_spool(|event| {
             let _here = runtime.enter();
-            app.store.event(&serde_json::to_value(&event).unwrap_or_default());
-            http::take_event(&app, event).is_ok()
+            intake::record_and_take(&app, event)
         });
         std::thread::sleep(Duration::from_secs(5));
     });

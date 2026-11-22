@@ -197,7 +197,7 @@ pub(super) async fn reads_offered(State(app): State<Arc<App>>) -> Json<airband_c
 pub(super) async fn reads(Json(wanted): Json<airband_core::radio::SetReads>) -> Json<Value> {
     Json(match judge::set_reader(wanted).await {
         Ok(name) => json!({ "reads": name }),
-        Err(why) => json!({ "error": why }),
+        Err(why) => refused(why),
     })
 }
 

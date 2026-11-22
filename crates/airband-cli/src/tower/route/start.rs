@@ -46,7 +46,7 @@ pub(super) async fn place_idea(app: &Arc<App>, idea: &str, projects: &[String]) 
     let picked = judge::ask_json::<Picked>(&app.cfg, "which project an idea is for", prompt, None).await.ok();
     match picked.and_then(|p| judge::listed(p.project, projects).cloned()) {
         Some(project) => Ok(project),
-        None => Err(say(format!("Which project is that for? {}.", projects.join(", ")), true)),
+        None => Err(say(which_project(projects), true)),
     }
 }
 
@@ -119,9 +119,14 @@ pub(super) async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, p
         (None, false) => {
             app.passing().call(radio).unplaced_idea = Some((idea, Instant::now()));
             log(format!("← radio: \"{text}\" → a new agent, project not clear"));
-            return Reply { say: format!("Which project is that for? {}.", projects.join(", ")), listen: true, ..Reply::default() };
+            return Reply { say: which_project(projects), listen: true, ..Reply::default() };
         }
     };
     log(format!("← radio: \"{text}\" → launch in {project}"));
     launch(app, &project, &idea).await
+}
+
+/// The question when the project a new agent is for is not known.
+fn which_project(projects: &[String]) -> String {
+    format!("Which project is that for? {}.", projects.join(", "))
 }

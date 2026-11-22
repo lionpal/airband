@@ -110,7 +110,7 @@ pub(super) async fn utterance(State(app): State<Arc<App>>, Extension(RadioId(rad
     // away, or from this computer
     let via = headers.get(VIA_HEADER).and_then(|v| v.to_str().ok()).unwrap_or("this computer").to_string();
     if u.id.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "what he said has to come with an id" }))).into_response();
+        return (StatusCode::BAD_REQUEST, Json(refused("what he said has to come with an id"))).into_response();
     }
     {
         // the id is taken before anything is done, under the one lock, so the same utterance arriving twice
@@ -164,43 +164,4 @@ pub(super) async fn utterance(State(app): State<Arc<App>>, Extension(RadioId(rad
         inner.settle(&radio, &u.id, Outcome::Answered { reply });
     }));
     Json(Outcome::Taken).into_response()
-}
-
-/// How many short versions one feed request waits for. The rest are made behind it and arrive as changes.
-pub(super) const JUDGE_NOW: usize = 12;
-
-/// How many are made at once behind a request.
-pub(super) const JUDGE_AT_ONCE: usize = 3;
-
-/// Make the short version of these logged messages, a few at a time, and mark each changed as it is done so
-/// every radio following the feed is sent it. Nothing is left unjudged because a radio was away when it came in.
-pub(super) fn judge_later(app: &Arc<App>, entries: Vec<Entry>) {
-    let entries: Vec<Entry> = {
-        let mut inner = app.passing();
-        entries.into_iter().filter(|e| inner.judging.insert(e.id.clone())).collect()
-    };
-    if entries.is_empty() {
-        return;
-    }
-    let app = app.clone();
-    tokio::spawn(async move {
-        let limit = Arc::new(tokio::sync::Semaphore::new(JUDGE_AT_ONCE));
-        let mut tasks = tokio::task::JoinSet::new();
-        for e in entries {
-            let (app, limit) = (app.clone(), limit.clone());
-            tasks.spawn(async move {
-                let _slot = limit.acquire().await;
-                let j = judge_entry(&app, e.clone()).await;
-                let mut inner = app.change();
-                inner.fill(&e.id, &j);
-                push::consider(&app, &mut inner, &e.id);
-            });
-        }
-        tasks.join_all().await;
-    });
-}
-
-pub(super) async fn judge_entry(app: &Arc<App>, e: Entry) -> Judged {
-    let item = Item { say: None, ..app.read().item(&e) };
-    prepare(&app.cfg, &item).await
 }

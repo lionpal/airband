@@ -12,7 +12,7 @@ pub(super) async fn accounts_list(State(app): State<Arc<App>>, Query(q): Query<H
 pub(super) async fn accounts_use(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::UseAccount>) -> Json<Value> {
     Json(match accounts::switch(&app, to).await {
         Ok(now) => serde_json::to_value(now).unwrap_or_default(),
-        Err(why) => json!({ "error": why }),
+        Err(why) => refused(why),
     })
 }
 

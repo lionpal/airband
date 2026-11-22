@@ -2,6 +2,9 @@
 //! this computer), and what came of the last time.
 use super::*;
 
+/// What a model is asked to see that it answers at all.
+pub(crate) const READY: &str = "Reply with the one word: ready";
+
 /// One question to a model behind an API key, off the async threads. `read` finds the answer in what came back.
 /// One call to a service that speaks OpenAI's chat interface. `auth` is the header its key goes in and the
 /// value there, as its row says; a service with no key (one on his own computer) is sent none.
@@ -54,7 +57,7 @@ pub(in crate::tower) async fn set_reader(wanted: airband_core::radio::SetReads) 
     let using = Use { kind: p.id.clone(), offer: offer.id.clone(), key: key.clone(), set };
     // a model on this computer is fetched the first time it is chosen: wait through that
     super::local::wait_for_it(true);
-    let tried = ask(&using, "Reply with the one word: ready".into(), None).await;
+    let tried = ask(&using, READY.into(), None).await;
     super::local::wait_for_it(false);
     tried.map_err(|Failed(trouble, more)| {
         if !more.is_empty() {
@@ -169,7 +172,7 @@ pub(super) async fn chat(model: &Summarizer, by: &By, prompt: String, shape: Opt
         body["temperature"] = json!(0);
     }
     if let (true, Some(shape)) = (by.flag("shaped"), shape) {
-        body["response_format"] = json!({ "type": "json_schema", "json_schema": { "name": "answer", "strict": true, "schema": shape } });
+        body["response_format"] = shaped(shape);
     }
     let url = format!("{}/chat/completions", model.get(Job::Summary, "url").trim_end_matches('/'));
     // how this service takes a key is its row's to say; one sent no key needs nothing said
@@ -187,9 +190,14 @@ pub(super) async fn on_this_computer(_model: &Summarizer, by: &By, prompt: Strin
     };
     let mut body = json!({ "model": name, "messages": [{ "role": "user", "content": prompt }], "temperature": 0, "max_tokens": 400 });
     if let Some(shape) = shape {
-        body["response_format"] = json!({ "type": "json_schema", "json_schema": { "name": "answer", "strict": true, "schema": shape } });
+        body["response_format"] = shaped(shape);
     }
     Ok(ask_api(format!("{url}/chat/completions"), None, body, None).await?)
+}
+
+/// The answer's shape, as a chat completions request asks for it.
+fn shaped(shape: Value) -> Value {
+    json!({ "type": "json_schema", "json_schema": { "name": "answer", "strict": true, "schema": shape } })
 }
 
 pub(super) async fn command(model: &Summarizer, by: &By, prompt: String, shape: Option<Value>) -> Result<String, Failed> {

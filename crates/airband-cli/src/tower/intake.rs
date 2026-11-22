@@ -3,6 +3,54 @@
 use super::*;
 use airband_core::radio::Note;
 
+/// Take in one event of an agent's, and set going what follows from it. The one way in, for an event that
+/// came over HTTP and for one a watcher inside the tower saw. Call it where a runtime can be reached.
+pub(super) fn take(app: &Arc<App>, ev: AgentEvent) -> Result<(), String> {
+    // what a turn said is taken once, whichever of its tool's ways of saying it came first
+    if let Event::Said { turn: Some(turn), .. } = &ev.event {
+        let mut inner = app.passing();
+        if let Some(s) = inner.session(&ev.agent.id).filter(|s| s.turn.as_ref() == Some(turn)) {
+            // that turn is over, whatever was heard of it since by the slower way
+            s.waiting = true;
+            return Ok(());
+        }
+    }
+    // on some of an agent's reports the tower looks at whether it is in the right team
+    let reported = matches!(ev.event, Event::Said { .. }).then(|| ev.agent.id.clone());
+    let spoke = matches!(ev.event, Event::Said { .. } | Event::Notice { .. }).then(|| ev.agent.id.clone());
+    // its turn is over, with or without words
+    let ended = matches!(ev.event, Event::Said { .. } | Event::Stopped { .. }).then(|| ev.agent.id.clone());
+    on_event(app, ev)?;
+    // With a phone that can be woken and nobody reading the chat, what it said is read now: whether it
+    // deserves a notification is not known until then. With a radio reading, that radio's own request
+    // has it read.
+    if let Some(id) = spoke.filter(|_| app.push.any()) {
+        let unread: Vec<Entry> = {
+            let inner = app.read();
+            // the last thing this agent said, which is what was just recorded, if nobody has read it yet
+            inner.log.iter().rev().find(|e| e.agent.as_deref() == Some(id.as_str())).filter(|e| inner.readers == 0 && e.short.is_none()).cloned().into_iter().collect()
+        };
+        judge_later(app, unread);
+    }
+    if let Some(id) = &ended {
+        // one the tower runs has stopped: what he said to it meanwhile goes to it now
+        if app.read().find(id).is_some_and(|s| !s.queue.is_empty()) {
+            let (app, id) = (app.clone(), id.clone());
+            tokio::spawn(async move { held::flush(&app, &id).await });
+        }
+    }
+    if let Some(id) = reported.filter(|id| app.read().find(id).is_some_and(|s| place::due(s.reports))) {
+        tokio::spawn(place::look(app.clone(), id));
+    }
+    Ok(())
+}
+
+/// The same for an event a watcher inside the tower saw: written down first, as one that came over HTTP is.
+pub(super) fn record_and_take(app: &Arc<App>, ev: AgentEvent) -> bool {
+    app.store.event(&serde_json::to_value(&ev).unwrap_or_default());
+    take(app, ev).is_ok()
+}
+
 pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
     if ev.schema != agent::SCHEMA {
         return Err(format!("this version of airband takes {}, not \"{}\"", agent::SCHEMA, ev.schema));
