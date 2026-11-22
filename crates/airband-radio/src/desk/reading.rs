@@ -46,7 +46,7 @@ impl Desk {
             .into_iter()
             .map(|(computer, radio)| {
                 let (relay, near) = radio.reach();
-                DeskReach { id: computer.id, computer: computer.name, relay: relay.unwrap_or_default(), near: near.unwrap_or_default() }
+                DeskReach { id: computer.id, computer: computer.name, relay, near }
             })
             .collect()
     }

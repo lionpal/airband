@@ -153,15 +153,20 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// The link `airband pair` prints: opened from Messages or Mail, or pasted. Each computer has its own; pairing
     /// another adds it.
-    func pair(with link: String) {
+    /// What was wrong with this link, in words for him, or nothing when it was taken.
+    @discardableResult
+    func pair(with link: String) -> String? {
         let link = link.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isPairingLink(link: link) else {
-            problem = "That is not a pairing link. Run airband pair on your computer."
-            return
+        let wrong: String?
+        if !isPairingLink(link: link) {
+            wrong = "That is not a pairing link. Run airband pair on your computer."
+        } else if !linksRead {
+            wrong = RadioModel.linksUnread
+        } else {
+            wrong = links.contains(link) ? nil : connect(links + [link])
         }
-        guard linksRead else { problem = RadioModel.linksUnread; return }
-        guard !links.contains(link) else { return }
-        connect(links + [link])
+        if let wrong { problem = wrong }
+        return wrong
     }
 
     func forgetAll() {
@@ -223,13 +228,18 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// A message's words whole, once they have been fetched; as it came until then.
     func whole(_ m: ChatMessage) -> String { full[m.id] ?? m.text }
 
-    private func connect(_ wanted: [String]) {
+    /// Pair exactly these links. What went wrong, in words for him, or nothing.
+    @discardableResult
+    private func connect(_ wanted: [String]) -> String? {
         links = desk.setLinks(links: wanted)
-        if links.count < wanted.count { problem = "One pairing link is not valid and was skipped." }
-        if linksRead && !Keychain.keepLinks(links) { problem = "Couldn't save your pairings on this phone." }
+        var wrong: String?
+        if links.count < wanted.count { wrong = "One pairing link is not valid and was skipped." }
+        if linksRead && !Keychain.keepLinks(links) { wrong = "Couldn't save your pairings on this phone." }
+        if let wrong { problem = wrong }
         refresh()
         // paired: this is when notifications are worth asking for, and when a new computer needs the phone's address
         if !links.isEmpty { DispatchQueue.main.async { Push.shared.setUp() } }
+        return wrong
     }
 
     func refresh() {
@@ -314,7 +324,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// The picture he chose for each of his computers, by its id: a system symbol's name.
     @Published var computerIcons: [String: String] = Stored.setting("airband.computers.icons.byid", or: [:])
     /// The pictures a computer can have.
-    static let computerSymbols = ["laptopcomputer", "macmini", "desktopcomputer", "macstudio", "macpro.gen3", "server.rack", "pc"]
+    static let computerSymbols = ["laptopcomputer", "desktopcomputer", "display", "pc", "server.rack", "cpu"]
 
     func icon(of computer: String) -> String { computerIcons[computer] ?? "desktopcomputer" }
     /// What the default computer is for, in the words used wherever he chooses it.
@@ -345,6 +355,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         switch error {
         case RadioError.Told(let reason), RadioError.Trouble(let reason), RadioError.BadLink(let reason): return reason
         case RadioError.Offline: return unreached
+        case RadioError.Refused: return "That computer refused it."
         default: return fallback
         }
     }
@@ -373,7 +384,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// One of the core's calls that changes what is chosen. Calls back with what it said was wrong.
     func work(_ done: @escaping (String?) -> Void, _ call: @escaping () throws -> Void) {
-        ask("Your computer could not be reached. Try again when it can.", call) { _, wrong in
+        ask("That did not work. Try again.", call) { _, wrong in
             // a model can be fetched again, so it is left out of the phone's backups
             var folder = URL(fileURLWithPath: self.voiceDir).appendingPathComponent("models")
             var values = URLResourceValues()

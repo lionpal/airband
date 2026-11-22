@@ -19,6 +19,8 @@ struct TrayItem: Identifiable, Equatable {
     /// For a video: the part of it he kept, in seconds. Nothing means all of it.
     var kept: ClosedRange<Double>?
     let number: Int
+    /// The photo or video in his library it was taken from, when it was one of his newest.
+    var asset: String?
 }
 
 /// A video picked from the library, copied to somewhere the app can read it.
@@ -118,8 +120,8 @@ extension RadioModel {
 
     /// He tapped one of his newest photos or videos: it goes the way a picked one does. Returns which item in
     /// the tray it became.
-    @discardableResult func attach(_ asset: PHAsset) -> UUID {
-        let item = newItem(video: asset.mediaType == .video)
+    func attach(_ asset: PHAsset) {
+        let item = newItem(video: asset.mediaType == .video, asset: asset.localIdentifier)
         if item.video {
             let wanted = PHVideoRequestOptions()
             wanted.isNetworkAccessAllowed = true
@@ -139,7 +141,6 @@ extension RadioModel {
                 Task { await self.ready(item, photo: data) }
             }
         }
-        return item.id
     }
 
     /// He picked these from his photos: each appears in the tray at once, is made ready on the phone, then sent.
@@ -157,8 +158,8 @@ extension RadioModel {
     }
 
     /// A new item in the tray, shown at once while it is made ready.
-    private func newItem(video: Bool) -> TrayItem {
-        let item = TrayItem(video: video, number: nextNumber)
+    private func newItem(video: Bool, asset: String? = nil) -> TrayItem {
+        let item = TrayItem(video: video, number: nextNumber, asset: asset)
         tray.append(item)
         return item
     }

@@ -106,22 +106,16 @@ private struct TrayThumb: View {
 struct RecentStrip: View {
     @EnvironmentObject var model: RadioModel
     @State private var recent: [PHAsset] = []
-    /// Which of them are in the tray, and as which item there.
-    @State private var taken: [String: UUID] = [:]
 
     var body: some View {
         Group {
             if !recent.isEmpty {
                 HStack(spacing: 8) {
                     ForEach(recent, id: \.localIdentifier) { asset in
-                        let item = taken[asset.localIdentifier].flatMap { id in model.tray.first { $0.id == id } }
+                        // the tray says which are in it, however often the panel was closed since
+                        let item = model.tray.first { $0.asset == asset.localIdentifier }
                         Button {
-                            if let item {
-                                model.detach(item)
-                                taken[asset.localIdentifier] = nil
-                            } else {
-                                taken[asset.localIdentifier] = model.attach(asset)
-                            }
+                            if let item { model.detach(item) } else { model.attach(asset) }
                         } label: {
                             RecentThumb(asset: asset, chosen: item != nil)
                         }

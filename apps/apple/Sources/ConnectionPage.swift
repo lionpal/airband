@@ -28,10 +28,10 @@ struct ConnectionPage: View {
         .onAppear { reach = model.reach() }
     }
 
-    private func line(_ title: String, _ last: String) -> some View {
+    private func line(_ title: String, _ last: String?) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
-            Text(last.isEmpty ? "Nothing has failed" : last).font(.footnote).foregroundStyle(.secondary)
+            Text(last ?? "No failures on record").font(.footnote).foregroundStyle(.secondary)
         }
     }
 }

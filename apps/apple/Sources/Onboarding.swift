@@ -83,8 +83,7 @@ struct OnboardingView: View {
                 Spacer()
                 if step == last && !finishing {
                     Button("Paste a link instead") {
-                        model.pair(with: UIPasteboard.general.string ?? "")
-                        wrong = model.problem
+                        wrong = model.pair(with: UIPasteboard.general.string ?? "")
                     }
                 }
             }
