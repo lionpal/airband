@@ -343,8 +343,8 @@ fn teams_on_two_computers_get_different_colours_that_last() {
     std::fs::create_dir_all(&dir).unwrap();
     let mut colours = super::colours::Colours::open(dir.to_str().unwrap());
     // a team called shop on each of two computers: two rooms, by computer and team id, each its own colour
-    colours.see(["mini//w/shop".to_string(), "mini//w/shop".to_string()]);
-    colours.see(["laptop//w/shop".to_string()]);
+    let _ = colours.see(["mini//w/shop".to_string(), "mini//w/shop".to_string()]);
+    let _ = colours.see(["laptop//w/shop".to_string()]);
     assert_ne!(colours.of("mini//w/shop"), colours.of("laptop//w/shop"));
     // a room not seen yet has none
     assert_eq!(colours.of("laptop//w/garden"), None);
@@ -511,8 +511,8 @@ fn a_new_team_colour_counts_only_teams_on_his_screen() {
     let gone: std::collections::BTreeMap<String, u8> = (0..5u8).map(|c| (format!("old//w/{c}"), c)).collect();
     std::fs::write(dir.join("colours.json"), serde_json::to_string(&gone).unwrap()).unwrap();
     let mut colours = super::colours::Colours::open(dir.to_str().unwrap());
-    colours.see(["mini//w/shop".to_string()]);
-    colours.see(["mini//w/garden".to_string()]);
+    let _ = colours.see(["mini//w/shop".to_string()]);
+    let _ = colours.see(["mini//w/garden".to_string()]);
     // nothing on his screen has a colour yet: the first two are the first two colours
     assert_eq!((colours.of("mini//w/shop"), colours.of("mini//w/garden")), (Some(0), Some(1)));
     let _ = std::fs::remove_dir_all(&dir);
@@ -735,4 +735,50 @@ fn a_file_the_phone_cannot_read_is_not_told_as_his_computer_refusing() {
     let radio = radio_at(9);
     let e = radio.upload("f1", "/nonexistent/airband-test.mov", "a.mov", |_, _| true).unwrap_err();
     assert!(matches!(&e, RadioError::Told { reason } if reason == "This phone could not read that file."), "{e:?}");
+}
+
+#[test]
+fn a_main_computer_the_phone_could_not_keep_is_told_once() {
+    struct Noting(Mutex<Vec<String>>);
+    impl DeskHost for Noting {
+        fn secret(&self, _: String) -> Option<String> {
+            None
+        }
+        fn keep_secret(&self, _: String, _: Option<String>) {}
+        fn play(&self, _: u32, _: Vec<u8>, _: bool) {}
+        fn record_start(&self, _: u32) -> bool {
+            false
+        }
+        fn record_read(&self) -> Vec<u8> {
+            Vec::new()
+        }
+        fn record_stop(&self) {}
+        fn changed(&self) {}
+        fn status(&self, _: RadioStatus) {}
+        fn note(&self, text: String) {
+            self.0.lock().unwrap().push(text);
+        }
+        fn hearing(&self, _: String) {}
+        fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
+        fn watching(&self) -> bool {
+            false
+        }
+        fn device(&self) -> HostDevice {
+            HostDevice::default()
+        }
+        fn run_model(&self, _: String, _: String, _: ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
+            None
+        }
+    }
+    let dir = temp_dir("main-unkept");
+    let host = Arc::new(Noting(Mutex::new(Vec::new())));
+    let desk = Desk::open(dir.display().to_string(), host.clone());
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    desk.set_main_computer("c1".into());
+    desk.set_main_computer("c2".into());
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let told: Vec<String> = host.0.lock().unwrap().iter().filter(|t| t.ends_with("are not kept if the app closes.")).cloned().collect();
+    assert_eq!(told.len(), 1, "{told:?}");
 }

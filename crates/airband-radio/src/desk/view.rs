@@ -15,17 +15,21 @@ pub(super) struct ReadMarks {
     /// computer they are for, by its [`DeskComputer::id`]. It works out who they are for and passes them on.
     #[serde(default)]
     pub(super) main: Option<String>,
+    #[serde(skip)]
+    keeping: crate::kept::Keeping,
 }
 impl ReadMarks {
     pub(super) fn load(dir: &str) -> Self {
         let kept: Option<ReadMarks> = if dir.is_empty() { None } else { crate::kept::load_or_set_aside(&std::path::Path::new(dir).join("read.json")) };
-        kept.unwrap_or_else(|| ReadMarks { since: airband_core::clock::now_ms(), upto: HashMap::new(), main: None })
+        kept.unwrap_or_else(|| ReadMarks { since: airband_core::clock::now_ms(), ..ReadMarks::default() })
     }
-    pub(super) fn keep(&self, dir: &str) {
-        if !dir.is_empty() {
-            // what he has read, not kept, is shown as unread again after the app opens
-            let _ = crate::kept::save(&std::path::Path::new(dir).join("read.json"), self);
+    /// Keep them on the device. The words to tell him when they could not be kept.
+    #[must_use]
+    pub(super) fn keep(&self, dir: &str) -> Option<String> {
+        if dir.is_empty() {
+            return None;
         }
+        self.keeping.save(&std::path::Path::new(dir).join("read.json"), self, "What you have read, and your main computer, are not kept if the app closes.")
     }
     pub(super) fn unread(&self, m: &ChatMessage) -> bool {
         !m.his && !m.fyi && m.at > self.upto.get(m.agent.as_deref().unwrap_or_default()).copied().unwrap_or(self.since)
@@ -36,10 +40,13 @@ impl Desk {
     /// Make one of his computers the main one, by its [`DeskComputer::id`]: where his words go when nothing
     /// says which computer they are for. Kept on the device.
     pub fn set_main_computer(&self, computer: String) {
-        {
+        let lost = {
             let mut state = self.shared.state.lock().unwrap();
             state.read.main = Some(computer);
-            state.read.keep(&self.data_dir);
+            state.read.keep(&self.data_dir)
+        };
+        if let Some(lost) = lost {
+            self.shared.host.note(lost);
         }
         self.shared.host.changed();
     }
@@ -50,6 +57,8 @@ impl Desk {
         let all = state.merged();
         // What this view shows, while the chat is in front of him, is read. What agents he is not looking at
         // have said stays unread, and is counted for each of them and each team below.
+        // told once the screen's state is let go: the host may ask for a view again when told
+        let mut lost = None;
         if self.shared.host.watching() {
             let mut moved = false;
             for m in all.iter().filter(|m| room.as_ref().is_none_or(|r| m.room == *r) && agent.as_ref().is_none_or(|a| m.agent.as_ref() == Some(a))) {
@@ -59,7 +68,7 @@ impl Desk {
                 }
             }
             if moved {
-                state.read.keep(&self.data_dir);
+                lost = state.read.keep(&self.data_dir);
             }
         }
         let state = state;
@@ -119,7 +128,7 @@ impl Desk {
                 quick.push(q.clone());
             }
         }
-        DeskView {
+        let view = DeskView {
             colours: state.colours.all(),
             paired: !state.stations.is_empty(),
             online: state.stations.iter().any(|s| s.online),
@@ -152,7 +161,12 @@ impl Desk {
                     choices: guessed.chain(rest).take(8).map(|a| DeskChoice { id: a.id.clone(), callsign: a.callsign.clone(), badge: a.badge.clone(), colour: state.colour(&a.room) }).collect(),
                 }
             }),
+        };
+        drop(state);
+        if let Some(lost) = lost {
+            self.shared.host.note(lost);
         }
+        view
     }
     /// What was said between him and an agent just before one of its messages, oldest first: the context for
     /// a question.

@@ -160,7 +160,7 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model) -> Result<(), RadioError
     }
     // This version is whole: say so, and only now let go of the one that was here before it, which was in use
     // until this moment.
-    let _ = std::fs::write(folder.join(WHOLE), "");
+    std::fs::write(folder.join(WHOLE), "").map_err(|_| told("Could not write the model to this device."))?;
     for other in std::fs::read_dir(home(&dir, m)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| *p != folder) {
         let _ = if other.is_dir() { std::fs::remove_dir_all(&other) } else { std::fs::remove_file(&other) };
     }
