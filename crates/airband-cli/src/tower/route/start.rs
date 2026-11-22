@@ -47,10 +47,10 @@ pub(super) async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, p
         (None, []) => return say("There is no project to start it in yet. Run an agent in one first.".into(), false),
         (None, [only]) => only.clone(),
         (None, _) => {
-            let question = config::random_hex(8);
-            app.change().call(radio).unplaced_idea = Some((question.clone(), idea));
+            let question = airband_core::ids::QuestionId::new(config::random_hex(8));
+            app.change().call(radio).unplaced_idea = Some(Unplaced { question: question.clone(), idea });
             log(format!("← radio: \"{text}\" → a new agent, project not clear"));
-            return Reply { say: which_project(projects), listen: true, question: Some(question), ..Reply::default() };
+            return Reply { say: which_project(projects), listen: true, question: Some(question.to_string()), ..Reply::default() };
         }
     };
     log(format!("← radio: \"{text}\" → launch in {}", place.name));

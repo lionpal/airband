@@ -1,6 +1,23 @@
 //! Each radio's place in a call, and what came of what he said from it.
 use super::*;
 
+/// Words he said that the tower could not place, with their files, held until he says who they are for.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Asked {
+    /// The question asked him back ("Who is that for?"); only an answer to it takes these words.
+    pub(super) question: airband_core::ids::QuestionId,
+    pub(super) words: String,
+    pub(super) files: String,
+}
+
+/// An idea for a new agent held until he says which project it is for.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Unplaced {
+    /// The question asked him back ("Which project?").
+    pub(super) question: airband_core::ids::QuestionId,
+    pub(super) idea: Idea,
+}
+
 /// One radio's place in a call. Each radio has its own, so a phone and a desktop app on a call at the same time
 /// do not take each other's transmissions or answer each other's questions.
 #[derive(Default)]
@@ -22,10 +39,10 @@ pub(super) struct Call {
     pub(super) seen: Option<Instant>,
     /// Words he said that the tower could not place, with their files, held under the id of the question it
     /// asked him back ("Who is that for?"). Only an utterance that answers that id takes them.
-    pub(super) asked: Option<(String, String, String)>,
+    pub(super) asked: Option<Asked>,
     /// An idea for a new agent whose project the tower could not work out, held under the id of the question
     /// it asked him back ("Which project?").
-    pub(super) unplaced_idea: Option<(String, Idea)>,
+    pub(super) unplaced_idea: Option<Unplaced>,
     /// How far this radio has the chat on screen: the highest change count it has asked for what follows of,
     /// while it was showing the chat. A line changed after this is one he may not have seen.
     pub(super) has: u64,
@@ -69,6 +86,27 @@ impl Presence {
     }
 }
 impl Call {
+    /// The words held for "Who is that for?" when these words answer that question, by its id. Read, not
+    /// taken: they stay until what he said is settled ([`Call::resolve_asked`]).
+    pub(super) fn asked_for(&self, answers: Option<&str>) -> Option<Asked> {
+        self.asked.as_ref().filter(|a| answers == Some(a.question.as_str())).cloned()
+    }
+    /// The question is settled: what it held is let go, if it is still that question.
+    pub(super) fn resolve_asked(&mut self, question: &airband_core::ids::QuestionId) {
+        if self.asked.as_ref().is_some_and(|a| a.question == *question) {
+            self.asked = None;
+        }
+    }
+    /// The idea held for "Which project?" when these words answer that question, by its id. Read, not taken.
+    pub(super) fn unplaced_for(&self, answers: Option<&str>) -> Option<Unplaced> {
+        self.unplaced_idea.as_ref().filter(|u| answers == Some(u.question.as_str())).cloned()
+    }
+    /// The question is settled: the idea is let go, if it is still that question.
+    pub(super) fn resolve_unplaced(&mut self, question: &airband_core::ids::QuestionId) {
+        if self.unplaced_idea.as_ref().is_some_and(|u| u.question == *question) {
+            self.unplaced_idea = None;
+        }
+    }
     pub(super) fn connected(&self) -> bool {
         self.presence.on_call()
     }
