@@ -23,6 +23,8 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 webpki-roots = "1"
 # what an agent wrote, read as the markdown it is (prose.rs)
 pulldown-cmark = { version = "0.13", default-features = false }
+linkify = "0.10"
+url = "2"
 # a voice made on the phone itself: the program is here, its model is fetched when he asks for it
 ptts = { version = "0.7.1", features = ["hf"], optional = true }
 

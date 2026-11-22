@@ -77,7 +77,7 @@ impl Book {
     /// words already have the address.
     pub(super) fn said(&mut self, agent: &str, message: &str, words: &str) {
         let Some(made) = self.pending.remove(agent) else { return };
-        let written = airband_core::speech::links(words);
+        let written = airband_radio::prose::links(words);
         let rest: Vec<String> = made.into_iter().filter(|a| !written.contains(a)).collect();
         if !rest.is_empty() {
             self.with.insert(message.to_string(), rest);
@@ -90,7 +90,7 @@ impl Book {
     }
     /// The addresses that go with a message: the ones in its words, then what its agent's tool made.
     fn addresses(&self, message: &str, words: &str) -> Vec<String> {
-        let mut all = airband_core::speech::links(words);
+        let mut all = airband_radio::prose::links(words);
         for a in self.with.get(message).into_iter().flatten() {
             if !all.contains(a) {
                 all.push(a.clone());

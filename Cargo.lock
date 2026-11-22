@@ -77,7 +77,6 @@ dependencies = [
  "ed25519-dalek",
  "getrandom 0.3.4",
  "hkdf",
- "regex",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -90,6 +89,7 @@ version = "0.6.0"
 dependencies = [
  "airband-core",
  "getrandom 0.3.4",
+ "linkify",
  "ptts",
  "pulldown-cmark",
  "rustls",
@@ -99,6 +99,7 @@ dependencies = [
  "tungstenite",
  "uniffi",
  "ureq",
+ "url",
  "webpki-roots 1.0.12",
 ]
 
@@ -1674,6 +1675,15 @@ dependencies = [
  "cc",
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "linkify"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1dfa36d52c581e9ec783a7ce2a5e0143da6237be5811a0b3153fedfdbe9f780"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]

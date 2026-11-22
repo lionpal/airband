@@ -229,6 +229,19 @@ impl Reader<'_> {
         };
         while let Some(event) = self.events.get(self.at).cloned() {
             match event {
+                // an address written out bare leads where it says, as one written as a link does
+                Event::Text(text) if open.links.is_empty() => {
+                    for piece in addresses().spans(&text) {
+                        match piece.kind() {
+                            Some(_) => {
+                                open.links.push(piece.as_str().to_string());
+                                put(&open, piece.as_str(), false);
+                                open.links.pop();
+                            }
+                            None => put(&open, piece.as_str(), false),
+                        }
+                    }
+                }
                 Event::Text(text) | Event::Html(text) | Event::InlineHtml(text) | Event::InlineMath(text) | Event::DisplayMath(text) => put(&open, &text, false),
                 Event::FootnoteReference(name) => put(&open, &format!("[{name}]"), false),
                 Event::Code(text) => put(&open, &text, true),
@@ -261,8 +274,71 @@ impl Reader<'_> {
 }
 
 /// The words of some spans, with nothing of how they were marked.
+/// The scanner for web addresses written out bare in a run of words: whole addresses that name how they are
+/// reached (`https://…`), and nothing else.
+fn addresses() -> linkify::LinkFinder {
+    let mut finder = linkify::LinkFinder::new();
+    finder.kinds(&[linkify::LinkKind::Url]).url_must_have_scheme(true);
+    finder
+}
+
+/// How many links are shown beside one message.
+const LINKS_SHOWN: usize = 4;
+
+/// Where the links in what an agent wrote lead, in order, each once: the ones written as links and the web
+/// addresses written out bare, as the Markdown reader finds them. Nothing inside code is a link. A client shows
+/// them beside the short form of a message, which leaves them out.
+pub fn links(text: &str) -> Vec<String> {
+    fn web(address: &str) -> bool {
+        url::Url::parse(address).is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host_str().is_some())
+    }
+    fn take(spans: &[ProseSpan], out: &mut Vec<String>) {
+        for link in spans.iter().filter(|s| !s.code).filter_map(|s| s.link.as_ref()) {
+            if web(link) && !out.contains(link) {
+                out.push(link.clone());
+            }
+        }
+    }
+    fn gather(blocks: &[ProseBlock], out: &mut Vec<String>) {
+        for block in blocks {
+            match block {
+                ProseBlock::Paragraph { spans } | ProseBlock::Heading { spans, .. } => take(spans, out),
+                ProseBlock::List { items, .. } => items.iter().for_each(|item| gather(&item.blocks, out)),
+                ProseBlock::Quote { blocks } => gather(blocks, out),
+                ProseBlock::Table { head, rows, .. } => head.iter().chain(rows.iter().flatten()).for_each(|cell| take(&cell.spans, out)),
+                ProseBlock::Code { .. } | ProseBlock::Rule => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    gather(&blocks(text), &mut out);
+    out.truncate(LINKS_SHOWN);
+    out
+}
+
+/// The words of some spans as they are said: a link by its words, and an address written out bare as "a link".
 fn words(spans: &[ProseSpan]) -> String {
-    spans.iter().map(|span| span.text.as_str()).collect::<String>()
+    spans.iter().map(|span| match &span.link {
+        Some(link) if *link == span.text => "a link",
+        _ => span.text.as_str(),
+    }).collect::<String>()
+}
+
+/// The first two sentences of what an agent wrote, as words to say, for when no summary of it was made.
+pub fn opening(text: &str) -> String {
+    let s = said(text);
+    let mut out = String::new();
+    let mut ends = 0;
+    for (i, ch) in s.char_indices() {
+        out.push(ch);
+        if matches!(ch, '.' | '?' | '!') && s[i + ch.len_utf8()..].starts_with(' ') {
+            ends += 1;
+        }
+        if ends == 2 || out.chars().count() >= 300 {
+            break;
+        }
+    }
+    out
 }
 
 /// What an agent wrote, as words to say: no marks, a table row by row, code named and passed over.
@@ -272,10 +348,9 @@ pub fn said(text: &str) -> String {
     out.join(" ")
 }
 
-/// Some words as a sentence of what is said: paths, addresses and what is left of any mark are made sayable
-/// by the one function that does that.
+/// Some words as a sentence of what is said, on one line.
 fn sentence(words: String, out: &mut Vec<String>) {
-    let words = airband_core::speech::spoken(&words);
+    let words = words.split_whitespace().collect::<Vec<_>>().join(" ");
     if !words.is_empty() {
         out.push(if words.ends_with(['.', '?', '!', ':', ';', ',']) { words } else { format!("{words}.") });
     }
@@ -433,5 +508,19 @@ mod tests {
         for mark in ['#', '*', '`', '|', '>', '['] {
             assert!(!heard.contains(mark), "{mark} is in {heard}");
         }
+    }
+
+    #[test]
+    fn links_are_the_written_ones_and_the_bare_addresses_each_once_and_never_code() {
+        let text = "Published: https://claude.ai/artifact/abc123. See [the PR](https://github.com/a/b/pull/7), again https://claude.ai/artifact/abc123 and `http://localhost:3000/x`.\n\n```\ncurl https://in.code/x\n```";
+        assert_eq!(links(text), ["https://claude.ai/artifact/abc123", "https://github.com/a/b/pull/7"]);
+        assert!(links("No links, only a path /Users/c/x.png and a [note](notes.md)").is_empty());
+    }
+
+    #[test]
+    fn said_aloud_a_bare_address_is_a_link_and_marks_are_gone() {
+        assert_eq!(said("**Done.** See `scripts/check.mjs` and https://example.com/z\n- one"), "Done. See scripts/check.mjs and a link. one.");
+        assert_eq!(said("rewrite and/or drop [the doc](https://x.y/z)"), "rewrite and/or drop the doc.");
+        assert_eq!(opening("One. Two? Three. Four."), "One. Two?");
     }
 }
