@@ -26,7 +26,7 @@ private struct PickedMovie: Transferable {
     let url: URL
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(contentType: .movie) { SentTransferredFile($0.url) } importing: { received in
-            let copy = FileManager.default.temporaryDirectory.appendingPathComponent("picked-\(UUID().uuidString).\(received.file.pathExtension.isEmpty ? "mov" : received.file.pathExtension)")
+            let copy = FileManager.default.temporaryDirectory.appendingPathComponent("picked-\(UUID().uuidString)" + Prepare.ending(received.file))
             try FileManager.default.copyItem(at: received.file, to: copy)
             return PickedMovie(url: copy)
         }
@@ -37,6 +37,12 @@ private struct PickedMovie: Transferable {
 /// long side), a video at 960x540, so neither takes long on a phone connection. Returns the file, what to call it,
 /// and a small picture of it.
 enum Prepare {
+    /// The ending a file's name needs to say what it is, with its dot: its own, or the one its type has as the
+    /// system reads it. Nothing when neither says.
+    static func ending(_ file: URL) -> String {
+        let own = file.pathExtension.isEmpty ? (try? file.resourceValues(forKeys: [.contentTypeKey]))?.contentType?.preferredFilenameExtension : file.pathExtension
+        return own.map { "." + $0 } ?? ""
+    }
     static func photo(_ data: Data, number: Int) -> (URL, String, UIImage)? {
         guard let image = UIImage(data: data) else { return nil }
         let long = max(image.size.width, image.size.height) * image.scale
@@ -65,7 +71,7 @@ enum Prepare {
         let first = CMTime(seconds: kept?.lowerBound ?? 0, preferredTimescale: 600)
         if let frame = try? frames.copyCGImage(at: first, actualTime: nil) { picture = thumb(UIImage(cgImage: frame)) }
         // smaller first: a minute at 960x540 is around a tenth of what the camera recorded
-        let whole = "video-\(number).\(source.pathExtension.isEmpty ? "mov" : source.pathExtension)"
+        let whole = "video-\(number)" + ending(source)
         guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset960x540) else { return (source, whole, picture) }
         export.outputURL = file
         export.outputFileType = .mp4
@@ -103,6 +109,10 @@ extension RadioModel {
         }
     }
 
+    /// The number the next thing he attaches is called by: one past the highest in the tray, so a removal
+    /// never lets two have the same name.
+    private var nextNumber: Int { (tray.map(\.number).max() ?? 0) + 1 }
+
     /// Everything attached has reached his computer.
     var trayReady: Bool { !tray.isEmpty && tray.allSatisfy { item in view.uploads.first { $0.id == item.attachment }?.state == .ready } }
 
@@ -110,7 +120,7 @@ extension RadioModel {
     /// the tray it became.
     @discardableResult func attach(_ asset: PHAsset) -> UUID {
         let video = asset.mediaType == .video
-        let number = tray.count + 1
+        let number = nextNumber
         let item = TrayItem(video: video, number: number)
         tray.append(item)
         if video {
@@ -145,7 +155,7 @@ extension RadioModel {
     func attach(_ picked: [PhotosPickerItem]) {
         for pick in picked {
             let video = pick.supportedContentTypes.contains { $0.conforms(to: .movie) }
-            let number = tray.count + 1
+            let number = nextNumber
             let item = TrayItem(video: video, number: number)
             tray.append(item)
             Task {

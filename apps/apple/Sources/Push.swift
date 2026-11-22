@@ -55,6 +55,8 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler done: @escaping () -> Void) {
         let info = response.notification.request.content.userInfo
         let (room, agent) = (info["room"] as? String ?? "", info["agent"] as? String ?? "")
+        // what the agent is called now: the notification carries only its id
+        let called = RadioModel.shared.member(agent)?.agent.callsign
         let text: String?
         var tapped: Tapped?
         switch response.actionIdentifier {
@@ -91,7 +93,7 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
         }
         DispatchQueue.global(qos: .userInitiated).async {
             if finished.wait(timeout: .now() + 20) == .timedOut { failure.set("Still sending. Open airband to check.") }
-            if let why = failure.get() { Self.say(title: "Not sent to " + (agent.isEmpty ? "your agent" : agent), body: "“\(text)”. \(why)", room: room, agent: agent) }
+            if let why = failure.get() { Self.say(title: "Not sent to " + (called ?? "your agent"), body: "“\(text)”. \(why)", room: room, agent: agent) }
             DispatchQueue.main.async {
                 done()
                 UIApplication.shared.endBackgroundTask(task)

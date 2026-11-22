@@ -71,7 +71,7 @@ pub(crate) fn services(job: airband_core::providers::Job) -> Vec<Service> {
             key_name: p.key_name.clone(),
             keys_at: p.keys_at.clone(),
             asks: o.asks.iter().map(ServiceAsk::from).collect(),
-            usual_voice: o.usual("voice").unwrap_or_default(),
+            usual_voice: o.usual(crate::models::field::VOICE).unwrap_or_default(),
         })
         .collect()
 }

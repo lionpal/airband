@@ -21,6 +21,31 @@ pub(crate) fn models(device: &HostDevice) -> impl Iterator<Item = Arc<Model>> + 
     airband_core::catalog::current().models.clone().into_iter().filter(move |m| crate::engines::runs(m, device) && !m.version.is_empty())
 }
 
+/// The model a row marks as the one to start with for a job (`usual`), among those that run on this device.
+pub(crate) fn usual(device: &HostDevice, job: airband_core::providers::Job) -> Option<Arc<Model>> {
+    models(device).find(|m| m.job == job && m.with.get(field::USUAL).and_then(|u| u.as_bool()) == Some(true))
+}
+
+/// The names of the fields of a row's `with` that this build reads, each written once.
+pub(crate) mod field {
+    /// A model row: the one to start with for its job.
+    pub(crate) const USUAL: &str = "usual";
+    /// A model row: what the device does once before first use, in words for him.
+    pub(crate) const PREPARE: &str = "prepare";
+    /// A model row: the lowest system it runs on, for each kind of device.
+    pub(crate) const MIN_OS: &str = "min_os";
+    /// A voice: the rate of its sound.
+    pub(crate) const RATE: &str = "rate";
+    /// A voice service's setting: which of its voices speaks.
+    pub(crate) const VOICE: &str = "voice";
+}
+
+/// The setting a voice service's voice is chosen by, for a host that lays out its own voice picker.
+#[uniffi::export]
+pub fn voice_setting() -> String {
+    field::VOICE.to_string()
+}
+
 /// Use the newest catalogue this device has kept (in `dir`, a folder of the app's own), if it is newer than
 /// the one built in. Nothing is fetched. Call once at the start.
 #[uniffi::export]

@@ -178,7 +178,7 @@ impl Desk {
             }
             ChoicePlace::Service => {
                 let mut set: HashMap<String, String> = pick.set.into_iter().collect();
-                set.insert("voice".into(), name);
+                set.insert(crate::models::field::VOICE.into(), name);
                 self.choose_for(ChoiceJob::Voice, service_id(&pick.id, &pick.offer), None, set, false)
             }
         }

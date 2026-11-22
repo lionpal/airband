@@ -81,7 +81,7 @@ impl Saved {
     /// he finishes the first run). Where no row says so for a job, nothing is chosen for it. Which coding
     /// tools he uses is his to say: none is taken for his until he picks.
     pub(super) fn fresh(device: &HostDevice) -> Saved {
-        let usual = |job: Job| crate::models::models(device).find(|m| m.job == job && m.with.get("usual").and_then(|u| u.as_bool()) == Some(true)).map(|m| Pick { place: ChoicePlace::Phone, id: m.kind.clone(), offer: String::new(), set: BTreeMap::new(), voice: String::new() });
+        let usual = |job: Job| crate::models::usual(device, job).map(|m| Pick { place: ChoicePlace::Phone, id: m.kind.clone(), offer: String::new(), set: BTreeMap::new(), voice: String::new() });
         Saved { ears: usual(Job::Ears), voice: usual(Job::Voice), ..Saved::default() }
     }
 

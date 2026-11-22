@@ -55,7 +55,7 @@ pub struct HostDevice {
 /// which version of an operating system it needs, this is that system at that version or later.
 pub(crate) fn runs(m: &Model, device: &HostDevice) -> bool {
     let engine = HERE.iter().any(|(name, _)| *name == m.engine) || device.engines.contains(&m.engine);
-    let system = match m.with.get("min_os") {
+    let system = match m.with.get(crate::models::field::MIN_OS) {
         None => true,
         Some(needs) => needs.get(&device.os).and_then(|v| v.as_u64()).is_some_and(|least| u64::from(device.os_version) >= least),
     };
