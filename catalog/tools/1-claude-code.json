@@ -46,7 +46,7 @@
           "--resume",
           "{id}"
         ],
-        "line": "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":{text}}}",
+        "line": "{\"type\":\"user\",\"uuid\":{receipt},\"message\":{\"role\":\"user\",\"content\":{text}}}",
         "stop": "{\"type\":\"control_request\",\"request_id\":\"{id}\",\"request\":{\"subtype\":\"interrupt\"}}"
       }
     },

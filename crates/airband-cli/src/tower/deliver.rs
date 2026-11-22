@@ -3,17 +3,29 @@
 //! takes his words in a way of its own is none of that, only its adapter (`Deliver::Harness`).
 use super::*;
 
-pub(super) async fn deliver(app: &Arc<App>, how: &Deliver, agent_id: &str, content: &str) -> Result<(), String> {
+/// A new id for one delivery, in the form a tool's own records keep ids in.
+pub(super) fn receipt() -> String {
+    let h = config::random_hex(16);
+    format!("{}-{}-4{}-8{}-{}", &h[..8], &h[8..12], &h[13..16], &h[17..20], &h[20..32])
+}
+
+/// `lines` are the chat lines these words are: an agent whose tool writes down the id a delivery came under
+/// has them marked read when it takes them in.
+pub(super) async fn deliver(app: &Arc<App>, how: &Deliver, agent_id: &str, content: &str, lines: &[String]) -> Result<(), String> {
     let run = async {
         match how {
-            Deliver::Held => held::tell(app, agent_id, content).await,
+            Deliver::Held => held::tell(app, agent_id, content, lines).await,
             Deliver::Socket { path, token } => {
-                let mut lines = String::new();
+                let mut text = String::new();
                 if let Some(t) = token {
-                    lines.push_str(&format!("{}\n", json!({ "type": "auth", "token": t })));
+                    text.push_str(&format!("{}\n", json!({ "type": "auth", "token": t })));
                 }
-                lines.push_str(&format!("{}\n", json!({ "type": "user", "message": { "role": "user", "content": content } })));
-                inbox_write(path, lines.as_bytes()).await
+                // the session writes this id on its own record of the turn (`uuid`), which is how it is known read
+                let receipt = receipt();
+                text.push_str(&format!("{}\n", json!({ "type": "user", "uuid": receipt, "message": { "role": "user", "content": content } })));
+                inbox_write(path, text.as_bytes()).await?;
+                app.passing().receipts.insert(receipt, lines.to_vec());
+                Ok(())
             }
             Deliver::Command { argv } => {
                 let (program, args) = argv.split_first().ok_or("its delivery command is empty")?;

@@ -253,11 +253,17 @@ async fn revive(app: &Arc<App>, kept: &Kept) -> Result<(), String> {
 
 /// Give a held agent one message of his as its next turn. One whose process has gone (the computer restarted,
 /// or it crashed) is carried on first.
-pub(super) async fn tell(app: &Arc<App>, id: &str, text: &str) -> Result<(), String> {
+pub(super) async fn tell(app: &Arc<App>, id: &str, text: &str, lines: &[String]) -> Result<(), String> {
+    let receipt = deliver::receipt();
+    told_under(app, id, text, &receipt).await?;
+    app.passing().receipts.insert(receipt, lines.to_vec());
+    Ok(())
+}
+async fn told_under(app: &Arc<App>, id: &str, text: &str, receipt: &str) -> Result<(), String> {
     let kept = app.read().held.iter().find(|k| k.id == id).cloned().ok_or("airband is no longer running this agent")?;
     #[cfg(unix)]
     {
-        let words = || crate::hold::Tell::Say(text.to_string());
+        let words = || crate::hold::Tell::Say(text.to_string(), receipt.to_string());
         if tell_holder(&kept, words()).await.is_ok() {
             return Ok(());
         }
@@ -267,7 +273,7 @@ pub(super) async fn tell(app: &Arc<App>, id: &str, text: &str) -> Result<(), Str
     }
     #[cfg(not(unix))]
     {
-        let _ = (kept, text);
+        let _ = (kept, text, receipt);
         Err("airband cannot start agents itself on this system yet".into())
     }
 }
@@ -284,7 +290,7 @@ pub(super) async fn flush(app: &Arc<App>, id: &str) {
         waiting
     };
     let words = waiting.iter().map(|(_, text)| text.as_str()).collect::<Vec<_>>().join("\n\n");
-    let told = tell(app, id, &words).await;
+    let told = tell(app, id, &words, &waiting.iter().map(|(line, _)| line.clone()).collect::<Vec<_>>()).await;
     let mut inner = app.change();
     match told {
         Ok(()) => {
@@ -390,7 +396,7 @@ pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, model: Opti
     if task.is_empty() {
         app.kick.notify_one();
     } else {
-        tell(app, &kept.id, task).await?;
+        tell(app, &kept.id, task, &[]).await?;
     }
     Ok(kept.id)
 }

@@ -138,13 +138,14 @@ impl Inner {
         let Some(to) = self.find(agent_id).cloned() else { return };
         // nothing from before the chat he has; with no chat yet, the last day
         let oldest = self.log.first().map(|e| e.at).unwrap_or_else(|| now_ms().saturating_sub(24 * 3600 * 1000));
-        // what the tower passed on, now taken in by the agent: his message is marked read, the oldest unread first
+        // What the tower passed on, now taken in by the agent: the agent's record names the id the delivery went
+        // under, and the lines that delivery carried are marked read. Nothing is told from the words.
         for t in told.iter().filter(|t| !t.his) {
-            let read = self.log.iter().position(|e| e.his && e.seen.is_none() && !e.queued && !e.cancelled && e.to_agents.iter().any(|a| a == agent_id) && e.at <= t.at + 5000 && t.text.contains(e.full.trim()));
-            if let Some(i) = read {
-                self.log[i].seen = Some(t.at);
-                let id = self.log[i].id.clone();
-                self.touch(&id);
+            for line in self.receipts.remove(&t.id).unwrap_or_default() {
+                if let Some(e) = self.log.iter_mut().find(|e| e.id == line && e.seen.is_none() && !e.cancelled) {
+                    e.seen = Some(t.at);
+                    self.touch(&line);
+                }
             }
         }
         for (t, pictures) in told.into_iter().zip(pictures.into_iter().chain(std::iter::repeat_with(Vec::new))).filter(|(t, _)| t.his && t.at >= oldest) {

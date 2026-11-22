@@ -29,8 +29,8 @@ use std::time::Duration;
 
 /// What the tower says to a holder.
 pub enum Tell {
-    /// His words, as the agent's next turn.
-    Say(String),
+    /// His words, as the agent's next turn, and the id this delivery of them goes under.
+    Say(String, String),
     /// Leave off what you are doing.
     Stop,
     /// Finish: the program's input is closed, and it ends.
@@ -40,7 +40,7 @@ pub enum Tell {
 impl Tell {
     pub fn line(&self) -> String {
         match self {
-            Tell::Say(text) => json!({ "say": text }),
+            Tell::Say(text, receipt) => json!({ "say": text, "receipt": receipt }),
             Tell::Stop => json!({ "stop": true }),
             Tell::End => json!({ "end": true }),
         }
@@ -48,7 +48,7 @@ impl Tell {
     }
     fn read(line: &Value) -> Option<Tell> {
         match (line["say"].as_str(), line.get("stop"), line.get("end")) {
-            (Some(text), _, _) => Some(Tell::Say(text.to_string())),
+            (Some(text), _, _) => Some(Tell::Say(text.to_string(), line["receipt"].as_str().unwrap_or_default().to_string())),
             (None, Some(_), _) => Some(Tell::Stop),
             (None, None, Some(_)) => Some(Tell::End),
             _ => None,
@@ -138,7 +138,7 @@ fn lines(held: &Held, line: &str, stop: Option<&str>) -> Result<(), String> {
 }
 fn told(held: &Held, tell: Tell, line: &str, stop: Option<&str>) {
     match tell {
-        Tell::Say(text) => held.write(&line.replace("{text}", &Value::String(text).to_string())),
+        Tell::Say(text, receipt) => held.write(&line.replace("{text}", &Value::String(text).to_string()).replace("{receipt}", &Value::String(receipt).to_string())),
         Tell::Stop => {
             if let Some(stop) = stop {
                 held.write(&stop.replace("{id}", &crate::config::random_hex(8)));

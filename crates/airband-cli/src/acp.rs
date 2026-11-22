@@ -165,7 +165,7 @@ pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>, aske
             },
         };
         match msg {
-            Msg::Tell(Tell::Say(text)) => waiting.push_back(text),
+            Msg::Tell(Tell::Say(text, _)) => waiting.push_back(text),
             Msg::Tell(Tell::Stop) => {
                 if running.is_some() {
                     send(json!({ "jsonrpc": "2.0", "method": "session/cancel", "params": { "sessionId": session } }));

@@ -645,14 +645,14 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
                     queued.push(t.agent.id.clone());
                     Ok(())
                 } else {
-                    deliver(app, &Deliver::Held, &t.agent.id, &words).await
+                    deliver(app, &Deliver::Held, &t.agent.id, &words, std::slice::from_ref(&message_id)).await
                 }
             }
             // One reached through its own tool takes his words as a turn of his own too, and the tool keeps
             // them in order itself while the agent is busy.
-            Some(how @ Deliver::Harness { .. }) => deliver(app, how, &t.agent.id, &format!("{about}{}{files}", parsed.rest)).await,
+            Some(how @ Deliver::Harness { .. }) => deliver(app, how, &t.agent.id, &format!("{about}{}{files}", parsed.rest), std::slice::from_ref(&message_id)).await,
             // Anything else gets them from outside, as a message: one line in front says who they are from.
-            Some(how) => deliver(app, how, &t.agent.id, &content).await,
+            Some(how) => deliver(app, how, &t.agent.id, &content, std::slice::from_ref(&message_id)).await,
             None => Err("it was started in a way that gives airband nowhere to send it messages".into()),
         };
         app.store.delivery(&message_id, uid, &t.callsign.text(), &outcome);

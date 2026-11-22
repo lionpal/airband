@@ -17,6 +17,9 @@ pub(super) fn shown(at: &std::path::Path) -> String {
 }
 #[derive(Default)]
 pub(super) struct Inner {
+    /// By the id each delivery of his words went out under, the chat lines it carried. The agent's own record
+    /// names that id when it takes the words in: that, and nothing about the words, is how a line is marked read.
+    pub(super) receipts: HashMap<String, Vec<String>>,
     /// What is known about the things at the web addresses in the chat.
     pub(super) links: links::Book,
     pub(super) sessions: Vec<Session>,
