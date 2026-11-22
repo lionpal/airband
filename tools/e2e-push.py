@@ -18,7 +18,7 @@ from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BIN = os.path.join(ROOT, "target", "release", "airband")
+BIN = os.path.join(os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target")), "release", "airband")
 PORT, RELAY, OWN, RADIO = 7394, 7395, "push-own", "push-radio"
 work = tempfile.mkdtemp(prefix="airband-push-")
 home, project = os.path.join(work, "home"), os.path.join(work, "code", "shop")

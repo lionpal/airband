@@ -12,7 +12,7 @@ then stay where it is. The run fails if it is still climbing in the second half.
 import json, os, re, shutil, subprocess, sys, tempfile, time, urllib.request, urllib.error
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BIN = os.path.join(ROOT, "target", "release", "airband")
+BIN = os.path.join(os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target")), "release", "airband")
 PORT, OWN, RADIO = 7395, "soak-own", "soak-radio"
 ROUNDS = int(sys.argv[1]) if len(sys.argv) > 1 else 6000
 work = tempfile.mkdtemp(prefix="airband-soak-")

@@ -16,7 +16,7 @@ and then for that reason alone; they are marked (model).
 import json, os, shutil, subprocess, sys, tempfile, threading, time, urllib.request, urllib.error
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BIN = os.path.join(ROOT, "target", "release", "airband")
+BIN = os.path.join(os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target")), "release", "airband")
 PORT = 7391
 REAL_HOME = os.path.expanduser("~")
 work = tempfile.mkdtemp(prefix="airband-e2e-")

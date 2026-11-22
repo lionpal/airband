@@ -14,7 +14,8 @@ a pairing link, which uses the same core as the phone.
 import base64, hashlib, hmac, json, os, shutil, subprocess, sys, tempfile, time, urllib.parse, urllib.request, urllib.error
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BIN, RELAY = os.path.join(ROOT, "target", "release", "airband"), os.path.join(ROOT, "target", "release", "airband-relay")
+BUILT = os.path.join(os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target")), "release")
+BIN, RELAY = os.path.join(BUILT, "airband"), os.path.join(BUILT, "airband-relay")
 RELAY_PORT, TOWER_PORT = 7394, 7395
 # With AIRBAND_E2E_RELAY (and AIRBAND_E2E_ADMISSION if it asks for a key) the same checks run against a relay
 # that is already up, such as the live one, on a channel of their own that is closed at the end. What the relay

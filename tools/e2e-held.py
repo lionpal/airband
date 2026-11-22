@@ -12,7 +12,7 @@ stopping it, the rest then read together, the agent going on through a restart o
 import json, os, shutil, signal, subprocess, sys, tempfile, time, urllib.request, urllib.error
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BIN = os.path.join(ROOT, "target", "release", "airband")
+BIN = os.path.join(os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target")), "release", "airband")
 PORT, OWN, RADIO = 7397, "held-own", "held-radio"
 work = tempfile.mkdtemp(prefix="airband-held-")
 home, project, got = os.path.join(work, "home"), os.path.join(work, "code", "shop"), os.path.join(work, "got")
