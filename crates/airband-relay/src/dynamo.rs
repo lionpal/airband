@@ -141,6 +141,20 @@ impl Dynamo {
         Ok((items, next))
     }
 
+    /// Every item a `Scan` or a `Query` finds, page after page. For a reader that stops at the first it can use,
+    /// [`Dynamo::page`].
+    pub(crate) async fn all(&self, operation: &str, ask: Value) -> Result<Vec<Value>, String> {
+        let (mut all, mut from) = (Vec::new(), None);
+        loop {
+            let (items, next) = self.page(operation, ask.clone(), from.take()).await?;
+            all.extend(items);
+            match next {
+                Some(next) => from = Some(next),
+                None => return Ok(all),
+            }
+        }
+    }
+
     /// One DynamoDB operation, such as `PutItem`. Tried again a few times when the service is busy, cannot be
     /// reached, or two transactions touched the same item at once; a refusal that trying again cannot change
     /// comes back at once.

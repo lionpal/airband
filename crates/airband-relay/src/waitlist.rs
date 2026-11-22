@@ -103,3 +103,54 @@ pub(super) async fn waitlist(State(relay): State<Arc<Relay>>, headers: HeaderMap
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn what_passes_for_an_email_address() {
+        for good in ["c@example.games", "a.b+c@example.co.uk"] {
+            assert!(email_shaped(good), "{good}");
+        }
+        for bad in ["", "nobody", "@example.com", "a@b", "a@.com", "a@b.com.", "a b@example.com", "a@b@c.com", "x');drop--@example.com", "=cmd|calc@example.com", "<b>@example.com", "a@exa..mple.com"] {
+            assert!(!email_shaped(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn sign_ups_are_counted_per_caller_per_minute_and_per_day() {
+        let (mut s, t0) = (Signups::default(), Instant::now());
+        // one caller: five in an hour, and again after the hour
+        assert!((0..5).all(|_| s.allow("1.1.1.1", t0)) && !s.allow("1.1.1.1", t0));
+        assert!(s.allow("1.1.1.1", t0 + Duration::from_secs(3601)));
+        // everyone together: twenty in a minute, whoever they are
+        let (mut s, mut taken) = (Signups::default(), 0);
+        for i in 0..40 {
+            taken += s.allow(&format!("2.2.2.{i}"), t0) as u32;
+        }
+        assert_eq!(taken, A_MINUTE);
+        assert!(s.allow("3.3.3.3", t0 + Duration::from_secs(61)));
+        // and a day's worth, however slowly they come
+        let mut s = Signups::default();
+        let taken = (0..3000u64).filter(|i| s.allow(&format!("a{i}"), t0 + Duration::from_secs(i * 20))).count() as u32;
+        assert_eq!(taken, A_DAY);
+    }
+
+    #[test]
+    fn the_caller_is_the_address_the_load_balancer_added() {
+        let mut h = HeaderMap::new();
+        assert_eq!(caller(&h), "direct");
+        h.insert("x-forwarded-for", "9.9.9.9, 203.0.113.7".parse().unwrap()); // the first is whatever the caller sent
+        assert_eq!(caller(&h), "203.0.113.7");
+    }
+
+    #[test]
+    fn only_the_homepage_is_named_as_an_allowed_origin() {
+        let mut h = HeaderMap::new();
+        h.insert("origin", "https://evil.example".parse().unwrap());
+        assert_eq!(from_site(&h)[0].1, "https://airband.dev");
+        h.insert("origin", "https://www.airband.dev".parse().unwrap());
+        assert_eq!(from_site(&h)[0].1, "https://www.airband.dev");
+    }
+}

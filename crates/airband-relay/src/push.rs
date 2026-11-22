@@ -118,7 +118,8 @@ impl Apns {
         .to_string();
         // kept by Apple for a phone that is off: a question for a day, anything else for an hour
         let until = airband_core::clock::now_secs() + if question { 86_400 } else { 3600 };
-        for attempt in 0..2 {
+        let mut tried_again = false;
+        loop {
             let pass = match self.pass() {
                 Ok(pass) => pass,
                 Err(e) => return Outcome::Failed(e),
@@ -137,7 +138,7 @@ impl Apns {
                 .await;
             let res = match sent {
                 Ok(res) => res,
-                Err(e) => return Outcome::Failed(if e.is_timeout() { "Apple did not answer in time".into() } else { "Apple could not be reached".into() }),
+                Err(e) => return Outcome::Failed(if e.is_timeout() { "the push service did not answer in time".into() } else { "the push service could not be reached".into() }),
             };
             let status = res.status().as_u16();
             if status == 200 {
@@ -146,15 +147,15 @@ impl Apns {
             let reason = res.json::<serde_json::Value>().await.ok().and_then(|v| v["reason"].as_str().map(String::from)).unwrap_or_else(|| format!("status {status}"));
             return match (status, reason.as_str()) {
                 // the pass went stale between two notifications: make another and try once more
-                (403, "ExpiredProviderToken") if attempt == 0 => {
+                (403, "ExpiredProviderToken") if !tried_again => {
                     *self.pass.lock().unwrap() = None;
+                    tried_again = true;
                     continue;
                 }
                 (410, _) | (400, "BadDeviceToken" | "DeviceTokenNotForTopic") => Outcome::Gone(reason),
                 _ => Outcome::Refused(reason),
             };
         }
-        Outcome::Refused("ExpiredProviderToken".into())
     }
 }
 

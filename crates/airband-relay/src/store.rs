@@ -56,6 +56,10 @@ pub(crate) struct Saved {
 
 /// channels.json: each channel's [`Saved`]. A file that is there but cannot be read is an error, never "no
 /// channels": taken for empty, the next change would write that back and lose every pairing.
+/// One change to a folder's channel list or waiting list at a time: two towers opening at once must not each read
+/// the list and write it back without the other's channel.
+static LISTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn read_channels(dir: &std::path::Path) -> Result<HashMap<String, Saved>, String> {
     airband_core::kept::read(&dir.join("channels.json")).map(Option::unwrap_or_default)
 }
@@ -128,19 +132,14 @@ impl Store {
         match self {
             Store::Folder(dir) => read_channels(dir),
             Store::Dynamo(d) => {
-                let (mut all, mut from) = (HashMap::new(), None::<Value>);
-                loop {
-                    let (items, next) = d.db.page("Scan", json!({ "TableName": d.channels, "ConsistentRead": true }), from.take()).await?;
-                    for item in &items {
-                        if let (Some(channel), Some(pull_hash), Some(radio_hash)) = (dynamo::text(item, "channel"), dynamo::text(item, "pull_hash"), dynamo::text(item, "radio_hash")) {
-                            all.insert(channel, Saved { pull_hash, radio_hash });
-                        }
-                    }
-                    match next {
-                        Some(next) => from = Some(next),
-                        None => return Ok(all),
-                    }
-                }
+                let items = d.db.all("Scan", json!({ "TableName": d.channels, "ConsistentRead": true })).await?;
+                Ok(items
+                    .iter()
+                    .filter_map(|item| match (dynamo::text(item, "channel"), dynamo::text(item, "pull_hash"), dynamo::text(item, "radio_hash")) {
+                        (Some(channel), Some(pull_hash), Some(radio_hash)) => Some((channel, Saved { pull_hash, radio_hash })),
+                        _ => None,
+                    })
+                    .collect())
             }
             Store::Postgres(pg) => {
                 // a database cannot be created from inside itself: ask the server's own `postgres` database
@@ -170,12 +169,18 @@ impl Store {
     pub(crate) async fn join_waitlist(&self, email: &str) -> Result<(), String> {
         match self {
             Store::Folder(dir) => {
+                let _one = LISTS.lock().unwrap();
                 let file = dir.join("waitlist.txt");
-                let have = std::fs::read_to_string(&file).unwrap_or_default();
+                // not there yet is an empty list; there and unreadable is an error, never written over as empty
+                let have = match std::fs::read_to_string(&file) {
+                    Ok(have) => have,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+                    Err(e) => return Err(format!("cannot read {}: {e}", file.display())),
+                };
                 if have.lines().any(|l| l == email) {
                     return Ok(());
                 }
-                std::fs::write(&file, format!("{have}{email}\n")).map_err(|e| format!("cannot save {}: {e}", file.display()))
+                airband_core::kept::write_private(&file, format!("{have}{email}\n")).map_err(|e| format!("cannot save {}: {e}", file.display()))
             }
             Store::Postgres(pg) => {
                 let db = pg.connect(&pg.name).await?;
@@ -189,6 +194,7 @@ impl Store {
     pub(crate) async fn remove(&self, channel: &str) -> Result<(), String> {
         match self {
             Store::Folder(dir) => {
+                let _one = LISTS.lock().unwrap();
                 let mut all = read_channels(dir)?;
                 all.remove(channel);
                 write_channels(dir, &all)
@@ -206,6 +212,7 @@ impl Store {
     pub(crate) async fn add(&self, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<(), String> {
         match self {
             Store::Folder(dir) => {
+                let _one = LISTS.lock().unwrap();
                 let mut all = read_channels(dir)?;
                 all.entry(channel.into()).or_insert(Saved { pull_hash: pull_hash.into(), radio_hash: radio_hash.into() });
                 write_channels(dir, &all)
@@ -222,6 +229,9 @@ impl Store {
     }
 
 }
+
+/// How long a kept message waits for its tower, in seconds, in every store.
+const HELD_FOR_SECS: u64 = airband_core::relay::HELD_FOR_MS / 1000;
 
 /// A time in milliseconds that only goes up, so two messages kept in the same millisecond still have an order.
 fn next_ms() -> u64 {
@@ -273,7 +283,8 @@ impl Store {
                 if list.items.iter().any(|h| h.id == id) {
                     return Ok(true);
                 }
-                if list.items.len() >= most {
+                let now = airband_core::clock::now_secs();
+                if list.items.iter().filter(|h| now.saturating_sub(h.at) <= HELD_FOR_SECS).count() >= most {
                     return Ok(false);
                 }
                 // in the order they came: a number that only goes up
@@ -284,16 +295,21 @@ impl Store {
             }
             Store::Dynamo(d) => d.hold(channel, id, sealed, most).await,
             Store::Postgres(pg) => {
-                let db = pg.connect(&pg.name).await?;
-                let have: i64 = db.query_one("select count(*) from relay_held where channel = $1", &[&channel]).await.map_err(|e| e.to_string())?.get(0);
-                let already = db.query_opt("select 1 from relay_held where channel = $1 and id = $2", &[&channel, &id]).await.map_err(|e| e.to_string())?.is_some();
+                // counted and kept in one transaction, under a lock on the channel held until it ends, so two at
+                // once cannot both see room for one more and both be kept
+                let mut db = pg.connect(&pg.name).await?;
+                let tx = db.transaction().await.map_err(|e| e.to_string())?;
+                tx.execute("select pg_advisory_xact_lock(hashtext($1))", &[&channel]).await.map_err(|e| e.to_string())?;
+                let already = tx.query_opt("select 1 from relay_held where channel = $1 and id = $2", &[&channel, &id]).await.map_err(|e| e.to_string())?.is_some();
                 if already {
                     return Ok(true);
                 }
+                let have: i64 = tx.query_one("select count(*) from relay_held where channel = $1 and held_at > now() - make_interval(secs => $2)", &[&channel, &(HELD_FOR_SECS as f64)]).await.map_err(|e| e.to_string())?.get(0);
                 if have as usize >= most {
                     return Ok(false);
                 }
-                db.execute("insert into relay_held (channel, id, sealed) values ($1, $2, $3) on conflict (channel, id) do nothing", &[&channel, &id, &sealed]).await.map(|_| true).map_err(|e| e.to_string())
+                tx.execute("insert into relay_held (channel, id, sealed) values ($1, $2, $3) on conflict (channel, id) do nothing", &[&channel, &id, &sealed]).await.map_err(|e| e.to_string())?;
+                tx.commit().await.map(|_| true).map_err(|e| e.to_string())
             }
         }
     }
@@ -304,15 +320,34 @@ impl Store {
             Store::Folder(dir) => {
                 let _one = HELD.lock().unwrap();
                 let held = Self::held_dir(dir, channel);
-                let list = Self::held_list(&held)?;
-                let Some(first) = list.items.iter().min_by_key(|h| h.seq) else { return Ok(None) };
-                let sealed = std::fs::read(held.join(first.seq.to_string())).map_err(|e| e.to_string())?;
-                Ok(Some((first.id.clone(), sealed)))
+                let mut list = Self::held_list(&held)?;
+                list.items.sort_by_key(|h| h.seq);
+                let now = airband_core::clock::now_secs();
+                // what is past its time is passed over, as every store does; an entry whose message is not there
+                // (its file was lost) is dropped from the list and said, so the channel does not stop at it for ever
+                let mut lost = Vec::new();
+                let mut found = None;
+                for item in list.items.iter().filter(|h| now.saturating_sub(h.at) <= HELD_FOR_SECS) {
+                    match std::fs::read(held.join(item.seq.to_string())) {
+                        Ok(sealed) => {
+                            found = Some((item.id.clone(), sealed));
+                            break;
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => lost.push(item.seq),
+                        Err(e) => return Err(e.to_string()),
+                    }
+                }
+                if !lost.is_empty() {
+                    eprintln!("airband-relay: {} kept message(s) on a channel had no body and were dropped from its list", lost.len());
+                    list.items.retain(|h| !lost.contains(&h.seq));
+                    Self::held_keep(&held, &list)?;
+                }
+                Ok(found)
             }
             Store::Dynamo(d) => d.held_next(channel).await,
             Store::Postgres(pg) => {
                 let db = pg.connect(&pg.name).await?;
-                let row = db.query_opt("select id, sealed from relay_held where channel = $1 order by seq limit 1", &[&channel]).await.map_err(|e| e.to_string())?;
+                let row = db.query_opt("select id, sealed from relay_held where channel = $1 and held_at > now() - make_interval(secs => $2) order by seq limit 1", &[&channel, &(HELD_FOR_SECS as f64)]).await.map_err(|e| e.to_string())?;
                 Ok(row.map(|r| (r.get(0), r.get(1))))
             }
         }
@@ -339,8 +374,10 @@ impl Store {
         }
     }
 
-    /// Nothing is kept for ever: what a tower never came back for is dropped after this many days.
-    pub(crate) async fn held_purge(&self, days: u64) -> Result<(), String> {
+    /// Nothing is kept for ever: what a tower never came back for is dropped once it is past
+    /// [`HELD_FOR_SECS`]. Until then every store passes over it (`held_next`, and the count in `hold`), so the stores
+    /// agree on what is kept whenever this last ran.
+    pub(crate) async fn held_purge(&self) -> Result<(), String> {
         match self {
             Store::Folder(dir) => {
                 let _one = HELD.lock().unwrap();
@@ -348,7 +385,7 @@ impl Store {
                 let now = airband_core::clock::now_secs();
                 for held in channels.flatten().map(|c| c.path()) {
                     let Ok(mut list) = Self::held_list(&held) else { continue };
-                    let old: Vec<u64> = list.items.iter().filter(|h| now.saturating_sub(h.at) > days * 86_400).map(|h| h.seq).collect();
+                    let old: Vec<u64> = list.items.iter().filter(|h| now.saturating_sub(h.at) > HELD_FOR_SECS).map(|h| h.seq).collect();
                     if old.is_empty() {
                         continue;
                     }
@@ -362,7 +399,7 @@ impl Store {
             Store::Dynamo(_) => Ok(()),
             Store::Postgres(pg) => {
                 let db = pg.connect(&pg.name).await?;
-                db.execute("delete from relay_held where held_at < now() - make_interval(days => $1)", &[&(days as i32)]).await.map(|_| ()).map_err(|e| e.to_string())
+                db.execute("delete from relay_held where held_at < now() - make_interval(secs => $1)", &[&(HELD_FOR_SECS as f64)]).await.map(|_| ()).map_err(|e| e.to_string())
             }
         }
     }
@@ -411,6 +448,51 @@ mod tests {
         store.held_done("c", "c").await.unwrap();
         assert_eq!(store.held_next("c").await, Ok(None));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_lost_body_or_an_old_message_never_stops_a_channel_and_an_unreadable_waitlist_is_kept() {
+        let dir = std::env::temp_dir().join(format!("airband-relay-lost-{}", airband_core::encode::random_hex(6)));
+        let store = Store::Folder(dir.clone());
+        assert_eq!(store.hold("c", "a", b"one", 5).await, Ok(true));
+        assert_eq!(store.hold("c", "b", b"two", 5).await, Ok(true));
+        // the first one's body is gone: the next pull goes on to the second, and the list forgets the first
+        let held = Store::held_dir(&dir, "c");
+        let first = Store::held_list(&held).unwrap().items[0].seq;
+        std::fs::remove_file(held.join(first.to_string())).unwrap();
+        assert_eq!(store.held_next("c").await, Ok(Some(("b".into(), b"two".to_vec()))));
+        assert_eq!(Store::held_list(&held).unwrap().items.len(), 1);
+        // one past its time is passed over and does not count toward the most a channel may keep
+        let mut list = Store::held_list(&held).unwrap();
+        list.items[0].at = 1;
+        Store::held_keep(&held, &list).unwrap();
+        assert_eq!(store.held_next("c").await, Ok(None));
+        assert_eq!(store.hold("c", "d", b"four", 1).await, Ok(true));
+        // the waiting list: one that cannot be read is an error and stays as it was
+        store.join_waitlist("a@example.com").await.unwrap();
+        let waitlist = dir.join("waitlist.txt");
+        std::fs::write(&waitlist, [0xff, 0xfe]).unwrap();
+        assert!(store.join_waitlist("b@example.com").await.is_err());
+        assert_eq!(std::fs::read(&waitlist).unwrap(), vec![0xff, 0xfe]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn two_channels_opened_at_once_are_both_kept() {
+        let dir = std::env::temp_dir().join(format!("airband-relay-race-{}", airband_core::encode::random_hex(6)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Arc::new(Store::Folder(dir.clone()));
+        let opens: Vec<_> = (0..16).map(|i| {
+            let store = store.clone();
+            std::thread::spawn(move || futures_lite_block(store.add(&format!("c{i}"), "p", "r")))
+        }).collect();
+        opens.into_iter().for_each(|t| t.join().unwrap().unwrap());
+        assert_eq!(store.load().await.map(|c| c.len()), Ok(16));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    /// Run one future to its end on this thread: each test thread opens its channel truly at the same time.
+    fn futures_lite_block<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(f)
     }
 
     #[tokio::test]

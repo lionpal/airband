@@ -25,19 +25,8 @@ impl Dyn {
     }
     /// A channel's line: the place of every message kept for it, oldest first, as (key, id, expires).
     pub(super) async fn line(&self, channel: &str) -> Result<Vec<(String, String, u64)>, String> {
-        let (mut all, mut from) = (Vec::new(), None::<Value>);
-        loop {
-            let (items, next) = self.db.page("Query", json!({ "TableName": self.held, "ConsistentRead": true, "KeyConditionExpression": "#c = :c AND begins_with(#k, :m)", "ExpressionAttributeNames": { "#c": "channel", "#k": "k" }, "ExpressionAttributeValues": { ":c": s(channel), ":m": s("m#") } }), from.take()).await?;
-            for item in &items {
-                if let (Some(k), Some(id)) = (dynamo::text(item, "k"), dynamo::text(item, "id")) {
-                    all.push((k, id, dynamo::number(item, "expires").unwrap_or(0)));
-                }
-            }
-            match next {
-                Some(next) => from = Some(next),
-                None => return Ok(all),
-            }
-        }
+        let items = self.db.all("Query", json!({ "TableName": self.held, "ConsistentRead": true, "KeyConditionExpression": "#c = :c AND begins_with(#k, :m)", "ExpressionAttributeNames": { "#c": "channel", "#k": "k" }, "ExpressionAttributeValues": { ":c": s(channel), ":m": s("m#") } })).await?;
+        Ok(items.iter().filter_map(|item| Some((dynamo::text(item, "k")?, dynamo::text(item, "id")?, dynamo::number(item, "expires").unwrap_or(0)))).collect())
     }
     /// Take a message out of the table without touching the count: for one that has outlived its time.
     pub(super) async fn drop_stale(&self, channel: &str, place: &str, id: &str) {

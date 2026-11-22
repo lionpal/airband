@@ -1,6 +1,9 @@
 //! How much one caller may ask of the relay, and how often.
 use super::*;
 
+/// How many keys (channels or internet addresses) one limit remembers at once.
+pub(super) const KEYS_KEPT: usize = 20_000;
+
 /// Who is asking, as the load balancer saw them. It adds the caller's address to the end of this header, so the
 /// last entry is the one a caller cannot make up; anything before it is whatever they chose to send.
 pub(super) fn caller(headers: &HeaderMap) -> String {
@@ -99,5 +102,25 @@ impl Limits {
     }
     pub(super) fn address(&mut self, asks: Asks, address: &str, now: Instant) -> bool {
         self.radio[asks as usize].1.allow(address, now)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_limit_counts_per_key_and_starts_again_when_its_time_is_up() {
+        let (mut limit, t0) = (Limiter::new(3, 60), Instant::now());
+        assert!((0..3).all(|_| limit.allow("a", t0)) && !limit.allow("a", t0 + Duration::from_secs(59)));
+        assert!(limit.allow("b", t0));
+        assert!(limit.allow("a", t0 + Duration::from_secs(60)));
+        // a full table turns new keys away and keeps counting the ones it has
+        let mut limit = Limiter::new(2, 60);
+        for i in 0..KEYS_KEPT {
+            assert!(limit.allow(&i.to_string(), t0));
+        }
+        assert!(!limit.allow("one more", t0) && limit.allow("7", t0) && !limit.allow("7", t0));
+        assert!(limit.allow("one more", t0 + Duration::from_secs(61)));
     }
 }
