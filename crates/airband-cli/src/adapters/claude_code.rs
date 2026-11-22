@@ -411,7 +411,8 @@ fn steps_in(tail: &str, since: u64) -> Vec<String> {
 
 fn step(tool: &str, input: &Value) -> Option<String> {
     let text = |k: &str| input[k].as_str().map(str::trim).filter(|t| !t.is_empty());
-    let file = |k: &str| text(k).map(|p| p.rsplit(['/', '\\']).next().unwrap_or(p).to_string());
+    // a file by its own name, as the system reads the path
+    let file = |k: &str| text(k).map(|p| std::path::Path::new(p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string()));
     let said = match tool {
         // bookkeeping of its own, not a step in the work: keep looking further back
         "TodoWrite" | "ToolSearch" | "TaskCreate" | "TaskUpdate" | "TaskList" | "ExitPlanMode" => return None,
@@ -421,7 +422,10 @@ fn step(tool: &str, input: &Value) -> Option<String> {
         "Grep" => format!("Searching for {}", text("pattern")?),
         "Glob" => "Looking for files".into(),
         "WebSearch" => format!("Searching the web for {}", text("query")?),
-        "WebFetch" => format!("Reading {}", text("url")?.split('/').nth(2).unwrap_or("a web page")),
+        "WebFetch" => match airband_core::links::site(text("url")?) {
+            site if site.is_empty() => "Reading a web page".into(),
+            site => format!("Reading {site}"),
+        },
         "Bash" => text("command")?.lines().next()?.to_string(),
         // a tool from a server: its own name, as words ("take screenshot")
         other => other.rsplit("__").next().unwrap_or(other).replace(['_', '-'], " "),

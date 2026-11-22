@@ -6,7 +6,7 @@ use crate::providers::{By, Interface, Job, Offer};
 /// One question to a model behind an API key, off the async threads. `read` finds the answer in what came back.
 /// One call to a service that speaks OpenAI's chat interface. `auth` is the header its key goes in and the
 /// value there, as its row says; a service with no key (one on his own computer) is sent none.
-async fn ask_api(url: String, auth: Option<(String, String)>, body: Value) -> Result<String, Trouble> {
+async fn ask_api(url: String, auth: Option<(String, String)>, body: Value, check: Option<airband_core::providers::Check>) -> Result<String, Trouble> {
     tokio::task::spawn_blocking(move || {
         let mut req = airband_radio::net::agent(Duration::from_secs(60)).post(&url);
         if let Some((header, value)) = auth {
@@ -17,7 +17,7 @@ async fn ask_api(url: String, auth: Option<(String, String)>, body: Value) -> Re
         let mut res = req.send_json(&body).map_err(|_| Trouble::Unreachable)?;
         let status = res.status().as_u16();
         if status != 200 {
-            return Err(Trouble::of_status(status));
+            return Err(Trouble::of_status(status, check.as_ref()));
         }
         let v: Value = res.body_mut().read_json().map_err(|_| Trouble::NoAnswer)?;
         v["choices"][0]["message"]["content"].as_str().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).ok_or(Trouble::NoAnswer)
@@ -208,7 +208,9 @@ async fn chat(model: &Summarizer, by: &By, prompt: String, shape: Option<Value>)
     let url = format!("{}/chat/completions", model.get(Job::Summary, "url").trim_end_matches('/'));
     // how this service takes a key is its row's to say; one sent no key needs nothing said
     let auth = by.key_header(&model.key).map_err(|_| Failed(Trouble::NotSet, "this version of airband was not told how that service takes its key".into()))?;
-    Ok(ask_api(url, auth, body).await?)
+    // how its statuses read is its row's to say too
+    let check = airband_core::catalog::current().providers.iter().find(|p| p.id == model.kind).and_then(|p| p.check.clone());
+    Ok(ask_api(url, auth, body, check).await?)
 }
 
 async fn on_this_computer(_model: &Summarizer, by: &By, prompt: String, shape: Option<Value>) -> Result<String, Failed> {
@@ -221,7 +223,7 @@ async fn on_this_computer(_model: &Summarizer, by: &By, prompt: String, shape: O
     if let Some(shape) = shape {
         body["response_format"] = json!({ "type": "json_schema", "json_schema": { "name": "answer", "strict": true, "schema": shape } });
     }
-    Ok(ask_api(format!("{url}/chat/completions"), None, body).await?)
+    Ok(ask_api(format!("{url}/chat/completions"), None, body, None).await?)
 }
 
 async fn command(model: &Summarizer, by: &By, prompt: String, shape: Option<Value>) -> Result<String, Failed> {
@@ -647,9 +649,9 @@ pub(super) async fn detail_of(app: &Arc<App>, id: &str) -> Option<String> {
 mod tests {
     #[test]
     fn why_a_model_did_not_answer_is_told_from_the_status_and_never_in_the_services_words() {
-        assert_eq!((Trouble::of_status(401), Trouble::of_status(403)), (Trouble::WrongKey, Trouble::WrongKey));
-        assert_eq!((Trouble::of_status(402), Trouble::of_status(429)), (Trouble::Refused, Trouble::Refused));
-        assert_eq!((Trouble::of_status(404), Trouble::of_status(503)), (Trouble::NotFound, Trouble::Unexpected { status: 503 }));
+        assert_eq!((Trouble::of_status(401, None), Trouble::of_status(403, None)), (Trouble::WrongKey, Trouble::WrongKey));
+        assert_eq!((Trouble::of_status(402, None), Trouble::of_status(429, None)), (Trouble::Refused, Trouble::Refused));
+        assert_eq!((Trouble::of_status(404, None), Trouble::of_status(503, None)), (Trouble::NotFound, Trouble::Unexpected { status: 503 }));
         // one sentence each, all different, each whole, and the same ones a key that failed its test is told in
         let all = [Trouble::Unreachable, Trouble::WrongKey, Trouble::Refused, Trouble::NotFound, Trouble::Unexpected { status: 500 }, Trouble::NoAnswer, Trouble::Program, Trouble::TooSlow, Trouble::NotSet];
         let said: std::collections::HashSet<String> = all.iter().map(|t| t.said("Maker")).collect();

@@ -237,8 +237,18 @@ pub enum Trouble {
 }
 
 impl Trouble {
-    /// What a status says went wrong, for a service whose row does not say how its statuses read.
-    pub fn of_status(status: u16) -> Trouble {
+    /// What a status says went wrong. A service's own row says which of its statuses mean a wrong key and
+    /// which a refusal (`check`); for anything the row does not list, and for a service with no such row, the
+    /// status is read as HTTP itself defines it.
+    pub fn of_status(status: u16, check: Option<&Check>) -> Trouble {
+        if let Some(check) = check {
+            if check.wrong_key.contains(&status) {
+                return Trouble::WrongKey;
+            }
+            if check.refused.contains(&status) {
+                return Trouble::Refused;
+            }
+        }
         match status {
             401 | 403 => Trouble::WrongKey,
             402 | 429 => Trouble::Refused,
