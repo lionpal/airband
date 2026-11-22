@@ -80,13 +80,13 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         desk = Desk.open(dataDir: dir.path, host: self)
         #if DEBUG
         // development only: `-airband.devTools '("codex")'` opens as someone who uses those coding tools, for a screenshot
-        if let tools = UserDefaults.standard.stringArray(forKey: "airband.devTools") { desk.setTools(tools: tools) }
+        if let tools = Dev.list("devTools") { desk.setTools(tools: tools) }
         #endif
         var links = Keychain.links()
         #if DEBUG
         // development only: `xcrun simctl launch <sim> dev.airband.app -airband.devLink <pairing link>` pairs without the
         // system's "Open in airband?" prompt, which a script cannot tap
-        if let dev = UserDefaults.standard.string(forKey: "airband.devLink"), isPairingLink(link: dev.split(separator: " ").first.map(String.init) ?? "") {
+        if let dev = Dev.text("devLink"), isPairingLink(link: dev.split(separator: " ").first.map(String.init) ?? "") {
             links = dev.split(separator: " ").map(String.init) // several links, separated by spaces
         }
         #endif
@@ -94,7 +94,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         // development only: `-airband.devMic YES` opens the microphone a few seconds after launch, as a tap on
         // the big button would, for a run nobody is there to tap
         // the models he chose are fetched first, the microphone is open for eight seconds, and what it heard is sent
-        if UserDefaults.standard.bool(forKey: "airband.devMic") {
+        if Dev.flag("devMic") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                 self?.finishChoices { problem in
                     NSLog("airband dev: models fetched: \(problem ?? "ok")")

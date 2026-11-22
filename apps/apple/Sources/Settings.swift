@@ -5,9 +5,9 @@ struct SetupView: View {
     @ObservedObject private var push = Push.shared
     @Environment(\.dismiss) private var dismiss
     // development only: `-airband.devAccounts 1` opens the accounts page, for a screenshot
-    @State private var showAccounts = UserDefaults.standard.bool(forKey: "airband.devAccounts")
+    @State private var showAccounts = Dev.flag("devAccounts")
     // development only: `-airband.devPage Voice` opens Settings on that page (or `Settings` for the list itself)
-    @State private var devPage = UserDefaults.standard.string(forKey: "airband.devPage")
+    @State private var devPage = Dev.text("devPage")
     @State private var scanning = false
 
     var body: some View {

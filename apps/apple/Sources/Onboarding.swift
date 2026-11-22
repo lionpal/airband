@@ -10,7 +10,7 @@ struct OnboardingView: View {
     @EnvironmentObject var model: RadioModel
     @Environment(\.dismiss) private var dismiss
     // development only: `-airband.devStep 2` opens on that step, for a screenshot
-    @State private var step = UserDefaults.standard.integer(forKey: "airband.devStep")
+    @State private var step = Dev.number("devStep")
     @State private var scanning = false
     @State private var finishing = false
     @State private var working: (label: String, fraction: Double?)?
@@ -25,7 +25,7 @@ struct OnboardingView: View {
     private static let straight = "brew install lionpal/airband/airband && airband relay off && airband start"
     /// He asked for the pairing with no relay.
     // (development only: `-airband.devNoRelay YES` opens with it asked for, for a screenshot)
-    @State private var noRelay = UserDefaults.standard.bool(forKey: "airband.devNoRelay")
+    @State private var noRelay = Dev.flag("devNoRelay")
     private var command: String { noRelay ? Self.straight : Self.command }
     /// The first step waits for him to pick the coding agent he uses: none is picked for him.
     private var unchosen: Bool { step == 0 && model.usedTools.isEmpty }

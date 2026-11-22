@@ -192,7 +192,7 @@ struct NewAgentSheet: View {
             #if DEBUG
             // development only: `-airband.devNewAgent pick` chooses the first folder, `walk` opens the walk to
             // another, `start` chooses the first and starts an agent there. For a screenshot.
-            let dev = UserDefaults.standard.string(forKey: "airband.devNewAgent")
+            let dev = Dev.text("devNewAgent")
             if dev == "walk" { walking = true }
             if dev == "pick" || dev == "start", let first = recent.first {
                 place = Place(folder: first.folder, shown: first.shown, team: first.team)

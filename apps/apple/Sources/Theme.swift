@@ -19,7 +19,7 @@ enum Palette {
     static let dim = Color(red: 0.333, green: 0.341, blue: 0.353)
     /// Light blue: something to read in full.
     static let read = Color(red: 0.36, green: 0.80, blue: 0.95)
-    /// A colour for each team, in the order the tower hands them out: blue, orange, violet, magenta, and last the
+    /// A colour for each team, in the order the phone hands them out: blue, orange, violet, magenta, and last the
     /// two nearest the colours that already mean working and waiting. Checked as a set for telling apart,
     /// including by people who do not see red and green apart; a badge's letters say who it is in any case.
     static func team(_ place: UInt8?) -> Color { Color(uiColor: TeamColours.ui(place)) }
@@ -82,4 +82,20 @@ struct TakeOverAlert: ViewModifier {
             Text("Its terminal session ends, and the same conversation carries on run by airband. What you say then reaches it as your own words.")
         }
     }
+}
+
+/// The switches a development build is launched with (`-airband.devPage chat`, for a screenshot or a script that
+/// cannot tap). The one place they are read: a release build has none, and every one reads as unset.
+enum Dev {
+    #if DEBUG
+    static func flag(_ name: String) -> Bool { UserDefaults.standard.bool(forKey: "airband." + name) }
+    static func text(_ name: String) -> String? { UserDefaults.standard.string(forKey: "airband." + name) }
+    static func number(_ name: String) -> Int { UserDefaults.standard.integer(forKey: "airband." + name) }
+    static func list(_ name: String) -> [String]? { UserDefaults.standard.stringArray(forKey: "airband." + name) }
+    #else
+    static func flag(_ name: String) -> Bool { false }
+    static func text(_ name: String) -> String? { nil }
+    static func number(_ name: String) -> Int { 0 }
+    static func list(_ name: String) -> [String]? { nil }
+    #endif
 }

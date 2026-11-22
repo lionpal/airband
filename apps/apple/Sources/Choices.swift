@@ -128,7 +128,7 @@ struct ServiceEntry: View {
         // development only: with `-airband.devOpen <service>`, the key in AIRBAND_DEV_KEY and the settings in
         // AIRBAND_DEV_SETTINGS ("region=eastus") are filled in and "Use it" is pressed, to see the key tried
         .onAppear {
-            guard UserDefaults.standard.string(forKey: "airband.devOpen") == choice.id, let dev = ProcessInfo.processInfo.environment["AIRBAND_DEV_KEY"] else { return }
+            guard Dev.text("devOpen") == choice.id, let dev = ProcessInfo.processInfo.environment["AIRBAND_DEV_KEY"] else { return }
             key = dev
             for pair in (ProcessInfo.processInfo.environment["AIRBAND_DEV_SETTINGS"] ?? "").split(separator: ",") {
                 let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
@@ -258,7 +258,7 @@ struct ChoicePicker: View {
             model.refreshChoices(); model.refreshCatalog()
             #if DEBUG
             // development only: `-airband.devOpen <service>` opens that service's card, as a tap on it would
-            if let dev = UserDefaults.standard.string(forKey: "airband.devOpen") {
+            if let dev = Dev.text("devOpen") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { if all.contains(where: { $0.id == dev }) { (open, more) = (dev, true) } }
             }
             #endif

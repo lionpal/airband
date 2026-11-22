@@ -115,17 +115,17 @@ struct FeedView: View {
         #if DEBUG
         // development only: `-airband.devQuick 1` opens the quick messages, for a screenshot
         .onAppear {
-            if UserDefaults.standard.bool(forKey: "airband.devQuick") { showQuick = true }
-            if UserDefaults.standard.bool(forKey: "airband.devAccounts") || UserDefaults.standard.string(forKey: "airband.devPage") != nil { showSetup = true }
-            if UserDefaults.standard.bool(forKey: "airband.devAgents") { showAgents = true }
+            if Dev.flag("devQuick") { showQuick = true }
+            if Dev.flag("devAccounts") || Dev.text("devPage") != nil { showSetup = true }
+            if Dev.flag("devAgents") { showAgents = true }
             // `-airband.devProse YES` opens a message with every kind of formatting in it
-            if UserDefaults.standard.bool(forKey: "airband.devProse") { showProse = true }
+            if Dev.flag("devProse") { showProse = true }
             // `-airband.devNewAgent YES` opens the sheet that starts a new agent, for a screenshot
-            if UserDefaults.standard.string(forKey: "airband.devNewAgent") != nil { showNewAgent = true }
+            if Dev.text("devNewAgent") != nil { showNewAgent = true }
         }
         // and once his computers are reached, so it opens with them known
         .onChange(of: model.online) { _, online in
-            if online, UserDefaults.standard.string(forKey: "airband.devNewAgent") != nil {
+            if online, Dev.text("devNewAgent") != nil {
                 showNewAgent = false
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { showNewAgent = true }
             }
@@ -196,7 +196,7 @@ struct FeedView: View {
             #if DEBUG
             // development only: `-airband.devBehind 1` scrolls back a little, for a screenshot of the chat under the buttons
             .task {
-                guard UserDefaults.standard.bool(forKey: "airband.devBehind") else { return }
+                guard Dev.flag("devBehind") else { return }
                 try? await Task.sleep(for: .seconds(4))
                 if let m = model.view.feed.dropLast(5).last { proxy.scrollTo(m.id, anchor: .center) }
             }

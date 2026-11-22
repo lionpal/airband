@@ -23,7 +23,7 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     func setUp() {
         #if DEBUG
         // development only: `-airband.devNoPush YES` leaves the question about notifications unasked, for a screenshot
-        if UserDefaults.standard.bool(forKey: "airband.devNoPush") { return }
+        if Dev.flag("devNoPush") { return }
         #endif
         let center = UNUserNotificationCenter.current()
         center.delegate = self

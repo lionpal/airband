@@ -153,8 +153,8 @@ struct Question: View {
         // development only: `-airband.devContext <callsign>` opens that agent's question, for a screenshot,
         // and `-airband.devPick <callsign>` picks it, as a tap on the sentence would
         .onAppear {
-            if UserDefaults.standard.string(forKey: "airband.devContext") == m.from { showContext = true }
-            if UserDefaults.standard.string(forKey: "airband.devPick") == m.from, m.open { model.replyingTo = m }
+            if Dev.text("devContext") == m.from { showContext = true }
+            if Dev.text("devPick") == m.from, m.open { model.replyingTo = m }
         }
         #endif
     }
