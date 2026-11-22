@@ -33,8 +33,42 @@ enum Listed<'a> {
 /// settled after.
 struct Menus {
     tools: Vec<String>,
-    models: Vec<String>,
-    efforts: Vec<String>,
+    models: Listing,
+    efforts: Listing,
+}
+
+/// One menu across every launcher: each name once, as the routing model is shown it, and with each name the
+/// launchers that offer it, each by its own id for it. A name picked is passed on with those ids, and the
+/// launcher that starts the agent takes its own (`launch::chosen`).
+#[derive(Default)]
+struct Listing {
+    names: Vec<String>,
+    ids: Vec<Vec<(LauncherId, String)>>,
+}
+impl Listing {
+    fn of(menus: &[(LauncherId, airband_core::tools::Offers)], of: fn(&airband_core::tools::Offers) -> &Vec<airband_core::tools::Choice>) -> Listing {
+        let mut listing = Listing::default();
+        for (launcher, offers) in menus {
+            for c in of(offers) {
+                let at = match listing.names.iter().position(|n| *n == c.name) {
+                    Some(at) => at,
+                    None => {
+                        listing.names.push(c.name.clone());
+                        listing.ids.push(Vec::new());
+                        listing.names.len() - 1
+                    }
+                };
+                listing.ids[at].push((launcher.clone(), c.id.clone()));
+            }
+        }
+        listing
+    }
+    /// What the model's number for one of these comes to.
+    fn picked(&self, n: Option<usize>) -> Option<Pick> {
+        let name = judge::listed(n, &self.names)?.clone();
+        let at = self.names.iter().position(|x| *x == name)?;
+        Some(Pick::Listed { name, ids: self.ids[at].clone() })
+    }
 }
 
 #[derive(Deserialize)]
@@ -103,12 +137,11 @@ pub(in crate::tower) async fn route(app: &Arc<App>, radio: &str, rest: &str, re:
     };
     // what a new agent could be started in and on, if anything
     // any tool this computer can start will do for knowing that one can be: which one is settled when it starts
-    let cfg = app.cfg();
-    let launcher = cfg.launchers.values().next();
+    let any_launcher = !app.cfg().launchers.is_empty();
     let projects: Vec<Place> = app.read().launchable();
     // with agents of another computer on his screen there is always more than one it could be for
-    let can_start = (launcher.is_some() && !projects.is_empty()) || !others.is_empty();
-    let launcher = launcher.filter(|_| !projects.is_empty());
+    let can_start = (any_launcher && !projects.is_empty()) || !others.is_empty();
+    let launcher = any_launcher && !projects.is_empty();
     match scene.all.as_slice() {
         [] if !can_start => return Routed::Ask(Vec::new()),
         // only one agent it could be, and nothing else it could mean
@@ -121,10 +154,7 @@ pub(in crate::tower) async fn route(app: &Arc<App>, radio: &str, rest: &str, re:
     let (listed, lines) = listing(&scene, others, now);
     let menus = menus(app);
     // the other thing his words can be: a request for a new agent, on a model and at an effort he may name
-    let starting = match launcher {
-        None => String::new(),
-        Some(_) => starting(app, &menus, &projects, room.as_deref()),
-    };
+    let starting = if launcher { starting(app, &menus, &projects, room.as_deref()) } else { String::new() };
     let prompt = prompt(app, &lines, &last_said(&scene.focus, now), rest, &starting, can_start);
     let Ok(judged) = judge::ask_json::<Out>(&app.settings, "routing", prompt, Some(out_shape())).await else {
         return no_answer(app, &scene.all, can_start);
@@ -210,13 +240,8 @@ fn last_said(focus: &Option<(Session, Option<Spoke>)>, now: u64) -> String {
 /// Every tool, model and effort a new agent could be started with.
 fn menus(app: &App) -> Menus {
     let inner = app.read();
-    let menus: Vec<airband_core::tools::Offers> = app.cfg().launchers.iter().map(|(name, l)| held::offers(&inner, name, l)).collect();
-    let across = |of: fn(&airband_core::tools::Offers) -> &Vec<airband_core::tools::Choice>| {
-        let mut all: Vec<String> = Vec::new();
-        menus.iter().flat_map(of).for_each(|c| if !all.contains(&c.name) { all.push(c.name.clone()) });
-        all
-    };
-    Menus { tools: app.cfg().tools(), models: across(|m| &m.models), efforts: across(|m| &m.efforts) }
+    let menus: Vec<(LauncherId, airband_core::tools::Offers)> = app.cfg().launchers.iter().map(|(name, l)| (LauncherId::new(name.as_str()), held::offers(&inner, name, l))).collect();
+    Menus { tools: app.cfg().tools(), models: Listing::of(&menus, |m| &m.models), efforts: Listing::of(&menus, |m| &m.efforts) }
 }
 
 /// A numbered list on one line, for the model to answer with a number from.
@@ -239,7 +264,7 @@ fn starting(app: &App, menus: &Menus, projects: &[Place], room: Option<&str>) ->
             })
             .collect()
     };
-    let (tools, models, efforts) = (&menus.tools, &menus.models, &menus.efforts);
+    let (tools, models, efforts) = (&menus.tools, &menus.models.names, &menus.efforts.names);
     // the example is written with a tool he has, by the name its row gives it
     let tool = match tools.last().filter(|_| tools.len() > 1) {
         Some(eg) => format!("\"tool\" is the number of the coding tool he asked for by name (\"start a {eg} agent\", \"have {eg} look into…\"), of {}; else null. \"tool_said\" is his own word for a tool he named that is not listed, else null. ", numbered(tools)),
@@ -337,8 +362,8 @@ fn answered(mut judged: Out, scene: &Scene, listed: &[Listed], menus: &Menus, pr
             // one he named that the tower does not know is not swapped for another: he is asked which. He named
             // none, and there is one place it could be: that one.
             project: judge::listed(new.project, projects).cloned().or_else(|| (own(new.project_said).is_none() && projects.len() == 1).then(|| projects[0].clone())),
-            model: at(new.model, &menus.models).map(Pick::Listed).or(own(new.model_said).map(Pick::Said)),
-            effort: at(new.effort, &menus.efforts).map(Pick::Listed).or(own(new.effort_said).map(Pick::Said)),
+            model: menus.models.picked(new.model).or(own(new.model_said).map(Pick::Said)),
+            effort: menus.efforts.picked(new.effort).or(own(new.effort_said).map(Pick::Said)),
             // with no work named it is started with nothing to do yet, or he is asked what it should do
             task: new.task.trim().to_string(),
         });
@@ -402,4 +427,24 @@ pub(super) async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope:
     let judged: Out = judge::ask_json(&app.settings, "who he meant", prompt, Some(shape)).await?;
     let meant: Vec<Session> = if judged.all { all } else { judged.to.iter().filter_map(|n| judge::listed(Some(*n), &all).cloned()).collect() };
     Ok((!meant.is_empty()).then_some(meant))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use airband_core::tools::{Choice, Offers};
+
+    #[test]
+    fn a_menu_lists_each_name_once_and_keeps_every_launchers_own_id_for_it() {
+        let offers = |models: &[(&str, &str)]| Offers { models: models.iter().map(|(id, name)| Choice { id: id.to_string(), name: name.to_string() }).collect(), ..Offers::default() };
+        let (a, b) = (LauncherId::new("codex"), LauncherId::new("held-codex"));
+        let menus = vec![(a.clone(), offers(&[("gpt-6.2-sol", "6.2 Sol"), ("gpt-6-luna", "6 Luna")])), (b.clone(), offers(&[("sol-2", "6.2 Sol")]))];
+        let listing = Listing::of(&menus, |m| &m.models);
+        assert_eq!(listing.names, ["6.2 Sol", "6 Luna"]);
+        // the model's number 1 is "6.2 Sol", with each launcher's own id for it
+        assert_eq!(listing.picked(Some(1)), Some(Pick::Listed { name: "6.2 Sol".into(), ids: vec![(a.clone(), "gpt-6.2-sol".into()), (b, "sol-2".into())] }));
+        assert_eq!(listing.picked(Some(2)), Some(Pick::Listed { name: "6 Luna".into(), ids: vec![(a, "gpt-6-luna".into())] }));
+        assert_eq!(listing.picked(Some(3)), None);
+        assert_eq!(listing.picked(None), None);
+    }
 }

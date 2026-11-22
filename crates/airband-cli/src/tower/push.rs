@@ -191,6 +191,12 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
     }
 }
 
+/// A pairing's id as its radio is known by: the relay channel its secret gives. Nothing for one whose secret
+/// gives no keys.
+pub(super) fn channel_of(pairing: &config::PairedRadio) -> Option<String> {
+    Keys::derive(&pairing.secret).ok().map(|k| k.channel)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,10 +282,4 @@ mod tests {
         let long = notice(&inner, &inner.log[0], "mini");
         assert!(keys.seal(Direction::Push, &serde_json::to_vec(&long).unwrap()).len() <= PUSH_MOST);
     }
-}
-
-/// A pairing's id as its radio is known by: the relay channel its secret gives. Nothing for one whose secret
-/// gives no keys.
-pub(super) fn channel_of(pairing: &config::PairedRadio) -> Option<String> {
-    Keys::derive(&pairing.secret).ok().map(|k| k.channel)
 }
