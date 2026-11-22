@@ -194,15 +194,16 @@ pub enum UploadState {
     /// It did not get there.
     Failed,
 }
-/// How one computer was last reached. Each is a few words ("answered", "the relay says your computer is not
-/// connected"), or empty when that way has not been tried or has only ever worked.
+/// How one computer was last reached each way, as the record has it: a few words ("Answered.", "The relay says
+/// your computer is not connected."), or nothing when the record has nothing for that way. The record keeps
+/// failures and what he sent, so nothing means it has not been tried, or has not failed, since the record began.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct DeskReach {
     /// The computer, by its [`DeskComputer::id`], and what it is called to him.
     pub id: String,
     pub computer: String,
-    pub relay: String,
-    pub near: String,
+    pub relay: Option<String>,
+    pub near: Option<String>,
 }
 /// One folder inside another: its name, and its whole path to pass back.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]

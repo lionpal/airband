@@ -63,6 +63,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     let voice = Voice()
     var desk: Desk!
     private var links: [String] = []
+    /// Whether the kept pairing links have been read. Until they are, nothing is written over them.
+    private var linksRead = false
     var fetching: Set<String> = []
     /// Fetching full text and pictures: a few at a time on shared threads, not a thread each.
     let fetch = DispatchQueue(label: "dev.airband.fetch", qos: .userInitiated, attributes: .concurrent)
@@ -84,7 +86,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         // development only: `-airband.devTools '("codex")'` opens as someone who uses those coding tools, for a screenshot
         if let tools = Dev.list("devTools") { desk.setTools(tools: tools) }
         #endif
-        var links = Keychain.links()
+        var links: [String]? = readLinks()
         #if DEBUG
         // development only: `xcrun simctl launch <sim> dev.airband.app -airband.devLink <pairing link>` pairs without the
         // system's "Open in airband?" prompt, which a script cannot tap
@@ -114,8 +116,25 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
         center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in self?.wentAway() }
         center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.setFront(false) }
-        connect(links)
+        // links that could not be read before the phone was first unlocked are read once it is
+        center.addObserver(forName: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self, !self.linksRead, let links = self.readLinks() else { return }
+            self.connect(links)
+        }
+        if let links { connect(links) }
     }
+
+    /// The kept pairing links, or nil when the Keychain could not be read: then nothing is connected and nothing
+    /// is written, and he is told.
+    private func readLinks() -> [String]? {
+        switch Keychain.links() {
+        case .found(let links): linksRead = true; return links
+        case .none: linksRead = true; return []
+        case .failed: problem = RadioModel.linksUnread; return nil
+        }
+    }
+    static let linksUnread = "Can't read your pairings yet. Unlock your phone."
+    static let keysUnread = "Can't read your keys yet. Unlock your phone and try again."
 
     /// The app was put away. Reading messages aloud goes on only where that is wanted with the screen off:
     /// through headphones or a car. From the phone's own speaker it stops.
@@ -134,17 +153,26 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// The link `airband pair` prints: opened from Messages or Mail, or pasted. Each computer has its own; pairing
     /// another adds it.
-    func pair(with link: String) {
+    /// What was wrong with this link, in words for him, or nothing when it was taken.
+    @discardableResult
+    func pair(with link: String) -> String? {
         let link = link.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isPairingLink(link: link) else {
-            problem = "That is not a pairing link. Run airband pair on your computer."
-            return
+        let wrong: String?
+        if !isPairingLink(link: link) {
+            wrong = "That is not a pairing link. Run airband pair on your computer."
+        } else if !linksRead {
+            wrong = RadioModel.linksUnread
+        } else {
+            wrong = links.contains(link) ? nil : connect(links + [link])
         }
-        guard !links.contains(link) else { return }
-        connect(links + [link])
+        if let wrong { problem = wrong }
+        return wrong
     }
 
-    func forgetAll() { connect([]) }
+    func forgetAll() {
+        guard linksRead else { problem = RadioModel.linksUnread; return }
+        connect([])
+    }
 
     /// Where this phone can be woken, as Apple gave it: every paired computer is told.
     func pushAddress(_ token: String) { desk.setPush(provider: .apns, token: token) }
@@ -160,7 +188,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         refresh()
     }
     /// A team he has just made: the desk already shows it, empty, until its first agent comes.
-    func open(made room: String) {
+    func openMade() {
         replyingTo = nil
         refresh()
     }
@@ -200,16 +228,23 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// A message's words whole, once they have been fetched; as it came until then.
     func whole(_ m: ChatMessage) -> String { full[m.id] ?? m.text }
 
-    private func connect(_ wanted: [String]) {
+    /// Pair exactly these links. What went wrong, in words for him, or nothing.
+    @discardableResult
+    private func connect(_ wanted: [String]) -> String? {
         links = desk.setLinks(links: wanted)
-        if links.count < wanted.count { problem = "One pairing link is not valid and was skipped." }
-        Keychain.keepLinks(links)
+        var wrong: String?
+        if links.count < wanted.count { wrong = "One pairing link is not valid and was skipped." }
+        if linksRead && !Keychain.keepLinks(links) { wrong = "Couldn't save your pairings on this phone." }
+        if let wrong { problem = wrong }
         refresh()
         // paired: this is when notifications are worth asking for, and when a new computer needs the phone's address
         if !links.isEmpty { DispatchQueue.main.async { Push.shared.setUp() } }
+        return wrong
     }
 
     func refresh() {
+        // what the screen shows is in front of him: read, before it is drawn
+        desk.shown()
         // only when something he can see has changed: the chat is not laid out again for nothing
         let now = desk.view()
         if now != view {
@@ -289,9 +324,9 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     }
 
     /// The picture he chose for each of his computers, by its id: a system symbol's name.
-    @Published var computerIcons: [String: String] = Stored.settings.load("airband.computers.icons.byid", or: [:])
+    @Published var computerIcons: [String: String] = Stored.setting("airband.computers.icons.byid", or: [:])
     /// The pictures a computer can have.
-    static let computerSymbols = ["laptopcomputer", "macmini", "desktopcomputer", "macstudio", "macpro.gen3", "server.rack", "pc"]
+    static let computerSymbols = ["laptopcomputer", "desktopcomputer", "display", "pc", "server.rack", "cpu"]
 
     func icon(of computer: String) -> String { computerIcons[computer] ?? "desktopcomputer" }
     /// What the default computer is for, in the words used wherever he chooses it.
@@ -302,7 +337,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     }
     func setIcon(_ symbol: String, of computer: String) {
         computerIcons[computer] = symbol
-        Stored.settings.keep("airband.computers.icons.byid", computerIcons)
+        Stored.keepSetting("airband.computers.icons.byid", computerIcons)
     }
 
     /// Goes up when a newer catalogue of services and models has been taken: what the choosers list is read again.
@@ -314,14 +349,15 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     @Published var choices: [ChoiceJob: [Choice]] = [:]
 
     /// What he is told when a computer could not be asked.
-    static let unreached = "Cannot reach that computer."
+    static let unreached = "Your computer could not be reached."
 
     /// What went wrong, in words for him: the reason the computer gave when it gave one, that it cannot be
     /// reached when it cannot, and otherwise `fallback`, which says what did not happen.
     static func words(for error: Error, else fallback: String) -> String {
         switch error {
-        case RadioError.Told(let reason), RadioError.Kept(let reason): return reason
+        case RadioError.Told(let reason), RadioError.Trouble(let reason), RadioError.BadLink(let reason): return reason
         case RadioError.Offline: return unreached
+        case RadioError.Refused: return "That computer refused it."
         default: return fallback
         }
     }
@@ -350,7 +386,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// One of the core's calls that changes what is chosen. Calls back with what it said was wrong.
     func work(_ done: @escaping (String?) -> Void, _ call: @escaping () throws -> Void) {
-        ask("Your computer could not be reached. Try again when it can.", call) { _, wrong in
+        ask("That did not work. Try again.", call) { _, wrong in
             // a model can be fetched again, so it is left out of the phone's backups
             var folder = URL(fileURLWithPath: self.voiceDir).appendingPathComponent("models")
             var values = URLResourceValues()

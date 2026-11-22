@@ -21,13 +21,18 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var model: RadioModel { RadioModel.shared }
     /// The conversation was started from the car: it ends when the car goes.
     private var started = false
+    /// What the list is drawn from: it is drawn again when any of it changes, an agent's id included.
+    private struct Shown: Equatable {
+        let paired: Bool
+        let members: [DeskMember]
+    }
 
     func templateApplicationScene(_ scene: CPTemplateApplicationScene, didConnect controller: CPInterfaceController) {
         car = controller
         model.voice.inCar = true
         controller.setRootTemplate(root(), animated: false, completion: nil)
         // what the list says follows whether he is paired; what the voice screen says follows the conversation
-        model.$view.map { view in [view.paired ? "paired" : ""] + view.rooms.flatMap(\.members).map { "\($0.callsign):\($0.state)" } }.removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.refreshRoot() }.store(in: &watching)
+        model.$view.map { view in Shown(paired: view.paired, members: view.rooms.flatMap(\.members)) }.removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.refreshRoot() }.store(in: &watching)
         model.$status.combineLatest(model.$micOpen).receive(on: DispatchQueue.main).sink { [weak self] _ in self?.show() }.store(in: &watching)
         model.$calling.removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] on in if !on { self?.close() } }.store(in: &watching)
         // a conversation already on when the car connects carries on, on the car's screen

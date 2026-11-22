@@ -85,6 +85,7 @@ pub fn prose(text: String) -> Vec<prose::ProseBlock> {
 pub(crate) struct Senses {
     pub(crate) mouth: mouth::Mouth,
     pub(crate) ears: ears::Chosen,
+    pub(crate) passes: ears::Passes,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -278,23 +279,29 @@ pub enum RadioError {
     Refused,
     /// The tower answered, said no, and said why in words for him.
     Told { reason: String },
-    /// It did not go now, and is kept on this phone and sent when it can be: why, and that, in words for him.
-    Kept { reason: String },
+    /// His computer or the relay had trouble that may pass, with why in words for him: not a no. It is tried
+    /// again later.
+    Trouble { reason: String },
 }
 
 impl RadioError {
     /// What it is, in words for him.
     pub(crate) fn said(&self) -> String {
         match self {
-            RadioError::BadLink { reason } | RadioError::Told { reason } | RadioError::Kept { reason } => reason.clone(),
+            RadioError::BadLink { reason } | RadioError::Told { reason } | RadioError::Trouble { reason } => reason.clone(),
             RadioError::Refused => "That computer refused it.".into(),
             RadioError::Offline => "Your computer could not be reached.".into(),
         }
     }
+    /// What he asked about is not on any of his computers as this phone last saw them (a message, an agent):
+    /// said as that, never as his computer refusing.
+    pub(crate) fn gone(what: &str) -> RadioError {
+        crate::choices::told(format!("That {what} is no longer on any of your computers."))
+    }
     /// Something on this phone itself failed (a file it could not read or keep): said as that, never as his
     /// computer refusing.
     pub(crate) fn here(what: &str) -> RadioError {
-        RadioError::Told { reason: format!("This phone could not {what}.") }
+        crate::choices::told(format!("This phone could not {what}."))
     }
 }
 
@@ -308,32 +315,29 @@ pub(crate) fn with_query(base: &str, pairs: &[(&str, &str)]) -> String {
 
 impl std::fmt::Display for RadioError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RadioError::BadLink { reason } => write!(f, "{reason}"),
-            RadioError::Offline => write!(f, "cannot reach your computer"),
-            RadioError::Refused => write!(f, "your computer refused that"),
-            RadioError::Told { reason } | RadioError::Kept { reason } => write!(f, "{reason}"),
-        }
+        // the one wording, [`RadioError::said`]
+        write!(f, "{}", self.said())
     }
 }
 
-/// The one reading of a failed request for him. What may work in a moment is told first, as nothing coming
-/// back; then his computer's trouble, which may pass and is not a no; then its refusals, by their tag.
+/// The one reading of a failed request for him. What may work in a moment is told as nothing coming back;
+/// trouble that may pass (his computer's 5xx, its "not now", the relay's limits) as trouble, never as a no; a
+/// refusal with its own words. Each by its kind, never its words.
 impl From<LinkError> for RadioError {
     fn from(e: LinkError) -> Self {
-        match e {
-            e if e.retry() == Retry::Soon => RadioError::Offline,
-            e @ LinkError::Trouble(500..=599) => RadioError::Told { reason: e.said() },
-            // not now, with its reason: it may work later, and is told as it is, never as a no
-            LinkError::Refused(airband_core::radio::wire::Refusal::NotNow { reason }) => RadioError::Told { reason },
-            // a tower that speaks another version: he is asked to update, not left looking at a chat that half works
-            e @ LinkError::Refused(airband_core::radio::wire::Refusal::OtherVersion { .. }) => RadioError::Told { reason: e.said() },
-            // his computer's own reason, when it gave one, is what he should read
-            LinkError::Refused(r) if r.reason().is_some() => RadioError::Told { reason: r.reason().unwrap_or_default().to_string() },
-            LinkError::Refused(_) | LinkError::Trouble(_) => RadioError::Refused,
-            // it will not go however often it is tried: he is told why, never that it goes when it can
-            e if e.retry() == Retry::Never => RadioError::Told { reason: e.said() },
-            _ => RadioError::Offline,
+        match e.retry() {
+            Retry::Soon => RadioError::Offline,
+            Retry::Later => match e {
+                // not now, with its reason: it may work later
+                LinkError::Refused(airband_core::radio::wire::Refusal::NotNow { reason }) => RadioError::Trouble { reason },
+                e => RadioError::Trouble { reason: e.said() },
+            },
+            Retry::Never => match e {
+                // his computer's own reason, when it gave one, is what he should read
+                LinkError::Refused(r) if r.reason().is_some() => RadioError::Told { reason: r.reason().unwrap_or_default().to_string() },
+                // anything else it will not do, or that will never go: said by its kind
+                e => RadioError::Told { reason: e.said() },
+            },
         }
     }
 }

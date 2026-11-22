@@ -27,11 +27,8 @@ struct SetupView: View {
                     NavigationLink {
                         ChoicePage(title: "Coding agents", headline: Headline.tools) {
                             VStack(alignment: .leading, spacing: 14) {
-                                Text("Tick the ones you use. What can write your summaries follows from them.").font(.system(size: 15)).foregroundStyle(Palette.soft)
+                                Text("Check the ones you use.").font(.system(size: 15)).foregroundStyle(Palette.soft)
                                 ToolsPicker(single: false)
-                                ForEach(model.usedTools.filter { !$0.first.isEmpty }, id: \.id) { tool in
-                                    Text(tool.first).font(.system(size: 13)).foregroundStyle(Palette.quiet)
-                                }
                             }
                         }
                         .environmentObject(model)
@@ -42,7 +39,7 @@ struct SetupView: View {
                 Section {
                     Toggle("Show whole messages", isOn: $model.showWhole)
                 } footer: {
-                    Text("What's read aloud stays short.")
+                    Text("Messages read aloud stay short.")
                 }
                 if !model.computers.isEmpty {
                     Section {
@@ -78,8 +75,7 @@ struct SetupView: View {
                     Button { scanning = true } label: { Label("Scan code", systemImage: "qrcode.viewfinder").font(.body.weight(.semibold)) }
                     // the other way in, for a link sent to the phone: smaller, under the scan
                     Button("Paste a link instead") {
-                        model.pair(with: UIPasteboard.general.string ?? "")
-                        if model.problem == nil { dismiss() }
+                        if model.pair(with: UIPasteboard.general.string ?? "") == nil { dismiss() }
                     }
                     .font(.footnote).foregroundStyle(.secondary)
                     if model.paired {

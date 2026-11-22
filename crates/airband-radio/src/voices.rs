@@ -3,7 +3,7 @@
 //!
 //! Each way of reaching a voice service is an interface: a file under `voices/` with an `impl Synth` and a
 //! [`Voicing`] that names it, and a line of [`VOICES`]. A provider's row names the interface it speaks
-//! (`by.interface`) and tells it what it needs (`by.with`). A service that speaks OpenAI's speech interface
+//! (`by.interface`) and tells it what it needs (`by.with`). A service that speaks the common speech interface
 //! is a row and no code; one with a route of its own is one file here and its row.
 #![expect(clippy::disallowed_methods, reason = "asks a voice service")]
 use airband_core::providers::{By, Interface, Job, Offer, Provider, Use};
@@ -98,7 +98,7 @@ pub fn speaks(offer: &Offer) -> bool {
 /// The voice a setting names, through whichever interface its row says. Err says why not, in words for him.
 pub(crate) fn synth(voice: &Use) -> Made {
     if voice.is_none() {
-        return Err("No voice is set.".into());
+        return Err(crate::voice::NOTHING_CHOSEN.into());
     }
     let (provider, offer) = voice.offer(Job::Voice).ok_or("This version of airband has no such voice service.")?;
     let voicing = VOICES.iter().find(|v| v.is.fits(&offer)).ok_or("This version of airband cannot speak through that voice service yet. Update airband.")?;

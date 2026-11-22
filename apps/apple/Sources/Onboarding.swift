@@ -83,8 +83,7 @@ struct OnboardingView: View {
                 Spacer()
                 if step == last && !finishing {
                     Button("Paste a link instead") {
-                        model.pair(with: UIPasteboard.general.string ?? "")
-                        wrong = model.problem
+                        wrong = model.pair(with: UIPasteboard.general.string ?? "")
                     }
                 }
             }
@@ -129,7 +128,7 @@ struct OnboardingView: View {
             }
             .padding(16).background(Palette.card, in: RoundedRectangle(cornerRadius: 16))
             .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Palette.raised, lineWidth: 1))
-            Text("It installs airband, keeps it running after a restart, and shows a code on the screen.").font(.system(size: 15)).foregroundStyle(Palette.soft)
+            Text("It installs airband and shows a code to scan.").font(.system(size: 15)).foregroundStyle(Palette.soft)
             // the quiet second way: nothing of his passes through airband's relay
             VStack(alignment: .leading, spacing: 6) {
                 Button(noRelay ? "Use the relay" : "Pair without the relay") {
@@ -138,7 +137,7 @@ struct OnboardingView: View {
                 }
                 .font(.system(size: 15, weight: .medium)).foregroundStyle(Palette.quiet).buttonStyle(.plain)
                 if noRelay {
-                    Text("Your phone then connects directly to your computer, on the same network, or over a private network both are on. Notifications need the relay, so you get none this way.")
+                    Text("Your phone connects straight to your computer. You get no notifications this way.")
                         .font(.system(size: 14)).foregroundStyle(Palette.quiet).fixedSize(horizontal: false, vertical: true)
                 }
             }

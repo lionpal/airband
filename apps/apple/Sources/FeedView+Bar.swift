@@ -238,7 +238,7 @@ extension FeedView {
             // two to a row; an odd one out, usually one of his own, takes the whole row
             ForEach(Array(stride(from: 0, to: all.count, by: 2)), id: \.self) { i in
                 HStack(spacing: 8) {
-                    ForEach(all[i..<min(i + 2, all.count)], id: \.label) { q in
+                    ForEach(Array(all.enumerated())[i..<min(i + 2, all.count)], id: \.offset) { _, q in
                         Button {
                             model.quick(q)
                             withAnimation(.snappy(duration: 0.2)) { showQuick = false }

@@ -21,8 +21,18 @@ impl<T> Reach<T> {
         match answer {
             Ok(value) => Reach::Done(value),
             Err(RadioError::Told { reason } | RadioError::BadLink { reason }) => Reach::Refused(reason),
-            Err(no @ RadioError::Refused) => Reach::Refused(no.to_string()),
-            Err(RadioError::Offline | RadioError::Kept { .. }) => Reach::Unreachable,
+            Err(no @ RadioError::Refused) => Reach::Refused(no.said()),
+            // trouble that may pass is not a no: it is asked again
+            Err(RadioError::Offline | RadioError::Trouble { .. }) => Reach::Unreachable,
+        }
+    }
+    /// The same, with what it took it with changed by `f`.
+    pub(crate) fn map<U>(self, f: impl FnOnce(T) -> U) -> Reach<U> {
+        match self {
+            Reach::Done(value) => Reach::Done(f(value)),
+            Reach::Refused(why) => Reach::Refused(why),
+            Reach::Unreachable => Reach::Unreachable,
+            Reach::Skipped(why) => Reach::Skipped(why),
         }
     }
     /// Why it was not taken, in words for him, when it said no or could not be asked.

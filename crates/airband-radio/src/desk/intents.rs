@@ -51,14 +51,23 @@ impl<T> Intent<T> {
         };
         self.per.insert(computer.clone(), now);
     }
-    /// At least one computer has it.
-    pub(crate) fn taken(&self) -> bool {
-        self.per.values().any(|d| *d == Delivery::Done)
+    /// How it stands as a whole: taken by one computer at least, still waiting on one, or refused by every
+    /// computer it was put to, with each one's why.
+    pub(crate) fn standing(&self) -> Standing {
+        if self.per.values().any(|d| *d == Delivery::Done) {
+            return Standing::Taken;
+        }
+        let refused: Vec<String> = self.per.values().filter_map(|d| match d { Delivery::Refused { reason } => Some(reason.clone()), _ => None }).collect();
+        if self.per.is_empty() || refused.len() < self.per.len() { Standing::Waiting } else { Standing::Refused(refused) }
     }
-    /// Every one of these computers has it: nothing is left to send or to tell him.
-    pub(crate) fn done_by_all(&self, everyone: &[StationId]) -> bool {
-        everyone.iter().all(|c| self.per.get(c) == Some(&Delivery::Done))
-    }
+}
+
+/// How something wanted stands as a whole ([`Intent::standing`]).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Standing {
+    Taken,
+    Waiting,
+    Refused(Vec<String>),
 }
 
 /// What every computer is to be told about this device.

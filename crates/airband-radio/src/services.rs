@@ -27,7 +27,7 @@ pub(crate) struct Service {
     pub about: String,
     /// It takes a key.
     pub key: bool,
-    /// What its key is called, for asking for it ("Gemini API key").
+    /// What its key is called, for asking for it ("API key").
     pub key_name: String,
     /// Where its keys are made.
     pub keys_at: String,
@@ -91,6 +91,12 @@ pub struct CodingTool {
 #[uniffi::export]
 pub fn coding_tools() -> Vec<CodingTool> {
     airband_core::catalog::current().tools.iter().map(|t| CodingTool { id: t.id.clone(), name: t.name.clone(), maker: t.maker.clone(), first: t.first.clone() }).collect()
+}
+
+/// What a coding tool is called, by its id, as the catalogue names it. Nothing for a tool the catalogue on this
+/// phone does not have.
+pub(crate) fn tool_name(id: &str) -> Option<String> {
+    airband_core::catalog::current().tools.iter().find(|t| t.id == id).map(|t| t.name.clone())
 }
 
 pub(crate) fn service_of(kind: &str, offer: &str, key: &str, settings: HashMap<String, String>) -> airband_core::providers::Use {

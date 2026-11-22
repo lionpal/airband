@@ -139,7 +139,7 @@ pub fn accounts_by_tool(accounts: Vec<StationAccounts>) -> Vec<ToolAccounts> {
             };
             match out.iter_mut().find(|t| t.harness == entry.harness) {
                 Some(t) => t.rows.push(row),
-                None => out.push(ToolAccounts { harness: entry.harness.clone(), name: tools.iter().find(|t| t.id == entry.harness).map(|t| t.name.clone()).unwrap_or_else(|| entry.harness.clone()), rows: vec![row] }),
+                None => out.push(ToolAccounts { harness: entry.harness.clone(), name: crate::services::tool_name(&entry.harness).unwrap_or_else(|| entry.harness.clone()), rows: vec![row] }),
             }
         }
     }

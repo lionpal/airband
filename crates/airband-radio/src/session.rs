@@ -103,7 +103,7 @@ mod tests {
         session.asked(&asking("q1"));
         session.arm("f1".into());
         // nobody is at this address
-        let link = Link::new(airband_core::pairing::Pairing::parse("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t").unwrap(), "test", None).unwrap();
+        let link = Link::new(airband_core::pairing::Pairing::parse("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t").unwrap(), "test", crate::link::Trail::open(None)).unwrap();
         assert!(session.say(&link, "yes", None, None, None).is_err());
         assert_eq!(session.take_question().as_deref(), Some("q1"));
         assert_eq!(session.armed(), ["f1"]);

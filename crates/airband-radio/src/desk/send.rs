@@ -42,7 +42,14 @@ impl Desk {
     /// Words of his own sent as the answer to that message.
     pub fn answer(&self, message_id: String, text: String) {
         let Some(radio) = self.owner_or_say(&message_id) else { return };
-        self.shared.state.lock().unwrap().answered.insert(message_id.clone());
+        {
+            let mut state = self.shared.state.lock().unwrap();
+            state.answered.insert(message_id.clone());
+            // the files that have arrived on that computer leave with his answer: they leave the tray too
+            if let Some(there) = state.owner(&message_id).map(|s| s.id()) {
+                state.files_went(&there, &[]);
+            }
+        }
         radio.queue(text, Some(message_id), None, None);
         self.shared.host.changed();
     }
@@ -115,7 +122,7 @@ impl Desk {
     }
     /// Take back something he said that is still waiting its turn. Blocks: call it off the main thread.
     pub fn unsend(&self, message_id: String) -> Result<(), RadioError> {
-        self.radio_of(&message_id).ok_or(RadioError::Refused)?.unsend(message_id)
+        self.radio_of(&message_id).ok_or_else(|| RadioError::gone("message"))?.unsend(message_id)
     }
 }
 
@@ -132,8 +139,9 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
     let text = text.trim().to_string();
     let (radio, text, re, scope, others, to) = {
         let mut state = shared.state.lock().unwrap();
-        // nothing typed is still something to send when files are attached: the files themselves
-        if state.computers.is_empty() || (text.is_empty() && state.uploads.is_empty()) {
+        // nothing typed is still something to send when files have arrived: the files themselves. Files still
+        // on their way are not yet anything to send
+        if state.computers.is_empty() || (text.is_empty() && !state.uploads.iter().any(|u| u.shown.state == UploadState::Ready)) {
             return;
         }
         // something new said: whatever was waiting to be placed is let go
@@ -166,7 +174,7 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
             None => wanted,
         };
         // the ones that have arrived leave with this message
-        state.uploads.retain(|u| !(u.station == pick && u.shown.state == UploadState::Ready));
+        state.files_went(&pick, &[]);
         let Some(computer) = state.computer(&pick) else { return };
         // the agent he is looking at, by id: the tower reads nothing to find who it is for
         let to: Vec<String> = match (&agent, aimed) {

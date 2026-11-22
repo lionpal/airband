@@ -25,6 +25,8 @@ settings:
     OTHER_LDFLAGS: $(AIRBAND_CORE)
     # The Keychain group the app and the extension share: the pairing links are kept there.
     AIRBAND_KEYCHAIN_GROUP: $(AppIdentifierPrefix)dev.airband.shared
+    # The Keychain group only the app can read: his service keys. The extension never needs them.
+    AIRBAND_KEYCHAIN_PRIVATE: $(AppIdentifierPrefix)dev.airband.private
     # Communication Notifications (the agent's badge where a contact's picture goes) is a capability Apple's API
     # cannot turn on for an app. scripts/testflight.sh sets these two when the signing profile has it. Without
     # it a notification carries the agent's name and no picture.
@@ -101,6 +103,7 @@ targets:
           - CFBundleURLName: dev.airband.pair
             CFBundleURLSchemes: [airband]
         AirbandKeychainGroup: $(AIRBAND_KEYCHAIN_GROUP)
+        AirbandKeychainPrivate: $(AIRBAND_KEYCHAIN_PRIVATE)
         # a notification shown as a message from the agent, with its badge as the sender's picture
         NSUserActivityTypes: [INSendMessageIntent]
   # The tile that opens into listening, and the banner for an agent that is waiting. Plain SwiftUI: none of

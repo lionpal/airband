@@ -78,8 +78,7 @@ pub(crate) struct Link {
     /// Every try that failed, every try at sending something he said, and the first that worked after one
     /// that did not: the last few hundred, for him to copy when something is wrong. Kept in a file of the
     /// app's own on this device, so it is still there after the app was closed, and sent nowhere.
-    trail: Mutex<std::collections::VecDeque<Line>>,
-    trail_keeper: airband_io::kept::Keeper,
+    pub(crate) trail: Arc<Trail>,
     /// Where this radio stands, which every request says: on a call or not, showing the chat or not.
     presence: Mutex<airband_core::radio::Presence>,
     /// The relay still keeps something he said for his computer. While it does, what he says next goes by the
@@ -112,14 +111,9 @@ pub(crate) use airband_core::radio::wire::Method;
 impl Link {
     /// `radio` is this radio's own name for itself, the same every launch: the tower keeps each radio's place
     /// in a call by it. Through a relay the tower knows a radio by its pairing and this is not sent.
-    /// `trail_file` is where the trail is kept between launches; nothing keeps it in memory only.
-    pub(crate) fn new(pairing: Pairing, radio: &str, trail_file: Option<std::path::PathBuf>) -> Result<Self, String> {
+    /// `trail` is the computer's record of how requests went ([`Trail`]), the same for each of its links.
+    pub(crate) fn new(pairing: Pairing, radio: &str, trail: Arc<Trail>) -> Result<Self, String> {
         let agent = crate::net::agent(POLL_TIMEOUT);
-        let (mut trail, trail_keeper, damaged): (std::collections::VecDeque<Line>, _, _) = crate::kept::open(trail_file, "The record of earlier requests");
-        // the trail is for him to read on the connection screen: one that could not be read says so there
-        if let Some(told) = damaged {
-            trail.push_back(Line::Remark { at: now_ms(), what: told });
-        }
         let mut at = Vec::new();
         let route = match pairing {
             Pairing::Near { at: given, secret } => {
@@ -129,7 +123,7 @@ impl Link {
             Pairing::Direct { url, token } => Route::Direct { url, auth: format!("Bearer {token}"), radio: radio.to_string() },
             Pairing::Relay { relay, secret } => Route::Relay { relay, keys: Keys::derive(&secret)? },
         };
-        Ok(Link { route, agent, near: crate::net::agent_quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct { addrs: at, ..Direct::default() }), trail: Mutex::new(trail), trail_keeper, presence: Mutex::default(), kept_at_relay: Default::default(), lost: Mutex::default(), awaited: Mutex::default(), told: std::sync::Condvar::new() })
+        Ok(Link { route, agent, near: crate::net::agent_quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct { addrs: at, ..Direct::default() }), trail, presence: Mutex::default(), kept_at_relay: Default::default(), lost: Mutex::default(), awaited: Mutex::default(), told: std::sync::Condvar::new() })
     }
 
     /// Reach the tower through `transport` and nothing else.
@@ -177,13 +171,13 @@ impl Link {
 
     /// Add a line to the trail, and to its file.
     fn keep(&self, line: Line) {
-        let mut trail = self.trail.lock().unwrap();
+        let mut trail = self.trail.lines.lock().unwrap();
         trail.push_back(line);
         while trail.len() > TRAIL {
             trail.pop_front();
         }
         // the record is for him to read: one that could not be kept says so in itself, the first time in a row
-        if let Some(why) = self.trail_keeper.save(&*trail).news() {
+        if let Some(why) = self.trail.keeper.save(&*trail).news() {
             trail.push_back(Line::Remark { at: now_ms(), what: format!("{} The lines after this are lost when the app closes.", crate::kept::not_kept(why)) });
         }
     }
@@ -194,11 +188,11 @@ impl Link {
 
     /// The trail, oldest first, a line for each step.
     pub(crate) fn trail(&self) -> Vec<String> {
-        self.trail.lock().unwrap().iter().map(Line::told).collect()
+        self.trail.lines.lock().unwrap().iter().map(Line::told).collect()
     }
     /// How the last try each way went: for showing him whether this computer can be reached, and how.
     pub(crate) fn last_by(&self, way: Way) -> Option<Step> {
-        self.trail.lock().unwrap().iter().rev().find_map(|l| match l {
+        self.trail.lines.lock().unwrap().iter().rev().find_map(|l| match l {
             Line::Step(s) if s.way == way => Some(s.clone()),
             _ => None,
         })
@@ -530,7 +524,8 @@ mod tests {
         assert!(all.iter().all(|c| !c.told().is_empty() && !c.told().ends_with('.')));
         // the tower's own explanation reaches him
         assert!(never[2].told().contains("more than two minutes apart"));
-        assert!(Trouble(400).refused() && Refused(Refusal::Gone).refused() && !Trouble(503).refused() && !Away.refused());
+        // a no is never tried again; his computer's trouble and a lost connection are
+        assert!([Trouble(400), Refused(Refusal::Gone)].iter().all(|e| e.retry() == Retry::Never) && [Trouble(503), Away].iter().all(|e| e.retry() != Retry::Never));
     }
 
     fn said(id: &str, text: &str) -> Utterance {
@@ -540,7 +535,7 @@ mod tests {
     /// A link to a relay nobody is at, with a tower address nobody is at either.
     fn nowhere() -> Link {
         let secret: String = "ab".repeat(32);
-        let link = Link::new(Pairing::Relay { relay: "http://127.0.0.1:9".into(), secret }, "test", None).unwrap();
+        let link = Link::new(Pairing::Relay { relay: "http://127.0.0.1:9".into(), secret }, "test", Trail::open(None)).unwrap();
         link.set_direct(vec!["http://127.0.0.1:9".into()]);
         link
     }
@@ -575,7 +570,7 @@ mod tests {
         std::fs::write(&file, b"[ half").unwrap();
         // the folder cannot be written: the old file cannot be moved aside, and nothing can be kept
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
-        let link = Link::new(Pairing::Relay { relay: "http://127.0.0.1:9".into(), secret: "cd".repeat(32) }, "test", Some(file.clone())).unwrap();
+        let link = Link::new(Pairing::Relay { relay: "http://127.0.0.1:9".into(), secret: "cd".repeat(32) }, "test", Trail::open(Some(file.clone()))).unwrap();
         link.remark("one".into());
         link.remark("two".into());
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -590,7 +585,7 @@ mod tests {
         let file = std::env::temp_dir().join(format!("airband-trail-{}.json", std::process::id()));
         let _ = std::fs::remove_file(&file);
         let secret: String = "cd".repeat(32);
-        let open = || Link::new(Pairing::Relay { relay: "http://127.0.0.1:9".into(), secret: secret.clone() }, "test", Some(file.clone())).unwrap();
+        let open = || Link::new(Pairing::Relay { relay: "http://127.0.0.1:9".into(), secret: secret.clone() }, "test", Trail::open(Some(file.clone()))).unwrap();
         let link = open();
         let _ = link.utterance_once(&said("0123456789ab", "ship it"));
         link.remark("something worth a line".into());
@@ -634,7 +629,7 @@ mod tests {
         link.keeps_at_relay(true);
         assert_eq!(ways(&link)[0], Way::Relay);
         // a pairing with no relay never goes near one
-        let near = Link::new(Pairing::Near { at: vec!["http://127.0.0.1:9".into()], secret: "ab".repeat(32) }, "test", None).unwrap();
+        let near = Link::new(Pairing::Near { at: vec!["http://127.0.0.1:9".into()], secret: "ab".repeat(32) }, "test", Trail::open(None)).unwrap();
         assert_eq!(ways(&near), [Way::Near]);
     }
 }
@@ -648,7 +643,7 @@ mod probe {
     #[test]
     #[ignore]
     fn asks_a_real_tower() {
-        let link = Link::new(Pairing::parse(std::env::var("AIRBAND_LINK").unwrap().trim()).unwrap(), "probe", None).unwrap();
+        let link = Link::new(Pairing::parse(std::env::var("AIRBAND_LINK").unwrap().trim()).unwrap(), "probe", Trail::open(None)).unwrap();
         for (what, ordered) in [("as a question (by the relay or straight)", false), ("as something he said (by the relay first)", true)] {
             let began = std::time::Instant::now();
             let mut steps = Vec::new();

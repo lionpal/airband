@@ -18,7 +18,7 @@ struct TakeOverAlert: ViewModifier {
             }
             Button("Cancel", role: .cancel) { agent = nil }
         } message: {
-            Text("Its terminal session ends, and the same conversation carries on run by airband. What you say then reaches it as your own words.")
+            Text("Its terminal session ends and airband carries on the same conversation.")
         }
     }
 }

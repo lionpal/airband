@@ -41,6 +41,12 @@ pub(crate) mod field {
     pub(crate) const VOICE: &str = "voice";
     /// A service row: further headers each request carries.
     pub(crate) const HEADERS: &str = "headers";
+    /// A service's setting: where it is reached.
+    pub(crate) const URL: &str = "url";
+    /// A service's setting: which of its models does the work.
+    pub(crate) const MODEL: &str = "model";
+    /// A listening service's setting: the language he speaks.
+    pub(crate) const LANGUAGE: &str = "language";
 }
 
 /// The setting a voice service's voice is chosen by, for a host that lays out its own voice picker.
@@ -93,9 +99,8 @@ pub(crate) fn usable(dir: &str, m: &Model) -> Option<PathBuf> {
     if current(dir, m) {
         return Some(version_folder(dir, m));
     }
-    let mut earlier: Vec<PathBuf> = std::fs::read_dir(home(dir, m)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.join(WHOLE).is_file()).collect();
-    earlier.sort();
-    earlier.pop()
+    // the one made whole last, by when its mark was written: a version's name says nothing about its order
+    std::fs::read_dir(home(dir, m)).into_iter().flatten().flatten().map(|e| e.path()).filter_map(|p| std::fs::metadata(p.join(WHOLE)).and_then(|f| f.modified()).ok().map(|at| (at, p))).max_by_key(|(at, _)| *at).map(|(_, p)| p)
 }
 
 /// Where a model's files are, to run it: see [`usable`]. Before any are here, where they will be.
@@ -136,7 +141,7 @@ pub(crate) fn local_model_progress() -> u32 {
 /// Fetch a model. Blocks until it is all here: call it off the main thread. Files already here are kept, so
 /// one that was cut short goes on from the last whole file.
 pub(crate) fn fetch_local_model(dir: String, m: &Model) -> Result<(), RadioError> {
-    let told = |reason: &str| RadioError::Told { reason: reason.into() };
+    let told = crate::choices::told;
     let _one = FETCHING.lock().unwrap_or_else(|e| e.into_inner());
     let folder = version_folder(&dir, m);
     GOT.store(0, Ordering::SeqCst);
@@ -245,6 +250,21 @@ mod tests {
         put(&dir.join("models/tiny/2"));
         assert!(current(&at, &two));
         assert_eq!(folder(&at, &two), dir.join("models/tiny/2"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn of_two_earlier_versions_the_one_made_whole_last_runs_whatever_their_names() {
+        let dir = std::env::temp_dir().join(format!("airband-models-order-{}", random_hex(4)));
+        let at = dir.display().to_string();
+        // "10" sorts before "9" as text; 10 was made whole after 9 (audit 6, C-A5)
+        for v in ["9", "10"] {
+            put(&dir.join(format!("models/tiny/{v}")));
+            std::fs::write(dir.join(format!("models/tiny/{v}/.whole")), "").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        // the catalogue names a version not here yet
+        assert_eq!(usable(&at, &small("11")), Some(dir.join("models/tiny/10")));
         let _ = std::fs::remove_dir_all(dir);
     }
 

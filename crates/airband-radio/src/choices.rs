@@ -28,7 +28,7 @@ use std::collections::{BTreeMap, HashMap};
 mod desk;
 mod list;
 mod saved;
-pub(crate) use desk::computer_reached;
+pub(crate) use desk::tell_reads;
 use list::*;
 use saved::{Pick, Saved};
 pub(crate) use saved::ReadsWanted;
@@ -152,6 +152,11 @@ pub(crate) struct Chooser {
 }
 
 /// What he chose that this build has no code for, said one way: what it cannot do, and where to choose again.
+/// The key kept on this phone for a provider, when there is one.
+pub(crate) fn kept_key(host: &dyn DeskHost, provider: &str) -> Option<String> {
+    host.secret(provider.to_string()).filter(|k| !k.is_empty())
+}
+
 pub(crate) fn told(reason: impl Into<String>) -> RadioError {
     RadioError::Told { reason: reason.into() }
 }
@@ -169,7 +174,7 @@ impl Chooser {
         self.saved().tools
     }
 
-    /// What writes his summaries, as it is being sent to his computers: none once every computer has it.
+    /// What writes his summaries, with how each of his computers stands with it.
     pub(crate) fn reads_intent(&self) -> Option<crate::desk::Intent<ReadsWanted>> {
         self.saved().reads
     }
@@ -194,7 +199,15 @@ impl Chooser {
     /// cannot be used as things are is handed over as that, with why: nothing takes its place.
     pub(crate) fn apply(&self, host: &dyn DeskHost, senses: &Senses) {
         let saved = self.saved();
-        let key = |id: &str| host.secret(id.to_string()).unwrap_or_default();
+        // his key for a service, or why it cannot be used: one that takes a key and has none here is never
+        // tried with an empty one
+        let key = |id: &str, sense: Sense| -> Result<String, Cannot> {
+            match (kept_key(host, id), airband_core::providers::provider(id).filter(|p| p.key)) {
+                (Some(key), _) => Ok(key),
+                (None, None) => Ok(String::new()),
+                (None, Some(p)) => Err(Cannot::NoKey { sense, key_name: p.key_name.clone() }),
+            }
+        };
         senses.ears.set(saved.pick(ChoiceJob::Ears).map(|ears| match ears.place {
             ChoicePlace::Phone => match self.model(&ears.id).filter(|m| m.job == Job::Ears) {
                 None => crate::ears::Own::Cannot(Cannot::ModelNotRun(Sense::Listening)),
@@ -202,7 +215,11 @@ impl Chooser {
                 Some(m) => crate::ears::Own::Model(senses.ears.held(&m, crate::models::folder(&self.dir, &m))),
             },
             ChoicePlace::Service => {
-                let with = crate::services::service_of(&ears.id, &ears.offer, &key(&ears.id), ears.set.clone().into_iter().collect());
+                let key = match key(&ears.id, Sense::Listening) {
+                    Ok(key) => key,
+                    Err(why) => return crate::ears::Own::Cannot(why),
+                };
+                let with = crate::services::service_of(&ears.id, &ears.offer, &key, ears.set.clone().into_iter().collect());
                 if with.offer(Job::Ears).is_some_and(|(_, o)| crate::hears::listens(&o)) { crate::ears::Own::Service(with) } else { crate::ears::Own::Cannot(Cannot::ServiceNotUsed(Sense::Listening)) }
             }
         }));
@@ -216,7 +233,11 @@ impl Chooser {
                 },
             },
             ChoicePlace::Service => {
-                let with = crate::services::service_of(&voice.id, &voice.offer, &key(&voice.id), voice.set.clone().into_iter().collect());
+                let key = match key(&voice.id, Sense::Voice) {
+                    Ok(key) => key,
+                    Err(why) => return crate::mouth::Own::Cannot(why),
+                };
+                let with = crate::services::service_of(&voice.id, &voice.offer, &key, voice.set.clone().into_iter().collect());
                 if crate::voices::synth(&with).is_ok() { crate::mouth::Own::Service(with) } else { crate::mouth::Own::Cannot(Cannot::ServiceNotUsed(Sense::Voice)) }
             }
         }));
@@ -237,7 +258,7 @@ impl Chooser {
         let facts = Facts {
             models: crate::models::models(&self.device).collect(),
             here: &|m| (crate::models::fetched(&self.dir, m), crate::models::current(&self.dir, m)),
-            has_key: &|id| host.secret(id.to_string()).is_some_and(|k| !k.is_empty()),
+            has_key: &|id| kept_key(host, id).is_some(),
             failed: match job {
                 ChoiceJob::Ears => senses.ears.failed(),
                 ChoiceJob::Voice => senses.mouth.failed(),
@@ -431,7 +452,8 @@ mod tests {
 
     #[test]
     fn before_any_computer_summaries_follow_the_coding_tool_until_he_picks() {
-        let logins: Vec<Service> = crate::services::services(Job::Summary).into_iter().filter(|s| !s.login.is_empty()).collect();
+        // the offer each sign-in's row marks as the one to use (audit 6, C-A4)
+        let logins: Vec<Service> = crate::services::services(Job::Summary).into_iter().filter(|s| !s.login.is_empty() && !s.more).collect();
         let (one, two) = (logins[0].clone(), logins.iter().find(|s| s.login != logins[0].login).expect("two tools with a sign-in that reads").clone());
         let mut saved = Saved::default();
         saved.use_tools(vec![one.login.clone()]);
@@ -493,6 +515,21 @@ mod tests {
         assert_eq!(host.notes.lock().unwrap().last().map(String::as_str), Some(crate::voice::NOTHING_CHOSEN));
         assert!(matches!(crate::voice::say_until(&tape, &desk.shared.senses.mouth, "Shop two is waiting.", &|| false), crate::voice::Said::Nothing(why) if why == crate::voice::NOTHING_CHOSEN));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_service_that_takes_a_key_is_never_tried_without_one() {
+        let dir = std::env::temp_dir().join(format!("airband-choices-nokey-{}", random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("choices.json"), r#"{"ears":{"place":"service","id":"elevenlabs","offer":"scribe"}}"#).unwrap();
+        let host = Arc::new(Host::default());
+        let desk = Desk::alone(&dir.display().to_string(), host.clone());
+        desk.shared.chooser.apply(&*host, &desk.shared.senses);
+        let why = desk.shared.senses.ears.cannot();
+        let _ = std::fs::remove_dir_all(dir);
+        // he is told to enter the key, by its name (audit 6, C-A6)
+        let key_name = airband_core::providers::provider("elevenlabs").map(|p| p.key_name.clone()).unwrap();
+        assert_eq!(why, Some(format!("Enter your {key_name} in Settings, under Listening.")));
     }
 
     #[test]

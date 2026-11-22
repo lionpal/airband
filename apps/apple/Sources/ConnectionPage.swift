@@ -21,17 +21,17 @@ struct ConnectionPage: View {
                     copied = true
                 }
             } footer: {
-                Text("The record lists requests that failed and each try at sending what you said, with the time, the way it went and how it ended. Nothing you or your agents said is in it. It stays on this phone unless you paste it somewhere.")
+                Text("Failed requests and sends, with times. None of your messages are in it, and it stays on this phone.")
             }
         }
         .navigationTitle("Connection").navigationBarTitleDisplayMode(.inline)
         .onAppear { reach = model.reach() }
     }
 
-    private func line(_ title: String, _ last: String) -> some View {
+    private func line(_ title: String, _ last: String?) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
-            Text(last.isEmpty ? "Nothing has failed" : last).font(.footnote).foregroundStyle(.secondary)
+            Text(last ?? "No failures on record").font(.footnote).foregroundStyle(.secondary)
         }
     }
 }

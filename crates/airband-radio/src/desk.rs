@@ -40,7 +40,7 @@ use station_host::*;
 pub use airband_core::relay::PushService;
 use tell::*;
 pub(crate) use fanout::{fan_out, Reach};
-pub(crate) use intents::Intent;
+pub(crate) use intents::{Intent, Standing};
 #[cfg(test)]
 use intents::Delivery;
 use uploads::*;
@@ -212,8 +212,13 @@ impl State {
     pub(super) fn computer(&self, id: &StationId) -> Option<&Computer> {
         self.computers.iter().find(|s| s.id() == *id)
     }
+    /// A computer by its id, whatever its connection now: for what an old connection reports about the outbox
+    /// every connection of the computer shares, which stays true after a reconnect.
+    fn paired(&mut self, id: &StationId) -> Option<&mut Computer> {
+        self.computers.iter_mut().find(|s| s.id() == *id)
+    }
     /// A computer by its id, while `epoch` is still its connection: for the threads of one connection.
-    fn live(&mut self, id: &StationId, epoch: u64) -> Option<&mut Computer> {
+    pub(crate) fn live(&mut self, id: &StationId, epoch: u64) -> Option<&mut Computer> {
         self.computers.iter_mut().find(|s| s.epoch == epoch && s.id() == *id)
     }
     /// The computer that has this agent, by the agent's id.
@@ -258,6 +263,17 @@ impl State {
     /// and what the team is called. Nothing for a room no agent is in now.
     fn room(&self, room: &str) -> Option<(Arc<Radio>, String, String)> {
         self.computers.iter().find_map(|s| s.agents.iter().find(|a| a.room == room).map(|a| (s.radio.clone(), a.team.clone(), a.group.clone())))
+    }
+    /// The files that have arrived on this computer have gone with something he sent: they leave the tray,
+    /// all but those its radio still holds for the next thing (`still`). True when any left.
+    pub(super) fn files_went(&mut self, computer: &StationId, still: &[String]) -> bool {
+        let before = self.uploads.len();
+        self.uploads.retain(|u| !(u.station == *computer && u.shown.state == UploadState::Ready && !still.contains(&u.shown.id)));
+        self.uploads.len() != before
+    }
+    /// Which computer a room on his screen is on, by its id.
+    fn room_computer(&self, room: &str) -> Option<StationId> {
+        self.computers.iter().find(|s| s.agents.iter().any(|a| a.room == room)).map(|s| s.id())
     }
     /// The computer a message is in.
     fn owner(&self, message: &str) -> Option<&Computer> {
@@ -329,13 +345,15 @@ impl Desk {
         Desk { shared: Arc::new(Shared { state: Mutex::new(State::default()), floor: Floor::default(), host, chooser, senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: data_dir.into() }
     }
 }
+/// A short name that is the same every launch for the same bytes: not a secret and not a check, only a name.
+/// `from` is where it starts; each use keeps its own, so the names already on his phone stay the same.
+pub(crate) fn same_name(from: u64, bytes: &[u8]) -> String {
+    let h = bytes.iter().fold(from, |h, b| (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3));
+    format!("{h:x}")
+}
 /// A folder name that is the same every launch for the same link.
 fn folder(link: &str) -> String {
-    let mut h: u64 = 1469598103934665603;
-    for b in link.bytes() {
-        h = (h ^ b as u64).wrapping_mul(1099511628211);
-    }
-    format!("{h:x}")
+    same_name(1469598103934665603, link.as_bytes())
 }
 #[uniffi::export]
 impl Desk {
@@ -370,7 +388,7 @@ impl Desk {
         // each new computer is connected outside the lock: what it last showed is read from this device
         let mut made: Vec<Computer> = Vec::new();
         for (link, epoch) in new {
-            let Ok(radio) = self.connect(&link, epoch, None) else { continue };
+            let Ok(radio) = self.connect(&link, None) else { continue };
             radio.set_call_mode(calling);
             // what it last said it is called, kept on the phone: known before it answers again
             let name = radio.store.saved.lock().unwrap().computer.clone();
@@ -453,14 +471,14 @@ impl Desk {
 }
 
 impl Desk {
-    /// A new connection to the computer this link pairs, numbered `epoch`, handed what the last one kept for
-    /// him (`kept`), or opening it from this device when there was none.
-    fn connect(&self, link: &str, epoch: u64, kept: Option<Kept>) -> Result<Arc<Radio>, RadioError> {
+    /// A new connection to the computer this link pairs, handed what the last one kept for him (`kept`), or
+    /// opening it from this device when there was none.
+    fn connect(&self, link: &str, kept: Option<Kept>) -> Result<Arc<Radio>, RadioError> {
         let dir = if self.data_dir.is_empty() { String::new() } else { std::path::Path::new(&self.data_dir).join(folder(link)).display().to_string() };
-        let host: Arc<dyn RadioHost> = Arc::new(ComputerHost { shared: self.shared.clone(), station: station_id(link), epoch });
+        let host: Arc<dyn RadioHost> = Arc::new(ComputerHost { shared: self.shared.clone(), station: station_id(link) });
         let kept = kept.unwrap_or_else(|| Kept::open(&dir, host.clone()));
         let transport = self.shared.dial.as_ref().map(|dial| dial(link));
-        Radio::start_with(link.to_string(), &dir, host, self.shared.senses.clone(), kept, transport)
+        Radio::start_with(link.to_string(), host, self.shared.senses.clone(), kept, transport)
     }
     /// A new connection for each of these computers, by id. Everything else about each computer stays: what was
     /// last seen of it, and what is kept for him on its behalf.
@@ -476,7 +494,7 @@ impl Desk {
         };
         self.shared.floor.clear();
         for (id, link, epoch, kept) in plan {
-            let Ok(radio) = self.connect(&link, epoch, Some(kept)) else { continue };
+            let Ok(radio) = self.connect(&link, Some(kept)) else { continue };
             radio.set_call_mode(calling);
             let old = {
                 let mut state = self.shared.state.lock().unwrap();
@@ -510,7 +528,7 @@ impl Desk {
         let state = self.shared.state.lock().unwrap();
         let found = match (computer.is_empty(), state.computers.as_slice()) {
             (true, [only]) => Some(only),
-            (true, [_, _, ..]) => return Err(RadioError::Told { reason: "Choose which computer first.".into() }),
+            (true, [_, _, ..]) => return Err(crate::choices::told("Choose which computer first.")),
             _ => state.computers.iter().find(|s| s.id() == *computer),
         };
         found.filter(|s| s.online).map(|s| (s.radio.clone(), station_id(&s.link))).ok_or(RadioError::Offline)
@@ -520,7 +538,7 @@ impl Desk {
     }
     /// The radio of the computer that has this agent, or a refusal when none does.
     fn agent_radio(&self, agent: &str) -> Result<Arc<Radio>, RadioError> {
-        self.shared.state.lock().unwrap().radio_with_agent(agent).ok_or(RadioError::Refused)
+        self.shared.state.lock().unwrap().radio_with_agent(agent).ok_or_else(|| RadioError::gone("agent"))
     }
     /// The computer's radio that a message still waiting to go, or given up on, belongs to: what each keeps
     /// on this device says, so it is known from launch.

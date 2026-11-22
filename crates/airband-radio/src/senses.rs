@@ -30,6 +30,8 @@ pub(crate) enum Cannot {
     NoVoiceNamed { model: String },
     /// A voice he picked that the model no longer has.
     VoiceGone { model: String, voice: String },
+    /// A service that takes a key, with none kept on this phone for it: what the key is called.
+    NoKey { sense: Sense, key_name: String },
 }
 
 impl Cannot {
@@ -43,6 +45,7 @@ impl Cannot {
             Cannot::NotDownloaded { sense, model } => format!("{model} is not on this phone yet. Download it in Settings, under {}.", sense.section()),
             Cannot::NoVoiceNamed { model } => format!("{model} names no voice of its own to speak in. Choose one in Settings, under Voice."),
             Cannot::VoiceGone { model, voice } => format!("{model} no longer has the voice {voice}. Choose another in Settings, under Voice."),
+            Cannot::NoKey { sense, key_name } => format!("Enter your {key_name} in Settings, under {}.", sense.section()),
         }
     }
 }

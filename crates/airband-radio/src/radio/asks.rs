@@ -55,10 +55,9 @@ impl Radio {
         Ok(())
     }
 
-    /// What this computer can read with, and what it reads with now, by its own account. Nothing when it
-    /// cannot be reached, or is a version from before it could say. Blocks.
-    pub(crate) fn reads_offered(&self) -> Option<airband_core::radio::ReadsOffered> {
-        self.link.call::<at::ReadsOffered>(None, &Nothing {}, &Nothing {}).ok()
+    /// What this computer can read with, and what it reads with now, by its own account. Blocks.
+    pub(crate) fn reads_offered(&self) -> Result<airband_core::radio::ReadsOffered, RadioError> {
+        Ok(self.link.call::<at::ReadsOffered>(None, &Nothing {}, &Nothing {})?)
     }
 
     /// Rename one of his teams on this computer. Answers with the name it now has. Blocks.

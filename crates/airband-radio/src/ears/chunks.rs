@@ -23,10 +23,10 @@ fn pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str) 
 /// The pass goes in the address, with the model, the language and the names he is likely to say.
 fn connect(grant: &Pass, _request: &str) -> Result<Socket, ()> {
     let (stream, host) = grant.stream()?;
-    let model = grant.get("model");
+    let model = grant.get(crate::models::field::MODEL);
     let mut query: Vec<(&str, &str)> = vec![("model_id", model), ("audio_format", "pcm_16000"), ("commit_strategy", "manual"), ("token", &grant.token)];
     // its language codes are two letters ("en"), where a setting may say "en-US"
-    let language = grant.get("language");
+    let language = grant.get(crate::models::field::LANGUAGE);
     if let Some(language) = language.split('-').next().filter(|l| !l.is_empty()) {
         query.push(("language_code", language));
     }

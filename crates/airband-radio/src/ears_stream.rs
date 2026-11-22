@@ -88,7 +88,7 @@ pub(crate) fn live(wire: &'static Wire, pass: Arc<dyn Fn() -> Option<Pass> + Sen
     // The pass is asked for and the connection opened on a thread of their own, while the microphone is already
     // being read here: he does not wait for either before he can talk.
     let opening = connect(wire, &pass, &request);
-    let mut stream = Stream { wire, pass, host, waiting: VecDeque::from(header.clone()), header, request, opening, socket: None, kept: Vec::new(), ended: false, shown: String::new() };
+    let mut stream = Stream { wire, pass, host, waiting: VecDeque::from(header.clone()), header, request, opening, socket: None, kept: Vec::new(), ended: false, shown: String::new(), partial: None };
     let mut end = Endpointer::new(rate);
     // a microphone he left open is closed for him after this long: what he said is kept, and nothing is sent
     let began = Instant::now();
@@ -111,7 +111,7 @@ pub(crate) fn live(wire: &'static Wire, pass: Arc<dyn Fn() -> Option<Pass> + Sen
         stream.keep(bytes, sending);
         stream.connected()?;
         if sending {
-            stream.send(manual)?;
+            stream.send()?;
         }
         if manual && stream.ended {
             // the service closed its turn and he has not closed the microphone: carry on, in a new connection
@@ -165,6 +165,8 @@ struct Stream<'a> {
     /// The service ended its turn.
     ended: bool,
     shown: String,
+    /// The stretch it had not finished yet, as it last said it, and how many finished ones there were then.
+    partial: Option<(usize, String)>,
 }
 
 impl Stream<'_> {
@@ -207,21 +209,36 @@ impl Stream<'_> {
     }
 
     /// What waits goes, and what has been heard comes back.
-    fn send(&mut self, manual: bool) -> Result<(), ()> {
+    fn send(&mut self) -> Result<(), ()> {
         let Some(s) = self.socket.as_mut() else { return Ok(()) };
         let (wire, request) = (self.wire, &self.request);
         let sent = self.waiting.drain(..).try_for_each(|chunk| s.send((wire.audio)(request, &chunk)).map_err(|_| ()));
         match sent.and_then(|()| drain(wire, s, &mut self.kept, &mut self.ended)) {
             Ok(Some(now)) => self.tell(&now),
             Ok(None) => {}
-            Err(()) if manual && !self.kept.is_empty() => self.ended = true,
+            // the connection went with something heard: what it had not finished is kept as it last said it,
+            // and a new connection takes what he says next
+            Err(()) if self.salvage() => self.reconnect(),
             Err(()) => return Err(()),
         }
         Ok(())
     }
 
+    /// Keep the stretch the service had not finished, as it last said it, when the connection has gone. True
+    /// when anything has been heard.
+    fn salvage(&mut self) -> bool {
+        if let Some((at, said)) = self.partial.take()
+            && at == self.kept.len()
+            && !said.trim().is_empty()
+        {
+            self.kept.push(said.trim().to_string());
+        }
+        !self.kept.is_empty()
+    }
+
     /// Tell the host what he has said so far, when it has changed.
     fn tell(&mut self, now: &str) {
+        self.partial = Some((self.kept.len(), now.to_string()));
         let all = [self.kept.join(" "), now.to_string()].join(" ").trim().to_string();
         if all != self.shown {
             self.shown = all.clone();
@@ -232,7 +249,7 @@ impl Stream<'_> {
     /// He has stopped: whatever was not sent yet goes now, then the end of the audio, then the last words come
     /// back. With something already heard, a failure at the very end loses only the last words, not all of them.
     fn finish(mut self) -> Result<Option<String>, ()> {
-        if self.last().is_err() && self.kept.is_empty() {
+        if self.last().is_err() && !self.salvage() {
             return Err(());
         }
         let said = self.kept.join(" ");
@@ -317,6 +334,27 @@ impl RadioHost for Tape {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A wire that never connects: what is kept is all there is.
+    const NOWHERE: Wire = Wire { connect: |_, _| Err(()), audio: |_, _| Message::text(""), end: |_| Message::text(""), read: |_, _, _| None, header: false, reopens: false };
+
+    #[test]
+    fn what_was_heard_is_kept_when_the_connection_goes() {
+        let tape = Tape::of(&[], false);
+        let pass: Arc<dyn Fn() -> Option<Pass> + Send + Sync> = Arc::new(|| None);
+        let mut stream = Stream { wire: &NOWHERE, pass, host: &tape, waiting: VecDeque::new(), header: Vec::new(), request: String::new(), opening: channel().1, socket: None, kept: vec!["ship it".into()], ended: false, shown: String::new(), partial: None };
+        // the stretch it had not finished, as it last said it, is kept with the rest (audit 6, C-B4)
+        stream.tell("and test");
+        assert!(stream.salvage());
+        assert_eq!(stream.kept, ["ship it", "and test"]);
+        // a stretch it finished after it last said one is not kept twice
+        stream.tell("again");
+        stream.kept.push("again".into());
+        stream.salvage();
+        assert_eq!(stream.kept, ["ship it", "and test", "again"]);
+        // with the connection gone at the end, what was heard is what he said
+        assert_eq!(stream.finish(), Ok(Some("ship it and test again".to_string())));
+    }
 
     /// Against a real service, with a recording in place of the microphone. LISTEN_WITH is a provider's id in
     /// the catalogue, LISTEN_KEY its key, and LISTEN_SET any of its settings as `field=value,field=value`:

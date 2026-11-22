@@ -82,7 +82,7 @@ fn a_summary_choice_no_computer_takes_changes_nothing_and_says_why() {
 }
 
 #[test]
-fn a_computer_not_reached_is_sent_the_choice_when_it_is_and_then_it_is_let_go() {
+fn a_computer_not_reached_is_sent_the_choice_when_it_is_and_then_it_is_kept_for_later() {
     let dir = temp("later");
     let (studio, laptop) = (tower("studio", true), tower("laptop", true));
     studio.answers::<at::Reads>(&ReadsSet { reads: "Haiku".into() });
@@ -99,14 +99,17 @@ fn a_computer_not_reached_is_sent_the_choice_when_it_is_and_then_it_is_let_go() 
     assert_eq!(laptop.asked_on::<at::Reads>(), 0);
     // it is reached: it is sent the choice, and with every computer having it nothing is left waiting
     laptop.away.store(false, std::sync::atomic::Ordering::SeqCst);
-    let radio = desk.shared.state.lock().unwrap().computer(&laptop_id).map(|c| c.radio.clone()).unwrap();
-    crate::choices::computer_reached(&desk.shared, &radio);
+    let epoch = desk.shared.state.lock().unwrap().computer(&laptop_id).map(|c| c.epoch).unwrap();
+    crate::choices::tell_reads(&desk.shared, &laptop_id, epoch, true);
     let kept = desk.shared.chooser.reads_intent();
+    let after = reads_lines(&desk);
     desk.stop();
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(waiting, [("laptop".to_string(), DeskDelivery::Waiting)]);
     assert_eq!(laptop.asked_on::<at::Reads>(), 1);
-    assert!(kept.is_none(), "{kept:?}");
+    // every computer has it: nothing is left waiting, and it is kept for a computer paired later (P-B4)
+    assert!(after.is_empty(), "{after:?}");
+    assert!(kept.is_some_and(|k| k.per.values().all(|d| *d == super::super::intents::Delivery::Done)));
 }
 
 #[test]
@@ -114,13 +117,15 @@ fn a_computer_is_sent_the_key_only_when_it_has_none_of_its_own() {
     let wanted = crate::choices::ReadsWanted { id: "anthropic".into(), offer: "haiku".into(), set: BTreeMap::new(), his: true };
     let offers = |has_key: bool| ReadsOffered { offers: vec![ReadsOffer { provider: "anthropic".into(), offer: "haiku".into(), key: true, has_key, ..ReadsOffer::default() }], ..ReadsOffered::default() };
     // it keeps its own: none is sent from a phone that has none
-    assert_eq!(wanted.body_for(None, Some(&offers(true))).map(|b| b.key), Ok(String::new()));
+    assert_eq!(wanted.body_for(None, &offers(true)).map(|b| b.key), Ok(String::new()));
+    // it keeps its own and the phone has one too: the computer's own is used, the phone's goes nowhere (C-B1)
+    assert_eq!(wanted.body_for(Some("sk-1"), &offers(true)).map(|b| b.key), Ok(String::new()));
     // it has none and the phone has one: the phone's is sent
-    assert_eq!(wanted.body_for(Some("sk-1"), Some(&offers(false))).map(|b| b.key), Ok("sk-1".to_string()));
+    assert_eq!(wanted.body_for(Some("sk-1"), &offers(false)).map(|b| b.key), Ok("sk-1".to_string()));
     // neither has one: it is not sent, and why is said
-    assert_eq!(wanted.body_for(None, Some(&offers(false))).map(|b| b.key), Err(crate::choices::NO_KEY.to_string()));
-    // one that could not say what it has: the provider's own row says a key is needed
-    assert_eq!(wanted.body_for(None, None).map(|b| b.key), Err(crate::choices::NO_KEY.to_string()));
+    assert_eq!(wanted.body_for(None, &offers(false)).map(|b| b.key), Err(crate::choices::NO_KEY.to_string()));
+    // one that does not offer it at all: the provider's own row says a key is needed
+    assert_eq!(wanted.body_for(None, &ReadsOffered::default()).map(|b| b.key), Err(crate::choices::NO_KEY.to_string()));
 }
 
 #[test]
@@ -174,4 +179,87 @@ fn where_the_phone_can_be_woken_goes_to_each_computer_once_and_a_no_stays_with_t
     assert!(asked.0 >= 1 && asked.1 >= 1, "{asked:?}");
     assert_eq!(asked, after);
     assert_eq!(lines, [("laptop".to_string(), DeskDelivery::Refused { reason: "Notifications are off here.".into() })]);
+}
+
+/// As [`desk_with`], with this summary choice waiting to be sent (`reads`, as `choices.json` keeps it).
+fn desk_wanting(dir: &std::path::Path, towers: Vec<(String, Arc<FakeTower>)>, reads: serde_json::Value) -> Desk {
+    let kept = serde_json::json!({ "reads": reads, "offered": { "offers": [{ "provider": "anthropic", "offer": "haiku", "label": "Haiku", "key": true, "has_key": true, "preferred": true }] } });
+    std::fs::write(dir.join("choices.json"), kept.to_string()).unwrap();
+    let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
+    Desk::through(dir.to_str().unwrap(), host, move |l| towers.iter().find(|(k, _)| k == l).map(|(_, t)| t.clone()).unwrap_or_default())
+}
+fn wanted_haiku(per: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({ "rev": 1, "wanted": { "id": "anthropic", "offer": "haiku", "his": true }, "per": per })
+}
+/// How that computer stands with the summary choice, as the desk keeps it now.
+fn standing_of(desk: &Desk, computer: &StationId) -> Option<super::super::intents::Delivery> {
+    desk.shared.chooser.reads_intent().and_then(|i| i.per.get(computer).cloned())
+}
+fn until(mut done: impl FnMut() -> bool) -> bool {
+    (0..500).any(|_| {
+        let now = done();
+        if !now {
+            thread::sleep(Duration::from_millis(10));
+        }
+        now
+    })
+}
+
+#[test]
+fn a_computer_that_could_not_say_what_it_reads_with_is_asked_again_and_never_told_it_lacks_a_key() {
+    let dir = temp("unsaid");
+    let studio = Arc::new(FakeTower::default());
+    studio.answers::<at::Feed>(&Feed { station: "studio".into(), ..Feed::default() });
+    studio.refuses::<at::ReadsOffered>(503, &Refusal::NotNow { reason: "Starting up.".into() });
+    let desk = desk_wanting(&dir, vec![(link(1), studio.clone())], wanted_haiku(serde_json::json!({})));
+    desk.set_links(vec![link(1)]);
+    let id = station_id(&link(1));
+    // asked on each round while it owes it, as push and tools are (audit 6, P-B3, P-B5)
+    let again = until(|| studio.asked_on::<at::ReadsOffered>() >= 2);
+    let meanwhile = standing_of(&desk, &id);
+    // it comes back: the choice goes, and it has it
+    let offer = ReadsOffer { provider: "anthropic".into(), offer: "haiku".into(), label: "Haiku".into(), key: true, has_key: true, preferred: true, ..ReadsOffer::default() };
+    studio.answers::<at::ReadsOffered>(&ReadsOffered { offers: vec![offer], ..ReadsOffered::default() });
+    studio.answers::<at::Reads>(&ReadsSet { reads: "Haiku".into() });
+    let took = until(|| standing_of(&desk, &id) == Some(super::super::intents::Delivery::Done));
+    desk.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(again, "a computer that could not say was not asked again");
+    assert!(matches!(meanwhile, None | Some(super::super::intents::Delivery::Pending)), "trouble that may pass was kept as a no: {meanwhile:?}");
+    assert!(took, "it never got the choice once it could say");
+}
+
+#[test]
+fn a_summary_choice_every_computer_refused_says_why_and_does_not_wait_for_good() {
+    let dir = temp("all-no");
+    let per = serde_json::json!({ station_id(&link(1)).as_str(): { "state": "refused", "reason": "Enter your API key." } });
+    let desk = desk_wanting(&dir, Vec::new(), wanted_haiku(per));
+    let state = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "anthropic").map(|c| c.state);
+    let _ = std::fs::remove_dir_all(&dir);
+    // (audit 6, C-B2)
+    assert_eq!(state, Some(ChoiceState::Failed { why: "Enter your API key.".into() }));
+}
+
+#[test]
+fn a_computer_paired_after_the_others_took_the_summary_choice_is_sent_it_and_an_old_connection_sends_nothing() {
+    let dir = temp("paired-later");
+    let (studio, laptop) = (tower("studio", true), tower("laptop", true));
+    laptop.answers::<at::Reads>(&ReadsSet { reads: "Haiku".into() });
+    let per = serde_json::json!({ station_id(&link(1)).as_str(): { "state": "done" } });
+    let desk = desk_wanting(&dir, vec![(link(1), studio.clone()), (link(2), laptop.clone())], wanted_haiku(per));
+    desk.set_links(vec![link(1), link(2)]);
+    // (audit 6, P-B4)
+    let sent = until(|| laptop.asked_on::<at::Reads>() == 1);
+    let laptop_id = station_id(&link(2));
+    let took = until(|| standing_of(&desk, &laptop_id) == Some(super::super::intents::Delivery::Done));
+    // a connection that is no longer the computer's sends nothing (audit 6, C-B3)
+    let epoch = desk.shared.state.lock().unwrap().computer(&laptop_id).map(|c| c.epoch).unwrap();
+    let before = laptop.asked_on::<at::ReadsOffered>();
+    crate::choices::tell_reads(&desk.shared, &laptop_id, epoch + 100, true);
+    let after = laptop.asked_on::<at::ReadsOffered>();
+    desk.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(sent && took, "a computer paired later never got the choice the others had");
+    assert_eq!(studio.asked_on::<at::Reads>(), 0, "a computer that had it was sent it again");
+    assert_eq!(after, before);
 }

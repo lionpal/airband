@@ -1,6 +1,25 @@
 //! The record of how each request went, kept for the connection screen.
 use super::*;
 
+/// The trail of one computer, kept in its file on this device: one for the computer, shared by every
+/// connection to it, so only one copy of the file is ever written.
+pub(crate) struct Trail {
+    pub(super) lines: Mutex<std::collections::VecDeque<Line>>,
+    pub(super) keeper: airband_io::kept::Keeper,
+}
+
+impl Trail {
+    /// `file` is where it is kept between launches; nothing keeps it in memory only.
+    pub(crate) fn open(file: Option<std::path::PathBuf>) -> Arc<Trail> {
+        let (mut lines, keeper, damaged): (std::collections::VecDeque<Line>, _, _) = crate::kept::open(file, "The record of earlier requests");
+        // the trail is for him to read on the connection screen: one that could not be read says so there
+        if let Some(told) = damaged {
+            lines.push_back(Line::Remark { at: now_ms(), what: told });
+        }
+        Arc::new(Trail { lines: Mutex::new(lines), keeper })
+    }
+}
+
 /// One try at one request, one way: what the trail is made of. Nothing of what was said is in it, only the
 /// kind of request, the way it went and how it ended. It never leaves the phone.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

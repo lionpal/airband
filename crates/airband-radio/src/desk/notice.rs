@@ -108,11 +108,7 @@ pub fn notice_tap(action: String) -> Option<Tapped> {
 /// The name of the set of buttons for these answers: the same answers always get the same name.
 #[uniffi::export]
 pub fn notice_answers_name(options: Vec<String>) -> String {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in options.join("\u{1}").bytes() {
-        h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
-    }
-    format!("{ANSWERS}{h:x}")
+    format!("{ANSWERS}{}", crate::desk::same_name(0xcbf2_9ce4_8422_2325, options.join("\u{1}").as_bytes()))
 }
 /// The set of buttons is one made for a question's answers ([`notice_answers_name`]): one of those the host
 /// lets go of once there are many.

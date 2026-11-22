@@ -37,8 +37,6 @@ pub(super) struct ComputerHost {
     pub(super) shared: Arc<Shared>,
     /// The computer, by its id.
     pub(super) station: StationId,
-    /// The connection this host belongs to: once the computer has another, this one's callbacks do nothing.
-    pub(super) epoch: u64,
 }
 impl RadioHost for ComputerHost {
     // a phone's own voice and recognition are never used
@@ -54,8 +52,10 @@ impl RadioHost for ComputerHost {
     fn unplaced(&self, message: Outgoing, elsewhere: Option<String>, ask: Vec<String>) {
         {
             let mut state = self.shared.state.lock().unwrap();
-            // it was not delivered here: it is not on its way to this computer's chat
-            let Some(s) = state.live(&self.station, self.epoch) else { return };
+            // it was not delivered here: it is not on its way to this computer's chat. It left the outbox every
+            // connection of this computer shares, so an old connection's report of it still counts: dropping it
+            // would lose the message
+            let Some(s) = state.paired(&self.station) else { return };
             s.landing.retain(|(o, _)| o.id != message.id);
             // the tower read his words as for an agent another computer has: they go there, addressed to it
             let there = elsewhere.as_ref().filter(|c| state.with_agent(c).is_some_and(|s| s.id() != self.station)).cloned();
@@ -91,14 +91,11 @@ impl RadioHost for ComputerHost {
         // what he said has gone, and took with it the files that were waiting: they leave the tray
         if matches!(status, RadioStatus::Idle) {
             let mut state = self.shared.state.lock().unwrap();
-            if let Some(waiting) = state.computer(&self.station).map(|s| s.radio.armed()) {
-                let before = state.uploads.len();
-                let here = &self.station;
-                state.uploads.retain(|u| !(&u.station == here && u.shown.state == UploadState::Ready && !waiting.contains(&u.shown.id)));
-                if state.uploads.len() != before {
-                    drop(state);
-                    self.shared.host.changed();
-                }
+            if let Some(waiting) = state.computer(&self.station).map(|s| s.radio.armed())
+                && state.files_went(&self.station, &waiting)
+            {
+                drop(state);
+                self.shared.host.changed();
             }
         }
         if self.shared.floor.release(&self.station, ends) {
@@ -120,7 +117,8 @@ impl RadioHost for ComputerHost {
     fn outbox(&self, waiting: Vec<Outgoing>, note: Option<String>) {
         {
             let mut state = self.shared.state.lock().unwrap();
-            let Some(s) = state.live(&self.station, self.epoch) else { return };
+            // the outbox is the computer's, shared by its connections: what an old one reports of it is still so
+            let Some(s) = state.paired(&self.station) else { return };
             // What has left the list was sent. It stays on screen as on its way until the chat has it (the
             // tower gives the message the same id), so it never vanishes for a moment in between. Not when
             // there is something to tell him about it: then it did not go.

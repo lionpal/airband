@@ -7,23 +7,36 @@ import SwiftUI
 import UIKit
 
 extension RadioModel {
-    /// The keys he has given this phone, by provider. Kept in the Keychain, on this phone only. Only the core
-    /// asks for one, to use it: no screen is ever handed a key.
-    private var keys: [String: String] {
-        Stored.keychain.load("airband.keys", or: [:])
+    /// The keys he has given this phone, by provider. Kept in the Keychain group only the app can read, on this
+    /// phone only. Only the core asks for one, to use it: no screen is ever handed a key.
+    private var keys: KeychainRead<[String: String]> {
+        let here: KeychainRead<[String: String]> = Stored.load("airband.keys", in: .appOnly)
+        guard case .none = here else { return here }
+        // kept by an earlier build in the group the extension shares: moved to the app's own group once, and
+        // taken out of the shared one only after it is safely in its new place
+        let earlier: KeychainRead<[String: String]> = Stored.load("airband.keys", in: .shared)
+        if case .found(let all) = earlier, Stored.keep("airband.keys", all, in: .appOnly) { Keychain.write("airband.keys", "{}", in: .shared) }
+        return earlier
     }
 
     func secret(name: String) -> String? {
         keysLock.lock()
         defer { keysLock.unlock() }
-        return keys[name]
+        guard case .found(let all) = keys else { return nil }
+        return all[name]
     }
     func keepSecret(name: String, value: String?) {
         keysLock.lock()
         defer { keysLock.unlock() }
-        var all = keys
+        // keys that could not be read are never written over with this one alone
+        var all: [String: String]
+        switch keys {
+        case .found(let kept): all = kept
+        case .none: all = [:]
+        case .failed: note(text: RadioModel.keysUnread); return
+        }
         all[name] = value
-        Stored.keychain.keep("airband.keys", all)
+        if !Stored.keep("airband.keys", all, in: .appOnly) { note(text: RadioModel.keysUnread) }
     }
 
     func device() -> HostDevice {

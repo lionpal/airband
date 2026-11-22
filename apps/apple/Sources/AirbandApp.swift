@@ -22,7 +22,7 @@ struct AirbandApp: App {
 }
 /// "Hey Siri, talk to Airband", the Action button, or a Shortcut: open the microphone.
 struct TalkIntent: AppIntent {
-    static var title: LocalizedStringResource = "Talk to Airband"
+    static var title: LocalizedStringResource = "Talk to airband"
     static var description = IntentDescription("Opens the microphone so you can speak to your agents.")
     static var openAppWhenRun = false
 

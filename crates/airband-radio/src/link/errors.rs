@@ -70,10 +70,6 @@ impl LinkError {
             Err(_) => LinkError::Trouble(status),
         }
     }
-    /// His computer answered and said no.
-    pub(crate) fn refused(&self) -> bool {
-        self.retry() == Retry::Never && matches!(self, LinkError::Refused(_) | LinkError::Rejected(_) | LinkError::Trouble(_))
-    }
     /// What happened, as a sentence of its own.
     pub(crate) fn said(&self) -> String {
         format!("{}.", airband_core::prose::capital(&self.told()))

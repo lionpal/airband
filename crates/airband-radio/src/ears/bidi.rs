@@ -28,14 +28,14 @@ fn connect(grant: &Pass, _request: &str) -> Result<Socket, ()> {
     let url = super::with_query(&url, &[("access_token", &grant.token)]);
     let mut socket = dial(&host, url.into_client_request().map_err(|_| ())?)?;
     let mut hearing = json!({ "mode": "VERBATIM" });
-    if !grant.get("language").is_empty() {
-        hearing["languageCodes"] = json!([grant.get("language")]);
+    if !grant.get(crate::models::field::LANGUAGE).is_empty() {
+        hearing["languageCodes"] = json!([grant.get(crate::models::field::LANGUAGE)]);
     }
     if !grant.phrases.is_empty() {
         // it does best with a hundred or fewer
         hearing["customVocabulary"] = json!(grant.phrases.iter().take(100).collect::<Vec<_>>());
     }
-    let setup = json!({ "setup": { "model": format!("models/{}", grant.get("model")), "generationConfig": { "responseModalities": ["TEXT"] }, "inputAudioTranscription": hearing } });
+    let setup = json!({ "setup": { "model": format!("models/{}", grant.get(crate::models::field::MODEL)), "generationConfig": { "responseModalities": ["TEXT"] }, "inputAudioTranscription": hearing } });
     socket.send(Message::text(setup.to_string())).map_err(|_| ())?;
     // it says when it is ready, and nothing may be sent before
     loop {

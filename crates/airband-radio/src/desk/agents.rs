@@ -14,9 +14,8 @@ impl Desk {
     /// that no tool has a record of. `computer` is its [`DeskComputer::id`], or empty when he has only one. Blocks: call it
     /// off the main thread.
     pub fn recent_folders(&self, computer: String) -> Result<Vec<DeskRecent>, RadioError> {
-        let tools = airband_core::catalog::current();
-        let called = |id: &String| tools.tools.iter().find(|t| t.id == *id).map(|t| t.name.clone()).unwrap_or_else(|| id.clone());
-        Ok(self.station_radio(&StationId::from(computer.as_str()))?.recent()?.folders.into_iter().map(|r| DeskRecent { tools: r.tools.iter().map(called).collect(), folder: r.folder, shown: r.shown, name: r.name, team: r.team.is_some(), at: r.at }).collect())
+        // each tool by its name; one this phone's catalogue does not have is left out, never shown by its id
+        Ok(self.station_radio(&StationId::from(computer.as_str()))?.recent()?.folders.into_iter().map(|r| DeskRecent { tools: r.tools.iter().filter_map(|t| crate::services::tool_name(t)).collect(), folder: r.folder, shown: r.shown, name: r.name, team: r.team.is_some(), at: r.at }).collect())
     }
     /// Make a new team on a computer, or start another agent in one that is there: its name as he wrote it,
     /// and the folder its agents work in (with `make`, the folder a new one called by that name is made in).
@@ -55,7 +54,7 @@ impl Desk {
     pub fn accounts(&self, fresh: bool) -> Vec<StationAccounts> {
         // a computer is always headed by a name: its own, or its place in the list until it has said its own
         let radios = self.shared.state.lock().unwrap().named_radios();
-        // one after another, not all at once: two computers on the same account asking Anthropic in the same
+        // one after another, not all at once: two computers on the same account asking its provider in the same
         // moment is how one of them gets refused
         let told: Vec<(DeskComputer, Result<airband_core::radio::Accounts, RadioError>)> = radios.into_iter().map(|(computer, radio)| { let got = radio.accounts(fresh); (computer, got) }).collect();
         let answered: Vec<(DeskComputer, airband_core::radio::Accounts)> = told.iter().filter_map(|(c, got)| got.as_ref().ok().map(|a| (c.clone(), a.clone()))).collect();
@@ -67,11 +66,7 @@ impl Desk {
                     station: computer.id,
                     name: computer.name,
                     accounts: Vec::new(),
-                    note: Some(match e {
-                        RadioError::Told { reason } => reason,
-                        RadioError::Offline => "Cannot reach this computer.".into(),
-                        _ => "This computer would not say.".into(),
-                    }),
+                    note: Some(e.said()),
                     checked_at: 0,
                 },
             })
@@ -92,9 +87,11 @@ impl Desk {
         let pick = match to {
             DeskTeamPick::Room { room } => {
                 let state = self.shared.state.lock().unwrap();
-                let (there, team, _) = state.room(&room).ok_or(crate::choices::told(NO_TEAM))?;
-                if !Arc::ptr_eq(&there, &radio) {
-                    return Err(RadioError::Told { reason: "An agent can only move to a team on its own computer.".into() });
+                let (_, team, _) = state.room(&room).ok_or(crate::choices::told(NO_TEAM))?;
+                // the same computer, by its id
+                let here = state.with_agent(&agent).map(|s| s.id());
+                if here.is_none() || here != state.room_computer(&room) {
+                    return Err(crate::choices::told("An agent can only move to a team on its own computer."));
                 }
                 airband_core::radio::TeamPick::Team { id: team }
             }
@@ -145,7 +142,7 @@ impl Desk {
     /// Let a question go without answering it: it stops waiting on him, here at once and on its computer.
     /// Blocks: call it off the main thread.
     pub fn dismiss(&self, message_id: String) -> Result<(), RadioError> {
-        let radio = self.radio_of(&message_id).ok_or(RadioError::Refused)?;
+        let radio = self.radio_of(&message_id).ok_or_else(|| RadioError::gone("message"))?;
         self.shared.state.lock().unwrap().answered.insert(message_id.clone());
         self.shared.host.changed();
         radio.dismiss(message_id)

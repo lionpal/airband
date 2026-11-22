@@ -55,15 +55,18 @@ fn asking_a_computer_afresh_replaces_only_its_connection() {
     desk.reconnect();
     let (online, name, epoch) = desk.shared.state.lock().unwrap().computers.first().map(|s| (s.online, s.name.clone(), s.epoch)).unwrap();
     let after = radio_of(&desk, &link(1));
-    // the old connection's host is now nobody's: what it says changes nothing
-    let old = ComputerHost { shared: desk.shared.clone(), station, epoch: old_epoch };
+    // the old connection's host still speaks for the outbox both connections share: a message it found no one
+    // for is put to him, never dropped (audit 6, P-B1)
+    let old = ComputerHost { shared: desk.shared.clone(), station };
     old.unplaced(Outgoing::of("late".into()), None, vec![]);
-    let asking = desk.shared.state.lock().unwrap().asking.is_some();
+    let asking = desk.shared.state.lock().unwrap().asking.as_ref().map(|a| a.message.text.clone());
     desk.stop();
     assert!(!Arc::ptr_eq(&before, &after), "it was not asked afresh");
+    // one record of how requests went, for both connections: one writer of its file (audit 6, P-B10)
+    assert!(Arc::ptr_eq(&before.link.trail, &after.link.trail), "each connection kept a trail file of its own");
     assert_ne!(epoch, old_epoch);
     assert!(online && name == "studio", "what was seen of it was dropped with the old connection");
-    assert!(!asking, "an old connection still changed what he sees");
+    assert_eq!(asking.as_deref(), Some("late"), "a message the tower could not place vanished after a reconnect");
 }
 
 #[test]
@@ -122,10 +125,13 @@ fn a_team_that_has_gone_is_let_go_of_and_one_just_made_stays_open_until_its_firs
     desk.set_links(vec![link(1)]);
     assert!(answered(&desk, &link(1)), "the stand-in tower was never heard");
     desk.look(Some("gone-room".into()), Some("gone-agent".into()));
+    desk.shown();
     let gone = desk.view().focus;
     desk.shared.state.lock().unwrap().focus = Focus { room: Some("made-room".into()), agent: None, made: Some("made-room".into()) };
+    desk.shown();
     let made = desk.view().focus;
     desk.look(None, None);
+    desk.shown();
     let after = desk.view().focus;
     let still_made = desk.shared.state.lock().unwrap().focus.made.clone();
     desk.stop();

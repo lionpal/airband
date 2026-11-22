@@ -236,7 +236,13 @@ final class Voice: NSObject, @unchecked Sendable {
     /// The core wants the microphone at `rate`. If he has already opened it, this is that same capture, from
     /// its beginning, whether or not he has closed it again since. False if the microphone cannot be opened.
     func recordStart(rate: UInt32) -> Bool {
-        micQueue.sync {
+        // the microphone is only ever opened at the one rate the core listens at: another is not something this
+        // app can give, so it is said, never given in the wrong one
+        guard Double(rate) == Voice.micRate else {
+            NSLog("airband: the core asked for the microphone at \(rate) Hz, and this app records at \(Voice.micRate)")
+            return false
+        }
+        return micQueue.sync {
             recLock.lock()
             let mine = held
             held = false

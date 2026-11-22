@@ -93,7 +93,7 @@ struct ServiceEntry: View {
                 } else {
                     SecureField(choice.keyName, text: $key).textContentType(.password).font(.system(size: 16)).focused($typing)
                         .padding(.horizontal, 12).frame(minHeight: 44).background(Palette.field, in: RoundedRectangle(cornerRadius: 10))
-                    if !choice.keysAt.isEmpty { Text("Keys are made at \(choice.keysAt)").font(.system(size: 12)).foregroundStyle(Palette.quiet) }
+                    if !choice.keysAt.isEmpty { Text("Get a key at \(choice.keysAt)").font(.system(size: 12)).foregroundStyle(Palette.quiet) }
                 }
             }
             let asks = choice.asks.filter { choice.voices.isEmpty || $0.field != voiceSetting() }
@@ -205,7 +205,7 @@ extension ChoiceJob {
         }
     }
     /// A line under the headline on the first run, where one helps.
-    var aside: String? { self == .voice ? "Hear each agent\u{2019}s news read out, even with the screen off." : nil }
+    var aside: String? { self == .voice ? "Hear your agents with the screen off." : nil }
     /// What the list is a list of.
     var label: String {
         switch self {
@@ -413,7 +413,7 @@ struct ToolsPicker: View {
         VStack(spacing: 10) {
             ForEach(codingTools(), id: \.id) { tool in
                 let on = model.tools.contains(tool.id)
-                ChoiceCard(title: tool.name, subtitle: tool.maker, chosen: on, mark: "harness-\(tool.id)") {
+                ChoiceCard(title: tool.name, subtitle: tool.maker, chosen: on, mark: Marks.tool(tool.id)) {
                     if single {
                         model.tools = [tool.id]
                     } else if on {

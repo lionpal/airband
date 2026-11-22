@@ -94,8 +94,13 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
             finished.signal()
         }
         DispatchQueue.global(qos: .userInitiated).async {
-            if finished.wait(timeout: .now() + 20) == .timedOut { failure.set("Still sending. Open airband to check.") }
-            if let why = failure.get() { Self.say(title: "Not sent to " + (called ?? "your agent"), body: "“\(text)”. \(why)", room: room, agent: agent) }
+            let name = called ?? "your agent"
+            // still going after a while: he is told it is still going, and later what became of it
+            if finished.wait(timeout: .now() + 20) == .timedOut {
+                Self.say(title: "Still sending to " + name, body: "“\(text)”. Open airband to check.", room: room, agent: agent)
+                finished.wait()
+            }
+            if let why = failure.get() { Self.say(title: "Not sent to " + name, body: "“\(text)”. \(why)", room: room, agent: agent) }
             DispatchQueue.main.async {
                 done()
                 UIApplication.shared.endBackgroundTask(task)

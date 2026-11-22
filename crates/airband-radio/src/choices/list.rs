@@ -1,5 +1,6 @@
 //! The one list for each job, made from what he chose and the state of things outside.
 use super::*;
+use crate::desk::Standing;
 
 /// What a list is made from besides what he chose: the state of things outside, gathered once.
 pub(super) struct Facts<'a> {
@@ -85,8 +86,11 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
                 let is = chosen.as_ref().is_some_and(|c| c.provider == s.kind && c.offer == s.offer);
                 let has_key = there || (facts.has_key)(&s.kind);
                 let state = working(&service_id(&s.kind, &s.offer)).unwrap_or(match () {
-                    // no computer has it yet
-                    _ if is && saved.reads.as_ref().is_some_and(|w| !w.taken()) => ChoiceState::Waiting,
+                    // no computer has it yet: it waits, or every computer it was put to said no, and why
+                    _ if is && let Some(w) = &saved.reads && w.standing() != Standing::Taken => match w.standing() {
+                        Standing::Refused(why) => ChoiceState::Failed { why: why.join(" ") },
+                        _ => ChoiceState::Waiting,
+                    },
                     _ if is && reads_failed.is_some() => ChoiceState::Failed { why: reads_failed.map(|t| t.said(&s.name)).unwrap_or_default() },
                     _ if s.key && !has_key => ChoiceState::NeedsKey,
                     _ => ChoiceState::Ready,

@@ -70,7 +70,7 @@ extension FeedView {
             Text(label).font(.system(size: 14, weight: on ? .semibold : .medium)).lineLimit(1)
                 .padding(.bottom, 2).overlay(alignment: .bottom) { if let colour { Capsule().fill(Palette.team(colour)).frame(height: 2) } }
             if subagents > 0 {
-                Text("+\(subagents)").font(.system(size: 12, weight: .medium)).foregroundStyle(on ? Palette.dim : Palette.quiet)
+                Text("+\(subagents)").accessibilityLabel(subagents == 1 ? "1 subagent" : "\(subagents) subagents").font(.system(size: 12, weight: .medium)).foregroundStyle(on ? Palette.dim : Palette.quiet)
             }
             if !on { Unread(count: unread) }
         }
@@ -199,17 +199,13 @@ extension FeedView {
                     // his tool by name when he uses one; otherwise none is singled out
                     let tool = model.onlyTool?.name ?? "your coding agent"
                     Text("You\u{2019}re connected").font(.system(size: 19, weight: .semibold))
-                    Text("Start \(tool) in a project on your computer and it shows up here, or start one from here.")
+                    Text("Start \(tool) on your computer, or start one here.")
                         .font(.system(size: 16)).foregroundStyle(Palette.quiet).multilineTextAlignment(.center).lineSpacing(3)
                     Button { showNewAgent = true } label: {
                         Text("Start an agent").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.ground)
                             .padding(.horizontal, 22).frame(minHeight: 50).background(Palette.ink, in: RoundedRectangle(cornerRadius: 16))
                     }
                     .buttonStyle(.plain).padding(.top, 14)
-                    Text("Sessions that are already open show up by themselves.").font(.system(size: 13)).foregroundStyle(Palette.quiet).multilineTextAlignment(.center).padding(.top, 18)
-                    if let first = model.onlyTool?.first, !first.isEmpty {
-                        Text(first).font(.system(size: 13)).foregroundStyle(Palette.quiet).multilineTextAlignment(.center)
-                    }
                 } else {
                     Text("No messages yet").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.quiet)
                 }
