@@ -1,7 +1,7 @@
 //! airband: one channel for every coding agent on this machine.
 //!
 //!   airband run                  the tower itself, in the foreground
-//!   airband install              add the Claude Code hooks and start the tower at login
+//!   airband install              add the hooks of the coding tools he uses and start the tower at login
 //!   airband uninstall            remove both
 //!   airband status               agents, and what is waiting to be heard
 //!   airband relay <url>          reach radios through this relay (`airband relay off` to stop)
@@ -11,12 +11,14 @@
 //!   airband radio [--link <pairing link>]
 //!                              a radio in this terminal: transmissions are printed, typed lines are replies
 //!                              (it makes no sound: voice is the phone's)
-//!   airband feed [all|<group>|"<callsign>"] [--once]
+//!   airband feed [--team <team> | --agent "<callsign>"] [--once]
 //!                              the chat in this terminal: every message, cut to a line or two
 //!   airband send "@shop2 ..."    say something; @group and @all work too
-//!   airband launch <project> <task>
-//!                              start a new agent in a project the tower knows (`airband status` lists them)
-//!   airband hook <harness>       adapter run by a harness's own hooks (claude-code, codex)
+//!   airband launch <team> [--tool <id>] [--model <name>] [--effort <name>] [task…]
+//!                              start a new agent in one of his teams (`airband status` lists them)
+//!   airband keys [add <provider> | remove <name>]
+//!                              the keys he gave, one per provider
+//!   airband hook <tool>          run by a coding tool's own hooks, as its row names them
 //!   airband report ...           put any other agent on the radio from a script (see `airband report` with no arguments)
 //!   airband --version            which version this is
 #[cfg(unix)]

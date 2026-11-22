@@ -144,7 +144,7 @@ pub(crate) fn services(job: airband_core::providers::Job) -> Vec<Service> {
             kind: p.id.clone(),
             offer: o.id.clone(),
             more: !o.preferred,
-            free: o.local(),
+            free: o.local,
             login: o.login.clone(),
             price: o.price.clone(),
             voices: o.voices.iter().map(|v| crate::models::VoiceChoice { name: v.id.clone(), label: v.name.clone(), about: v.about.clone(), preview: v.sample.clone() }).collect(),

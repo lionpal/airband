@@ -4,8 +4,8 @@
 //!
 //! What can be chosen is what `providers::offering` lists; nothing in the questions below names a provider.
 //!
-//! A key is kept once, under a name, with the provider it is for (`Config::keys`). What reads uses a key by
-//! its value, and the settings file writes that as the key's name, so a provider can have several keys.
+//! A key is kept once, with the provider it is for (`Config::keys`): one key per provider, found by that
+//! provider (`Config::key_of`). The settings file writes a use of it as the key's name.
 use crate::config::{self, Config};
 use crate::providers::{self, Job, Provider, Use};
 use serde_json::json;

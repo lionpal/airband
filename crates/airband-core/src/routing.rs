@@ -159,13 +159,6 @@ pub struct Parsed {
     pub rest: String,
 }
 
-impl Parsed {
-    /// The one agent named, when exactly one was.
-    pub fn session(&self) -> Option<usize> {
-        (self.to.len() == 1).then(|| self.to[0])
-    }
-}
-
 fn norm(t: &str) -> String {
     let lowered = t.to_lowercase().replace(['’', '\''], "");
     lowered.split(|c: char| !c.is_ascii_alphanumeric()).filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ")
@@ -281,7 +274,8 @@ mod tests {
     }
     fn p(t: &str) -> (Option<usize>, String) {
         let u = parse_utterance(t, &live());
-        (u.session(), u.rest)
+        // the one agent named, when exactly one was
+        ((u.to.len() == 1).then(|| u.to[0]), u.rest)
     }
 
     #[test]

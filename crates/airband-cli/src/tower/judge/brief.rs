@@ -40,7 +40,7 @@ pub(in crate::tower) fn offered(cfg: &Config) -> airband_core::radio::ReadsOffer
             about: o.about.clone(),
             price: o.price.clone(),
             preferred: o.preferred,
-            free: o.local(),
+            free: o.local,
             login: o.login.clone(),
             key: p.key,
             has_key: p.key && kept.contains(&p.id),

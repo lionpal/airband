@@ -10,24 +10,28 @@
 //! and this machine's address on a private network laid over the internet, if it has one (`config::overlay_addrs`), and every direct request needs the token.
 //!
 //! Where things are:
-//! - this file: starting the tower up, and the pieces every module shares
+//! - this file: the pieces every module shares; `serve` starts the tower up and runs its background loops
 //! - `state`: what the tower remembers, all of it in one place (`Inner`), and what is asked of the whole
 //! - `sessions`: the agents on the radio, what each is called and which team it is in
 //! - `entries`: the chat log's lines
 //! - `aloud`: where each thing said stands on its way to being heard on a call
 //! - `calls`: each radio's place in a call
-//! - `intake`: agents' events coming in
-//! - `judge`: what is worth his attention, and in how few words (asks the model)
+//! - `intake`: agents' events coming in, the one way in for every source
+//! - `judge`: what is worth his attention, and in how few words (asks the model), and the short versions made
+//!   behind the requests that want them
+//! - `place`: whether an agent is in the right team
 //! - `route`: who a reply is for, and the controls the tower answers itself
 //! - `deliver`: the ways of getting his words to an agent
-//! - `launch`: starting a new agent in a known project
+//! - `launch` and `held`: starting a new agent, and the ones the tower runs itself
 //! - `pump`: call mode's one-at-a-time queue
 //! - `http`: the routes
-//! - `permit`: permission an agent's harness asks for, put to him and answered from the phone
-//! - `pictures`: small copies of the pictures agents look at or make for him
+//! - `permit`: permission an agent's tool asks for, put to him and answered from the phone
+//! - `pictures` and `attachments`: copies of the pictures agents look at, and the files he sends
 //! - `store`: the database: the chat log, the raw event record, receipts, delivery attempts
 //! - `relay_link`: the outbound connection to the relay, one per paired radio
 //! - `push`: waking his phone with a sealed notification when a message deserves it and he is not looking
+//! - `accounts`, `local`, `links`, `access`, `loops`, `probe`: a tool's accounts, a model run on this computer,
+//!   links in messages, folder access, the timers, and the commands that try a model
 mod accounts;
 mod aloud;
 mod attachments;

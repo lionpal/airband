@@ -426,10 +426,6 @@ impl Offer {
     pub fn usual(&self, field: &str) -> Option<String> {
         self.asks.iter().find(|a| a.field == field).map(|a| a.usual.clone())
     }
-    /// It runs on his own computer: nothing leaves it, and it costs him nothing.
-    pub fn local(&self) -> bool {
-        self.local
-    }
 }
 
 /// Words that stand where a provider's id or a setting's name would (a choice on the phone, the fields of a
@@ -452,7 +448,7 @@ pub fn provider(id: &str) -> Option<Arc<Provider>> {
 /// by name.
 pub fn in_order(job: Job) -> Vec<(Arc<Provider>, Arc<Offer>)> {
     let mut all: Vec<(Arc<Provider>, Arc<Offer>)> = offering(job).into_iter().flat_map(|p| p.offers.iter().filter(|o| o.job == job).map(|o| (p.clone(), o.clone())).collect::<Vec<_>>()).collect();
-    all.sort_by(|(p, o), (q, r)| (!o.local(), p.key, !o.preferred, o.label.as_str()).cmp(&(!r.local(), q.key, !r.preferred, r.label.as_str())));
+    all.sort_by(|(p, o), (q, r)| (!o.local, p.key, !o.preferred, o.label.as_str()).cmp(&(!r.local, q.key, !r.preferred, r.label.as_str())));
     all
 }
 
