@@ -56,7 +56,7 @@ class Relay(BaseHTTPRequestHandler):
             return self.reply(404)
         pushes.append({"auth": self.headers.get("authorization"), "raw": body, **json.loads(body)})
         code = answer_with[0]
-        self.reply(code, json.dumps({"sent": code == 200, "gone": code == 410, "reason": "Unregistered" if code == 410 else ""}).encode())
+        self.reply(code, json.dumps({"sent": True} if code == 200 else {"sent": False, "gone": True, "why": "gone", "reason": "the phone's address is no longer good"}).encode())
 server = ThreadingHTTPServer(("127.0.0.1", RELAY), Relay)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 
@@ -200,7 +200,7 @@ try:
     report("asked", "Publish the notes?")
     check("it forgets the address: nothing more is asked for it", quiet(5))
     log = open(os.path.join(work, "tower.log")).read()
-    check("the log says what was asked and what came back", log.count("push: asked the relay to wake \"phone\"") == 5 and "sent" in log and "no longer good (Unregistered); forgotten" in log, [l for l in log.splitlines() if "push" in l])
+    check("the log says what was asked and what came back", log.count("push: asked the relay to wake \"phone\"") == 5 and "sent" in log and "the phone's address is no longer good; forgotten" in log, [l for l in log.splitlines() if "push" in l])
     check("and holds no address", ADDRESS not in log and SECRET not in log)
 finally:
     tower.terminate()
