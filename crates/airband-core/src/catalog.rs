@@ -74,8 +74,8 @@ pub struct Catalog {
     pub frames: Vec<Frames>,
     /// Words of the trade that a recogniser otherwise hears as everyday ones ("sync" as "sink").
     pub phrases: Vec<String>,
-    /// Providers that are no more, by id. One this build has compiled in and a later copy neither lists nor
-    /// names here is kept as compiled in.
+    /// Providers and coding tools that are no more, by id. One this build has compiled in and a later copy
+    /// neither lists nor names here is kept as compiled in.
     pub retired: Vec<String>,
     /// What was in the document and could not be read by this build, in a few words each.
     pub left_out: Vec<String>,
@@ -316,6 +316,21 @@ mod tests {
         // three offers and one provider and one model did not read, and each is named
         assert_eq!(c.left_out.len(), 5, "{:?}", c.left_out);
         assert!(c.left_out[0].starts_with("x: an offer") && c.left_out[3].starts_with("y:") && c.left_out[4].starts_with("m:"));
+    }
+
+    #[test]
+    fn a_tool_row_this_build_cannot_read_is_left_out_said_and_the_compiled_in_tool_stays() {
+        // N20: one tool row in a shape this build cannot read leaves the rest of the copy to be taken
+        let (taken, said) = offered(&|d| {
+            let tools = d["tools"].as_array_mut().unwrap();
+            tools.iter_mut().find(|t| t["id"] == "codex").unwrap()["name"] = serde_json::json!({ "a": "new shape" });
+            tools.push(serde_json::json!({ "id": "newtool", "launchers": "a new shape" }));
+        })
+        .unwrap();
+        let taken = taken.unwrap();
+        assert_eq!(taken.tools.iter().find(|t| t.id == "codex"), built().tools.iter().find(|t| t.id == "codex"));
+        assert!(!taken.tools.iter().any(|t| t.id == "newtool"));
+        assert!(said.left_out.iter().any(|l| l.starts_with("codex:")) && said.left_out.iter().any(|l| l.starts_with("newtool:")), "{:?}", said.left_out);
     }
 
     #[test]

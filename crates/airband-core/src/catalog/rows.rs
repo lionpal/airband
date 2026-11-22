@@ -14,7 +14,7 @@ pub(super) struct Document {
     #[serde(default)]
     models: Vec<Value>,
     #[serde(default)]
-    tools: Vec<ToolRow>,
+    tools: Vec<Value>,
     #[serde(default)]
     servers: Vec<Value>,
     #[serde(default)]
@@ -49,7 +49,7 @@ pub(super) struct ProviderHead {
     offers: Vec<Value>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 pub(super) struct ToolRow {
     id: String,
     name: String,
@@ -136,8 +136,7 @@ pub(super) fn read(text: &str) -> Result<Catalog, String> {
             usable
         })
         .collect();
-    let tools = doc
-        .tools
+    let tools = each::<ToolRow>(doc.tools, "tool", &mut left_out)
         .into_iter()
         .map(|t| {
             // a launcher in a tool's row starts that tool
