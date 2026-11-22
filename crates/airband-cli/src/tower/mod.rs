@@ -27,7 +27,7 @@
 //!   to "Who is that for?")
 //! - `deliver`: getting his words to an agent
 //! - `edges`: what the tower reaches outside itself through (the model, processes, folders, the ways to an
-//!   agent), each a trait with a stand-in for tests
+//!   agent), each a trait
 //! - `launch` and `held`: starting a new agent, and the ones the tower runs itself
 //! - `pump`: call mode's one-at-a-time queue
 //! - `http`: the routes

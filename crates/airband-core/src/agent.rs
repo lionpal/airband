@@ -82,8 +82,8 @@ pub struct Agent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Deliver {
-    /// A socket on this machine that takes a turn as one line of JSON (`{"type":"user","message":{…}}`), after
-    /// a line that shows `token` when it asks for one. Claude Code's per-session inbox is one.
+    /// A socket on this machine that takes a turn as one line of JSON ([`SocketLine`]), after a line that shows
+    /// `token` when it asks for one.
     Socket {
         path: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -267,5 +267,52 @@ mod tests {
         let odd = r#"{"schema":"airband.agent/1","agent":{"id":"a1","harness":"x"},"event":{"type":"said","text":"Done.","kind":"celebration"}}"#;
         let e: AgentEvent = serde_json::from_str(odd).unwrap();
         assert_eq!(e.event, Event::Said { text: "Done.".into(), kind: Some(crate::radio::Kind::Unknown), turn: None });
+    }
+}
+
+/// The lines a [`Deliver::Socket`] takes, one JSON object to a line: the shape the variant is defined by.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SocketLine {
+    /// Shown first, when the socket asks for a token.
+    Auth { token: String },
+    /// His words, as a turn; `uuid` is the id the session writes on its record of it, which marks it read.
+    User { uuid: String, message: SocketTurn },
+}
+
+/// A turn on a [`SocketLine::User`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SocketTurn {
+    pub role: SocketRole,
+    pub content: String,
+}
+
+/// Who a [`SocketTurn`] is from: always him.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SocketRole {
+    User,
+}
+
+impl SocketLine {
+    /// The lines to write for `words`, under the id `uuid`, with the token first when there is one.
+    pub fn lines(token: Option<&str>, uuid: &str, words: &str) -> String {
+        let auth = token.map(|t| SocketLine::Auth { token: t.to_string() });
+        let user = SocketLine::User { uuid: uuid.to_string(), message: SocketTurn { role: SocketRole::User, content: words.to_string() } };
+        auth.into_iter().chain([user]).map(|l| serde_json::to_string(&l).unwrap_or_default() + "\n").collect()
+    }
+}
+
+#[cfg(test)]
+mod socket_tests {
+    use super::*;
+
+    #[test]
+    fn a_socket_turn_is_written_as_its_lines_say() {
+        let text = SocketLine::lines(Some("t"), "u1", "hi");
+        let lines: Vec<serde_json::Value> = text.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(lines[0], serde_json::from_str::<serde_json::Value>(r#"{"type":"auth","token":"t"}"#).unwrap());
+        assert_eq!(lines[1], serde_json::from_str::<serde_json::Value>(r#"{"type":"user","uuid":"u1","message":{"role":"user","content":"hi"}}"#).unwrap());
+        assert_eq!(SocketLine::lines(None, "u1", "hi").lines().count(), 1);
     }
 }
