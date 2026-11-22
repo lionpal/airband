@@ -103,6 +103,8 @@ def named(f):
     """The roster sends each agent's callsign as its typed parts; here each is also given the text it is shown as
     and its team's name, as the checks read them."""
     for a in f.get("roster", []):
+        if not isinstance(a["callsign"], dict):
+            continue  # already named
         parts = a["callsign"]
         a["parts"], a["callsign"], a["group"] = parts, f"{parts['project']} {parts['number']}", parts["project"]
     return f
@@ -112,7 +114,7 @@ def message(f, who, has=""):
     hits = [m for m in f["messages"] if m["from"] == who and has.lower() in m["text"].lower()]
     return hits[-1] if hits else None
 def roster(f):
-    return {a["callsign"]: a for a in f["roster"]}
+    return {a["callsign"]: a for a in named(f)["roster"]}
 
 def keychain(*args, **more):
     return subprocess.run(["security", *args], capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL, **more)

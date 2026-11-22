@@ -285,6 +285,8 @@ def named(f):
     """The roster sends each agent's callsign as its typed parts; here each is also given the text it is shown as
     and its team's name, as the checks read them."""
     for a in f.get("roster", []):
+        if not isinstance(a["callsign"], dict):
+            continue  # already named
         parts = a["callsign"]
         a["parts"], a["callsign"], a["group"] = parts, f"{parts['project']} {parts['number']}", parts["project"]
     return f
