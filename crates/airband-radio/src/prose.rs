@@ -326,7 +326,7 @@ fn words(spans: &[ProseSpan]) -> String {
 
 /// The first two sentences of what an agent wrote, as words to say, for when no summary of it was made.
 pub fn opening(text: &str) -> String {
-    let s = said(text);
+    let s = plain(text);
     let mut out = String::new();
     let mut ends = 0;
     for (i, ch) in s.char_indices() {
@@ -344,29 +344,37 @@ pub fn opening(text: &str) -> String {
 /// What an agent wrote, as words to say: no marks, a table row by row, code named and passed over.
 pub fn said(text: &str) -> String {
     let mut out = Vec::new();
-    say(&blocks(text), &mut out);
+    say(&blocks(text), &mut out, true);
+    out.join(" ")
+}
+
+/// What an agent wrote, as its words on one line with no marks: the same reading as [`said`], with nothing
+/// added to them. For showing a message short when no summary of it was made.
+pub fn plain(text: &str) -> String {
+    let mut out = Vec::new();
+    say(&blocks(text), &mut out, false);
     out.join(" ")
 }
 
 /// Some words as a sentence of what is said, on one line.
-fn sentence(words: String, out: &mut Vec<String>) {
+fn sentence(words: String, out: &mut Vec<String>, stop: bool) {
     let words = words.split_whitespace().collect::<Vec<_>>().join(" ");
     if !words.is_empty() {
-        out.push(if words.ends_with(['.', '?', '!', ':', ';', ',']) { words } else { format!("{words}.") });
+        out.push(if !stop || words.ends_with(['.', '?', '!', ':', ';', ',']) { words } else { format!("{words}.") });
     }
 }
 
 /// Each block as a sentence of its own, so the voice pauses where the page breaks.
-fn say(blocks: &[ProseBlock], out: &mut Vec<String>) {
+fn say(blocks: &[ProseBlock], out: &mut Vec<String>, stop: bool) {
     for block in blocks {
         match block {
-            ProseBlock::Paragraph { spans } | ProseBlock::Heading { spans, .. } => sentence(words(spans), out),
+            ProseBlock::Paragraph { spans } | ProseBlock::Heading { spans, .. } => sentence(words(spans), out, stop),
             ProseBlock::List { items, .. } => {
                 for item in items {
-                    say(&item.blocks, out);
+                    say(&item.blocks, out, stop);
                 }
             }
-            ProseBlock::Quote { blocks } => say(blocks, out),
+            ProseBlock::Quote { blocks } => say(blocks, out, stop),
             ProseBlock::Code { .. } => out.push("There is a block of code here.".into()),
             ProseBlock::Table { head, rows, .. } => {
                 for row in rows {
@@ -375,7 +383,7 @@ fn say(blocks: &[ProseBlock], out: &mut Vec<String>) {
                         Some(name) => format!("{name} {}", words(&cell.spans)),
                         None => words(&cell.spans),
                     });
-                    sentence(cells.collect::<Vec<_>>().join(", "), out);
+                    sentence(cells.collect::<Vec<_>>().join(", "), out, stop);
                 }
             }
             ProseBlock::Rule => {}
@@ -522,5 +530,7 @@ mod tests {
         assert_eq!(said("**Done.** See `scripts/check.mjs` and https://example.com/z\n- one"), "Done. See scripts/check.mjs and a link. one.");
         assert_eq!(said("rewrite and/or drop [the doc](https://x.y/z)"), "rewrite and/or drop the doc.");
         assert_eq!(opening("One. Two? Three. Four."), "One. Two?");
+        // shown short, an agent's words are its own: nothing is added to them
+        assert_eq!(super::plain("the shelves are **stocked**"), "the shelves are stocked");
     }
 }
