@@ -44,9 +44,17 @@ pub(crate) fn to_run(harness: &str, command: &str) -> String {
 }
 
 /// A tool's `PermissionRequest` hook: the tool it asks for, and what that tool is given. Nothing for any other
-/// hook.
+/// hook, and nothing for one that does not name its tool: no name is made up for it.
 pub(crate) fn permission_hook(hook: &Value) -> Option<(&str, &Value)> {
-    (hook["hook_event_name"].as_str() == Some("PermissionRequest")).then(|| (hook["tool_name"].as_str().unwrap_or("a tool"), &hook["tool_input"]))
+    (hook["hook_event_name"].as_str() == Some("PermissionRequest")).then_some(())?;
+    Some((hook["tool_name"].as_str()?, &hook["tool_input"]))
+}
+
+/// What a tool asks leave to do, as he is asked it, whole: in its row's words when its row has them; else in
+/// the tool's own words for it (`own`), when it gives any; else the tool by its name with exactly what it was
+/// given. Never a summary made up here.
+pub(crate) fn asking(harness: &str, tool: &str, input: &Value, own: Option<String>) -> String {
+    fill(&tool_use(harness, tool)["asks"], input).or(own).unwrap_or_else(|| format!("{tool} {input}"))
 }
 
 /// What he said when he said no from his phone, for the tool to read.
@@ -287,5 +295,12 @@ mod tests {
         let long = leave(agent(), "Bash", "run `x`".into(), &json!({ "command": "y".repeat(7000) }), AT_KEYBOARD, None).unwrap();
         assert!(long.detail.starts_with("Bash\n") && long.detail.ends_with("characters. The rest is at the keyboard.)"));
         assert!(decision(false, "not now", false).contains("not now") && decision(true, "", false).contains("\"behavior\":\"allow\""));
+    }
+
+    #[test]
+    fn what_a_tool_with_no_words_of_its_own_asks_is_shown_as_it_was_given() {
+        let input = serde_json::json!({ "path": "/w/shop/cart.rs" });
+        assert_eq!(asking("no-such-tool", "Frobnicate", &input, None), "Frobnicate {\"path\":\"/w/shop/cart.rs\"}");
+        assert_eq!(asking("no-such-tool", "Frobnicate", &input, Some("tidy the cart".into())), "tidy the cart");
     }
 }

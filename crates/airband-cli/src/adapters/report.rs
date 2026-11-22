@@ -1,6 +1,6 @@
 //! `airband report`: the adapter for everything that has no adapter of its own. Any script can put an agent on
 //! the radio with it.
-use super::post;
+use super::{Posted, post};
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, SCHEMA};
 use std::io::Read;
 
@@ -107,5 +107,30 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         Some("signoff") => Event::Signoff,
         _ => return Err("expected one of: checkin, working, doing <text>, model <name> [effort], said <text>, asked <text>, notice <text>, show <picture file>, picture <picture file>, made <address> [title], signoff".into()),
     };
-    if post(&AgentEvent { schema: SCHEMA.into(), agent, event, via: None }) { Ok(()) } else { Err("airband did not answer (is it running? `airband status`)".into()) }
+    said(post(&AgentEvent { schema: SCHEMA.into(), agent, event, via: None }))
+}
+
+/// What `airband report` comes to: done when the tower took the event or it is kept for the tower, so a
+/// script that tries again on failure does not send it twice; a failure only when it is lost.
+fn said(posted: Posted) -> Result<(), String> {
+    match posted {
+        Posted::Taken => Ok(()),
+        Posted::Kept => {
+            eprintln!("airband did not answer; the report is kept and handed over when it is back.");
+            Ok(())
+        }
+        Posted::Lost => Err("airband did not answer, and the report could not be kept (is it running? `airband status`)".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_report_kept_for_the_tower_is_done_and_only_a_lost_one_fails() {
+        assert!(said(Posted::Taken).is_ok());
+        assert!(said(Posted::Kept).is_ok());
+        assert!(said(Posted::Lost).is_err());
+    }
 }

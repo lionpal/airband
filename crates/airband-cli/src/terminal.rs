@@ -142,20 +142,43 @@ fn link_or_here(cfg: &Config, args: &[String]) -> String {
     crate::option(args, "--link").unwrap_or_else(|| Pairing::Direct { url: format!("http://127.0.0.1:{}", cfg.port), token: cfg.radio_token.clone() }.link())
 }
 
+/// An agent as the feed's roster has it, for finding by name: its id, its team's id, and its callsign as shown
+/// and as its parts.
+struct Named {
+    id: String,
+    team: String,
+    shown: String,
+    parts: airband_core::routing::Callsign,
+}
+
+/// The id of the team called exactly `named`, from the agents in it. Names are distinct on one computer.
+fn team_named(roster: &[Named], named: &str) -> Result<String, String> {
+    roster.iter().find(|a| a.parts.project == named).map(|a| a.team.clone()).ok_or(format!("No team called {named} has an agent here."))
+}
+
+/// The id of the one agent called exactly `named`. Two called alike are not told apart by a guess: he is told,
+/// and nothing is shown.
+fn agent_named(roster: &[Named], named: &str) -> Result<String, String> {
+    match roster.iter().filter(|a| a.shown == named || a.parts.text() == named).collect::<Vec<_>>().as_slice() {
+        [] => Err(format!("No agent is called {named}.")),
+        [one] => Ok(one.id.clone()),
+        _ => Err(format!("More than one agent is called {named}.")),
+    }
+}
+
 /// `airband feed [--team <team> | --agent "<callsign>"] [--once]`: the chat, in a terminal. Each message is the
 /// short version.
 pub(crate) fn feed(cfg: &Config, args: &[String]) -> Result<(), String> {
     let radio = Radio::start(link_from(cfg, args), String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
     let once = args.iter().any(|a| a == "--once");
     let flag = |name: &str| crate::option(args, name);
-    let team = flag("--team");
-    // the agent he named, by the id its callsign has now
-    let agent = match flag("--agent") {
-        Some(named) => {
-            let roster = radio.feed(None, None, u64::MAX, 0).map_err(|e| e.to_string())?.agents;
-            Some(roster.into_iter().find(|a| a.callsign == named || a.parts().text() == named).map(|a| a.id).ok_or(format!("No agent is called {named}."))?)
+    // the team and the agent he named, by their ids: the feed goes by ids, and a name is only shown
+    let (team, agent) = match (flag("--team"), flag("--agent")) {
+        (None, None) => (None, None),
+        (team, agent) => {
+            let roster: Vec<Named> = radio.feed(None, None, u64::MAX, 0).map_err(|e| e.to_string())?.agents.iter().map(|a| Named { id: a.id.clone(), team: a.team.clone(), shown: a.callsign.clone(), parts: a.parts() }).collect();
+            (team.map(|named| team_named(&roster, &named)).transpose()?, agent.map(|named| agent_named(&roster, &named)).transpose()?)
         }
-        None => None,
     };
     let mut after = 0;
     loop {
@@ -182,22 +205,12 @@ pub(crate) fn feed(cfg: &Config, args: &[String]) -> Result<(), String> {
 /// `airband launch <team> [--tool <id>] [--model <name>] [--effort <name>] [task…]`: start a new agent in one of
 /// his teams. The flags are this command's own; the task is everything else, in his words.
 pub(crate) fn launch(cfg: &Config, args: &[String]) -> Result<(), String> {
-    let mut rest: Vec<String> = Vec::new();
-    let mut flags: std::collections::HashMap<&str, String> = Default::default();
-    let mut words = args.iter();
-    while let Some(word) = words.next() {
-        match ["--tool", "--model", "--effort", "--link"].into_iter().find(|flag| flag == word) {
-            Some(flag) => {
-                flags.insert(flag, words.next().cloned().ok_or(format!("{flag} needs a value"))?);
-            }
-            None => rest.push(word.clone()),
-        }
-    }
+    let crate::Words { mut flags, rest, .. } = crate::words("launch", args, &["--tool", "--model", "--effort", "--link"])?;
     let Some((project, task)) = rest.split_first() else {
         return Err("say which team: airband launch <team> [--tool <id>] [--model <name>] [--effort <name>] [task]".into());
     };
     let radio = Radio::start(link_from(cfg, args), String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
-    println!("{}", radio.launch(project.clone(), flags.remove("--tool"), flags.remove("--model"), flags.remove("--effort"), task.join(" ")).map_err(|e| e.to_string())?);
+    println!("{}", radio.launch(project.clone(), flags.remove("tool"), flags.remove("model"), flags.remove("effort"), task.join(" ")).map_err(|e| e.to_string())?);
     Ok(())
 }
 
@@ -239,4 +252,27 @@ pub(crate) fn send(cfg: &Config, args: &[String]) -> Result<(), String> {
     let radio = Radio::start(link_from(cfg, args), String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
     println!("{}", radio.send(words.join(" "), None).map_err(|e| e.to_string())?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn named(id: &str, team: &str, project: &str, number: &str) -> Named {
+        let parts = airband_core::routing::Callsign { project: project.into(), number: number.into(), named: false };
+        Named { id: id.into(), team: team.into(), shown: parts.shown(), parts }
+    }
+
+    #[test]
+    fn the_feed_is_asked_for_a_team_and_an_agent_by_their_ids() {
+        let roster = [named("a", "/w/shop", "shop", "one"), named("b", "/w/garden", "garden", "one"), named("c", "/w/garden", "garden", "two")];
+        // the name he typed is never what the feed is asked for
+        assert_eq!(team_named(&roster, "garden"), Ok("/w/garden".to_string()));
+        assert!(team_named(&roster, "orchard").is_err());
+        assert_eq!(agent_named(&roster, "garden two"), Ok("c".to_string()));
+        assert!(agent_named(&roster, "garden three").is_err());
+        // two answering to one name are not told apart by which came first
+        let twins = [named("a", "/w/shop", "shop", "one"), named("b", "/v/shop", "shop", "one")];
+        assert!(agent_named(&twins, "shop one").is_err());
+    }
 }

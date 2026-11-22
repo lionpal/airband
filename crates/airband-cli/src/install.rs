@@ -36,7 +36,7 @@ pub(crate) fn install() -> Result<(), String> {
     let brewed = homebrew_exe(&real).filter(|lasting| fs::canonicalize(lasting).is_ok_and(|to| to == real));
     let exe = match brewed {
         Some(lasting) => {
-            println!("Using Homebrew's copy at {}. After `brew upgrade airband`, run `airband install` again to restart airband.", lasting.display());
+            println!("Using the package manager's copy at {}. After it updates airband, run `airband install` again to restart airband.", lasting.display());
             lasting
         }
         None => {
@@ -62,7 +62,9 @@ pub(crate) fn install() -> Result<(), String> {
 fn start_at_login(exe: &std::path::Path) -> Result<(), String> {
     use std::process::Command;
     let log = config::dir().join("airband.log");
-    let path = std::env::var("PATH").unwrap_or_else(|_| "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin".into());
+    // the tower finds the coding tools where his terminal does: by the PATH it is installed from, never one
+    // written here
+    let path = std::env::var("PATH").map_err(|_| "PATH is not set, so airband could not find your coding tools. Run `airband install` from a terminal.".to_string())?;
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -101,7 +103,7 @@ fn start_at_login(exe: &std::path::Path) -> Result<(), String> {
 
 #[cfg(not(target_os = "macos"))]
 fn start_at_login(exe: &std::path::Path) -> Result<(), String> {
-    println!("Starting at login is only set up on macOS so far. Start airband yourself:  \"{}\" run", exe.display());
+    println!("airband cannot set itself to start at login on this computer yet. Start it yourself:  \"{}\" run", exe.display());
     Ok(())
 }
 

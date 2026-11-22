@@ -25,22 +25,6 @@ pub(crate) fn refresh() -> (bool, Vec<String>) {
 }
 
 
-/// The words after the command that are not an option or its value.
-fn plain(args: &[String]) -> Vec<&String> {
-    let mut out = Vec::new();
-    let mut skip = false;
-    for a in args {
-        if std::mem::take(&mut skip) {
-            continue;
-        }
-        if a.starts_with("--") {
-            skip = true;
-        } else {
-            out.push(a);
-        }
-    }
-    out
-}
 
 const USAGE: &str = "  airband catalog export [--expires-in-days 180]\n  airband catalog sign <key file> <document>\n  airband catalog check <document> [<signature>] [--against <the copy published before>]\n  airband catalog stamp <catalog/rev>";
 
@@ -49,7 +33,7 @@ const USAGE: &str = "  airband catalog export [--expires-in-days 180]\n  airband
 /// whether a document would be taken by this build. `stamp` gives the rows a
 /// new number when they have changed. `scripts/publish-catalog.sh` and `scripts/catalog-stamp.sh` use them.
 pub(crate) fn command(args: &[String]) -> Result<(), String> {
-    let words = plain(args.get(1..).unwrap_or_default());
+    let words = crate::words("catalog", args.get(1..).unwrap_or_default(), &["--expires-in-days", "--against"])?.rest;
     match args.first().map(String::as_str) {
         Some("export") => {
             let days: u64 = crate::option(args, "--expires-in-days").map(|d| d.parse().map_err(|_| "--expires-in-days takes a number")).transpose()?.unwrap_or(180);

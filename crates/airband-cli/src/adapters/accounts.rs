@@ -24,7 +24,7 @@ pub(crate) fn use_account(harness: &str, id: &str) -> Result<std::thread::JoinHa
 pub(crate) fn accounts_command(cfg: &config::Config, args: &[String]) -> Result<(), String> {
     let harness = HARNESSES.iter().find(|h| h.accounts().is_some()).map(|h| h.name()).ok_or("None of your coding tools has accounts to switch between here.")?;
     let tower = |method: &str, path: &str, body: Option<Value>| -> Option<Result<Accounts, String>> {
-        let here = config::Tower::here(cfg, Duration::from_secs(60));
+        let here = super::TowerHere::here(cfg, Duration::from_secs(60));
         let mut res = match (method, body) {
             ("POST", Some(b)) => here.post(path).send_json(b),
             _ => here.get(path).call(),
