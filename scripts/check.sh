@@ -19,4 +19,5 @@ cargo test -q --release -p airband-core -p airband-relay -p airband-radio -p air
 cargo build -q --release -p airband-cli -p airband-relay
 python3 tools/e2e-relay.py
 python3 tools/e2e-held.py
+python3 tools/e2e-links.py
 python3 tools/e2e.py --claude

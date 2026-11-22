@@ -246,7 +246,7 @@ impl Outgoing {
 
 fn chat(m: airband_core::radio::Message) -> ChatMessage {
     use airband_core::routing::shown;
-    ChatMessage { seq: m.seq, id: m.id, at: m.at, his: m.his, from: shown(&m.from), group: m.group, to: m.to.iter().map(|t| shown(t)).collect(), needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), text: m.text, long: m.long, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links, agent: m.agent, station: String::new(), open: m.open, badge: String::new(), colour: 0, read: m.read, own_session: m.own_session, not_read: m.not_read.map(not_read).unwrap_or_default().to_string() }
+    ChatMessage { seq: m.seq, id: m.id, at: m.at, his: m.his, from: shown(&m.from), group: m.group, to: m.to.iter().map(|t| shown(t)).collect(), needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), text: m.text, long: m.long, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links.into_iter().map(chat_link).collect(), agent: m.agent, station: String::new(), open: m.open, badge: String::new(), colour: 0, read: m.read, own_session: m.own_session, not_read: m.not_read.map(not_read).unwrap_or_default().to_string() }
 }
 
 fn chat_feed(feed: Feed) -> ChatFeed {
@@ -342,8 +342,9 @@ pub struct ChatMessage {
     pub permission: bool,
     /// Pictures that go with it, the ones the agent meant him to see first. `picture(id)` fetches one.
     pub pictures: Vec<ChatPicture>,
-    /// Web links the agent wrote (an artifact, a pull request). The short text leaves them out: show them to open.
-    pub links: Vec<String>,
+    /// The things at web addresses that go with it (a pull request, an artifact, a plain link). The short text
+    /// leaves them out: show each as a card that opens its address.
+    pub links: Vec<ChatLink>,
     /// The agent that said it: stable while that agent runs, whatever it is called. Nothing for his own messages.
     pub agent: Option<String>,
     /// Which computer it came from, when he is paired with several and a [`Desk`] merged them. Empty otherwise.
@@ -363,6 +364,28 @@ pub struct ChatMessage {
     /// It was to be read out to him while he had reading aloud on, and was not: why, in a sentence. Empty for
     /// every other line. Mark the line, and show the sentence when he asks.
     pub not_read: String,
+}
+
+/// Something at a web address that goes with a message. One whose maker's tool said what it is has a `kind`
+/// and usually a `title`: show it as a card. One nothing was said about has neither: show it as a small
+/// button called by its `host`. A host draws every kind the same way; it has no list of kinds of its own.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ChatLink {
+    /// Where a tap goes. Opened as an ordinary address, the phone hands it to the app that owns such
+    /// addresses when one is installed, and to the browser otherwise.
+    pub address: String,
+    /// What kind of thing it is, in his words ("Pull request"). Empty when no tool said.
+    pub kind: String,
+    /// The name of the mark to show beside it, in the platform's symbol set. Empty when no tool said.
+    pub symbol: String,
+    /// What it is called, as the tool that made it said. Empty when it did not.
+    pub title: String,
+    /// The site it is at: "github.com".
+    pub host: String,
+}
+
+fn chat_link(l: airband_core::links::Link) -> ChatLink {
+    ChatLink { address: l.address, kind: l.name, symbol: l.symbol, title: l.title.unwrap_or_default(), host: l.host }
 }
 
 /// A picture an agent looked at or made for him. The size is known before the picture is fetched, so a host

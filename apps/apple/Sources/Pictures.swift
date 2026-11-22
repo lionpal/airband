@@ -191,30 +191,56 @@ private struct Zoomable: View {
     }
 }
 
-/// The web links an agent wrote, as buttons, each called by the site it goes to. They open in the browser.
+/// The web addresses that go with a message. One whose maker's tool said what it is (a pull request, a
+/// published page) is a card: what it is called and what kind of thing it is. Any other is a small button
+/// called by the site it goes to. Every kind is drawn the same way from what the core says; there is no list
+/// of kinds here. A tap opens the address, which the phone hands to the app that owns such addresses when it
+/// is installed, and to the browser otherwise.
 struct LinkRow: View {
     @Environment(\.openURL) private var openURL
     let m: ChatMessage
 
-    /// What to call a link: the site it goes to.
-    static func label(_ url: URL) -> String {
-        let host = url.host ?? "link"
-        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
-    }
+    private var made: [ChatLink] { m.links.filter { !$0.kind.isEmpty || !$0.title.isEmpty } }
+    private var plain: [ChatLink] { m.links.filter { $0.kind.isEmpty && $0.title.isEmpty } }
+    private func open(_ link: ChatLink) { if let url = URL(string: link.address) { openURL(url) } }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(m.links.compactMap { URL(string: $0) }, id: \.absoluteString) { url in
-                    Button { openURL(url) } label: {
-                        HStack(spacing: 6) {
-                            Text(LinkRow.label(url)).font(.system(size: 15, weight: .semibold)).lineLimit(1)
-                            Image(systemName: "arrow.up.right").font(.system(size: 12, weight: .bold))
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(made, id: \.address) { link in
+                let title = link.title.isEmpty ? link.host : link.title
+                Button { open(link) } label: {
+                    HStack(spacing: 11) {
+                        if !link.symbol.isEmpty {
+                            Image(systemName: link.symbol).font(.system(size: 15, weight: .medium)).foregroundStyle(Palette.soft)
+                                .frame(width: 32, height: 32).background(Palette.field, in: RoundedRectangle(cornerRadius: 9))
                         }
-                        .foregroundStyle(Palette.ink).padding(.horizontal, 14).frame(minHeight: 44)
-                        .background(Palette.raised, in: Capsule())
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(title).font(.system(size: 15, weight: .semibold)).foregroundStyle(Palette.ink).lineLimit(1)
+                            if !link.kind.isEmpty { Text(link.kind).font(.system(size: 13)).foregroundStyle(Palette.quiet).lineLimit(1) }
+                        }
+                        Spacer(minLength: 4)
+                        Image(systemName: "arrow.up.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Palette.quiet)
                     }
-                    .buttonStyle(.plain).accessibilityLabel("Open \(LinkRow.label(url))")
+                    .padding(.horizontal, 12).padding(.vertical, 9).frame(minHeight: 44)
+                    .background(Palette.raised, in: RoundedRectangle(cornerRadius: 14))
+                }
+                .buttonStyle(.plain).accessibilityLabel("Open \([title, link.kind].filter { !$0.isEmpty }.joined(separator: ", "))")
+            }
+            if !plain.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(plain, id: \.address) { link in
+                            Button { open(link) } label: {
+                                HStack(spacing: 6) {
+                                    Text(link.host.isEmpty ? "Link" : link.host).font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                                    Image(systemName: "arrow.up.right").font(.system(size: 12, weight: .bold))
+                                }
+                                .foregroundStyle(Palette.ink).padding(.horizontal, 14).frame(minHeight: 44)
+                                .background(Palette.raised, in: Capsule())
+                            }
+                            .buttonStyle(.plain).accessibilityLabel("Open \(link.host.isEmpty ? "the link" : link.host)")
+                        }
+                    }
                 }
             }
         }

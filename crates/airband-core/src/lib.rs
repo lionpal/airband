@@ -11,6 +11,7 @@ pub mod audio;
 pub mod catalog;
 pub mod clock;
 pub mod kept;
+pub mod links;
 pub mod pairing;
 pub mod providers;
 pub mod radio;

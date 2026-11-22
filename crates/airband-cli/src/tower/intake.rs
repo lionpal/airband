@@ -87,6 +87,10 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
             let extra = s.pictures.len().saturating_sub(12);
             s.pictures.drain(..extra);
         }
+        Event::Made { address, title, kind } => {
+            log(format!("{callsign}: its tool made something, shown with what it says next"));
+            inner.links.made(&id, &address, title, kind);
+        }
         Event::Subagent { done, .. } => {
             let s = inner.session(&id).unwrap();
             s.subagents = if done { s.subagents.saturating_sub(1) } else { s.subagents + 1 };
@@ -119,6 +123,7 @@ pub(super) fn enqueue(inner: &mut Inner, agent_id: &str, notice: bool, full: Str
     let id = config::random_hex(8);
     // a notice from the harness is read to him as it is: it has its line from the start and no model reads it
     let short = notice.then(|| spoken(&full));
+    inner.links.said(agent_id, &id, &full);
     // the line is its own place in the reading queue (a key in it is masked as it is recorded, so the copy a
     // model reads to shorten it has none either)
     inner.record(Entry { pictures, short, notice, aloud: Aloud::Waiting, ..Entry::said(id, &session, kind, full) });

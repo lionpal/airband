@@ -45,6 +45,52 @@ fn remote_control_name(transcript: &str, session: &str) -> Option<String> {
     name
 }
 
+/// The kind of link (`catalog/links`) a pull request is.
+const PULL_KIND: &str = "pull-request";
+
+/// The pull requests this session has opened since the last look. Claude Code writes one line into the
+/// session's transcript for each (`pr-link`: its address, its number and the repository), which is what its
+/// own screen shows them from. The place reached is kept beside the tower's files, so each is reported once.
+/// On the first look at a session nothing is reported: what its transcript already holds was made before
+/// anyone was watching.
+fn pull_requests(hook: &Value) -> Vec<Event> {
+    let (Some(transcript), Some(session)) = (hook["transcript_path"].as_str(), hook["session_id"].as_str()) else { return Vec::new() };
+    if !session.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return Vec::new();
+    }
+    let note = crate::config::dir().join("claude-code").join(format!("{session}.made.json"));
+    let Ok(file) = std::fs::File::open(transcript) else { return Vec::new() };
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let reached = airband_core::kept::load::<Value>(&note).and_then(|kept| kept["at"].as_u64()).filter(|at| *at <= len);
+    let mut found: Vec<Event> = Vec::new();
+    let at = match reached {
+        Some(at) => whole_lines(file, at, |line| {
+            if let Some(made) = pull_request_line(line).filter(|made| !found.contains(made)) {
+                found.push(made);
+            }
+        })
+        .unwrap_or(at),
+        None => len,
+    };
+    let _ = airband_core::kept::save(&note, &serde_json::json!({ "at": at }));
+    found
+}
+
+/// The pull request one transcript line records, when the line is Claude Code's own record of one. Such a
+/// record is a short line; the long ones (a request, a tool's output) are not read at all.
+fn pull_request_line(line: &[u8]) -> Option<Event> {
+    if line.len() > 4096 {
+        return None;
+    }
+    let entry: Value = serde_json::from_slice(line).ok()?;
+    if entry["type"].as_str() != Some("pr-link") {
+        return None;
+    }
+    let address = entry["prUrl"].as_str().filter(|a| a.starts_with("https://"))?;
+    let title = entry["prRepository"].as_str().zip(entry["prNumber"].as_u64()).map(|(repository, number)| format!("{repository} #{number}"));
+    Some(Event::Made { address: address.to_string(), title, kind: Some(PULL_KIND.to_string()) })
+}
+
 /// Read a transcript's lines from a place in it onward, handing each whole line to `each`, and say how far
 /// that got. A line still being written is left for next time, and so is whatever follows a part that could
 /// not be read. Nothing when the place could not be gone to.
@@ -466,18 +512,40 @@ pub fn events(hook: &Value) -> Vec<AgentEvent> {
         Some("PostToolUse") if is_subagent(hook) => vec![Event::Subagent { done: true, what: hook["tool_input"]["description"].as_str().unwrap_or("").to_string() }],
         // it sent him a file
         Some("PostToolUse") if hook["tool_name"].as_str() == Some(SENDS_FILES) => files_sent(hook).into_iter().map(|path| Event::Picture { path, shown: true }).collect(),
+        // it published a page: the tool's own answer says where it is and what it is called
+        Some("PostToolUse") if hook["tool_name"].as_str() == Some(ARTIFACT_TOOL) => made_artifact(hook).into_iter().collect(),
         _ => Vec::new(),
     });
-    super::hooks::from_agent(agent_of(hook), events)
+    // what its turn made that Claude Code wrote down itself comes first, so it goes with what the turn said
+    let made = if matches!(hook["hook_event_name"].as_str(), Some("Stop" | "SessionStart")) { pull_requests(hook) } else { Vec::new() };
+    super::hooks::from_agent(agent_of(hook), made.into_iter().chain(events).collect())
 }
 
 // ---- setting Claude Code up to report: its hooks, in its own settings file ----
 
+/// Claude Code's tool for publishing a page on claude.ai, and the kind of link (`catalog/links`) such a page is.
+const ARTIFACT_TOOL: &str = "Artifact";
+const ARTIFACT_KIND: &str = "claude-artifact";
+
+/// The page the Artifact tool just published, from the tool's own answer. The tool says which of its actions
+/// it was asked for (publishing is the one it does when none is named); reading a page, listing them or
+/// adding a file to one publishes nothing.
+fn made_artifact(hook: &Value) -> Option<Event> {
+    let asked = &hook["tool_input"];
+    if !matches!(asked["action"].as_str(), None | Some("publish")) || asked["asset"].as_bool() == Some(true) {
+        return None;
+    }
+    let answer = &hook["tool_response"];
+    let address = answer["url"].as_str().filter(|a| a.starts_with("https://"))?;
+    let title = answer["title"].as_str().map(str::trim).filter(|t| !t.is_empty()).map(String::from);
+    Some(Event::Made { address: address.to_string(), title, kind: Some(ARTIFACT_KIND.to_string()) })
+}
+
 /// Claude Code's tool for handing him a file.
 const SENDS_FILES: &str = "SendUserFile";
-/// The Claude Code tools worth hearing about once they have run: the one that hands him a file, and the one
-/// that runs a subagent.
-const AFTER_TOOLS: &str = "SendUserFile|Agent|Task";
+/// The Claude Code tools worth hearing about once they have run: the one that hands him a file, the one that
+/// publishes a page, and the one that runs a subagent.
+const AFTER_TOOLS: &str = "SendUserFile|Artifact|Agent|Task";
 /// The ones worth hearing about as they start: a subagent.
 const BEFORE_TOOLS: &str = "Agent|Task";
 /// Permission is asked on the radio first. The time allowed is long because he is the one being waited for; the
@@ -653,6 +721,29 @@ mod tests {
         assert_eq!(call("PreToolUse"), Event::Subagent { done: false, what: "map the columns".into() });
         assert_eq!(call("PostToolUse"), Event::Subagent { done: true, what: "map the columns".into() });
     }
+    #[test]
+    fn a_page_it_published_is_reported_as_the_tool_itself_described_it() {
+        let asked = |input: Value, answer: Value| json!({ "session_id": "s1", "cwd": "/x/shop", "hook_event_name": "PostToolUse", "tool_name": "Artifact", "tool_input": input, "tool_response": answer });
+        let hook = |answer: Value| asked(json!({ "file_path": "/x/shop/plan.html" }), answer);
+        let made = events(&hook(json!({ "url": "https://claude.ai/artifact/abc123", "path": "/x/shop/plan.html", "artifact_id": "1687a527-01d7-4833-9328-96aa99574dec", "title": "Refund plan", "updated": false, "owned": true, "icon": "test", "audience": "owner", "seq": 1, "version": "1795306244-abb6", "contract": "0.0.0", "liveSubscription": "arming", "editsApplied": 1 })));
+        assert_eq!(made[0].event, Event::Made { address: "https://claude.ai/artifact/abc123".into(), title: Some("Refund plan".into()), kind: Some("claude-artifact".into()) });
+        // looking one up publishes nothing
+        assert!(events(&asked(json!({ "action": "read", "url": "https://claude.ai/artifact/abc123" }), json!({ "url": "https://claude.ai/artifact/abc123", "title": "Refund plan" }))).is_empty());
+        assert!(events(&hook(json!({ "error": "refused" }))).is_empty());
+    }
+
+    #[test]
+    fn a_pull_request_is_read_from_claude_codes_own_record_of_it_and_from_nothing_else() {
+        // the line a real session wrote when its `gh pr create` came back (the names changed, nothing else)
+        let real = br#"{"type":"pr-link","sessionId":"08613ff5-7162-4f55-a77a-580db37aef01","prNumber":194,"prUrl":"https://github.com/acme/shop/pull/194","prRepository":"acme/shop","timestamp":"2026-11-22T00:47:59.530Z"}"#;
+        assert_eq!(pull_request_line(real), Some(Event::Made { address: "https://github.com/acme/shop/pull/194".into(), title: Some("acme/shop #194".into()), kind: Some("pull-request".into()) }));
+        // the same address in a tool's output or in what the agent wrote is not a record of one
+        let output = br#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"https://github.com/acme/shop/pull/194"}]}}"#;
+        let wrote = br#"{"type":"assistant","message":{"content":[{"type":"text","text":"The draft PR is open at https://github.com/acme/shop/pull/194."}]}}"#;
+        assert_eq!((pull_request_line(output), pull_request_line(wrote)), (None, None));
+        assert_eq!(pull_request_line(br#"{"type":"pr-link","prNumber":194}"#), None);
+    }
+
     #[test]
     fn a_picture_a_tool_touched_is_reported() {
         let dir = std::env::temp_dir().join(format!("airband-adapter-{}", std::process::id()));

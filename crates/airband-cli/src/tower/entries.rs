@@ -240,7 +240,7 @@ impl Inner {
             // only while the harness is still waiting on it
             permission: e.leave && e.permit.as_ref().is_some_and(|id| self.permits.get(id).is_some_and(|p| p.decided.is_none())),
             pictures: e.pictures.clone(),
-            links: if e.his { Vec::new() } else { airband_core::speech::links(&e.full) },
+            links: if e.his { Vec::new() } else { self.links.links(&airband_core::catalog::current().links, &e.id, &e.full) },
             agent: e.agent.clone(),
             rev: e.rev,
             open: false,

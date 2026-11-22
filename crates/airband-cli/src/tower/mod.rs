@@ -42,6 +42,7 @@ mod launch;
 mod local;
 mod permit;
 mod place;
+mod links;
 mod pictures;
 mod pump;
 mod push;
@@ -448,6 +449,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         let (saved, entries) = store.load(LOG_KEEP);
         let (seq, rev) = store.last_counts();
         let mut inner = Inner { sessions: saved.sessions, projects: saved.projects, colours: saved.colours, held: saved.held, menus: saved.menus, tools: saved.tools, placed: saved.placed, seq, rev, log: entries, ..Inner::default() };
+        inner.links = links::Book::load();
         inner.reap();
         inner.close_requests_from_before();
         // credentials said before the chat masked them: masked now, and sent to every radio again as they are

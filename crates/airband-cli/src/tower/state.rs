@@ -17,6 +17,8 @@ pub(super) fn shown(at: &std::path::Path) -> String {
 }
 #[derive(Default)]
 pub(super) struct Inner {
+    /// What is known about the things at the web addresses in the chat.
+    pub(super) links: links::Book,
     pub(super) sessions: Vec<Session>,
     pub(super) log: Vec<Entry>,
     /// The last changes to what is read out, as the log has them: for `airband status`.
