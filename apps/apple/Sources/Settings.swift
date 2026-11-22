@@ -42,7 +42,7 @@ struct SetupView: View {
                 Section {
                     Toggle("Show whole messages", isOn: $model.showWhole)
                 } footer: {
-                    Text("Off, you see the short version of what each agent wrote and can open any one. On, you see all of it. What is read aloud is the short version either way.")
+                    Text("What's read aloud stays short.")
                 }
                 if !model.computers.isEmpty {
                     Section {
@@ -56,7 +56,7 @@ struct SetupView: View {
                             Picker(selection: Binding(get: { model.icon(of: c.id) }, set: { model.setIcon($0, of: c.id) })) {
                                 ForEach(RadioModel.computerSymbols, id: \.self) { symbol in Image(systemName: symbol).tag(symbol) }
                             } label: {
-                                Label(c.name, systemImage: model.icon(of: c.id))
+                                Text(c.name)
                             }
                         }
                     } header: {
@@ -74,7 +74,7 @@ struct SetupView: View {
                         }
                     }
                 }
-                Section(footer: Text("Run ") + Text("airband pair").font(.system(.footnote, design: .monospaced)) + Text(" on each computer, then scan the code it shows or paste its link. Each one adds that computer. Treat a link like a password.")) {
+                Section(footer: Text("Run ") + Text("airband pair").font(.system(.footnote, design: .monospaced)) + Text(" on a computer, then scan its code. Keep the link private.")) {
                     Button { scanning = true } label: { Label("Scan code", systemImage: "qrcode.viewfinder").font(.body.weight(.semibold)) }
                     // the other way in, for a link sent to the phone: smaller, under the scan
                     Button("Paste a link instead") {
