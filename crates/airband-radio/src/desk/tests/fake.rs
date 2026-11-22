@@ -15,6 +15,8 @@ pub(crate) struct FakeTower {
     answers: Mutex<HashMap<(String, &'static str), Scripted>>,
     /// Every request it was asked, in order: method and whole path.
     pub(crate) asked: Mutex<Vec<(String, String)>>,
+    /// While set it answers nothing at all, as a computer that is off.
+    pub(crate) away: std::sync::atomic::AtomicBool,
 }
 
 impl FakeTower {
@@ -45,6 +47,10 @@ fn fits(pattern: &str, path: &str) -> bool {
 
 impl Transport for FakeTower {
     fn exchange(&self, method: Method, path: &str, _: Option<Value>) -> Result<(u16, Value), LinkError> {
+        if self.away.load(std::sync::atomic::Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(20));
+            return Err(LinkError::Unreachable(Way::Paired));
+        }
         self.asked.lock().unwrap().push((method.to_string(), path.to_string()));
         let answers = self.answers.lock().unwrap();
         let found = answers.iter().find(|((m, p), _)| *m == method.to_string() && fits(p, path)).map(|(_, a)| a.clone());

@@ -90,13 +90,15 @@ fn a_computer_not_reached_is_sent_the_choice_when_it_is_and_then_it_is_let_go() 
     let desk = desk_with(&dir, vec![(link(1), studio), (link(2), laptop.clone())]);
     desk.set_links(vec![link(1), link(2)]);
     assert!(all_answered(&desk, 2));
-    // the laptop is away when he chooses
+    // the laptop is away when he chooses: off, so nothing reaches it until it is back
+    laptop.away.store(true, std::sync::atomic::Ordering::SeqCst);
     let laptop_id = { let mut state = desk.shared.state.lock().unwrap(); let c = state.computers.iter_mut().find(|c| c.link == link(2)).unwrap(); c.online = false; c.id() };
     let id = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "anthropic").map(|c| c.id).unwrap();
     desk.choose_for(ChoiceJob::Reads, id, None, HashMap::new(), false).unwrap();
     let waiting = reads_lines(&desk);
     assert_eq!(laptop.asked_on::<at::Reads>(), 0);
     // it is reached: it is sent the choice, and with every computer having it nothing is left waiting
+    laptop.away.store(false, std::sync::atomic::Ordering::SeqCst);
     let radio = desk.shared.state.lock().unwrap().computer(&laptop_id).map(|c| c.radio.clone()).unwrap();
     crate::choices::computer_reached(&desk.shared, &radio);
     let kept = desk.shared.chooser.reads_intent();
