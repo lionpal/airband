@@ -265,8 +265,11 @@ impl Ears {
 
     /// Ask for the pass now, so it is there before he next opens the microphone. Nothing is asked of anyone
     /// when what he chose needs no pass.
+    /// A pass good for one connection only is never asked for ahead: it would be spent for nothing.
     pub(crate) fn warm(&self) {
-        if matches!(self.way(), Way::Mic(Mic::Live { .. })) {
+        if let Way::Mic(Mic::Live { with }) = self.way()
+            && !with.once
+        {
             let _ = self.pass();
         }
     }

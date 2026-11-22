@@ -147,7 +147,7 @@ impl Desk {
     /// Let a question go without answering it: it stops waiting on him, here at once and on its computer.
     /// Blocks: call it off the main thread.
     pub fn dismiss(&self, message_id: String) -> Result<(), RadioError> {
-        let radio = self.radio_of(&message_id).ok_or(RadioError::Refused)?;
+        let radio = self.radio_of(&message_id).ok_or_else(|| RadioError::gone("message"))?;
         self.shared.state.lock().unwrap().answered.insert(message_id.clone());
         self.shared.host.changed();
         radio.dismiss(message_id)

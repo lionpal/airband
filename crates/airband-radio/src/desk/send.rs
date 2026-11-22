@@ -122,7 +122,7 @@ impl Desk {
     }
     /// Take back something he said that is still waiting its turn. Blocks: call it off the main thread.
     pub fn unsend(&self, message_id: String) -> Result<(), RadioError> {
-        self.radio_of(&message_id).ok_or(RadioError::Refused)?.unsend(message_id)
+        self.radio_of(&message_id).ok_or_else(|| RadioError::gone("message"))?.unsend(message_id)
     }
 }
 

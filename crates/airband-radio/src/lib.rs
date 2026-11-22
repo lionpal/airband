@@ -293,6 +293,11 @@ impl RadioError {
             RadioError::Offline => "Your computer could not be reached.".into(),
         }
     }
+    /// What he asked about is not on any of his computers as this phone last saw them (a message, an agent):
+    /// said as that, never as his computer refusing.
+    pub(crate) fn gone(what: &str) -> RadioError {
+        RadioError::Told { reason: format!("That {what} is no longer on any of your computers.") }
+    }
     /// Something on this phone itself failed (a file it could not read or keep): said as that, never as his
     /// computer refusing.
     pub(crate) fn here(what: &str) -> RadioError {

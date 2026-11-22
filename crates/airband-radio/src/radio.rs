@@ -375,8 +375,9 @@ impl Radio {
     /// A picture, as a JPEG file on the device: fetched from the tower the first time and kept, so it is there
     /// at once afterwards and without a connection. Returns the file's path. Blocks: call it off the main thread.
     pub(crate) fn picture(&self, id: String) -> Result<String, RadioError> {
+        // a picture's id is the hex its computer gave it: anything else names no picture there
         if id.is_empty() || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(RadioError::Refused);
+            return Err(RadioError::gone("picture"));
         }
         let file = self.store.pictures().join(format!("{id}.jpg"));
         if file.is_file() {
@@ -385,7 +386,7 @@ impl Radio {
         let (mut bytes, mut from) = (Vec::new(), 0u32);
         loop {
             let part = self.link.call::<at::Picture>(Some(&id), &wire::PartQuery { from: from as usize }, &Nothing {})?;
-            bytes.extend(airband_core::encode::unbase64(&part.data).ok_or(RadioError::Refused)?);
+            bytes.extend(airband_core::encode::unbase64(&part.data).ok_or_else(|| crate::choices::told("Your computer sent a picture that could not be read."))?);
             // a part that moves nothing forward would loop for ever
             if part.done || part.next <= from {
                 break;

@@ -21,7 +21,7 @@ impl Desk {
     }
     /// Exactly what the agent wrote. Blocks: call it off the main thread.
     pub fn full(&self, message_id: String) -> Result<String, RadioError> {
-        self.radio_of(&message_id).ok_or(RadioError::Refused)?.more(message_id, true)
+        self.radio_of(&message_id).ok_or_else(|| RadioError::gone("message"))?.more(message_id, true)
     }
     /// Read a question to him before he answers it: who is asking, its short form, and the answers it offers,
     /// in the voice he chose on this device. Blocks until it has been heard or [`Desk::stop_reading`] is
@@ -36,7 +36,7 @@ impl Desk {
     }
     /// One of a message's pictures, as a file on the device. Blocks: call it off the main thread.
     pub fn picture(&self, message_id: String, picture_id: String) -> Result<String, RadioError> {
-        self.radio_of(&message_id).ok_or(RadioError::Refused)?.picture(picture_id)
+        self.radio_of(&message_id).ok_or_else(|| RadioError::gone("message"))?.picture(picture_id)
     }
     /// For each computer: how it was last reached, or not, through the relay and at its own address on the
     /// network the phone is on. From what this phone has seen itself; nothing is asked of anyone to make it.

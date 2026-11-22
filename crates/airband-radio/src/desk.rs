@@ -529,7 +529,7 @@ impl Desk {
     }
     /// The radio of the computer that has this agent, or a refusal when none does.
     fn agent_radio(&self, agent: &str) -> Result<Arc<Radio>, RadioError> {
-        self.shared.state.lock().unwrap().radio_with_agent(agent).ok_or(RadioError::Refused)
+        self.shared.state.lock().unwrap().radio_with_agent(agent).ok_or_else(|| RadioError::gone("agent"))
     }
     /// The computer's radio that a message still waiting to go, or given up on, belongs to: what each keeps
     /// on this device says, so it is known from launch.
