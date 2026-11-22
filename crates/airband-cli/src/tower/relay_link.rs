@@ -5,7 +5,7 @@
 //! bytes; a request that does not open with a paired radio's key, is not fresh, or was already answered is
 //! dropped here.
 use crate::config::{self, PairedRadio};
-use super::{App, PRESENCE_HEADER, RADIO_HEADER, VIA_HEADER, log, now_ms};
+use super::{App, PRESENCE_HEADER, VIA_HEADER, log, now_ms};
 use axum::Router;
 use axum::body::Body;
 use axum::http::Request;
@@ -307,7 +307,7 @@ impl Serve {
             return self.refused(call, via, 403, "a radio may only use /v1/radio/");
         }
         let body = if call.body.is_null() { Body::empty() } else { Body::from(serde_json::to_vec(&call.body).unwrap()) };
-        let mut req = Request::builder().method(call.method.as_str()).uri(&call.path).header("authorization", format!("Bearer {}", self.token)).header(RADIO_HEADER, &self.name).header(VIA_HEADER, via).header("content-type", "application/json");
+        let mut req = Request::builder().method(call.method.as_str()).uri(&call.path).header("authorization", format!("Bearer {}", self.token)).header(VIA_HEADER, via).extension(super::http::RadioId(self.name.clone())).header("content-type", "application/json");
         if now {
             req = req.header(PRESENCE_HEADER, serde_json::to_string(&call.presence).unwrap());
         }

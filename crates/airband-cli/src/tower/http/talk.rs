@@ -1,8 +1,8 @@
 //! Talking: what to say next, what he heard and said, and judging what agents said for him.
 use super::*;
+use axum::Extension;
 
-pub(super) async fn next(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>) -> Response {
-    let radio = radio_of(&headers);
+pub(super) async fn next(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Query(q): Query<HashMap<String, String>>) -> Response {
     {
         let mut inner = app.passing();
         // He has just turned reading aloud on, and the radio says so (`joined`). What was said long before is
@@ -27,7 +27,7 @@ pub(super) async fn next(State(app): State<Arc<App>>, headers: HeaderMap, Query(
     while Instant::now() < until {
         {
             let mut inner = app.passing();
-            let call = inner.call(&radio);
+        let call = inner.call(&radio);
             if let Some(t) = call.outbox.take() {
                 call.handed = Some(t.clone());
                 return Json(t).into_response();
@@ -40,8 +40,7 @@ pub(super) async fn next(State(app): State<Arc<App>>, headers: HeaderMap, Query(
 
 /// A radio was handed something to read out and no sound came of it. It goes back in the queue, the reason is
 /// written down, and that radio is handed nothing more for a minute.
-pub(super) async fn unheard(State(app): State<Arc<App>>, headers: HeaderMap, Json(u): Json<Value>) -> Json<Value> {
-    let radio = radio_of(&headers);
+pub(super) async fn unheard(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Json(u): Json<Value>) -> Json<Value> {
     let mut inner = app.change();
     let id = u["id"].as_str().unwrap_or_default();
     let who = inner.log.iter().find(|e| e.id == id).map(|e| e.from.clone()).unwrap_or_default();
@@ -59,14 +58,13 @@ pub(super) async fn unheard(State(app): State<Arc<App>>, headers: HeaderMap, Jso
 
 /// A radio says where it stands, when that changes and while it has nothing else to ask (he has the
 /// microphone open on a call): so the tower does not take it for gone.
-pub(super) async fn presence(State(app): State<Arc<App>>, headers: HeaderMap, Json(said): Json<airband_core::radio::Presence>) -> Json<Value> {
-    app.passing().radio_says(&radio_of(&headers), said);
+pub(super) async fn presence(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Json(said): Json<airband_core::radio::Presence>) -> Json<Value> {
+    app.passing().radio_says(&radio, said);
     app.kick.notify_one();
     Json(json!({}))
 }
 
-pub(super) async fn heard(State(app): State<Arc<App>>, headers: HeaderMap, Json(h): Json<Heard>) -> Json<Value> {
-    let radio = radio_of(&headers);
+pub(super) async fn heard(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Json(h): Json<Heard>) -> Json<Value> {
     let mut inner = app.change();
     // remember when he was last told, so an unanswered question comes round again later and not at once
     let times = inner.offered.get(&h.id).map(|(n, _)| *n).unwrap_or(0);
@@ -86,10 +84,9 @@ pub(super) async fn heard(State(app): State<Arc<App>>, headers: HeaderMap, Json(
     Json(json!({}))
 }
 
-pub(super) async fn ready(State(app): State<Arc<App>>, headers: HeaderMap) -> Json<Value> {
+pub(super) async fn ready(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>) -> Json<Value> {
     let waiting = {
         let mut inner = app.passing();
-        let radio = radio_of(&headers);
         let call = inner.call(&radio);
         call.ready = true;
         // ready for the next with no word about the last (he turned reading off part way, or its own voice
@@ -107,9 +104,8 @@ pub(super) const SLOW: Duration = Duration::from_secs(10);
 /// Something he said. It is answered at once: the tower has it, under its id. Working out who it is for and
 /// handing it over can take a model a while, and no request waits on that: what comes of it is told in the
 /// feed, and to anyone who asks again under the same id.
-pub(super) async fn utterance(State(app): State<Arc<App>>, headers: HeaderMap, Json(u): Json<Utterance>) -> Response {
+pub(super) async fn utterance(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, headers: HeaderMap, Json(u): Json<Utterance>) -> Response {
     use airband_core::radio::Outcome;
-    let radio = radio_of(&headers);
     // how it came: through the relay, straight over his own network, kept by the relay while the tower was
     // away, or from this computer
     let via = headers.get(VIA_HEADER).and_then(|v| v.to_str().ok()).unwrap_or("this computer").to_string();

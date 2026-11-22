@@ -1,5 +1,6 @@
 //! The chat as a radio reads it: the feed, one message whole, its pictures, and the computer's status.
 use super::*;
+use axum::Extension;
 
 /// One request for the whole chat, for as long as it is open.
 pub(super) struct Reading(Arc<App>);
@@ -18,8 +19,7 @@ impl Drop for Reading {
 /// renamed, so a radio always ends up with the current form of every line. `since=0` is a radio starting from
 /// nothing: it gets the newest lines.
 /// With no `since`, `after=<seq>` gives the lines added after that position, and never a change to an earlier one.
-pub(super) async fn feed(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>) -> Json<Feed> {
-    let radio = radio_of(&headers);
+pub(super) async fn feed(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Query(q): Query<HashMap<String, String>>) -> Json<Feed> {
     // all of it, or one team's (`team`), or one agent's (`agent`, its id)
     let (team, agent) = (q.get("team").cloned(), q.get("agent").cloned());
     let since: Option<u64> = q.get("since").and_then(|v| v.parse().ok());

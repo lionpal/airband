@@ -17,10 +17,12 @@ use teams::*;
 pub(super) use events::take_event;
 pub(super) use teams::read_worked;
 
-/// Which radio is asking.
-fn radio_of(headers: &HeaderMap) -> String {
-    headers.get(RADIO_HEADER).and_then(|v| v.to_str().ok()).map(|v| v.chars().filter(|c| c.is_ascii_alphanumeric() || "-_ .".contains(*c)).take(40).collect::<String>()).filter(|v| !v.is_empty()).unwrap_or_else(|| "radio".into())
-}
+/// Which radio is asking: the name of its pairing, exactly as the pairing has it. A request the relay link or
+/// the near listener opened carries it from the pairing whose key opened it; one on the plain direct route says
+/// it in its header. Every place that keeps something per radio (settled answers, presence, push addresses)
+/// goes by this one value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RadioId(pub String);
 
 /// Compare every byte whatever the outcome, so timing says nothing about a token.
 fn same(given: &[u8], want: &[u8]) -> bool {
@@ -33,15 +35,28 @@ async fn auth(State(app): State<Arc<App>>, req: Request, next: Next) -> Response
     let given = req.headers().get("authorization").and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).unwrap_or("").as_bytes();
     let own = same(given, app.cfg.token.as_bytes());
     let radio = same(given, app.cfg.radio_token.as_bytes()) && req.uri().path().starts_with("/v1/radio/");
-    if own || radio { next.run(req).await } else { (StatusCode::UNAUTHORIZED, Json(json!({ "error": "bad token" }))).into_response() }
+    if !(own || radio) {
+        return (StatusCode::UNAUTHORIZED, Json(json!({ "error": "bad token" }))).into_response();
+    }
+    let mut req = req;
+    if req.uri().path().starts_with("/v1/radio/") && req.extensions().get::<RadioId>().is_none() {
+        match req.headers().get(RADIO_HEADER).and_then(|v| v.to_str().ok()).filter(|v| !v.is_empty()).map(String::from) {
+            Some(name) => {
+                req.extensions_mut().insert(RadioId(name));
+            }
+            None => return (StatusCode::BAD_REQUEST, Json(json!({ "error": "the request does not say which radio it is from" }))).into_response(),
+        }
+    }
+    next.run(req).await
 }
 
 /// Every request from a radio says where the radio stands: on a call or not, showing the chat or not. It is
 /// written down before the request is run, so every rule about whether he is there reads what the radio said.
 async fn presence_said(State(app): State<Arc<App>>, req: Request, next: Next) -> Response {
     if req.uri().path().starts_with("/v1/radio/")
-        && let Some(said) = req.headers().get(PRESENCE_HEADER).and_then(|v| v.to_str().ok()).and_then(|v| serde_json::from_str::<airband_core::radio::Presence>(v).ok()) {
-            app.passing().radio_says(&radio_of(req.headers()), said);
+        && let Some(said) = req.headers().get(PRESENCE_HEADER).and_then(|v| v.to_str().ok()).and_then(|v| serde_json::from_str::<airband_core::radio::Presence>(v).ok())
+        && let Some(RadioId(radio)) = req.extensions().get::<RadioId>() {
+            app.passing().radio_says(radio, said);
         }
     next.run(req).await
 }
@@ -84,4 +99,51 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .layer(middleware::from_fn_with_state(app.clone(), presence_said))
         .layer(middleware::from_fn_with_state(app.clone(), auth))
         .with_state(app)
+}
+
+#[cfg(test)]
+pub(super) mod tests {
+    use super::*;
+    use tower::ServiceExt;
+
+    /// A tower with nothing in it, its state in a folder of its own.
+    pub(in crate::tower) fn app(name: &str) -> Arc<App> {
+        let path = std::env::temp_dir().join(format!("airband-http-{name}-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let store = Store::open(&path).unwrap();
+        let cfg: Config = serde_json::from_str(r#"{"token":"own","radio_token":"radio"}"#).unwrap();
+        let push = push::Wake::load(&store);
+        Arc::new(App { push, cfg, store, inner: Mutex::new(Inner::default()), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default() })
+    }
+
+    fn presence(radio: Option<RadioId>, header: Option<&str>) -> Request {
+        let mut req = Request::builder().method("POST").uri("/v1/radio/presence").header("authorization", "Bearer radio").header("content-type", "application/json");
+        if let Some(h) = header {
+            req = req.header(RADIO_HEADER, h);
+        }
+        if let Some(r) = radio {
+            req = req.extension(r);
+        }
+        req.body(axum::body::Body::from(r#"{"on_call":true,"showing_chat":false}"#)).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_radio_is_known_by_its_pairing_name_exactly_and_never_by_a_made_up_one() {
+        let app = app("radio-id");
+        // from a pairing whose name is not plain letters: kept under that name, as push and settled answers find it
+        let res = router(app.clone()).oneshot(presence(Some(RadioId("Charles's phone ☎".into())), None)).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert!(app.read().calls.contains_key("Charles's phone ☎"));
+        // a header cannot stand in for a pairing the link already named
+        let res = router(app.clone()).oneshot(presence(Some(RadioId("kitchen".into())), Some("someone else"))).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert!(app.read().calls.contains_key("kitchen") && !app.read().calls.contains_key("someone else"));
+        // the plain direct route says its name; saying none is refused, never called "radio"
+        let res = router(app.clone()).oneshot(presence(None, Some("desk phone"))).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert!(app.read().calls.contains_key("desk phone"));
+        let res = router(app.clone()).oneshot(presence(None, None)).await.unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        assert!(!app.read().calls.contains_key("radio"));
+    }
 }
