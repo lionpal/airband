@@ -16,7 +16,7 @@ const WIRE: Wire = Wire { connect, audio, end: |_| Message::text(json!({ "realti
 /// any number of connections in that time, so one fetched ahead is still good when he opens the microphone,
 /// and again if a connection drops.
 fn pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
-    let until = crate::ears_stream::stamp_at(now_ms() + 20 * 60 * 1000);
+    let until = airband_core::clock::rfc3339(now_ms() + 20 * 60 * 1000);
     let body = serde_json::json!({ "uses": 0, "expireTime": until, "newSessionExpireTime": until });
     pass_field(by, service, set, key, Some(body), "name")
 }

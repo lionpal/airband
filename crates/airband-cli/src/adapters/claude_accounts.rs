@@ -294,30 +294,6 @@ fn saved_token(email: &str) -> Res<String> {
 
 // ── allowances ──
 
-/// `2026-11-25T01:00:00.487315+00:00` as milliseconds since 1970.
-pub(super) fn iso_ms(s: &str) -> Option<u64> {
-    let (date, rest) = s.split_once('T')?;
-    let mut d = date.split('-').map(|x| x.parse::<i64>().ok());
-    let (y, m, day) = (d.next()??, d.next()??, d.next()??);
-    let (clock, offset_minutes) = match rest.rfind(['+', '-', 'Z']) {
-        Some(i) if rest.as_bytes()[i] == b'Z' => (&rest[..i], 0),
-        Some(i) => {
-            let (h, min) = rest[i + 1..].split_once(':')?;
-            let minutes = h.parse::<i64>().ok()? * 60 + min.parse::<i64>().ok()?;
-            (&rest[..i], if rest.as_bytes()[i] == b'-' { -minutes } else { minutes })
-        }
-        None => (rest, 0),
-    };
-    let mut t = clock.split(':');
-    let (h, min, sec) = (t.next()?.parse::<i64>().ok()?, t.next()?.parse::<i64>().ok()?, t.next().and_then(|x| x.parse::<f64>().ok()).unwrap_or(0.0));
-    // days since 1970 for a date in the Gregorian calendar
-    let (y2, m2) = if m <= 2 { (y - 1, m + 9) } else { (y, m - 3) };
-    let era = y2.div_euclid(400);
-    let yoe = y2 - era * 400;
-    let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + (153 * m2 + 2) / 5 + day - 1 - 719_468;
-    let seconds = days * 86_400 + h * 3600 + min * 60 - offset_minutes * 60;
-    u64::try_from(seconds * 1000 + (sec * 1000.0).round() as i64).ok()
-}
 
 /// What Anthropic's usage answer says, as limits: the week, then the 5 hours when that window is open.
 fn limits_in(usage: &Value) -> Vec<Limit> {
@@ -325,7 +301,7 @@ fn limits_in(usage: &Value) -> Vec<Limit> {
         .into_iter()
         .filter_map(|(name, key)| {
             let w = usage.get(key)?;
-            Some(Limit { name: name.into(), used: (w.get("utilization")?.as_f64()? / 100.0).clamp(0.0, 1.0), resets_at: w.get("resets_at").and_then(|r| r.as_str()).and_then(iso_ms) })
+            Some(Limit { name: name.into(), used: (w.get("utilization")?.as_f64()? / 100.0).clamp(0.0, 1.0), resets_at: w.get("resets_at").and_then(|r| r.as_str()).and_then(airband_core::clock::parse_rfc3339) })
         })
         .collect()
 }
@@ -491,16 +467,6 @@ pub fn forget(id: &str) -> Res<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_reset_time_is_read_whatever_its_offset() {
-        assert_eq!(iso_ms("1970-01-01T00:00:00Z"), Some(0));
-        assert_eq!(iso_ms("2026-11-25T01:00:00.487315+00:00"), Some(1_795_568_400_487));
-        // the same moment, written from Tokyo
-        assert_eq!(iso_ms("2026-11-25T10:00:00.487+09:00"), Some(1_795_568_400_487));
-        assert_eq!(iso_ms("2024-02-29T12:00:00-05:00"), Some(1_709_226_000_000));
-        assert_eq!(iso_ms("next week"), None);
-    }
 
     #[test]
     fn limits_come_from_the_usage_answer() {

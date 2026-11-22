@@ -66,24 +66,9 @@ fn signing_key(secret: &str, date: &str, region: &str, service: &str) -> Vec<u8>
     mac(&mac(&mac(&day, region.as_bytes()), service.as_bytes()), b"aws4_request")
 }
 
-/// Seconds since 1970 as `YYYYMMDDTHHMMSSZ`, the form a signature is dated in.
-fn stamp(secs: u64) -> String {
-    let (days, rest) = (secs / 86_400, secs % 86_400);
-    // days to a date in the calendar everyone uses (Howard Hinnant's `civil_from_days`)
-    let z = days as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let (d, m) = (doy - (153 * mp + 2) / 5 + 1, if mp < 10 { mp + 3 } else { mp - 9 });
-    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
-    format!("{y:04}{m:02}{d:02}T{:02}{:02}{:02}Z", rest / 3600, rest % 3600 / 60, rest % 60)
-}
-
 /// The headers that sign one request: `authorization` and those it covers besides `host`.
 fn signed(creds: &Creds, region: &str, host: &str, target: &str, body: &[u8], secs: u64) -> Vec<(&'static str, String)> {
-    let when = stamp(secs);
+    let when = airband_core::clock::compact(secs);
     let date = &when[..8];
     let mut headers = vec![("content-type", "application/x-amz-json-1.0".to_string()), ("host", host.to_string()), ("x-amz-date", when.clone())];
     if let Some(token) = &creds.token {
@@ -234,13 +219,6 @@ mod tests {
         // from "Examples of how to derive a signing key for Signature Version 4" in the AWS documentation
         let key = signing_key("wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", "20120215", "us-east-1", "iam");
         assert_eq!(hex(&key), "f4780e2d9f65fa895f9c67b32ce1baf0b0d8a43505a000a1a9e090d414db404d");
-    }
-    #[test]
-    fn dates_are_written_as_a_signature_wants_them() {
-        assert_eq!(stamp(0), "19700101T000000Z");
-        assert_eq!(stamp(1_440_938_160), "20150830T123600Z");
-        assert_eq!(stamp(1_709_164_799), "20240228T235959Z");
-        assert_eq!(stamp(1_709_251_200), "20240301T000000Z"); // the day after a leap day
     }
     #[test]
     fn a_request_is_signed_over_its_headers_and_body_and_the_session_token_when_there_is_one() {

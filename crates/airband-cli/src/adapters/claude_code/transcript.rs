@@ -215,7 +215,7 @@ pub(super) fn told_in(piece: &str) -> Vec<super::super::Told> {
             if !his && !of("peer") && entry["promptSource"] != "sdk" {
                 return None;
             }
-            let at = from["timestamp"].as_str().or(entry["timestamp"].as_str()).and_then(super::super::claude_accounts::iso_ms)?;
+            let at = from["timestamp"].as_str().or(entry["timestamp"].as_str()).and_then(airband_core::clock::parse_rfc3339)?;
             Some(super::super::Told { id: id.to_string(), at, text, images: if his { images } else { Vec::new() }, his })
         })
         .collect()
@@ -236,7 +236,7 @@ pub(super) fn tool_uses(tail: &str) -> Vec<(Option<u64>, String, Value)> {
         if entry["isSidechain"] == true {
             continue;
         }
-        let at = entry["timestamp"].as_str().and_then(super::super::claude_accounts::iso_ms);
+        let at = entry["timestamp"].as_str().and_then(airband_core::clock::parse_rfc3339);
         let Some(parts) = entry["message"]["content"].as_array_mut() else { continue };
         for part in parts.iter_mut().filter(|c| c["type"] == "tool_use") {
             if let Some(name) = part["name"].as_str().map(String::from) {

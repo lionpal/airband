@@ -15,7 +15,7 @@ const WIRE: Wire = Wire { connect, audio, end: |request| audio(request, &[]), re
 
 /// `2026-11-19T10:00:00.000Z`, as the service wants on every message.
 fn stamp() -> String {
-    crate::ears_stream::stamp_at(now_ms())
+    airband_core::clock::rfc3339(now_ms())
 }
 
 fn text(path: &str, request: &str, body: &Value) -> Message {
