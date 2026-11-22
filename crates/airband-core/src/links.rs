@@ -42,6 +42,11 @@ pub fn site(address: &str) -> String {
     url::Url::parse(address).ok().and_then(|u| u.host_str().map(String::from)).unwrap_or_default()
 }
 
+/// Is this a web address reached over a secure connection, as the address itself is built?
+pub fn secure(address: &str) -> bool {
+    url::Url::parse(address).is_ok_and(|u| u.scheme() == "https" && u.host_str().is_some())
+}
+
 /// What is shown for an address. `kind` is what the tool that made it said it is, by the id of a row; with
 /// none, or one no row has, it is a plain link.
 pub fn link(kinds: &[LinkKind], address: &str, kind: Option<&str>, title: Option<String>) -> Link {

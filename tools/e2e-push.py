@@ -120,7 +120,7 @@ try:
 
     print("A report")
     report("said", "The checker passes on all twelve units.")
-    check("a report wakes it too, and is not called a question", pushed(2) and pushes[1]["question"] is False and opened(pushes[1]["sealed"])["kind"] == "report")
+    check("something no model read wakes it too, as what it is, and is not called a question", pushed(2) and pushes[1]["question"] is False and opened(pushes[1]["sealed"])["kind"] == "unjudged")
 
     print("The phone has the chat open")
     showing = threading.Event()

@@ -59,7 +59,14 @@ fn pull_requests(hook: &Value) -> Vec<Event> {
         return Vec::new();
     }
     let note = crate::config::dir().join("claude-code").join(format!("{session}.made.json"));
-    let Ok(file) = std::fs::File::open(transcript) else { return Vec::new() };
+    // A session that has written nothing yet has no transcript: everything it comes to hold was made while
+    // the tower was watching, so the place reached is its start.
+    let Ok(file) = std::fs::File::open(transcript) else {
+        if !std::path::Path::new(transcript).exists() {
+            let _ = airband_core::kept::save(&note, &serde_json::json!({ "at": 0 }));
+        }
+        return Vec::new();
+    };
     let len = file.metadata().map(|m| m.len()).unwrap_or(0);
     let reached = airband_core::kept::load::<Value>(&note).and_then(|kept| kept["at"].as_u64()).filter(|at| *at <= len);
     let mut found: Vec<Event> = Vec::new();
@@ -86,7 +93,7 @@ fn pull_request_line(line: &[u8]) -> Option<Event> {
     if entry["type"].as_str() != Some("pr-link") {
         return None;
     }
-    let address = entry["prUrl"].as_str().filter(|a| a.starts_with("https://"))?;
+    let address = entry["prUrl"].as_str().filter(|a| airband_core::links::secure(a))?;
     let title = entry["prRepository"].as_str().zip(entry["prNumber"].as_u64()).map(|(repository, number)| format!("{repository} #{number}"));
     Some(Event::Made { address: address.to_string(), title, kind: Some(PULL_KIND.to_string()) })
 }
@@ -540,7 +547,7 @@ fn made_artifact(hook: &Value) -> Option<Event> {
         return None;
     }
     let answer = &hook["tool_response"];
-    let address = answer["url"].as_str().filter(|a| a.starts_with("https://"))?;
+    let address = answer["url"].as_str().filter(|a| airband_core::links::secure(a))?;
     let title = answer["title"].as_str().map(str::trim).filter(|t| !t.is_empty()).map(String::from);
     Some(Event::Made { address: address.to_string(), title, kind: Some(ARTIFACT_KIND.to_string()) })
 }
@@ -831,7 +838,7 @@ mod tests {
         assert_eq!(step_in(&transcript).as_deref(), Some("Run the payments tests"));
         let s = |tool: &str, input: Value| step(tool, &input);
         assert_eq!(s("Read", json!({ "file_path": "/x/a/webhook.ts" })).as_deref(), Some("Reading webhook.ts"));
-        assert_eq!(s("Edit", json!({ "file_path": "C:\\code\\refund.ts" })).as_deref(), Some("Editing refund.ts"));
+        assert_eq!(s("Edit", json!({ "file_path": "/x/code/refund.ts" })).as_deref(), Some("Editing refund.ts"));
         assert_eq!(s("Grep", json!({ "pattern": "charge_id" })).as_deref(), Some("Searching for charge_id"));
         assert_eq!(s("WebFetch", json!({ "url": "https://docs.stripe.com/refunds" })).as_deref(), Some("Reading docs.stripe.com"));
         assert_eq!(s("Bash", json!({ "command": "cargo test\n" })).as_deref(), Some("cargo test"));
