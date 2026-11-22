@@ -167,7 +167,19 @@ fn saved_token(here: &Here, email: &str, may_refresh: bool) -> Res<String> {
     Ok(new_token)
 }
 
-fn account(email: String, live: bool, checked: Result<Vec<airband_core::radio::Limit>, Unchecked>) -> Account {
+/// Who a login is, as Claude Code's own account record says, read the way the tool's row says and never from the
+/// email: the live one's where Claude Code keeps it (the folder its account file is in, moved or not), a saved
+/// one's from the record kept with it. A login by email is never known by a key: keys are not looked at here.
+fn identity(here: &Here, email: &str, live: bool) -> airband_core::identity::AccountIdentity {
+    if live {
+        let folder = here.account_file.parent().map(PathBuf::from).unwrap_or_default();
+        let at = super::Looking { tool_home: folder.clone(), user_home: folder, env: &|_| None, keychain: &|_| None };
+        return super::identity_of(HARNESS, &at);
+    }
+    saved::saved(here, email).ok().flatten().map(|d| super::identity_in_copy(HARNESS, &row("account_file"), &d)).unwrap_or_default()
+}
+
+fn account(email: String, identity: airband_core::identity::AccountIdentity, live: bool, checked: Result<Vec<airband_core::radio::Limit>, Unchecked>) -> Account {
     let (limits, problem) = match checked {
         Ok(l) => (l, None),
         // the login in use is refreshed by the sessions that use it, so a refusal means none has lately
@@ -175,7 +187,7 @@ fn account(email: String, live: bool, checked: Result<Vec<airband_core::radio::L
         Err(Unchecked::Expired) => (Vec::new(), Some("Its login has run out.".to_string())),
         Err(Unchecked::Said(e)) => (Vec::new(), Some(e)),
     };
-    Account { id: email.clone(), harness: HARNESS.into(), label: email, identity: Default::default(), live, limits, problem }
+    Account { id: email.clone(), harness: HARNESS.into(), label: email, identity, live, limits, problem }
 }
 
 fn list_in(here: &Here) -> (Vec<Account>, Option<String>) {
@@ -203,7 +215,7 @@ fn list_in(here: &Here) -> (Vec<Account>, Option<String>) {
                     let is_live = live == Live::Known(e.clone());
                     s.spawn(move || {
                         let token = if is_live { live::token(here).ok_or_else(|| format!("{} is not signed in.", tool())) } else { saved_token(here, &e, may_refresh) };
-                        account(e, is_live, token.map_err(Unchecked::from).and_then(|t| service::usage(here, &t)))
+                        account(e.clone(), identity(here, &e, is_live), is_live, token.map_err(Unchecked::from).and_then(|t| service::usage(here, &t)))
                     })
                 })
                 .collect();
