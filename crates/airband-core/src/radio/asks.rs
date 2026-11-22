@@ -100,15 +100,22 @@ pub struct FoldersAsk {
     pub under: String,
 }
 
+/// One folder inside another: its name, and its whole path as the computer writes it, to pass back.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Folder {
+    pub name: String,
+    pub path: String,
+}
+
 /// The answer: where this is, as a whole path and as he would read it ("~/Companies"), the folder above it
-/// (nothing at the top of the disk), and the folders inside it by name, without the hidden ones.
+/// (nothing at the top of the disk), and the folders inside it, without the hidden ones.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Folders {
     pub path: String,
     pub shown: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub up: Option<String>,
-    pub folders: Vec<String>,
+    pub folders: Vec<Folder>,
     /// The team that works in this folder, or the name a team there would have.
     #[serde(default)]
     pub team: String,
@@ -150,7 +157,10 @@ pub struct RecentFolder {
 /// writes it) or `{error}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewProject {
+    /// The team's name as he wrote it; the tower makes it a team's name. With `make`, the new folder is
+    /// called exactly this.
     pub name: String,
+    /// The folder its agents work in, or with `make` the folder the new one is made inside.
     pub folder: String,
     #[serde(default)]
     pub make: bool,

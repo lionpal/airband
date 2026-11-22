@@ -42,8 +42,10 @@ pub(super) async fn folders(State(app): State<Arc<App>>, Json(ask): Json<airband
                 std::io::ErrorKind::PermissionDenied => "Your Mac does not let airband open this folder. To allow it, open System Settings on the Mac, then Privacy & Security, then Files and Folders.".to_string(),
                 _ => "That folder cannot be opened from here.".to_string(),
             })?;
-            let mut inside: Vec<String> = entries.flatten().filter(|e| e.path().is_dir()).filter_map(|e| e.file_name().into_string().ok()).filter(|n| !n.starts_with('.')).collect();
-            inside.sort_by_key(|n| n.to_lowercase());
+            let mut inside: Vec<airband_core::radio::Folder> = entries.flatten().filter(|e| e.path().is_dir())
+                .filter_map(|e| Some(airband_core::radio::Folder { name: e.file_name().into_string().ok()?, path: e.path().display().to_string() }))
+                .filter(|f| !f.name.starts_with('.')).collect();
+            inside.sort_by_key(|f| f.name.to_lowercase());
             Ok(airband_core::radio::Folders { path: at.display().to_string(), shown: shown(&at), up: at.parent().map(|p| p.display().to_string()), folders: inside, team: String::new(), has_team: false })
         })
     });
@@ -83,21 +85,20 @@ pub(super) async fn project(State(app): State<Arc<App>>, Json(new): Json<airband
         return Json(json!({ "error": "A team\u{2019}s name is letters and numbers, 24 at most." }));
     };
     let folder = if new.make {
-        let wanted = std::path::PathBuf::from(&new.folder);
-        match wanted.parent().map(|p| folder_at(&p.display().to_string())) {
-            Some(Ok(parent)) => match wanted.file_name().filter(|n| !n.to_string_lossy().starts_with('.')) {
-                Some(last) => {
-                    let made = parent.join(last);
-                    if let Err(e) = std::fs::create_dir(&made)
-                        && !made.is_dir() {
-                            return Json(json!({ "error": format!("That folder could not be made: {e}") }));
-                        }
-                    Ok(made)
-                }
-                None => Err("That is not a name for a folder.".to_string()),
-            },
-            Some(Err(why)) => Err(why),
-            None => Err("That is not a folder.".to_string()),
+        // the new folder is called exactly as he wrote the name: one part of a path, not hidden
+        let called = std::path::Path::new(new.name.trim());
+        let one_part = matches!(called.components().collect::<Vec<_>>().as_slice(), [std::path::Component::Normal(_)]);
+        match (folder_at(&new.folder), called.file_name().filter(|n| one_part && !n.to_string_lossy().starts_with('.'))) {
+            (Ok(parent), Some(last)) => {
+                let made = parent.join(last);
+                if let Err(e) = std::fs::create_dir(&made)
+                    && !made.is_dir() {
+                        return Json(json!({ "error": format!("That folder could not be made: {e}") }));
+                    }
+                Ok(made)
+            }
+            (Err(why), _) => Err(why),
+            (Ok(_), None) => Err("That is not a name for a folder.".to_string()),
         }
     } else if new.folder.trim().is_empty() {
         Err("Choose a folder for it to work in.".to_string())

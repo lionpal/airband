@@ -106,6 +106,13 @@ pub fn open_notice(links: Vec<String>, sealed: String, colours: std::collections
     })
 }
 
+/// What a team he names this way would be called: the computer names it by the same rule. Empty when the
+/// words make no name.
+#[uniffi::export]
+pub fn team_name(written: String) -> String {
+    airband_core::routing::team_name(&written).unwrap_or_default()
+}
+
 /// Is this a pairing link a computer gave (`airband pair`)? Read by the one parser that pairs with it.
 #[uniffi::export]
 pub fn is_pairing_link(link: String) -> bool {

@@ -8,7 +8,7 @@ impl Desk {
     /// home folder. Blocks: call it off the main thread.
     pub fn folders(&self, computer: String, under: String) -> Result<DeskFolders, RadioError> {
         let f = self.station_radio(&computer)?.folders(under)?;
-        Ok(DeskFolders { path: f.path, shown: f.shown, up: f.up, folders: f.folders, team: f.team, has_team: f.has_team })
+        Ok(DeskFolders { path: f.path, shown: f.shown, up: f.up, folders: f.folders.into_iter().map(|f| DeskFolder { name: f.name, path: f.path }).collect(), team: f.team, has_team: f.has_team })
     }
     /// The folders the coding tools on a computer have had sessions in, newest first, then the teams there
     /// that no tool has a record of. `computer` is its name, or empty when he has only one. Blocks: call it
@@ -18,8 +18,8 @@ impl Desk {
         let called = |id: &String| tools.tools.iter().find(|t| t.id == *id).map(|t| t.name.clone()).unwrap_or_else(|| id.clone());
         Ok(self.station_radio(&computer)?.recent()?.folders.into_iter().map(|r| DeskRecent { tools: r.tools.iter().map(called).collect(), folder: r.folder, shown: r.shown, name: r.name, team: r.team, at: r.at }).collect())
     }
-    /// Make a new team on a computer, or start another agent in one that is there: its name, and the folder
-    /// its agents work in (made first with `make`).
+    /// Make a new team on a computer, or start another agent in one that is there: its name as he wrote it,
+    /// and the folder its agents work in (with `make`, the folder a new one called by that name is made in).
     /// Its first agent is started there with nothing to do yet. Blocks: call it off the main thread.
     /// `tool` is the coding tool its first agent is, by id; nothing is the computer's usual one.
     /// Answers with the team's room on his screen ([`DeskRoom::id`]).

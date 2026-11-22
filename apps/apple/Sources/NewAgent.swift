@@ -28,7 +28,8 @@ struct NewAgentSheet: View {
         var name = ""
     }
 
-    private var team: String { name.trimmingCharacters(in: .whitespaces).lowercased() }
+    /// What the computer will call the team: the core names it by the computer's own rule.
+    private var team: String { teamName(written: name) }
     /// Every choice made: a folder and a name, and the computer and the coding agent when there is more than one.
     private var ready: Bool { place != nil && !team.isEmpty && !starting && (model.view.stations.count <= 1 || !computer.isEmpty) && (model.usedTools.count <= 1 || !tool.isEmpty) }
     /// A folder he walked to, when it is none of the recent ones: shown with them, chosen.
@@ -82,7 +83,7 @@ struct NewAgentSheet: View {
                                 .font(.system(size: 16)).foregroundStyle(Palette.ink).padding(.horizontal, 14)
                                 .frame(minHeight: 48).background(Palette.field, in: RoundedRectangle(cornerRadius: 12))
                         }
-                        Text(place.make ? (team.isEmpty ? "Name the team. The new folder is called the same." : "The agent starts in \(place.shown)/\(team), a new folder, with nothing to do yet. It waits for your first message.") : "The agent starts in \(place.shown) with nothing to do yet. It waits for your first message.")
+                        Text(place.make ? (team.isEmpty ? "Name the team. The new folder is called the same." : "The agent starts in a new folder called \(name.trimmingCharacters(in: .whitespaces)), inside \(place.shown), with nothing to do yet. Its team is \(team). It waits for your first message.") : "The agent starts in \(place.shown) with nothing to do yet. It waits for your first message.")
                             .font(.system(size: 13)).foregroundStyle(Palette.quiet).lineSpacing(2)
                     }
                     if let wrong { Text(wrong).font(.system(size: 14)).foregroundStyle(.red) }
@@ -214,7 +215,7 @@ struct NewAgentSheet: View {
     private func start() {
         guard let place, ready else { return }
         (starting, wrong) = (true, nil)
-        model.newTeam(team, on: computer, folder: place.make ? place.folder + "/" + team : place.folder, make: place.make, tool: tool.isEmpty ? nil : tool) { made, problem in
+        model.newTeam(place.make ? name : team, on: computer, folder: place.folder, make: place.make, tool: tool.isEmpty ? nil : tool) { made, problem in
             starting = false
             if let made {
                 model.only = nil
@@ -247,9 +248,9 @@ struct FolderWalk: View {
                         if let up = here.up {
                             line("arrow.up", "Up", dim: true) { open(up) }
                         }
-                        ForEach(here.folders, id: \.self) { folder in
+                        ForEach(here.folders, id: \.path) { folder in
                             Rectangle().fill(Palette.raised).frame(height: 1)
-                            line("folder", folder, dim: false) { open(here.path == "/" ? "/" + folder : here.path + "/" + folder) }
+                            line("folder", folder.name, dim: false) { open(folder.path) }
                         }
                         if here.folders.isEmpty {
                             Rectangle().fill(Palette.raised).frame(height: 1)

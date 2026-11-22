@@ -402,20 +402,23 @@ try:
     print("A new team, made from the phone")
     os.makedirs(os.path.join(home, "work", "garden"))
     top = http("POST", "/v1/radio/folders", {"under": ""})[1]
-    check("his home folder is listed, without the hidden folders", top and "work" in top["folders"] and not any(n.startswith(".") for n in top["folders"]) and top["shown"] == "~", top)
+    names = lambda listed: [f["name"] for f in (listed or {}).get("folders", [])]
+    check("his home folder is listed, without the hidden folders", top and "work" in names(top) and not any(n.startswith(".") for n in names(top)) and top["shown"] == "~", top)
+    check("each folder comes with its whole path, as the computer writes it", top and all(f["path"] == os.path.join(top["path"], f["name"]) for f in top["folders"]), top)
     inside = http("POST", "/v1/radio/folders", {"under": top["path"] + "/work"})[1]
-    check("a folder inside it is walked into", inside and inside["folders"] == ["garden"] and inside["shown"] == "~/work" and inside["up"] == top["path"], inside)
+    check("a folder inside it is walked into", inside and names(inside) == ["garden"] and inside["shown"] == "~/work" and inside["up"] == top["path"], inside)
     above = http("POST", "/v1/radio/folders", {"under": top["up"]})[1]
     whole = http("POST", "/v1/radio/folders", {"under": "/"})[1]
-    check("he can go up from his home folder, to the top of the disk", above and "home" in above["folders"] and above["shown"] == above["path"] and whole and whole.get("up") is None and whole["folders"], (above, whole))
+    check("he can go up from his home folder, to the top of the disk", above and "home" in names(above) and above["shown"] == above["path"] and whole and whole.get("up") is None and whole["folders"], (above, whole))
     check("a folder that is not there is said to be so", "error" in http("POST", "/v1/radio/folders", {"under": "/no/such/place"})[1] and "error" in http("POST", "/v1/radio/project", {"name": "nowhere", "folder": "/no/such/place"})[1])
     check("a team's name has to say something, and be short", "error" in http("POST", "/v1/radio/project", {"name": "!!!", "folder": inside["path"]})[1] and "error" in http("POST", "/v1/radio/project", {"name": "a" * 25, "folder": inside["path"]})[1])
     made = http("POST", "/v1/radio/project", {"name": "Garden", "folder": inside["path"] + "/garden"})[1]
     check("a new team is made in the folder he chose, and its first agent is there with nothing to do", made and made.get("team") == "garden" and until(lambda: any(a["group"] == "garden" for a in feed()["roster"])), (made, feed()["roster"]))
     more = http("POST", "/v1/radio/project", {"name": "garden", "folder": inside["path"] + "/garden"})[1]
     check("asked again for the same folder, another agent joins the team", more and "error" not in more and until(lambda: len([a for a in feed()["roster"] if a["group"] == "garden"]) == 2), (more, feed()["roster"]))
-    made = http("POST", "/v1/radio/project", {"name": "orchard", "folder": inside["path"] + "/orchard", "make": True})[1]
-    check("a folder that is not there yet is made for it", made and "error" not in made and os.path.isdir(os.path.join(home, "work", "orchard")), made)
+    made = http("POST", "/v1/radio/project", {"name": "Orchard Two", "folder": inside["path"], "make": True})[1]
+    check("a new folder is made inside the one he chose, called exactly as he wrote the name", made and "error" not in made and os.path.isdir(os.path.join(home, "work", "Orchard Two")) and made.get("team") == "orchard two", made)
+    check("a name that is not one folder's name is refused for a new folder", all("error" in http("POST", "/v1/radio/project", {"name": bad, "folder": inside["path"], "make": True})[1] for bad in ("a/b", ".hidden", "..")))
     check("a name another folder already has is refused", "error" in http("POST", "/v1/radio/project", {"name": "garden", "folder": inside["path"]})[1])
     made = http("POST", "/v1/radio/project", {"name": "hay store", "folder": hay})[1]
     check("a team can work in any folder on the computer, and is called as a callsign is written", made and made.get("team") == "hay store" and until(lambda: any(a["group"] == "hay store" for a in feed()["roster"])), (made, feed()["roster"]))

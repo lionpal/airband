@@ -150,6 +150,12 @@ pub struct DeskReach {
     pub relay: String,
     pub near: String,
 }
+/// One folder inside another: its name, and its whole path to pass back.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct DeskFolder {
+    pub name: String,
+    pub path: String,
+}
 /// The folders inside one of his on a computer.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct DeskFolders {
@@ -159,8 +165,8 @@ pub struct DeskFolders {
     pub shown: String,
     /// The folder above, to pass back; nothing at his home folder.
     pub up: Option<String>,
-    /// The folders inside, by name.
-    pub folders: Vec<String>,
+    /// The folders inside, each with its whole path to pass back.
+    pub folders: Vec<DeskFolder>,
     /// The team that works in this folder, or the name the computer would give one there.
     pub team: String,
     /// A team works here already: a new agent joins it.
