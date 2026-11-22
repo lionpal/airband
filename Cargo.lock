@@ -123,6 +123,7 @@ version = "0.7.0"
 dependencies = [
  "airband-core",
  "airband-io",
+ "async-trait",
  "axum",
  "reqwest",
  "ring",
