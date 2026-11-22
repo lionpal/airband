@@ -5,7 +5,7 @@ It starts a tower in a throwaway home on its own port, puts six agents on it the
 them (two teams with two agents each, two teams with one), and goes through everything a radio can do, checking
 each result. Nothing here touches the real tower or its files.
 
-    cargo build --release && tools/e2e.py            about two minutes, some dozens of small model calls
+    cargo build --release --features airband-cli/stand-ins && tools/e2e.py            about two minutes, some dozens of small model calls
     tools/e2e.py --local                             the same, with the model the tower runs itself doing the reading
     tools/e2e.py --claude                            also asks a real `claude -p` session for permission
     tools/e2e.py --gemini                            the same, with Gemini as the model that reads everything
@@ -51,8 +51,8 @@ json.dump({
 # end) and a stand-in for Anthropic's servers. No real login is read or changed.
 RUN = os.urandom(4).hex()
 LIVE_ITEM, VAULT_ITEMS, STAND_IN = f"airband-e2e-live-{RUN}", f"airband-e2e-vault-{RUN}", 7392
-env = dict(os.environ, HOME=home, AIRBAND_TRACE="1", AIRBAND_CLAUDE_API=f"http://127.0.0.1:{STAND_IN}", AIRBAND_CLAUDE_TOKEN_URL=f"http://127.0.0.1:{STAND_IN}/token",
-           AIRBAND_CLAUDE_LIVE_SERVICE=LIVE_ITEM, AIRBAND_CLAUDE_VAULT_SERVICE=VAULT_ITEMS)
+env = dict(os.environ, HOME=home, AIRBAND_TRACE="1", AIRBAND_STAND_IN_ACCOUNTS=f"http://127.0.0.1:{STAND_IN}", AIRBAND_STAND_IN_TOKENS=f"http://127.0.0.1:{STAND_IN}/token",
+           AIRBAND_STAND_IN_LIVE_ITEM=LIVE_ITEM, AIRBAND_STAND_IN_VAULT_ITEM=VAULT_ITEMS)
 env.pop("CLAUDE_CONFIG_DIR", None)
 
 results = []

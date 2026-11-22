@@ -8,7 +8,7 @@ pub(super) fn running(pid: u32, started: &str) -> bool {
     #[cfg(unix)]
     {
         // as Claude Code writes it: in English, by the clock at Greenwich
-        let Ok(out) = std::process::Command::new("ps").args(["-p", &pid.to_string(), "-o", "lstart="]).env("LC_ALL", "C").env("TZ", "UTC").output() else { return false };
+        let Ok(out) = std::process::Command::new(crate::platform::PS).args(["-p", &pid.to_string(), "-o", "lstart="]).env("LC_ALL", "C").env("TZ", "UTC").output() else { return false };
         let words = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ");
         out.status.success() && !started.trim().is_empty() && words(&String::from_utf8_lossy(&out.stdout)) == words(started)
     }

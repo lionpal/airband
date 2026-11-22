@@ -17,7 +17,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 cargo clippy -q --workspace --all-targets -- -D warnings
 cargo test -q --release -p airband-core -p airband-io -p airband-relay -p airband-radio -p airband-cli
 [ "$1" = "--full" ] || exit 0
-cargo build -q --release -p airband-cli -p airband-relay
+cargo build -q --release -p airband-cli -p airband-relay --features airband-cli/stand-ins
 python3 tools/e2e-relay.py
 python3 tools/e2e-held.py
 python3 tools/e2e-links.py

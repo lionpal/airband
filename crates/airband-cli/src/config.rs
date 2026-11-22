@@ -304,7 +304,9 @@ fn render(cfg: &Config) -> Result<String, String> {
     if let Some(why) = &cfg.keyless {
         return Err(format!("the settings cannot be changed from here: {why}"));
     }
-    let existing = airband_io::files::read_text(&dir().join("config.json")).ok().flatten().unwrap_or_default();
+    let path = dir().join("config.json");
+    // a file that is there and cannot be read is never taken as one without keys: that would write over it
+    let existing = airband_io::files::read_text(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?.unwrap_or_default();
     let mut doc = serde_json::to_value(cfg).unwrap();
     name_keys(&mut doc);
     let before = if crate::vault::sealed(&existing) { kept()? } else { Default::default() };
@@ -321,18 +323,26 @@ pub(crate) fn save(cfg: &Config) -> Result<(), String> {
     write_private(&dir().join("config.json"), &text).map_err(|e| format!("cannot write ~/.airband/config.json: {e}"))
 }
 
+/// What is in the settings file: `None` when there is no file yet. A file that is there and cannot be read or
+/// parsed is an error, never "no file": it holds the token, the pairings and the keys, and is never replaced.
+fn existing(path: &std::path::Path) -> Result<Option<(String, Config)>, String> {
+    let unread = |e: String| format!("{} cannot be read: {e}.\nNothing was changed. Fix it, or move the file aside to start again with a new one (which unpairs every radio).", path.display());
+    match airband_io::files::read_text(path) {
+        Ok(None) => Ok(None),
+        Ok(Some(text)) => parse(&text).map(|cfg| Some((text, cfg))).map_err(unread),
+        Err(e) => Err(unread(e.to_string())),
+    }
+}
+
 /// Read the config, creating it (with a fresh token) on first use.
 pub(crate) fn load() -> Config {
     let path = dir().join("config.json");
     airband_io::files::make_folder(&dir()).expect("cannot create ~/.airband");
-    let existing = airband_io::files::read_text(&path).ok().flatten();
-    let cfg: Config = match existing.as_deref().map(parse) {
-        Some(Ok(cfg)) => cfg,
-        None => parse("{}").unwrap(),
-        // A config that cannot be read is never replaced: it holds the token, the pairings and the keys. A typo,
-        // or a setting written by a newer build, must cost nothing but this message.
-        Some(Err(e)) => {
-            eprintln!("{} cannot be read: {e}.\nNothing was changed. Fix that line, or move the file aside to start again with a new one (which unpairs every radio).", path.display());
+    let (existing, cfg) = match existing(&path) {
+        Ok(Some((text, cfg))) => (Some(text), cfg),
+        Ok(None) => (None, parse("{}").unwrap()),
+        Err(why) => {
+            eprintln!("{why}");
             std::process::exit(2);
         }
     };
@@ -358,6 +368,20 @@ fn yes() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_settings_file_that_cannot_be_read_is_an_error_never_no_file() {
+        let dir = std::env::temp_dir().join(format!("airband-cfg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        assert!(existing(&path).unwrap().is_none(), "no file is no file");
+        std::fs::write(&path, b"{\"token\": \"\xff\"}").unwrap();
+        assert!(existing(&path).is_err(), "a byte that is not text is an error, not an empty file");
+        assert_eq!(std::fs::read(&path).unwrap(), b"{\"token\": \"\xff\"}", "and the file is left as it was");
+        std::fs::write(&path, "{ not json").unwrap();
+        assert!(existing(&path).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn keys_that_could_not_be_had_once_do_not_block_every_later_read() {

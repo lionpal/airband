@@ -65,7 +65,7 @@ fn fetch(server: &airband_core::catalog::Server) -> Result<PathBuf, String> {
     }
     let packed = dir().join(&archive.file);
     airband_io::files::write_atomic(&packed, &bytes).map_err(|e| e.to_string())?;
-    let unpacked = Command::new("tar").arg("-xzf").arg(&packed).arg("-C").arg(dir()).status().map_err(|e| format!("could not unpack it: {e}"))?;
+    let unpacked = Command::new(crate::platform::TAR).arg("-xzf").arg(&packed).arg("-C").arg(dir()).status().map_err(|e| format!("could not unpack it: {e}"))?;
     airband_io::files::remove(&packed).ok();
     if !unpacked.success() || !program.is_file() {
         return Err("the program that runs the model could not be unpacked".into());
@@ -80,7 +80,7 @@ fn healthy() -> bool {
 
 /// When a process started, as the system says it: what tells it from another that was later given its number.
 fn started(pid: u32) -> Option<String> {
-    let out = Command::new("ps").args(["-p", &pid.to_string(), "-o", "lstart="]).env("LC_ALL", "C").env("TZ", "UTC").output().ok().filter(|o| o.status.success())?;
+    let out = Command::new(crate::platform::PS).args(["-p", &pid.to_string(), "-o", "lstart="]).env("LC_ALL", "C").env("TZ", "UTC").output().ok().filter(|o| o.status.success())?;
     Some(String::from_utf8_lossy(&out.stdout).split_whitespace().collect::<Vec<_>>().join(" ")).filter(|s| !s.is_empty())
 }
 
@@ -145,7 +145,7 @@ pub(crate) fn ensure(model: &str, server: &str, patience: Patience) -> Result<St
             // went: a model left running by itself would hold gigabytes of memory for nobody. The same shell
             // ends it when it is told to stop.
             const KEEPER: &str = "trap 'kill \"$c\" \"$w\" 2>/dev/null' TERM INT; \"$@\" & c=$!; ( while kill -0 \"$AIRBAND_TOWER_PID\" 2>/dev/null; do sleep 2; done; kill \"$c\" 2>/dev/null ) & w=$!; wait \"$c\"";
-            let child = Command::new("sh")
+            let child = Command::new(crate::platform::SH)
                 .args(["-c", KEEPER, "sh"])
                 .arg(&program)
                 .env("AIRBAND_TOWER_PID", std::process::id().to_string())

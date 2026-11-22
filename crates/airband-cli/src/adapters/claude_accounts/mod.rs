@@ -80,19 +80,26 @@ fn login_item(moved: Option<&std::path::Path>) -> String {
     }
 }
 
+/// A stand-in the end-to-end suites put in place of the account service and the keychain items. Only a build made
+/// with the `stand-ins` feature reads these: the airband he installs never does, so nothing set in his shell can
+/// send his logins anywhere else.
+fn stand_in(key: &str) -> Option<String> {
+    if cfg!(feature = "stand-ins") { super::env(key) } else { None }
+}
+
 impl Here {
     fn this_computer() -> Here {
-        let place = |key: &str, default: String| super::env(key).unwrap_or(default);
+        let place = |key: &str, default: String| stand_in(key).unwrap_or(default);
         let moved = super::moved_home(HARNESS);
-        let live_service = super::env("AIRBAND_CLAUDE_LIVE_SERVICE").unwrap_or_else(|| login_item(moved.as_deref()));
+        let live_service = stand_in("AIRBAND_STAND_IN_LIVE_ITEM").unwrap_or_else(|| login_item(moved.as_deref()));
         Here {
             vault: Box::new(vault::Keychain),
-            api: place("AIRBAND_CLAUDE_API", row("accounts_api")),
-            token_url: place("AIRBAND_CLAUDE_TOKEN_URL", row("accounts_token")),
+            api: place("AIRBAND_STAND_IN_ACCOUNTS", row("accounts_api")),
+            token_url: place("AIRBAND_STAND_IN_TOKENS", row("accounts_token")),
             dir: dir(),
             account_file: moved.unwrap_or_else(config::home).join(row("account_file")),
             live_service,
-            vault_service: place("AIRBAND_CLAUDE_VAULT_SERVICE", "airband".into()),
+            vault_service: place("AIRBAND_STAND_IN_VAULT_ITEM", "airband".into()),
             user: config::account().map(|a| a.login).filter(|l| !l.is_empty()).ok_or_else(|| "This computer's account has no login name.".to_string()),
         }
     }

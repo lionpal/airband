@@ -21,7 +21,8 @@ pub(super) struct Keychain;
 /// `security`, run as the user it really is: the login keychain is found through the home folder, and with
 /// HOME pointed anywhere else `security` finds no keychain and waits for ever on a dialog.
 fn security() -> Command {
-    let mut c = Command::new("security");
+    // by its full path: the tower runs with his terminal's PATH, and every login goes to this program
+    let mut c = Command::new(crate::platform::SECURITY);
     if let Some(a) = config::account().filter(|a| !a.home.is_empty()) {
         c.env("HOME", a.home);
     }

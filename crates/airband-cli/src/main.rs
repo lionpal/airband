@@ -41,6 +41,7 @@ mod config;
 mod hold;
 mod commands;
 mod install;
+mod platform;
 mod providers;
 mod terminal;
 mod tower;

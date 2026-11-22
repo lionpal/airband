@@ -45,3 +45,7 @@ path = "src/main.rs"
 [dev-dependencies]
 # a paused clock, so tests of the requests that wait do not wait
 tokio = { version = "1", features = ["test-util"] }
+
+[features]
+# the end-to-end suites' stand-ins for the account service and keychain items; never in a release he installs
+stand-ins = []
