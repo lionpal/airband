@@ -196,17 +196,13 @@ fn keep(email: &str, oauth: &Value, account: &Value) -> Res<()> {
     Ok(())
 }
 
-/// The saved account he means: its whole email, or any part of it that only one has.
+/// The saved account he means: its whole email, or the number it is listed under (`airband accounts`).
 fn resolve(query: &str) -> Res<String> {
     let list = index();
-    if let Some(e) = list.iter().find(|e| e.as_str() == query) {
-        return Ok(e.clone());
-    }
-    let hits: Vec<&String> = list.iter().filter(|e| e.to_lowercase().contains(&query.to_lowercase())).collect();
-    match hits.as_slice() {
-        [one] => Ok((*one).clone()),
-        [] => Err(format!("No saved account matches \"{query}\". Saved: {}.", if list.is_empty() { "none".into() } else { list.join(", ") })),
-        _ => Err(format!("\"{query}\" matches {} accounts: {}.", hits.len(), hits.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "))),
+    let numbered = query.parse::<usize>().ok().and_then(|n| n.checked_sub(1)).and_then(|i| list.get(i));
+    match list.iter().find(|e| e.as_str() == query).or(numbered) {
+        Some(e) => Ok(e.clone()),
+        None => Err(format!("No saved account is \"{query}\". Give its whole email or its number: {}.", if list.is_empty() { "none saved".into() } else { list.iter().enumerate().map(|(i, e)| format!("{}. {e}", i + 1)).collect::<Vec<_>>().join(", ") })),
     }
 }
 

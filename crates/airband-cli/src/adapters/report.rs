@@ -80,7 +80,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         // a picture goes with the next thing the agent says: `show` for one he should see, `picture` for one it only looked at
         Some(word @ ("picture" | "show")) => Event::Picture { path: std::path::absolute(rest.get(1).ok_or("give the picture's file")?).map_err(|e| e.to_string())?.display().to_string(), shown: word == "show" },
         // something it made that lives at a web address, shown with the next thing it says: `made <address> [title]`
-        Some("made") => Event::Made { address: rest.get(1).filter(|a| a.starts_with("https://") || a.starts_with("http://")).ok_or("give the web address of what was made")?.clone(), title: rest.get(2).cloned(), kind: None },
+        Some("made") => Event::Made { address: rest.get(1).filter(|a| airband_core::links::web(a).is_some()).ok_or("give the web address of what was made")?.clone(), title: rest.get(2).cloned(), kind: None },
         Some("doing") => Event::Activity { text: body()? },
         // what it runs on: `model "Opus 4.7" high`; the effort is left off where the harness has none
         Some("model") => Event::Model { name: rest.get(1).ok_or("give the model's name")?.clone(), effort: rest.get(2).cloned() },

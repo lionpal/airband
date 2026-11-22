@@ -46,9 +46,12 @@ impl Store {
         )
         .map_err(|e| format!("cannot prepare {}: {e}", path.display()))?;
         // what a request for leave asked and where it stands; a database made before this has no such column
-        let has_request = db.prepare("select request from messages limit 0").is_ok();
-        if !has_request {
-            db.execute_batch("alter table messages add column request text;").map_err(|e| format!("cannot prepare {}: {e}", path.display()))?;
+        // columns added since the table was first made: what a request for leave asked and where it stands,
+        // and what airband says around the tool's words
+        for (column, kind) in [("request", "text"), ("note", "text")] {
+            if db.prepare(&format!("select {column} from messages limit 0")).is_err() {
+                db.execute_batch(&format!("alter table messages add column {column} {kind};")).map_err(|e| format!("cannot prepare {}: {e}", path.display()))?;
+            }
         }
         Ok(Store { db: Mutex::new(db) })
     }
@@ -73,7 +76,7 @@ impl Store {
             }
         };
         let mut entries = Vec::new();
-        if let Some(mut q) = Self::warn("reading messages", db.prepare("select seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request from messages order by seq desc limit ?1")) {
+        if let Some(mut q) = Self::warn("reading messages", db.prepare("select seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note from messages order by seq desc limit ?1")) {
             let rows = q.query_map(params![keep as i64], |r| {
                 Ok(Entry {
                     seq: r.get::<_, i64>(0)? as u64,
@@ -97,10 +100,10 @@ impl Store {
                     read: r.get(16)?,
                     own_session: r.get::<_, Option<i64>>(20)?.unwrap_or(0) != 0,
                     background: false,
-                    dismissed: r.get::<_, Option<String>>(17)?.as_deref() == Some("dismissed"),
+                    dismissed: held(r)? == Some(Held::Dismissed),
                     seen: r.get::<_, Option<i64>>(18)?.map(|t| t as u64),
-                    queued: r.get::<_, Option<String>>(17)?.as_deref() == Some("queued"),
-                    cancelled: r.get::<_, Option<String>>(17)?.as_deref() == Some("cancelled"),
+                    queued: held(r)? == Some(Held::Queued),
+                    cancelled: held(r)? == Some(Held::Cancelled),
                     permit: None,
                     // a request kept before what it asked was written down is still known as one, so a late
                     // answer to it is never passed on as words
@@ -110,6 +113,7 @@ impl Store {
                     },
                     aloud: r.get::<_, Option<String>>(21)?.and_then(|a| serde_json::from_str(&a).ok()).unwrap_or_default(),
                     notice: r.get::<_, Option<i64>>(22)? == Some(1),
+                    note: r.get::<_, Option<String>>(24)?.and_then(|n| serde_json::from_value(Value::String(n)).ok()),
                 })
             });
             if let Some(rows) = Self::warn("reading messages", rows) {
@@ -151,9 +155,9 @@ impl Store {
             Self::warn(
                 "saving a message",
                 db.execute(
-                    "insert into messages (seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
+                    "insert into messages (seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
                      on conflict (seq) do update set kind = excluded.kind, short = excluded.short, full = excluded.full, detail = excluded.detail, options = excluded.options, recommended = excluded.recommended, rev = excluded.rev, read = excluded.read, waiting = excluded.waiting, seen = excluded.seen, leave = excluded.leave, request = excluded.request, own_session = excluded.own_session, aloud = excluded.aloud",
-                    params![e.seq as i64, e.id, e.at as i64, e.from, e.group, serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, if e.cancelled { Some("cancelled") } else if e.queued { Some("queued") } else if e.dismissed { Some("dismissed") } else { None }, e.seen.map(|t| t as i64), e.leave.is_some() as i64, e.own_session as i64, serde_json::to_string(&e.aloud).unwrap(), e.notice as i64, e.leave.as_ref().map(|r| serde_json::to_string(r).unwrap())],
+                    params![e.seq as i64, e.id, e.at as i64, e.from, e.group, serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, Held::of(e).map(Held::word), e.seen.map(|t| t as i64), e.leave.is_some() as i64, e.own_session as i64, serde_json::to_string(&e.aloud).unwrap(), e.notice as i64, e.leave.as_ref().map(|r| serde_json::to_string(r).unwrap()), e.note.and_then(|n| serde_json::to_value(n).ok()).and_then(|v| v.as_str().map(String::from))],
                 ),
             );
         }
@@ -281,4 +285,27 @@ mod tests {
         assert!(about.contains("/s") && !about.contains("secret"));
         let _ = std::fs::remove_file(path);
     }
+}
+
+/// Where a line stands, as the `waiting` column keeps it.
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Held {
+    /// He let this question go.
+    Dismissed,
+    /// His words, waiting for the agent to stop.
+    Queued,
+    /// His words, taken back before they went.
+    Cancelled,
+}
+impl Held {
+    fn of(e: &Entry) -> Option<Held> {
+        if e.cancelled { Some(Held::Cancelled) } else if e.queued { Some(Held::Queued) } else if e.dismissed { Some(Held::Dismissed) } else { None }
+    }
+    fn word(self) -> String {
+        serde_json::to_value(self).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default()
+    }
+}
+fn held(r: &rusqlite::Row) -> rusqlite::Result<Option<Held>> {
+    Ok(r.get::<_, Option<String>>(17)?.and_then(|t| serde_json::from_value(Value::String(t)).ok()))
 }

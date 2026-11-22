@@ -1,6 +1,7 @@
 //! Agents → tower. One `airband.agent/1` event at a time: who is on the radio, what they last said, and what is
 //! now stale. Nothing here talks to a model; a message is only recorded and queued.
 use super::*;
+use airband_core::radio::Note;
 
 pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
     if ev.schema != agent::SCHEMA {
@@ -78,7 +79,7 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
             if !with.is_empty() {
                 log(format!("{callsign}: {} with what it says next", if with.len() == 1 { "1 picture".to_string() } else { format!("{} pictures", with.len()) }));
             }
-            enqueue(&mut inner, &id, false, text, kind, with);
+            enqueue(&mut inner, &id, false, text, kind, with, None);
         }
         Event::Picture { shown, .. } => {
             let s = inner.session(&id).unwrap();
@@ -98,7 +99,7 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
             let s = inner.session(&id).unwrap();
             s.subagents = if done { s.subagents.saturating_sub(1) } else { s.subagents + 1 };
         }
-        Event::Notice { text } => enqueue(&mut inner, &id, true, format!("Needs you at the keyboard: {text}"), Some(Kind::NeedsYou), Vec::new()),
+        Event::Notice { text } => enqueue(&mut inner, &id, true, text, Some(Kind::NeedsYou), Vec::new(), Some(Note::AtKeyboard)),
         // its turn is over with nothing said: it is waiting, like after anything it says. A turn that failed
         // is something he must know, in the tool's own words.
         Event::Stopped { why } => {
@@ -108,7 +109,7 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
             s.subagents = 0;
             if let Some(why) = why.map(|w| w.trim().to_string()).filter(|w| !w.is_empty()) {
                 log(format!("{callsign}: its turn failed: {}", why.chars().take(200).collect::<String>()));
-                enqueue(&mut inner, &id, true, format!("My turn failed and I have stopped. {why}"), Some(Kind::NeedsYou), Vec::new());
+                enqueue(&mut inner, &id, true, why, Some(Kind::NeedsYou), Vec::new(), Some(Note::TurnFailed));
             }
         }
         Event::Checkin | Event::Signoff | Event::Unknown => {}
@@ -118,16 +119,16 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
 }
 
 /// An agent said something: it goes in the log, and in the queue of things he has not heard.
-pub(super) fn enqueue(inner: &mut Inner, agent_id: &str, notice: bool, full: String, kind: Option<Kind>, pictures: Vec<airband_core::radio::Picture>) {
+pub(super) fn enqueue(inner: &mut Inner, agent_id: &str, notice: bool, full: String, kind: Option<Kind>, pictures: Vec<airband_core::radio::Picture>, note: Option<Note>) {
     let Some(session) = inner.find(agent_id).cloned() else { return };
     // only the latest thing each agent said is worth hearing
     inner.supersede(agent_id, notice);
     log(format!("{}: {} queued ({} characters)", session.callsign.text(), if notice { "notice" } else { "message" }, full.chars().count()));
     let id = config::random_hex(8);
     // a notice from the harness is read to him as it is: it has its line from the start and no model reads it
-    let short = notice.then(|| spoken(&full));
+    let short = notice.then(|| spoken(&note.map_or_else(|| full.clone(), |n| n.said(&full))));
     inner.links.said(agent_id, &id, &full);
     // the line is its own place in the reading queue (a key in it is masked as it is recorded, so the copy a
     // model reads to shorten it has none either)
-    inner.record(Entry { pictures, short, notice, aloud: Aloud::Waiting, ..Entry::said(id, &session, kind, full) });
+    inner.record(Entry { pictures, short, notice, note, aloud: Aloud::Waiting, ..Entry::said(id, &session, kind, full) });
 }

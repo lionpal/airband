@@ -64,11 +64,12 @@ fn offers(options: &Value) -> Offers {
 
 /// Why something he asked for cannot be had: the agent has no such setting, or no such value of it. The ones
 /// it does have are named when they are few enough to say.
-fn no_such(what: &str, said: &str, has: Option<&Setting>) -> String {
+/// `noun` is the setting's name ("effort"), `what` the same with its article ("an effort").
+fn no_such(noun: &str, what: &str, said: &str, has: Option<&Setting>) -> String {
     match has.map(|s| s.choices.as_slice()) {
         None | Some([]) => format!("it cannot be given {what}"),
-        Some(choices) if choices.len() <= 8 => format!("it has no {} called {said}. It can be {}", what.rsplit(' ').next().unwrap_or(what), choices.iter().map(|c| c.id.as_str()).collect::<Vec<_>>().join(", ")),
-        Some(_) => format!("it has no {} called {said}", what.rsplit(' ').next().unwrap_or(what)),
+        Some(choices) if choices.len() <= 8 => format!("it has no {noun} called {said}. It can be {}", choices.iter().map(|c| c.id.as_str()).collect::<Vec<_>>().join(", ")),
+        Some(_) => format!("it has no {noun} called {said}"),
     }
 }
 
@@ -130,11 +131,11 @@ pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>, aske
     // not left out and the agent started without it.
     let offered = offers(&made["configOptions"]);
     let mut settings = made["configOptions"].clone();
-    for (category, what, said, request) in [(MODEL, "a model", &asked.model, 5), (EFFORT, "an effort", &asked.effort, 6)] {
+    for (category, noun, what, said, request) in [(MODEL, "model", "a model", &asked.model, 5), (EFFORT, "effort", "an effort", &asked.effort, 6)] {
         let Some(said) = said else { continue };
         let has = setting(&settings, category);
         let (Some(s), Some(choice)) = (has.as_ref(), has.as_ref().and_then(|s| named(&s.choices, said))) else {
-            return Err(no_such(what, said, has.as_ref()));
+            return Err(no_such(noun, what, said, has.as_ref()));
         };
         if s.now.as_deref() != Some(choice.id.as_str()) {
             send(json!({ "jsonrpc": "2.0", "id": request, "method": "session/set_config_option", "params": { "sessionId": session, "configId": s.id, "value": choice.id } }));
@@ -303,7 +304,7 @@ mod tests {
         assert_eq!((s.id.as_str(), s.now.as_deref()), ("reasoning", Some("low")));
         // an agent that lists nothing offers nothing
         assert_eq!(offers(&Value::Null), Offers::default());
-        assert_eq!(no_such("an effort", "huge", Some(&s)), "it has no effort called huge. It can be low, high");
-        assert_eq!(no_such("a model", "x", None), "it cannot be given a model");
+        assert_eq!(no_such("effort", "an effort", "huge", Some(&s)), "it has no effort called huge. It can be low, high");
+        assert_eq!(no_such("model", "a model", "x", None), "it cannot be given a model");
     }
 }

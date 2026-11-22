@@ -207,7 +207,8 @@ pub fn install(exe: &std::path::Path) -> Result<Vec<String>, String> {
     HARNESSES.iter().filter_map(|h| h.hooks().map(|file| (h, file))).map(|(h, file)| file.install(exe).map(|changed| h.installed(&file, changed))).collect()
 }
 pub fn uninstall() -> Result<(), String> {
-    HARNESSES.iter().filter_map(|h| h.hooks()).try_for_each(|file| file.uninstall())
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    HARNESSES.iter().filter_map(|h| h.hooks()).try_for_each(|file| file.uninstall(&exe))
 }
 
 /// What this agent is doing right now and what it runs on, as far as its harness's adapter can tell.

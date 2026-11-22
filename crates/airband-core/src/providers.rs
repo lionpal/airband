@@ -329,8 +329,10 @@ pub fn fill(template: &str, setting: &dyn Fn(&str) -> String) -> Result<String, 
         let value = setting(field).trim().to_string();
         if out.is_empty() && before.is_empty() {
             let value = value.trim_end_matches('/');
-            let whole = value.strip_prefix("https://").or_else(|| value.strip_prefix("http://")).filter(|at| !at.is_empty() && !at.starts_with('/') && at.bytes().all(|b| part(b) || matches!(b, b'/' | b'[' | b']')));
-            if whole.is_none() {
+            // a whole web address with no login, question or fragment, made only of characters an address part may have
+            let whole = crate::links::web(value).filter(|u| u.username().is_empty() && u.password().is_none() && u.query().is_none() && u.fragment().is_none());
+            let plain = value.bytes().all(|b| part(b) || matches!(b, b'/' | b'[' | b']'));
+            if whole.is_none() || !plain {
                 return Err(format!("\"{value}\" is not something the setting {field} can be. It is the address of a service, like the usual one."));
             }
             out.push_str(value);
@@ -392,11 +394,9 @@ impl Offer {
     }
 }
 
-/// The `kind` of a setting when nothing does the job.
-const NONE: &str = "none";
-/// Words that stand where a provider's id or a setting's name would (`Use::kind`, a choice on the phone, the
-/// fields of a `Use` as written down). No provider, offer or setting may take one of these as its name.
-pub const NOT_AN_ID: &[&str] = &[NONE, "kind", "offer", "key"];
+/// Words that stand where a provider's id or a setting's name would (a choice on the phone, the fields of a
+/// `Use` as written down). No provider, offer or setting may take one of these as its name.
+pub const NOT_AN_ID: &[&str] = &["none", "kind", "offer", "key"];
 
 impl Use {
     /// Every setting of a job as it stands, set or usual: what a phone is told beside its pass.
@@ -440,7 +440,7 @@ pub struct Use {
 
 impl Default for Use {
     fn default() -> Self {
-        Use { kind: NONE.into(), offer: String::new(), key: String::new(), set: BTreeMap::new() }
+        Use { kind: String::new(), offer: String::new(), key: String::new(), set: BTreeMap::new() }
     }
 }
 
@@ -450,9 +450,9 @@ impl Use {
     pub fn of(kind: &str, offer: &str) -> Use {
         Use { kind: kind.into(), offer: offer.into(), key: String::new(), set: BTreeMap::new() }
     }
-    /// Nothing is set.
+    /// It names no provider the catalogue has: nothing is set, or what was set is a row this build lacks.
     pub fn is_none(&self) -> bool {
-        matches!(self.kind.as_str(), NONE | "")
+        provider(&self.kind).is_none()
     }
     /// The row for this job, and how the job is done. Nothing when the settings name a provider or an offer
     /// this build does not have, or one that does not do this job.
@@ -472,7 +472,7 @@ impl Use {
     /// One line for him: the provider and what it is set to. Never the key.
     pub fn describe(&self, job: Job) -> String {
         match self.offer(job) {
-            None if self.is_none() => "none".into(),
+            None if self.kind.is_empty() => "none".into(),
             None => format!("\"{} {}\", which this version of airband does not have", self.kind, self.offer),
             Some((_, o)) => {
                 let told: Vec<String> = o.asks.iter().map(|a| format!("{} {}", a.question.to_lowercase(), self.get(job, &a.field))).collect();
@@ -517,7 +517,7 @@ mod tests {
         let e: Use = serde_json::from_str(r#"{"kind":"azure","offer":"speech-to-text","key":"k","region":"japaneast"}"#).unwrap();
         assert_eq!((e.get(Job::Ears, "region"), e.get(Job::Ears, "language")), ("japaneast".into(), "en-US".into()));
         // nothing set
-        assert!(serde_json::from_str::<Use>(r#"{"kind":"none"}"#).unwrap().is_none());
+        assert!(Use::default().is_none() && serde_json::from_str::<Use>(r#"{"kind":"no-such-row"}"#).unwrap().is_none());
         // a command of his own keeps its arguments, and round-trips as it was written
         let c: Use = serde_json::from_str(r#"{"kind":"command","offer":"own","argv":["mine","-x"]}"#).unwrap();
         assert_eq!(serde_json::to_string(&c).unwrap(), r#"{"kind":"command","offer":"own","argv":["mine","-x"]}"#);

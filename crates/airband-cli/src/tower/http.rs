@@ -648,15 +648,38 @@ async fn feed(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
     }
 }
 
-async fn message(State(app): State<Arc<App>>, Path(id): Path<String>, Query(q): Query<HashMap<String, String>>) -> Response {
-    // `spoken` is the whole message as it is read aloud, for the radio to read in its own voice. A very long
-    // one is read as far as a few minutes go
-    if q.get("form").map(String::as_str) == Some("spoken") {
+/// Which form of a message a radio asks for.
+#[derive(Deserialize, Clone, Copy, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum Form {
+    /// The whole message as it is read aloud, for the radio to read in its own voice.
+    Spoken,
+    /// The whole message as written.
+    Full,
+    /// What it holds that he should be able to read whole.
+    Detail,
+}
+/// Which part of a spoken message.
+#[derive(Deserialize, Clone, Copy, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum Part {
+    /// The question as he would be asked it on a call.
+    Asked,
+}
+#[derive(Deserialize)]
+struct MessageAsk {
+    form: Option<Form>,
+    part: Option<Part>,
+}
+
+async fn message(State(app): State<Arc<App>>, Path(id): Path<String>, Query(q): Query<MessageAsk>) -> Response {
+    // a very long one is read as far as a few minutes go
+    if q.form == Some(Form::Spoken) {
         // `part=asked` is the question as he would be asked it on a call: who is asking, its short form, and
         // the answers it offers, for a radio that reads it to him before he answers
         let inner = app.read();
-        let text: Option<String> = inner.log.iter().find(|e| e.id == id).map(|e| match q.get("part").map(String::as_str) {
-            Some("asked") => {
+        let text: Option<String> = inner.log.iter().find(|e| e.id == id).map(|e| match q.part {
+            Some(Part::Asked) => {
                 let short = e.short.clone().unwrap_or_else(|| spoken(&e.full).chars().take(600).collect());
                 let choices = match e.options.as_slice() {
                     [] => String::new(),
@@ -666,14 +689,14 @@ async fn message(State(app): State<Arc<App>>, Path(id): Path<String>, Query(q): 
                 format!("{}. {short}{choices}", inner.sender(e).map(|s| s.callsign.text()).unwrap_or_else(|| e.from.clone()))
             }
             // the whole of it, read from its blocks: no mark is said, a table goes row by row, code is passed over
-            _ => spoken(&e.full).chars().take(3000).collect(),
+            None => spoken(&e.full).chars().take(3000).collect(),
         });
         return match text {
             Some(text) => Json(json!({ "text": text })).into_response(),
             None => StatusCode::NOT_FOUND.into_response(),
         };
     }
-    if q.get("form").map(String::as_str) == Some("full") {
+    if q.form == Some(Form::Full) {
         return match app.read().log.iter().find(|e| e.id == id) {
             Some(e) => Json(More { text: e.full.clone() }).into_response(),
             None => StatusCode::NOT_FOUND.into_response(),
@@ -711,6 +734,7 @@ async fn status(State(app): State<Arc<App>>) -> Json<Value> {
     let mut inner = app.passing();
     inner.reap();
     let callsign_of = |id: &str| inner.sessions.iter().find(|s| s.agent.id == id).map(|s| s.callsign.text());
+    let open = inner.open_ids();
     Json(json!({
         "phone": inner.connected(),
         "held": inner.calls.values().any(|c| c.held),
@@ -720,7 +744,7 @@ async fn status(State(app): State<Arc<App>>) -> Json<Value> {
         "kept": { "messages": app.store.counts().0, "events": app.store.counts().1 },
         "sessions": inner.sessions.iter().map(|s| json!({
             "callsign": s.callsign.text(), "harness": s.agent.harness, "cwd": s.agent.cwd,
-            "state": if s.waiting { "waiting" } else { "working" }, "reachable": s.agent.deliver.is_some(), "meta": s.agent.meta,
+            "state": inner.state_of(s, &open), "reachable": s.agent.deliver.is_some(), "meta": s.agent.meta,
         })).collect::<Vec<_>>(),
         "pending": inner.unheard().map(|e| json!({ "callsign": e.agent.as_deref().and_then(callsign_of).unwrap_or_else(|| e.from.clone()), "kind": e.kind, "say": e.short, "aloud": e.aloud })).collect::<Vec<_>>(),
         // the last changes to what is read out, each with what it was, what it became and why

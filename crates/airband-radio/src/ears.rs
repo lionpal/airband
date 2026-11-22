@@ -50,7 +50,7 @@ impl Pass {
     /// names them), and the host in it.
     pub fn stream(&self) -> Result<(String, String), ()> {
         let url = airband_core::providers::fill(self.by.text("stream"), &|field| self.get(field).to_string()).map_err(|_| ())?;
-        let host = url.split_once("://").map(|(_, rest)| rest.split(['/', '?', ':']).next().unwrap_or_default().to_string()).filter(|h| !h.is_empty()).ok_or(())?;
+        let host = Some(airband_core::links::site(&url)).filter(|h| !h.is_empty()).ok_or(())?;
         Ok((url, host))
     }
 }

@@ -23,7 +23,7 @@ fn hex(id: &str) -> bool {
 }
 /// A file name that cannot leave its folder or surprise a shell: letters, digits, dot, dash and underscore.
 fn safe(name: &str) -> String {
-    let base = name.rsplit(['/', '\\']).next().unwrap_or("");
+    let base = std::path::Path::new(name).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let clean: String = base.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '-' }).collect();
     let clean = clean.trim_matches(['.', '-']).to_string();
     if clean.is_empty() { "file".into() } else { clean.chars().rev().take(80).collect::<String>().chars().rev().collect() }

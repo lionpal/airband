@@ -90,8 +90,15 @@ pub(super) struct Entry {
     /// It is a notice from the harness that the agent needs him at the keyboard: read to him as it is.
     #[serde(default)]
     pub(super) notice: bool,
+    /// What airband says about the agent around the tool's words (`full`), when it says something.
+    #[serde(default)]
+    pub(super) note: Option<airband_core::radio::Note>,
 }
 impl Entry {
+    /// The words as they are read and shown: the tool's, after airband's own note when there is one.
+    pub(super) fn said_whole(&self) -> String {
+        self.note.map_or_else(|| self.full.clone(), |n| n.said(&self.full))
+    }
     /// Mask any credential in the words this line keeps. Returns whether there was one.
     pub(super) fn scrub(&mut self) -> bool {
         use airband_core::redact::redact;
@@ -129,7 +136,7 @@ pub(super) const LOG_KEEP: usize = 1000;
 impl Inner {
     /// What the judge reads of a line.
     pub(super) fn item(&self, e: &Entry) -> Item {
-        Item { asked: e.agent.as_deref().and_then(|a| self.last_instruction(a)), id: e.id.clone(), notice: e.notice, full: e.full.clone(), kind: e.kind, say: e.short.clone() }
+        Item { asked: e.agent.as_deref().and_then(|a| self.last_instruction(a)), id: e.id.clone(), notice: e.notice, full: e.said_whole(), kind: e.kind, say: e.short.clone() }
     }
     /// What he said to an agent at its own keyboard, as its harness kept it: added to the chat as his words to
     /// it, each once, at the time he said it. `upto` is how far the harness's record has now been read.
@@ -212,7 +219,7 @@ impl Inner {
     }
     /// A logged line as a radio sees it. The sender's name is what it is called now, if it is still here.
     pub(super) fn message(&self, e: &Entry) -> Message {
-        let text = e.short.clone().unwrap_or_else(|| opening(&e.full));
+        let text = e.short.clone().unwrap_or_else(|| opening(&e.said_whole()));
         let sender = self.sender(e);
         // a callsign is shown from its parts while its agent is here; one that has gone keeps what it was called
         let to = if e.to_agents.is_empty() { e.to.clone() } else { e.to_agents.iter().zip(&e.to).map(|(id, was)| self.find(id).map(|s| s.callsign.shown()).unwrap_or_else(|| was.clone())).collect() };
@@ -254,6 +261,7 @@ impl Inner {
             rev: e.rev,
             open: false,
             not_read: e.aloud.not_read(),
+            note: e.note,
         }
     }
     /// Does this line belong in one team's view (`team`), or one agent's (`agent`, its id)? With neither, every

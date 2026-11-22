@@ -37,6 +37,9 @@ pub fn tool_use(harness: &str, tool: &str) -> Value {
     airband_core::catalog::built().tools.iter().find(|t| t.id == harness).map(|t| t.with["tools"][tool].clone()).unwrap_or(Value::Null)
 }
 
+/// The mark on a hook airband put in a tool's settings: an argument the hook command passes over.
+const OURS: &str = "--put-there-by-airband";
+
 /// The tools a row gives one of these parts, by their own names.
 pub fn with_role(harness: &str, roles: &[&str]) -> Vec<String> {
     let rows = airband_core::catalog::built();
@@ -108,22 +111,24 @@ impl File {
     fn write(&self, v: &Value) -> Result<(), String> {
         airband_core::kept::write_atomic(&self.path, format!("{}\n", serde_json::to_string_pretty(v).unwrap())).map_err(|e| e.to_string())
     }
-    /// A hook of ours: the `airband` binary, wherever it is installed (~/.airband/bin, or Homebrew's folder), run
-    /// as `hook <name>`.
-    fn is_ours(&self, hook: &Value) -> bool {
-        hook["command"].as_str().and_then(|c| c.trim_end().strip_suffix(&format!(" hook {}", self.name))).is_some_and(|program| {
-            let file = program.trim().trim_matches('"').rsplit(['/', '\\']).next().unwrap_or("");
-            file == "airband" || file == "airband.exe"
-        })
+    /// The command a hook of ours runs: this program, as `hook <name>`, with the mark that says airband put it
+    /// there. The mark is what knows it again, wherever the program is installed and whatever it is called.
+    fn command(&self, exe: &Path) -> String {
+        format!("\"{}\" hook {} {OURS}", exe.display(), self.name)
+    }
+    /// A hook of ours: one carrying our mark, or the command this program wrote before it had one.
+    fn is_ours(&self, hook: &Value, exe: &Path) -> bool {
+        let Some(command) = hook["command"].as_str() else { return false };
+        command.trim_end().ends_with(&format!(" hook {} {OURS}", self.name)) || command == format!("\"{}\" hook {}", exe.display(), self.name)
     }
     /// Take our hooks out, leaving everyone else's exactly as they were.
-    pub(super) fn strip(&self, file: &mut Value) {
+    pub(super) fn strip(&self, file: &mut Value, exe: &Path) {
         let Some(hooks) = file.get_mut("hooks").and_then(Value::as_object_mut) else { return };
         for groups in hooks.values_mut() {
             if let Some(list) = groups.as_array_mut() {
                 for group in list.iter_mut() {
                     if let Some(inner) = group.get_mut("hooks").and_then(Value::as_array_mut) {
-                        inner.retain(|h| !self.is_ours(h));
+                        inner.retain(|h| !self.is_ours(h, exe));
                     }
                 }
                 list.retain(|g| g["hooks"].as_array().is_none_or(|h| !h.is_empty()));
@@ -139,10 +144,10 @@ impl File {
     pub fn install(&self, exe: &Path) -> Result<bool, String> {
         let mut file = self.read()?;
         let before = file.clone();
-        self.strip(&mut file);
+        self.strip(&mut file, exe);
         let whole = file.as_object_mut().ok_or_else(|| format!("{} is not a JSON object", self.path.display()))?;
         let hooks = whole.entry("hooks").or_insert_with(|| json!({})).as_object_mut().ok_or_else(|| format!("\"hooks\" in {} is not an object", self.path.display()))?;
-        let command = format!("\"{}\" hook {}", exe.display(), self.name);
+        let command = self.command(exe);
         for on in self.events {
             let list = hooks.entry(on.event).or_insert_with(|| json!([])).as_array_mut().ok_or_else(|| format!("a hooks entry in {} is not a list", self.path.display()))?;
             let mut group = json!({ "hooks": [{ "type": "command", "command": command, "timeout": on.timeout }] });
@@ -156,13 +161,13 @@ impl File {
         }
         self.write(&file).map(|()| true)
     }
-    pub fn uninstall(&self) -> Result<(), String> {
+    pub fn uninstall(&self, exe: &Path) -> Result<(), String> {
         if !self.path.is_file() {
             return Ok(());
         }
         let mut file = self.read()?;
         let before = file.clone();
-        self.strip(&mut file);
+        self.strip(&mut file, exe);
         if file == before { Ok(()) } else { self.write(&file) }
     }
 }
@@ -218,27 +223,24 @@ mod tests {
     #[test]
     fn strip_removes_only_ours() {
         let f = file(Path::new("/nowhere"));
+        let exe = Path::new("/Users/c/.airband/bin/airband");
         let mut s = json!({ "model": "x", "hooks": {
             "Stop": [
-                { "hooks": [{ "type": "command", "command": "\"/Users/c/.airband/bin/airband\" hook claude-code" }] },
+                { "hooks": [{ "type": "command", "command": "\"/opt/homebrew/opt/airband/bin/airband\" hook claude-code --put-there-by-airband" }] },
                 { "hooks": [{ "type": "command", "command": "afplay ding.aiff" }] }
             ],
+            // what this program wrote before hooks carried the mark
             "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"/Users/c/.airband/bin/airband\" hook claude-code" }] }]
         }});
-        f.strip(&mut s);
+        f.strip(&mut s, exe);
         assert_eq!(s, json!({ "model": "x", "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "afplay ding.aiff" }] }] } }));
-        let mut only = json!({ "model": "x", "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "\"C:\\Users\\c\\.airband\\bin\\airband.exe\" hook claude-code" }] }] } });
-        f.strip(&mut only);
-        assert_eq!(only, json!({ "model": "x" }));
-        // Homebrew's copy is ours too; a different program that happens to take the same arguments is not, and
-        // neither is our hook for another tool
-        let mut brewed = json!({ "hooks": { "Stop": [
-            { "hooks": [{ "type": "command", "command": "\"/opt/homebrew/opt/airband/bin/airband\" hook claude-code" }] },
+        // a program that happens to take the same arguments is not ours, and neither is our hook for another tool
+        let mut other = json!({ "hooks": { "Stop": [
             { "hooks": [{ "type": "command", "command": "\"/usr/local/bin/other-airband\" hook claude-code" }] },
-            { "hooks": [{ "type": "command", "command": "\"/opt/homebrew/opt/airband/bin/airband\" hook codex" }] }
+            { "hooks": [{ "type": "command", "command": "\"/x/airband\" hook codex --put-there-by-airband" }] }
         ] } });
-        f.strip(&mut brewed);
-        assert_eq!(brewed["hooks"]["Stop"].as_array().unwrap().len(), 2);
+        f.strip(&mut other, exe);
+        assert_eq!(other["hooks"]["Stop"].as_array().unwrap().len(), 2);
     }
 
     #[test]
@@ -252,7 +254,7 @@ mod tests {
         let now: Value = serde_json::from_str(&std::fs::read_to_string(&f.path).unwrap()).unwrap();
         assert_eq!(now["hooks"]["Stop"].as_array().unwrap().len(), 2);
         assert_eq!(now["hooks"]["PostToolUse"][0]["matcher"], "Read");
-        f.uninstall().unwrap();
+        f.uninstall(Path::new("/x/airband")).unwrap();
         let after: Value = serde_json::from_str(&std::fs::read_to_string(&f.path).unwrap()).unwrap();
         assert_eq!(after, json!({ "model": "x", "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "afplay ding.aiff" }] }] } }));
         std::fs::remove_dir_all(&dir).unwrap();

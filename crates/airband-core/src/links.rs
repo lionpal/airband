@@ -42,9 +42,14 @@ pub fn site(address: &str) -> String {
     url::Url::parse(address).ok().and_then(|u| u.host_str().map(String::from)).unwrap_or_default()
 }
 
+/// A web address, read by the rules for web addresses: http or https, with a host. Nothing when it is not one.
+pub fn web(address: &str) -> Option<url::Url> {
+    url::Url::parse(address).ok().filter(|u| matches!(u.scheme(), "https" | "http") && u.host_str().is_some())
+}
+
 /// Is this a web address reached over a secure connection, as the address itself is built?
 pub fn secure(address: &str) -> bool {
-    url::Url::parse(address).is_ok_and(|u| u.scheme() == "https" && u.host_str().is_some())
+    web(address).is_some_and(|u| u.scheme() == "https")
 }
 
 /// What is shown for an address. `kind` is what the tool that made it said it is, by the id of a row; with

@@ -122,7 +122,7 @@ pub fn uninstall() -> Result<(), String> {
 /// `airband relay <url> [--admission <key>]` / `airband relay off`
 pub fn relay(mut cfg: Config, args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
-        None => println!("{}", cfg.relay.as_deref().map(|r| format!("Your phone reaches this computer through {r}.")).unwrap_or("No relay: your phone reaches this computer at its own addresses, on the same network or over Tailscale.".into())),
+        None => println!("{}", cfg.relay.as_deref().map(|r| format!("Your phone reaches this computer through {r}.")).unwrap_or("No relay: your phone reaches this computer at its own addresses, on the same network or over a private network.".into())),
         Some("off") => {
             cfg.relay = None;
             cfg.relay_admission = None;
@@ -136,8 +136,8 @@ pub fn relay(mut cfg: Config, args: &[String]) -> Result<(), String> {
             println!("Relay set to {}. A phone paired without it must be paired again:  airband pair", config::RELAY);
         }
         Some(url) => {
-            if !url.starts_with("https://") && !url.starts_with("http://") {
-                return Err("a relay address starts with https://".into());
+            if airband_core::links::web(url).is_none() {
+                return Err(format!("a relay address is a web address, like {}", config::RELAY));
             }
             cfg.relay = Some(url.trim_end_matches('/').to_string());
             cfg.relay_admission = args.iter().position(|a| a == "--admission").and_then(|i| args.get(i + 1)).cloned();

@@ -710,6 +710,29 @@ pub struct Message {
     /// It was to be read out to him while he had reading aloud on, and was not: why. A client marks the line.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub not_read: Option<NotRead>,
+    /// What airband says about the agent in its own voice, with the tool's words after it: the agent is held at
+    /// its keyboard, or its turn failed. `text` already starts with it; a client may mark the line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<Note>,
+}
+
+/// Something airband says about an agent in its own voice, never in the agent's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Note {
+    /// The tool says the agent needs him at its keyboard.
+    AtKeyboard,
+    /// The agent's turn failed and it stopped.
+    TurnFailed,
+}
+impl Note {
+    /// The line, with the tool's own words after it. The one place these words are written.
+    pub fn said(self, text: &str) -> String {
+        match self {
+            Note::AtKeyboard => format!("Needs you at the keyboard: {text}"),
+            Note::TurnFailed => format!("Its turn failed, and it has stopped. {text}"),
+        }
+    }
 }
 
 /// What an agent is doing.
