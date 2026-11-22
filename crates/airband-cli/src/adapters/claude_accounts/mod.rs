@@ -218,7 +218,8 @@ fn list_in(here: &Here) -> (Vec<Account>, Option<String>) {
                     })
                 })
                 .collect();
-            checks.into_iter().filter_map(|h| h.join().ok()).collect()
+            // one whose check failed inside is said, not left off the list as if it were not saved
+            checks.into_iter().filter_map(|h| h.join().map_err(|_| notes.push("One saved account could not be checked: airband ran into trouble with it.".into())).ok()).collect()
         });
         match (&live, accounts.len()) {
             (Live::Unknown, _) => notes.push(format!("Could not tell which account {} is using just now: {} did not say.", tool(), maker())),
@@ -266,10 +267,7 @@ fn switch_in(here: &Here, id: &str) -> Res<std::thread::JoinHandle<()>> {
             // the login goes back as it was, so the two never disagree
             let undone = match &before {
                 Some(before) => here.vault.write(&here.live_service, user, before),
-                None => {
-                    here.vault.delete(&here.live_service, user);
-                    Ok(())
-                }
+                None => here.vault.delete(&here.live_service, user),
             };
             return Err(match undone {
                 Ok(()) => format!("Did not switch: {e}"),
@@ -347,8 +345,11 @@ pub(crate) fn add() -> Res<String> {
         locked(&here, || saved::keep(&here, &email, &oauth, &acct))??;
         Ok(email)
     })();
-    if let Ok(user) = here.user() {
-        here.vault.delete(&service, user);
+    // the sign-in's own copy, in an item of its own: one left behind is said, never passed over
+    if let Ok(user) = here.user()
+        && let Err(e) = here.vault.delete(&service, user)
+    {
+        eprintln!("The sign-in's copy of the login could not be taken out of the keychain ({e}). It is the item {service}.");
     }
     std::fs::remove_dir_all(&tmp).ok();
     result

@@ -217,6 +217,11 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     // where it works, and who it is: the tower always says, and nothing is made up when it does not
     let cwd = named.get("cwd").cloned().ok_or("airband hold needs --cwd")?;
     let (id, harness) = (named.get("id").cloned().ok_or("airband hold needs --id")?, named.get("harness").cloned().ok_or("airband hold needs --harness")?);
+    // all it needs is known before the program starts: one started and then given up on would be left running
+    let line = match by {
+        By::Lines => Some(named.get("line").cloned().ok_or("airband hold --by lines needs --line")?),
+        By::Acp => None,
+    };
     let mut command = Command::new(program);
     command.args(rest).current_dir(&cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     // A program whose holder reports for it stays quiet itself, hooks and all: two reports of the same thing
@@ -231,9 +236,10 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             pass_output(&mut child, tx, by == By::Acp);
             keep_errors(&mut child, errors.clone());
             let held = Held { id, harness, cwd, rx, to_program: Arc::new(Mutex::new(child.stdin.take())), state: state.clone(), errors };
-            let done = match by {
-                By::Lines => lines(&held, named.get("line").ok_or("airband hold --by lines needs --line")?, named.get("stop").map(String::as_str)),
-                By::Acp => crate::acp::run(&held, named.get("session").cloned(), named.get("mode").map(String::as_str), crate::acp::Asked { model: named.get("model").cloned(), effort: named.get("effort").cloned() }),
+            // a line to write is what a program driven by lines has, and only that
+            let done = match &line {
+                Some(line) => lines(&held, line, named.get("stop").map(String::as_str)),
+                None => crate::acp::run(&held, named.get("session").cloned(), named.get("mode").map(String::as_str), crate::acp::Asked { model: named.get("model").cloned(), effort: named.get("effort").cloned() }),
             };
             held.close_input();
             end(&mut child);

@@ -12,11 +12,15 @@ pub(super) trait Vault: Send + Sync {
     fn read(&self, service: &str, account: &str) -> Res<Option<String>>;
     /// Keep it, and read it back to be sure it was kept.
     fn write(&self, service: &str, account: &str, data: &str) -> Res<()>;
-    fn delete(&self, service: &str, account: &str);
+    /// Take an item out. One that is not there is already out.
+    fn delete(&self, service: &str, account: &str) -> Res<()>;
 }
 
 /// The login keychain.
 pub(super) struct Keychain;
+
+/// What `security` ends with when the item asked for is not there (`errSecItemNotFound`).
+const ITEM_NOT_FOUND: i32 = 44;
 
 /// `security`, run as the user it really is: the login keychain is found through the home folder, and with
 /// HOME pointed anywhere else `security` finds no keychain and waits for ever on a dialog.
@@ -68,8 +72,13 @@ impl Vault for Keychain {
             _ => Err(format!("the keychain did not keep {service}")),
         }
     }
-    fn delete(&self, service: &str, account: &str) {
-        security().args(["delete-generic-password", "-a", account, "-s", service]).stdout(Stdio::null()).stderr(Stdio::null()).status().ok();
+    fn delete(&self, service: &str, account: &str) -> Res<()> {
+        let status = security().args(["delete-generic-password", "-a", account, "-s", service]).stdout(Stdio::null()).stderr(Stdio::null()).status().map_err(|e| format!("could not ask the keychain: {e}"))?;
+        // `security` ends with 44 for an item that is not there
+        match status.code() {
+            Some(0 | ITEM_NOT_FOUND) => Ok(()),
+            _ => Err(format!("the keychain did not delete it ({status})")),
+        }
     }
 }
 
@@ -87,7 +96,8 @@ impl Vault for Memory {
         self.0.lock().unwrap().insert((service.to_string(), account.to_string()), data.to_string());
         Ok(())
     }
-    fn delete(&self, service: &str, account: &str) {
+    fn delete(&self, service: &str, account: &str) -> Res<()> {
         self.0.lock().unwrap().remove(&(service.to_string(), account.to_string()));
+        Ok(())
     }
 }
