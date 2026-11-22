@@ -28,9 +28,10 @@ struct Install {
 #[uniffi::export]
 pub fn install_command(relay: bool) -> String {
     let i: Install = serde_json::from_str(include_str!("../../../../site/install.json")).expect("the install file is part of this build, and reads");
-    // the package manager's words are its catalogue row's; what starts airband is airband's own
-    let install = airband_core::catalog::installer().expect("an installer row is compiled in").install_line();
-    format!("{install} && {}", if relay { i.start } else { i.start_without_relay })
+    // the package manager's words are its catalogue row's, one line for each; what starts airband is airband's own
+    let start = if relay { i.start } else { i.start_without_relay };
+    let lines: Vec<String> = airband_core::catalog::installers().iter().map(|m| format!("{} && {start}", m.install_line())).collect();
+    if lines.is_empty() { start } else { lines.join("\n") }
 }
 
 /// Is this a pairing link a computer gave (`airband pair`)? Read by the one parser that pairs with it.

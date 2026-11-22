@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn the_frames_program_is_this_builds_own_row_and_fills_its_words() {
-        let f = frames().expect("a frames row is compiled in");
+        let f = frames_programs().into_iter().next().expect("this build compiles a frames row in");
         let run = f.run("/v/clip.mov", 30, "/v/frames");
         assert!(run.contains(&"/v/clip.mov".to_string()) && run.contains(&"30".to_string()) && run.contains(&"/v/frames/%02d.jpg".to_string()), "{run:?}");
         assert!(!run.iter().any(|w| w.contains('{')), "{run:?}");
