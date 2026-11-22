@@ -58,6 +58,20 @@ impl Tell {
         serde_json::to_string(&line).expect("a line to a holder writes as JSON")
     }
 }
+/// A holder's answer to anything but a status ask: whether it took what it was told. The tower counts words as
+/// given only on `Taken`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "answer", rename_all = "kebab-case")]
+pub(crate) enum Answer {
+    Taken,
+    Refused { why: String },
+}
+impl Answer {
+    fn line(&self) -> String {
+        serde_json::to_string(self).expect("a holder's answer writes as JSON")
+    }
+}
+
 /// The line that asks a holder where it has got to. The answer is a [`State`].
 pub(crate) fn status_line() -> String {
     serde_json::to_string(&ToHolder::Status).expect("a line to a holder writes as JSON")
@@ -254,17 +268,26 @@ fn listen(sock: &str, state: Arc<Mutex<State>>, tx: mpsc::Sender<Msg>) -> Result
             if conn.read_to_string(&mut said).is_err() {
                 continue;
             }
-            for line in said.lines().filter_map(|l| serde_json::from_str::<ToHolder>(l).ok()) {
-                let tell = match line {
-                    ToHolder::Status => {
+            for line in said.lines() {
+                let tell = match serde_json::from_str::<ToHolder>(line) {
+                    Ok(ToHolder::Status) => {
                         writeln!(conn, "{}", serde_json::to_string(&*state.lock().unwrap()).unwrap()).ok();
                         continue;
                     }
-                    ToHolder::Say { text, receipt } => Tell::Say(text, receipt),
-                    ToHolder::Stop => Tell::Stop,
-                    ToHolder::End => Tell::End,
+                    Ok(ToHolder::Say { text, receipt }) => Tell::Say(text, receipt),
+                    Ok(ToHolder::Stop) => Tell::Stop,
+                    Ok(ToHolder::End) => Tell::End,
+                    Err(e) => {
+                        writeln!(conn, "{}", Answer::Refused { why: format!("its holder could not read what it was told: {e}") }.line()).ok();
+                        continue;
+                    }
                 };
-                tx.send(Msg::Tell(tell)).ok();
+                // its program has gone and nothing reads this any more: not taken
+                let answer = match tx.send(Msg::Tell(tell)) {
+                    Ok(()) => Answer::Taken,
+                    Err(_) => Answer::Refused { why: "it has ended".into() },
+                };
+                writeln!(conn, "{}", answer.line()).ok();
             }
         }
     });

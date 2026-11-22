@@ -202,7 +202,7 @@ pub(super) mod tests {
         let cfg: Config = serde_json::from_str(r#"{"token":"own","radio_token":"radio"}"#).unwrap();
         let push = push::Wake::load(&store, &[]).unwrap();
         let saver = saver::Saver::start(store.clone());
-        Arc::new(App { push, settings: Settings::held(cfg), store, saver, inner: Mutex::new(Inner::default()), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default() })
+        Arc::new(App { push, settings: Settings::held(cfg), store, saver, inner: Mutex::new(Inner::default()), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default(), reviving: Default::default() })
     }
 
     fn presence(radio: Option<RadioId>, header: Option<&str>) -> Request {

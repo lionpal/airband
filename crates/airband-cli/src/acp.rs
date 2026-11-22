@@ -186,10 +186,15 @@ impl Opening<'_> {
     }
 }
 
+/// What he is told when an agent ended with `n` of his messages still waiting for it.
+fn never_reached(n: usize) -> String {
+    if n == 1 { "It ended before your last message reached it.".into() } else { format!("It ended before your last {n} messages reached it.") }
+}
+
 /// Drive the open session until it ends: one prompt at a time, what he says while it works waiting here in the
 /// order he said it.
 fn drive(held: &Held, session: &str, me: &Agent, early: VecDeque<Tell>) {
-    let (mut waiting, mut running, mut said, mut next_id) = (VecDeque::<String>::new(), None::<u64>, String::new(), 10u64);
+    let (mut waiting, mut running, mut said, mut next_id) = (VecDeque::<(String, String)>::new(), None::<u64>, String::new(), 10u64);
     let mut early: VecDeque<Msg> = early.into_iter().map(Msg::Tell).collect();
     loop {
         let msg = match early.pop_front() {
@@ -200,7 +205,7 @@ fn drive(held: &Held, session: &str, me: &Agent, early: VecDeque<Tell>) {
             },
         };
         match msg {
-            Msg::Tell(Tell::Say(text, _)) => waiting.push_back(text),
+            Msg::Tell(Tell::Say(text, receipt)) => waiting.push_back((text, receipt)),
             Msg::Tell(Tell::Stop) => {
                 if running.is_some() {
                     send(held, json!({ "jsonrpc": "2.0", "method": "session/cancel", "params": { "sessionId": session } }));
@@ -235,13 +240,19 @@ fn drive(held: &Held, session: &str, me: &Agent, early: VecDeque<Tell>) {
             Msg::Gone => break,
         }
         if running.is_none()
-            && let Some(text) = waiting.pop_front() {
+            && let Some((text, receipt)) = waiting.pop_front() {
                 next_id += 1;
                 running = Some(next_id);
                 said.clear();
                 send(held, json!({ "jsonrpc": "2.0", "id": next_id, "method": "session/prompt", "params": { "sessionId": session, "prompt": [{ "type": "text", "text": text }] } }));
+                // given to it as its turn: what that delivery carried is read
+                post(me, Event::Took { receipt });
                 post(me, Event::Working);
             }
+    }
+    // it ended with words of his still waiting: they never reached it, and he is told, not left thinking they did
+    if !waiting.is_empty() {
+        post(me, Event::Stopped { why: Some(never_reached(waiting.len())) });
     }
 }
 

@@ -236,6 +236,9 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         why: Option<String>,
     },
+    /// It has taken in what the tower gave it under `receipt` (`airband_core::agent::Deliver::Held`): the
+    /// messages that delivery carried are marked read. For a tool whose own record does not name the receipt.
+    Took { receipt: String },
     /// It is gone.
     Signoff,
     #[serde(other)]

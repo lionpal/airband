@@ -149,6 +149,9 @@ pub(crate) struct App {
     push: push::Wake,
     /// Every pairing being served, by its channel.
     served: relay_link::Served,
+    /// Held when a held agent's holder is started again, so two deliveries to one whose holder has gone never
+    /// start two holders on one session.
+    reviving: tokio::sync::Mutex<()>,
 }
 
 impl App {

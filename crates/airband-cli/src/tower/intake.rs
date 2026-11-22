@@ -175,6 +175,10 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
                 enqueue(&mut inner, &id, true, why, Some(Kind::NeedsYou), Vec::new(), Some(Note::TurnFailed));
             }
         }
+        Event::Took { receipt } => {
+            inner.took(&receipt, now_ms());
+            return Ok(());
+        }
         Event::Checkin | Event::Signoff | Event::Unknown => {}
     }
     inner.tell();

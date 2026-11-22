@@ -154,6 +154,15 @@ impl Inner {
     pub(super) fn item(&self, e: &Entry) -> Item {
         Item { asked: e.agent.as_deref().and_then(|a| self.last_instruction(a)), id: e.id.clone(), notice: e.notice, full: e.said_whole(), kind: e.kind, say: e.short.clone() }
     }
+    /// The agent has taken in what was delivered under `receipt`: the lines that delivery carried are marked read.
+    pub(super) fn took(&mut self, receipt: &str, at: u64) {
+        for line in self.receipts.remove(receipt).unwrap_or_default() {
+            if let Some(e) = self.log.iter_mut().find(|e| e.id == line && e.seen.is_none() && e.held != Some(Held::Cancelled)) {
+                e.seen = Some(at);
+                self.touch(&line);
+            }
+        }
+    }
     /// What he said to an agent at its own keyboard, as its harness kept it: added to the chat as his words to
     /// it, each once, at the time he said it. `upto` is how far the harness's record has now been read.
     /// `pictures` are the ones that came with each thing told, already kept, in the same order.
@@ -164,12 +173,7 @@ impl Inner {
         // What the tower passed on, now taken in by the agent: the agent's record names the id the delivery went
         // under, and the lines that delivery carried are marked read. Nothing is told from the words.
         for t in told.iter().filter(|t| !t.his) {
-            for line in self.receipts.remove(&t.id).unwrap_or_default() {
-                if let Some(e) = self.log.iter_mut().find(|e| e.id == line && e.seen.is_none() && e.held != Some(Held::Cancelled)) {
-                    e.seen = Some(t.at);
-                    self.touch(&line);
-                }
-            }
+            self.took(&t.id, t.at);
         }
         for (t, pictures) in told.into_iter().zip(pictures.into_iter().chain(std::iter::repeat_with(Vec::new))).filter(|(t, _)| t.his && t.at >= oldest) {
             // the harness's own id for it, so the same words are never added twice

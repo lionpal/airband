@@ -125,7 +125,7 @@ fn open(cfg: Config) -> Result<Arc<App>, String> {
     inner.settle_reading();
     let push = push::Wake::load(&store, &cfg.pairings)?;
     let saver = saver::Saver::start(store.clone());
-    let app = Arc::new(App { push, settings: Settings::new(cfg), store, saver, inner: Mutex::new(inner), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default() });
+    let app = Arc::new(App { push, settings: Settings::new(cfg), store, saver, inner: Mutex::new(inner), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default(), reviving: Default::default() });
     // what was changed while starting (a credential masked in a kept message) is written now, not at the next
     // thing an agent says
     drop(app.change());
