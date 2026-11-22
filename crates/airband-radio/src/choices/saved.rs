@@ -33,10 +33,10 @@ pub(super) struct Waiting {
     /// that does.
     #[serde(default)]
     pub(super) his: bool,
-    /// The computers that have taken it, by `Station::id`. It waits for the rest.
+    /// The computers that have taken it, by `Computer::id`. It waits for the rest.
     #[serde(default)]
     pub(super) taken: Vec<String>,
-    /// The computers that said no to it, by `Station::id`: they are not asked again, and he was told why.
+    /// The computers that said no to it, by `Computer::id`: they are not asked again, and he was told why.
     #[serde(default)]
     pub(super) refused: Vec<String>,
 }

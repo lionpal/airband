@@ -82,9 +82,15 @@ pub trait DeskHost: Send + Sync {
     /// Keep this key under that name from now on, or with nothing, forget it.
     fn keep_secret(&self, name: String, value: Option<String>);
 }
-pub(crate) struct Station {
+/// One computer he is paired with, for as long as he is: what was last seen of it, and the connection to it
+/// now. The computer outlives its connections: asking it afresh (`reconnect`, `wake`) replaces only the
+/// connection, and what is kept for him on its behalf (the radio's [`Kept`]) passes to the next one.
+pub(crate) struct Computer {
     link: String,
+    /// The connection to it now: replaced on every reconnect, with what it keeps handed on.
     pub(crate) radio: Arc<Radio>,
+    /// Which connection this is: a thread of an older one finds it changed and stops.
+    epoch: u64,
     name: String,
     pub(crate) online: bool,
     /// It has been asked at least once and has answered or failed.
@@ -99,7 +105,9 @@ pub(crate) struct Station {
     reads_failed: String,
     agents: Vec<ChatAgent>,
     open: HashSet<String>,
-    sending: Vec<Outgoing>,
+    /// What its radio last said was waiting to go: only for telling what has since left. What is shown as
+    /// waiting is read from what the radio keeps on this device, so it is there from launch.
+    was_waiting: Vec<Outgoing>,
     /// Sent, and not yet seen in the chat that comes back from the tower: shown as on their way until they are.
     landing: Vec<(Outgoing, std::time::Instant)>,
     quick: Vec<QuickMessage>,
@@ -110,7 +118,7 @@ pub(crate) struct Station {
 pub(super) const UNPAIRED: &str = "That computer is no longer paired.";
 /// What he is told when the team he picked has no agents left, so no computer has it.
 pub(super) const NO_TEAM: &str = "That team has no agents now.";
-impl Station {
+impl Computer {
     /// What this computer is known by on this device ([`station_id`]).
     pub(crate) fn id(&self) -> String {
         station_id(&self.link)
@@ -139,11 +147,11 @@ pub(crate) struct State {
     asking: Option<Asking>,
     /// He took back what he was saying: when the microphone closes, nothing is sent.
     discard: bool,
-    pub(crate) stations: Vec<Station>,
+    pub(crate) computers: Vec<Computer>,
     /// Answered here a moment ago: hidden from "waiting" before the tower confirms.
     answered: HashSet<String>,
-    /// Goes up each time the set of computers changes, so threads following the old set stop.
-    generation: u64,
+    /// The last connection's number: each connection to a computer gets the next ([`Computer::epoch`]).
+    epochs: u64,
     calling: bool,
     uploads: Vec<Upload>,
     /// Where this device can be woken with a notification (a push service's name and the device's address
@@ -159,66 +167,71 @@ pub(crate) struct State {
 impl State {
     /// Every computer's radio, in the computers' order.
     fn radios(&self) -> Vec<Arc<Radio>> {
-        self.stations.iter().map(|s| s.radio.clone()).collect()
+        self.computers.iter().map(|s| s.radio.clone()).collect()
     }
-    /// The computer that has this agent, by the agent's id: its place among them.
-    /// Where a computer is among them now, by its id ([`Station::id`]).
-    pub(super) fn station_at(&self, id: &str) -> Option<usize> {
-        self.stations.iter().position(|s| s.id() == id)
+    /// A computer by its id ([`Computer::id`]).
+    pub(super) fn computer(&self, id: &str) -> Option<&Computer> {
+        self.computers.iter().find(|s| s.id() == id)
     }
-    fn station_with_agent(&self, id: &str) -> Option<usize> {
-        self.stations.iter().position(|s| s.agents.iter().any(|a| a.id == id))
+    /// A computer by its id, while `epoch` is still its connection: for the threads of one connection.
+    fn live(&mut self, id: &str, epoch: u64) -> Option<&mut Computer> {
+        self.computers.iter_mut().find(|s| s.epoch == epoch && s.id() == id)
+    }
+    /// The computer that has this agent, by the agent's id.
+    fn with_agent(&self, id: &str) -> Option<&Computer> {
+        self.computers.iter().find(|s| s.agents.iter().any(|a| a.id == id))
     }
     /// The radio of the computer that has this agent, by the agent's id.
     fn radio_with_agent(&self, id: &str) -> Option<Arc<Radio>> {
-        self.station_with_agent(id).map(|i| self.stations[i].radio.clone())
+        self.with_agent(id).map(|s| s.radio.clone())
     }
-    /// What a computer is called wherever one is named to him: the name it gave itself, and for one that
-    /// gave none, "Your computer" when it is the only one and its place among them when there are several.
-    pub(super) fn computer_name(&self, index: usize) -> String {
-        let Some(station) = self.stations.get(index) else { return String::new() };
-        if !station.name.is_empty() {
-            return station.name.clone();
+    /// What a computer is called wherever one is named to him, by its id: the name it gave itself, and for
+    /// one that never gave one, what its pairing link calls it.
+    pub(super) fn computer_name(&self, id: &str) -> String {
+        let Some(computer) = self.computer(id) else { return String::new() };
+        if !computer.name.is_empty() {
+            return computer.name.clone();
         }
         // one that has never said its name: what its pairing link calls it, or where the link reaches it
-        match airband_core::pairing::Pairing::computer_in(&station.link) {
+        match airband_core::pairing::Pairing::computer_in(&computer.link) {
             Some(name) => name,
-            None if self.stations.len() == 1 => "Your computer".to_string(),
+            None if self.computers.len() == 1 => "Your computer".to_string(),
             None => "New computer".to_string(),
         }
     }
     /// Every computer's radio with its id and what it is called.
     fn named_radios(&self) -> Vec<(DeskComputer, Arc<Radio>)> {
-        (0..self.stations.len()).map(|i| (DeskComputer { id: self.stations[i].id(), name: self.computer_name(i) }, self.stations[i].radio.clone())).collect()
+        self.computers.iter().map(|s| (DeskComputer { id: s.id(), name: self.computer_name(&s.id()) }, s.radio.clone())).collect()
     }
     /// The colour a team is shown in.
     fn colour(&self, group: &str) -> Option<u8> {
         self.colours.of(group)
     }
     /// His main computer: the only one, or the one he chose, while it is still paired.
-    pub(crate) fn main(&self) -> Option<usize> {
-        match self.stations.len() {
-            0 => None,
-            1 => Some(0),
-            _ => self.read.main.as_deref().and_then(|id| self.station_at(id)),
+    pub(crate) fn main(&self) -> Option<&Computer> {
+        match self.computers.as_slice() {
+            [] => None,
+            [only] => Some(only),
+            _ => self.read.main.as_deref().and_then(|id| self.computer(id)),
         }
     }
     /// A room on his screen ([`DeskRoom::id`]): the radio of the computer that has it, the team's id there,
     /// and what the team is called. Nothing for a room no agent is in now.
     fn room(&self, room: &str) -> Option<(Arc<Radio>, String, String)> {
-        self.stations.iter().find_map(|s| s.agents.iter().find(|a| a.room == room).map(|a| (s.radio.clone(), a.team.clone(), a.group.clone())))
+        self.computers.iter().find_map(|s| s.agents.iter().find(|a| a.room == room).map(|a| (s.radio.clone(), a.team.clone(), a.group.clone())))
     }
-    fn owner(&self, message: &str) -> Option<usize> {
-        self.stations.iter().position(|s| s.messages.iter().any(|m| m.id == message))
+    /// The computer a message is in.
+    fn owner(&self, message: &str) -> Option<&Computer> {
+        self.computers.iter().find(|s| s.messages.iter().any(|m| m.id == message))
     }
-    fn message(&self, id: &str) -> Option<(usize, &ChatMessage)> {
-        self.stations.iter().enumerate().find_map(|(i, s)| s.messages.iter().find(|m| m.id == id).map(|m| (i, m)))
+    fn message(&self, id: &str) -> Option<(&Computer, &ChatMessage)> {
+        self.computers.iter().find_map(|s| s.messages.iter().find(|m| m.id == id).map(|m| (s, m)))
     }
     /// Every message, oldest first, each labelled with its computer when there are several.
     fn merged(&self) -> Vec<ChatMessage> {
-        let several = self.stations.len() > 1;
+        let several = self.computers.len() > 1;
         let mut all: Vec<ChatMessage> = self
-            .stations
+            .computers
             .iter()
             .flat_map(|s| {
                 s.messages.iter().map(move |m| {
@@ -240,10 +253,10 @@ impl State {
     /// Every agent on every computer, each once.
     fn everyone(&self) -> Vec<&ChatAgent> {
         let mut seen = HashSet::new();
-        self.stations.iter().flat_map(|s| s.agents.iter()).filter(|a| seen.insert(a.id.clone())).collect()
+        self.computers.iter().flat_map(|s| s.agents.iter()).filter(|a| seen.insert(a.id.clone())).collect()
     }
     fn is_open(&self, id: &str) -> bool {
-        !self.answered.contains(id) && self.stations.iter().any(|s| s.open.contains(id))
+        !self.answered.contains(id) && self.computers.iter().any(|s| s.open.contains(id))
     }
 }
 pub(crate) struct Shared {
@@ -257,7 +270,12 @@ pub(crate) struct Shared {
     pub(crate) senses: Arc<Senses>,
     /// How a key he gives is tested before it is kept: one request to its service (`keys::check`).
     pub(crate) key_test: crate::keys::Test,
+    /// What reaches a computer in place of the network, by its pairing link: a stand-in tower in tests.
+    /// Nothing in the app, where every computer is reached the way its link says.
+    pub(crate) dial: Option<Dial>,
 }
+/// A stand-in for the network to a computer, by its pairing link ([`Shared::dial`]).
+pub(crate) type Dial = Arc<dyn Fn(&str) -> Arc<dyn crate::link::Transport> + Send + Sync>;
 #[derive(uniffi::Object)]
 pub struct Desk {
     pub(crate) shared: Arc<Shared>,
@@ -268,7 +286,7 @@ impl Desk {
     /// A desk with no computers, keeping what it keeps in `data_dir`.
     pub(crate) fn alone(data_dir: &str, host: Arc<dyn DeskHost>) -> Desk {
         let chooser = crate::choices::Chooser::open(data_dir, host.device());
-        Desk { shared: Arc::new(Shared { state: Mutex::new(State::default()), floor: Floor::default(), host, chooser, senses: Arc::default(), key_test: crate::keys::pretend }), data_dir: data_dir.into() }
+        Desk { shared: Arc::new(Shared { state: Mutex::new(State::default()), floor: Floor::default(), host, chooser, senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: data_dir.into() }
     }
 }
 /// A folder name that is the same every launch for the same link.
@@ -291,64 +309,65 @@ impl Desk {
         let senses: Arc<Senses> = Arc::default();
         // what he chose to listen and speak with is in use from the start
         chooser.apply(&*host, &senses);
-        Arc::new(Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser, senses, key_test: crate::keys::check }), data_dir })
+        Arc::new(Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser, senses, key_test: crate::keys::check, dial: None }), data_dir })
     }
     /// The computers he is paired with, as the links `airband pair` printed, one each. Replaces whatever set
-    /// was there. Returns the links that were taken: one that is not a pairing link is left out. What was last
-    /// seen from each is on screen at once, before any connection.
+    /// was there: a computer that stays is left as it is, connection and all; one no longer listed is let go;
+    /// a new one is connected. Returns the links that were taken: one that is not a pairing link is left out.
+    /// What was last seen from each is on screen at once, before any connection.
     pub fn set_links(&self, links: Vec<String>) -> Vec<String> {
-        let (old, generation, calling) = {
+        let mut wanted: Vec<String> = Vec::new();
+        links.into_iter().for_each(|l| if !wanted.contains(&l) { wanted.push(l) });
+        let (calling, new): (bool, Vec<(String, u64)>) = {
             let mut state = self.shared.state.lock().unwrap();
-            state.generation += 1;
-            (std::mem::take(&mut state.stations), state.generation, state.calling)
+            let fresh: Vec<String> = wanted.iter().filter(|l| !state.computers.iter().any(|s| &s.link == *l)).cloned().collect();
+            let numbered = fresh.into_iter().map(|l| { state.epochs += 1; (l, state.epochs) }).collect();
+            (state.calling, numbered)
         };
-        old.iter().for_each(|s| s.radio.stop());
-        self.shared.floor.clear();
-        let mut made: Vec<Station> = Vec::new();
-        for link in links {
-            if made.iter().any(|s| s.link == link) {
-                continue;
-            }
-            let dir = if self.data_dir.is_empty() { String::new() } else { std::path::Path::new(&self.data_dir).join(folder(&link)).display().to_string() };
-            let host: Arc<dyn RadioHost> = Arc::new(StationHost { shared: self.shared.clone(), index: made.len(), generation });
-            // a computer that was already there keeps what was last seen of it, so the screen does not empty while
-            // it is asked again, and what he was about to send there
-            let was = old.iter().find(|s| s.link == link);
-            let kept = was.map(|s| s.radio.kept()).unwrap_or_else(|| Kept::open(&dir, host.clone()));
-            let Ok(radio) = Radio::start_with(link.clone(), &dir, host, self.shared.senses.clone(), kept) else { continue };
+        // each new computer is connected outside the lock: what it last showed is read from this device
+        let mut made: Vec<Computer> = Vec::new();
+        for (link, epoch) in new {
+            let Ok(radio) = self.connect(&link, epoch, None) else { continue };
             radio.set_call_mode(calling);
-            let sending = radio.unsent();
             // what it last said it is called, kept on the phone: known before it answers again
-            let name = was.map(|s| s.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| radio.store.saved.lock().unwrap().computer.clone());
-            let mut station = Station {
+            let name = radio.store.saved.lock().unwrap().computer.clone();
+            let was_waiting = radio.unsent();
+            let mut computer = Computer {
                 messages: radio.history(),
                 radio,
+                epoch,
                 name,
-                online: was.is_some_and(|s| s.online),
+                online: false,
                 tried: false,
-                answered_at: was.and_then(|s| s.answered_at),
+                answered_at: None,
                 fails: 0,
                 failing_since: None,
                 reads: String::new(),
                 reads_failed: String::new(),
-                agents: was.map(|s| s.agents.clone()).unwrap_or_default(),
-                open: was.map(|s| s.open.clone()).unwrap_or_default(),
-                // what is still waiting to go, or was given up on, is shown from the start: nothing else says so
-                // until it is next tried
-                sending,
+                agents: Vec::new(),
+                open: HashSet::new(),
+                was_waiting,
                 landing: Vec::new(),
-                quick: was.map(|s| s.quick.clone()).unwrap_or_default(),
+                quick: Vec::new(),
                 link,
             };
             // the lines kept on the phone are in their rooms before any computer answers
-            station.settle_rooms();
-            made.push(station);
+            computer.settle_rooms();
+            made.push(computer);
         }
-        let taken: Vec<String> = made.iter().map(|s| s.link.clone()).collect();
-        let radios: Vec<Arc<Radio>> = made.iter().map(|s| s.radio.clone()).collect();
-        {
+        let started: Vec<(String, u64, Arc<Radio>)> = made.iter().map(|s| (s.id(), s.epoch, s.radio.clone())).collect();
+        let (taken, gone) = {
             let mut state = self.shared.state.lock().unwrap();
-            let paired: HashSet<String> = made.iter().map(|s| s.id()).collect();
+            let mut was = std::mem::take(&mut state.computers);
+            let mut kept: Vec<Computer> = Vec::new();
+            for link in &wanted {
+                if let Some(at) = was.iter().position(|s| &s.link == link) {
+                    kept.push(was.remove(at));
+                } else if let Some(at) = made.iter().position(|s| &s.link == link) {
+                    kept.push(made.remove(at));
+                }
+            }
+            let paired: HashSet<String> = kept.iter().map(|s| s.id()).collect();
             // files on a computer he no longer has, and words that reached it, go nowhere else
             state.uploads.retain(|u| {
                 let keep = paired.contains(&u.station);
@@ -360,45 +379,83 @@ impl Desk {
             if state.asking.as_ref().is_some_and(|a| !paired.contains(&a.at)) {
                 state.asking = None;
             }
-            state.stations = made;
-        }
-        for (index, radio) in radios.into_iter().enumerate() {
+            let taken: Vec<String> = kept.iter().map(|s| s.link.clone()).collect();
+            state.computers = kept;
+            (taken, was)
+        };
+        gone.iter().for_each(|s| s.radio.stop());
+        for (id, epoch, radio) in started {
             let shared = self.shared.clone();
-            thread::spawn(move || follow(shared, radio, index, generation));
+            thread::spawn(move || follow(shared, radio, id, epoch));
         }
         self.shared.host.changed();
         taken
     }
     /// The app is in front of him again. A request that was open when it went to the background is dead and
-    /// would not be noticed for most of a minute, so if no computer has answered lately they are all asked
-    /// afresh, now. Cheap to call whenever the app comes forward.
+    /// would not be noticed for most of a minute, so a computer that has not answered lately is asked afresh,
+    /// now. Cheap to call whenever the app comes forward.
     pub fn wake(&self) {
-        let stale = {
+        let stale: Vec<String> = {
             let state = self.shared.state.lock().unwrap();
             // a request waits up to 25 seconds for news, so an answer older than that plus a margin is a dead line
-            !state.stations.is_empty() && state.stations.iter().any(|s| s.answered_at.is_none_or(|t| t.elapsed() > Duration::from_secs(32)))
+            state.computers.iter().filter(|s| s.answered_at.is_none_or(|t| t.elapsed() > Duration::from_secs(32))).map(|s| s.id()).collect()
         };
-        if stale {
-            let links: Vec<String> = self.shared.state.lock().unwrap().stations.iter().map(|s| s.link.clone()).collect();
-            self.set_links(links);
-        }
+        self.reconnect_these(stale);
     }
     /// He asked for it: ask every computer afresh, now, whatever was last heard from them.
     pub fn reconnect(&self) {
-        let links: Vec<String> = self.shared.state.lock().unwrap().stations.iter().map(|s| s.link.clone()).collect();
-        if !links.is_empty() {
-            self.set_links(links);
-        }
+        let all: Vec<String> = self.shared.state.lock().unwrap().computers.iter().map(|s| s.id()).collect();
+        self.reconnect_these(all);
     }
 }
 
 impl Desk {
+    /// A new connection to the computer this link pairs, numbered `epoch`, handed what the last one kept for
+    /// him (`kept`), or opening it from this device when there was none.
+    fn connect(&self, link: &str, epoch: u64, kept: Option<Kept>) -> Result<Arc<Radio>, RadioError> {
+        let dir = if self.data_dir.is_empty() { String::new() } else { std::path::Path::new(&self.data_dir).join(folder(link)).display().to_string() };
+        let host: Arc<dyn RadioHost> = Arc::new(ComputerHost { shared: self.shared.clone(), station: station_id(link), epoch });
+        let kept = kept.unwrap_or_else(|| Kept::open(&dir, host.clone()));
+        let transport = self.shared.dial.as_ref().map(|dial| dial(link));
+        Radio::start_with(link.to_string(), &dir, host, self.shared.senses.clone(), kept, transport)
+    }
+    /// A new connection for each of these computers, by id. Everything else about each computer stays: what was
+    /// last seen of it, and what is kept for him on its behalf.
+    fn reconnect_these(&self, ids: Vec<String>) {
+        if ids.is_empty() {
+            return;
+        }
+        let (calling, plan): (bool, Vec<(String, String, u64, Kept)>) = {
+            let mut state = self.shared.state.lock().unwrap();
+            let plan = ids.iter().filter_map(|id| state.computer(id).map(|s| (id.clone(), s.link.clone(), s.radio.kept()))).collect::<Vec<_>>();
+            let plan = plan.into_iter().map(|(id, link, kept)| { state.epochs += 1; (id, link, state.epochs, kept) }).collect();
+            (state.calling, plan)
+        };
+        self.shared.floor.clear();
+        for (id, link, epoch, kept) in plan {
+            let Ok(radio) = self.connect(&link, epoch, Some(kept)) else { continue };
+            radio.set_call_mode(calling);
+            let old = {
+                let mut state = self.shared.state.lock().unwrap();
+                let Some(computer) = state.computers.iter_mut().find(|s| s.id() == id) else {
+                    radio.stop();
+                    continue;
+                };
+                computer.epoch = epoch;
+                std::mem::replace(&mut computer.radio, radio.clone())
+            };
+            old.stop();
+            let shared = self.shared.clone();
+            thread::spawn(move || follow(shared, radio, id, epoch));
+        }
+        self.shared.host.changed();
+    }
     /// Stop for good.
     #[cfg(test)]
     pub(crate) fn stop(&self) {
         let mut state = self.shared.state.lock().unwrap();
-        state.generation += 1;
-        state.stations.drain(..).for_each(|s| s.radio.stop());
+        state.epochs += 1;
+        state.computers.drain(..).for_each(|s| s.radio.stop());
     }
     /// The computer called this. With no name it is the one computer he has; with several he has to say
     /// which, and none is picked for him.
@@ -408,23 +465,23 @@ impl Desk {
     /// The same, with what the computer is known by in the rooms of his screen.
     fn station_of(&self, computer: &str) -> Result<(Arc<Radio>, String), RadioError> {
         let state = self.shared.state.lock().unwrap();
-        let found = match (computer.is_empty(), state.stations.as_slice()) {
+        let found = match (computer.is_empty(), state.computers.as_slice()) {
             (true, [only]) => Some(only),
             (true, [_, _, ..]) => return Err(RadioError::Told { reason: "Choose which computer first.".into() }),
-            _ => state.stations.iter().find(|s| s.id() == computer),
+            _ => state.computers.iter().find(|s| s.id() == computer),
         };
         found.filter(|s| s.online).map(|s| (s.radio.clone(), station_id(&s.link))).ok_or(RadioError::Offline)
     }
     fn radio_of(&self, message: &str) -> Option<Arc<Radio>> {
-        let state = self.shared.state.lock().unwrap();
-        state.owner(message).map(|i| state.stations[i].radio.clone())
+        self.shared.state.lock().unwrap().owner(message).map(|s| s.radio.clone())
     }
     /// The radio of the computer that has this agent, or a refusal when none does.
     fn agent_radio(&self, agent: &str) -> Result<Arc<Radio>, RadioError> {
         self.shared.state.lock().unwrap().radio_with_agent(agent).ok_or(RadioError::Refused)
     }
-    /// The computer's radio that a message still waiting to go, or given up on, belongs to.
+    /// The computer's radio that a message still waiting to go, or given up on, belongs to: what each keeps
+    /// on this device says, so it is known from launch.
     fn sender_of(&self, id: &str) -> Option<Arc<Radio>> {
-        self.shared.state.lock().unwrap().stations.iter().find(|s| s.sending.iter().any(|o| o.id == id)).map(|s| s.radio.clone())
+        self.shared.state.lock().unwrap().computers.iter().find(|s| s.radio.unsent().iter().any(|o| o.id == id)).map(|s| s.radio.clone())
     }
 }

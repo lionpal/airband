@@ -5,25 +5,27 @@ use super::*;
 /// so two never talk over each other or take his answer for theirs.
 #[derive(Default)]
 pub(super) struct Floor {
-    pub(super) holder: Mutex<Option<usize>>,
+    /// The computer that has it, by its id.
+    pub(super) holder: Mutex<Option<String>>,
     pub(super) freed: Condvar,
 }
 impl Floor {
-    pub(super) fn take(&self, index: usize) {
+    pub(super) fn take(&self, computer: &str) {
         let mut holder = self.holder.lock().unwrap();
-        while holder.is_some_and(|h| h != index) {
+        while holder.as_deref().is_some_and(|h| h != computer) {
             holder = self.freed.wait(holder).unwrap();
         }
-        *holder = Some(index);
+        *holder = Some(computer.to_string());
     }
-    /// Give it up if `index` has it. Returns whether `index` may show its status: it has the floor or nobody does.
-    pub(super) fn release(&self, index: usize, give_up: bool) -> bool {
+    /// Give it up if `computer` has it. Returns whether `computer` may show its status: it has the floor or
+    /// nobody does.
+    pub(super) fn release(&self, computer: &str, give_up: bool) -> bool {
         let mut holder = self.holder.lock().unwrap();
-        if give_up && *holder == Some(index) {
+        if give_up && holder.as_deref() == Some(computer) {
             *holder = None;
             self.freed.notify_all();
         }
-        holder.is_none_or(|h| h == index)
+        holder.as_deref().is_none_or(|h| h == computer)
     }
     pub(super) fn clear(&self) {
         *self.holder.lock().unwrap() = None;
@@ -31,12 +33,14 @@ impl Floor {
     }
 }
 /// What one computer's radio calls back into: it knows which computer it is, and the desk does the rest.
-pub(super) struct StationHost {
+pub(super) struct ComputerHost {
     pub(super) shared: Arc<Shared>,
-    pub(super) index: usize,
-    pub(super) generation: u64,
+    /// The computer, by its id.
+    pub(super) station: String,
+    /// The connection this host belongs to: once the computer has another, this one's callbacks do nothing.
+    pub(super) epoch: u64,
 }
-impl RadioHost for StationHost {
+impl RadioHost for ComputerHost {
     // a phone's own voice and recognition are never used
     fn speak(&self, _: String) {}
     fn listen(&self) -> Option<String> {
@@ -50,35 +54,29 @@ impl RadioHost for StationHost {
     fn unplaced(&self, message: Outgoing, elsewhere: Option<String>, ask: Vec<String>) {
         {
             let mut state = self.shared.state.lock().unwrap();
-            if state.generation != self.generation {
-                return;
-            }
             // it was not delivered here: it is not on its way to this computer's chat
-            if let Some(s) = state.stations.get_mut(self.index) {
-                s.landing.retain(|(o, _)| o.id != message.id);
-            }
+            let Some(s) = state.live(&self.station, self.epoch) else { return };
+            s.landing.retain(|(o, _)| o.id != message.id);
             // the tower read his words as for an agent another computer has: they go there, addressed to it
-            let there = elsewhere.as_ref().filter(|c| state.station_with_agent(c).is_some_and(|i| i != self.index)).cloned();
+            let there = elsewhere.as_ref().filter(|c| state.with_agent(c).is_some_and(|s| s.id() != self.station)).cloned();
             match (there, elsewhere) {
                 (Some(agent), Some(_)) => {
-                    let here = state.stations.get(self.index).map(|s| s.id()).unwrap_or_default();
                     drop(state);
-                    place(&self.shared, &here, message, agent);
+                    place(&self.shared, &self.station, message, agent);
                 }
                 (_, gone) => {
-                    let Some(at) = state.stations.get(self.index).map(|s| s.id()) else { return };
-                    state.asking = Some(Asking { message, guesses: gone.into_iter().chain(ask).collect(), at });
+                    state.asking = Some(Asking { message, guesses: gone.into_iter().chain(ask).collect(), at: self.station.clone() });
                 }
             }
         }
         self.shared.host.changed();
     }
     fn play(&self, rate: u32, pcm: Vec<u8>, last: bool) {
-        self.shared.floor.take(self.index);
+        self.shared.floor.take(&self.station);
         self.shared.host.play(rate, pcm, last);
     }
     fn record_start(&self, rate: u32) -> bool {
-        self.shared.floor.take(self.index);
+        self.shared.floor.take(&self.station);
         self.shared.host.record_start(rate)
     }
     fn record_read(&self) -> Vec<u8> {
@@ -93,16 +91,17 @@ impl RadioHost for StationHost {
         // what he said has gone, and took with it the files that were waiting: they leave the tray
         if matches!(status, RadioStatus::Idle) {
             let mut state = self.shared.state.lock().unwrap();
-            if let Some((here, waiting)) = state.stations.get(self.index).map(|s| (s.id(), s.radio.armed())) {
+            if let Some(waiting) = state.computer(&self.station).map(|s| s.radio.armed()) {
                 let before = state.uploads.len();
-                state.uploads.retain(|u| !(u.station == here && u.shown.state == UploadState::Ready && !waiting.contains(&u.shown.id)));
+                let here = &self.station;
+                state.uploads.retain(|u| !(&u.station == here && u.shown.state == UploadState::Ready && !waiting.contains(&u.shown.id)));
                 if state.uploads.len() != before {
                     drop(state);
                     self.shared.host.changed();
                 }
             }
         }
-        if self.shared.floor.release(self.index, ends) {
+        if self.shared.floor.release(&self.station, ends) {
             self.shared.host.status(status);
         }
     }
@@ -115,28 +114,24 @@ impl RadioHost for StationHost {
     fn words(&self, text: String, starts: Vec<u32>, at_ms: Vec<u32>) {
         // only the computer whose turn it is to speak says what is being said: another one's words wait with
         // its sound, or they would be shown over the voice of the one speaking
-        self.shared.floor.take(self.index);
+        self.shared.floor.take(&self.station);
         self.shared.host.words(text, starts, at_ms);
     }
     fn outbox(&self, waiting: Vec<Outgoing>, note: Option<String>) {
         {
             let mut state = self.shared.state.lock().unwrap();
-            if state.generation != self.generation {
-                return;
+            let Some(s) = state.live(&self.station, self.epoch) else { return };
+            // What has left the list was sent. It stays on screen as on its way until the chat has it (the
+            // tower gives the message the same id), so it never vanishes for a moment in between. Not when
+            // there is something to tell him about it: then it did not go.
+            if note.is_none() {
+                // (one that was given up on and has now been let go did not go anywhere)
+                let gone: Vec<Outgoing> = s.was_waiting.iter().filter(|was| !waiting.iter().any(|w| w.id == was.id)).cloned().collect();
+                let now = std::time::Instant::now();
+                s.landing.retain(|(_, at)| at.elapsed() < Duration::from_secs(15));
+                s.landing.extend(gone.into_iter().map(|o| (o, now)));
             }
-            if let Some(s) = state.stations.get_mut(self.index) {
-                // What has left the list was sent. It stays on screen as on its way until the chat has it (the
-                // tower gives the message the same id), so it never vanishes for a moment in between. Not when
-                // there is something to tell him about it: then it did not go.
-                if note.is_none() {
-                    // (one that was given up on and has now been let go did not go anywhere)
-                    let gone: Vec<Outgoing> = s.sending.iter().filter(|was| !waiting.iter().any(|w| w.id == was.id)).cloned().collect();
-                    let now = std::time::Instant::now();
-                    s.landing.retain(|(_, at)| at.elapsed() < Duration::from_secs(15));
-                    s.landing.extend(gone.into_iter().map(|o| (o, now)));
-                }
-                s.sending = waiting;
-            }
+            s.was_waiting = waiting;
         }
         self.shared.host.changed();
         if let Some(note) = note.filter(|n| !n.is_empty()) {

@@ -2,13 +2,15 @@
 use super::*;
 
 /// Keeps one computer's part of the chat current. One request is always open with its tower.
-pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64) {
+/// `station` is the computer's id, and `epoch` the connection `radio` is: when the computer has another, this
+/// one stops.
+pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, station: String, epoch: u64) {
     let mut first = true;
     let mut told_taken: Option<Vec<airband_core::routing::Callsign>> = None;
     loop {
         // a computer that has not been told where this device can be woken is told as soon as it is reached
-        tell_push(&shared, &radio, index, generation);
-        tell_tools(&shared, &radio, index, generation);
+        tell_push(&shared, &radio, &station, epoch);
+        tell_tools(&shared, &radio, &station, epoch);
         // the tower is told whether the chat is in front of him: only then does having it count as seeing it
         radio.set_away(!shared.host.watching());
         // the first answer must come at once: it is what says the tower is there and who is on it
@@ -22,38 +24,35 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, gener
         let mut colours_lost: Option<String> = None;
         {
             let mut state = shared.state.lock().unwrap();
-            if state.generation != generation {
-                return;
-            }
             let calling = state.calling;
-            let open: HashSet<String> = state.stations.iter().flat_map(|s| s.open.iter().cloned()).collect();
-            let Some(station) = state.stations.get_mut(index) else { return };
+            let open: HashSet<String> = state.computers.iter().flat_map(|s| s.open.iter().cloned()).collect();
+            let Some(computer) = state.live(&station, epoch) else { return };
             match &got {
                 Ok(feed) => {
                     first = false;
-                    station.tried = true;
-                    station.fails = 0;
-                    station.failing_since = None;
-                    station.answered_at = Some(std::time::Instant::now());
-                    reached = !station.online || station.reads != feed.reads || station.reads_failed != feed.reads_failed;
-                    station.online = true;
-                    if !feed.station.is_empty() && station.name != feed.station {
-                        station.name = feed.station.clone();
-                        station.radio.store.change(|s| s.computer = feed.station.clone());
+                    computer.tried = true;
+                    computer.fails = 0;
+                    computer.failing_since = None;
+                    computer.answered_at = Some(std::time::Instant::now());
+                    reached = !computer.online || computer.reads != feed.reads || computer.reads_failed != feed.reads_failed;
+                    computer.online = true;
+                    if !feed.station.is_empty() && computer.name != feed.station {
+                        computer.name = feed.station.clone();
+                        computer.radio.store.change(|s| s.computer = feed.station.clone());
                     }
-                    station.reads = feed.reads.clone();
+                    computer.reads = feed.reads.clone();
                     // what reads there has stopped working: he is told once, when it stops, and each message
                     // comes as it was written until it works again
-                    if !feed.reads_failed.is_empty() && station.reads_failed != feed.reads_failed {
+                    if !feed.reads_failed.is_empty() && computer.reads_failed != feed.reads_failed {
                         reads_trouble = Some(feed.reads_failed.clone());
                     }
-                    station.reads_failed = feed.reads_failed.clone();
-                    station.agents = feed.agents.clone();
-                    station.open = feed.open.iter().cloned().collect();
-                    station.quick = feed.quick.clone();
+                    computer.reads_failed = feed.reads_failed.clone();
+                    computer.agents = feed.agents.clone();
+                    computer.open = feed.open.iter().cloned().collect();
+                    computer.quick = feed.quick.clone();
                     // the radio keeps the chat itself, each line in its current form
-                    station.messages = radio.history();
-                    station.settle_rooms();
+                    computer.messages = radio.history();
+                    computer.settle_rooms();
                     // on screen in front of him now: read, so a call started later does not read it out
                     if !calling && shared.host.watching() {
                         seen = feed.messages.iter().filter(|m| !m.his && !m.needs_you).map(|m| m.id.clone()).collect();
@@ -62,31 +61,31 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, gener
                 // one request lost is not a computer out of reach: it is asked again at once, and only a second
                 // failure says so
                 Err(_) => {
-                    station.fails += 1;
+                    computer.fails += 1;
                     // a computer being restarted is back in a few seconds: it is only said to be out of reach
                     // when it has been for a while (or has never once answered)
-                    let long = station.failing_since.get_or_insert_with(std::time::Instant::now).elapsed() > Duration::from_secs(10);
-                    if station.fails >= 2 && (long || station.answered_at.is_none()) {
-                        station.tried = true;
-                        station.online = false;
+                    let long = computer.failing_since.get_or_insert_with(std::time::Instant::now).elapsed() > Duration::from_secs(10);
+                    if computer.fails >= 2 && (long || computer.answered_at.is_none()) {
+                        computer.tried = true;
+                        computer.online = false;
                     }
                 }
             }
             // the teams this computer has are given their colours here, beside every other computer's
             if got.is_ok()
-                && let Some(station) = state.stations.get(index) {
-                let rooms: Vec<String> = station.agents.iter().map(|a| a.room.clone()).chain(station.messages.iter().map(|m| m.room.clone())).collect();
+                && let Some(computer) = state.computer(&station) {
+                let rooms: Vec<String> = computer.agents.iter().map(|a| a.room.clone()).chain(computer.messages.iter().map(|m| m.room.clone())).collect();
                 colours_lost = state.colours.see(rooms);
             }
             // once the tower agrees a message is answered, stop tracking it here
-            let now_open: HashSet<String> = state.stations.iter().flat_map(|s| s.open.iter().cloned()).collect();
+            let now_open: HashSet<String> = state.computers.iter().flat_map(|s| s.open.iter().cloned()).collect();
             if now_open != open {
                 state.answered.retain(|id| now_open.contains(id));
             }
         }
         // the names he is likely to say, for whatever listens on this device: his agents and their teams
         if got.is_ok() {
-            let names: Vec<String> = shared.state.lock().unwrap().stations.iter().flat_map(|s| s.agents.iter().flat_map(|a| [a.callsign.clone(), a.group.clone()])).collect();
+            let names: Vec<String> = shared.state.lock().unwrap().computers.iter().flat_map(|s| s.agents.iter().flat_map(|a| [a.callsign.clone(), a.group.clone()])).collect();
             shared.senses.ears.expect(names);
         }
         shared.host.changed();
@@ -94,7 +93,7 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, gener
             shared.host.note(lost);
         }
         if let Some(why) = reads_trouble {
-            let name = shared.state.lock().unwrap().computer_name(index);
+            let name = shared.state.lock().unwrap().computer_name(&station);
             shared.host.note(format!("{name}: summaries are not working. {why} You are getting each message as it was written. To change what makes them, open Settings, then Summaries."));
         }
         if !seen.is_empty() {
@@ -108,19 +107,21 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, gener
         }
         // Two computers number their agents without knowing of each other. The later one in his list is told
         // the names the earlier ones use, whenever those change, and keeps off them.
-        if got.is_ok() && index > 0 {
-            let elsewhere: Vec<airband_core::routing::Callsign> = {
+        if got.is_ok() {
+            let (first, elsewhere): (bool, Vec<airband_core::routing::Callsign>) = {
                 let state = shared.state.lock().unwrap();
                 let mut names: Vec<airband_core::routing::Callsign> = Vec::new();
-                state.stations.iter().take(index).flat_map(|s| s.agents.iter().map(|a| a.parts())).for_each(|c| if !names.contains(&c) { names.push(c) });
-                names
+                // the computers before this one in his list, as it is now
+                let before: Vec<&Computer> = state.computers.iter().take_while(|s| s.id() != station).collect();
+                before.iter().flat_map(|s| s.agents.iter().map(|a| a.parts())).for_each(|c| if !names.contains(&c) { names.push(c) });
+                (before.is_empty(), names)
             };
-            if told_taken.as_ref() != Some(&elsewhere) && radio.taken(&elsewhere) {
+            if !first && told_taken.as_ref() != Some(&elsewhere) && radio.taken(&elsewhere) {
                 told_taken = Some(elsewhere);
             }
         }
         if got.is_err() {
-            let fails = shared.state.lock().unwrap().stations.get(index).map(|s| s.fails).unwrap_or(1);
+            let fails = shared.state.lock().unwrap().computer(&station).map(|s| s.fails).unwrap_or(1);
             thread::sleep(Duration::from_millis(if fails <= 1 { 300 } else { 2500 }));
         }
     }

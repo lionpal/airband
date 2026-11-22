@@ -97,7 +97,7 @@ impl Desk {
         {
             // shown as the tower now has it, without waiting for the next look at the feed
             let mut state = self.shared.state.lock().unwrap();
-            for s in state.stations.iter_mut().filter(|s| s.agents.iter().any(|a| a.id == agent)) {
+            for s in state.computers.iter_mut().filter(|s| s.agents.iter().any(|a| a.id == agent)) {
                 for a in s.agents.iter_mut().filter(|a| a.id == agent) {
                     a.call(now.callsign.clone());
                     a.team = now.team.clone();
@@ -117,7 +117,7 @@ impl Desk {
         {
             // shown as the tower now has it, without waiting for the next look at the feed
             let mut state = self.shared.state.lock().unwrap();
-            for a in state.stations.iter_mut().flat_map(|s| s.agents.iter_mut()).filter(|a| a.room == room) {
+            for a in state.computers.iter_mut().flat_map(|s| s.agents.iter_mut()).filter(|a| a.room == room) {
                 a.call(airband_core::routing::Callsign { project: now.clone(), ..a.parts() });
             }
         }
