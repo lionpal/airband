@@ -82,7 +82,7 @@ pub fn leave_word(allow: bool) -> String {
 /// colour as [`DeskView::colours`] last gave it, from the copy the host keeps; a team not in it has none.
 #[uniffi::export]
 pub fn open_notice(links: Vec<String>, sealed: String, colours: std::collections::HashMap<String, u8>) -> Option<OpenedNotice> {
-    let sealed = airband_core::audio::base64_decode(&sealed)?;
+    let sealed = airband_core::encode::unbase64(&sealed)?;
     let several = links.len() > 1;
     links.iter().find_map(|link| {
         let Pairing::Relay { secret, .. } = Pairing::parse(link).ok()? else { return None };

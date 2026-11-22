@@ -50,7 +50,7 @@ fn connect(grant: &Pass, _request: &str) -> Result<Socket, ()> {
 }
 
 fn chunk(bytes: &[u8], commit: bool) -> Message {
-    Message::text(json!({ "message_type": "input_audio_chunk", "audio_base_64": airband_core::audio::base64_encode(bytes), "commit": commit, "sample_rate": 16000 }).to_string())
+    Message::text(json!({ "message_type": "input_audio_chunk", "audio_base_64": airband_core::encode::base64(bytes), "commit": commit, "sample_rate": 16000 }).to_string())
 }
 
 /// A partial replaces the one before it; a committed stretch is final, and the next partial starts from nothing.

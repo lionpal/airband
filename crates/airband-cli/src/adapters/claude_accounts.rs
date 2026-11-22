@@ -70,7 +70,7 @@ fn live_service() -> String {
     }
 }
 fn sha8(s: &str) -> String {
-    Sha256::digest(s.as_bytes()).iter().take(4).map(|b| format!("{b:02x}")).collect()
+    airband_core::encode::hex(&Sha256::digest(s.as_bytes())[..4])
 }
 fn claude_json_path() -> PathBuf {
     claude_config_dir().map(|d| d.join(".claude.json")).unwrap_or_else(|| config::home().join(".claude.json"))
@@ -129,16 +129,15 @@ fn key_read(service: &str, account: &str) -> Res<Option<String>> {
     }
     let s = String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string();
     // `security -w` prints anything that is not plain text as hex
-    if !s.is_empty() && s.len().is_multiple_of(2) && s.bytes().all(|b| b.is_ascii_hexdigit()) {
-        let bytes: Option<Vec<u8>> = (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok()).collect();
-        if let Some(t) = bytes.and_then(|b| String::from_utf8(b).ok()).filter(|t| t.starts_with('{')) {
+    if !s.is_empty() {
+        if let Some(t) = airband_core::encode::unhex(&s).and_then(|b| String::from_utf8(b).ok()).filter(|t| t.starts_with('{')) {
             return Ok(Some(t));
         }
     }
     Ok(Some(s))
 }
 fn key_write(service: &str, account: &str, data: &str) -> Res<()> {
-    let hex: String = data.bytes().map(|b| format!("{b:02x}")).collect();
+    let hex = airband_core::encode::hex(data.as_bytes());
     let line = format!("add-generic-password -U -a \"{account}\" -s \"{service}\" -X \"{hex}\"\n");
     // On standard input, so the login is never in the process list. `security -i` takes a line of about 4 KB
     // at most. A longer one could only go as an argument, where any program on this computer can read it

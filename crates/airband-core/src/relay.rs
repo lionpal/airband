@@ -20,6 +20,7 @@ use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use hkdf::Hkdf;
 use serde::{Deserialize, Serialize};
+use crate::encode::{hex, random_hex, unhex};
 use sha2::{Digest, Sha256};
 
 pub const SCHEMA: &str = "airband.relay/1";
@@ -70,20 +71,6 @@ pub struct Keys {
     push: [u8; 32],
 }
 
-pub fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-fn unhex(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) || !s.is_ascii() {
-        return None;
-    }
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok()).collect()
-}
-pub fn random_hex(bytes: usize) -> String {
-    let mut buf = vec![0u8; bytes];
-    getrandom::fill(&mut buf).expect("the system has no random source");
-    hex(&buf)
-}
 /// A new pairing secret: 32 random bytes, as hex.
 pub fn new_secret() -> String {
     random_hex(32)

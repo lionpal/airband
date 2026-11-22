@@ -446,7 +446,7 @@ mod tests {
     #[test]
     fn a_copy_not_signed_by_airband_is_refused() {
         let doc = built_in(crate::clock::now_secs() + 3600).replace(&format!("\"rev\":{}", built().rev), "\"rev\":999999");
-        let forged = crate::audio::base64_encode(&[7u8; 64]);
+        let forged = crate::encode::base64(&[7u8; 64]);
         assert!(accept(doc.as_bytes(), &forged).is_err());
         assert!(current().rev < 999999);
     }

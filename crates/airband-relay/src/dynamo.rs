@@ -52,9 +52,7 @@ impl std::fmt::Display for Failed {
 fn var(k: &str) -> Option<String> {
     std::env::var(k).ok().filter(|v| !v.is_empty())
 }
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
+use airband_core::encode::hex;
 fn sha256(data: &[u8]) -> String {
     hex(digest::digest(&digest::SHA256, data).as_ref())
 }
@@ -215,8 +213,7 @@ pub fn n(number: u64) -> Value {
     json!({ "N": number.to_string() })
 }
 pub fn b(bytes: &[u8]) -> Value {
-    use base64::Engine;
-    json!({ "B": base64::engine::general_purpose::STANDARD.encode(bytes) })
+    json!({ "B": airband_core::encode::base64(bytes) })
 }
 pub fn text(item: &Value, name: &str) -> Option<String> {
     item[name]["S"].as_str().map(str::to_string)
@@ -225,8 +222,7 @@ pub fn number(item: &Value, name: &str) -> Option<u64> {
     item[name]["N"].as_str().and_then(|n| n.parse().ok())
 }
 pub fn bytes(item: &Value, name: &str) -> Option<Vec<u8>> {
-    use base64::Engine;
-    item[name]["B"].as_str().and_then(|b| base64::engine::general_purpose::STANDARD.decode(b).ok())
+    item[name]["B"].as_str().and_then(airband_core::encode::unbase64)
 }
 
 #[cfg(test)]

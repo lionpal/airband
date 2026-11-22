@@ -25,7 +25,8 @@ use std::time::Duration;
 use serde_json::Value;
 use airband_core::pairing::Pairing;
 use airband_core::radio::{Act, Feed, Heard, Kind, Reply, Transmission, Utterance};
-use airband_core::relay::{Call, Direction, Keys, random_hex};
+use airband_core::encode::random_hex;
+use airband_core::relay::{Call, Direction, Keys};
 
 mod call;
 mod choices;

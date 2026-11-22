@@ -160,7 +160,7 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model) -> Result<(), RadioError
         }
         drop(file);
         // a sign-in page, a connection that closed early, a file changed at the source: none of them is the model
-        let got: String = sha2::Digest::finalize(hash).iter().map(|b| format!("{b:02x}")).collect();
+        let got: String = airband_core::encode::hex(&sha2::Digest::finalize(hash));
         if got != *sha {
             let _ = std::fs::remove_file(&part);
             GOT.store(before, Ordering::SeqCst);

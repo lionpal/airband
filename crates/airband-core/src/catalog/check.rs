@@ -31,7 +31,7 @@ pub fn accept(document: &[u8], signature: &str) -> Result<Taken, String> {
 /// Is this document signed by airband's catalogue key?
 pub fn signed(document: &[u8], signature: &str) -> Result<(), String> {
     let key = VerifyingKey::from_bytes(&SIGNED_BY).map_err(|e| e.to_string())?;
-    let sig = crate::audio::base64_decode(signature.trim()).ok_or("the catalogue's signature does not read")?;
+    let sig = crate::encode::unbase64(signature.trim()).ok_or("the catalogue's signature does not read")?;
     let sig = Signature::from_slice(&sig).map_err(|_| "the catalogue's signature does not read")?;
     key.verify(document, &sig).map_err(|_| "the catalogue is not signed by airband".to_string())
 }

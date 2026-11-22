@@ -143,8 +143,7 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
             (note.permission, note.options) = (false, Vec::new());
         }
     };
-    use base64::Engine;
-    let sealed = base64::engine::general_purpose::STANDARD.encode(sealed);
+    let sealed = airband_core::encode::base64(&sealed);
     let agent = airband_core::net::agent(Duration::from_secs(20));
     for target in targets {
         let ask = PushRequest { provider: target.provider, to: target.token.clone(), sealed: sealed.clone(), question: note.kind == Some(Kind::NeedsYou) };

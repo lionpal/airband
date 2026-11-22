@@ -62,10 +62,10 @@ pub fn command(args: &[String]) -> Result<(), String> {
             let (path, doc) = (words.first().ok_or(USAGE)?, words.get(1).ok_or(USAGE)?);
             let hex = std::fs::read_to_string(path).map_err(|e| format!("cannot read the key file: {e}"))?;
             let hex = hex.trim();
-            let seed: Vec<u8> = (0..hex.len() / 2).filter_map(|i| u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()).collect();
+            let seed = airband_core::encode::unhex(hex).ok_or("that file does not hold a key")?;
             let seed: [u8; 32] = seed.try_into().map_err(|_| "that file does not hold a key")?;
             let doc = std::fs::read(doc).map_err(|e| format!("cannot read the document: {e}"))?;
-            println!("{}", airband_core::audio::base64_encode(&ed25519_dalek::SigningKey::from_bytes(&seed).sign(&doc).to_bytes()));
+            println!("{}", airband_core::encode::base64(&ed25519_dalek::SigningKey::from_bytes(&seed).sign(&doc).to_bytes()));
             Ok(())
         }
         Some("check") => {

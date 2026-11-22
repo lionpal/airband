@@ -3,7 +3,7 @@
 //! model in braces), how the key is presented (`auth`), how the words are to be said (`style`) and the rate of
 //! what comes back (`rate`).
 use super::{Made, Reach, Synth, Voicing};
-use airband_core::audio::base64_decode;
+use airband_core::encode::unbase64;
 use airband_core::providers::{By, Interface, Job, Provider, Use};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
@@ -44,7 +44,7 @@ impl Synth for Generated {
             let Some(data) = line.strip_prefix("data: ") else { continue };
             let Ok(v) = serde_json::from_str::<Value>(data) else { continue };
             for part in v["candidates"][0]["content"]["parts"].as_array().into_iter().flatten() {
-                if let Some(pcm) = part["inlineData"]["data"].as_str().and_then(base64_decode) {
+                if let Some(pcm) = part["inlineData"]["data"].as_str().and_then(unbase64) {
                     sink(&pcm);
                 }
             }

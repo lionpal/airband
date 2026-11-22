@@ -494,7 +494,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_unreadable_channels_file_is_refused_and_never_written_over() {
-        let dir = std::env::temp_dir().join(format!("airband-relay-store-{}", airband_core::relay::random_hex(6)));
+        let dir = std::env::temp_dir().join(format!("airband-relay-store-{}", airband_core::encode::random_hex(6)));
         std::fs::create_dir_all(&dir).unwrap();
         let store = Store::Folder(dir.clone());
         // not there yet: no channels, and one can be added
@@ -519,7 +519,7 @@ mod tests {
         let prefix = std::env::var("AIRBAND_TEST_DYNAMO").expect("set AIRBAND_TEST_DYNAMO to the tables' prefix");
         let store = Store::Dynamo(Dyn { db: Dynamo::new(std::env::var("AWS_REGION").expect("set AWS_REGION")), channels: format!("{prefix}-channels"), held: format!("{prefix}-held"), waitlist: format!("{prefix}-waitlist") });
         let Store::Dynamo(d) = &store else { unreachable!() };
-        let channel = airband_core::relay::random_hex(16);
+        let channel = airband_core::encode::random_hex(16);
         let channel = channel.as_str();
         let count = || async { dynamo::number(&d.db.call("GetItem", json!({ "TableName": d.held, "Key": Dyn::key(channel, "n"), "ConsistentRead": true })).await.unwrap()["Item"], "held").unwrap_or(0) };
         let set = move |k: String, name: &'static str, to: u64| async move {

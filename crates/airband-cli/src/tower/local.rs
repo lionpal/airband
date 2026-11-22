@@ -59,7 +59,7 @@ fn fetch(server: &airband_core::catalog::Server) -> Result<PathBuf, String> {
     let mut res = agent.get(&url).call().map_err(|e| format!("the program that runs the model could not be fetched: {e}"))?;
     let mut bytes = Vec::new();
     std::io::Read::read_to_end(&mut res.body_mut().as_reader(), &mut bytes).map_err(|e| format!("the download stopped part way: {e}"))?;
-    let got: String = <sha2::Sha256 as sha2::Digest>::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect();
+    let got: String = airband_core::encode::hex(&<sha2::Sha256 as sha2::Digest>::digest(&bytes));
     if got != archive.sha256 {
         return Err("what came down was not the program that runs the model; nothing was kept".into());
     }

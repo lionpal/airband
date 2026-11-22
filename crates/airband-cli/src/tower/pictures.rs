@@ -38,7 +38,7 @@ pub(super) fn keep(path: &Path) -> Option<Picture> {
     let meta = std::fs::metadata(path).ok().filter(|m| m.is_file() && m.len() <= TOO_LARGE)?;
     let modified = crate::adapters::written(path);
     let digest = Sha256::digest(format!("{}\n{}\n{modified}", path.display(), meta.len()));
-    keep_as(airband_core::relay::hex(&digest[..12]), || image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.decode().ok())
+    keep_as(airband_core::encode::hex(&digest[..12]), || image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.decode().ok())
 }
 
 /// Keep a copy of a picture he pasted in, given as its bytes.
@@ -46,7 +46,7 @@ pub(super) fn keep_bytes(bytes: &[u8]) -> Option<Picture> {
     if bytes.len() as u64 > TOO_LARGE {
         return None;
     }
-    keep_as(airband_core::relay::hex(&Sha256::digest(bytes)[..12]), || image::load_from_memory(bytes).ok())
+    keep_as(airband_core::encode::hex(&Sha256::digest(bytes)[..12]), || image::load_from_memory(bytes).ok())
 }
 
 /// The small copy kept under `id`: the one already there, or one made now from the picture `decode` gives.
@@ -111,7 +111,7 @@ pub(super) fn part(id: &str, from: usize) -> Option<PicturePart> {
     let mut buf = vec![0u8; PICTURE_PART.min(len.saturating_sub(from))];
     f.read_exact(&mut buf).ok()?;
     let next = from + buf.len();
-    Some(PicturePart { data: airband_core::audio::base64_encode(&buf), next: next as u32, done: next >= len })
+    Some(PicturePart { data: airband_core::encode::base64(&buf), next: next as u32, done: next >= len })
 }
 
 /// Drop copies nobody will ask for again.

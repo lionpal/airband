@@ -3,7 +3,7 @@
 //! reached (`url`, which names his voice in braces), how the key is presented (`auth`) and the rate of what
 //! comes back (`rate`).
 use super::{Made, Reach, Synth, Voicing};
-use airband_core::audio::base64_decode;
+use airband_core::encode::unbase64;
 use airband_core::providers::{By, Interface, Job, Provider, Use};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
@@ -43,7 +43,7 @@ impl Synth for Timed {
                 gap = space;
                 at += c.as_str().map(|c| c.chars().count() as u32).unwrap_or(1);
             }
-            if let Some(pcm) = v["audio_base64"].as_str().and_then(base64_decode) {
+            if let Some(pcm) = v["audio_base64"].as_str().and_then(unbase64) {
                 sink(&pcm);
             }
         }

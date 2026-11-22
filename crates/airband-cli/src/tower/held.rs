@@ -84,7 +84,7 @@ fn learn(app: &App, inner: &mut Inner, launcher: &str, offers: airband_core::too
 /// the same for the same agent of the same tower every time.
 fn socket(id: &str) -> std::path::PathBuf {
     use sha2::{Digest, Sha256};
-    let name: String = Sha256::digest(format!("{}|{id}", config::dir().display()).as_bytes()).iter().take(8).map(|b| format!("{b:02x}")).collect();
+    let name: String = airband_core::encode::hex(&Sha256::digest(format!("{}|{id}", config::dir().display()).as_bytes())[..8]);
     #[cfg(unix)]
     let user = unsafe { libc::getuid() };
     #[cfg(not(unix))]
@@ -119,8 +119,7 @@ async fn tell_holder(kept: &Kept, tell: crate::hold::Tell) -> Result<(), String>
 
 /// A session id of the usual shape, made here so the agent is known by it before it has said a word.
 pub(super) fn new_id() -> String {
-    let h = config::random_hex(16);
-    format!("{}-{}-4{}-a{}-{}", &h[0..8], &h[8..12], &h[13..16], &h[17..20], &h[20..32])
+    airband_core::encode::uuid_v4()
 }
 
 /// How long a new agent is given to be there. One that speaks the Agent Client Protocol through a program

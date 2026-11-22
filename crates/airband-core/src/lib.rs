@@ -13,6 +13,7 @@ pub mod agent;
 pub mod audio;
 pub mod catalog;
 pub mod clock;
+pub mod encode;
 pub mod kept;
 pub mod links;
 pub mod net;

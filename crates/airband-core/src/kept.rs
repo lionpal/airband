@@ -25,7 +25,7 @@ fn write(path: &Path, bytes: &[u8], leave: Leave) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     // beside it, so taking its name is one step on the same disk; hidden, and never the same name twice
-    let part = path.with_file_name(format!(".{name}.part-{}", crate::relay::random_hex(4)));
+    let part = path.with_file_name(format!(".{name}.part-{}", crate::encode::random_hex(4)));
     let was = std::fs::metadata(path).ok().map(|m| m.permissions());
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -95,7 +95,7 @@ mod tests {
     use super::*;
 
     fn folder() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("airband-kept-{}", crate::relay::random_hex(6)));
+        let dir = std::env::temp_dir().join(format!("airband-kept-{}", crate::encode::random_hex(6)));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

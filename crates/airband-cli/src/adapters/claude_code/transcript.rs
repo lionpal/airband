@@ -199,8 +199,7 @@ pub(super) fn told_in(piece: &str) -> Vec<super::super::Told> {
             let images: Vec<Vec<u8>> = entry["message"]["content"]
                 .as_array()
                 .map(|parts| {
-                    use base64::Engine;
-                    parts.iter().filter(|p| p["type"] == "image" && p["source"]["type"] == "base64").filter_map(|p| base64::engine::general_purpose::STANDARD.decode(p["source"]["data"].as_str()?).ok()).take(4).collect()
+                    parts.iter().filter(|p| p["type"] == "image" && p["source"]["type"] == "base64").filter_map(|p| airband_core::encode::unbase64(p["source"]["data"].as_str()?)).take(4).collect()
                 })
                 .unwrap_or_default();
             let (from, id, text) = match entry["type"].as_str()? {

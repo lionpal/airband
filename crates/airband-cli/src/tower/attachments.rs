@@ -56,7 +56,7 @@ pub(super) fn take(part: AttachmentPart) -> Result<u64, String> {
     let dir = root().join(&part.id);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join(safe(&part.name));
-    let bytes = airband_core::audio::base64_decode(&part.data).ok_or("that part could not be read")?;
+    let bytes = airband_core::encode::unbase64(&part.data).ok_or("that part could not be read")?;
     let mut file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&path).map_err(|e| e.to_string())?;
     if part.from + bytes.len() as u64 > MOST || part.total > MOST {
         let _ = std::fs::remove_dir_all(&dir);

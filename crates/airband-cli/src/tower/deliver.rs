@@ -5,8 +5,7 @@ use super::*;
 
 /// A new id for one delivery, in the form a tool's own records keep ids in.
 pub(super) fn receipt() -> String {
-    let h = config::random_hex(16);
-    format!("{}-{}-4{}-8{}-{}", &h[..8], &h[8..12], &h[13..16], &h[17..20], &h[20..32])
+    airband_core::encode::uuid_v4()
 }
 
 /// `lines` are the chat lines these words are: an agent whose tool writes down the id a delivery came under

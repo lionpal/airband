@@ -34,7 +34,8 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{Notify, oneshot};
-use airband_core::relay::{HELD_FOR_MS, HELD_MOST, MAX_MESSAGE, PUSH_MOST, PushAnswer, PushRequest, random_hex, token_hash};
+use airband_core::relay::{HELD_FOR_MS, HELD_MOST, MAX_MESSAGE, PUSH_MOST, PushAnswer, PushRequest, token_hash};
+use airband_core::encode::random_hex;
 
 /// How long a tower's pull is held open.
 const HOLD: Duration = Duration::from_secs(25);

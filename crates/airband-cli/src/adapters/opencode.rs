@@ -39,7 +39,7 @@ fn client() -> ureq::Agent {
     ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(4))).http_status_as_error(false).build().into()
 }
 fn auth(password: &str) -> String {
-    format!("Basic {}", airband_core::audio::base64_encode(format!("{}:{password}", super::row_says(NAME, "user")).as_bytes()))
+    format!("Basic {}", airband_core::encode::base64(format!("{}:{password}", super::row_says(NAME, "user")).as_bytes()))
 }
 fn get(path: &str) -> Option<Value> {
     let (url, password) = service()?;

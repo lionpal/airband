@@ -1,14 +1,5 @@
-//! Sound and bytes shared by every host: when he has finished speaking ([`Endpointer`]), microphone bytes as
-//! samples, and base64. The sound itself is made and heard on the phone; none crosses to his computer.
-
-pub fn base64_encode(bytes: &[u8]) -> String {
-    use base64::Engine;
-    base64::engine::general_purpose::STANDARD.encode(bytes)
-}
-pub fn base64_decode(text: &str) -> Option<Vec<u8>> {
-    use base64::Engine;
-    base64::engine::general_purpose::STANDARD.decode(text.trim()).ok()
-}
+//! Sound shared by every host: when he has finished speaking ([`Endpointer`]), and microphone bytes as samples.
+//! The sound itself is made and heard on the phone; none crosses to his computer.
 
 /// Has he finished speaking? Fed microphone audio a little at a time, it says when speech began and when it
 /// ended. Shared by every host, so "how long a pause ends a reply" is decided once.

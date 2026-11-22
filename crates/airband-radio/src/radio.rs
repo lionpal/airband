@@ -436,7 +436,7 @@ impl Radio {
         let (mut bytes, mut from) = (Vec::new(), 0u32);
         loop {
             let part: airband_core::radio::PicturePart = self.asked("GET", &format!("/picture/{id}?from={from}"), None)?;
-            bytes.extend(airband_core::audio::base64_decode(&part.data).ok_or(RadioError::Refused)?);
+            bytes.extend(airband_core::encode::unbase64(&part.data).ok_or(RadioError::Refused)?);
             // a part that moves nothing forward would loop for ever
             if part.done || part.next <= from {
                 break;
@@ -544,7 +544,7 @@ impl Radio {
             file.seek(SeekFrom::Start(from)).map_err(|_| RadioError::Refused)?;
             let mut buf = Vec::with_capacity(PART as usize);
             file.take(PART).read_to_end(&mut buf).map_err(|_| RadioError::Refused)?;
-            Ok(airband_core::radio::AttachmentPart { id: id.into(), name: name.into(), from, data: airband_core::audio::base64_encode(&buf), total })
+            Ok(airband_core::radio::AttachmentPart { id: id.into(), name: name.into(), from, data: airband_core::encode::base64(&buf), total })
         };
         // a part lost on a bad connection is sent again, to the same place, a few times before giving up
         let send = |part: &airband_core::radio::AttachmentPart| -> Result<u64, RadioError> {

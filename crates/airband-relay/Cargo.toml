@@ -19,4 +19,3 @@ rustls-pemfile = "2"
 # push notifications: Apple's service takes HTTP/2 only, and a pass signed with the key it issued (ES256)
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "http2", "json"] }
 ring = "0.17"
-base64 = "0.22"

@@ -48,7 +48,6 @@ dependencies = [
  "airband-core",
  "airband-radio",
  "axum",
- "base64 0.22.1",
  "chacha20poly1305",
  "ed25519-dalek",
  "getrandom 0.3.4",
@@ -112,7 +111,6 @@ version = "0.6.0"
 dependencies = [
  "airband-core",
  "axum",
- "base64 0.22.1",
  "reqwest",
  "ring",
  "rustls",

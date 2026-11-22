@@ -285,7 +285,7 @@ fn a_notification_is_opened_by_the_pairing_that_sealed_it_and_no_other() {
     let link = |secret: &str| Pairing::Relay { relay: "https://relay.example".into(), secret: secret.into() }.link();
     let (mini, laptop, stranger) = (airband_core::relay::new_secret(), airband_core::relay::new_secret(), airband_core::relay::new_secret());
     let keys = Keys::derive(&laptop).unwrap();
-    let seal = |n: &Notice| airband_core::audio::base64_encode(&keys.seal(Direction::Push, &serde_json::to_vec(n).unwrap()));
+    let seal = |n: &Notice| airband_core::encode::base64(&keys.seal(Direction::Push, &serde_json::to_vec(n).unwrap()));
     let question = Notice { id: "m1".into(), from: "shop 3".into(), agent: Some("a3".into()), badge: "S3".into(), group: "shop".into(), team: "/work/shop".into(), station: "laptop".into(), text: "Rewrite or leave?".into(), kind: Some(Kind::NeedsYou), options: vec!["Rewrite".into(), "Leave".into()], permission: false };
     let got = open_notice(vec![link(&mini), link(&laptop)], seal(&question), [(format!("{}//work/shop", keys.channel), 2)].into()).unwrap();
     assert_eq!((got.title.as_str(), got.subtitle.as_str(), got.body.as_str(), got.badge.as_str(), got.colour), ("shop 3", "laptop", "Rewrite or leave?", "S3", Some(2)));
@@ -300,7 +300,7 @@ fn a_notification_is_opened_by_the_pairing_that_sealed_it_and_no_other() {
     assert!(card.permission && card.options.is_empty());
     // not by another pairing, not as an ordinary answer from the tower, not when it is not base64 at all
     assert!(open_notice(vec![link(&mini), link(&stranger)], seal(&question), Default::default()).is_none());
-    let answer = airband_core::audio::base64_encode(&keys.seal(Direction::ToRadio, &serde_json::to_vec(&question).unwrap()));
+    let answer = airband_core::encode::base64(&keys.seal(Direction::ToRadio, &serde_json::to_vec(&question).unwrap()));
     assert!(open_notice(vec![link(&laptop)], answer, Default::default()).is_none());
     assert!(open_notice(vec![link(&laptop)], "not sealed".into(), Default::default()).is_none());
     assert_eq!(station_key(&link(&laptop)), Some(keys.channel.clone()));

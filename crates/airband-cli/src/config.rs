@@ -207,7 +207,7 @@ pub(crate) fn account() -> Option<Account> {
 pub(crate) fn account() -> Option<Account> {
     None
 }
-pub use airband_core::relay::random_hex;
+pub use airband_core::encode::random_hex;
 fn default_permission_wait() -> u64 {
     180
 }

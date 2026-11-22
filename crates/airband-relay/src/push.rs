@@ -10,9 +10,8 @@
 //!   APNS_TEAM_ID   the developer team it belongs to
 //!   APNS_TOPIC     the app's bundle id
 //!   APNS_HOST      where to send (default https://api.push.apple.com; a development build needs the sandbox)
-use base64::Engine;
 use airband_core::relay::PushService;
-use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+use airband_core::encode::base64_url;
 use ring::rand::SystemRandom;
 use ring::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair};
 use std::sync::Mutex;
@@ -89,9 +88,9 @@ impl Apns {
     /// `key` is the text of the .p8 file: PKCS#8, base64, between its two marker lines.
     pub fn new(key: &str, key_id: &str, team: &str, topic: &str, host: &str) -> Result<Apns, String> {
         // however the lines were kept (an environment variable may hold them joined, or with "\n" written out)
-        let body: String = key.replace("\\n", "\n").lines().filter(|l| !l.contains("-----")).flat_map(|l| l.chars()).filter(|c| !c.is_whitespace()).collect();
-        let der = STANDARD.decode(body).map_err(|_| "it is not a .p8 key file's text")?;
-        let key = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &der, &SystemRandom::new()).map_err(|_| "it is not a P-256 signing key")?;
+        let text = key.replace("\\n", "\n");
+        let der = rustls_pemfile::pkcs8_private_keys(&mut text.as_bytes()).next().and_then(Result::ok).ok_or("it is not a .p8 key file's text")?;
+        let key = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, der.secret_pkcs8_der(), &SystemRandom::new()).map_err(|_| "it is not a P-256 signing key")?;
         let http = reqwest::Client::builder().timeout(Duration::from_secs(15)).pool_idle_timeout(Duration::from_secs(600)).build().map_err(|e| e.to_string())?;
         Ok(Apns { key, key_id: key_id.into(), team: team.into(), topic: topic.into(), host: host.trim_end_matches('/').into(), http, pass: Mutex::new(None) })
     }
@@ -104,10 +103,10 @@ impl Apns {
                 return Ok(made.clone());
             }
         let now = airband_core::clock::now_secs();
-        let part = |v: serde_json::Value| URL_SAFE_NO_PAD.encode(v.to_string());
+        let part = |v: serde_json::Value| base64_url(v.to_string().as_bytes());
         let signed = format!("{}.{}", part(serde_json::json!({ "alg": "ES256", "kid": self.key_id })), part(serde_json::json!({ "iss": self.team, "iat": now })));
         let signature = self.key.sign(&SystemRandom::new(), signed.as_bytes()).map_err(|_| "the push key could not sign")?;
-        let made = format!("{signed}.{}", URL_SAFE_NO_PAD.encode(signature.as_ref()));
+        let made = format!("{signed}.{}", base64_url(signature.as_ref()));
         *pass = Some((made.clone(), Instant::now()));
         Ok(made)
     }
@@ -185,7 +184,7 @@ pub mod tests {
     pub fn test_key() -> (String, Vec<u8>) {
         let made = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &SystemRandom::new()).unwrap();
         let pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, made.as_ref(), &SystemRandom::new()).unwrap();
-        let text = STANDARD.encode(made.as_ref());
+        let text = airband_core::encode::base64(made.as_ref());
         // as the file has it: marker lines, and the base64 broken into lines
         let lines: Vec<&str> = text.as_bytes().chunks(64).map(|c| std::str::from_utf8(c).unwrap()).collect();
         (format!("-----BEGIN PRIVATE KEY-----\n{}\n-----END PRIVATE KEY-----\n", lines.join("\n")), pair.public_key().as_ref().to_vec())
@@ -195,9 +194,9 @@ pub mod tests {
     pub fn pass_is_good(pass: &str, public: &[u8], key_id: &str, team: &str) -> bool {
         let parts: Vec<&str> = pass.split('.').collect();
         let [head, claims, signature] = parts.as_slice() else { return false };
-        let read = |part: &str| URL_SAFE_NO_PAD.decode(part).ok().and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()).unwrap_or_default();
+        let read = |part: &str| airband_core::encode::unbase64_url(part).and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()).unwrap_or_default();
         let (head_json, claims_json) = (read(head), read(claims));
-        let Ok(signature) = URL_SAFE_NO_PAD.decode(signature) else { return false };
+        let Some(signature) = airband_core::encode::unbase64_url(signature) else { return false };
         head_json["alg"] == "ES256" && head_json["kid"] == key_id && claims_json["iss"] == team && claims_json["iat"].as_u64().is_some() && UnparsedPublicKey::new(&ECDSA_P256_SHA256_FIXED, public).verify(format!("{head}.{claims}").as_bytes(), &signature).is_ok()
     }
 

@@ -74,7 +74,7 @@ pub fn transcribe(with: &Use, wav: &[u8], phrases: &[String]) -> Result<String, 
 fn transcriptions(with: &Use, by: &By, wav: &[u8], phrases: &[String]) -> Result<String, String> {
     let set = |field: &str| with.get(Job::Ears, field);
     let agent = crate::net::agent(Duration::from_secs(60));
-    let edge = format!("airband{}", airband_core::relay::random_hex(12));
+    let edge = format!("airband{}", airband_core::encode::random_hex(12));
     let mut body = Vec::with_capacity(wav.len() + 600);
     let mut field = |name: &str, value: &str| body.extend_from_slice(format!("--{edge}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes());
     field("model", &set("model"));
