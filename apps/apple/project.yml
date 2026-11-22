@@ -47,6 +47,7 @@ targets:
       - Common
       - Resources
       - path: Generated/airband_radio.swift
+      - path: Generated/airband_core.swift
     dependencies:
       - target: Notify
       - target: Widgets
@@ -137,6 +138,7 @@ targets:
       - Shared
       - Common
       - path: Generated/airband_radio.swift
+      - path: Generated/airband_core.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.airband.app.notify

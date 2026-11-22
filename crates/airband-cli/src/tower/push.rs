@@ -145,7 +145,7 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
     };
     use base64::Engine;
     let sealed = base64::engine::general_purpose::STANDARD.encode(sealed);
-    let agent = airband_radio::net::agent(Duration::from_secs(20));
+    let agent = airband_core::net::agent(Duration::from_secs(20));
     for target in targets {
         let ask = PushRequest { provider: target.provider, to: target.token.clone(), sealed: sealed.clone(), question: note.kind == Some(Kind::NeedsYou) };
         let res = agent.post(format!("{}/v1/channels/{}/push", relay.trim_end_matches('/'), keys.channel)).header("authorization", format!("Bearer {}", keys.pull_token)).send_json(&ask);

@@ -85,7 +85,7 @@ use tokio::sync::Notify;
 use airband_core::agent::{self, Agent, AgentEvent, Deliver, Event};
 use airband_core::radio::{Act, AgentState, Feed, Heard, Kind, Message, More, Reply, RosterEntry, Transmission, Utterance};
 use airband_core::routing::{Callsign, Control, parse_utterance};
-use airband_radio::prose::{opening, plain as spoken};
+use airband_core::prose::{opening, plain as spoken};
 
 /// The header a radio names itself in, so each has its own place in a call. A radio that comes through the
 /// relay is named by its pairing; one that sends nothing is "radio".

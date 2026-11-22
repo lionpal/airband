@@ -16,7 +16,8 @@ pub fn images(text: &str) -> Vec<String> {
 }
 
 /// A run of words in one style.
-#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct ProseSpan {
     pub text: String,
     pub strong: bool,
@@ -28,7 +29,8 @@ pub struct ProseSpan {
 }
 
 /// One thing in a list, which may hold anything, another list included.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct ProseItem {
     /// A task: done or not. Nothing for an ordinary item.
     pub task: Option<bool>,
@@ -36,7 +38,8 @@ pub struct ProseItem {
 }
 
 /// Which side a table's column keeps to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum ProseSide {
     Left,
     Middle,
@@ -44,12 +47,14 @@ pub enum ProseSide {
 }
 
 /// One cell of a table.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct ProseCell {
     pub spans: Vec<ProseSpan>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum ProseBlock {
     Paragraph { spans: Vec<ProseSpan> },
     /// `level` is 1 for the largest.
@@ -65,11 +70,6 @@ pub enum ProseBlock {
 }
 
 /// What an agent wrote, as blocks to draw.
-#[uniffi::export]
-pub fn prose(text: String) -> Vec<ProseBlock> {
-    blocks(&text)
-}
-
 pub fn blocks(text: &str) -> Vec<ProseBlock> {
     let options = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let mut reader = Reader { events: Parser::new_ext(text, options).collect(), at: 0 };

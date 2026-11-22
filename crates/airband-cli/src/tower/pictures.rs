@@ -71,7 +71,7 @@ fn keep_as(id: String, decode: impl FnOnce() -> Option<image::DynamicImage>) -> 
 /// agent that means him to see a picture sends it (its tool's own way) or writes it as an image.
 pub(super) fn in_markdown(text: &str, cwd: Option<&str>) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
-    for named in airband_radio::prose::images(text) {
+    for named in airband_core::prose::images(text) {
         // only a file that is here is one: a picture on the web is not looked for
         let path = PathBuf::from(&named);
         let path = if path.is_absolute() { path } else { Path::new(cwd.unwrap_or(".")).join(path) };

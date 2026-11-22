@@ -15,8 +15,19 @@ sha2 = "0.10"
 getrandom = "0.3"
 base64 = "0.22"
 url = "2"
+# what an agent wrote, read as the markdown it is (prose.rs)
+pulldown-cmark = { version = "0.13", default-features = false }
+linkify = "0.10"
+# the HTTP client every part uses (net.rs)
+ureq.workspace = true
+# the phone core builds these types for Swift
+uniffi = { workspace = true, optional = true }
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 
 [build-dependencies]
 serde_json.workspace = true
 sha2 = "0.10"
+
+[features]
+# the types a phone sees through the phone core (prose.rs), made for Swift
+ffi = ["dep:uniffi"]

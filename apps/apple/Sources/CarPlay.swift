@@ -213,9 +213,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             if let face = avatar(of: callsign, side: 28) { speakerFace?.image = face }
         }
         guard screen.activeStateIdentifier != wanted.rawValue else { return }
-        screen.activateVoiceControlState(withIdentifier: wanted)
+        screen.activateVoiceControlState(withIdentifier: wanted.rawValue)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-            guard let self, self.voiceScreen === screen, screen.activeStateIdentifier != wanted else { return }
+            guard let self, self.voiceScreen === screen, screen.activeStateIdentifier != wanted.rawValue else { return }
             self.show()
         }
     }

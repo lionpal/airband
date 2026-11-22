@@ -86,7 +86,7 @@ pub fn start(app: Arc<App>, router: Router, handle: Handle) {
                     }
                 };
                 let stop = Arc::new(AtomicBool::new(false));
-                let serve = Serve { app: app.clone(), relay: key.0.clone(), name: key.1.name.clone(), keys, admission: cfg.relay_admission.clone(), token: app.cfg.radio_token.clone(), router: router.clone(), handle: handle.clone(), stop: stop.clone(), seen: Arc::new(Mutex::new(HashMap::new())), replies: airband_radio::net::agent(Duration::from_secs(15)) };
+                let serve = Serve { app: app.clone(), relay: key.0.clone(), name: key.1.name.clone(), keys, admission: cfg.relay_admission.clone(), token: app.cfg.radio_token.clone(), router: router.clone(), handle: handle.clone(), stop: stop.clone(), seen: Arc::new(Mutex::new(HashMap::new())), replies: airband_core::net::agent(Duration::from_secs(15)) };
                 served().lock().unwrap().insert(serve.keys.channel.clone(), serve.clone());
                 running.insert(key, (stop, std::thread::spawn(move || serve.run())));
             }
@@ -124,7 +124,7 @@ impl Serve {
             }
             return;
         };
-        let agent = airband_radio::net::agent(Duration::from_secs(40));
+        let agent = airband_core::net::agent(Duration::from_secs(40));
         let auth = format!("Bearer {}", self.keys.pull_token);
         let base = format!("{}/v1/channels/{}", relay, self.keys.channel);
         let (mut open, mut wait, mut told) = (false, 1, false);

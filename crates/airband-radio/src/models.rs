@@ -22,62 +22,6 @@ pub(crate) fn models(device: &HostDevice) -> impl Iterator<Item = Arc<Model>> + 
     airband_core::catalog::current().models.clone().into_iter().filter(move |m| crate::engines::runs(m, device) && !m.version.is_empty())
 }
 
-/// The name a copy of the catalogue is kept under, by the form of the document.
-const KEPT: &str = "catalog.json";
-
-/// What to write in a log about a copy of the catalogue that was just looked at: what it holds that this
-/// build cannot use, so an offer that vanished is never a mystery. `speaks` says whether this program has the
-/// code for an offer.
-fn news(taken: &airband_core::catalog::Taken, speaks: &dyn Fn(&Offer) -> bool) -> Vec<String> {
-    let mut lines: Vec<String> = taken.note.iter().map(|n| format!("catalogue: {n}")).collect();
-    if taken.newer {
-        let now = airband_core::catalog::current();
-        let unspoken: Vec<String> = now.providers.iter().flat_map(|p| p.offers.iter().filter(|o| !speaks(o)).map(move |o| format!("{} by \"{}\"", p.id, o.by.interface))).collect();
-        if !taken.left_out.is_empty() {
-            lines.push(format!("catalogue rev {}: left out {} rows this build cannot read ({})", now.rev, taken.left_out.len(), taken.left_out.join("; ")));
-        }
-        if !unspoken.is_empty() {
-            lines.push(format!("catalogue rev {}: {} offers are for a newer build and are not offered here ({})", now.rev, unspoken.len(), unspoken.join(", ")));
-        }
-    }
-    lines
-}
-
-/// Use the newest catalogue kept in `dir`, if it is newer than the one built in. Nothing is fetched. Returns
-/// what is worth a line in a log. The one place a kept catalogue is read, for the app and the tower alike.
-pub fn catalog_load(dir: &Path, speaks: &dyn Fn(&Offer) -> bool) -> Vec<String> {
-    let at = dir.join(KEPT);
-    match (std::fs::read(&at), std::fs::read_to_string(at.with_extension("json.sig"))) {
-        (Ok(doc), Ok(sig)) => match airband_core::catalog::accept(&doc, &sig) {
-            Ok(taken) => news(&taken, speaks),
-            Err(why) => vec![format!("catalogue: the copy kept here was not used ({why})")],
-        },
-        _ => Vec::new(),
-    }
-}
-
-/// Fetch the published catalogue and, if it is airband's and newer, use it and keep it in `dir`. True when
-/// it is now the one in use, with what is worth a line in a log. Blocks for a few seconds at most; does
-/// nothing with no network. The one place it is fetched, for the app and the tower alike.
-pub fn catalog_refresh(dir: &Path, speaks: &dyn Fn(&Offer) -> bool) -> (bool, Vec<String>) {
-    let agent = crate::net::agent(Duration::from_secs(6));
-    let get = |url: &str| agent.get(url).call().ok().filter(|r| r.status().as_u16() == 200).and_then(|mut r| r.body_mut().read_to_vec().ok());
-    let address = airband_core::catalog::ADDRESS;
-    let (Some(doc), Some(sig)) = (get(address), get(&format!("{address}.sig"))) else { return (false, Vec::new()) };
-    let sig = String::from_utf8_lossy(&sig).to_string();
-    match airband_core::catalog::accept(&doc, &sig) {
-        Ok(taken) => {
-            if taken.newer {
-                let at = dir.join(KEPT);
-                let _ = std::fs::write(&at, &doc);
-                let _ = std::fs::write(at.with_extension("json.sig"), sig);
-            }
-            (taken.newer, news(&taken, speaks))
-        }
-        Err(why) => (false, vec![format!("catalogue: the published copy was not taken ({why})")]),
-    }
-}
-
 /// What this device does itself is speaking and listening; reading is his computer's.
 fn this_device_speaks(offer: &Offer) -> bool {
     match offer.job {
@@ -91,14 +35,14 @@ fn this_device_speaks(offer: &Offer) -> bool {
 /// the one built in. Nothing is fetched. Call once at the start.
 #[uniffi::export]
 pub fn load_catalog(dir: String) {
-    catalog_load(Path::new(&dir), &this_device_speaks).iter().for_each(|line| eprintln!("{line}"));
+    airband_core::catalog::load_kept(Path::new(&dir), &this_device_speaks).iter().for_each(|line| eprintln!("{line}"));
 }
 
 /// Fetch the published catalogue and, if it is airband's and newer, use it and keep it in `dir`. True when
 /// what a chooser lists may have changed. Blocks for a few seconds at most; does nothing with no network.
 #[uniffi::export]
 pub fn refresh_catalog(dir: String) -> bool {
-    let (changed, lines) = catalog_refresh(Path::new(&dir), &this_device_speaks);
+    let (changed, lines) = airband_core::catalog::refresh(Path::new(&dir), &this_device_speaks);
     lines.iter().for_each(|line| eprintln!("{line}"));
     changed
 }

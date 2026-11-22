@@ -6,13 +6,18 @@
 //! - [`radio`], `airband.radio/2`: how a phone, car or desktop app hears transmissions and sends replies.
 //! - [`relay`], `airband.relay/1`: how a radio reaches a tower that is behind a home router, through a relay
 //!   that can read none of it. [`pairing`] is the link that sets a radio up for either route.
+#[cfg(feature = "ffi")]
+uniffi::setup_scaffolding!();
+
 pub mod agent;
 pub mod audio;
 pub mod catalog;
 pub mod clock;
 pub mod kept;
 pub mod links;
+pub mod net;
 pub mod pairing;
+pub mod prose;
 pub mod providers;
 pub mod radio;
 pub mod redact;

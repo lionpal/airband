@@ -13,7 +13,9 @@ cargo build --release -p airband-radio --target aarch64-apple-ios
 cargo build -p airband-radio
 rm -rf apps/apple/Generated && mkdir -p apps/apple/Generated
 cargo run -q -p uniffi-bindgen -- generate --library target/debug/libairband_radio.dylib --language swift --out-dir apps/apple/Generated
-mv apps/apple/Generated/airband_radioFFI.modulemap apps/apple/Generated/module.modulemap
+# one Swift file and one C module for each crate whose types the phone sees (the core's, and the phone core's)
+cat apps/apple/Generated/*FFI.modulemap > apps/apple/Generated/module.modulemap
+rm apps/apple/Generated/*FFI.modulemap
 (cd apps/apple && xcodegen generate --quiet)
 if [ "$1" = "--device" ]; then
   # by SDK, not by destination: this works on a Mac that has the iOS SDK but not the device platform download

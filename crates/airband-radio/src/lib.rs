@@ -36,9 +36,7 @@ mod keys;
 mod link;
 mod models;
 mod mouth;
-pub mod net;
 mod outbox;
-pub mod prose;
 mod store;
 mod voice;
 mod voices;
@@ -46,7 +44,7 @@ mod voices;
 use call::*;
 pub use choices::{Choice, ChoiceJob, ChoicePlace, ChoiceState};
 pub use desk::*;
-pub use models::{catalog_load, catalog_refresh};
+pub use airband_core::{net, prose};
 pub use models::VoiceChoice;
 pub use mouth::{CodingTool, ServiceAsk, VoiceSample, coding_tools};
 pub use engines::HostDevice;
@@ -55,6 +53,12 @@ use outbox::*;
 use store::*;
 
 uniffi::setup_scaffolding!();
+
+/// What an agent wrote, as blocks to draw: the core's one Markdown reader.
+#[uniffi::export]
+pub fn prose(text: String) -> Vec<prose::ProseBlock> {
+    prose::blocks(&text)
+}
 
 /// What he chose to listen and speak with on this device itself, and the models loaded for it. A desk has
 /// one, and every radio of the desk's uses it; nothing of it is kept in the process at large.
