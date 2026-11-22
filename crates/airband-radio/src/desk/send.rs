@@ -268,7 +268,7 @@ fn others(state: &State, pick: usize, room: Option<&str>) -> String {
         .flat_map(|(_, s)| s.agents.iter().map(move |a| (s, a)))
         .filter(|(_, a)| room.is_none_or(|r| a.group == r) && seen.insert(a.id.clone()))
         .map(|(s, a)| {
-            let last = s.messages.iter().rev().find(|m| m.from == a.callsign && !m.fyi);
+            let last = s.messages.iter().rev().find(|m| m.agent.as_deref() == Some(a.id.as_str()) && !m.fyi);
             airband_core::radio::Other { callsign: a.callsign.clone(), group: a.group.clone(), said: last.map(|m| m.text.chars().take(240).collect()).unwrap_or_default(), ago: last.map(|m| now.saturating_sub(m.at) / 1000).unwrap_or(0) }
         })
         .collect();

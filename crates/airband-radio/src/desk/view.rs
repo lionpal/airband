@@ -88,11 +88,11 @@ impl Desk {
         };
         let mut rooms: Vec<DeskRoom> = Vec::new();
         // what an agent is waiting on him for: its newest question still open
-        let asked = |a: &ChatAgent| all.iter().rev().find(|m| m.needs_you && m.from == a.callsign && state.is_open(&m.id));
+        let asked = |a: &ChatAgent| all.iter().rev().find(|m| m.needs_you && m.agent.as_deref() == Some(a.id.as_str()) && state.is_open(&m.id));
         for a in &agents {
             let member = DeskMember { id: a.id.clone(), callsign: a.callsign.clone(), state: a.state, subagents: a.subagents, doing: a.doing.clone(), held: a.held, ends: a.ends, unread: unread_from.get(a.callsign.as_str()).copied().unwrap_or(0), question: asked(a).map(|m| m.text.clone()).unwrap_or_default(), question_id: asked(a).map(|m| m.id.clone()).unwrap_or_default(), harness: a.harness.clone(), badge: airband_core::routing::badge(&a.group, &a.callsign), model: a.model.clone().unwrap_or_default(), effort: a.effort.clone().unwrap_or_default(), number: a.number.clone(), station: if state.stations.len() > 1 { state.stations.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(|s| s.name.clone()).unwrap_or_default() } else { String::new() } };
             // what the team is doing is said in the name of whoever is doing it, without the team's own name
-            let doing = a.doing.as_ref().map(|d| match a.callsign.strip_prefix(&a.group).map(str::trim).filter(|rest| !rest.is_empty()) {
+            let doing = a.doing.as_ref().map(|d| match Some(a.number.as_str()).filter(|rest| !rest.is_empty()) {
                 Some(who) => format!("{who}: {d}"),
                 None => d.clone(),
             });
@@ -143,7 +143,7 @@ impl Desk {
             asking: state.asking.as_ref().map(|asking| {
                 // the tower's guesses first, in its order; then everyone else, whoever spoke last first
                 let mut rest: Vec<&ChatAgent> = agents.iter().copied().filter(|a| !asking.guesses.contains(&a.callsign)).collect();
-                let spoke = |a: &ChatAgent| state.stations.iter().flat_map(|s| s.messages.iter()).filter(|m| m.from == a.callsign).map(|m| m.at).max().unwrap_or(0);
+                let spoke = |a: &ChatAgent| state.stations.iter().flat_map(|s| s.messages.iter()).filter(|m| m.agent.as_deref() == Some(a.id.as_str())).map(|m| m.at).max().unwrap_or(0);
                 rest.sort_by_key(|a| std::cmp::Reverse(spoke(a)));
                 let guessed = asking.guesses.iter().filter_map(|c| agents.iter().copied().find(|a| a.callsign == *c));
                 DeskAsk {

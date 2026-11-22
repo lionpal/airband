@@ -164,10 +164,12 @@ impl Serve {
                     200 => {
                         wait = 1;
                         let id = res.headers().get("x-airband-request").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+                        // the relay says outright when it had been keeping this one; nothing is read from the id
+                        let kept = res.headers().contains_key(airband_core::relay::KEPT_HEADER);
                         if let Ok(sealed) = res.body_mut().read_to_vec() {
                             let me = self.clone();
                             // not awaited: `next` is held for 25 s, and other requests must get through meanwhile
-                            self.handle.spawn(async move { me.answer(id, sealed).await });
+                            self.handle.spawn(async move { me.answer(id, kept, sealed).await });
                         }
                     }
                     204 => wait = 1,
@@ -217,12 +219,12 @@ impl Serve {
         Some(self.keys.seal_answer(&Answer { id: call.id, status, body }))
     }
 
-    async fn answer(self, request_id: String, sealed: Vec<u8>) {
+    async fn answer(self, request_id: String, kept: bool, sealed: Vec<u8>) {
         let Some(call) = self.keys.open_call(&sealed) else {
             log(format!("dropped a request on \"{}\"'s channel that its key does not open", self.name));
             // one the relay was keeping has to be taken off its hands all the same, or it would be handed over
             // for ever and hold up everything kept behind it
-            if request_id.starts_with(airband_core::relay::HELD) {
+            if kept {
                 self.send_back(&request_id, None).await;
             }
             return;
@@ -231,7 +233,6 @@ impl Serve {
         // A message the relay kept while this tower was away is old on purpose, and may be handed over twice.
         // Only something he said is taken that way, and only with an id: the tower takes each id once, for good,
         // so neither its age nor a second copy can make it happen again.
-        let kept = request_id.starts_with(airband_core::relay::HELD);
         let (status, body) = if kept {
             let said = call.method == "POST" && call.path == "/v1/radio/utterance" && call.body["id"].as_str().is_some_and(|id| !id.is_empty());
             if said && now.saturating_sub(call.t) <= airband_core::relay::HELD_FOR_MS {

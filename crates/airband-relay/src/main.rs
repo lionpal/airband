@@ -325,7 +325,7 @@ async fn pull(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, head
                     if let Some(ch) = relay.channels.lock().unwrap().get_mut(&channel) {
                         ch.holding = Some((id.clone(), Instant::now()));
                     }
-                    return ([("x-airband-request", format!("{HELD}{id}"))], sealed).into_response();
+                    return ([("x-airband-request", format!("{HELD}{id}")), (airband_core::relay::KEPT_HEADER, "1".to_string())], sealed).into_response();
                 }
                 Ok(None) => {
                     if let Some(ch) = relay.channels.lock().unwrap().get_mut(&channel) {
