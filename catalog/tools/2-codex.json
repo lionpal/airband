@@ -17,6 +17,26 @@
     }
   ],
   "with": {
-    "program": "codex"
+    "program": "codex",
+    "home": ".codex",
+    "home_env": "CODEX_HOME",
+    "control_socket": "app-server-control/app-server-control.sock",
+    "tools": {
+      "Bash": {
+        "asks": "run `{command}`"
+      },
+      "shell": {
+        "asks": "run `{command}`"
+      },
+      "exec_command": {
+        "asks": "run `{command}`"
+      },
+      "apply_patch": {
+        "asks": [
+          "{description}",
+          "change files"
+        ]
+      }
+    }
   }
 }

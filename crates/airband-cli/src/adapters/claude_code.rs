@@ -418,24 +418,21 @@ fn steps_in(tail: &str, since: u64) -> Vec<String> {
 
 fn step(tool: &str, input: &Value) -> Option<String> {
     let text = |k: &str| input[k].as_str().map(str::trim).filter(|t| !t.is_empty());
-    // a file by its own name, as the system reads the path
-    let file = |k: &str| text(k).map(|p| std::path::Path::new(p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string()));
-    let said = match tool {
+    // what the row says of this tool of Claude Code's own
+    let row = super::hooks::tool_use(NAME_ROW, tool);
+    let said = if row["bookkeeping"].as_bool() == Some(true) {
         // bookkeeping of its own, not a step in the work: keep looking further back
-        "TodoWrite" | "ToolSearch" | "TaskCreate" | "TaskUpdate" | "TaskList" | "ExitPlanMode" => return None,
-        _ if text("description").is_some() => text("description")?.to_string(),
-        "Read" => format!("Reading {}", file("file_path")?),
-        "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => format!("Editing {}", file("file_path").or_else(|| file("notebook_path"))?),
-        "Grep" => format!("Searching for {}", text("pattern")?),
-        "Glob" => "Looking for files".into(),
-        "WebSearch" => format!("Searching the web for {}", text("query")?),
-        "WebFetch" => match airband_core::links::site(text("url")?) {
-            site if site.is_empty() => "Reading a web page".into(),
-            site => format!("Reading {site}"),
-        },
-        "Bash" => text("command")?.lines().next()?.to_string(),
-        // a tool from a server: its own name, as words ("take screenshot")
-        other => other.rsplit("__").next().unwrap_or(other).replace(['_', '-'], " "),
+        return None;
+    } else if let Some(said) = text("description") {
+        said.to_string()
+    } else if !row.is_null() {
+        super::hooks::fill(&row["doing"], input)?
+    } else {
+        // a tool from a server, named by Claude Code as server and tool with its row's mark between: the
+        // tool's own name, as words ("take screenshot")
+        let mark = super::row_says(NAME_ROW, "server_tool");
+        let own = if mark.is_empty() { tool } else { tool.rsplit(mark.as_str()).next().unwrap_or(tool) };
+        own.replace(['_', '-'], " ")
     };
     let said: String = said.split_whitespace().collect::<Vec<_>>().join(" ");
     Some(if said.chars().count() > 64 { format!("{}…", said.chars().take(63).collect::<String>().trim_end()) } else { said }).filter(|s| !s.is_empty())
@@ -454,20 +451,11 @@ pub fn permission(hook: &Value) -> Option<PermissionAsk> {
     let tool = hook["tool_name"].as_str().unwrap_or("a tool");
     let input = &hook["tool_input"];
     // whole, never cut: what he reads is what will run
-    let field = |k: &str| text(input, k);
-    let what = match tool {
-        "Bash" => super::hooks::command(input).map(|c| format!("run `{c}`")),
-        "Write" => field("file_path").map(|f| format!("write the file {f}")),
-        "Edit" | "MultiEdit" | "NotebookEdit" => field("file_path").or(field("notebook_path")).map(|f| format!("edit the file {f}")),
-        "Read" => field("file_path").map(|f| format!("read the file {f}")),
-        "WebFetch" => field("url").map(|u| format!("fetch {u}")),
-        "WebSearch" => field("query").map(|q| format!("search the web for \"{q}\"")),
-        _ => None,
-    }
-    .unwrap_or_else(|| format!("use {tool}"));
+    let row = super::hooks::tool_use(NAME_ROW, tool);
+    let what = super::hooks::fill(&row["asks"], input).unwrap_or_else(|| format!("use {tool}"));
     // Its tool for asking him something is not a thing to allow: it is a question, put to him as one. One
     // question comes with the answers it offered; several are put together, for him to answer in his own words.
-    let question = (tool == "AskUserQuestion").then(|| {
+    let question = (row["role"].as_str() == Some("question")).then(|| {
         let asked: Vec<&Value> = input["questions"].as_array().into_iter().flatten().collect();
         let text = asked.iter().filter_map(|q| q["question"].as_str()).map(str::trim).collect::<Vec<_>>().join("\n\n");
         let choices = match asked.as_slice() {
@@ -481,9 +469,13 @@ pub fn permission(hook: &Value) -> Option<PermissionAsk> {
     super::hooks::leave(agent_of(hook)?, tool, what, input, " The rest is at the keyboard.", question)
 }
 
-/// Is this tool call Claude Code starting a subagent? The tool has been called both names.
+/// Which part of Claude Code's this tool call is, as its row has it.
+fn role(hook: &Value) -> Option<String> {
+    super::hooks::tool_use(NAME_ROW, hook["tool_name"].as_str()?)["role"].as_str().map(String::from)
+}
+/// Is this tool call Claude Code starting a subagent?
 fn is_subagent(hook: &Value) -> bool {
-    matches!(hook["tool_name"].as_str(), Some("Agent" | "Task"))
+    role(hook).as_deref() == Some("subagent")
 }
 
 /// The files Claude Code's own tool for handing him a file was given: its `files` field, a list of paths.
@@ -522,9 +514,9 @@ pub fn events(hook: &Value) -> Vec<AgentEvent> {
         Some("PreToolUse") if is_subagent(hook) => vec![Event::Subagent { done: false, what: hook["tool_input"]["description"].as_str().unwrap_or("").to_string() }],
         Some("PostToolUse") if is_subagent(hook) => vec![Event::Subagent { done: true, what: hook["tool_input"]["description"].as_str().unwrap_or("").to_string() }],
         // it sent him a file
-        Some("PostToolUse") if hook["tool_name"].as_str() == Some(SENDS_FILES) => files_sent(hook).into_iter().map(|path| Event::Picture { path, shown: true }).collect(),
+        Some("PostToolUse") if role(hook).as_deref() == Some("files") => files_sent(hook).into_iter().map(|path| Event::Picture { path, shown: true }).collect(),
         // it published a page: the tool's own answer says where it is and what it is called
-        Some("PostToolUse") if hook["tool_name"].as_str() == Some(ARTIFACT_TOOL) => made_artifact(hook).into_iter().collect(),
+        Some("PostToolUse") if role(hook).as_deref() == Some("artifact") => made_artifact(hook).into_iter().collect(),
         _ => Vec::new(),
     });
     // what its turn made that Claude Code wrote down itself comes first, so it goes with what the turn said
@@ -534,8 +526,7 @@ pub fn events(hook: &Value) -> Vec<AgentEvent> {
 
 // ---- setting Claude Code up to report: its hooks, in its own settings file ----
 
-/// Claude Code's tool for publishing a page on claude.ai, and the kind of link (`catalog/links`) such a page is.
-const ARTIFACT_TOOL: &str = "Artifact";
+/// The kind of link (`catalog/links`) a page published by Claude Code's tool for that is.
 const ARTIFACT_KIND: &str = "claude-artifact";
 
 /// The page the Artifact tool just published, from the tool's own answer. The tool says which of its actions
@@ -552,13 +543,21 @@ fn made_artifact(hook: &Value) -> Option<Event> {
     Some(Event::Made { address: address.to_string(), title, kind: Some(ARTIFACT_KIND.to_string()) })
 }
 
-/// Claude Code's tool for handing him a file.
-const SENDS_FILES: &str = "SendUserFile";
-/// The Claude Code tools worth hearing about once they have run: the one that hands him a file, the one that
-/// publishes a page, and the one that runs a subagent.
-const AFTER_TOOLS: &str = "SendUserFile|Artifact|Agent|Task";
+/// Where Claude Code keeps its settings and sessions, as its row has it.
+fn claude_home() -> std::path::PathBuf {
+    crate::config::home().join(super::row_says(NAME_ROW, "home"))
+}
+const NAME_ROW: &str = "claude-code";
+
+/// The Claude Code tools worth hearing about once they have run, by its row: the one that hands him a file,
+/// the one that publishes a page, and the one that runs a subagent.
+fn after_tools() -> String {
+    super::hooks::with_role(NAME_ROW, &["files", "artifact", "subagent"]).join("|")
+}
 /// The ones worth hearing about as they start: a subagent.
-const BEFORE_TOOLS: &str = "Agent|Task";
+fn before_tools() -> String {
+    super::hooks::with_role(NAME_ROW, &["subagent"]).join("|")
+}
 /// Permission is asked on the radio first. The time allowed is long because he is the one being waited for; the
 /// tower says how long to wait and the hook gives up by itself well before this.
 const HOOKS: &[On] = &[
@@ -567,8 +566,8 @@ const HOOKS: &[On] = &[
     on("Notification", 5),
     on("UserPromptSubmit", 5),
     on("SessionEnd", 5),
-    On { event: "PostToolUse", timeout: 5, only: Some(AFTER_TOOLS) },
-    On { event: "PreToolUse", timeout: 5, only: Some(BEFORE_TOOLS) },
+    On { event: "PostToolUse", timeout: 5, only: Some(after_tools) },
+    On { event: "PreToolUse", timeout: 5, only: Some(before_tools) },
     on("PermissionRequest", 900),
 ];
 
@@ -584,7 +583,7 @@ impl super::Harness for ClaudeCode {
         events(hook)
     }
     fn hooks(&self) -> Option<super::hooks::File> {
-        Some(super::hooks::File { name: self.name(), path: crate::config::home().join(".claude").join("settings.json"), events: HOOKS })
+        Some(super::hooks::File { name: self.name(), path: claude_home().join("settings.json"), events: HOOKS })
     }
     fn permission(&self, hook: &Value) -> Option<PermissionAsk> {
         permission(hook)
@@ -605,10 +604,10 @@ impl super::Harness for ClaudeCode {
         steps(agent, since)
     }
     fn open(&self) -> Option<Vec<super::Open>> {
-        open_in(&crate::config::home().join(".claude"), &running)
+        open_in(&claude_home(), &running)
     }
     fn worked(&self) -> Vec<super::Worked> {
-        worked_in(&crate::config::home().join(".claude"))
+        worked_in(&claude_home())
     }
 }
 

@@ -108,6 +108,87 @@
     },
     "not_models": [
       "<synthetic>"
-    ]
+    ],
+    "home": ".claude",
+    "keychain_service": "Claude Code-credentials",
+    "oauth_client": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+    "oauth_beta": "oauth-2025-04-20",
+    "tools": {
+      "TodoWrite": {
+        "bookkeeping": true
+      },
+      "ToolSearch": {
+        "bookkeeping": true
+      },
+      "TaskCreate": {
+        "bookkeeping": true
+      },
+      "TaskUpdate": {
+        "bookkeeping": true
+      },
+      "TaskList": {
+        "bookkeeping": true
+      },
+      "ExitPlanMode": {
+        "bookkeeping": true
+      },
+      "Read": {
+        "doing": "Reading {file_path.file}",
+        "asks": "read the file {file_path}"
+      },
+      "Write": {
+        "doing": "Editing {file_path|notebook_path.file}",
+        "asks": "write the file {file_path}"
+      },
+      "Edit": {
+        "doing": "Editing {file_path|notebook_path.file}",
+        "asks": "edit the file {file_path|notebook_path}"
+      },
+      "MultiEdit": {
+        "doing": "Editing {file_path|notebook_path.file}",
+        "asks": "edit the file {file_path|notebook_path}"
+      },
+      "NotebookEdit": {
+        "doing": "Editing {file_path|notebook_path.file}",
+        "asks": "edit the file {file_path|notebook_path}"
+      },
+      "Grep": {
+        "doing": "Searching for {pattern}"
+      },
+      "Glob": {
+        "doing": "Looking for files"
+      },
+      "WebSearch": {
+        "doing": "Searching the web for {query}",
+        "asks": "search the web for \"{query}\""
+      },
+      "WebFetch": {
+        "doing": [
+          "Reading {url.site}",
+          "Reading a web page"
+        ],
+        "asks": "fetch {url}"
+      },
+      "Bash": {
+        "doing": "{command.line}",
+        "asks": "run `{command}`"
+      },
+      "Agent": {
+        "role": "subagent"
+      },
+      "Task": {
+        "role": "subagent"
+      },
+      "AskUserQuestion": {
+        "role": "question"
+      },
+      "SendUserFile": {
+        "role": "files"
+      },
+      "Artifact": {
+        "role": "artifact"
+      }
+    },
+    "server_tool": "__"
   }
 }

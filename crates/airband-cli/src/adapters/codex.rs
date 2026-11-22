@@ -67,12 +67,9 @@ pub fn permission(hook: &Value) -> Option<PermissionAsk> {
     }
     let tool = hook["tool_name"].as_str().unwrap_or("a tool");
     let input = &hook["tool_input"];
-    let what = match tool {
-        "Bash" | "shell" | "exec_command" => super::hooks::command(input).map(|c| format!("run `{c}`")),
-        "apply_patch" => Some(text(input, "description").unwrap_or_else(|| "change files".into())),
-        _ => text(input, "description"),
-    }
-    .unwrap_or_else(|| format!("use {tool}"));
+    // the row's words for one of Codex's own tools; any other says what it is doing itself, or is named
+    let row = super::hooks::tool_use(NAME, tool);
+    let what = if row.is_null() { text(input, "description") } else { super::hooks::fill(&row["asks"], input) }.unwrap_or_else(|| format!("use {tool}"));
     // one too long to put in front of him whole is not asked on the phone: Codex asks at its keyboard
     super::hooks::leave(agent_of(hook)?, tool, what, input, " The rest is at the keyboard.", None)
 }
@@ -96,7 +93,7 @@ struct Server {
 impl Server {
     /// Nothing when the server is not running: it is Codex that starts it, never the tower.
     fn connect() -> Option<Server> {
-        let stream = std::os::unix::net::UnixStream::connect(home().join("app-server-control").join("app-server-control.sock")).ok()?;
+        let stream = std::os::unix::net::UnixStream::connect(control_socket()).ok()?;
         stream.set_read_timeout(Some(std::time::Duration::from_secs(3))).ok()?;
         stream.set_write_timeout(Some(std::time::Duration::from_secs(3))).ok()?;
         let (socket, _) = tungstenite::client("ws://localhost/", stream).ok()?;
@@ -310,7 +307,7 @@ fn watch(tower: super::Tower) {
     let asking: std::sync::Arc<std::sync::Mutex<Asking>> = Default::default();
     let asking_for_threads = asking.clone();
     loop {
-        std::thread::sleep(std::time::Duration::from_secs(if home().join("app-server-control").join("app-server-control.sock").exists() { 2 } else { 20 }));
+        std::thread::sleep(std::time::Duration::from_secs(if control_socket().exists() { 2 } else { 20 }));
         let Some(mut server) = Server::connect() else { continue };
         let Some(threads) = threads(&mut server) else { continue };
         // not the ones the tower runs itself: their driver reports for them
@@ -383,8 +380,12 @@ fn worked_in(codex: &std::path::Path) -> Vec<super::Worked> {
 
 const HOOKS: &[On] = &[on("SessionStart", 5), on("UserPromptSubmit", 5), on("Stop", 5), on("SubagentStart", 5), on("SubagentStop", 5), on("SessionEnd", 2), on("PermissionRequest", 900)];
 
+/// The socket Codex's app server listens on, under its home, as its row has it.
+fn control_socket() -> PathBuf {
+    home().join(super::row_says(NAME, "control_socket"))
+}
 fn home() -> PathBuf {
-    std::env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|| crate::config::home().join(".codex"))
+    std::env::var_os(super::row_says(NAME, "home_env")).map(PathBuf::from).unwrap_or_else(|| crate::config::home().join(super::row_says(NAME, "home")))
 }
 
 pub struct Codex;

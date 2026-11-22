@@ -26,8 +26,14 @@ use std::time::Duration;
 type Res<T> = Result<T, String>;
 
 pub const HARNESS: &str = "claude-code";
-const LIVE_BASE: &str = "Claude Code-credentials";
-const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+/// The keychain item Claude Code keeps its login under, as its row names it.
+fn live_base() -> String {
+    super::row_says(HARNESS, "keychain_service")
+}
+/// The header value its account API asks for, as its row has it.
+fn oauth_beta() -> String {
+    super::row_says(HARNESS, "oauth_beta")
+}
 const ADD_AGAIN: &str = "Sign in to it again on the computer: airband accounts add";
 
 /// Where the pieces are. The environment can point them elsewhere so the whole thing can be tried against
@@ -59,8 +65,8 @@ fn live_service() -> String {
         return named;
     }
     match claude_config_dir() {
-        Some(d) => format!("{LIVE_BASE}-{}", sha8(&d.to_string_lossy())),
-        None => LIVE_BASE.to_string(),
+        Some(d) => format!("{}-{}", live_base(), sha8(&d.to_string_lossy())),
+        None => live_base(),
     }
 }
 fn sha8(s: &str) -> String {
@@ -232,7 +238,7 @@ fn set_oauth_account(acct: &Value) -> Res<()> {
 }
 /// Ask whose token this is. Nothing when the server cannot say (expired, offline).
 fn profile_email(token: &str) -> Option<String> {
-    let mut res = http().get(format!("{}/api/oauth/profile", api())).header("authorization", format!("Bearer {token}")).header("anthropic-beta", "oauth-2025-04-20").call().ok()?;
+    let mut res = http().get(format!("{}/api/oauth/profile", api())).header("authorization", format!("Bearer {token}")).header("anthropic-beta", oauth_beta()).call().ok()?;
     if res.status() != 200 {
         return None;
     }
@@ -270,7 +276,8 @@ fn saved_token(email: &str) -> Res<String> {
     }
     let refresh = o.get("refreshToken").and_then(|x| x.as_str()).filter(|x| !x.is_empty()).ok_or(ADD_AGAIN)?;
     let scopes = o.get("scopes").and_then(|x| x.as_array()).map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(" ")).unwrap_or_default();
-    let client = o.get("clientId").and_then(|x| x.as_str()).unwrap_or(CLIENT_ID);
+    // the login says which client it was made by; one that does not was made by Claude Code's own, as its row has it
+    let client = o.get("clientId").and_then(|x| x.as_str()).map(String::from).unwrap_or_else(|| super::row_says(HARNESS, "oauth_client"));
     let mut res = http()
         .post(token_url())
         .header("content-type", "application/json")
@@ -336,7 +343,7 @@ fn usage(token: &str) -> Result<Vec<Limit>, Unchecked> {
     let mut res = http()
         .get(format!("{}/api/oauth/usage", api()))
         .header("authorization", format!("Bearer {token}"))
-        .header("anthropic-beta", "oauth-2025-04-20")
+        .header("anthropic-beta", oauth_beta())
         .call()
         .map_err(|_| Unchecked::Said(format!("Could not reach {} to check it.", maker())))?;
     match res.status().as_u16() {
@@ -456,7 +463,7 @@ pub fn add() -> Res<String> {
     std::fs::create_dir_all(dir()).map_err(|e| e.to_string())?;
     let tmp = dir().join(format!("login-{}", now_ms()));
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
-    let service = format!("{LIVE_BASE}-{}", sha8(&tmp.to_string_lossy()));
+    let service = format!("{}-{}", live_base(), sha8(&tmp.to_string_lossy()));
     std::fs::write(tmp.join(".claude.json"), "{\"hasCompletedOnboarding\":true}").map_err(|e| e.to_string())?;
     println!("A browser opens: sign in to the account to add. The login in use now is not touched.");
     let program = super::row_says(HARNESS, "program");

@@ -31,7 +31,7 @@ const QUIET: u64 = 2 * 3600 * 1000;
 /// Where OpenCode's server is and the password for it, when it is running.
 fn service() -> Option<(String, String)> {
     let state = std::env::var_os("XDG_STATE_HOME").map(std::path::PathBuf::from).unwrap_or_else(|| crate::config::home().join(".local").join("state"));
-    let v: Value = serde_json::from_slice(&std::fs::read(state.join("opencode").join("service.json")).ok()?).ok()?;
+    let v: Value = serde_json::from_slice(&std::fs::read(state.join(super::row_says(NAME, "state")).join(super::row_says(NAME, "service"))).ok()?).ok()?;
     Some((v["url"].as_str()?.trim_end_matches('/').to_string(), v["password"].as_str()?.to_string()))
 }
 
@@ -39,7 +39,7 @@ fn client() -> ureq::Agent {
     ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(4))).http_status_as_error(false).build().into()
 }
 fn auth(password: &str) -> String {
-    format!("Basic {}", airband_core::audio::base64_encode(format!("opencode:{password}").as_bytes()))
+    format!("Basic {}", airband_core::audio::base64_encode(format!("{}:{password}", super::row_says(NAME, "user")).as_bytes()))
 }
 fn get(path: &str) -> Option<Value> {
     let (url, password) = service()?;

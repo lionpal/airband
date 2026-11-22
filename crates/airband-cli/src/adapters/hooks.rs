@@ -30,10 +30,50 @@ pub fn from_agent(agent: Option<Agent>, events: Vec<Event>) -> Vec<AgentEvent> {
     events.into_iter().map(|event| AgentEvent { schema: SCHEMA.into(), agent: agent.clone(), event, via: Some(airband_core::agent::Via::Hook) }).collect()
 }
 
-/// The command a tool wants to run, as he is shown it: whole, whether the tool gives it as one line or as its
-/// words.
-pub fn command(input: &Value) -> Option<String> {
-    text(input, "command").or_else(|| input["command"].as_array().map(|parts| parts.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(" ")).filter(|c| !c.is_empty()))
+/// What a coding tool's row says about one of its own tools, by the name the tool calls it (`with.tools`):
+/// what it is doing (`doing`), what it asks leave for (`asks`), whether it is bookkeeping, and its part
+/// (`role`: subagent, question, files, artifact). Null when the row does not list it.
+pub fn tool_use(harness: &str, tool: &str) -> Value {
+    airband_core::catalog::built().tools.iter().find(|t| t.id == harness).map(|t| t.with["tools"][tool].clone()).unwrap_or(Value::Null)
+}
+
+/// The tools a row gives one of these parts, by their own names.
+pub fn with_role(harness: &str, roles: &[&str]) -> Vec<String> {
+    let rows = airband_core::catalog::built();
+    let tools = rows.tools.iter().find(|t| t.id == harness).and_then(|t| t.with["tools"].as_object().cloned()).unwrap_or_default();
+    tools.into_iter().filter(|(_, v)| v["role"].as_str().is_some_and(|r| roles.contains(&r))).map(|(k, _)| k).collect()
+}
+
+/// A row's words for a tool call, filled from what the call was given. `{a}` is the field `a`; `{a|b}` the
+/// first of them given; `.file` after it takes a path's own name, `.line` its first line, `.site` an address's
+/// site. A list is tried in order and the first whose fields are all given is the one; None when none is.
+pub fn fill(words: &Value, input: &Value) -> Option<String> {
+    let one = |t: &str| -> Option<String> {
+        let mut out = String::new();
+        let mut rest = t;
+        while let Some(open) = rest.find('{') {
+            let close = open + rest[open..].find('}')?;
+            out.push_str(&rest[..open]);
+            let inner = &rest[open + 1..close];
+            let (fields, how) = inner.split_once('.').unwrap_or((inner, ""));
+            let given = fields.split('|').find_map(|f| text(input, f).or_else(|| input[f].as_array().map(|parts| parts.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(" ")).filter(|c| !c.is_empty())))?;
+            let made = match how {
+                "file" => std::path::Path::new(&given).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(given),
+                "line" => given.lines().next()?.to_string(),
+                "site" => Some(airband_core::links::site(&given)).filter(|s| !s.is_empty())?.to_string(),
+                _ => given,
+            };
+            out.push_str(&made);
+            rest = &rest[close + 1..];
+        }
+        out.push_str(rest);
+        Some(out)
+    };
+    match words {
+        Value::String(t) => one(t),
+        Value::Array(list) => list.iter().filter_map(Value::as_str).find_map(one),
+        _ => None,
+    }
 }
 
 /// One event a tool is asked to run `airband hook <name>` on.
@@ -41,8 +81,8 @@ pub struct On {
     pub event: &'static str,
     /// How long the tool waits for the hook, in seconds.
     pub timeout: u32,
-    /// Only for the tools this names, in the tool's own pattern language.
-    pub only: Option<&'static str>,
+    /// Only for the tools this names, in the tool's own pattern language, made from its row.
+    pub only: Option<fn() -> String>,
 }
 pub const fn on(event: &'static str, timeout: u32) -> On {
     On { event, timeout, only: None }
@@ -107,7 +147,7 @@ impl File {
             let list = hooks.entry(on.event).or_insert_with(|| json!([])).as_array_mut().ok_or_else(|| format!("a hooks entry in {} is not a list", self.path.display()))?;
             let mut group = json!({ "hooks": [{ "type": "command", "command": command, "timeout": on.timeout }] });
             if let Some(only) = on.only {
-                group["matcher"] = only.into();
+                group["matcher"] = only().into();
             }
             list.push(group);
         }
@@ -167,7 +207,10 @@ pub fn decision(allow: bool, reason: &str, answered: bool) -> String {
 mod tests {
     use super::*;
 
-    const EVENTS: &[On] = &[on("Stop", 5), On { event: "PostToolUse", timeout: 5, only: Some("Read") }];
+    fn read() -> String {
+        "Read".into()
+    }
+    const EVENTS: &[On] = &[on("Stop", 5), On { event: "PostToolUse", timeout: 5, only: Some(read) }];
     fn file(dir: &Path) -> File {
         File { name: "claude-code", path: dir.join("settings.json"), events: EVENTS }
     }
