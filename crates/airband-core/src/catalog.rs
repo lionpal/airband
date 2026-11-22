@@ -99,8 +99,14 @@ pub struct Tool {
 impl Tool {
     /// Something its row tells the code that speaks to it, as text. Empty when the row does not say.
     pub fn told(&self, what: &str) -> &str {
-        self.with.get(what).and_then(Value::as_str).unwrap_or_default()
+        row_text(self.with.get(what))
     }
+}
+
+/// Something a row tells the code, as text: what is written under one name in its `with`. Empty when the row
+/// does not say, or says something other than text. The one way a row's word is read.
+pub fn row_text(said: Option<&Value>) -> &str {
+    said.and_then(Value::as_str).unwrap_or_default()
 }
 
 /// A model that runs on the phone itself.
@@ -154,9 +160,8 @@ impl PhoneModel {
     /// One of the things its engine is told, as text. Empty when the row does not say.
     pub fn told(&self, name: &str) -> String {
         match self.with.get(name) {
-            Some(Value::String(s)) => s.clone(),
             Some(Value::Number(n)) => n.to_string(),
-            _ => String::new(),
+            other => row_text(other).to_string(),
         }
     }
 }

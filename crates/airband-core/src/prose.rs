@@ -289,12 +289,9 @@ const LINKS_SHOWN: usize = 4;
 /// addresses written out bare, as the Markdown reader finds them. Nothing inside code is a link. A client shows
 /// them beside the short form of a message, which leaves them out.
 pub fn links(text: &str) -> Vec<String> {
-    fn web(address: &str) -> bool {
-        url::Url::parse(address).is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host_str().is_some())
-    }
     fn take(spans: &[ProseSpan], out: &mut Vec<String>) {
         for link in spans.iter().filter(|s| !s.code).filter_map(|s| s.link.as_ref()) {
-            if web(link) && !out.contains(link) {
+            if crate::links::web(link).is_some() && !out.contains(link) {
                 out.push(link.clone());
             }
         }

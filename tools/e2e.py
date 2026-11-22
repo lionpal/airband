@@ -99,8 +99,15 @@ def said(text, **more):
         time.sleep(0.1)
 def say(text, **more):
     return said(text, **more)["say"]
+def named(f):
+    """The roster sends each agent's callsign as its typed parts; here each is also given the text it is shown as
+    and its team's name, as the checks read them."""
+    for a in f.get("roster", []):
+        parts = a["callsign"]
+        a["parts"], a["callsign"], a["group"] = parts, f"{parts['project']} {parts['number']}", parts["project"]
+    return f
 def feed(since=0):
-    return http("GET", f"/v1/radio/feed?since={since}")[1]
+    return named(http("GET", f"/v1/radio/feed?since={since}")[1])
 def message(f, who, has=""):
     hits = [m for m in f["messages"] if m["from"] == who and has.lower() in m["text"].lower()]
     return hits[-1] if hits else None
@@ -283,19 +290,20 @@ try:
     # a team is sent by its id; a new one by the name he gave it
     team_of = lambda name: next(a["team"] for a in feed()["roster"] if a["group"] == name)
     new = lambda name: {"new": {"name": name}}
+    called = lambda c: f"{c['project']} {c['number']}" if isinstance(c, dict) else None
     moved = http("POST", "/v1/radio/team", {"agent": "tr", "to": new("Payouts")})[1]
-    check("he can move an agent to another team, and a name he gave it goes with it", moved.get("callsign") == "payouts webhook" and moved.get("team") == "payouts" and moved.get("id") and roster(feed())["payouts webhook"]["group"] == "payouts", moved)
+    check("he can move an agent to another team, and a name he gave it goes with it", called(moved.get("callsign")) == "payouts webhook" and moved.get("team") == team_of("payouts") and roster(feed())["payouts webhook"]["group"] == "payouts", moved)
     check("what he said to it is now shown as said to it under its new name", his("payments tests")[0]["to"] == ["payouts webhook"], his("payments tests"))
     moved = http("POST", "/v1/radio/team", {"agent": "tr", "to": new("returns")})[1]
     f = feed()
-    check("a team that was not there is made by moving an agent into it", moved.get("callsign") == "returns webhook" and roster(f)["returns webhook"]["group"] == "returns", moved)
+    check("a team that was not there is made by moving an agent into it", called(moved.get("callsign")) == "returns webhook" and roster(f)["returns webhook"]["group"] == "returns", moved)
     check("the tower gives no colours: the phone chooses them, across every computer", "colours" not in f, list(f))
     session("tr", "orders", {"type": "working"}, "orders hooks")
     check("renamed afterwards, it stays in the team he put it in", "returns hooks" in roster(feed()), list(roster(feed())))
     session("nb", "orders", {"type": "working"})
     was = [c for c, a in roster(feed()).items() if a["id"] == "nb"]
     moved = http("POST", "/v1/radio/team", {"agent": "nb", "to": {"team": {"id": team_of("catalog")}}})[1]
-    check("one known only by a number takes the next free number in its new team", was == ["orders one"] and moved.get("callsign") == "catalog one", (was, moved))
+    check("one known only by a number takes the next free number in its new team", was == ["orders one"] and called(moved.get("callsign")) == "catalog one", (was, moved))
     check("a team with no name, one that is not there, or an agent that has gone, is refused in words", "error" in http("POST", "/v1/radio/team", {"agent": "nb", "to": new("  ")})[1] and "error" in http("POST", "/v1/radio/team", {"agent": "nb", "to": {"team": {"id": "catalog"}}})[1] and "error" in http("POST", "/v1/radio/team", {"agent": "nobody", "to": {"team": {"id": team_of("catalog")}}})[1])
     session("nb", "orders", {"type": "signoff"})
     session("tr", "orders", {"type": "signoff"})

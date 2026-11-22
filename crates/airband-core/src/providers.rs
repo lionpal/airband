@@ -48,7 +48,7 @@ pub struct By {
 impl By {
     /// Something the interface is told, as text. Empty when the row does not say.
     pub fn text(&self, name: &str) -> &str {
-        self.with.get(name).and_then(Value::as_str).unwrap_or_default()
+        crate::catalog::row_text(self.with.get(name))
     }
     pub fn flag(&self, name: &str) -> bool {
         self.with.get(name).and_then(Value::as_bool).unwrap_or(false)
@@ -277,13 +277,11 @@ impl Trouble {
     /// which a refusal (`check`); for anything the row does not list, and for a service with no such row, the
     /// status is read as HTTP itself defines it.
     pub fn of_status(status: u16, check: Option<&Check>) -> Trouble {
-        if let Some(check) = check {
-            if check.wrong_key.contains(&status) {
-                return Trouble::WrongKey;
-            }
-            if check.refused.contains(&status) {
-                return Trouble::Refused;
-            }
+        // the row's reading first, through the one place a row's statuses are read
+        match check.map(|c| c.read(status)) {
+            Some(KeyCheck::WrongKey) => return Trouble::WrongKey,
+            Some(KeyCheck::Refused) => return Trouble::Refused,
+            _ => {}
         }
         match status {
             401 | 403 => Trouble::WrongKey,

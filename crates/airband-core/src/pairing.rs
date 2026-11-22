@@ -16,33 +16,15 @@ pub enum Pairing {
     Direct { url: String, token: String },
 }
 
-fn decode(s: &str) -> String {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        let hex = (b[i] == b'%').then(|| s.get(i + 1..i + 3)).flatten().and_then(|h| u8::from_str_radix(h, 16).ok());
-        match hex {
-            Some(byte) => {
-                out.push(byte);
-                i += 3;
-            }
-            None => {
-                out.push(if b[i] == b'+' { b' ' } else { b[i] });
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-fn encode(s: &str) -> String {
-    s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
+/// A link's query, each value encoded: written with the same rules it is read by.
+fn query(pairs: &[(&str, &str)]) -> String {
+    url::form_urlencoded::Serializer::new(String::new()).extend_pairs(pairs).finish()
 }
 
 impl Pairing {
     pub fn parse(link: &str) -> Result<Pairing, String> {
         let query = link.trim().strip_prefix("airband://pair?").ok_or("a pairing link starts with airband://pair?")?;
-        let get = |name: &str| query.split('&').filter_map(|kv| kv.split_once('=')).find(|(k, _)| *k == name).map(|(_, v)| decode(v)).filter(|v| !v.is_empty());
+        let get = |name: &str| url::form_urlencoded::parse(query.as_bytes()).find(|(k, _)| k == name).map(|(_, v)| v.into_owned()).filter(|v| !v.is_empty());
         let tidy = |u: String| u.trim_end_matches('/').to_string();
         let at = get("at").map(|at| at.split(',').map(|a| tidy(a.to_string())).filter(|a| !a.is_empty()).collect::<Vec<_>>()).filter(|at| !at.is_empty());
         match (get("relay"), get("secret"), get("url"), get("token")) {
@@ -54,9 +36,9 @@ impl Pairing {
     }
     pub fn link(&self) -> String {
         match self {
-            Pairing::Relay { relay, secret } => format!("airband://pair?relay={}&secret={}", encode(relay), encode(secret)),
-            Pairing::Near { at, secret } => format!("airband://pair?secret={}&at={}", encode(secret), encode(&at.join(","))),
-            Pairing::Direct { url, token } => format!("airband://pair?url={}&token={}", encode(url), encode(token)),
+            Pairing::Relay { relay, secret } => format!("airband://pair?{}", query(&[("relay", relay), ("secret", secret)])),
+            Pairing::Near { at, secret } => format!("airband://pair?{}", query(&[("secret", secret), ("at", &at.join(","))])),
+            Pairing::Direct { url, token } => format!("airband://pair?{}", query(&[("url", url), ("token", token)])),
         }
     }
 }

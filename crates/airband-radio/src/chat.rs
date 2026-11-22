@@ -39,7 +39,7 @@ pub(crate) fn chat_feed(feed: Feed) -> ChatFeed {
         messages: feed.messages.into_iter().map(chat).collect(),
         agents: feed.roster.into_iter().map(|r| {
             let mut agent = ChatAgent { id: r.id, callsign: String::new(), badge: String::new(), group: String::new(), team: r.team, room: String::new(), number: String::new(), number_kept: String::new(), named: false, harness: r.harness, waiting: r.waiting, reachable: r.reachable, state: r.state.into(), subagents: r.subagents, doing: r.doing, held: r.held, terminal: r.terminal, ends: r.ends, model: r.model, effort: r.effort };
-            agent.call(airband_core::routing::Callsign { project: r.group, number: r.number, named: r.named });
+            agent.call(r.callsign);
             agent
         }).collect(),
         quick: feed.quick.into_iter().map(|q| QuickMessage { label: q.label, text: q.text }).collect(),

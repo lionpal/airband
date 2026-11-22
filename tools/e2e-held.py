@@ -281,7 +281,14 @@ def say(text, **more):
         took = http("POST", "/v1/radio/utterance", body)[1]
         if took["state"] == "answered": return took["reply"]["say"]
         time.sleep(0.1)
-feed = lambda: http("GET", "/v1/radio/feed?since=0")[1]
+def named(f):
+    """The roster sends each agent's callsign as its typed parts; here each is also given the text it is shown as
+    and its team's name, as the checks read them."""
+    for a in f.get("roster", []):
+        parts = a["callsign"]
+        a["parts"], a["callsign"], a["group"] = parts, f"{parts['project']} {parts['number']}", parts["project"]
+    return f
+feed = lambda: named(http("GET", "/v1/radio/feed?since=0")[1])
 arrived = lambda: [json.loads(l) for l in open(os.path.join(got, "said"))] if os.path.exists(os.path.join(got, "said")) else []
 def agent():
     held = [a for a in feed()["roster"] if a.get("held")]

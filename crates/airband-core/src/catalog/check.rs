@@ -12,6 +12,18 @@ pub struct Taken {
     pub note: Option<String>,
 }
 
+/// A new offer of a provider this build knows, reached exactly as one of its offers is, and by nothing that
+/// runs a program: the one kind of new offer a later copy may add.
+fn known_way(known: &Provider, o: &Offer) -> bool {
+    !BUILT_IN_ONLY.contains(&o.by.interface.as_str()) && known.offers.iter().any(|was| was.by == o.by && reach(was) == reach(o))
+}
+
+/// How this build starts a coding tool, by its id: its launchers and what its row tells the code. Nothing for
+/// a tool this build does not know.
+fn own_start(built: &Catalog, id: &str) -> (Vec<crate::tools::Launcher>, BTreeMap<String, Value>) {
+    built.tools.iter().find(|b| b.id == id).map(|b| (b.launchers.clone(), b.with.clone())).unwrap_or_default()
+}
+
 /// Take a newer copy of the catalogue. `signature` is the 64 bytes of its Ed25519 signature, in base64.
 /// An error when it is not signed by airband's key, does not read, has run out, or would do something a
 /// later copy may not; then nothing changes.
@@ -98,7 +110,7 @@ pub(super) fn weigh_against(text: &str, now: u64, have: &Catalog, built: &Catalo
     for p in newer.providers.iter_mut() {
         let Some(known) = built.providers.iter().find(|b| b.id == p.id) else { continue };
         let before = p.offers.len();
-        Arc::make_mut(p).offers.retain(|o| known.offers.iter().any(|was| was.id == o.id) || (!BUILT_IN_ONLY.contains(&o.by.interface.as_str()) && known.offers.iter().any(|was| was.by == o.by && reach(was) == reach(o))));
+        Arc::make_mut(p).offers.retain(|o| known.offers.iter().any(|was| was.id == o.id) || known_way(known, o));
         if p.offers.len() < before {
             newer.left_out.push(format!("{}: a new offer reached another way than this build knows it by", p.id));
         }
@@ -111,9 +123,7 @@ pub(super) fn weigh_against(text: &str, now: u64, have: &Catalog, built: &Catalo
     // How a coding tool is started is a program to run, and is this build's own for every tool it knows. What
     // a later copy says about that is not kept: a tool new to this build comes with no way to start it.
     for t in newer.tools.iter_mut() {
-        let own = built.tools.iter().find(|b| b.id == t.id);
-        t.launchers = own.map(|b| b.launchers.clone()).unwrap_or_default();
-        t.with = own.map(|b| b.with.clone()).unwrap_or_default();
+        (t.launchers, t.with) = own_start(built, &t.id);
     }
     if newer.providers.is_empty() {
         return Err("the catalogue has no providers in it".into());
@@ -161,7 +171,7 @@ pub(super) fn allowed(newer: &Catalog, built: &Catalog) -> Result<(), String> {
                         return Err(format!("the catalogue would change where {} is reached", p.id));
                     }
                 }
-                None if BUILT_IN_ONLY.contains(&o.by.interface.as_str()) || !known.offers.iter().any(|was| was.by == o.by && reach(was) == reach(o)) => return Err(format!("the catalogue would have {} reached a new way", p.id)),
+                None if !known_way(known, o) => return Err(format!("the catalogue would have {} reached a new way", p.id)),
                 None => {}
             }
         }
@@ -175,8 +185,7 @@ pub(super) fn allowed(newer: &Catalog, built: &Catalog) -> Result<(), String> {
     }
     // the same for how a coding tool is started: only what this build came with
     for t in &newer.tools {
-        let own = built.tools.iter().find(|b| b.id == t.id);
-        if t.launchers != own.map(|b| b.launchers.clone()).unwrap_or_default() || t.with != own.map(|b| b.with.clone()).unwrap_or_default() {
+        if (t.launchers.clone(), t.with.clone()) != own_start(built, &t.id) {
             return Err(format!("the catalogue would change the program run to start {}", t.id));
         }
     }

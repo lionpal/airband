@@ -250,17 +250,13 @@ pub struct RosterEntry {
     /// The agent's id: stable while it runs. What messages refer to.
     #[serde(default)]
     pub id: String,
-    pub callsign: String,
-    pub group: String,
-    /// Its team's id on this computer: what views, colours, moves and renames go by. `group` is only shown.
+    /// What it is called, as its typed parts: its team's name, and what tells it from the others of its team
+    /// (a number the tower handed out, or a name he gave it). Every form it is shown in is made from these.
+    pub callsign: crate::routing::Callsign,
+    /// Its team's id on this computer: what views, colours, moves and renames go by. The callsign's team name
+    /// is only shown.
     #[serde(default)]
     pub team: String,
-    /// What tells it from the others of its team: the part of its callsign after the team's name.
-    #[serde(default)]
-    pub number: String,
-    /// That part is a name he gave the session, not a number the tower handed out.
-    #[serde(default)]
-    pub named: bool,
     pub harness: String,
     /// Finished a turn and waiting on him.
     pub waiting: bool,
