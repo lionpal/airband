@@ -115,10 +115,19 @@ pub(crate) fn stop() {
     let _ = std::fs::remove_file(dir().join("server.pid"));
 }
 
+/// How long a caller waits for a model run on this computer to be ready.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Patience {
+    /// Through fetching the program and the model, which takes minutes the first time.
+    Long,
+    /// A moment: one not ready is told so, and asks again later.
+    Moment,
+}
+
 /// The address to speak to `model` at, starting its server if it is not running. The first time, the
-/// program and then the model are fetched, which takes minutes: a patient caller waits through that, and any
-/// other is told it is not ready yet. Blocks.
-pub(crate) fn ensure(model: &str, server: &str, patient: bool) -> Result<String, String> {
+/// program and then the model are fetched, which takes minutes: a [`Patience::Long`] caller waits through
+/// that, and any other is told it is not ready yet. Blocks.
+pub(crate) fn ensure(model: &str, server: &str, patience: Patience) -> Result<String, String> {
     let server = server_row(server)?;
     {
         let mut running = RUNNING.lock().unwrap();
@@ -154,7 +163,7 @@ pub(crate) fn ensure(model: &str, server: &str, patient: bool) -> Result<String,
             *running = Some((model.to_string(), child));
         }
     }
-    let until = Instant::now() + if patient { Duration::from_secs(45 * 60) } else { Duration::from_secs(2) };
+    let until = Instant::now() + if patience == Patience::Long { Duration::from_secs(45 * 60) } else { Duration::from_secs(2) };
     loop {
         if healthy() {
             return Ok(format!("{}/v1", address()));

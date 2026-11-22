@@ -378,11 +378,8 @@ impl Inner {
 pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, model: Option<String>, effort: Option<String>, task: &str) -> Result<String, String> {
     let harness = app.cfg().launchers.get(launcher).map(|l| l.harness.clone()).ok_or_else(|| format!("no launcher called {launcher} is configured"))?;
     // nothing is started that no team could hold: it would run with nobody able to speak to it
-    {
-        let inner = app.read();
-        if inner.team_at(cwd).is_none() && inner.name_for_folder(cwd).is_none() {
-            return Err("That folder has no name a team could have.".into());
-        }
+    if !a_team_can_hold(&app.read(), cwd) {
+        return Err("That folder has no name a team could have.".into());
     }
     let mut kept = Kept { id: new_id(), cwd: cwd.to_string(), launcher: launcher.to_string(), model, effort, session: None };
     let started = spawn(app, &kept, true).await?;
@@ -413,7 +410,7 @@ pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, model: Opti
 /// session cannot be carried on is let go.
 pub(super) async fn carry_on(app: &Arc<App>) {
     let kept: Vec<Kept> = app.read().held.clone();
-    for k in kept {
+    for k in to_carry_on(kept, &edges::folders::Disk) {
         // only the ones still on the radio: one that signed off is finished
         if app.read().find(&k.id).is_none() {
             continue;
@@ -427,6 +424,25 @@ pub(super) async fn carry_on(app: &Arc<App>) {
             log(format!("could not carry on held agent {}: {e}", &k.id[..8.min(k.id.len())]));
         }
     }
+}
+
+/// The held agents worth carrying on: the ones whose folder is still there. One whose folder has gone could
+/// not be started in it, and is said and left.
+fn to_carry_on(kept: Vec<Kept>, folders: &dyn edges::folders::Folders) -> Vec<Kept> {
+    kept.into_iter()
+        .filter(|k| {
+            let there = folders.exists(&k.cwd);
+            if !there {
+                log(format!("did not carry on held agent {}: its folder is gone", &k.id[..8.min(k.id.len())]));
+            }
+            there
+        })
+        .collect()
+}
+
+/// Whether a team could hold an agent working in this folder: the one there, or one the folder could name.
+fn a_team_can_hold(inner: &Inner, cwd: &str) -> bool {
+    inner.team_at(cwd).is_some() || inner.name_for_folder(cwd).is_some()
 }
 
 /// Let a held agent go: its input is closed, and it ends by itself and signs off.
@@ -472,22 +488,21 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
     if !session.waiting {
         return Err("It is in the middle of something. Take it over when it has stopped.".into());
     }
+    // nothing is ended that the tower could not then hold: a team must be there for it before its terminal
+    // session goes
+    if !a_team_can_hold(&app.read(), &cwd) {
+        return Err("It has no team airband can put it in, so it was left running in its terminal.".into());
+    }
     // ending it signs it off: written down first is the team it goes back to, by whoever put it there
     app.change().put(id, &session.team, session.moved.unwrap_or(Mover::Tower));
-    // ask it to end, and wait for it to be gone: two processes must never run one session
-    terminate(pid);
-    for _ in 0..50 {
-        if !alive(pid) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
-    if alive(pid) {
+    // ask it to end, and wait for it to be gone: two processes must never run one session, so the one the
+    // tower holds can only start once this one has ended
+    if edges::procs::end_and_wait(&edges::procs::SystemProcs, pid).await.is_err() {
         return Err("Its terminal session did not end. Close it there, then try again.".into());
     }
     let mut kept = Kept { id: id.to_string(), cwd, launcher, model: None, effort: None, session: Some(id.to_string()) };
     // ending it signed it off; it reports in again from the new process, under the same id
-    let started = spawn(app, &kept, false).await?;
+    let started = spawn(app, &kept, false).await.map_err(|e| format!("Its terminal session ended, but airband could not carry it on: {e}"))?;
     kept.session = started.session.or(kept.session);
     let taken = {
         let mut inner = app.change();
@@ -519,4 +534,27 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
     }
     log(format!("took over {}", session.callsign.text()));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use edges::folders::FakeFolders;
+
+    fn kept(id: &str, cwd: &str) -> Kept {
+        Kept { id: id.into(), cwd: cwd.into(), launcher: "l".into(), model: None, effort: None, session: None }
+    }
+
+    #[test]
+    fn only_held_agents_whose_folder_is_still_there_are_carried_on() {
+        let disk = FakeFolders(vec!["/work/shop".into()]);
+        let carried = to_carry_on(vec![kept("a", "/work/shop"), kept("b", "/work/gone")], &disk);
+        assert_eq!(carried.iter().map(|k| k.id.as_str()).collect::<Vec<_>>(), ["a"]);
+    }
+
+    #[test]
+    fn a_folder_no_team_could_hold_is_never_one_an_agent_is_started_or_taken_over_in() {
+        let inner = Inner::default();
+        assert!(!a_team_can_hold(&inner, "/"));
+    }
 }

@@ -48,6 +48,15 @@ pub(super) async fn ask_shaped(settings: &Settings, prompt: String, shape: Optio
     asked.map_err(|Failed(trouble, more)| if more.is_empty() { format!("{trouble:?}") } else { format!("{trouble:?} ({more})") })
 }
 
+/// The model he chose, as the tower's edge to a model ([`crate::tower::edges::models::Model`]).
+pub(in crate::tower) struct ChosenModel<'a>(pub(in crate::tower) &'a Settings);
+
+impl crate::tower::edges::models::Model for ChosenModel<'_> {
+    fn ask<'a>(&'a self, prompt: String, shape: Option<Value>) -> crate::tower::edges::Boxed<'a, Result<String, String>> {
+        Box::pin(ask_shaped(self.0, prompt, shape))
+    }
+}
+
 /// What comes back from asking: the model's answer, or why there is none.
 pub(super) type Asked<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, Failed>> + Send + 'a>>;
 
@@ -127,7 +136,7 @@ pub(super) async fn on_this_computer(_model: &Summarizer, by: &By, prompt: Strin
     let (name, server) = (by.text("model").to_string(), by.text("server").to_string());
     let url = {
         let name = name.clone();
-        tokio::task::spawn_blocking(move || super::local::ensure(&name, &server, false)).await.map_err(|e| Failed(Trouble::Program, e.to_string()))?.map_err(|e| Failed(Trouble::Program, e))?
+        tokio::task::spawn_blocking(move || super::local::ensure(&name, &server, super::local::Patience::Moment)).await.map_err(|e| Failed(Trouble::Program, e.to_string()))?.map_err(|e| Failed(Trouble::Program, e))?
     };
     let mut body = json!({ "model": name, "messages": [{ "role": "user", "content": prompt }], "temperature": 0, "max_tokens": 400 });
     if let Some(shape) = shape {
