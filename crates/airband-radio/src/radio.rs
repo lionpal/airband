@@ -255,8 +255,8 @@ impl Radio {
     /// How this computer was last reached, or not, each way: through the relay, and at its own address.
     pub(crate) fn reach(&self) -> (Option<String>, Option<String>) {
         let told = |s: Step| match s.outcome {
-            Ok(_) => "answered".to_string(),
-            Err(e) => e.told(),
+            Ok(_) => "Answered.".to_string(),
+            Err(e) => e.said(),
         };
         (self.link.last_by(if self.link.by_relay() { Way::Relay } else { Way::Paired }).map(told), self.link.last_by(Way::Near).map(told))
     }

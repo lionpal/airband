@@ -49,7 +49,7 @@ impl Desk {
         let radios = self.shared.state.lock().unwrap().named_radios();
         // one after another, not all at once: two computers on the same account asking Anthropic in the same
         // moment is how one of them gets refused
-        let mut all: Vec<StationAccounts> = radios
+        radios
             .into_iter()
             .map(|(computer, radio)| {
                 radio.accounts(&computer, fresh).unwrap_or_else(|e| StationAccounts {
@@ -64,17 +64,9 @@ impl Desk {
                     checked_at: 0,
                 })
             })
-            .collect();
-        // the same account on two computers has one allowance: where one computer could not be told it, what
-        // the other was told is shown
-        let known: Vec<(String, String, Vec<AccountLimit>)> = all.iter().flat_map(|s| s.accounts.iter()).filter(|a| !a.limits.is_empty()).map(|a| (a.harness.clone(), a.label.clone(), a.limits.clone())).collect();
-        for a in all.iter_mut().flat_map(|s| s.accounts.iter_mut()).filter(|a| a.limits.is_empty()) {
-            if let Some((_, _, limits)) = known.iter().find(|(harness, label, _)| *harness == a.harness && *label == a.label) {
-                a.limits = limits.clone();
-                a.problem = None;
-            }
-        }
-        all
+            .collect()
+        // Each computer's accounts are as it told them. Two computers' accounts are never taken for one by what
+        // they are called: nothing a computer says names an account the same way on another.
     }
     /// Move one computer's sessions to another of its accounts. `station`, `harness` and `id` are as
     /// [`Desk::accounts`] gave them. Blocks: call it off the main thread.

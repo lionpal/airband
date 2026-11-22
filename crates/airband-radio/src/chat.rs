@@ -102,7 +102,8 @@ pub struct ChatMessage {
     pub links: Vec<ChatLink>,
     /// The agent that said it: stable while that agent runs, whatever it is called. Nothing for his own messages.
     pub agent: Option<String>,
-    /// Which computer it came from, when he is paired with several and a [`Desk`] merged them. Empty otherwise.
+    /// Which computer it came from, by its [`crate::DeskComputer::id`], when he is paired with several and a
+    /// [`Desk`] merged them. Empty otherwise.
     pub station: String,
     /// It needs him and nothing has answered it yet. An inbox shows these.
     pub open: bool,

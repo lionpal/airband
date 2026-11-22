@@ -304,7 +304,7 @@ fn a_notification_is_opened_by_the_pairing_that_sealed_it_and_no_other() {
     let answer = airband_core::encode::base64(&keys.seal(Direction::ToRadio, &serde_json::to_vec(&question).unwrap()));
     assert!(open_notice(vec![link(&laptop)], answer, Default::default()).is_none());
     assert!(open_notice(vec![link(&laptop)], "not sealed".into(), Default::default()).is_none());
-    assert_eq!(station_key(&link(&laptop)), Some(keys.channel.clone()));
+    assert_eq!(station_id(&link(&laptop)), keys.channel);
 }
 
 #[test]
@@ -332,8 +332,9 @@ fn waiting_is_what_is_open_and_not_just_answered() {
     assert!(state.is_open("q1") && state.is_open("q2") && !state.is_open("d1"));
     state.answered.insert("q1".into());
     assert!(!state.is_open("q1"));
-    // labelled with its computer, because there are two
-    assert_eq!(state.merged().iter().map(|m| (m.id.as_str(), m.station.as_str())).collect::<Vec<_>>(), [("q1", "mini"), ("d1", "mini"), ("q2", "macbook")]);
+    // labelled with its computer, by its id, because there are two
+    let (mini, macbook) = (state.stations[0].id(), state.stations[1].id());
+    assert_eq!(state.merged().iter().map(|m| (m.id.clone(), m.station.clone())).collect::<Vec<_>>(), [("q1".into(), mini.clone()), ("d1".into(), mini), ("q2".into(), macbook)]);
 }
 
 #[test]
@@ -781,4 +782,37 @@ fn a_main_computer_the_phone_could_not_keep_is_told_once() {
     let _ = std::fs::remove_dir_all(&dir);
     let told: Vec<String> = host.0.lock().unwrap().iter().filter(|t| t.ends_with("are not kept if the app closes.")).cloned().collect();
     assert_eq!(told.len(), 1, "{told:?}");
+}
+
+#[test]
+fn a_message_names_its_computer_by_the_id_every_other_place_uses() {
+    let mut state = two();
+    // neither computer has said its name, and two computers could say the same one
+    state.stations.iter_mut().for_each(|s| s.name.clear());
+    let ids: Vec<String> = state.stations.iter().map(|s| s.id()).collect();
+    let desk = desk_of(state);
+    let view = desk.view(None, None);
+    let q2 = view.feed.iter().find(|m| m.id == "q2").unwrap();
+    assert_eq!(q2.station, ids[1]);
+    assert!(view.stations.iter().any(|c| c.id == q2.station));
+}
+
+#[test]
+fn two_computers_with_one_name_are_two_lines_on_the_connection_page() {
+    let mut state = two();
+    state.stations.iter_mut().for_each(|s| s.name = "Mac".into());
+    let desk = desk_of(state);
+    let reach = desk.reach();
+    assert_ne!(reach[0].id, reach[1].id);
+}
+
+#[test]
+fn an_account_on_two_computers_is_never_taken_for_one_by_what_it_is_called() {
+    let read = station("mini", tower_answering(r#"{"schema":"","accounts":[{"id":"1","harness":"h","label":"me@example.com","limits":[{"name":"week","used":0.5}]}]}"#), &[], vec![]);
+    let unread = station("laptop", tower_answering(r#"{"schema":"","accounts":[{"id":"7","harness":"h","label":"me@example.com","problem":"Could not read it."}]}"#), &[], vec![]);
+    let desk = desk_of(State { stations: vec![read, unread], ..State::default() });
+    let all = desk.accounts(false);
+    let laptop = &all[1].accounts[0];
+    assert!(laptop.limits.is_empty());
+    assert_eq!(laptop.problem.as_deref(), Some("Could not read it."));
 }

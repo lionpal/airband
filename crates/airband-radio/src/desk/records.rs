@@ -142,6 +142,8 @@ pub enum UploadState {
 /// connected"), or empty when that way has not been tried or has only ever worked.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct DeskReach {
+    /// The computer, by its [`DeskComputer::id`], and what it is called to him.
+    pub id: String,
     pub computer: String,
     pub relay: String,
     pub near: String,

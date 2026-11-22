@@ -182,6 +182,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     var computers: [DeskComputer] { view.stations }
     /// What a computer is called to him, by its id.
     func computerName(_ id: String) -> String { view.stations.first { $0.id == id }?.name ?? "" }
+    /// Who a message is from, and on which computer when he has several.
+    func fromAndComputer(_ m: ChatMessage) -> String { [m.from, computerName(m.station)].filter { !$0.isEmpty }.joined(separator: " · ") }
     /// What he is told when a computer cannot be reached: which, when more than one could be meant.
     var cannotReach: String { view.away.isEmpty ? "Can\u{2019}t reach your computer" : "Can\u{2019}t reach " + view.away.joined(separator: ", ") }
     /// A state as it is read out for someone who cannot see its dot.

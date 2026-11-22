@@ -214,7 +214,7 @@ impl State {
             .flat_map(|s| {
                 s.messages.iter().map(move |m| {
                     ChatMessage {
-                        station: if several { s.name.clone() } else { String::new() },
+                        station: if several { s.id() } else { String::new() },
                         colour: self.colours.of(&m.room),
                         ..m.clone()
                     }

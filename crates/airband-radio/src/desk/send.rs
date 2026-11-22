@@ -63,8 +63,7 @@ impl Desk {
         let radio = {
             let mut state = self.shared.state.lock().unwrap();
             state.answered.insert(message_id.clone());
-            let named = state.stations.iter().position(|s| station_key(&s.link).as_deref() == Some(station.as_str()));
-            named.or(state.owner(&message_id)).map(|i| state.stations[i].radio.clone())
+            state.station_at(&station).or(state.owner(&message_id)).map(|i| state.stations[i].radio.clone())
         };
         self.shared.host.changed();
         radio.ok_or(RadioError::Told { reason: "That computer is no longer paired.".into() })?.answer_now(match &tapped { Some(t @ (Tapped::Allow | Tapped::Deny)) => t.words(), _ => text }, message_id, tapped.map(|t| t.act()))
