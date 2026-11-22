@@ -107,8 +107,12 @@ its query, body and answer, is one `Endpoint` in `airband_core::radio::wire::at`
 types. A 200 carries the route's answer and nothing else; "nothing to say back" is `Done` (`{}`). A refusal is a
 4xx whose body is a `Refusal`: `{ refusal: "told", reason }` (words for him), `bad_ask` (the request itself
 was wrong, such as a query value that is not a number), `other_version` (`speaks` the version the tower takes),
-`too_big`, `gone` or `not_allowed`. A reader goes by `refusal`, never by the status, and a 200 never carries an
-error. A radio names itself in the
+`too_big`, `gone`, `not_allowed`, or `not_now` (with a `reason`: it could not be done just now, and the same
+request is sent again in a moment, with status 503). A reader goes by `refusal`, never by the status, and a 200
+never carries an error. Every request a radio makes says which version it speaks: straight to the tower in the
+`x-airband-schema` header, through the relay in the sealed request's `schema`. One that says another version, or
+none, is answered `other_version` (426) and goes no further. A token that opens nothing is answered 401
+`not_allowed`. A radio names itself in the
 `x-airband-radio` header so the tower can keep its place in a call apart from another radio's; for a sealed
 request the tower uses the pairing's name.
 

@@ -4,6 +4,7 @@
 //! The tower only ever calls out, so it works behind any router with no port opened. The relay sees sealed
 //! bytes; a request that does not open with a paired radio's key, is not fresh, or was already answered is
 //! dropped here.
+use airband_core::radio::wire::Refusal;
 use crate::config::{self, PairedRadio};
 use super::{App, PRESENCE_HEADER, VIA_HEADER, log, now_ms};
 use airband_core::relay::{ADMISSION_HEADER, RADIO_HASH_HEADER, REQUEST_HEADER};
@@ -220,7 +221,7 @@ impl Serve {
         let call = self.keys.open_call(sealed)?;
         let now = now_ms();
         let (status, body) = if !fresh(call.t, now) {
-            self.refused(&call, "his own network", 408, &wrong_clock())
+            self.refused(&call, "his own network", Refusal::told(wrong_clock()))
         } else {
             if !self.first_time(&call.id, now) {
                 return None;
@@ -246,7 +247,7 @@ impl Serve {
         // so neither its age nor a second copy can make it happen again.
         let (status, body) = if kept {
             // something he said, read as what it is: its id, as the tower takes it
-            let said: Option<String> = (call.method == airband_core::radio::wire::Method::Post && call.path == super::http::UTTERANCE).then(|| serde_json::from_value::<airband_core::radio::Utterance>(call.body.clone()).ok()).flatten().map(|u| u.id).filter(|id| !id.is_empty());
+            let said: Option<String> = (call.method == airband_core::radio::wire::Method::Post && call.path == <airband_core::radio::wire::at::Utterance as airband_core::radio::wire::Endpoint>::PATH).then(|| serde_json::from_value::<airband_core::radio::Utterance>(call.body.clone()).ok()).flatten().map(|u| u.id).filter(|id| !id.is_empty());
             if said.is_some() && now.saturating_sub(call.t) <= airband_core::relay::HELD_FOR_MS {
                 log(format!("\"{}\" said this while the tower was away", self.name));
                 self.dispatch(&call, "the relay, kept while the tower was away", false).await
@@ -256,11 +257,11 @@ impl Serve {
                 if let Some(id) = &said {
                     self.app.passing().settle(&self.name, id, airband_core::radio::Outcome::Rejected { why: airband_core::radio::Rejected::TooOld });
                 }
-                self.refused(&call, "the relay, kept while the tower was away", 400, "only something he said, sent in the last week, is taken late")
+                self.refused(&call, "the relay, kept while the tower was away", Refusal::BadAsk { reason: "only something he said, sent in the last week, is taken late".into() })
             }
         } else if !fresh(call.t, now) {
             // answered, not dropped, so a phone with a wrong clock is told why nothing works
-            self.refused(&call, "the relay", 408, &wrong_clock())
+            self.refused(&call, "the relay", Refusal::told(wrong_clock()))
         } else {
             if !self.first_time(&call.id, now) {
                 return log(format!("dropped a replayed request on \"{}\"'s channel", self.name));
@@ -302,9 +303,9 @@ impl Serve {
     }
 
     /// A request the tower will not run, and the line that says so: which pairing, how it came, and why.
-    fn refused(&self, call: &Call, via: &str, status: u16, why: &str) -> (u16, Value) {
-        log(format!("refused a request from \"{}\" by {via} ({} {}, {status}): {why}", self.name, call.method, call.path.split('?').next().unwrap_or_default()));
-        (status, serde_json::json!({ "error": why }))
+    fn refused(&self, call: &Call, via: &str, no: Refusal) -> (u16, Value) {
+        log(format!("refused a request from \"{}\" by {via} ({} {}, {}): {}", self.name, call.method, call.path.split('?').next().unwrap_or_default(), no.status(), no.reason().unwrap_or("no reason given")));
+        (no.status(), serde_json::to_value(&no).unwrap_or_default())
     }
 
     /// Run a radio's request through the same routes the local port serves. Only the radio's routes: a paired
@@ -312,33 +313,28 @@ impl Serve {
     /// `now`: the request was made just now, so where its radio said it stands is where it stands. One the relay
     /// kept says where the radio stood when he said it, which is not news.
     async fn dispatch(&self, call: &Call, via: &str, now: bool) -> (u16, Value) {
-        if call.schema != airband_core::radio::SCHEMA {
-            // in words for him: it is what his phone shows
-            log(format!("a radio spoke {}, and this version of airband takes {}", call.schema, airband_core::radio::SCHEMA));
-            return self.refused(call, via, 400, "This computer runs another version of airband. Update it and the app.");
-        }
         if !call.path.starts_with(airband_core::radio::PATH) || !matches!(call.method, airband_core::radio::wire::Method::Get | airband_core::radio::wire::Method::Post) {
-            return self.refused(call, via, 403, "a radio may only use /v1/radio/");
+            return self.refused(call, via, Refusal::NotAllowed);
         }
         let body = if call.body.is_null() { Body::empty() } else { Body::from(serde_json::to_vec(&call.body).unwrap()) };
-        let mut req = Request::builder().method(call.method.as_str()).uri(&call.path).header("authorization", format!("Bearer {}", self.token)).header(VIA_HEADER, via).extension(super::http::RadioId(self.name.clone())).header("content-type", "application/json");
+        let mut req = Request::builder().method(call.method.as_str()).uri(&call.path).header("authorization", format!("Bearer {}", self.token)).header(VIA_HEADER, via).header(airband_core::radio::SCHEMA_HEADER, &call.schema).extension(super::http::RadioId(self.name.clone())).header("content-type", "application/json");
         if now {
             req = req.header(PRESENCE_HEADER, serde_json::to_string(&call.presence).unwrap());
         }
         let Ok(req) = req.body(body) else {
-            return (400, Value::Null);
+            return self.refused(call, via, Refusal::BadAsk { reason: "that request cannot be made into one this computer can run".into() });
         };
         let Ok(res) = self.router.clone().oneshot(req).await;
         let status = res.status().as_u16();
         // the whole answer: one too big for the relay is told so when it is sealed for the relay
         // (`seal_answer_for_relay`), and one given straight has no such bound
         let Ok(bytes) = axum::body::to_bytes(res.into_body(), usize::MAX).await else {
-            return (500, serde_json::json!({ "error": "airband could not read its own answer." }));
+            return self.refused(call, via, Refusal::NotNow { reason: "airband could not read its own answer.".into() });
         };
         match serde_json::from_slice(&bytes) {
             Ok(body) => (status, body),
             Err(_) if bytes.is_empty() => (status, Value::Null),
-            Err(e) => (500, serde_json::json!({ "error": format!("airband made an answer that is not JSON ({e}).") })),
+            Err(e) => self.refused(call, via, Refusal::NotNow { reason: format!("airband made an answer that is not JSON ({e}).") }),
         }
     }
 }

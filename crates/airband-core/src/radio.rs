@@ -42,6 +42,11 @@ pub const VIA_HEADER: &str = "x-airband-via";
 /// The header a radio says where it stands in, as JSON ([`Presence`]). A radio that comes through the relay
 /// says it inside the sealed request, and the relay link puts it here.
 pub const PRESENCE_HEADER: &str = "x-airband-presence";
+/// The header a radio says which version of this protocol it speaks in ([`SCHEMA`]), on every request it makes
+/// straight to a tower. One that comes through the relay says it inside the sealed request (`Call.schema`), and
+/// the relay link puts it here. A request that says another version, or none, is refused with
+/// [`wire::Refusal::OtherVersion`].
+pub const SCHEMA_HEADER: &str = "x-airband-schema";
 
 /// How much a message deserves his attention. Deciding this is the tower's main job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

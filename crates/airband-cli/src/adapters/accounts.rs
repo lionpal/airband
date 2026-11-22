@@ -1,5 +1,6 @@
 //! A coding tool's accounts: listing them for every tool that has them, switching, and `airband accounts`; and
 //! who an account is, read the way its tool's row says.
+use airband_core::radio::wire;
 use super::*;
 use airband_core::identity::{AccountIdentity, IdSource, Place, Under};
 
@@ -117,14 +118,10 @@ fn by_tower(sent: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> ByTo
     };
     let status = res.status().as_u16();
     let Ok(text) = res.body_mut().read_to_string() else { return ByTower::Said(Err("airband's answer could not be read.".into())) };
-    #[derive(serde::Deserialize)]
-    struct Refusal {
-        error: String,
-    }
-    ByTower::Said(match (status, serde_json::from_str::<Refusal>(&text)) {
-        (200, Ok(r)) => Err(r.error),
-        (200, Err(_)) => serde_json::from_str::<Accounts>(&text).map_err(|_| "airband's answer could not be read.".to_string()),
-        (n, _) => Err(format!("airband refused ({n}).")),
+    // a 200 carries the accounts and nothing else; anything else carries why not
+    ByTower::Said(match status {
+        200 => serde_json::from_str::<Accounts>(&text).map_err(|_| "airband's answer could not be read.".to_string()),
+        n => Err(serde_json::from_str::<airband_core::radio::wire::Refusal>(&text).ok().and_then(|r| r.reason().map(String::from)).unwrap_or_else(|| format!("airband refused ({n})."))),
     })
 }
 
@@ -160,13 +157,13 @@ pub(crate) fn accounts_command(cfg: &config::Config, args: &[String]) -> Result<
         }
     };
     match args.first().map(String::as_str) {
-        None => match by_tower(here.get("/v1/radio/accounts?fresh=1").call()) {
+        None => match by_tower(here.get(&wire::address::<wire::at::Accounts>(None, &wire::AccountsQuery { fresh: true })).config().http_status_as_error(false).build().call()) {
             ByTower::Said(now) => show(&now?),
             ByTower::NotRunning => show(&accounts()),
         },
         Some("use") => {
             let id = args.get(1).ok_or("Which account? airband accounts use <its email or number>")?;
-            match by_tower(here.post("/v1/radio/accounts/use").send_json(serde_json::json!({ "harness": harness, "id": id }))) {
+            match by_tower(here.post(<wire::at::UseAccount as wire::Endpoint>::PATH).config().http_status_as_error(false).build().send_json(airband_core::radio::UseAccount { harness: harness.to_string(), id: id.to_string() })) {
                 ByTower::Said(now) => show(&now?),
                 ByTower::NotRunning => {
                     let _ = use_account(harness, id)?.join();
