@@ -15,7 +15,7 @@ pub(super) async fn team_rename(State(app): State<Arc<App>>, Json(to): Json<airb
     Json(match inner.rename_team(&to.team, &to.to) {
         Ok(team) => {
             inner.tell();
-            json!(airband_core::radio::TeamRenamed { team })
+            json!(airband_core::radio::TeamRenamed { team: team.into_string() })
         }
         Err(why) => refused(why),
     })
@@ -76,8 +76,8 @@ pub(super) async fn recent(State(app): State<Arc<App>>) -> Json<airband_core::ra
 pub(super) async fn project(State(app): State<Arc<App>>, Json(new): Json<airband_core::radio::NewProject>) -> Json<Value> {
     // a team's name is part of what its agents are called, and is said aloud: short, and written as a
     // callsign is
-    let mut name = match airband_core::routing::chosen_team_name(&new.name) {
-        Ok(name) => name,
+    let mut name = match TeamName::new(&new.name) {
+        Ok(name) => name.into_string(),
         Err(why) => return Json(refused(why)),
     };
     let folder = if new.make {

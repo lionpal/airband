@@ -73,9 +73,9 @@ pub(super) struct Inner {
     pub(super) settled: VecDeque<(u64, String, airband_core::radio::Settled)>,
 }
 /// One of his teams: what it is called, and the folder its agents work in when it has one.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Team {
-    pub(super) name: String,
+    pub(super) name: TeamName,
     #[serde(default)]
     pub(super) folder: Option<String>,
     /// He chose this name (renamed it, made it from a radio, started an agent under it). It keeps it though a
@@ -322,7 +322,7 @@ mod tests {
         joins(&mut inner, &agent("a", "/x/shop", Some("refunds")));
         joins(&mut inner, &agent("b", "/x/shop", None));
         let shop = inner.team_at("/x/shop").unwrap();
-        assert_eq!(inner.rename_team(&shop, "Store Front"), Ok("store front".to_string()));
+        assert_eq!(inner.rename_team(&shop, "Store Front"), Ok(TeamName::new("store front").unwrap()));
         assert_eq!(names(&inner), ["store front refunds", "store front one"]);
         // its folder is still its folder: a new agent there joins it
         assert_eq!(joins(&mut inner, &agent("c", "/x/shop", None)).text(), "store front two");
@@ -369,7 +369,7 @@ mod tests {
         // listed once, under its configured name; a name with nothing in it is left out
         assert_eq!(inner.folder_teams().into_iter().collect::<Vec<_>>(), [("shop".to_string(), real_folder(&folder))]);
         let shop = inner.team_at(&folder).unwrap();
-        assert_eq!(inner.rename_team(&shop, "store"), Ok("store".to_string()));
+        assert_eq!(inner.rename_team(&shop, "store"), Ok(TeamName::new("store").unwrap()));
         assert_eq!(inner.folder_teams().into_keys().collect::<Vec<_>>(), ["store"]);
         // read from the configuration again at the next start: his name stays, and there is still one team
         inner.configure_teams(&listed);
@@ -826,7 +826,7 @@ mod tests {
         b.name = Some("a name far longer than any team may have".into());
         let _ = inner.check_in(&b);
         // neither is a team here: one is the name of a team on another computer, the other is too long
-        assert!(inner.teams.values().all(|t| t.name != "garden" && t.name.chars().count() <= 24), "{:?}", inner.teams);
+        assert!(inner.teams.values().all(|t| t.name != "garden" && t.name.as_str().chars().count() <= 24), "{:?}", inner.teams);
     }
 
     #[test]

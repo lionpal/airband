@@ -70,6 +70,9 @@ pub struct Catalog {
     /// A program that pulls frames out of a video (`catalog/frames/`). Always the ones compiled in: they are
     /// programs run.
     pub frames: Vec<Frames>,
+    /// The package managers airband is installed with (`catalog/installers/`). Always the ones compiled in:
+    /// they are programs run.
+    pub installers: Vec<Installer>,
     /// Words of the trade that a recogniser otherwise hears as everyday ones ("sync" as "sink").
     pub phrases: Vec<String>,
     /// Providers and coding tools that are no more, by id. One this build has compiled in and a later copy
@@ -328,6 +331,21 @@ mod tests {
         assert_eq!(taken.tools.iter().find(|t| t.id == "codex"), built().tools.iter().find(|t| t.id == "codex"));
         assert!(!taken.tools.iter().any(|t| t.id == "newtool"));
         assert!(said.left_out.iter().any(|l| l.starts_with("codex:")) && said.left_out.iter().any(|l| l.starts_with("newtool:")), "{:?}", said.left_out);
+    }
+
+    #[test]
+    fn a_launcher_this_build_cannot_read_is_left_out_and_said_and_its_tool_and_other_launchers_stay() {
+        let (taken, said) = offered(&|d| {
+            let tools = d["tools"].as_array_mut().unwrap();
+            let codex = tools.iter_mut().find(|t| t["id"] == "codex").unwrap();
+            codex["launchers"].as_array_mut().unwrap().push(serde_json::json!({ "name": "later", "held": { "by": "a way this build has no code for" } }));
+        })
+        .unwrap();
+        let taken = taken.unwrap();
+        let codex = taken.tools.iter().find(|t| t.id == "codex").unwrap();
+        let built_codex = built().tools.iter().find(|t| t.id == "codex").unwrap().clone();
+        assert_eq!(codex.launchers, built_codex.launchers);
+        assert!(said.left_out.iter().any(|l| l.starts_with("codex: a launcher")), "{:?}", said.left_out);
     }
 
     #[test]

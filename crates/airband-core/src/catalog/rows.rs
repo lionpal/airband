@@ -26,6 +26,8 @@ pub(super) struct Document {
     #[serde(default)]
     frames: Vec<Value>,
     #[serde(default)]
+    installers: Vec<Value>,
+    #[serde(default)]
     phrases: Vec<String>,
     #[serde(default)]
     retired: Vec<String>,
@@ -57,8 +59,10 @@ pub(super) struct ToolRow {
     maker: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     first: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    launchers: Vec<crate::tools::Launcher>,
+    /// Read one at a time, like a provider's offers: a launcher this build cannot read is left out and said,
+    /// and the tool and its other launchers are kept.
+    #[serde(default)]
+    launchers: Vec<Value>,
     #[serde(default)]
     with: BTreeMap<String, Value>,
 }
@@ -125,6 +129,7 @@ pub(super) fn read(text: &str) -> Result<Catalog, String> {
     let links = each::<crate::links::LinkKind>(doc.links, "link", &mut left_out);
     let terminals = each::<Terminal>(doc.terminals, "terminal", &mut left_out);
     let frames = each::<Frames>(doc.frames, "frames", &mut left_out);
+    let installers = each::<Installer>(doc.installers, "installer", &mut left_out);
     // a secret's shape that would mask nothing, or every word, is no shape: it is left out and said
     let secrets = each::<crate::redact::Shape>(doc.secrets, "secret", &mut left_out)
         .into_iter()
@@ -140,9 +145,14 @@ pub(super) fn read(text: &str) -> Result<Catalog, String> {
         .into_iter()
         .map(|t| {
             // a launcher in a tool's row starts that tool
-            let launchers = t.launchers.into_iter().map(|l| crate::tools::Launcher { harness: t.id.clone(), ..l }).collect();
+            let launchers = t
+                .launchers
+                .into_iter()
+                .filter_map(|l| serde_json::from_value::<crate::tools::Launcher>(l).map_err(|e| left_out.push(format!("{}: a launcher ({e})", t.id))).ok())
+                .map(|l| crate::tools::Launcher { harness: t.id.clone(), ..l })
+                .collect();
             Tool { id: t.id, name: t.name, maker: t.maker, first: t.first, launchers, with: t.with }
         })
         .collect();
-    Ok(Catalog { rev: doc.rev, hash: doc.hash, providers, tools, models, servers, links, secrets, terminals, frames, phrases: doc.phrases, retired: doc.retired, left_out })
+    Ok(Catalog { rev: doc.rev, hash: doc.hash, providers, tools, models, servers, links, secrets, terminals, frames, installers, phrases: doc.phrases, retired: doc.retired, left_out })
 }
