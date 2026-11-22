@@ -406,6 +406,12 @@ try:
     check("and it is waiting, not working", fresh and fresh["state"] not in ("working", "asking"), fresh)
     check("his first word reaches it as his own", say("@" + fresh["callsign"].replace(" ", "") + " start with the tests").startswith("Sent to") and until(lambda: arrived()[-1:] == ["start with the tests"]), arrived())
     until(lambda: agent() and agent()["state"] != "working")
+    launched = subprocess.run([BIN, "launch", "shop"], env=env, capture_output=True, text=True)
+    held_now = lambda: [a for a in feed()["roster"] if a.get("held")]
+    check("the command line starts one in a team he names", launched.stdout.strip() == "A new agent is ready in shop." and until(lambda: len(held_now()) == 2), (launched.stdout, launched.stderr, feed()["roster"]))
+    for a in held_now():
+        if a["id"] != fresh["id"]: http("POST", "/v1/radio/end", {"agent": a["id"]})
+    until(lambda: len(held_now()) == 1)
     check("it can be ended like any other", http("POST", "/v1/radio/end", {"agent": fresh["id"]})[1] == {} and until(lambda: agent() is None), feed()["roster"])
 
     print("A new team, made from the phone")
