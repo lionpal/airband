@@ -275,10 +275,11 @@ pub(crate) fn computer_reached(shared: &Shared, radio: &Radio) {
     // what can write summaries, and what does now, as the main computer says: another computer's word on it
     // does not stand in for the main one's
     let is_main = { let state = shared.state.lock().unwrap(); state.main().is_some_and(|i| std::ptr::eq(&*state.stations[i].radio, radio)) };
-    if is_main && let Some(offered) = radio.reads_offered() {
-        if let Err(e) = chooser.change(|s| s.offered = Some(offered)) {
-            shared.host.note(e.to_string());
-        }
+    if is_main
+        && let Some(offered) = radio.reads_offered()
+        && let Err(e) = chooser.change(|s| s.offered = Some(offered))
+    {
+        shared.host.note(e.to_string());
     }
     shared.host.changed();
 }
