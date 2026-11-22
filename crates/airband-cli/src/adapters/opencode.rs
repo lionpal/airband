@@ -66,9 +66,16 @@ fn agent(id: &str, cwd: Option<&str>) -> Agent {
     }
 }
 
-/// What a session's newest answer says: its text, without what it thought to itself on the way.
+/// Where a session's newest answer is: the server is asked for its answers only, newest first, and one of
+/// them (its API says the order is the one asked for, and does not say what it is when none is asked).
+fn newest_answer_at(session: &str) -> String {
+    format!("/api/session/{session}/message?limit=1&order=desc&type=assistant")
+}
+
+/// What a session's newest answer says, from what [`newest_answer_at`] gives: its text, without what it
+/// thought to itself on the way.
 fn newest_answer(messages: &Value) -> Option<String> {
-    let said = messages["data"].as_array()?.iter().find(|m| m["type"] == "assistant")?;
+    let said = messages["data"].as_array()?.first().filter(|m| m["type"] == "assistant")?;
     let text: Vec<&str> = said["content"].as_array()?.iter().filter(|part| part["type"] == "text").filter_map(|part| part["text"].as_str()).map(str::trim).filter(|t| !t.is_empty()).collect();
     (!text.is_empty()).then(|| text.join("\n\n"))
 }
@@ -178,7 +185,7 @@ fn watch(tower: Tower) {
                     }
                     if idle > was_idle && idle >= busy {
                         // its turn is over: its newest answer is what it said, and with none it only stopped
-                        let ended = get(&format!("/api/session/{id}/message?limit=6")).map(|messages| newest_answer(&messages).map(|text| Event::Said { text, kind: None, turn: None }).unwrap_or(Event::Stopped { why: None }));
+                        let ended = get(&newest_answer_at(id)).map(|messages| newest_answer(&messages).map(|text| Event::Said { text, kind: None, turn: None }).unwrap_or(Event::Stopped { why: None }));
                         if ended.is_some_and(|event| send(id, cwd, event)) {
                             (told_busy, told_idle) = (told_busy.max(busy), idle);
                         }
@@ -262,13 +269,12 @@ mod tests {
 
     #[test]
     fn an_answer_is_its_words_without_its_thinking() {
+        // as OpenCode 2.3.2's server answers newest_answer_at (checked against a real one)
         let messages = json!({ "data": [
-            { "type": "idle", "outcome": "succeeded" },
             { "type": "assistant", "content": [{ "type": "reasoning", "text": "He wants one word." }, { "type": "text", "text": " queued " }] },
-            { "type": "user", "text": "Now reply with the one word: queued" },
-            { "type": "assistant", "content": [{ "type": "text", "text": "ready" }] },
-        ] });
+        ], "cursor": { "previous": "p", "next": "n" } });
         assert_eq!(newest_answer(&messages).as_deref(), Some("queued"));
+        assert_eq!(newest_answer_at("ses_1"), "/api/session/ses_1/message?limit=1&order=desc&type=assistant");
         assert_eq!(newest_answer(&json!({ "data": [{ "type": "user", "text": "hello" }] })), None);
         // his words go to the session through OpenCode's server
         assert_eq!(agent("ses_1", Some("/x/shop")).deliver, Some(Deliver::Harness { name: "opencode".into(), session: "ses_1".into() }));
