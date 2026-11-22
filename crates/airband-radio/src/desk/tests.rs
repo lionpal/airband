@@ -876,6 +876,7 @@ fn an_account_on_two_computers_is_never_taken_for_one_by_what_it_is_called() {
 }
 
 mod fake;
+mod kept_files;
 mod lifetimes;
 mod scenarios;
 mod sending;

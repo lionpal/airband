@@ -17,11 +17,14 @@ pub(super) struct ReadMarks {
     pub(super) main: Option<String>,
     #[serde(skip)]
     keeper: airband_io::kept::Keeper,
+    /// What he is to be told about the file when the desk opens: it could not be read.
+    #[serde(skip)]
+    pub(super) opened: Option<String>,
 }
 impl ReadMarks {
     pub(super) fn load(dir: &str) -> Self {
-        let (kept, keeper) = crate::kept::open::<Option<ReadMarks>>(crate::kept::file(dir, "read.json"));
-        ReadMarks { keeper, ..kept.unwrap_or_else(|| ReadMarks { since: airband_core::clock::now_ms(), ..ReadMarks::default() }) }
+        let (kept, keeper, opened) = crate::kept::open::<Option<ReadMarks>>(crate::kept::file(dir, "read.json"), "What you have read, and your default computer,");
+        ReadMarks { keeper, opened, ..kept.unwrap_or_else(|| ReadMarks { since: airband_core::clock::now_ms(), ..ReadMarks::default() }) }
     }
     /// Keep them on the device. The words to tell him when they could not be kept.
     #[must_use]

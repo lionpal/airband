@@ -76,6 +76,11 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, station: String, ep
                 && let Some(computer) = state.computer(&station) {
                 let rooms: Vec<String> = computer.agents.iter().map(|a| a.room.clone()).chain(computer.messages.iter().map(|m| m.room.clone())).collect();
                 colours_lost = state.colours.see(rooms);
+                // once every paired computer has answered, a colour kept for a team none of them has is let go
+                if state.computers.iter().all(|c| c.answered_at.is_some()) {
+                    let all: std::collections::BTreeSet<String> = state.computers.iter().flat_map(|c| c.agents.iter().map(|a| a.room.clone()).chain(c.messages.iter().map(|m| m.room.clone()))).filter(|r| !r.is_empty()).collect();
+                    colours_lost = colours_lost.or(state.colours.keep_only(&all));
+                }
             }
             // once the tower agrees a message is answered, stop tracking it here
             let now_open: HashSet<String> = state.computers.iter().flat_map(|s| s.open.iter().cloned()).collect();

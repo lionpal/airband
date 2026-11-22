@@ -1,7 +1,7 @@
 //! The files the phone keeps, through `airband_io::kept`: what happens to one that is damaged is decided there,
 //! once (set aside, or left as it is with every save refused). This says so in the device's log, and puts a save
 //! that failed in words for him.
-use airband_io::kept::{Keeper, Saved};
+use airband_io::kept::{Keeper, Loaded, Saved};
 use serde::de::DeserializeOwned;
 use std::path::{Path, PathBuf};
 
@@ -10,13 +10,24 @@ pub(crate) fn file(dir: &str, name: &str) -> Option<PathBuf> {
     (!dir.is_empty()).then(|| Path::new(dir).join(name))
 }
 
-/// What `path` holds, or the default, and where to keep it. One that could not be read is told in the log.
-pub(crate) fn open<T: DeserializeOwned + Default>(path: Option<PathBuf>) -> (T, Keeper) {
+/// What `path` holds, or the default, and where to keep it. One that could not be read is told in the log, and
+/// in words for him naming `what` it held: the caller tells him once.
+pub(crate) fn open<T: DeserializeOwned + Default>(path: Option<PathBuf>, what: &str) -> (T, Keeper, Option<String>) {
     let (value, keeper, loaded) = Keeper::open(path);
     if let Some(trouble) = loaded.trouble() {
         eprintln!("airband: {trouble}");
     }
-    (value, keeper)
+    let told = damaged(&loaded, what);
+    (value, keeper, told)
+}
+
+/// In words for him, what came of a file that could not be read. Nothing when it read, or was not there yet.
+fn damaged(loaded: &Loaded, what: &str) -> Option<String> {
+    match loaded {
+        Loaded::Fresh | Loaded::Read => None,
+        Loaded::SetAside { .. } => Some(format!("{what} could not be read on this phone, so it starts again. The old copy is kept beside it.")),
+        Loaded::LeftInPlace { .. } => Some(format!("{what} could not be read on this phone and is left as it was. Nothing new is kept until it can be.")),
+    }
 }
 
 /// The words for him when a save failed: why, in words for him.
@@ -48,12 +59,13 @@ mod tests {
         let file = dir.join("radio.json");
         std::fs::write(&file, b"{ half written").unwrap();
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
-        let (got, keeper): (Vec<String>, _) = open(Some(file.clone()));
+        let (got, keeper, told): (Vec<String>, _, _) = open(Some(file.clone()), "Test");
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
         let saved = said(keeper.save(&vec!["new".to_string()]));
         let left = std::fs::read(&file).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(got.is_empty());
+        assert!(told.is_some_and(|t| t.contains("left as it was")), "he is not told");
         assert!(saved.is_err(), "it was saved over");
         assert_eq!(left, b"{ half written");
     }

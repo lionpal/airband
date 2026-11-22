@@ -114,7 +114,11 @@ impl Link {
     /// `trail_file` is where the trail is kept between launches; nothing keeps it in memory only.
     pub(crate) fn new(pairing: Pairing, radio: &str, trail_file: Option<std::path::PathBuf>) -> Result<Self, String> {
         let agent = crate::net::agent(POLL_TIMEOUT);
-        let (trail, trail_keeper) = crate::kept::open(trail_file);
+        let (mut trail, trail_keeper, damaged): (std::collections::VecDeque<Line>, _, _) = crate::kept::open(trail_file, "The record of earlier requests");
+        // the trail is for him to read on the connection screen: one that could not be read says so there
+        if let Some(told) = damaged {
+            trail.push_back(Line::Remark { at: now_ms(), what: told });
+        }
         let mut at = Vec::new();
         let route = match pairing {
             Pairing::Near { at: given, secret } => {
@@ -177,8 +181,10 @@ impl Link {
         while trail.len() > TRAIL {
             trail.pop_front();
         }
-        // the record of what failed is for him to copy; one not kept is missing those lines, nothing more
-        let _ = self.trail_keeper.save(&*trail);
+        // the record is for him to read: one that could not be kept says so in itself, the first time in a row
+        if let Some(why) = self.trail_keeper.save(&*trail).news() {
+            trail.push_back(Line::Remark { at: now_ms(), what: format!("{} The lines after this are lost when the app closes.", crate::kept::not_kept(why)) });
+        }
     }
     /// Something worth a line in the trail that is not a step. Never anything he or an agent said.
     pub(crate) fn remark(&self, what: String) {
@@ -556,6 +562,26 @@ mod tests {
         let (_, again) = link.utterance_once(&said("0123456789ab", "ship it"));
         assert_eq!(again.iter().map(|s| s.way).collect::<Vec<_>>(), [Way::Relay]);
         assert_eq!(link.last_by(Way::Near).map(|s| s.outcome.is_err()), Some(true));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_trail_that_could_not_be_read_or_kept_says_so_in_itself_once() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("airband-trail-bad-{}", airband_core::encode::random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("trail.json");
+        std::fs::write(&file, b"[ half").unwrap();
+        // the folder cannot be written: the old file cannot be moved aside, and nothing can be kept
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let link = Link::new(Pairing::Relay { relay: "http://127.0.0.1:9".into(), secret: "cd".repeat(32) }, "test", Some(file.clone())).unwrap();
+        link.remark("one".into());
+        link.remark("two".into());
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let trail = link.trail();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(trail[0].contains("could not be read"), "{trail:?}");
+        assert_eq!(trail.iter().filter(|l| l.contains("lost when the app closes")).count(), 1, "{trail:?}");
     }
 
     #[test]

@@ -18,6 +18,7 @@
 use super::*;
 use crate::engines::HostDevice;
 use crate::models::{Model, VoiceChoice};
+use crate::senses::{Cannot, Sense};
 use crate::services::{Service, ServiceAsk};
 use airband_core::providers::Job;
 use airband_core::radio::{OfferName, ReadsOffered, SetReads};
@@ -145,14 +146,11 @@ pub(crate) struct Chooser {
     device: HostDevice,
     saved: Mutex<Saved>,
     working: Mutex<Option<Work>>,
+    /// What he is to be told about the file when the desk opens: it could not be read.
+    pub(crate) opened: Mutex<Option<String>>,
 }
 
 /// What he chose that this build has no code for, said one way: what it cannot do, and where to choose again.
-fn cannot(what: &str, job: ChoiceJob) -> String {
-    let section = if job == ChoiceJob::Voice { "Voice" } else { "Listening" };
-    format!("This version of airband cannot {what}. Choose another in Settings, under {section}.")
-}
-
 pub(crate) fn told(reason: impl Into<String>) -> RadioError {
     RadioError::Told { reason: reason.into() }
 }
@@ -160,9 +158,9 @@ pub(crate) fn told(reason: impl Into<String>) -> RadioError {
 impl Chooser {
     /// What was kept in `dir`, or a new install's choices. With no folder (a test), nothing is kept.
     pub(crate) fn open(dir: &str, device: HostDevice) -> Chooser {
-        let (kept, keeper) = crate::kept::open::<Option<Saved>>(crate::kept::file(dir, "choices.json"));
+        let (kept, keeper, opened) = crate::kept::open::<Option<Saved>>(crate::kept::file(dir, "choices.json"), "What you chose in Settings");
         let saved = Mutex::new(kept.unwrap_or_else(|| Saved::fresh(&device)));
-        Chooser { dir: dir.into(), keeper, device, saved, working: Mutex::new(None) }
+        Chooser { dir: dir.into(), keeper, device, saved, working: Mutex::new(None), opened: Mutex::new(opened) }
     }
 
     /// The coding tools he uses, by id, the one he uses most first.
@@ -193,19 +191,19 @@ impl Chooser {
         let key = |id: &str| host.secret(id.to_string()).unwrap_or_default();
         senses.ears.set(saved.pick(ChoiceJob::Ears).map(|ears| match ears.place {
             ChoicePlace::Phone => match self.model(&ears.id).filter(|m| m.job == Job::Ears) {
-                None => crate::ears::Own::Cannot(cannot("run the listening model you chose", ChoiceJob::Ears)),
-                Some(m) if !crate::models::fetched(&self.dir, &m) => crate::ears::Own::Cannot(format!("{} is not on this phone yet. Download it in Settings, under Listening.", m.name)),
+                None => crate::ears::Own::Cannot(Cannot::ModelNotRun(Sense::Listening)),
+                Some(m) if !crate::models::fetched(&self.dir, &m) => crate::ears::Own::Cannot(Cannot::NotDownloaded { sense: Sense::Listening, model: m.name.clone() }),
                 Some(m) => crate::ears::Own::Model(senses.ears.held(&m, crate::models::folder(&self.dir, &m))),
             },
             ChoicePlace::Service => {
                 let with = crate::services::service_of(&ears.id, &ears.offer, &key(&ears.id), ears.set.clone().into_iter().collect());
-                if with.offer(Job::Ears).is_some_and(|(_, o)| crate::hears::listens(&o)) { crate::ears::Own::Service(with) } else { crate::ears::Own::Cannot(cannot("listen with the service you chose", ChoiceJob::Ears)) }
+                if with.offer(Job::Ears).is_some_and(|(_, o)| crate::hears::listens(&o)) { crate::ears::Own::Service(with) } else { crate::ears::Own::Cannot(Cannot::ServiceNotUsed(Sense::Listening)) }
             }
         }));
         senses.mouth.set(saved.pick(ChoiceJob::Voice).map(|voice| match voice.place {
             ChoicePlace::Phone => match self.model(&voice.id).filter(|m| m.job == Job::Voice) {
-                None => crate::mouth::Own::Cannot(cannot("run the voice you chose", ChoiceJob::Voice)),
-                Some(m) if !crate::models::fetched(&self.dir, &m) => crate::mouth::Own::Cannot(format!("{} is not on this phone yet. Download it in Settings, under Voice.", m.name)),
+                None => crate::mouth::Own::Cannot(Cannot::ModelNotRun(Sense::Voice)),
+                Some(m) if !crate::models::fetched(&self.dir, &m) => crate::mouth::Own::Cannot(Cannot::NotDownloaded { sense: Sense::Voice, model: m.name.clone() }),
                 Some(m) => match voice_of(&m, &voice.voice) {
                     Ok(name) => crate::mouth::Own::Model { held: senses.mouth.held(&m, crate::models::folder(&self.dir, &m)), voice: name },
                     Err(why) => crate::mouth::Own::Cannot(why),
@@ -213,7 +211,7 @@ impl Chooser {
             },
             ChoicePlace::Service => {
                 let with = crate::services::service_of(&voice.id, &voice.offer, &key(&voice.id), voice.set.clone().into_iter().collect());
-                if crate::voices::synth(&with).is_ok() { crate::mouth::Own::Service(with) } else { crate::mouth::Own::Cannot(cannot("speak with the service you chose", ChoiceJob::Voice)) }
+                if crate::voices::synth(&with).is_ok() { crate::mouth::Own::Service(with) } else { crate::mouth::Own::Cannot(Cannot::ServiceNotUsed(Sense::Voice)) }
             }
         }));
     }
@@ -266,7 +264,7 @@ impl Chooser {
             let by: crate::engines::ByHost = &|engine, folder, job, input| host.run_model(engine.into(), folder.into(), job, input);
             let ran = held.with(|loaded| match m.job {
                 // in the voice he picked, or the one its row names as usual: never just the first it lists
-                Job::Voice => voice_of(m, &self.saved().pick(ChoiceJob::Voice).filter(|p| p.id == m.kind).map(|p| p.voice).unwrap_or_default()).and_then(|voice| loaded.speak(by, &voice, "Ready.", &mut |_| {}, &|| false)),
+                Job::Voice => voice_of(m, &self.saved().pick(ChoiceJob::Voice).filter(|p| p.id == m.kind).map(|p| p.voice).unwrap_or_default()).map_err(|why| why.told()).and_then(|voice| loaded.speak(by, &voice, "Ready.", &mut |_| {}, &|| false)),
                 _ => loaded.hear(by, vec![0u8; 32000]).map(|_| ()),
             });
             ran.and_then(|ran| ran).map_err(|why| told(format!("{} did not load on this phone: {why}.", m.name)))?;
@@ -277,11 +275,11 @@ impl Chooser {
 
 /// The voice a model speaks in: the one he picked, or with none picked the one its row names as usual, when the
 /// model has it. A voice it does not have is never swapped for another of its voices.
-fn voice_of(m: &Model, picked: &str) -> Result<String, String> {
+fn voice_of(m: &Model, picked: &str) -> Result<String, Cannot> {
     let wanted = m.voice(picked);
     m.voices.iter().map(|v| &v.0).find(|name| name.as_str() == wanted).cloned().ok_or_else(|| match picked.is_empty() {
-        true => format!("{} names no voice of its own to speak in. Choose one in Settings, under Voice.", m.name),
-        false => format!("{} no longer has the voice {picked}. Choose another in Settings, under Voice.", m.name),
+        true => Cannot::NoVoiceNamed { model: m.name.clone() },
+        false => Cannot::VoiceGone { model: m.name.clone(), voice: picked.to_string() },
     })
 }
 
@@ -627,7 +625,7 @@ mod voice_tests {
     fn a_model_whose_row_names_no_usual_voice_is_never_run_with_an_empty_one() {
         let mut m = (*crate::models::models(&HostDevice::default()).chain(airband_core::catalog::current().models.clone()).find(|m| m.job == Job::Voice).unwrap()).clone();
         m.usual_voice = String::new();
-        assert!(voice_of(&m, "").unwrap_err().contains("names no voice"));
+        assert_eq!(voice_of(&m, "").unwrap_err(), Cannot::NoVoiceNamed { model: m.name.clone() });
         let first = m.voices[0].0.clone();
         assert_eq!(voice_of(&m, &first).unwrap(), first);
     }
