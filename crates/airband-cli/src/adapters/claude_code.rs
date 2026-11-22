@@ -149,8 +149,17 @@ fn file_safe(session: &str) -> bool {
     !session.is_empty() && session.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
+/// The folder Claude Code was told to keep everything in instead of its usual one, by the variable its row names.
+pub(super) fn moved_home() -> Option<std::path::PathBuf> {
+    super::env(&super::row_says(HARNESS, "home_env")).map(std::path::PathBuf::from)
+}
+
+/// Where Claude Code keeps its settings, sessions and transcripts: the moved folder, or its usual one.
 fn claude_home() -> std::path::PathBuf {
-    crate::config::home().join(super::row_says(HARNESS, "home"))
+    home_given(moved_home())
+}
+fn home_given(moved: Option<std::path::PathBuf>) -> std::path::PathBuf {
+    moved.unwrap_or_else(|| crate::config::home().join(super::row_says(HARNESS, "home")))
 }
 
 /// The Claude Code tools worth hearing about once they have run, by its row: the one that hands him a file,
@@ -219,6 +228,14 @@ impl super::Harness for ClaudeCode {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_moved_home_is_where_hooks_and_sessions_are_looked_for_as_the_accounts_look() {
+        // the variable is the row's, the same one the accounts and a sign-in use
+        assert_eq!(super::super::row_says(HARNESS, "home_env"), "CLAUDE_CONFIG_DIR");
+        assert_eq!(home_given(Some("/elsewhere/claude".into())), std::path::PathBuf::from("/elsewhere/claude"));
+        assert_eq!(home_given(None), crate::config::home().join(".claude"));
+    }
 
     #[test]
     fn claude_code_stop_becomes_said() {
