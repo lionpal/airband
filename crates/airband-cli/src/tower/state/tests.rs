@@ -31,7 +31,9 @@ fn a_new_agent_can_be_started_by_name_in_a_folder_a_coding_tool_has_worked_in() 
     joins(&mut inner, &agent("a", &shop, None));
     inner.worked = vec![(back.clone(), vec!["codex".into()], 9), (other_shop.clone(), vec!["claude-code".into()], 7), (shop.clone(), vec!["claude-code".into(), "codex".into()], 5)];
     let recent = inner.recent();
-    let listed: Vec<(&str, &str, bool, u64)> = recent.iter().map(|r| (r.name.as_str(), r.folder.as_str(), r.team, r.at)).collect();
+    let listed: Vec<(&str, &str, bool, u64)> = recent.iter().map(|r| (r.name.as_str(), r.folder.as_str(), r.team.is_some(), r.at)).collect();
+    // the folder with a team carries that team's id
+    assert_eq!(recent.iter().find(|r| r.folder == shop).and_then(|r| r.team.clone()), inner.team_at(&shop));
     // newest first; a folder is called as its team is when it has one, and as a team there would be when not
     // another folder called as his team is would be a team of its own, its parent's name in front
     assert_eq!(listed, [("back office", back.as_str(), false, 9), ("elsewhere shop", other_shop.as_str(), false, 7), ("shop", shop.as_str(), true, 5)]);
@@ -43,7 +45,7 @@ fn a_new_agent_can_be_started_by_name_in_a_folder_a_coding_tool_has_worked_in() 
     assert_eq!(inner.teams.len(), 1);
     // a team no tool has a record of is still listed, last
     inner.worked = vec![(back.clone(), vec!["codex".into()], 9)];
-    assert_eq!(inner.recent().iter().map(|r| (r.name.as_str(), r.team, r.at)).collect::<Vec<_>>(), [("back office", false, 9), ("shop", true, 0)]);
+    assert_eq!(inner.recent().iter().map(|r| (r.name.as_str(), r.team.is_some(), r.at)).collect::<Vec<_>>(), [("back office", false, 9), ("shop", true, 0)]);
     let _ = std::fs::remove_dir_all(&here);
 }
 
@@ -139,7 +141,7 @@ fn renaming_a_team_changes_only_what_it_is_called() {
     assert_eq!(inner.rename_team(&garden, "store front"), Err("There is already a team called store front, here or on another of your computers.".to_string()));
     assert!(inner.rename_team(&garden, "!!").is_err());
     // a team is found by its id, and never by what it is called
-    assert!(inner.rename_team("garden", "x").is_err());
+    assert!(inner.rename_team(&TeamId::new("garden"), "x").is_err());
 }
 
 #[test]
@@ -189,7 +191,7 @@ fn a_configured_team_with_no_agents_is_one_team_and_can_be_renamed() {
 #[test]
 fn kept_agents_from_two_folders_in_one_team_go_back_to_their_own_folders_teams() {
     // as kept before teams went by folder: one name, two folders
-    let session = |id: &str, cwd: &str, number: &str| Session { agent: agent(id, cwd, None), callsign: Callsign { project: "shop".into(), number: number.into(), named: false }, team: String::new(), waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false, hooked: false, turn: None };
+    let session = |id: &str, cwd: &str, number: &str| Session { agent: agent(id, cwd, None), callsign: Callsign { project: "shop".into(), number: number.into(), named: false }, team: TeamId::default(), waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false, hooked: false, turn: None };
     let old: BTreeMap<String, String> = [("shop".to_string(), "/a/work/shop".to_string()), ("garden".to_string(), "/g".to_string())].into();
     let mut inner = Inner { sessions: vec![session("a", "/a/work/shop", "one"), session("b", "/b/work/shop", "two")], ..Inner::default() };
     // a line kept under a team's name, and one he said to several teams
@@ -588,7 +590,7 @@ fn a_radio_that_only_reads_and_types_keeps_who_it_was_talking_to() {
 }
 
 fn kept_session(id: &str, cwd: Option<&str>, project: &str) -> Session {
-    Session { agent: Agent { cwd: cwd.map(String::from), ..agent(id, "", None) }, callsign: Callsign { project: project.into(), number: "one".into(), named: false }, team: String::new(), waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false, hooked: false, turn: None }
+    Session { agent: Agent { cwd: cwd.map(String::from), ..agent(id, "", None) }, callsign: Callsign { project: project.into(), number: "one".into(), named: false }, team: TeamId::default(), waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false, hooked: false, turn: None }
 }
 
 #[test]
@@ -673,11 +675,11 @@ fn a_start_keeps_the_name_the_tower_gave_a_configured_team_to_stay_distinct() {
     let mut inner = Inner { here: "Laptop".into(), ..Inner::default() };
     inner.configure_teams(&listed);
     assert!(inner.taken_elsewhere(&[Callsign { project: "shop".into(), number: "one".into(), named: false }]));
-    assert_eq!(inner.team_name("/x/shop"), Some("laptop shop"));
+    assert_eq!(inner.team_name(&TeamId::new("/x/shop")), Some("laptop shop"));
     // the next start knows nothing of the other computer yet: the name it was given stays
     let mut next = Inner { here: "Laptop".into(), teams: inner.teams.clone(), ..Inner::default() };
     next.configure_teams(&listed);
-    assert_eq!(next.team_name("/x/shop"), Some("laptop shop"));
+    assert_eq!(next.team_name(&TeamId::new("/x/shop")), Some("laptop shop"));
 }
 
 #[test]
@@ -712,7 +714,7 @@ fn a_team_is_let_go_only_when_nothing_is_in_it_and_its_folder_is_gone() {
     };
     let (kept, gone, talked) = (folder("kept"), folder("gone"), folder("talked"));
     let mut inner = Inner::default();
-    let ids: Vec<String> = [&kept, &gone, &talked].iter().map(|f| inner.folder_team(f).unwrap()).collect();
+    let ids: Vec<TeamId> = [&kept, &gone, &talked].iter().map(|f| inner.folder_team(f).unwrap()).collect();
     joins(&mut inner, &agent("a", &talked, None));
     says(&mut inner, "a", Kind::Report, "done");
     inner.remove("a");

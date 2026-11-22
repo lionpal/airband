@@ -273,7 +273,7 @@ fn starting(app: &App, menus: &Menus, projects: &[Place], room: Option<&str>) ->
          choice beats asking him: he is told where it started), else null when nothing points to \
          any of them or he named one that is not listed (then \"project_said\" is his own word for it, else null); {tool}{models}{efforts}\"task\" is the work in his own words, without the words \
          about starting an agent, the tool, the model or the effort. Otherwise \"new\" is null. The projects:\n{projects}",
-        room = room.and_then(|r| app.read().team_name(r).map(|n| format!(" (he is looking at {n})"))).unwrap_or_default(),
+        room = room.and_then(|r| app.read().team_name(&TeamId::new(r)).map(|n| format!(" (he is looking at {n})"))).unwrap_or_default(),
         tool = tool,
         by_model = by_model,
         models = offered("model", models),

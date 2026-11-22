@@ -22,7 +22,7 @@ impl Team {
 pub(crate) struct Saved {
     pub(in crate::tower) sessions: Vec<Session>,
     #[serde(default)]
-    pub(in crate::tower) teams: BTreeMap<String, Team>,
+    pub(in crate::tower) teams: BTreeMap<TeamId, Team>,
     /// Kept by a tower from before teams had ids: teams by name with their folders, and the names he gave.
     /// Read once, by `settle_teams`, and never written again.
     #[serde(default, skip_serializing)]
@@ -36,7 +36,7 @@ pub(crate) struct Saved {
     #[serde(default)]
     pub(in crate::tower) tools: Vec<String>,
     #[serde(default)]
-    pub(in crate::tower) placed: BTreeMap<String, (String, Mover)>,
+    pub(in crate::tower) placed: BTreeMap<AgentId, (TeamId, Mover)>,
 }
 
 /// The tables kept from one run to the next, each under its own key in the database's state table, so one that

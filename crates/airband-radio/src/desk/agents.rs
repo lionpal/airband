@@ -16,7 +16,7 @@ impl Desk {
     pub fn recent_folders(&self, computer: String) -> Result<Vec<DeskRecent>, RadioError> {
         let tools = airband_core::catalog::current();
         let called = |id: &String| tools.tools.iter().find(|t| t.id == *id).map(|t| t.name.clone()).unwrap_or_else(|| id.clone());
-        Ok(self.station_radio(&computer)?.recent()?.folders.into_iter().map(|r| DeskRecent { tools: r.tools.iter().map(called).collect(), folder: r.folder, shown: r.shown, name: r.name, team: r.team, at: r.at }).collect())
+        Ok(self.station_radio(&computer)?.recent()?.folders.into_iter().map(|r| DeskRecent { tools: r.tools.iter().map(called).collect(), folder: r.folder, shown: r.shown, name: r.name, team: r.team.is_some(), at: r.at }).collect())
     }
     /// Make a new team on a computer, or start another agent in one that is there: its name as he wrote it,
     /// and the folder its agents work in (with `make`, the folder a new one called by that name is made in).

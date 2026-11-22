@@ -34,6 +34,11 @@ macro_rules! ids {
                 Self(id)
             }
         }
+        impl From<$name> for String {
+            fn from(id: $name) -> String {
+                id.0
+            }
+        }
         impl From<&str> for $name {
             fn from(id: &str) -> Self {
                 Self(id.to_string())
@@ -49,9 +54,39 @@ macro_rules! ids {
                 &self.0
             }
         }
+        impl std::borrow::Borrow<String> for $name {
+            fn borrow(&self) -> &String {
+                &self.0
+            }
+        }
         impl PartialEq<str> for $name {
             fn eq(&self, other: &str) -> bool {
                 self.0 == other
+            }
+        }
+        impl PartialEq<&str> for $name {
+            fn eq(&self, other: &&str) -> bool {
+                self.0 == *other
+            }
+        }
+        impl PartialEq<String> for $name {
+            fn eq(&self, other: &String) -> bool {
+                &self.0 == other
+            }
+        }
+        impl PartialEq<$name> for str {
+            fn eq(&self, other: &$name) -> bool {
+                self == other.0
+            }
+        }
+        impl PartialEq<$name> for &str {
+            fn eq(&self, other: &$name) -> bool {
+                *self == other.0
+            }
+        }
+        impl PartialEq<$name> for String {
+            fn eq(&self, other: &$name) -> bool {
+                *self == other.0
             }
         }
     )*};

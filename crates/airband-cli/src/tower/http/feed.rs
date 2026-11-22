@@ -50,7 +50,8 @@ pub(super) async fn feed(State(app): State<Arc<App>>, Extension(RadioId(radio)):
             let inner = app.read();
             let roster_same = roster_seen.is_none_or(|seen| seen == inner.roster_rev());
             let settled = !inner.settled_for(&radio, since).is_empty();
-            let wanted = |e: &&Entry| inner.in_view(e, team.as_ref().map(|t| t.as_str()), agent.as_ref().map(|a| a.as_str()));
+            let team_id = team.clone();
+            let wanted = |e: &&Entry| inner.in_view(e, team_id.as_ref(), agent.as_ref().map(|a| a.as_str()));
             match since {
                 Some(0) | None => {
                     let hits: Vec<&Entry> = inner.log.iter().filter(|e| e.seq > after).filter(wanted).collect();
