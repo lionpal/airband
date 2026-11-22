@@ -172,7 +172,7 @@ impl State {
         self.colours.of(group)
     }
     /// His main computer: the only one, or the one he chose, while it is still paired.
-    fn main(&self) -> Option<usize> {
+    pub(crate) fn main(&self) -> Option<usize> {
         match self.stations.len() {
             0 => None,
             1 => Some(0),

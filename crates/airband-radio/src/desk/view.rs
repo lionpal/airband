@@ -139,7 +139,6 @@ impl Desk {
             stations: state.stations.iter().map(|s| s.name.clone()).collect(),
             main_computer: state.main().map(|i| state.stations[i].name.clone()),
             choose_main: state.stations.len() > 1 && state.main().is_none(),
-            reads: state.stations.iter().map(|s| s.reads.clone()).find(|r| !r.is_empty()).unwrap_or_default(),
             uploads: state.uploads.iter().map(|u| u.shown.clone()).collect(),
             asking: state.asking.as_ref().map(|asking| {
                 // the tower's guesses first, in its order; then everyone else, whoever spoke last first

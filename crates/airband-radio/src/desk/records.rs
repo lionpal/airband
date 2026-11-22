@@ -97,9 +97,6 @@ pub struct DeskView {
     pub main_computer: Option<String>,
     /// He has several computers and has not said which is the main one: ask him before anything is sent.
     pub choose_main: bool,
-    /// What reads the agents' messages and makes the short of them, by name: on the first computer that says.
-    /// Empty when none does.
-    pub reads: String,
     /// Files he has attached and not yet sent, in the order he added them: on their way to the computer, there
     /// and waiting for his words, or failed.
     pub uploads: Vec<DeskUpload>,

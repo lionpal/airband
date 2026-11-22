@@ -93,7 +93,9 @@ impl Desk {
             let wanted = SetReads { kind: provider.clone(), offer, key: the_key(), set };
             let sent = radios.iter().try_for_each(|radio| radio.set_reads(&wanted));
             if sent.is_ok() {
-                let offered = radios.iter().find_map(|radio| radio.reads_offered());
+                // what is offered and in use is the main computer's: the one he chose, or the only one
+                let main = { let state = self.shared.state.lock().unwrap(); state.main().map(|i| state.stations[i].radio.clone()) };
+                let offered = main.and_then(|radio| radio.reads_offered());
                 chooser.change(|s| {
                     s.reads = None;
                     if offered.is_some() {
@@ -231,7 +233,10 @@ pub(crate) fn computer_reached(shared: &Shared, radio: &Radio) {
             Err(_) => {}
         }
     }
-    if let Some(offered) = radio.reads_offered() {
+    // what can write summaries, and what does now, as the main computer says: another computer's word on it
+    // does not stand in for the main one's
+    let is_main = { let state = shared.state.lock().unwrap(); state.main().is_some_and(|i| std::ptr::eq(&*state.stations[i].radio, radio)) };
+    if is_main && let Some(offered) = radio.reads_offered() {
         chooser.change(|s| s.offered = Some(offered));
     }
     shared.host.changed();
