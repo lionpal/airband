@@ -912,7 +912,7 @@ mod tests {
         assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "cc33").await, (410, false, true, "BadDeviceToken".into()));
         assert_eq!(seen.load(Ordering::SeqCst), 3);
         // a service this relay does not have, and an address that is not one
-        assert_eq!(ask(&keys.pull_token, "carrier-pigeon", "aa11").await.0, 503);
+        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Unknown, "aa11").await.0, 503);
         assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "aa11/../x").await.0, 400);
         // and only so many from one channel
         relay.channels.lock().unwrap().get_mut(&keys.channel).unwrap().pushed = Some((Instant::now(), push::PUSHES));

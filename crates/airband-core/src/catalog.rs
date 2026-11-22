@@ -879,4 +879,18 @@ mod tests {
         assert!(accept(doc.as_bytes(), &forged).is_err());
         assert!(current().rev < 999999);
     }
+
+    #[test]
+    fn what_a_copy_holds_that_this_build_cannot_use_is_said() {
+        let taken = Taken { newer: true, left_out: vec!["x: an offer (missing field `label`)".into()], note: None };
+        // a build that speaks nothing: every offer in hand is for another build
+        let lines = news(&taken, &|_| false);
+        assert!(lines.len() == 2 && lines[0].contains("left out 1 rows") && lines[1].contains("for a newer build"), "{lines:?}");
+        // one that speaks everything, and a copy with nothing odd in it: nothing to say
+        assert!(news(&Taken { newer: true, ..Default::default() }, &|_| true).is_empty());
+        // a copy that was not taken says only what is worth knowing about that
+        let same = Taken { note: Some("a catalogue with the same rev (5) has different rows; the one in hand is kept".into()), ..Default::default() };
+        assert_eq!(news(&same, &|_| false).len(), 1);
+    }
+
 }

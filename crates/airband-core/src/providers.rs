@@ -427,7 +427,7 @@ pub fn offering(job: Job) -> Vec<Arc<Provider>> {
 /// A provider in use for one job: which row and which of its offers, with what key, and whatever is set
 /// differently from the offer. Written in the settings as `{"kind": …, "offer": …, "key": …, …}`. The key is
 /// the provider's: the same one whichever of its offers is used.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Use {
     pub kind: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -438,11 +438,6 @@ pub struct Use {
     pub set: BTreeMap<String, Value>,
 }
 
-impl Default for Use {
-    fn default() -> Self {
-        Use { kind: String::new(), offer: String::new(), key: String::new(), set: BTreeMap::new() }
-    }
-}
 
 
 impl Use {

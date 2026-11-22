@@ -123,6 +123,13 @@ struct FeedView: View {
             // `-airband.devNewAgent YES` opens the sheet that starts a new agent, for a screenshot
             if UserDefaults.standard.string(forKey: "airband.devNewAgent") != nil { showNewAgent = true }
         }
+        // and once his computers are reached, so it opens with them known
+        .onChange(of: model.online) { _, online in
+            if online, UserDefaults.standard.string(forKey: "airband.devNewAgent") != nil {
+                showNewAgent = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { showNewAgent = true }
+            }
+        }
         .sheet(isPresented: $showProse) { ProseSample() }
         #endif
     }

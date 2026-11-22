@@ -57,7 +57,7 @@ struct NewAgentSheet: View {
                             row(walked.make ? "New folder" : (walked.shown as NSString).lastPathComponent, walked.make ? "Inside \(walked.shown)" : walked.shown, "", chosen: true) {}
                         }
                         if !loading && recent.isEmpty && walked == nil {
-                            Text("No coding agent has worked in a folder here yet.").font(.system(size: 15)).foregroundStyle(Palette.quiet)
+                            Text(computer.isEmpty ? "Pick a computer to see its folders." : "No coding agent has worked in a folder here yet.").font(.system(size: 15)).foregroundStyle(Palette.quiet)
                                 .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 6)
                         }
                         Button { walking = true } label: {
@@ -68,7 +68,7 @@ struct NewAgentSheet: View {
                             }
                             .padding(.horizontal, 14).frame(minHeight: 52).background(Palette.card, in: RoundedRectangle(cornerRadius: 14)).contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.plain).disabled(computer.isEmpty).opacity(computer.isEmpty ? 0.4 : 1)
                     }
                     if let place {
                         label("Team")
@@ -119,6 +119,10 @@ struct NewAgentSheet: View {
             computer = model.view.stations.count == 1 ? model.view.stations[0] : ""
             tool = model.usedTools.count == 1 ? model.usedTools[0].id : ""
             load()
+        }
+        // the computers can become known after the sheet opens: the only one is taken, as above
+        .onChange(of: model.view.stations) { _, stations in
+            if computer.isEmpty, stations.count == 1 { computer = stations[0]; load() }
         }
     }
 
@@ -175,6 +179,8 @@ struct NewAgentSheet: View {
     }
 
     private func load() {
+        // with no computer picked there is nowhere to list folders from yet
+        guard !computer.isEmpty else { (recent, loading, wrong) = ([], false, nil); return }
         (loading, wrong) = (true, nil)
         let asked = computer
         model.recentFolders(on: computer) { found, problem in
