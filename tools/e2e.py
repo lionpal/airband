@@ -14,6 +14,7 @@ Checks that depend on a model's judgement (what kind a message is, who an untagg
 and then for that reason alone; they are marked (model).
 """
 import json, os, shutil, subprocess, sys, tempfile, threading, time, urllib.request, urllib.error
+import wire
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target")), "release", "airband")
@@ -70,14 +71,17 @@ def skip(names, why):
 STANDS = {"reader": {"on_call": True, "showing_chat": False}, "reader2": {"on_call": True, "showing_chat": False}}
 def http(method, path, body=None, token=RADIO, radio="e2e", timeout=90):
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", method=method, data=None if body is None else json.dumps(body).encode(),
-                                 headers={"authorization": f"Bearer {token}", "content-type": "application/json", "x-airband-radio": radio,
+                                 headers={"authorization": f"Bearer {token}", "content-type": "application/json", wire.SCHEMA_HEADER: wire.SCHEMA, "x-airband-radio": radio,
                                           "x-airband-presence": json.dumps(STANDS.get(radio, {"on_call": False, "showing_chat": True}))})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             raw = r.read()
             return r.status, (json.loads(raw) if raw else None)
     except urllib.error.HTTPError as e:
-        return e.code, None
+        # a refusal comes with a 4xx and says what it is in its body
+        raw = e.read()
+        try: return e.code, (json.loads(raw) if raw else None)
+        except ValueError: return e.code, None
     except urllib.error.URLError:
         return 0, None
 
@@ -161,7 +165,7 @@ def accounts_check():
         del who["t-a-1"]
         sign_in("b@example.com", "t-b-1", "r-b-1", now + hour)
         check("a second account is saved beside it", cli("save") == "Saved b@example.com.")
-        code, got_ = http("GET", "/v1/radio/accounts?fresh=1")
+        code, got_ = http("GET", "/v1/radio/accounts?fresh=true")
         by = {a["label"]: a for a in (got_ or {}).get("accounts", [])}
         check("a radio is told both accounts and which is in use", code == 200 and set(by) == {"a@example.com", "b@example.com"} and by["b@example.com"]["live"] and not by["a@example.com"]["live"], got_)
         check("each with how much is used and when it starts again", by and [(l["name"], l["used"]) for l in by["a@example.com"]["limits"]] == [("week", 0.9), ("5 hours", 0.3)]
@@ -177,9 +181,9 @@ def accounts_check():
         check("the answer shows the new state", {a["label"]: a["live"] for a in (after or {}).get("accounts", [])} == {"a@example.com": True, "b@example.com": False}, after)
         check("the account switched away from can be switched back to, by its number in the list", "▶ b@example.com" in cli("use", "2") and live_now()["claudeAiOauth"]["accessToken"] == "t-b-1")
         code, refused = http("POST", "/v1/radio/accounts/use", {"harness": "claude-code", "id": "nobody@"})
-        check("an account that is not saved is refused in words", code == 200 and "No saved account" in (refused or {}).get("error", ""), refused)
+        check("an account that is not saved is refused in words", code == 409 and "No saved account" in wire.reason(refused), refused)
         check("the tower's own token is not needed, and an agent's harness that has no accounts says so",
-              "no accounts" in (http("POST", "/v1/radio/accounts/use", {"harness": "codex", "id": "x"})[1] or {}).get("error", ""))
+              "no accounts" in wire.reason(http("POST", "/v1/radio/accounts/use", {"harness": "codex", "id": "x"})[1]))
     finally:
         server.shutdown()
         keychain("delete-generic-password", "-a", user, "-s", LIVE_ITEM)
@@ -306,7 +310,7 @@ try:
     was = [c for c, a in roster(feed()).items() if a["id"] == "nb"]
     moved = http("POST", "/v1/radio/team", {"agent": "nb", "to": {"team": {"id": team_of("catalog")}}})[1]
     check("one known only by a number takes the next free number in its new team", was == ["orders one"] and called(moved.get("callsign")) == "catalog one", (was, moved))
-    check("a team with no name, one that is not there, or an agent that has gone, is refused in words", "error" in http("POST", "/v1/radio/team", {"agent": "nb", "to": new("  ")})[1] and "error" in http("POST", "/v1/radio/team", {"agent": "nb", "to": {"team": {"id": "catalog"}}})[1] and "error" in http("POST", "/v1/radio/team", {"agent": "nobody", "to": {"team": {"id": team_of("catalog")}}})[1])
+    check("a team with no name, one that is not there, or an agent that has gone, is refused in words", wire.refusal(http("POST", "/v1/radio/team", {"agent": "nb", "to": new("  ")})[1]) and wire.refusal(http("POST", "/v1/radio/team", {"agent": "nb", "to": {"team": {"id": "catalog"}}})[1]) and wire.refusal(http("POST", "/v1/radio/team", {"agent": "nobody", "to": {"team": {"id": team_of("catalog")}}})[1]))
     session("nb", "orders", {"type": "signoff"})
     session("tr", "orders", {"type": "signoff"})
     # opened in the catalog folder, but every step it takes is in the logistics project
@@ -434,7 +438,7 @@ try:
           and os.path.join(".airband", "attachments", photo, "Photo-1.png") in received("page") and "(an image" in received("page"), received("page")[-300:])
     mine = message(feed(), "you", "make the header look like this")
     check("and his message in the chat shows the photo, without the file path", mine and mine.get("pictures") and "attachments" not in mine["text"], mine)
-    check("a part that runs past the end of its file is refused", "error" in (http("POST", "/v1/radio/attachment", {"id": os.urandom(8).hex(), "name": "x.png", "from": 500, "data": b64.b64encode(b"x" * 20).decode(), "total": 510})[1] or {}))
+    check("a part that runs past the end of its file is refused", wire.refusal(http("POST", "/v1/radio/attachment", {"id": os.urandom(8).hex(), "name": "x.png", "from": 500, "data": b64.b64encode(b"x" * 20).decode(), "total": 510})[1] or {}))
     # the tower takes a file's parts in any order: here the last first
     raw, ident = os.urandom(200_000), os.urandom(8).hex()
     pieces = [(at, raw[at:at + 90_000]) for at in range(0, len(raw), 90_000)]
@@ -623,14 +627,14 @@ Send it as written, or do you want changes?""")
     print("Reading aloud")
     # a second radio turns reading aloud on; everything it is handed here it says it heard, until told otherwise
     def read_next(joined=False):
-        return http("GET", "/v1/radio/next" + ("?joined=1" if joined else ""), radio="reader", timeout=40)
+        return http("GET", "/v1/radio/next" + ("?joined=true" if joined else ""), radio="reader", timeout=40)
     def heard(t):
         http("POST", "/v1/radio/heard", {"id": t["id"]}, radio="reader")
         http("POST", "/v1/radio/ready", {}, radio="reader")
     def read_until(callsign, joined=False):
         for n in range(12):
             status, t = read_next(joined and n == 0)
-            if status != 200: return None
+            if status != 200 or t is None: return None
             if t["callsign"] == callsign: return t
             heard(t)
     os.makedirs(os.path.join(projects, "solo"), exist_ok=True)
@@ -654,7 +658,7 @@ Send it as written, or do you want changes?""")
         # last got, gets the same one at once and not after two minutes
         def other(query):
             return http("GET", "/v1/radio/next?" + query, radio="reader2", timeout=40)
-        lost = other("joined=1&have=")
+        lost = other("joined=true&have=")
         began = time.time()
         again = other("have=")
         check("a transmission whose answer was lost is handed over again when the radio says what it last got",
@@ -720,7 +724,7 @@ Send it as written, or do you want changes?""")
     check("and is off it the moment it says so, not a minute later", "reader2" not in radios(), radios())
     STANDS["quiet"] = {"on_call": False, "showing_chat": False}
     quiet = http("GET", "/v1/radio/next", radio="quiet", timeout=40)
-    check("asking for something to read does not put a radio on a call that says it is not on one", quiet[0] == 204 and "quiet" not in radios(), (quiet, radios()))
+    check("asking for something to read does not put a radio on a call that says it is not on one", quiet == (200, None) and "quiet" not in radios(), (quiet, radios()))
 finally:
     tower.terminate()
     tower.wait(10)

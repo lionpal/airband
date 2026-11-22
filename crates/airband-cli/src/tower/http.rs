@@ -140,7 +140,8 @@ async fn presence_said(State(app): State<Arc<App>>, req: Request, next: Next) ->
     if req.uri().path().starts_with(airband_core::radio::PATH)
         && let Some(said) = req.headers().get(PRESENCE_HEADER).and_then(|v| v.to_str().ok()).and_then(|v| serde_json::from_str::<airband_core::radio::Presence>(v).ok())
         && let Some(RadioId(radio)) = req.extensions().get::<RadioId>() {
-            app.change().radio_says(radio, said);
+            let name = push::radio_name(&app.cfg(), radio);
+            app.change().radio_named_says(radio, name, said);
         }
     next.run(req).await
 }

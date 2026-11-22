@@ -10,6 +10,7 @@ with no model: his words arriving as they are, what he says meanwhile waiting it
 stopping it, the rest then read together, the agent going on through a restart of the tower, and ending it.
 """
 import json, os, shutil, signal, subprocess, sys, tempfile, time, urllib.request, urllib.error
+import wire
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target")), "release", "airband")
@@ -264,13 +265,16 @@ def check(name, ok, detail=""):
     print(("  ok    " if ok else "  FAIL  ") + name + (f"   [{detail}]" if detail and not ok else ""), flush=True)
 def http(method, path, body=None, token=RADIO):
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", method=method, data=None if body is None else json.dumps(body).encode(),
-                                 headers={"authorization": f"Bearer {token}", "content-type": "application/json", "x-airband-radio": "held", "x-airband-presence": '{"on_call":false,"showing_chat":true}'})
+                                 headers={"authorization": f"Bearer {token}", "content-type": "application/json", wire.SCHEMA_HEADER: wire.SCHEMA, "x-airband-radio": "held", "x-airband-presence": '{"on_call":false,"showing_chat":true}'})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             raw = r.read()
             return r.status, (json.loads(raw) if raw else None)
     except urllib.error.HTTPError as e:
-        return e.code, None
+        # a refusal comes with a 4xx and says what it is in its body
+        raw = e.read()
+        try: return e.code, (json.loads(raw) if raw else None)
+        except ValueError: return e.code, None
     except urllib.error.URLError:
         return 0, None
 def say(text, **more):
@@ -368,13 +372,13 @@ try:
     mine = lambda has: [m for m in feed()["messages"] if m["from"] == "you" and has in m["text"]]
     check("what he says waits its turn, and says so", mine("FIRST")[0].get("queued") and mine("SECOND")[0].get("queued") and "FIRST afterthought" not in arrived(), (mine("FIRST"), arrived()))
     check("he can take one back", http("POST", "/v1/radio/unsend", {"message": mine("FIRST")[0]["id"]})[1] == {} and mine("FIRST")[0].get("cancelled") and not mine("FIRST")[0].get("queued"), mine("FIRST"))
-    check("but only once", "error" in http("POST", "/v1/radio/unsend", {"message": mine("FIRST")[0]["id"]})[1])
+    check("but only once", wire.refusal(http("POST", "/v1/radio/unsend", {"message": mine("FIRST")[0]["id"]})[1]))
     began = time.time()
     check("he can stop it, at once", http("POST", "/v1/radio/stop", {"agent": me["id"]})[1] == {} and time.time() - began < 3, time.time() - began)
     check("what was still waiting is then given to it, and what he took back is not", until(lambda: arrived()[-1:] == ["SECOND afterthought"]) and "FIRST afterthought" not in arrived(), arrived())
     check("and his message no longer says it is waiting", until(lambda: not mine("SECOND")[0].get("queued")), mine("SECOND"))
     until(lambda: agent()["state"] != "working")
-    check("one that is doing nothing cannot be stopped, in words", "error" in http("POST", "/v1/radio/stop", {"agent": me["id"]})[1])
+    check("one that is doing nothing cannot be stopped, in words", wire.refusal(http("POST", "/v1/radio/stop", {"agent": me["id"]})[1]))
     say("@shop1 work 2 on a short job")
     until(lambda: agent()["state"] == "working")
     say("@shop1 LATER: one more thing")
@@ -396,7 +400,7 @@ try:
     print("Ending it")
     until(lambda: agent() and agent()["state"] != "working")
     check("he can end it, and it leaves the radio", http("POST", "/v1/radio/end", {"agent": me["id"]})[1] == {} and until(lambda: agent() is None), feed()["roster"])
-    check("one that has gone cannot be ended again, in words", "error" in http("POST", "/v1/radio/end", {"agent": me["id"]})[1])
+    check("one that has gone cannot be ended again, in words", wire.refusal(http("POST", "/v1/radio/end", {"agent": me["id"]})[1]))
     check("nothing of it is left running, a moment later", until(lambda: not subprocess.run(["pgrep", "-f", AGENT], capture_output=True, text=True).stdout.strip(), 5))
 
     print("Started with nothing to do yet, as the + on a team does")
@@ -425,16 +429,16 @@ try:
     above = http("POST", "/v1/radio/folders", {"under": top["up"]})[1]
     whole = http("POST", "/v1/radio/folders", {"under": "/"})[1]
     check("he can go up from his home folder, to the top of the disk", above and "home" in names(above) and above["shown"] == above["path"] and whole and whole.get("up") is None and whole["folders"], (above, whole))
-    check("a folder that is not there is said to be so", "error" in http("POST", "/v1/radio/folders", {"under": "/no/such/place"})[1] and "error" in http("POST", "/v1/radio/project", {"name": "nowhere", "folder": "/no/such/place"})[1])
-    check("a team's name has to say something, and be short", "error" in http("POST", "/v1/radio/project", {"name": "!!!", "folder": inside["path"]})[1] and "error" in http("POST", "/v1/radio/project", {"name": "a" * 25, "folder": inside["path"]})[1])
+    check("a folder that is not there is said to be so", wire.refusal(http("POST", "/v1/radio/folders", {"under": "/no/such/place"})[1]) and wire.refusal(http("POST", "/v1/radio/project", {"name": "nowhere", "folder": "/no/such/place"})[1]))
+    check("a team's name has to say something, and be short", wire.refusal(http("POST", "/v1/radio/project", {"name": "!!!", "folder": inside["path"]})[1]) and wire.refusal(http("POST", "/v1/radio/project", {"name": "a" * 25, "folder": inside["path"]})[1]))
     made = http("POST", "/v1/radio/project", {"name": "Garden", "folder": inside["path"] + "/garden"})[1]
     check("a new team is made in the folder he chose, and its first agent is there with nothing to do", made and made.get("team") == "garden" and until(lambda: any(a["group"] == "garden" for a in feed()["roster"])), (made, feed()["roster"]))
     more = http("POST", "/v1/radio/project", {"name": "garden", "folder": inside["path"] + "/garden"})[1]
-    check("asked again for the same folder, another agent joins the team", more and "error" not in more and until(lambda: len([a for a in feed()["roster"] if a["group"] == "garden"]) == 2), (more, feed()["roster"]))
+    check("asked again for the same folder, another agent joins the team", more and not wire.refusal(more) and until(lambda: len([a for a in feed()["roster"] if a["group"] == "garden"]) == 2), (more, feed()["roster"]))
     made = http("POST", "/v1/radio/project", {"name": "Orchard Two", "folder": inside["path"], "make": True})[1]
-    check("a new folder is made inside the one he chose, called exactly as he wrote the name", made and "error" not in made and os.path.isdir(os.path.join(home, "work", "Orchard Two")) and made.get("team") == "orchard two", made)
-    check("a name that is not one folder's name is refused for a new folder", all("error" in http("POST", "/v1/radio/project", {"name": bad, "folder": inside["path"], "make": True})[1] for bad in ("a/b", ".hidden", "..")))
-    check("a name another folder already has is refused", "error" in http("POST", "/v1/radio/project", {"name": "garden", "folder": inside["path"]})[1])
+    check("a new folder is made inside the one he chose, called exactly as he wrote the name", made and not wire.refusal(made) and os.path.isdir(os.path.join(home, "work", "Orchard Two")) and made.get("team") == "orchard two", made)
+    check("a name that is not one folder's name is refused for a new folder", all(wire.refusal(http("POST", "/v1/radio/project", {"name": bad, "folder": inside["path"], "make": True})[1]) for bad in ("a/b", ".hidden", "..")))
+    check("a name another folder already has is refused", wire.refusal(http("POST", "/v1/radio/project", {"name": "garden", "folder": inside["path"]})[1]))
     made = http("POST", "/v1/radio/project", {"name": "hay store", "folder": hay})[1]
     check("a team can work in any folder on the computer, and is called as a callsign is written", made and made.get("team") == "hay store" and until(lambda: any(a["group"] == "hay store" for a in feed()["roster"])), (made, feed()["roster"]))
     # a team is its folder: another folder of the same name is a team of its own, called apart from the first
@@ -450,7 +454,7 @@ try:
     check("a team he renames keeps its agents, under the new name", renamed and renamed.get("team") == "back garden" and until(lambda: "back garden" in groups() and "other garden" not in groups()) and len([a for a in feed()["roster"] if a["group"] == "back garden"]) == 1, (renamed, groups()))
     joined = http("POST", "/v1/radio/project", {"name": "anything", "folder": other})[1]
     check("and its folder is still its folder: another agent there joins it", joined and joined.get("team") == "back garden" and until(lambda: len([a for a in feed()["roster"] if a["group"] == "back garden"]) == 2), (joined, groups()))
-    check("a name another team has is refused in words", "already" in http("POST", "/v1/radio/team/rename", {"team": made["id"], "to": "garden"})[1].get("error", ""))
+    check("a name another team has is refused in words", "already" in wire.reason(http("POST", "/v1/radio/team/rename", {"team": made["id"], "to": "garden"})[1]))
 
     print("An agent that speaks the Agent Client Protocol")
     noted = lambda: open(os.path.join(got, "acp")).read().split("\n")[:-1] if os.path.exists(os.path.join(got, "acp")) else []

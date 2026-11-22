@@ -12,6 +12,7 @@ says has gone. With no model, a message is a question if the agent said so and a
 chatter gets no notification is checked in the tower's own tests.
 """
 import base64, json, os, shutil, subprocess, sys, tempfile, threading, time, urllib.request, urllib.error
+import wire
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
@@ -63,17 +64,39 @@ results = []
 def check(name, ok, detail=""):
     results.append((name, bool(ok)))
     print(("  ok    " if ok else "  FAIL  ") + name + (f"   [{detail}]" if detail and not ok else ""), flush=True)
+def sealed(method, path, body=None, timeout=40, showing=True):
+    """A request as the paired phone makes it straight to the tower: sealed with the pairing's key, so the tower
+    knows it as that pairing (by its channel) and can wake it."""
+    call = {"t": int(time.time() * 1000), "id": os.urandom(8).hex(), "method": method, "path": path, "body": body if body is not None else {},
+            "schema": wire.SCHEMA, "presence": {"on_call": False, "showing_chat": showing}}
+    nonce = os.urandom(12)
+    plain = json.dumps(call).encode()
+    sealed_call = nonce + ChaCha20Poly1305(derived("to tower")).encrypt(nonce, plain, f"airband.relay/1 {CHANNEL} to tower".encode())
+    req = urllib.request.Request(f"http://127.0.0.1:{PORT}/v1/sealed/{CHANNEL}", method="POST", data=sealed_call)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read()
+    except (urllib.error.HTTPError, urllib.error.URLError):
+        return 0, None
+    answer = json.loads(ChaCha20Poly1305(derived("to radio")).decrypt(raw[:12], raw[12:], f"airband.relay/1 {CHANNEL} to radio".encode()))
+    return answer["status"], answer.get("body")
 def http(method, path, body=None, token=RADIO, radio="phone", timeout=40, showing=True):
-    """`showing`: the radio says the chat is in front of him, as every request of a radio's says whether it is."""
+    """`showing`: the radio says the chat is in front of him, as every request of a radio's says whether it is.
+    The phone is the paired one, and speaks sealed; another radio speaks with the tower's radio token."""
+    if radio == "phone" and token == RADIO and path.startswith("/v1/radio/"):
+        return sealed(method, path, body, timeout, showing)
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", method=method, data=None if body is None else json.dumps(body).encode(),
-                                 headers={"authorization": f"Bearer {token}", "content-type": "application/json", "x-airband-radio": radio,
+                                 headers={"authorization": f"Bearer {token}", "content-type": "application/json", wire.SCHEMA_HEADER: wire.SCHEMA, "x-airband-radio": radio,
                                           "x-airband-presence": json.dumps({"on_call": False, "showing_chat": showing})})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             raw = r.read()
             return r.status, (json.loads(raw) if raw else None)
     except urllib.error.HTTPError as e:
-        return e.code, None
+        # a refusal comes with a 4xx and says what it is in its body
+        raw = e.read()
+        try: return e.code, (json.loads(raw) if raw else None)
+        except ValueError: return e.code, None
     except urllib.error.URLError:
         return 0, None
 def report(*words, agent="a1"):

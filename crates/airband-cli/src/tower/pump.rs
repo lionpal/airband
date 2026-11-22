@@ -51,7 +51,7 @@ pub(super) async fn pump(app: &Arc<App>) {
     let callsign = inner.sender_name(next);
     let say = next.line();
     let kind = next.kind.unwrap_or(Kind::Unjudged);
-    log(format!("→ {radio}: {callsign} ({kind:?}): {say}"));
+    log(format!("→ {}: {callsign} ({kind:?}): {say}", inner.radio_name(&radio)));
     let spoken_line = format!("{}. {say}", airband_core::prose::capital(&callsign));
     let waiting = inner.unheard().count() as u32 - 1;
     inner.set_aloud(&next.id, Aloud::Handed { radio: radio.clone(), at: now_ms() });
@@ -73,7 +73,7 @@ fn transmit(app: &Arc<App>, inner: &mut Inner, radio: &str, t: Transmission) {
         let mut inner = app.change();
         let call = inner.call(&radio);
         if call.epoch == epoch && !call.ready {
-            log(format!("{radio} never said it was ready; carrying on"));
+            log(format!("{} never said it was ready; carrying on", call.name.as_deref().unwrap_or(&radio)));
             call.ready = true;
             call.outbox = None;
             inner.give_back(&radio);
@@ -109,7 +109,7 @@ fn remind(app: &Arc<App>, inner: &mut Inner, radio: &str) {
     let first = !inner.offered.contains_key(&e.id);
     let say = e.line();
     let from = inner.sender_name(&e);
-    log(format!("→ {radio}: {from} ({}): {say}", if first { "waiting" } else { "reminder" }));
+    log(format!("→ {}: {from} ({}): {say}", inner.radio_name(radio), if first { "waiting" } else { "reminder" }));
     let spoken_line = if first { format!("{} is waiting. {say}", airband_core::prose::capital(&from)) } else { format!("Still waiting: {from}. {say}") };
     transmit(app, inner, radio, Transmission { id: e.id.clone(), agent: e.agent.clone().unwrap_or_default(), callsign: from, kind: Kind::NeedsYou, say: spoken_line, waiting: 0 });
 }

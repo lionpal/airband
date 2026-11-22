@@ -10,6 +10,7 @@ are cards, from Claude Code's own records and nothing else; an address no tool s
 link by its site, however it reads; each is reported once; and it is all kept when the tower starts again.
 """
 import json, os, shutil, subprocess, sys, tempfile, time, urllib.request, urllib.error
+import wire
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target")), "release", "airband")
@@ -28,7 +29,7 @@ def check(name, ok, detail=""):
     print(("  ok    " if ok else "  FAIL  ") + name + (f"   [{detail}]" if detail and not ok else ""), flush=True)
 def http(method, path, body=None):
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", method=method, data=None if body is None else json.dumps(body).encode(),
-                                 headers={"authorization": f"Bearer {RADIO}", "content-type": "application/json", "x-airband-radio": "links", "x-airband-presence": json.dumps({"on_call": False, "showing_chat": True})})
+                                 headers={"authorization": f"Bearer {RADIO}", "content-type": "application/json", wire.SCHEMA_HEADER: wire.SCHEMA, "x-airband-radio": "links", "x-airband-presence": json.dumps({"on_call": False, "showing_chat": True})})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return json.loads(r.read() or b"null")

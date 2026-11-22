@@ -70,7 +70,7 @@ pub(super) fn register(app: &App, radio: &str, target: PushTarget) {
         mine.drain(..extra);
     }
     if *mine != before {
-        log(format!("push: \"{radio}\" {}", if mine.is_empty() { "can no longer be woken" } else { "can be woken with a notification" }));
+        log(format!("push: \"{}\" {}", radio_name(&app.cfg(), radio), if mine.is_empty() { "can no longer be woken" } else { "can be woken with a notification" }));
         if mine.is_empty() {
             targets.remove(radio);
         }
@@ -150,7 +150,7 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
         // too long for one push: he gets the opening, and the rest when he opens it
         let keep = note.text.chars().count() * 2 / 3;
         if keep < 20 {
-            return log(format!("push: {what} is too long to send to \"{radio}\""));
+            return log(format!("push: {what} is too long to send to \"{}\"", pairing.name));
         }
         note.text = airband_core::prose::clip(&note.text, keep);
         // cut: never an Allow under part of a command
@@ -188,8 +188,14 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
                 }
             }
         };
-        log(format!("push: asked the relay to wake \"{radio}\" for {what}: {outcome}"));
+        log(format!("push: asked the relay to wake \"{}\" for {what}: {outcome}", pairing.name));
     }
+}
+
+/// What a radio is called where he reads about it (the log, `airband status`): the name its pairing was given,
+/// found by the channel the radio is known by; a radio that came with the tower's own token is known by its name.
+pub(super) fn radio_name(cfg: &Config, radio: &str) -> String {
+    cfg.pairings.iter().find(|p| channel_of(p).as_deref() == Some(radio)).map_or_else(|| radio.to_string(), |p| p.name.clone())
 }
 
 /// A pairing's id as its radio is known by: the relay channel its secret gives. Nothing for one whose secret

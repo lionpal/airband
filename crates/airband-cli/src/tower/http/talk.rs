@@ -61,7 +61,8 @@ pub(super) async fn unheard(State(app): State<Arc<App>>, Extension(RadioId(radio
 /// A radio says where it stands, when that changes and while it has nothing else to ask (he has the
 /// microphone open on a call): so the tower does not take it for gone.
 pub(super) async fn presence(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Sent(said): Sent<at::Presence>) -> Answer<at::Presence> {
-    app.change().radio_says(&radio, said);
+    let name = super::push::radio_name(&app.cfg(), &radio);
+    app.change().radio_named_says(&radio, name, said);
     app.kick.notify_one();
     done()
 }

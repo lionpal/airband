@@ -9,6 +9,8 @@ pub(crate) struct Status {
     pub(crate) phone: bool,
     /// A radio has said to stand by.
     pub(crate) held: bool,
+    /// The radios on a call, each by the name its pairing was given (a radio that came with the tower's own token
+    /// is named by what it said it is called).
     pub(crate) radios: Vec<String>,
     /// How many things he said are being worked out right now.
     pub(crate) answering: usize,
@@ -53,12 +55,13 @@ pub(crate) struct Pending {
 impl Status {
     pub(super) fn of(app: &App) -> Status {
         app.reap();
+        let cfg = app.cfg();
         let inner = app.read();
         let open = inner.open_ids();
         Status {
             phone: inner.connected(),
             held: inner.calls.values().any(|c| c.held),
-            radios: inner.calls.iter().filter(|(_, c)| c.connected()).map(|(id, _)| id.clone()).collect(),
+            radios: inner.calls.iter().filter(|(_, c)| c.connected()).map(|(id, _)| super::push::radio_name(&cfg, id)).collect(),
             answering: inner.answering.len(),
             projects: inner.launchable().into_iter().map(|p| (p.name, p.folder)).collect(),
             kept: app.store.counts().map(|(messages, events)| Kept { messages, events }),
@@ -66,5 +69,30 @@ impl Status {
             pending: inner.unheard().map(|e| Pending { callsign: inner.sender_name(e), kind: e.kind, say: e.short.clone(), aloud: e.aloud.clone() }).collect(),
             aloud: inner.aloud_trail.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_radio_on_a_call_is_shown_by_its_pairings_name_not_its_channel() {
+        let app = super::super::http::tests::app("status-names");
+        let pairing = config::PairedRadio { name: "phone".into(), secret: "ab".repeat(32) };
+        let channel = super::super::push::channel_of(&pairing).unwrap();
+        app.settings.change(|cfg| cfg.pairings.push(pairing.clone())).unwrap();
+        {
+            let mut inner = app.change();
+            let _ = inner.call(&channel).presence.says(airband_core::radio::Presence { on_call: true, showing_chat: false });
+            let _ = inner.call("desk phone").presence.says(airband_core::radio::Presence { on_call: true, showing_chat: false });
+        }
+        let mut shown = Status::of(&app).radios;
+        shown.sort();
+        assert_eq!(shown, vec!["desk phone".to_string(), "phone".to_string()]);
+        // and once it has said where it stands under that name, the log and the reading trail call it so too
+        app.change().radio_named_says(&channel, "phone".into(), airband_core::radio::Presence { on_call: true, showing_chat: false });
+        assert_eq!(app.read().radio_name(&channel), "phone");
+        assert_eq!(super::super::Aloud::Heard { radio: channel.clone(), at: 0 }.words(|r| app.read().radio_name(r)), "heard on phone");
     }
 }

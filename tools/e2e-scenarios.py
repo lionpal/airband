@@ -10,6 +10,7 @@ phone keeps across a reconnect or a relaunch, and two computers at once, are tri
 (crates/airband-radio/src/desk/tests/scenarios.rs), where the desk can be driven without a screen.
 """
 import json, os, shutil, signal, subprocess, sys, tempfile, time, urllib.request, urllib.error
+import wire
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target")), "release", "airband")
@@ -30,13 +31,16 @@ def check(name, ok, detail=""):
     print(("  ok    " if ok else "  FAIL  ") + name + (f"   [{detail}]" if detail and not ok else ""), flush=True)
 def http(method, path, body=None, token=RADIO):
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", method=method, data=None if body is None else json.dumps(body).encode(),
-                                 headers={"authorization": f"Bearer {token}", "content-type": "application/json", "x-airband-radio": "scenarios", "x-airband-presence": '{"on_call":false,"showing_chat":true}'})
+                                 headers={"authorization": f"Bearer {token}", "content-type": "application/json", wire.SCHEMA_HEADER: wire.SCHEMA, "x-airband-radio": "scenarios", "x-airband-presence": '{"on_call":false,"showing_chat":true}'})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             raw = r.read()
             return r.status, (json.loads(raw) if raw else None)
     except urllib.error.HTTPError as e:
-        return e.code, None
+        # a refusal comes with a 4xx and says what it is in its body
+        raw = e.read()
+        try: return e.code, (json.loads(raw) if raw else None)
+        except ValueError: return e.code, None
     except urllib.error.URLError:
         return 0, None
 def up():
@@ -97,17 +101,20 @@ try:
     say("A month.", re=asked["id"] if asked else "none")
     got_a1 = until(lambda: received("a1"))
     check("an agent that spoke since its question gets the question quoted with his answer", 'This answers what you asked earlier' in got_a1 and "a week or a month" in got_a1 and "A month." in got_a1, got_a1[-300:])
-    latest = said_by("a1", "tidied the checkout")
+    # its newest message, with nothing said either way since
+    report("a1", shop, "said", "The cart now keeps items for a month.")
+    latest = until(lambda: said_by("a1", "keeps items for a month"))
     open(os.path.join(got, "a1"), "w").close()
     say("Thanks.", re=latest["id"] if latest else "none")
     got_a1 = until(lambda: received("a1"))
     check("a reply to its newest message carries no quote", "Thanks." in got_a1 and "This answers what you asked earlier" not in got_a1, got_a1[-300:])
 
     print("Kept across a restart of the tower")
-    report("b1", docs, "said", "Is the guide to go out today?")
+    # a question its tool marked as one, so no model is needed to know it is
+    report("b1", docs, "asked", "Is the guide to go out today?")
     question = until(lambda: said_by("b1", "guide to go out"))
     team = next((a.get("team") for a in roster() if a["id"] == "b1"), None)
-    renamed = http("POST", "/v1/radio/team/rename", {"team": team, "name": "handbook"})
+    renamed = http("POST", "/v1/radio/team/rename", {"team": team, "to": "handbook"})
     before = [m["id"] for m in messages()]
     down(tower); tower = up()
     after = [m["id"] for m in messages()]
@@ -134,6 +141,10 @@ try:
     check("N43: a report that timed out while the tower was slow, and that it then took, is in the chat once", times == 1, f"{times} times; report said: {late.stdout.strip()} {late.stderr.strip()}")
 
     print("Files of the tower's own that are damaged (A-5, N14)")
+    # something an agent made is kept in a file of the tower's own (its links), so there is one to damage
+    report("a1", shop, "made", "https://preview.example.com/build/1", "A preview")
+    report("a1", shop, "said", "The preview is up.")
+    until(lambda: os.path.exists(os.path.join(home, ".airband", "links.json")), 10)
     down(tower)
     kept = sorted(os.path.relpath(os.path.join(d, f), os.path.join(home, ".airband")) for d, _, fs in os.walk(os.path.join(home, ".airband")) for f in fs if f.endswith(".json") and f != "config.json" and "spool" not in d)
     check("the tower keeps some files of its own to try this on", kept, os.listdir(os.path.join(home, ".airband")))
