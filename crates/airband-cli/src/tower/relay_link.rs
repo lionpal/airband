@@ -120,6 +120,11 @@ struct Serve {
 }
 
 impl Serve {
+    /// Whether the settings now still hold this pairing, read again from the file when it has changed.
+    fn still_paired(&self) -> bool {
+        self.app.cfg().pairings.iter().any(|p| Keys::derive(&p.secret).is_ok_and(|k| k.channel == self.keys.channel))
+    }
+
     fn run(self) {
         // with no relay there is nothing to pull: requests come straight (`answer_here`) until this is stopped
         let Some(relay) = self.relay.clone() else {
@@ -139,6 +144,12 @@ impl Serve {
         };
         while !self.stop.load(Ordering::SeqCst) {
             if !open {
+                // a pairing undone since this started is never opened again: `airband unpair` has just closed
+                // its channel, and opening it would put it back on record for a phone that was cut off
+                if !self.still_paired() {
+                    log(format!("\"{}\" is no longer paired; its channel is not opened again", self.name));
+                    return;
+                }
                 // who its radio is goes with the opening, so the relay knows from the first moment whose channel it is
                 let mut req = agent.put(&base).header("authorization", &auth).header(RADIO_HASH_HEADER, airband_core::relay::token_hash(&self.keys.radio_token));
                 if let Some(a) = &self.admission {
@@ -334,5 +345,25 @@ impl Serve {
             // its own fault, and asking again gets the same: not something to wait out
             Err(e) => self.refused(call, via, Refusal::told(format!("airband made an answer that is not JSON ({e})."))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pairing_undone_is_never_opened_on_the_relay_again() {
+        let app = crate::tower::http::tests::app("unpaired-link");
+        let phone = crate::config::PairedRadio { name: "phone".into(), secret: "11".repeat(32) };
+        app.settings.change(|c| c.pairings.push(phone.clone())).unwrap();
+        let keys = Keys::derive(&phone.secret).unwrap();
+        // a relay nothing listens on: were it asked, the link would wait on it, not end
+        let serve = Serve { app: app.clone(), relay: Some("http://127.0.0.1:9".into()), name: phone.name.clone(), keys, admission: None, token: "radio".into(), router: crate::tower::http::router(app.clone()), handle: tokio::runtime::Handle::current(), stop: Arc::new(AtomicBool::new(false)), seen: Default::default(), replies: airband_io::http::agent(Duration::from_secs(1)) };
+        assert!(serve.still_paired());
+        app.settings.change(|c| c.pairings.clear()).unwrap();
+        assert!(!serve.still_paired());
+        let ended = tokio::task::spawn_blocking(move || serve.run());
+        tokio::time::timeout(Duration::from_secs(5), ended).await.expect("it ends without opening the channel").unwrap();
     }
 }
