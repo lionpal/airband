@@ -24,6 +24,24 @@
       "shell": {
         "asks": "run `{command}`"
       }
-    }
+    },
+    "account_id": [
+      {
+        "place": {
+          "kind": "sqlite",
+          "file": ".local/share/opencode/opencode.db",
+          "under": "user",
+          "table": "credential",
+          "column": "value",
+          "provider_column": "integration_id"
+        },
+        "take": {
+          "kind": "key",
+          "path": [
+            "key"
+          ]
+        }
+      }
+    ]
   }
 }

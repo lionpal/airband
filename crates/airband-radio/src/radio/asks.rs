@@ -9,7 +9,7 @@ impl Radio {
         struct Whole {
             text: String,
         }
-        Ok(self.asked::<Whole>(Method::Get, &format!("/message/{id}?{}", airband_core::radio::MessageAsk { form: Some(if full { airband_core::radio::Form::Full } else { airband_core::radio::Form::Detail }), part: None }.query()), None)?.text)
+        Ok(self.asked::<Whole>(Method::Get, &format!("/message/{id}?{}", airband_core::radio::wire::query_of(&airband_core::radio::wire::MessageQuery { form: Some(if full { airband_core::radio::Form::Full } else { airband_core::radio::Form::Detail }), part: None })), None)?.text)
     }
 
     /// The accounts the agents on this computer can run under, and how much of each is used. `fresh` asks the

@@ -131,7 +131,7 @@ pub(super) async fn feed(State(app): State<Arc<App>>, Extension(RadioId(radio)):
     }
 }
 
-pub(super) async fn message(State(app): State<Arc<App>>, Path(id): Path<String>, Query(q): Query<airband_core::radio::MessageAsk>) -> Response {
+pub(super) async fn message(State(app): State<Arc<App>>, Path(id): Path<String>, Query(q): Query<airband_core::radio::wire::MessageQuery>) -> Response {
     // a very long one is read as far as a few minutes go
     if q.form == Some(airband_core::radio::Form::Spoken) {
         // `part=asked` is the question as he would be asked it on a call: who is asking, its short form, and

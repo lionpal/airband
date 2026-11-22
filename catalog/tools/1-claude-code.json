@@ -206,6 +206,36 @@
         "role": "artifact"
       }
     },
-    "server_tool": "__"
+    "server_tool": "__",
+    "account_id": [
+      {
+        "place": {
+          "kind": "file",
+          "file": ".claude.json",
+          "under": "user"
+        },
+        "take": {
+          "kind": "id",
+          "path": [
+            "oauthAccount",
+            "accountUuid"
+          ],
+          "org_path": [
+            "oauthAccount",
+            "organizationUuid"
+          ]
+        }
+      },
+      {
+        "place": {
+          "kind": "env",
+          "name": "ANTHROPIC_API_KEY"
+        },
+        "take": {
+          "kind": "key",
+          "provider": "anthropic"
+        }
+      }
+    ]
   }
 }

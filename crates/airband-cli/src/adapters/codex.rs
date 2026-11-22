@@ -20,7 +20,7 @@
 //! (`/hooks` inside Codex), and again whenever it changes. `airband install` writes the hooks and says so.
 use super::env;
 use super::hooks::{On, on, text};
-use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk, SCHEMA};
+use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk};
 use serde_json::Value;
 use std::path::PathBuf;
 
@@ -321,7 +321,7 @@ fn watch(tower: super::Tower) {
                 // A turn that was already over when the thread was first seen has been said, or was said
                 // before the tower started: nothing of it is said again. One under way is working.
                 let told = match &now {
-                    Some((_, false)) => (tower.event)(AgentEvent { schema: SCHEMA.into(), agent: agent.clone(), event: Event::Working, via: None }).then(|| now.clone()),
+                    Some((_, false)) => (tower.event)(AgentEvent::new(agent.clone(), Event::Working)).then(|| now.clone()),
                     _ => Some(now.clone()),
                 };
                 if let Some(told) = told {
@@ -333,7 +333,7 @@ fn watch(tower: super::Tower) {
                 continue;
             }
             let Some(event) = turn_event(turn) else { continue };
-            if (tower.event)(AgentEvent { schema: SCHEMA.into(), agent: agent.clone(), event, via: None }) {
+            if (tower.event)(AgentEvent::new(agent.clone(), event)) {
                 heard.insert(agent.id.clone(), now);
             }
         }

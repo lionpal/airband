@@ -12,7 +12,7 @@
 //!   (`POST …/permission/<id>/reply`). Each is put to him, and his answer is the one that is sent: once, or
 //!   refused with his reason. One nobody answered from a phone stays where it was, on OpenCode's own screen.
 use super::Tower;
-use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk, SCHEMA};
+use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -159,7 +159,7 @@ fn watch(tower: Tower) {
         std::thread::sleep(Duration::from_secs(if service().is_some() { 2 } else { 20 }));
         let Some(list) = listed() else { continue };
         let Some(sessions) = list["data"].as_array() else { continue };
-        let send = |id: &str, cwd: Option<&str>, event: Event| (tower.event)(AgentEvent { schema: SCHEMA.into(), agent: agent(id, cwd), event, via: None });
+        let send = |id: &str, cwd: Option<&str>, event: Event| (tower.event)(AgentEvent::new(agent(id, cwd), event));
         // not the ones the tower runs itself: their driver reports for them
         let here: Vec<&Value> = current(sessions, airband_core::clock::now_ms()).into_iter().filter(|s| s["id"].as_str().is_some_and(|id| !(tower.holds)(id))).collect();
         for s in &here {

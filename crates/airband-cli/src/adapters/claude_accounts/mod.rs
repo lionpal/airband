@@ -175,7 +175,7 @@ fn account(email: String, live: bool, checked: Result<Vec<airband_core::radio::L
         Err(Unchecked::Expired) => (Vec::new(), Some("Its login has run out.".to_string())),
         Err(Unchecked::Said(e)) => (Vec::new(), Some(e)),
     };
-    Account { id: email.clone(), harness: HARNESS.into(), label: email, live, limits, problem }
+    Account { id: email.clone(), harness: HARNESS.into(), label: email, identity: Default::default(), live, limits, problem }
 }
 
 fn list_in(here: &Here) -> (Vec<Account>, Option<String>) {

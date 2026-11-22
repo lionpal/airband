@@ -28,7 +28,7 @@ pub(crate) fn session_events(hook: &Value) -> Option<Vec<Event>> {
 /// Events as the tower takes them, each from this agent. None of them when the hook did not say who it is.
 pub(crate) fn from_agent(agent: Option<Agent>, events: Vec<Event>) -> Vec<AgentEvent> {
     let Some(agent) = agent else { return Vec::new() };
-    events.into_iter().map(|event| AgentEvent { schema: SCHEMA.into(), agent: agent.clone(), event, via: Some(airband_core::agent::Via::Hook) }).collect()
+    events.into_iter().map(|event| AgentEvent::new(agent.clone(), event).via(airband_core::agent::Via::Hook)).collect()
 }
 
 /// What a coding tool's row says about one of its own tools, by the name the tool calls it (`with.tools`):

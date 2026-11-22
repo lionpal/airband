@@ -110,7 +110,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         Some("signoff") => Event::Signoff,
         _ => return Err("expected one of: checkin, working, doing <text>, model <name> [effort], said <text>, asked <text>, notice <text>, show <picture file>, picture <picture file>, made <address> [title], signoff".into()),
     };
-    said(post(&AgentEvent { schema: SCHEMA.into(), agent, event, via: None }))
+    said(post(&AgentEvent::new(agent, event)))
 }
 
 /// What `airband report` comes to: done when the tower took the event or it is kept for the tower, so a

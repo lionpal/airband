@@ -37,6 +37,54 @@
           "change files"
         ]
       }
-    }
+    },
+    "account_id": [
+      {
+        "place": {
+          "kind": "file",
+          "file": "auth.json",
+          "under": "home"
+        },
+        "take": {
+          "kind": "id",
+          "jwt": [
+            "tokens",
+            "id_token"
+          ],
+          "path": [
+            "https://api.openai.com/auth",
+            "chatgpt_user_id"
+          ],
+          "org_path": [
+            "https://api.openai.com/auth",
+            "chatgpt_account_id"
+          ]
+        }
+      },
+      {
+        "place": {
+          "kind": "file",
+          "file": "auth.json",
+          "under": "home"
+        },
+        "take": {
+          "kind": "key",
+          "path": [
+            "OPENAI_API_KEY"
+          ],
+          "provider": "openai"
+        }
+      },
+      {
+        "place": {
+          "kind": "env",
+          "name": "OPENAI_API_KEY"
+        },
+        "take": {
+          "kind": "key",
+          "provider": "openai"
+        }
+      }
+    ]
   }
 }

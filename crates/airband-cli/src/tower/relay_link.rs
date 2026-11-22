@@ -246,7 +246,7 @@ impl Serve {
         // so neither its age nor a second copy can make it happen again.
         let (status, body) = if kept {
             // something he said, read as what it is: its id, as the tower takes it
-            let said: Option<String> = (call.method == "POST" && call.path == super::http::UTTERANCE).then(|| serde_json::from_value::<airband_core::radio::Utterance>(call.body.clone()).ok()).flatten().map(|u| u.id).filter(|id| !id.is_empty());
+            let said: Option<String> = (call.method == airband_core::radio::wire::Method::Post && call.path == super::http::UTTERANCE).then(|| serde_json::from_value::<airband_core::radio::Utterance>(call.body.clone()).ok()).flatten().map(|u| u.id).filter(|id| !id.is_empty());
             if said.is_some() && now.saturating_sub(call.t) <= airband_core::relay::HELD_FOR_MS {
                 log(format!("\"{}\" said this while the tower was away", self.name));
                 self.dispatch(&call, "the relay, kept while the tower was away", false).await
@@ -317,7 +317,7 @@ impl Serve {
             log(format!("a radio spoke {}, and this version of airband takes {}", call.schema, airband_core::radio::SCHEMA));
             return self.refused(call, via, 400, "This computer runs another version of airband. Update it and the app.");
         }
-        if !call.path.starts_with(airband_core::radio::PATH) || !matches!(call.method.as_str(), "GET" | "POST") {
+        if !call.path.starts_with(airband_core::radio::PATH) || !matches!(call.method, airband_core::radio::wire::Method::Get | airband_core::radio::wire::Method::Post) {
             return self.refused(call, via, 403, "a radio may only use /v1/radio/");
         }
         let body = if call.body.is_null() { Body::empty() } else { Body::from(serde_json::to_vec(&call.body).unwrap()) };

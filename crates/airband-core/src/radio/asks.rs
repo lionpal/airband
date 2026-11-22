@@ -27,8 +27,12 @@ pub struct Account {
     pub id: String,
     /// The harness it belongs to ("claude-code").
     pub harness: String,
-    /// What to show him: usually the email it signs in with.
+    /// What to show him: usually the email it signs in with, or a key's last four characters. Only to show:
+    /// two computers' accounts are the same one by [`Account::identity`], never by this.
     pub label: String,
+    /// Who it is, as its tool records it.
+    #[serde(default)]
+    pub identity: crate::identity::AccountIdentity,
     /// It is the one every session of that harness is using now.
     #[serde(default)]
     pub live: bool,
