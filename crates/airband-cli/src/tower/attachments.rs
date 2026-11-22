@@ -176,10 +176,16 @@ pub(super) async fn find(id: &str) -> Option<Attached> {
 
 /// What an agent is told about the files that came with a message, and the pictures to show beside his words
 /// in the chat (an image itself; for a video, its first frame).
-pub(super) async fn describe(ids: &[String]) -> (String, Vec<airband_core::radio::Picture>) {
+/// A file that has not all arrived is not left out without a word: his words wait, and he is told.
+pub(super) async fn describe(ids: &[String]) -> Result<(String, Vec<airband_core::radio::Picture>), String> {
+    if ids.len() > MOST_AT_ONCE {
+        return Err(format!("Send at most {MOST_AT_ONCE} files at once."));
+    }
     let (mut lines, mut pictures) = (Vec::new(), Vec::new());
-    for id in ids.iter().take(8) {
-        let Some(a) = find(id).await else { continue };
+    for id in ids {
+        let Some(a) = find(id).await else {
+            return Err(if ids.len() == 1 { "Your file had not arrived. Send it again.".into() } else { "One of your files had not arrived. Send them again.".into() });
+        };
         let size = if a.bytes >= 1024 * 1024 { format!("{:.1} MB", a.bytes as f64 / 1_048_576.0) } else { format!("{} KB", a.bytes.div_ceil(1024)) };
         match a.what {
             What::Image => {
@@ -204,10 +210,13 @@ pub(super) async fn describe(ids: &[String]) -> (String, Vec<airband_core::radio
         }
     }
     if lines.is_empty() {
-        return (String::new(), pictures);
+        return Ok((String::new(), pictures));
     }
-    (format!("\n\nHe attached {}, saved on this computer:\n{}", if lines.len() == 1 { "a file" } else { "files" }, lines.join("\n")), pictures)
+    Ok((format!("\n\nHe attached {}, saved on this computer:\n{}", if lines.len() == 1 { "a file" } else { "files" }, lines.join("\n")), pictures))
 }
+
+/// The most files one message can carry.
+const MOST_AT_ONCE: usize = 8;
 
 /// Old attachments are cleared when the tower starts.
 pub(super) fn prune() {
@@ -217,6 +226,13 @@ pub(super) fn prune() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_file_that_has_not_arrived_holds_his_words_back_and_says_so() {
+        assert!(describe(&[]).await.unwrap().0.is_empty(), "no files, nothing to say");
+        assert!(describe(&["not-one-of-ours".into()]).await.is_err());
+        assert!(describe(&vec!["x".to_string(); MOST_AT_ONCE + 1]).await.is_err(), "more than one message carries");
+    }
 
     #[test]
     fn a_name_cannot_leave_its_folder() {
