@@ -28,6 +28,21 @@ impl Wake {
     }
 }
 
+/// What is kept for him on one computer's behalf and outlasts the radio talking to it: what he sends next takes
+/// (the files he attached, the question it answers), and what is saved on the device (his unsent messages, the
+/// recent chat). A desk starts a new radio for a computer on every reconnect and hands it the same, so nothing he
+/// was about to send is lost, and only one copy of the saved file is ever written.
+#[derive(Clone)]
+pub(crate) struct Kept {
+    pub(crate) session: Arc<Session>,
+    pub(crate) store: Arc<Store>,
+}
+impl Kept {
+    pub(crate) fn open(data_dir: &str, host: Arc<dyn RadioHost>) -> Kept {
+        Kept { session: Arc::default(), store: Arc::new(Store::open(data_dir, Some(host))) }
+    }
+}
+
 #[derive(uniffi::Object)]
 pub struct Radio {
     pub(crate) jobs: Mutex<Sender<Job>>,
@@ -59,7 +74,8 @@ impl Radio {
         let senses = Senses::default();
         senses.mouth.set(Some(mouth::Own::Host));
         senses.ears.set(Some(ears::Own::Host));
-        Self::start_with(link, data_dir, host, Arc::new(senses))
+        let kept = Kept::open(&data_dir, host.clone());
+        Self::start_with(link, &data_dir, host, Arc::new(senses), kept)
     }
 
     /// Chat, for a bad connection: take what he typed and keep trying until the tower has it. Returns at
@@ -72,14 +88,15 @@ impl Radio {
     /// `label`, for a quick message, is the button's words: the chat shows those and the agent gets `text`.
     /// Returns the id it waits under, for following it.
     pub fn queue(&self, text: String, re: Option<String>, scope: Option<String>, label: Option<String>) -> String {
-        self.queue_as(text, re, scope, label, String::new(), Vec::new(), None)
+        self.queue_his(Outgoing { re, scope, label, ..Outgoing::of(text) })
     }
 }
 
 impl Radio {
-    /// As [`Radio::start`], listening and speaking with what he chose on this device.
-    pub(crate) fn start_with(link: String, data_dir: String, host: Arc<dyn RadioHost>, senses: Arc<Senses>) -> Result<Arc<Self>, RadioError> {
-        let store = Arc::new(Store::open(&data_dir, Some(host.clone())));
+    /// As [`Radio::start`], listening and speaking with what he chose on this device, and with what is kept for
+    /// him on this computer's behalf ([`Kept`]).
+    pub(crate) fn start_with(link: String, data_dir: &str, host: Arc<dyn RadioHost>, senses: Arc<Senses>, kept: Kept) -> Result<Arc<Self>, RadioError> {
+        let Kept { session, store } = kept;
         let me = store.saved.lock().unwrap().radio.clone();
         let me = if me.is_empty() { store.change(|s| { s.radio = format!("radio-{}", random_hex(4)); s.radio.clone() }) } else { me };
         // the record of what failed is kept beside the saved chat, on this device
@@ -91,7 +108,6 @@ impl Radio {
         let busy = Arc::new(AtomicBool::new(false));
         let calling = Arc::new(AtomicBool::new(false));
         let wake = Arc::new(Wake::default());
-        let session = Arc::new(Session::default());
         {
             let (link, session, host, stop, busy, calling, senses) = (link.clone(), session.clone(), host.clone(), stop.clone(), busy.clone(), calling.clone(), senses.clone());
             thread::spawn(move || work(call::Working { jobs: rx, link, session, host, stop, busy, calling, senses }));
@@ -108,15 +124,20 @@ impl Radio {
         Ok(Arc::new(Radio { jobs: Mutex::new(tx), stop, calling, link, session, store, host, wake, senses, roster: std::sync::atomic::AtomicU64::new(0), reading: std::sync::atomic::AtomicU64::new(0) }))
     }
 
+    /// What this radio keeps for him that outlasts it: the next radio started for this computer takes it over.
+    pub(crate) fn kept(&self) -> Kept {
+        Kept { session: self.session.clone(), store: self.store.clone() }
+    }
+
     /// Ask this computer something and read its answer. A reason it gives in words (`error`) is told to him
     /// as it is; anything else that is not the answer asked for is a refusal. Every request but his own words
     /// goes through here.
     fn asked<T: serde::de::DeserializeOwned>(&self, method: Method, path: &str, body: Option<Value>) -> Result<T, RadioError> {
         let (status, v) = self.link.request(method, path, body)?;
         match (status, v["error"].as_str()) {
-            (200, Some(why)) => Err(RadioError::Told { reason: why.into() }),
             (200, None) => serde_json::from_value(v).map_err(|_| RadioError::Refused),
-            _ => Err(RadioError::Refused),
+            // a no, with its reason when it gave one: read the one way every refusal is ([`LinkError::Tower`])
+            (status, error) => Err(LinkError::Tower { status, error: error.unwrap_or_default().into() }.into()),
         }
     }
 
@@ -130,17 +151,11 @@ impl Radio {
         self.link.is_direct()
     }
 
-    /// Read a whole message aloud in the voice he chose on this device. Blocks until it has been heard or
-    /// [`Radio::hush`] is called. False when it was not read: he is told why.
-    pub(crate) fn read_aloud(&self, id: &str) -> bool {
-        self.read(id, None)
-    }
     /// Read a question to him as he would be asked it on a call: who is asking, its short form, and the
-    /// answers it offers. Blocks the same way.
+    /// answers it offers, in the voice he chose on this device. Blocks until it has been heard or
+    /// [`Radio::hush`] is called. False when it was not read: he is told why.
     pub(crate) fn read_question(&self, id: &str) -> bool {
-        self.read(id, Some(airband_core::radio::Part::Asked))
-    }
-    fn read(&self, id: &str, part: Option<airband_core::radio::Part>) -> bool {
+        let part = Some(airband_core::radio::Part::Asked);
         let mine = self.reading.fetch_add(1, Ordering::SeqCst) + 1;
         // With no voice chosen nothing can read it: he is told where to choose one, before anything is asked
         // of his computer.
@@ -177,16 +192,21 @@ impl Radio {
         let _ = self.jobs.lock().unwrap().send(Job::Dictate(done));
     }
 
-    /// As [`Radio::queue`], for the agents he picked (by id) and for what a button of his stood for. `text`
-    /// is then what the chat shows for it.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn queue_as(&self, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, others: String, to: Vec<String>, act: Option<Act>) -> String {
-        let id = random_hex(12);
+    /// His own next words, as [`Radio::queue`]: they take with them whatever he attached that has reached the
+    /// tower, and they answer the question his computer last asked him back.
+    pub(crate) fn queue_his(&self, out: Outgoing) -> String {
+        let mut out = out;
+        out.attachments.extend(self.session.take_armed());
+        out.answers = out.answers.or_else(|| self.session.take_question());
+        self.queue_out(out)
+    }
+    /// Something to send that is not his next words (a button, a command, words sent on to another agent): it
+    /// goes as it is, and leaves his files and his question for what he says next. Returns the id it waits
+    /// under.
+    pub(crate) fn queue_out(&self, out: Outgoing) -> String {
+        let id = out.id.clone();
         let waiting = self.store.change(|s| {
-            // whatever he attached and has reached the tower goes with this, and the next thing he says after
-            // his computer asked him something back is his answer to it
-            let answers = self.session.take_question();
-            s.outbox.push(Outgoing { to, answers, ..Outgoing::new(id.clone(), text, re, scope, label, self.session.take_armed(), others).with_act(act.as_ref()) });
+            s.outbox.push(out);
             s.outbox.clone()
         });
         self.wake.ring();
@@ -229,8 +249,8 @@ impl Radio {
     /// How this computer was last reached, or not, each way: through the relay, and at its own address.
     pub(crate) fn reach(&self) -> (Option<String>, Option<String>) {
         let told = |s: Step| match s.outcome {
-            Ok(_) => "answered".to_string(),
-            Err(e) => e.told(),
+            Ok(_) => "Answered.".to_string(),
+            Err(e) => e.said(),
         };
         (self.link.last_by(if self.link.by_relay() { Way::Relay } else { Way::Paired }).map(told), self.link.last_by(Way::Near).map(told))
     }
@@ -269,8 +289,9 @@ impl Radio {
         let roster = self.roster.load(Ordering::SeqCst);
         // with an address of the tower's still to try, this request does not wait for news: it only finds out
         // whether the tower is there, so the straight path is in use (and shown) within a moment
-        let wait = if self.link.untried() { 0 } else { wait_seconds.min(25) };
-        let feed: Feed = self.asked(Method::Get, &with_query("/feed", &[("since", &since.to_string()), ("roster", &roster.to_string()), ("wait", &wait.to_string())]), None)?;
+        let wait = if self.link.untried() { 0 } else { wait_seconds };
+        let ask = airband_core::radio::FeedAsk { since: Some(since), roster: Some(roster), wait, ..Default::default() };
+        let feed: Feed = self.asked(Method::Get, &format!("/feed?{}", ask.query()), None)?;
         spoken_alike(&feed)?;
         self.roster.store(feed.roster_rev, Ordering::SeqCst);
         self.link.set_direct(feed.direct.clone());
@@ -323,11 +344,8 @@ impl Radio {
     /// each message cut to a line or two. Waits up to `wait_seconds` (25 at most) for something new. Blocks:
     /// call it off the main thread.
     pub fn feed(&self, team: Option<String>, agent: Option<String>, after: u64, wait_seconds: u32) -> Result<ChatFeed, RadioError> {
-        let (after, wait) = (after.to_string(), wait_seconds.min(25).to_string());
-        let mut query = vec![("after", after.as_str()), ("wait", wait.as_str())];
-        team.iter().for_each(|t| query.push(("team", t)));
-        agent.iter().for_each(|a| query.push(("agent", a)));
-        let feed: Feed = self.asked(Method::Get, &with_query("/feed", &query), None)?;
+        let ask = airband_core::radio::FeedAsk { team, agent, after, wait: wait_seconds, ..Default::default() };
+        let feed: Feed = self.asked(Method::Get, &format!("/feed?{}", ask.query()), None)?;
         spoken_alike(&feed)?;
         self.link.set_direct(feed.direct.clone());
         Ok(chat_feed(feed))
@@ -367,7 +385,7 @@ impl Radio {
             }
             from = part.next;
         }
-        airband_core::kept::write_atomic(&file, &bytes).map_err(|_| RadioError::Refused)?;
+        airband_core::kept::write_atomic(&file, &bytes).map_err(|_| RadioError::here("keep that picture"))?;
         Ok(file.display().to_string())
     }
 
@@ -442,7 +460,7 @@ impl Radio {
         });
         self.wake.ring();
         self.host.outbox(waiting, None);
-        Err(failed.into())
+        Err(RadioError::Kept { reason: format!("{} It is on this phone and goes when it can.", failed.said()) })
     }
 
     /// Send a file to the tower in parts, under `id`. `sent` is told how far it has got after each part and
@@ -454,12 +472,13 @@ impl Radio {
         // Every part is a round trip to his computer and back, so they go several at once: a video is hundreds
         // of them. The first goes alone: a file his computer will not take is refused before the rest is sent.
         const AT_ONCE: usize = 6;
-        let total = std::fs::metadata(path).map_err(|_| RadioError::Refused)?.len();
+        let unread = |_| RadioError::here("read that file");
+        let total = std::fs::metadata(path).map_err(unread)?.len();
         let part_at = |from: u64| -> Result<airband_core::radio::AttachmentPart, RadioError> {
-            let mut file = std::fs::File::open(path).map_err(|_| RadioError::Refused)?;
-            file.seek(SeekFrom::Start(from)).map_err(|_| RadioError::Refused)?;
+            let mut file = std::fs::File::open(path).map_err(unread)?;
+            file.seek(SeekFrom::Start(from)).map_err(unread)?;
             let mut buf = Vec::with_capacity(PART as usize);
-            file.take(PART).read_to_end(&mut buf).map_err(|_| RadioError::Refused)?;
+            file.take(PART).read_to_end(&mut buf).map_err(unread)?;
             Ok(airband_core::radio::AttachmentPart { id: id.into(), name: name.into(), from, data: airband_core::encode::base64(&buf), total })
         };
         // a part lost on a bad connection is sent again, to the same place, a few times before giving up

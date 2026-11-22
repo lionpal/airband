@@ -158,7 +158,7 @@ pub(crate) fn settle(store: &Store, host: &dyn RadioHost, id: &str, outcome: air
         // The host takes it from here; it has left this radio's list either way
         Outcome::Answered { reply } if reply.elsewhere.is_some() || !reply.ask.is_empty() => {
             host.outbox(gone(), None);
-            // names as the screen shows them
+            // the agents it might be for, by id
             host.unplaced(was, reply.elsewhere, reply.ask);
         }
         // what was done as he asked shows as his own line in the chat; anything else he has to see

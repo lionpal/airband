@@ -54,7 +54,7 @@ extension FeedView {
 
     /// The team he is in: the one he picked, or the team of the agent he is looking at.
     var team: DeskRoom? {
-        if let room = model.room { return model.view.rooms.first { $0.id == room } }
+        if model.room != nil { return model.room(model.room) }
         if let only = model.only { return model.member(only)?.team }
         return nil
     }
@@ -63,12 +63,15 @@ extension FeedView {
     /// What is selected, as the id of its chip: for scrolling the row to it.
     var chosen: String { model.only.map { "agent:" + $0 } ?? model.room.map { "team:" + $0 } ?? "all" }
 
-    private func chip(_ label: String, on: Bool, dot: AgentState? = nil, working: Bool = false, colour: UInt8? = nil, badge: (String, UInt8?)? = nil, unread: UInt32 = 0) -> some View {
+    private func chip(_ label: String, on: Bool, dot: AgentState? = nil, working: Bool = false, colour: UInt8? = nil, badge: (String, UInt8?)? = nil, unread: UInt32 = 0, subagents: UInt32 = 0) -> some View {
         HStack(spacing: 7) {
             if let dot { StateDot(state: dot, working: working).id("\(dot)" + (working ? "+" : "")) }
             if let badge { Badge(text: badge.0, colour: badge.1, size: 20) }
             Text(label).font(.system(size: 14, weight: on ? .semibold : .medium)).lineLimit(1)
                 .padding(.bottom, 2).overlay(alignment: .bottom) { if let colour { Capsule().fill(Palette.team(colour)).frame(height: 2) } }
+            if subagents > 0 {
+                Text("+\(subagents)").font(.system(size: 12, weight: .medium)).foregroundStyle(on ? Palette.dim : Palette.quiet)
+            }
             if !on { Unread(count: unread) }
         }
         .padding(.horizontal, 14).frame(minHeight: 40)
@@ -95,7 +98,7 @@ extension FeedView {
                 if let team {
                     // inside a team: the team itself, then its agents
                     Button { model.look(room: team.id) } label: {
-                        chip(team.name, on: model.only == nil, dot: team.state, working: team.members.contains { $0.state == .working }, colour: team.colour, unread: team.unread)
+                        chip(team.name, on: model.only == nil, dot: team.state, working: team.anyWorking, colour: team.colour, unread: team.unread)
                     }
                     .buttonStyle(.plain).id("team:" + team.id).accessibilityLabel(team.unread > 0 && model.only != nil ? "\(team.name), \(team.unread) unread" : team.name)
                     ForEach(team.members, id: \.id) { agent in
@@ -114,16 +117,7 @@ extension FeedView {
                     Button {
                         model.look(room: on ? nil : room.id)
                     } label: {
-                        HStack(spacing: 7) {
-                            StateDot(state: room.state, working: room.members.contains { $0.state == .working }).id("\(room.state)" + (room.members.contains { $0.state == .working } ? "+" : ""))
-                            Text(room.name).font(.system(size: 14, weight: on ? .semibold : .medium))
-                                .padding(.bottom, 2).overlay(alignment: .bottom) { Capsule().fill(Palette.team(room.colour)).frame(height: 2) }
-                            if room.subagents > 0 {
-                                Text("+\(room.subagents)").font(.system(size: 12, weight: .medium)).foregroundStyle(on ? Palette.dim : Palette.quiet)
-                            }
-                        }
-                        .padding(.horizontal, 14).frame(minHeight: 40)
-                        .background(on ? Palette.ink : Palette.field, in: Capsule()).foregroundStyle(on ? Palette.ground : Palette.ink)
+                        chip(room.name, on: on, dot: room.state, working: room.anyWorking, colour: room.colour, subagents: room.subagents)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("\(room.name), \(RadioModel.spoken(state: room.state))\(room.subagents > 0 ? ", \(room.subagents) subagents" : "")")
@@ -203,7 +197,7 @@ extension FeedView {
                 if model.view.rooms.isEmpty {
                     // paired, and no agent has been heard from: say what makes one appear
                     // his tool by name when he uses one; otherwise none is singled out
-                    let tool = model.usedTools.count == 1 ? model.usedTools[0].name : "your coding agent"
+                    let tool = model.onlyTool?.name ?? "your coding agent"
                     Text("You\u{2019}re connected").font(.system(size: 19, weight: .semibold))
                     Text("Start \(tool) in a project on your computer and it shows up here, or start one from here.")
                         .font(.system(size: 16)).foregroundStyle(Palette.quiet).multilineTextAlignment(.center).lineSpacing(3)
@@ -213,7 +207,7 @@ extension FeedView {
                     }
                     .buttonStyle(.plain).padding(.top, 14)
                     Text("Sessions that are already open show up by themselves.").font(.system(size: 13)).foregroundStyle(Palette.quiet).multilineTextAlignment(.center).padding(.top, 18)
-                    if model.usedTools.count == 1, let first = model.usedTools.first?.first, !first.isEmpty {
+                    if let first = model.onlyTool?.first, !first.isEmpty {
                         Text(first).font(.system(size: 13)).foregroundStyle(Palette.quiet).multilineTextAlignment(.center)
                     }
                 } else {
@@ -238,4 +232,14 @@ extension FeedView {
     private var stopLabel: some View {
         RoundIcon("stop.fill", side: 40, glyph: 14, weight: .bold).foregroundStyle(Palette.ink)
     }
+}
+
+extension DeskRoom {
+    /// Some agent in it is working, whatever the team's own state says.
+    var anyWorking: Bool { members.contains { $0.state == .working } }
+}
+
+extension DeskMember {
+    /// He can stop what it is doing now: it is at work, and run by its computer.
+    var canStop: Bool { held && state == .working }
 }

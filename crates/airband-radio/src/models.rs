@@ -21,6 +21,31 @@ pub(crate) fn models(device: &HostDevice) -> impl Iterator<Item = Arc<Model>> + 
     airband_core::catalog::current().models.clone().into_iter().filter(move |m| crate::engines::runs(m, device) && !m.version.is_empty())
 }
 
+/// The model a row marks as the one to start with for a job (`usual`), among those that run on this device.
+pub(crate) fn usual(device: &HostDevice, job: airband_core::providers::Job) -> Option<Arc<Model>> {
+    models(device).find(|m| m.job == job && m.with.get(field::USUAL).and_then(|u| u.as_bool()) == Some(true))
+}
+
+/// The names of the fields of a row's `with` that this build reads, each written once.
+pub(crate) mod field {
+    /// A model row: the one to start with for its job.
+    pub(crate) const USUAL: &str = "usual";
+    /// A model row: what the device does once before first use, in words for him.
+    pub(crate) const PREPARE: &str = "prepare";
+    /// A model row: the lowest system it runs on, for each kind of device.
+    pub(crate) const MIN_OS: &str = "min_os";
+    /// A voice: the rate of its sound.
+    pub(crate) const RATE: &str = "rate";
+    /// A voice service's setting: which of its voices speaks.
+    pub(crate) const VOICE: &str = "voice";
+}
+
+/// The setting a voice service's voice is chosen by, for a host that lays out its own voice picker.
+#[uniffi::export]
+pub fn voice_setting() -> String {
+    field::VOICE.to_string()
+}
+
 /// Use the newest catalogue this device has kept (in `dir`, a folder of the app's own), if it is newer than
 /// the one built in. Nothing is fetched. Call once at the start.
 #[uniffi::export]
@@ -160,7 +185,7 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model) -> Result<(), RadioError
     }
     // This version is whole: say so, and only now let go of the one that was here before it, which was in use
     // until this moment.
-    let _ = std::fs::write(folder.join(WHOLE), "");
+    std::fs::write(folder.join(WHOLE), "").map_err(|_| told("Could not write the model to this device."))?;
     for other in std::fs::read_dir(home(&dir, m)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| *p != folder) {
         let _ = if other.is_dir() { std::fs::remove_dir_all(&other) } else { std::fs::remove_file(&other) };
     }
@@ -228,7 +253,7 @@ mod tests {
         let (dir, kind) = (std::env::var("AIRBAND_MODEL_DIR").unwrap(), std::env::var("AIRBAND_MODEL").unwrap());
         let began = std::time::Instant::now();
         // a phone that has every engine the catalogue names
-        let device = HostDevice { engines: airband_core::catalog::current().models.iter().map(|m| m.engine.clone()).collect(), os: "ios".into(), os_version: u32::MAX };
+        let device = HostDevice { engines: airband_core::catalog::current().models.iter().map(|m| m.engine.clone()).collect(), os: "ios".into(), os_version: u32::MAX, team_colours: 0 };
         let m = model(&kind, &device).unwrap();
         fetch_local_model(dir.clone(), &m).unwrap();
         assert!(fetched(&dir, &m) && local_model_progress() == 100);

@@ -10,6 +10,8 @@ import UIKit
 /// used only while the voice screen is up, and the audio is held only for as long as the conversation is on.
 /// Nothing here asks him to pick up his phone.
 final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
+    /// What the list calls an agent that is waiting on him, and the section they are in.
+    private static let waiting = "Waiting on you"
     private var car: CPInterfaceController?
     private var voiceScreen: CPVoiceControlTemplate?
     /// The button on the voice screen that names who is speaking.
@@ -47,12 +49,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         if case .answer(let agent?) = route {
             start(then: agent)
         } else {
-            model.only = nil
+            // the Talk tile, or a banner about no one in particular: everyone in the team he is in, and no
+            // message picked
+            model.look(room: model.room)
             start(then: nil)
-            // already routed: the Talk tile, or a banner about no one in particular
             Task { @MainActor in
                 guard self.model.calling else { return }
-                if case .talk = route { self.model.replyingTo = nil }
                 self.model.openMic()
             }
         }
@@ -78,18 +80,19 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         // Who is waiting on him: choosing one has its question read out, then opens the microphone for the
         // answer. What it asked is heard, not shown.
         let waiting = agents.filter { $0.state == .asking }.map { agent -> CPListItem in
-            let item = CPListItem(text: agent.callsign, detailText: "Waiting on you", image: avatar(of: agent.id, side: 44))
+            let item = CPListItem(text: agent.callsign, detailText: Self.waiting, image: avatar(of: agent.id, side: 44))
             item.handler = { [weak self] _, done in
                 self?.start(then: agent.id)
                 done()
             }
             return item
         }
-        if !waiting.isEmpty { sections.append(CPListSection(items: waiting, header: "Waiting on you", sectionIndexTitle: nil)) }
+        if !waiting.isEmpty { sections.append(CPListSection(items: waiting, header: Self.waiting, sectionIndexTitle: nil)) }
         let working = agents.filter { $0.state == .working }.map { agent -> CPListItem in
             let item = CPListItem(text: agent.callsign, detailText: "Working", image: avatar(of: agent.id, side: 44))
             item.handler = { [weak self] _, done in
-                self?.model.look(room: self?.model.room, agent: agent.id)
+                // as on the phone's list: that agent, whichever team it is in
+                self?.model.look(agent: agent.id)
                 self?.start(then: nil)
                 done()
             }
@@ -111,8 +114,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private func start(then answer: String?) {
         Task { @MainActor in
             if let answer, let team = self.model.member(answer)?.team {
-                self.model.room = team.id
-                self.model.only = answer
+                self.model.look(room: team.id, agent: answer)
             }
             if !self.model.calling { await self.model.setCalling(true) }
             guard self.model.calling else {

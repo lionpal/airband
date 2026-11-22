@@ -5,7 +5,7 @@ use super::*;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(super) struct Pick {
     pub(super) place: ChoicePlace,
-    /// The model's kind or the provider's id. Empty for his computer's choice.
+    /// The model's kind or the provider's id.
     #[serde(default)]
     pub(super) id: String,
     /// For a service: which of its provider's offers.
@@ -36,12 +36,19 @@ pub(super) struct Waiting {
     /// The computers that have taken it, by `Station::id`. It waits for the rest.
     #[serde(default)]
     pub(super) taken: Vec<String>,
+    /// The computers that said no to it, by `Station::id`: they are not asked again, and he was told why.
+    #[serde(default)]
+    pub(super) refused: Vec<String>,
 }
 
 impl Waiting {
     /// The same choice, whichever computers have taken it.
     pub(super) fn same(&self, other: &Waiting) -> bool {
         (&self.id, &self.offer, &self.set) == (&other.id, &other.offer, &other.set)
+    }
+    /// That computer has given its answer to it, yes or no: it is not asked again.
+    pub(super) fn answered(&self, computer: &str) -> bool {
+        self.taken.iter().chain(&self.refused).any(|c| c == computer)
     }
 }
 
@@ -74,7 +81,7 @@ impl Saved {
     /// he finishes the first run). Where no row says so for a job, nothing is chosen for it. Which coding
     /// tools he uses is his to say: none is taken for his until he picks.
     pub(super) fn fresh(device: &HostDevice) -> Saved {
-        let usual = |job: Job| crate::models::models(device).find(|m| m.job == job && m.with.get("usual").and_then(|u| u.as_bool()) == Some(true)).map(|m| Pick { place: ChoicePlace::Phone, id: m.kind.clone(), offer: String::new(), set: BTreeMap::new(), voice: String::new() });
+        let usual = |job: Job| crate::models::usual(device, job).map(|m| Pick { place: ChoicePlace::Phone, id: m.kind.clone(), offer: String::new(), set: BTreeMap::new(), voice: String::new() });
         Saved { ears: usual(Job::Ears), voice: usual(Job::Voice), ..Saved::default() }
     }
 
@@ -93,7 +100,7 @@ impl Saved {
         self.tools = tools;
         if self.offered.is_none() && self.reads.as_ref().is_none_or(|w| !w.his) {
             let most = self.tools.first().cloned().unwrap_or_default();
-            self.reads = crate::services::services(Job::Summary).into_iter().find(|s| !most.is_empty() && s.login == most).map(|s| Waiting { id: s.kind, offer: s.offer, set: BTreeMap::new(), his: false, taken: Vec::new() });
+            self.reads = crate::services::services(Job::Summary).into_iter().find(|s| !most.is_empty() && s.login == most).map(|s| Waiting { id: s.kind, offer: s.offer, set: BTreeMap::new(), his: false, taken: Vec::new(), refused: Vec::new() });
         }
     }
 }

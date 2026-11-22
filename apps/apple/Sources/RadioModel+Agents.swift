@@ -1,7 +1,5 @@
 // What he does with his agents and their messages: answering, sending, stopping and starting agents, teams,
 // accounts, and the full text and pictures of a message.
-import AVFoundation
-import PhononCoreML
 import Foundation
 import SwiftUI
 import UIKit
@@ -19,7 +17,7 @@ extension RadioModel {
     }
 
     /// Start an agent in a folder on a computer: in the team that works there, or a new one of this name.
-    /// Calls back with the team's name as the computer writes it, or with what is wrong.
+    /// Calls back with the team's room id ([`DeskRoom.id`]), or with what is wrong.
     func newTeam(_ name: String, on computer: String, folder: String, make: Bool, tool: String?, done: @escaping (String?, String?) -> Void) {
         ask(Self.unreached, { try self.desk.newTeam(computer: computer, name: name, folder: folder, make: make, tool: tool) }, then: done)
     }
@@ -51,7 +49,7 @@ extension RadioModel {
 
     /// The agents he could stop right now: at work, run by their computer, and in the room or agent he is looking at.
     var stoppable: [DeskMember] {
-        view.rooms.filter { room == nil || $0.id == room }.flatMap(\.members).filter { $0.held && $0.state == .working && (only == nil || $0.id == only) }
+        view.rooms.filter { room == nil || $0.id == room }.flatMap(\.members).filter { $0.canStop && (only == nil || $0.id == only) }
     }
 
     /// Stop what an agent is doing, now. What he said to it meanwhile it then reads together.
@@ -61,20 +59,23 @@ extension RadioModel {
 
     /// End an agent its computer runs: it finishes and leaves the radio.
     func end(_ agent: DeskMember) {
-        tell("It did not end.", { try self.desk.endAgent(agent: agent.id) }) { if self.only == agent.id { self.only = nil } }
+        tell("It did not end.", { try self.desk.endAgent(agent: agent.id) }) { if self.only == agent.id { self.look(room: self.room) } }
     }
 
     /// Start a new agent in a team. It appears in the list at once, with nothing to do until he speaks to it.
     /// `tool` is one of the coding tools he uses; nothing is the one he uses when there is only one.
     func newAgent(in room: String, tool: CodingTool? = nil) {
-        desk.newAgent(room: room, tool: tool ?? (usedTools.count == 1 ? usedTools.first : nil))
+        desk.newAgent(room: room, tool: tool ?? onlyTool)
     }
 
     /// The coding tools he uses, as the catalogue describes them, the one he uses most first.
-    var usedTools: [CodingTool] {
-        let all = codingTools()
-        return tools.compactMap { id in all.first { $0.id == id } }
-    }
+    var usedTools: [CodingTool] { tools.compactMap(tool(of:)) }
+    /// The coding tool he uses, when he uses just one: then it is never asked which.
+    var onlyTool: CodingTool? { usedTools.count == 1 ? usedTools[0] : nil }
+    /// A coding tool, by its id, as the catalogue describes it.
+    func tool(of id: String) -> CodingTool? { codingTools().first { $0.id == id } }
+    /// His computer, by its id, when he has just one: then it is never asked which.
+    var onlyComputer: String? { view.stations.count == 1 ? view.stations[0].id : nil }
 
     /// Let a question go without answering it.
     func dismiss(_ m: ChatMessage) {

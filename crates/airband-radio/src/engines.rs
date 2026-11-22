@@ -49,13 +49,15 @@ pub struct HostDevice {
     /// The operating system, as a model's row names it under `min_os` ("ios"), and its major version.
     pub os: String,
     pub os_version: u32,
+    /// How many team colours the host draws with: the phone hands out places in that list, and no more.
+    pub team_colours: u8,
 }
 
 /// Can this build, on this device, run the model? Its engine is here or the host's, and where the row says
 /// which version of an operating system it needs, this is that system at that version or later.
 pub(crate) fn runs(m: &Model, device: &HostDevice) -> bool {
     let engine = HERE.iter().any(|(name, _)| *name == m.engine) || device.engines.contains(&m.engine);
-    let system = match m.with.get("min_os") {
+    let system = match m.with.get(crate::models::field::MIN_OS) {
         None => true,
         Some(needs) => needs.get(&device.os).and_then(|v| v.as_u64()).is_some_and(|least| u64::from(device.os_version) >= least),
     };
@@ -70,7 +72,7 @@ struct Hosted {
 
 impl Loaded for Hosted {
     fn speak(&mut self, host: ByHost, voice: &str, text: &str, sink: &mut dyn FnMut(&[u8]), _: &dyn Fn() -> bool) -> Result<(), String> {
-        let pcm = host(&self.engine, &self.folder, ChoiceJob::Voice, format!("{text}\n{voice}").into_bytes()).ok_or("this device could not run it")?;
+        let pcm = host(&self.engine, &self.folder, ChoiceJob::Voice, serde_json::to_vec(&serde_json::json!({ "text": text, "voice": voice })).expect("words write as JSON")).ok_or("this device could not run it")?;
         sink(&pcm);
         Ok(())
     }
@@ -122,7 +124,7 @@ mod tests {
 
     #[test]
     fn a_model_is_offered_only_where_its_engine_and_its_system_are() {
-        let phone = HostDevice { engines: vec!["host-new".into()], os: "ios".into(), os_version: 18 };
+        let phone = HostDevice { engines: vec!["host-new".into()], os: "ios".into(), os_version: 18, team_colours: 0 };
         // an engine nobody here has: not offered
         assert!(!runs(&row("unheard-of", serde_json::json!({})), &phone));
         // the host's own, with nothing said about the system
@@ -154,7 +156,9 @@ mod tests {
         assert_eq!(sound, [1, 0, 2, 0]);
         let asked = asked.into_inner().unwrap();
         assert_eq!(asked[0], ("host-new".into(), "/models/tiny/1".into(), ChoiceJob::Ears, vec![0, 0]));
-        assert_eq!(asked[1], ("host-new".into(), "/models/tiny/1".into(), ChoiceJob::Voice, b"Hello.\nZoey".to_vec()));
+        assert_eq!((&asked[1].0, &asked[1].2), (&"host-new".to_string(), &ChoiceJob::Voice));
+        // words with a line in them reach the host whole, beside the voice
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&asked[1].3).unwrap(), serde_json::json!({ "text": "Hello.", "voice": "Zoey" }));
         // a host that cannot says so, and nothing is made up in its place
         assert!(held.with(|m| m.hear(&|_, _, _, _| None, vec![0, 0])).unwrap().is_err());
     }

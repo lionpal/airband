@@ -12,7 +12,7 @@ use std::time::Duration;
 pub(super) const VOICING: Voicing = Voicing { is: Interface { name: "generate-content", can: &[], told: &["url", "style", "auth", "rate"] }, make };
 
 fn make(voice: &Use, by: &By, provider: &Provider) -> Made {
-    Ok(Box::new(Generated { reach: Reach::of(voice, by, provider)?, style: by.text("style").into(), voice: voice.get(Job::Voice, "voice") }))
+    Ok(Box::new(Generated { reach: Reach::of(voice, by, provider)?, style: by.text("style").into(), voice: voice.get(Job::Voice, crate::models::field::VOICE) }))
 }
 
 struct Generated {

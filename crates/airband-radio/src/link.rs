@@ -10,6 +10,14 @@ pub(crate) use trail::*;
 /// The tower holds `GET /next` open for 25 seconds; anything past this means the connection is dead.
 pub(crate) const POLL_TIMEOUT: Duration = Duration::from_secs(50);
 
+/// Where what he says goes on the tower, under [`on_tower`].
+pub(crate) const UTTERANCE: &str = "/utterance";
+/// A path of the tower's radio routes, as the tower serves it: the one way every request's path is made,
+/// sealed for the relay or sent straight.
+pub(crate) fn on_tower(path: &str) -> String {
+    format!("{}{}", airband_core::radio::PATH.trim_end_matches('/'), path)
+}
+
 /// The way to the tower: straight there, or sealed through a relay. Nothing above this knows which.
 pub(crate) enum Route {
     Direct { url: String, auth: String, radio: String },
@@ -291,7 +299,7 @@ impl Link {
         Some(Err(last))
     }
 
-    /// One `airband.radio/2` request. `path` is what follows `/v1/radio`. An answer from the tower comes back
+    /// One request of the radio protocol ([`airband_core::radio::SCHEMA`]). `path` is what follows `/v1/radio`. An answer from the tower comes back
     /// with its status, whatever that is; an error is a request the tower never answered.
     pub(crate) fn request(&self, method: Method, path: &str, body: Option<Value>) -> Result<(u16, Value), LinkError> {
         self.request_as(method, path, body, false, &mut Vec::new())
@@ -301,7 +309,7 @@ impl Link {
     /// holding for it. The relay turns it back (`Behind`) while there is, and it is left with the relay too.
     /// `steps` is given each way it was tried and how that went.
     fn request_as(&self, method: Method, path: &str, body: Option<Value>, ordered: bool, steps: &mut Vec<Step>) -> Result<(u16, Value), LinkError> {
-        let path = format!("{}{}", airband_core::radio::PATH.trim_end_matches('/'), path);
+        let path = on_tower(path);
         let what = format!("{method} {path}");
         match &self.route {
             Route::Direct { url, auth, radio } => {
@@ -405,13 +413,14 @@ impl Link {
         let Route::Relay { relay, keys } = &self.route else { return Err(LinkError::Unreachable(Way::Paired)) };
         let id = &u.id;
         let began = std::time::Instant::now();
-        let sealed = keys.seal_call(&self.call(Method::Post, "/v1/radio/utterance", serde_json::to_value(u).unwrap()));
+        let path = on_tower(UTTERANCE);
+        let sealed = keys.seal_call(&self.call(Method::Post, &path, serde_json::to_value(u).unwrap()));
         let kept = match self.agent.post(format!("{relay}/v1/channels/{}/queue", keys.channel)).header("authorization", format!("Bearer {}", keys.radio_token)).header("content-type", "application/octet-stream").header(airband_core::relay::ID_HEADER, id).send(&sealed[..]) {
             Err(e) => Err(unsent(&e, Way::Kept)),
             Ok(res) if res.status().as_u16() == 202 => Ok(202),
             Ok(res) => Err(LinkError::HoldRefused(res.status().as_u16())),
         };
-        self.note(steps, true, began, "POST /v1/radio/utterance", Way::Kept, kept.clone());
+        self.note(steps, true, began, &format!("{} {path}", Method::Post), Way::Kept, kept.clone());
         kept.map(|_| ())
     }
 
@@ -422,7 +431,7 @@ impl Link {
     }
 
     fn say_ordered(&self, u: &Utterance, steps: &mut Vec<Step>) -> Result<airband_core::radio::Outcome, LinkError> {
-        match self.request_as(Method::Post, "/utterance", Some(serde_json::to_value(u).unwrap()), true, steps)? {
+        match self.request_as(Method::Post, UTTERANCE, Some(serde_json::to_value(u).unwrap()), true, steps)? {
             (200, v) => serde_json::from_value(v).map_err(|_| LinkError::Unreadable(self.went(steps))),
             (status, v) => Err(Self::no(status, &v)),
         }
@@ -601,7 +610,7 @@ mod tests {
     fn what_he_says_goes_straight_first_unless_the_relay_still_keeps_earlier_words() {
         let ways = |link: &Link| -> Vec<Way> {
             let mut steps = Vec::new();
-            let _ = link.request_as(Method::Post, "/utterance", None, true, &mut steps);
+            let _ = link.request_as(Method::Post, UTTERANCE, None, true, &mut steps);
             steps.iter().map(|s| s.way).collect()
         };
         // nothing kept: his own network first, the relay when the computer is not on it

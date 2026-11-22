@@ -5,28 +5,30 @@ use super::*;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-/// How many team colours a host has (`Palette.team` in the app).
-pub(crate) const COLOURS: u8 = 6;
-
 #[derive(Default)]
 pub(crate) struct Colours {
     /// Where they are kept. None for a desk that keeps nothing (a test).
     path: Option<PathBuf>,
+    /// How many colours the host draws teams with ([`HostDevice::team_colours`]).
+    count: u8,
     by_team: BTreeMap<String, u8>,
     /// The rooms seen since the app opened: a new one is given the colour the fewest of these have. Rooms kept
     /// from before that are not seen again (a team gone, a computer paired again) count for nothing.
     seen: std::collections::BTreeSet<String>,
+    keeping: crate::kept::Keeping,
 }
 
 impl Colours {
-    pub(crate) fn open(dir: &str) -> Colours {
+    pub(crate) fn open(dir: &str, count: u8) -> Colours {
         let path = (!dir.is_empty()).then(|| std::path::Path::new(dir).join("colours.json"));
         let by_team = path.as_deref().map(crate::kept::load_or_set_aside).unwrap_or_default();
-        Colours { path, by_team, seen: Default::default() }
+        Colours { path, count, by_team, seen: Default::default(), keeping: Default::default() }
     }
     /// Teams seen in a computer's chat: one seen for the first time is given the colour the fewest teams on
-    /// his screen have, the lowest of those when several tie.
-    pub(crate) fn see(&mut self, teams: impl IntoIterator<Item = String>) {
+    /// his screen have, the lowest of those when several tie. The words to tell him when the colours could
+    /// not be kept.
+    #[must_use]
+    pub(crate) fn see(&mut self, teams: impl IntoIterator<Item = String>) -> Option<String> {
         let mut changed = false;
         for team in teams {
             if team.is_empty() {
@@ -37,14 +39,13 @@ impl Colours {
                 continue;
             }
             let on_screen = |c: &u8| self.seen.iter().filter(|t| self.by_team.get(*t) == Some(c)).count();
-            let next = (0..COLOURS).min_by_key(on_screen).unwrap_or(0);
+            // a host with no colours gives none
+            let Some(next) = (0..self.count).min_by_key(on_screen) else { continue };
             self.by_team.insert(team, next);
             changed = true;
         }
-        if changed && let Some(path) = &self.path {
-            // a colour that could not be kept is chosen again the next time the app opens
-            let _ = crate::kept::save(path, &self.by_team);
-        }
+        let path = self.path.as_ref().filter(|_| changed)?;
+        self.keeping.save(path, &self.by_team, "Team colours may change when the app opens again.")
     }
     /// A room's colour: its place in the host's list of team colours. Nothing for one not seen yet.
     pub(crate) fn of(&self, room: &str) -> Option<u8> {

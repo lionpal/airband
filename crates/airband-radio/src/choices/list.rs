@@ -136,7 +136,7 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
         let has_key = (facts.has_key)(&s.kind);
         let state = working(&service_id(&s.kind, &s.offer)).or(failed(chosen)).unwrap_or(if s.key && !has_key { ChoiceState::NeedsKey } else { ChoiceState::Ready });
         // with none named, the usual answer the row gives for its voice
-        let voice = pick.as_ref().filter(|_| chosen).and_then(|p| p.set.get("voice").cloned()).filter(|v| !v.is_empty()).unwrap_or_else(|| s.usual_voice.clone());
+        let voice = pick.as_ref().filter(|_| chosen).and_then(|p| p.set.get(crate::models::field::VOICE).cloned()).filter(|v| !v.is_empty()).unwrap_or_else(|| s.usual_voice.clone());
         out.push(of_service(s, chosen, has_key, voice, state));
     }
     out

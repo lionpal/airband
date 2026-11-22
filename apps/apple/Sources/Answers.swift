@@ -172,7 +172,7 @@ struct ContextView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(m.fromAndStation).font(.system(size: 20, weight: .bold))
+                Text(model.fromAndComputer(m)).font(.system(size: 20, weight: .bold))
                 Spacer()
                 Button { dismiss() } label: {
                     RoundIcon("xmark", side: 34, glyph: 14, weight: .bold)

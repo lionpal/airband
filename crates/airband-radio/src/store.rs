@@ -30,14 +30,14 @@ pub(crate) struct Store {
     pub(crate) saved: Mutex<Saved>,
     /// Who is told when what he said could not be kept, once until it can be again.
     host: Option<Arc<dyn RadioHost>>,
-    failing: AtomicBool,
+    keeping: crate::kept::Keeping,
 }
 
 impl Store {
     pub(crate) fn open(data_dir: &str, host: Option<Arc<dyn RadioHost>>) -> Store {
         let file = (!data_dir.is_empty()).then(|| std::path::Path::new(data_dir).join("radio.json"));
         let saved = file.as_deref().map(crate::kept::load_or_set_aside).unwrap_or_default();
-        Store { file, saved: Mutex::new(saved), host, failing: AtomicBool::new(false) }
+        Store { file, saved: Mutex::new(saved), host, keeping: Default::default() }
     }
     /// Where fetched pictures are kept: beside the saved chat, or in the system's temporary folder when the
     /// host keeps nothing.
@@ -51,16 +51,11 @@ impl Store {
     pub(crate) fn change<T>(&self, f: impl FnOnce(&mut Saved) -> T) -> T {
         let mut saved = self.saved.lock().unwrap();
         let out = f(&mut saved);
-        if let Some(file) = &self.file {
-            match crate::kept::save(file, &*saved) {
-                Ok(()) => self.failing.store(false, Ordering::SeqCst),
-                Err(why) if !self.failing.swap(true, Ordering::SeqCst) => {
-                    if let Some(host) = &self.host {
-                        host.told(format!("{why} What you send and the chat are lost if the app closes."));
-                    }
-                }
-                Err(_) => {}
-            }
+        if let Some(file) = &self.file
+            && let Some(told) = self.keeping.save(file, &*saved, "What you send and the chat are lost if the app closes.")
+            && let Some(host) = &self.host
+        {
+            host.told(told);
         }
         out
     }

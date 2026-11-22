@@ -153,17 +153,28 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     func answerNow(station: String, message: String, text: String, tapped: Tapped?) throws { try desk.answerNow(station: station, messageId: message, text: text, tapped: tapped) }
 
     /// Look at everyone, at one team, or at one agent. Whatever he was answering is let go: it may no longer be
-    /// in view. Every place that changes who he is looking at goes through here.
+    /// in view. Every change he makes to who he is looking at goes through here; only a team that has gone is let go
+    /// of without him (`refresh`).
     func look(room: String? = nil, agent: String? = nil) {
         replyingTo = nil
         self.room = room
         only = agent
+    }
+    /// A team he has just made, waiting for its first agent to show: it is not in the list yet.
+    private var madeRoom: String?
+    /// Open a team he has just made. It is shown, empty, until its first agent comes.
+    func open(made room: String) {
+        madeRoom = room
+        look(room: room)
     }
 
     /// He tapped a notification: show that agent.
     func show(room: String, agent: String) {
         look(room: room.isEmpty ? nil : room, agent: agent.isEmpty ? nil : agent)
     }
+
+    /// A team on his screen, by its room id.
+    func room(_ id: String?) -> DeskRoom? { id.flatMap { id in view.rooms.first { $0.id == id } } }
 
     /// Every agent on the radio, in the order the teams are shown.
     var agents: [DeskMember] { view.rooms.flatMap(\.members) }
@@ -182,6 +193,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     var computers: [DeskComputer] { view.stations }
     /// What a computer is called to him, by its id.
     func computerName(_ id: String) -> String { view.stations.first { $0.id == id }?.name ?? "" }
+    /// Who a message is from, and on which computer when he has several.
+    func fromAndComputer(_ m: ChatMessage) -> String { [m.from, computerName(m.station)].filter { !$0.isEmpty }.joined(separator: " · ") }
     /// What he is told when a computer cannot be reached: which, when more than one could be meant.
     var cannotReach: String { view.away.isEmpty ? "Can\u{2019}t reach your computer" : "Can\u{2019}t reach " + view.away.joined(separator: ", ") }
     /// A state as it is read out for someone who cannot see its dot.
@@ -222,7 +235,9 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
             tray.removeAll { item in gone.contains { $0.id == item.id } }
         }
         // a room that has gone (its last agent left) is not somewhere he can stay
-        if let room, view.online, !view.rooms.contains(where: { $0.id == room }) { self.room = nil }
+        // (one he has just made is there once its first agent is: it stays open until then)
+        if let made = madeRoom, view.rooms.contains(where: { $0.id == made }) { madeRoom = nil }
+        if let room, view.online, room != madeRoom, !view.rooms.contains(where: { $0.id == room }) { self.room = nil }
         if full.count > (showWhole ? 400 : 60) { full.removeAll() } // opened long ago: fetched again if he looks again
         refreshChoices()
         syncBanners()
@@ -255,9 +270,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         guard let found = member(id) else { return }
         let (agent, team) = found
         // look at that agent, so the question is in view and his words go to it
-        replyingTo = nil
-        room = team.id
-        only = id
+        look(room: team.id, agent: id)
         let question = view.feed.last { $0.id == agent.questionId }
         guard !agent.questionId.isEmpty else {
             openMic()
@@ -276,26 +289,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
     }
 
-    /// The banners up now, by the agent each is for.
-    private var banners: [String: Activity<NeedsYouAttributes>] = [:]
-
-    /// While he is on a call, each agent that is waiting on him has a banner: on the lock screen, and on a
-    /// car's screen when another app is in front. It comes down when the agent has its answer or the call ends.
-    private func syncBanners() {
-        let waiting = calling ? agents.filter { $0.state == .asking } : []
-        for (id, banner) in banners where !waiting.contains(where: { $0.id == id }) {
-            banners[id] = nil
-            Task { await banner.end(nil, dismissalPolicy: .immediate) }
-        }
-        guard !waiting.isEmpty, ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-        for agent in waiting where banners[agent.id] == nil {
-            let state = NeedsYouAttributes.ContentState(waiting: waiting.count, question: agent.question)
-            guard let banner = try? Activity.request(attributes: NeedsYouAttributes(agent: agent.id, callsign: agent.callsign, badge: agent.badge), content: .init(state: state, staleDate: nil)) else { continue }
-            banners[agent.id] = banner
-            // the alert is what makes it show itself, and not only sit on the lock screen
-            Task { await banner.update(.init(state: state, staleDate: nil), alertConfiguration: .init(title: "\(agent.callsign) needs you", body: LocalizedStringResource(stringLiteral: agent.question.isEmpty ? "Tap to answer" : agent.question), sound: .default)) }
-        }
-    }
+    /// The banners up now, by the agent each is for (`RadioModel+Banners.swift`).
+    var banners: [String: Activity<NeedsYouAttributes>] = [:]
 
     /// The coding tools he uses, by id, the one he uses most first. The core keeps them: what can write his
     /// summaries follows from them.
@@ -340,7 +335,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// reached when it cannot, and otherwise `fallback`, which says what did not happen.
     static func words(for error: Error, else fallback: String) -> String {
         switch error {
-        case RadioError.Told(let reason): return reason
+        case RadioError.Told(let reason), RadioError.Kept(let reason): return reason
         case RadioError.Offline: return unreached
         default: return fallback
         }

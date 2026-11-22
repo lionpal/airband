@@ -16,7 +16,7 @@ pub struct DeskRoom {
     /// What one of its working agents is doing right now, as "callsign: a few words". Changes often; show it
     /// small and in passing, and never read it aloud.
     pub doing: Option<String>,
-    /// Its agents, by callsign: for a list he can pick one from.
+    /// Its agents, each known by its id: for a list he can pick one from.
     pub members: Vec<DeskMember>,
     /// Its place in the host's list of team colours. Nothing until the phone has given its team one.
     pub colour: Option<u8>,
@@ -76,7 +76,7 @@ pub struct DeskView {
     /// The feed: reports, questions and what he said, oldest first, without the chatter not worth his attention.
     /// A message with `open` is a question still waiting on him; one with `stalled` is from an agent that stopped.
     pub feed: Vec<ChatMessage>,
-    /// One per project with an agent on the radio, by name. Not narrowed by what he is looking at.
+    /// One per team with an agent on the radio, each known by its room id ([`DeskRoom::id`]). Not narrowed by what he is looking at.
     pub rooms: Vec<DeskRoom>,
     /// How many things agents have said that he has not had in front of him, over all of them. While the chat
     /// is on screen none of these are in what he is looking at.
@@ -142,6 +142,8 @@ pub enum UploadState {
 /// connected"), or empty when that way has not been tried or has only ever worked.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct DeskReach {
+    /// The computer, by its [`DeskComputer::id`], and what it is called to him.
+    pub id: String,
     pub computer: String,
     pub relay: String,
     pub near: String,

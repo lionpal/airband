@@ -12,7 +12,7 @@ private struct Speaker: View {
         Button { model.look(agent: m.agent) } label: {
             HStack(spacing: 7) {
                 if !m.badge.isEmpty { Badge(text: m.badge, colour: m.colour, size: 20) }
-                Text(m.fromAndStation).font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.quiet)
+                Text(model.fromAndComputer(m)).font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.quiet)
                 // no model read it: it is as the agent wrote it, and a small mark says so
                 if !m.unjudged.isEmpty {
                     Image(systemName: "text.badge.xmark").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.dim)
@@ -281,7 +281,3 @@ struct Unsent: View {
     }
 }
 
-extension ChatMessage {
-    /// Who it is from, and on which computer when he has several.
-    var fromAndStation: String { station.isEmpty ? from : "\(from) · \(station)" }
-}

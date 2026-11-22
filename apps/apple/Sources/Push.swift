@@ -55,6 +55,8 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler done: @escaping () -> Void) {
         let info = response.notification.request.content.userInfo
         let (room, agent) = (info["room"] as? String ?? "", info["agent"] as? String ?? "")
+        // what the agent is called now: the notification carries only its id
+        let called = RadioModel.shared.member(agent)?.agent.callsign
         let text: String?
         var tapped: Tapped?
         switch response.actionIdentifier {
@@ -84,14 +86,14 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
             do { try RadioModel.shared.answerNow(station: station, message: message, text: text, tapped: tapped) }
             catch RadioError.Told(let reason) { failure.set(reason) }
             catch RadioError.Refused { failure.set("That computer refused it.") }
-            // only this one is kept and sent later; anything that will never go comes as Told, with why
-            catch RadioError.Offline { failure.set("No connection. It goes when there is one.") }
+            // kept on the phone and sent later, with why it did not go now; anything that will never go comes as Told
+            catch RadioError.Kept(let reason) { failure.set(reason) }
             catch { failure.set("It was not sent. Open airband to send it again.") }
             finished.signal()
         }
         DispatchQueue.global(qos: .userInitiated).async {
             if finished.wait(timeout: .now() + 20) == .timedOut { failure.set("Still sending. Open airband to check.") }
-            if let why = failure.get() { Self.say(title: "Not sent to " + (agent.isEmpty ? "your agent" : agent), body: "“\(text)”. \(why)", room: room, agent: agent) }
+            if let why = failure.get() { Self.say(title: "Not sent to " + (called ?? "your agent"), body: "“\(text)”. \(why)", room: room, agent: agent) }
             DispatchQueue.main.async {
                 done()
                 UIApplication.shared.endBackgroundTask(task)
@@ -116,19 +118,5 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
         content.categoryIdentifier = NoticeButtons.failed
         content.userInfo = ["room": room, "agent": agent]
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
-    }
-}
-
-final class AppDelegate: NSObject, UIApplicationDelegate {
-    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
-        // before the launch ends, so an answer given on a notification while the app was not running is handled
-        UNUserNotificationCenter.current().delegate = Push.shared
-        return true
-    }
-    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-        RadioModel.shared.pushAddress(deviceToken.map { String(format: "%02x", $0) }.joined())
-    }
-    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
-        // no address: the app works as before, without notifications. Nothing to tell him that he can act on.
     }
 }

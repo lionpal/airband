@@ -10,9 +10,9 @@ pub(super) const VOICING: Voicing = Voicing { is: Interface { name: "speech", ca
 fn make(voice: &Use, by: &By, provider: &Provider) -> Made {
     let set = |field: &str| voice.get(Job::Voice, field);
     // the interface does not say the rate in a way every service agrees on, so the row or his setting does
-    let rate = set("rate").parse().ok().filter(|r| super::RATES.contains(r)).ok_or_else(|| format!("\"{}\" is not a rate a voice can be played at. It is a number like 24000.", set("rate")))?;
+    let rate = set(crate::models::field::RATE).parse().ok().filter(|r| super::RATES.contains(r)).ok_or_else(|| format!("\"{}\" is not a rate a voice can be played at. It is a number like 24000.", set(crate::models::field::RATE)))?;
     let reach = super::Reach { url: format!("{}/audio/speech", set("url").trim_end_matches('/')), auth: super::key_header(by, &voice.key)?, headers: Vec::new(), rate, service: super::Answering::of(provider) };
-    Ok(Box::new(OpenAiSpeech { reach, model: set("model"), voice: set("voice") }))
+    Ok(Box::new(OpenAiSpeech { reach, model: set("model"), voice: set(crate::models::field::VOICE) }))
 }
 
 /// Any service that speaks OpenAI's speech interface: `POST {url}/audio/speech`, asked for raw 16-bit mono PCM.

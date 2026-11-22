@@ -18,6 +18,8 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, gener
         let mut reached = false;
         // what reads there has just stopped working, in words for him
         let mut reads_trouble: Option<String> = None;
+        // the team colours could not be kept, in words for him
+        let mut colours_lost: Option<String> = None;
         {
             let mut state = shared.state.lock().unwrap();
             if state.generation != generation {
@@ -71,7 +73,7 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, gener
             if got.is_ok()
                 && let Some(station) = state.stations.get(index) {
                 let rooms: Vec<String> = station.agents.iter().map(|a| a.room.clone()).chain(station.messages.iter().map(|m| m.room.clone())).collect();
-                state.colours.see(rooms);
+                colours_lost = state.colours.see(rooms);
             }
             // once the tower agrees a message is answered, stop tracking it here
             let now_open: HashSet<String> = state.stations.iter().flat_map(|s| s.open.iter().cloned()).collect();
@@ -85,6 +87,9 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, gener
             shared.senses.ears.expect(names);
         }
         shared.host.changed();
+        if let Some(lost) = colours_lost {
+            shared.host.note(lost);
+        }
         if let Some(why) = reads_trouble {
             let name = shared.state.lock().unwrap().computer_name(index);
             shared.host.note(format!("{name}: summaries are not working. {why} You are getting each message as it was written. To change what makes them, open Settings, then Summaries."));

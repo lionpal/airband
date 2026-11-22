@@ -9,7 +9,7 @@ struct ConnectionPage: View {
 
     var body: some View {
         Form {
-            ForEach(reach, id: \.computer) { r in
+            ForEach(reach, id: \.id) { r in
                 Section(r.computer) {
                     line("Through the relay", r.relay)
                     line("On this network", r.near)
@@ -31,7 +31,7 @@ struct ConnectionPage: View {
     private func line(_ title: String, _ last: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
-            Text(last.isEmpty ? "Nothing has failed" : last.prefix(1).uppercased() + last.dropFirst()).font(.footnote).foregroundStyle(.secondary)
+            Text(last.isEmpty ? "Nothing has failed" : last).font(.footnote).foregroundStyle(.secondary)
         }
     }
 }

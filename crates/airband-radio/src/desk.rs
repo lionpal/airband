@@ -71,7 +71,7 @@ pub trait DeskHost: Send + Sync {
     fn device(&self) -> HostDevice;
     /// Run a model with one of the engines `device` named. `folder` is where the model's files are. For
     /// listening `input` is a recording (16-bit little-endian mono PCM at 16 kHz) and the answer is the
-    /// words, as UTF-8. For a voice it is the words, as UTF-8, then a line feed and the name of the voice, and
+    /// words, as UTF-8. For a voice it is JSON, `{"text": the words, "voice": the voice's name}`, and
     /// the answer is the sound (16-bit little-endian mono PCM at the rate the model's row gives). Nothing when
     /// the host cannot. May block for as long as it takes.
     fn run_model(&self, engine: String, folder: String, job: ChoiceJob, input: Vec<u8>) -> Option<Vec<u8>>;
@@ -106,6 +106,10 @@ pub(crate) struct Station {
     /// This computer's recent chat, oldest first.
     messages: Vec<ChatMessage>,
 }
+/// What he is told when what he acted on is on a computer he is no longer paired with.
+pub(super) const UNPAIRED: &str = "That computer is no longer paired.";
+/// What he is told when the team he picked has no agents left, so no computer has it.
+pub(super) const NO_TEAM: &str = "That team has no agents now.";
 impl Station {
     /// What this computer is known by on this device ([`station_id`]).
     pub(crate) fn id(&self) -> String {
@@ -126,8 +130,8 @@ impl Station {
 struct Asking {
     message: Outgoing,
     guesses: Vec<String>,
-    /// The computer the words reached, which has the files they took with them.
-    at: usize,
+    /// The computer the words reached, which has the files they took with them, by its id.
+    at: String,
 }
 #[derive(Default)]
 pub(crate) struct State {
@@ -158,6 +162,10 @@ impl State {
         self.stations.iter().map(|s| s.radio.clone()).collect()
     }
     /// The computer that has this agent, by the agent's id: its place among them.
+    /// Where a computer is among them now, by its id ([`Station::id`]).
+    pub(super) fn station_at(&self, id: &str) -> Option<usize> {
+        self.stations.iter().position(|s| s.id() == id)
+    }
     fn station_with_agent(&self, id: &str) -> Option<usize> {
         self.stations.iter().position(|s| s.agents.iter().any(|a| a.id == id))
     }
@@ -187,7 +195,7 @@ impl State {
         match self.stations.len() {
             0 => None,
             1 => Some(0),
-            _ => self.read.main.as_ref().and_then(|id| self.stations.iter().position(|s| s.id() == *id)),
+            _ => self.read.main.as_deref().and_then(|id| self.station_at(id)),
         }
     }
     /// A room on his screen ([`DeskRoom::id`]): the radio of the computer that has it, the team's id there,
@@ -210,7 +218,7 @@ impl State {
             .flat_map(|s| {
                 s.messages.iter().map(move |m| {
                     ChatMessage {
-                        station: if several { s.name.clone() } else { String::new() },
+                        station: if several { s.id() } else { String::new() },
                         colour: self.colours.of(&m.room),
                         ..m.clone()
                     }
@@ -272,8 +280,9 @@ impl Desk {
     /// kept in a folder under it. Nothing is connected until [`Desk::set_links`].
     #[uniffi::constructor]
     pub fn open(data_dir: String, host: Arc<dyn DeskHost>) -> Arc<Self> {
-        let state = State { read: ReadMarks::load(&data_dir), colours: Colours::open(&data_dir), ..State::default() };
-        let chooser = crate::choices::Chooser::open(&data_dir, host.device());
+        let device = host.device();
+        let state = State { read: ReadMarks::load(&data_dir), colours: Colours::open(&data_dir, device.team_colours), ..State::default() };
+        let chooser = crate::choices::Chooser::open(&data_dir, device);
         let senses: Arc<Senses> = Arc::default();
         // what he chose to listen and speak with is in use from the start
         chooser.apply(&*host, &senses);
@@ -296,12 +305,14 @@ impl Desk {
                 continue;
             }
             let dir = if self.data_dir.is_empty() { String::new() } else { std::path::Path::new(&self.data_dir).join(folder(&link)).display().to_string() };
-            let host = Arc::new(StationHost { shared: self.shared.clone(), index: made.len(), generation });
-            let Ok(radio) = Radio::start_with(link.clone(), dir, host, self.shared.senses.clone()) else { continue };
-            radio.set_call_mode(calling);
+            let host: Arc<dyn RadioHost> = Arc::new(StationHost { shared: self.shared.clone(), index: made.len(), generation });
             // a computer that was already there keeps what was last seen of it, so the screen does not empty while
-            // it is asked again
+            // it is asked again, and what he was about to send there
             let was = old.iter().find(|s| s.link == link);
+            let kept = was.map(|s| s.radio.kept()).unwrap_or_else(|| Kept::open(&dir, host.clone()));
+            let Ok(radio) = Radio::start_with(link.clone(), &dir, host, self.shared.senses.clone(), kept) else { continue };
+            radio.set_call_mode(calling);
+            let sending = radio.unsent();
             let mut station = Station {
                 messages: radio.history(),
                 radio,
@@ -315,7 +326,9 @@ impl Desk {
                 reads_failed: String::new(),
                 agents: was.map(|s| s.agents.clone()).unwrap_or_default(),
                 open: was.map(|s| s.open.clone()).unwrap_or_default(),
-                sending: Vec::new(),
+                // what is still waiting to go, or was given up on, is shown from the start: nothing else says so
+                // until it is next tried
+                sending,
                 landing: Vec::new(),
                 quick: was.map(|s| s.quick.clone()).unwrap_or_default(),
                 link,
@@ -326,7 +339,22 @@ impl Desk {
         }
         let taken: Vec<String> = made.iter().map(|s| s.link.clone()).collect();
         let radios: Vec<Arc<Radio>> = made.iter().map(|s| s.radio.clone()).collect();
-        self.shared.state.lock().unwrap().stations = made;
+        {
+            let mut state = self.shared.state.lock().unwrap();
+            let paired: HashSet<String> = made.iter().map(|s| s.id()).collect();
+            // files on a computer he no longer has, and words that reached it, go nowhere else
+            state.uploads.retain(|u| {
+                let keep = paired.contains(&u.station);
+                if !keep {
+                    u.dropped.store(true, Ordering::SeqCst);
+                }
+                keep
+            });
+            if state.asking.as_ref().is_some_and(|a| !paired.contains(&a.at)) {
+                state.asking = None;
+            }
+            state.stations = made;
+        }
         for (index, radio) in radios.into_iter().enumerate() {
             let shared = self.shared.clone();
             thread::spawn(move || follow(shared, radio, index, generation));
@@ -355,15 +383,16 @@ impl Desk {
             self.set_links(links);
         }
     }
+}
+
+impl Desk {
     /// Stop for good.
-    pub fn stop(&self) {
+    #[cfg(test)]
+    pub(crate) fn stop(&self) {
         let mut state = self.shared.state.lock().unwrap();
         state.generation += 1;
         state.stations.drain(..).for_each(|s| s.radio.stop());
     }
-}
-
-impl Desk {
     /// The computer called this. With no name it is the one computer he has; with several he has to say
     /// which, and none is picked for him.
     fn station_radio(&self, computer: &str) -> Result<Arc<Radio>, RadioError> {

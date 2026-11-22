@@ -27,6 +27,9 @@ pub struct OpenedNotice {
     pub options: Vec<String>,
     /// It asks permission: the buttons are Allow and Deny, and words of his own refuse it.
     pub permission: bool,
+    /// Who it is from, the same for every notice of that agent on that computer: the thread it is grouped in,
+    /// and the sender the system groups it under.
+    pub thread: String,
 }
 /// What a button under a question stood for.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -68,7 +71,9 @@ pub fn open_notice(links: Vec<String>, sealed: String, colours: std::collections
         let keys = Keys::derive(&secret).ok()?;
         let n: airband_core::radio::Notice = serde_json::from_slice(&keys.open(Direction::Push, &sealed).ok()?).ok()?;
         let room = room_id(&keys.channel, &n.team);
+        let agent = n.agent.unwrap_or_default();
         Some(OpenedNotice {
+            thread: format!("{}/{agent}", keys.channel),
             colour: colours.get(&room).copied(),
             room,
             station: keys.channel,
@@ -77,7 +82,7 @@ pub fn open_notice(links: Vec<String>, sealed: String, colours: std::collections
             subtitle: if several { n.station } else { String::new() },
             body: n.text,
             badge: n.badge,
-            agent: n.agent.unwrap_or_default(),
+            agent,
             question: n.kind == Some(Kind::NeedsYou),
             options: if n.permission { Vec::new() } else { n.options },
             permission: n.permission,

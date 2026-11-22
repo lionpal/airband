@@ -131,8 +131,8 @@ pub trait RadioHost: Send + Sync {
     fn words(&self, text: String, starts: Vec<u32>, at_ms: Vec<u32>);
     /// Run a model with an engine the host has. `engine` is the name the model's row gives, `folder` is where
     /// the model's files are. For listening `input` is a recording (16-bit little-endian mono PCM at 16 kHz)
-    /// and the answer is the words, as UTF-8. For a voice it is the words, as UTF-8, then a line feed and the
-    /// name of the voice, and the answer is the sound (16-bit little-endian mono PCM at the rate the row
+    /// and the answer is the words, as UTF-8. For a voice it is JSON, `{"text": the words, "voice": the
+    /// voice's name}`, and the answer is the sound (16-bit little-endian mono PCM at the rate the row
     /// gives). Nothing when the host cannot: it has no such engine, or the model would not load. Blocks while
     /// it works.
     fn run_model(&self, engine: String, folder: String, job: ChoiceJob, input: Vec<u8>) -> Option<Vec<u8>>;
@@ -163,7 +163,7 @@ pub struct Outgoing {
     pub re: Option<String>,
     /// When he sent it, in milliseconds since 1970.
     pub at: u64,
-    /// The room he was looking at when he sent it  by its team's name, if he was in one.
+    /// The team of the room he was looking at when he sent it, by the team's id, if he was in one.
     #[serde(default)]
     pub scope: Option<String>,
     /// For a quick message: the words on the button. `text` is then the whole instruction.
@@ -249,6 +249,10 @@ impl Outgoing {
     pub(crate) fn new(id: String, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, attachments: Vec<String>, others: String) -> Outgoing {
         Outgoing { id, text, re, at: now_ms(), scope, label, attachments, others, to: Vec::new(), act: String::new(), answers: None, tries: 0, last_tried: 0, trail: Vec::new(), failed: None, stage: Stage::Trying }
     }
+    /// Words to send, under a new id, with nothing else yet: the rest is set by whoever sends them.
+    pub(crate) fn of(text: String) -> Outgoing {
+        Outgoing::new(random_hex(12), text, None, None, None, Vec::new(), String::new())
+    }
     /// What a button of his stood for goes with it, kept as the tower will read it.
     pub(crate) fn with_act(self, act: Option<&Act>) -> Outgoing {
         Outgoing { act: act.and_then(|a| serde_json::to_string(a).ok()).unwrap_or_default(), ..self }
@@ -272,6 +276,16 @@ pub enum RadioError {
     Refused,
     /// The tower answered, said no, and said why in words for him.
     Told { reason: String },
+    /// It did not go now, and is kept on this phone and sent when it can be: why, and that, in words for him.
+    Kept { reason: String },
+}
+
+impl RadioError {
+    /// Something on this phone itself failed (a file it could not read or keep): said as that, never as his
+    /// computer refusing.
+    pub(crate) fn here(what: &str) -> RadioError {
+        RadioError::Told { reason: format!("This phone could not {what}.") }
+    }
 }
 
 /// An address with its query, each value encoded: the one way an address with a query is put together, for
@@ -298,7 +312,7 @@ impl std::fmt::Display for RadioError {
             RadioError::BadLink { reason } => write!(f, "{reason}"),
             RadioError::Offline => write!(f, "cannot reach your computer"),
             RadioError::Refused => write!(f, "your computer refused that"),
-            RadioError::Told { reason } => write!(f, "{reason}"),
+            RadioError::Told { reason } | RadioError::Kept { reason } => write!(f, "{reason}"),
         }
     }
 }
@@ -308,6 +322,8 @@ impl From<LinkError> for RadioError {
         match e {
             // his computer's own reason, when it gave one, is what he should read
             LinkError::Tower { error, .. } if !error.is_empty() => RadioError::Told { reason: error },
+            // trouble of its own, which may pass, is not a no
+            e @ LinkError::Tower { status: 500..=599, .. } => RadioError::Told { reason: e.said() },
             LinkError::Tower { .. } => RadioError::Refused,
             // it will not go however often it is tried: he is told why, never that it goes when it can
             e if e.retry() == Retry::Never => RadioError::Told { reason: e.said() },

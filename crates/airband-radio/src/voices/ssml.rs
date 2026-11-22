@@ -10,7 +10,7 @@ pub(super) const VOICING: Voicing = Voicing { is: Interface { name: "ssml", can:
 
 fn make(voice: &Use, by: &By, provider: &Provider) -> Made {
     let reach = Reach::of(voice, by, provider)?;
-    Ok(Box::new(Ssml { language: by.text("language").into(), voice: voice.get(Job::Voice, "voice"), reach }))
+    Ok(Box::new(Ssml { language: by.text("language").into(), voice: voice.get(Job::Voice, crate::models::field::VOICE), reach }))
 }
 
 struct Ssml {

@@ -9,9 +9,8 @@ extension FeedView {
         model.view.feed.first { $0.id == m.id }?.from ?? m.from
     }
     private var placeholder: String {
-        if let re = model.replyingTo { return "reply to \(name(of: re))" }
-        if let only = model.onlyName { return "message \(only)" }
-        if let room = model.view.rooms.first(where: { $0.id == model.room }) { return "message \(room.name)" }
+        if let aim { return model.replyingTo == nil ? "message \(aim)" : "reply to \(aim)" }
+        if let room = model.room(model.room) { return "message \(room.name)" }
         return "say anything"
     }
     /// Who the line above the buttons says his words will go to, when it says so: the message he picked or the
@@ -31,7 +30,7 @@ extension FeedView {
     /// One quiet line above the buttons: who he is answering, or what the radio is doing.
     private var statusLine: String? {
         if model.micOpen { return aim.map { "to \($0) \u{b7} tap to send" } ?? "listening \u{b7} tap to send" }
-        if let re = model.replyingTo { return "to \(name(of: re)) \u{b7} tap here to undo" }
+        if model.replyingTo != nil, let aim { return "to \(aim) \u{b7} tap here to undo" }
         switch model.status {
         case .listening: return "listening \u{b7} tap to send"
         case .sending: return "sending"

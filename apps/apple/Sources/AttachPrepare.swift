@@ -26,17 +26,23 @@ private struct PickedMovie: Transferable {
     let url: URL
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(contentType: .movie) { SentTransferredFile($0.url) } importing: { received in
-            let copy = FileManager.default.temporaryDirectory.appendingPathComponent("picked-\(UUID().uuidString).\(received.file.pathExtension.isEmpty ? "mov" : received.file.pathExtension)")
+            let copy = FileManager.default.temporaryDirectory.appendingPathComponent("picked-\(UUID().uuidString)" + Prepare.ending(received.file))
             try FileManager.default.copyItem(at: received.file, to: copy)
             return PickedMovie(url: copy)
         }
     }
 }
 
-/// Making what he picked ready to send. A photo is sent at a size an agent can use (2400 points at most on its
+/// Making what he picked ready to send. A photo is sent at a size an agent can use (2400 pixels at most on its
 /// long side), a video at 960x540, so neither takes long on a phone connection. Returns the file, what to call it,
 /// and a small picture of it.
 enum Prepare {
+    /// The ending a file's name needs to say what it is, with its dot: its own, or the one its type has as the
+    /// system reads it. Nothing when neither says.
+    static func ending(_ file: URL) -> String {
+        let own = file.pathExtension.isEmpty ? (try? file.resourceValues(forKeys: [.contentTypeKey]))?.contentType?.preferredFilenameExtension : file.pathExtension
+        return own.map { "." + $0 } ?? ""
+    }
     static func photo(_ data: Data, number: Int) -> (URL, String, UIImage)? {
         guard let image = UIImage(data: data) else { return nil }
         let long = max(image.size.width, image.size.height) * image.scale
@@ -65,7 +71,7 @@ enum Prepare {
         let first = CMTime(seconds: kept?.lowerBound ?? 0, preferredTimescale: 600)
         if let frame = try? frames.copyCGImage(at: first, actualTime: nil) { picture = thumb(UIImage(cgImage: frame)) }
         // smaller first: a minute at 960x540 is around a tenth of what the camera recorded
-        let whole = "video-\(number).\(source.pathExtension.isEmpty ? "mov" : source.pathExtension)"
+        let whole = "video-\(number)" + ending(source)
         guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset960x540) else { return (source, whole, picture) }
         export.outputURL = file
         export.outputFileType = .mp4
@@ -103,39 +109,34 @@ extension RadioModel {
         }
     }
 
+    /// The number the next thing he attaches is called by: one past the highest in the tray, so a removal
+    /// never lets two have the same name.
+    private var nextNumber: Int { (tray.map(\.number).max() ?? 0) + 1 }
+
     /// Everything attached has reached his computer.
     var trayReady: Bool { !tray.isEmpty && tray.allSatisfy { item in view.uploads.first { $0.id == item.attachment }?.state == .ready } }
 
     /// He tapped one of his newest photos or videos: it goes the way a picked one does. Returns which item in
     /// the tray it became.
     @discardableResult func attach(_ asset: PHAsset) -> UUID {
-        let video = asset.mediaType == .video
-        let number = tray.count + 1
-        let item = TrayItem(video: video, number: number)
-        tray.append(item)
-        if video {
+        let item = newItem(video: asset.mediaType == .video)
+        if item.video {
             let wanted = PHVideoRequestOptions()
             wanted.isNetworkAccessAllowed = true
             PHImageManager.default().requestAVAsset(forVideo: asset, options: wanted) { movie, _, _ in
                 // A copy of the app's own, as a picked video is: the tray trims its source and deletes it when the
                 // item is taken off, and neither may ever touch the one in his library.
-                let copy = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mov")
-                guard let url = (movie as? AVURLAsset)?.url, (try? FileManager.default.copyItem(at: url, to: copy)) != nil else {
-                    DispatchQueue.main.async { self.prepared(item.id, nil, source: nil) }
-                    return
-                }
-                Task {
-                    let made = await Prepare.video(copy, number: number)
-                    await MainActor.run { self.prepared(item.id, made, source: copy) }
-                }
+                guard let url = (movie as? AVURLAsset)?.url else { return self.failed(item) }
+                let copy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + Prepare.ending(url))
+                guard (try? FileManager.default.copyItem(at: url, to: copy)) != nil else { return self.failed(item) }
+                Task { await self.ready(item, video: copy) }
             }
         } else {
             let wanted = PHImageRequestOptions()
             wanted.isNetworkAccessAllowed = true
             wanted.deliveryMode = .highQualityFormat
             PHImageManager.default().requestImageDataAndOrientation(for: asset, options: wanted) { data, _, _, _ in
-                let photo = data.flatMap { Prepare.photo($0, number: number) }
-                DispatchQueue.main.async { self.prepared(item.id, photo.map { ($0.0, $0.1, $0.2) }, source: nil) }
+                Task { await self.ready(item, photo: data) }
             }
         }
         return item.id
@@ -144,20 +145,35 @@ extension RadioModel {
     /// He picked these from his photos: each appears in the tray at once, is made ready on the phone, then sent.
     func attach(_ picked: [PhotosPickerItem]) {
         for pick in picked {
-            let video = pick.supportedContentTypes.contains { $0.conforms(to: .movie) }
-            let number = tray.count + 1
-            let item = TrayItem(video: video, number: number)
-            tray.append(item)
+            let item = newItem(video: pick.supportedContentTypes.contains { $0.conforms(to: .movie) })
             Task {
-                if video, let movie = try? await pick.loadTransferable(type: PickedMovie.self) {
-                    let made = await Prepare.video(movie.url, number: number)
-                    await MainActor.run { self.prepared(item.id, made, source: movie.url) }
-                } else if let data = try? await pick.loadTransferable(type: Data.self), let photo = Prepare.photo(data, number: number) {
-                    await MainActor.run { self.prepared(item.id, (photo.0, photo.1, photo.2), source: nil) }
+                if item.video, let movie = try? await pick.loadTransferable(type: PickedMovie.self) {
+                    await ready(item, video: movie.url)
                 } else {
-                    await MainActor.run { self.prepared(item.id, nil, source: nil) }
+                    await ready(item, photo: try? await pick.loadTransferable(type: Data.self))
                 }
             }
         }
+    }
+
+    /// A new item in the tray, shown at once while it is made ready.
+    private func newItem(video: Bool) -> TrayItem {
+        let item = TrayItem(video: video, number: nextNumber)
+        tray.append(item)
+        return item
+    }
+    /// A video of the app's own, made ready to send: the tray keeps it as the source to trim again.
+    private func ready(_ item: TrayItem, video copy: URL) async {
+        let made = await Prepare.video(copy, number: item.number)
+        await MainActor.run { self.prepared(item.id, made, source: copy) }
+    }
+    /// A photo made ready to send; nothing when it could not be read.
+    private func ready(_ item: TrayItem, photo data: Data?) async {
+        let photo = data.flatMap { Prepare.photo($0, number: item.number) }
+        await MainActor.run { self.prepared(item.id, photo.map { ($0.0, $0.1, $0.2) }, source: nil) }
+    }
+    /// What he attached could not be had at all.
+    private func failed(_ item: TrayItem) {
+        DispatchQueue.main.async { self.prepared(item.id, nil, source: nil) }
     }
 }

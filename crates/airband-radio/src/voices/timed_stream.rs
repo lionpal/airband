@@ -5,7 +5,7 @@
 use super::{Made, Reach, Synth, Voicing};
 use airband_core::encode::unbase64;
 use airband_core::providers::{By, Interface, Job, Provider, Use};
-use serde_json::{Value, json};
+use serde_json::json;
 use std::io::{BufRead, BufReader};
 use std::time::Duration;
 
@@ -33,20 +33,37 @@ impl Synth for Timed {
         let (mut at, mut gap) = (0u32, true);
         for line in BufReader::new(res.into_body().into_reader()).lines() {
             let line = line.map_err(|e| e.to_string())?;
-            let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
-            let (characters, starts) = (v["alignment"]["characters"].as_array(), v["alignment"]["character_start_times_seconds"].as_array());
-            for (c, start) in characters.into_iter().flatten().zip(starts.into_iter().flatten()) {
-                let space = c.as_str().is_none_or(|c| c.trim().is_empty());
-                if gap && !space {
-                    mark(at, (start.as_f64().unwrap_or(0.0) * 1000.0) as u32);
+            let Ok(part) = serde_json::from_str::<Part>(&line) else { continue };
+            // the timings, read as the service sends them; a part whose timings do not read marks nothing
+            if let Some(Alignment { characters, character_start_times_seconds: starts }) = part.alignment {
+                for (c, start) in characters.iter().zip(starts) {
+                    let space = c.trim().is_empty();
+                    if gap && !space {
+                        mark(at, (start * 1000.0) as u32);
+                    }
+                    gap = space;
+                    at += c.chars().count() as u32;
                 }
-                gap = space;
-                at += c.as_str().map(|c| c.chars().count() as u32).unwrap_or(1);
             }
-            if let Some(pcm) = v["audio_base64"].as_str().and_then(unbase64) {
+            if let Some(pcm) = part.audio_base64.as_deref().and_then(unbase64) {
                 sink(&pcm);
             }
         }
         Ok(())
     }
+}
+
+/// One line of what the service streams back: some of the sound, and where in the text each character of it
+/// starts.
+#[derive(serde::Deserialize)]
+struct Part {
+    #[serde(default)]
+    audio_base64: Option<String>,
+    #[serde(default)]
+    alignment: Option<Alignment>,
+}
+#[derive(serde::Deserialize)]
+struct Alignment {
+    characters: Vec<String>,
+    character_start_times_seconds: Vec<f64>,
 }

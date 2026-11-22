@@ -4,14 +4,14 @@ use super::*;
 #[uniffi::export]
 impl Desk {
     /// The folders inside one of his on a computer, for choosing where a new team works. `computer` is its
-    /// name, or empty when he has only one; `under` is a folder's whole path, or empty for his
+    /// [`DeskComputer::id`], or empty when he has only one; `under` is a folder's whole path, or empty for his
     /// home folder. Blocks: call it off the main thread.
     pub fn folders(&self, computer: String, under: String) -> Result<DeskFolders, RadioError> {
         let f = self.station_radio(&computer)?.folders(under)?;
         Ok(DeskFolders { path: f.path, shown: f.shown, up: f.up, folders: f.folders.into_iter().map(|f| DeskFolder { name: f.name, path: f.path }).collect(), team: f.team, has_team: f.has_team })
     }
     /// The folders the coding tools on a computer have had sessions in, newest first, then the teams there
-    /// that no tool has a record of. `computer` is its name, or empty when he has only one. Blocks: call it
+    /// that no tool has a record of. `computer` is its [`DeskComputer::id`], or empty when he has only one. Blocks: call it
     /// off the main thread.
     pub fn recent_folders(&self, computer: String) -> Result<Vec<DeskRecent>, RadioError> {
         let tools = airband_core::catalog::current();
@@ -22,7 +22,8 @@ impl Desk {
     /// and the folder its agents work in (with `make`, the folder a new one called by that name is made in).
     /// Its first agent is started there with nothing to do yet. Blocks: call it off the main thread.
     /// `tool` is the coding tool its first agent is, by id; nothing is the computer's usual one.
-    /// Answers with the team's room on his screen ([`DeskRoom::id`]).
+    /// `computer` is its [`DeskComputer::id`], or empty when he has only one. Answers with the team's room on
+    /// his screen ([`DeskRoom::id`]).
     pub fn new_team(&self, computer: String, name: String, folder: String, make: bool, tool: Option<String>) -> Result<String, RadioError> {
         let (radio, station) = self.station_of(&computer)?;
         Ok(room_id(&station, &radio.new_project(name, folder, make, tool.filter(|t| !t.is_empty()))?))
@@ -39,7 +40,7 @@ impl Desk {
             None => format!("New agent in {name}"),
         };
         let launch = airband_core::radio::Launch { team, tool: tool.map(|t| t.id), ..Default::default() };
-        radio.queue_as(shown, None, None, None, String::new(), Vec::new(), Some(Act::Launch(launch)));
+        radio.queue_out(Outgoing::of(shown).with_act(Some(&Act::Launch(launch))));
     }
     /// Every paired computer's accounts, in the order the computers were paired. A computer that cannot be
     /// reached, or whose airband is too old, comes back with a note and no accounts. Blocks: call it off the
@@ -49,7 +50,7 @@ impl Desk {
         let radios = self.shared.state.lock().unwrap().named_radios();
         // one after another, not all at once: two computers on the same account asking Anthropic in the same
         // moment is how one of them gets refused
-        let mut all: Vec<StationAccounts> = radios
+        radios
             .into_iter()
             .map(|(computer, radio)| {
                 radio.accounts(&computer, fresh).unwrap_or_else(|e| StationAccounts {
@@ -64,17 +65,9 @@ impl Desk {
                     checked_at: 0,
                 })
             })
-            .collect();
-        // the same account on two computers has one allowance: where one computer could not be told it, what
-        // the other was told is shown
-        let known: Vec<(String, String, Vec<AccountLimit>)> = all.iter().flat_map(|s| s.accounts.iter()).filter(|a| !a.limits.is_empty()).map(|a| (a.harness.clone(), a.label.clone(), a.limits.clone())).collect();
-        for a in all.iter_mut().flat_map(|s| s.accounts.iter_mut()).filter(|a| a.limits.is_empty()) {
-            if let Some((_, _, limits)) = known.iter().find(|(harness, label, _)| *harness == a.harness && *label == a.label) {
-                a.limits = limits.clone();
-                a.problem = None;
-            }
-        }
-        all
+            .collect()
+        // Each computer's accounts are as it told them. Two computers' accounts are never taken for one by what
+        // they are called: nothing a computer says names an account the same way on another.
     }
     /// Move one computer's sessions to another of its accounts. `station`, `harness` and `id` are as
     /// [`Desk::accounts`] gave them. Blocks: call it off the main thread.
@@ -91,7 +84,7 @@ impl Desk {
         let pick = match to {
             DeskTeamPick::Room { room } => {
                 let state = self.shared.state.lock().unwrap();
-                let (there, team, _) = state.room(&room).ok_or(RadioError::Told { reason: "That team has no agents now.".into() })?;
+                let (there, team, _) = state.room(&room).ok_or(crate::choices::told(NO_TEAM))?;
                 if !Arc::ptr_eq(&there, &radio) {
                     return Err(RadioError::Told { reason: "An agent can only move to a team on its own computer.".into() });
                 }
@@ -118,7 +111,7 @@ impl Desk {
     /// changes: its agents, its room and its colour stay. Answers with the name it now has. Blocks: call it
     /// off the main thread.
     pub fn rename_team(&self, room: String, to: String) -> Result<String, RadioError> {
-        let (radio, team, _) = self.shared.state.lock().unwrap().room(&room).ok_or(RadioError::Told { reason: "That team has no agents now.".into() })?;
+        let (radio, team, _) = self.shared.state.lock().unwrap().room(&room).ok_or(crate::choices::told(NO_TEAM))?;
         let now = radio.rename_team(team, to)?;
         {
             // shown as the tower now has it, without waiting for the next look at the feed

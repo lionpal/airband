@@ -10,7 +10,7 @@ impl Desk {
             if state.station_with_agent(&agent).is_some() { state.asking.take() } else { None }
         };
         if let Some(asking) = asking {
-            place(&self.shared, asking.at, asking.message, agent);
+            place(&self.shared, &asking.at, asking.message, agent);
         }
         self.shared.host.changed();
     }
@@ -35,7 +35,7 @@ impl Desk {
             })
         };
         if let Some((text, radio)) = sent {
-            radio.queue_as(text, Some(message_id), None, None, String::new(), Vec::new(), Some(tapped.act()));
+            radio.queue_out(Outgoing { re: Some(message_id), ..Outgoing::of(text) }.with_act(Some(&tapped.act())));
         }
         self.shared.host.changed();
     }
@@ -50,7 +50,7 @@ impl Desk {
     fn owner_or_say(&self, message_id: &str) -> Option<Arc<Radio>> {
         let radio = self.radio_of(message_id);
         if radio.is_none() {
-            self.shared.host.note("That computer is no longer paired.".into());
+            self.shared.host.note(UNPAIRED.into());
         }
         radio
     }
@@ -63,11 +63,10 @@ impl Desk {
         let radio = {
             let mut state = self.shared.state.lock().unwrap();
             state.answered.insert(message_id.clone());
-            let named = state.stations.iter().position(|s| station_key(&s.link).as_deref() == Some(station.as_str()));
-            named.or(state.owner(&message_id)).map(|i| state.stations[i].radio.clone())
+            state.station_at(&station).or(state.owner(&message_id)).map(|i| state.stations[i].radio.clone())
         };
         self.shared.host.changed();
-        radio.ok_or(RadioError::Told { reason: "That computer is no longer paired.".into() })?.answer_now(match &tapped { Some(t @ (Tapped::Allow | Tapped::Deny)) => t.words(), _ => text }, message_id, tapped.map(|t| t.act()))
+        radio.ok_or(crate::choices::told(UNPAIRED))?.answer_now(match &tapped { Some(t @ (Tapped::Allow | Tapped::Deny)) => t.words(), _ => text }, message_id, tapped.map(|t| t.act()))
     }
     /// Send what he typed. Who it is for, in this order: tags at its start (`@shop2`, `@shop`, `@all`); the
     /// message `re` if he picked one; the `agent` he is looking at; otherwise the tower works it out from his
@@ -80,19 +79,14 @@ impl Desk {
     /// computer that has the message if the chat holds only their opening. Blocks while it fetches: call it
     /// off the main thread.
     pub fn resend(&self, message_id: String, agent_id: String) {
-        let (text, known) = {
+        let found = {
             let state = self.shared.state.lock().unwrap();
-            let found = state.message(&message_id).map(|(_, m)| (m.text.clone(), m.long));
-            let known = state.stations.iter().flat_map(|s| s.agents.iter()).any(|a| a.id == agent_id);
-            (found, known)
+            state.message(&message_id).map(|(_, m)| (m.text.clone(), m.long)).zip(state.radio_with_agent(&agent_id))
         };
-        let (Some((text, long)), true) = (text, known) else { return };
+        let Some(((text, long), radio)) = found else { return };
         let text = if long { self.full(message_id).unwrap_or(text) } else { text };
         // to the agent he picked, whatever tags the words start with: he chose who, so nothing in them is read
-        let radio = self.shared.state.lock().unwrap().radio_with_agent(&agent_id);
-        if let Some(radio) = radio {
-            radio.queue_as(text, None, None, None, String::new(), vec![agent_id], None);
-        }
+        radio.queue_out(Outgoing { to: vec![agent_id], ..Outgoing::of(text) });
         self.shared.host.changed();
     }
     /// Send a quick message: the feed shows `label`, the agent gets `text`. Who it is for is worked out as for
@@ -109,7 +103,7 @@ impl Desk {
         };
         for (radio, team) in radios {
             // what the chat shows for it is what the stopped agents are told
-            radio.queue_as("Keep going.".into(), None, team, None, String::new(), Vec::new(), Some(Act::Control { control: airband_core::routing::Control::Poke }));
+            radio.queue_out(Outgoing { scope: team, ..Outgoing::of("Keep going.".into()) }.with_act(Some(&Act::Control { control: airband_core::routing::Control::Poke })));
         }
         self.shared.host.changed();
     }
@@ -121,12 +115,11 @@ impl Desk {
             if state.stations.is_empty() {
                 return;
             }
-            if let Some(id) = &re {
-                state.answered.insert(id.clone());
-            }
+            // the message he answers is answered when his words go (`deliver`), not when the microphone opens: he
+            // may say nothing, or take it back
             state.discard = false;
             // any computer that is there can do the listening; where the words go is worked out when he sends them
-            let pick = state.uploads.first().map(|u| u.station).or_else(|| pick_station(&state, "", re.as_deref(), room.as_deref(), agent.as_deref()));
+            let pick = files_at(&state).or_else(|| pick_station(&state, "", re.as_deref(), room.as_deref(), agent.as_deref()));
             let Some(pick) = pick.filter(|i| state.stations[*i].online).or_else(|| state.stations.iter().position(|s| s.online)).or(pick) else { return };
             state.stations[pick].radio.clone()
         };
@@ -204,23 +197,21 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
         // Files he attached are already on one computer. Words with no address go there with them. Words he
         // addressed (a tag, a message he picked, the agent he is looking at) go where they are addressed, and
         // if that is another computer the files are sent there first: the words wait for them.
-        let files_at = state.uploads.first().map(|u| u.station);
-        let pick = match files_at {
+        let pick = match files_at(&state) {
             Some(at) if at != wanted && (tagged || aimed || re.is_some()) => {
                 let to = state.stations[wanted].radio.clone();
+                let (from, wanted_id) = (state.stations[at].radio.clone(), state.stations[wanted].id());
                 let mut moved = Vec::new();
                 for u in state.uploads.iter_mut() {
                     u.dropped.store(true, Ordering::SeqCst);
                     u.dropped = Arc::new(AtomicBool::new(false));
-                    moved.push((u.station, u.shown.id.clone(), u.file_path.clone(), u.name.clone(), u.dropped.clone()));
-                    u.station = wanted;
+                    moved.push((u.shown.id.clone(), u.file_path.clone(), u.name.clone(), u.dropped.clone()));
+                    u.station = wanted_id.clone();
                     u.shown.sent = 0;
                     u.shown.state = UploadState::Sending;
                 }
-                for (was, id, file_path, name, dropped) in moved {
-                    if let Some(old) = state.stations.get(was) {
-                        old.radio.disarm(id.clone());
-                    }
+                for (id, file_path, name, dropped) in moved {
+                    from.disarm(id.clone());
                     send_file(shared.clone(), to.clone(), id, file_path, name, dropped);
                 }
                 // send the words when the files are there (or have failed, or he gave up on them)
@@ -242,7 +233,8 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
             None => wanted,
         };
         // the ones that have arrived leave with this message
-        state.uploads.retain(|u| !(u.station == pick && u.shown.state == UploadState::Ready));
+        let pick_id = state.stations[pick].id();
+        state.uploads.retain(|u| !(u.station == pick_id && u.shown.state == UploadState::Ready));
         // the agent he is looking at, by id: the tower reads nothing to find who it is for
         let to: Vec<String> = match (&agent, aimed) {
             (Some(id), true) => state.stations[pick].agents.iter().find(|a| a.id == *id).map(|a| a.id.clone()).into_iter().collect(),
@@ -254,28 +246,32 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
         let others = if tagged || aimed || re.is_some() || state.stations.len() < 2 { String::new() } else { others(&state, pick, room.as_deref()) };
         (state.stations[pick].radio.clone(), text, re, scope, others, to)
     };
-    radio.queue_as(text, re, scope, label, others, to, None);
+    radio.queue_his(Outgoing { re, scope, label, others, to, ..Outgoing::of(text) });
     shared.host.changed();
 }
 /// Words of his that reached the computer `from` and no agent, now for `agent`: they go to the computer that
 /// has it, addressed to it. The files they took go too when that is the computer they are on; otherwise they
 /// stay there, for the next thing he sends to it, and he is told.
-pub(super) fn place(shared: &Arc<Shared>, from: usize, message: Outgoing, agent: String) {
+pub(super) fn place(shared: &Arc<Shared>, from: &str, message: Outgoing, agent: String) {
     let found = {
         let state = shared.state.lock().unwrap();
-        state.station_with_agent(&agent).map(|to| (to, state.stations[to].radio.clone(), state.stations.get(from).map(|s| s.radio.clone()), state.computer_name(from)))
+        let from = state.station_at(from);
+        state.station_with_agent(&agent).map(|to| (state.stations[to].radio.clone(), from.map(|i| (i == to, state.stations[i].radio.clone(), state.computer_name(i)))))
     };
-    let Some((to, radio, origin, origin_name)) = found else { return };
+    let Some((radio, origin)) = found else { return };
+    // the files go with the words when they are on that computer; the words still answer what they answered
+    let mut attachments = Vec::new();
     if !message.attachments.is_empty() {
         match origin {
-            Some(origin) if to != from => {
-                message.attachments.iter().for_each(|f| origin.arm(f.clone()));
+            Some((true, _, _)) => attachments = message.attachments,
+            Some((false, origin, origin_name)) => {
+                message.attachments.into_iter().for_each(|f| origin.arm(f));
                 shared.host.note(format!("The files you attached are on {origin_name}. They go with the next thing you send there."));
             }
-            _ => message.attachments.iter().for_each(|f| radio.arm(f.clone())),
+            None => shared.host.note("The files you attached were on a computer that is no longer paired. Your words went without them.".into()),
         }
     }
-    radio.queue_as(message.text, None, None, message.label, String::new(), vec![agent], None);
+    radio.queue_out(Outgoing { label: message.label, to: vec![agent], answers: message.answers, attachments, ..Outgoing::of(message.text) });
 }
 /// The agents on his screen that computers other than `pick` have, each with the last thing it said: for the
 /// tower his words are going to. In one room, only that room's.

@@ -81,7 +81,7 @@ struct ServiceEntry: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !choice.voices.isEmpty {
-                VoiceGrid(choices: choice.voices, chosen: told["voice"] ?? choice.voice) { told["voice"] = $0.name }
+                VoiceGrid(choices: choice.voices, chosen: told[voiceSetting()] ?? choice.voice) { told[voiceSetting()] = $0.name }
             }
             if choice.key {
                 if kept {
@@ -96,7 +96,7 @@ struct ServiceEntry: View {
                     if !choice.keysAt.isEmpty { Text("Keys are made at \(choice.keysAt)").font(.system(size: 12)).foregroundStyle(Palette.quiet) }
                 }
             }
-            let asks = choice.asks.filter { choice.voices.isEmpty || $0.field != "voice" }
+            let asks = choice.asks.filter { choice.voices.isEmpty || $0.field != voiceSetting() }
             if !asks.isEmpty {
                 if more {
                     ForEach(asks, id: \.field) { ask in

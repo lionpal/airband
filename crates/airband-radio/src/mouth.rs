@@ -132,7 +132,7 @@ impl Mouth {
     fn rate(&self) -> Result<u32, String> {
         match self.using() {
             Some(Own::Service(with)) => crate::voices::synth(&with).map(|s| s.rate()),
-            Some(Own::Model { held, .. }) => held.m.told("rate").parse().map_err(|_| format!("{} does not say what rate it speaks at.", held.m.name)),
+            Some(Own::Model { held, .. }) => held.m.told(crate::models::field::RATE).parse().map_err(|_| format!("{} does not say what rate it speaks at.", held.m.name)),
             other => Err(silent(other)),
         }
     }
