@@ -216,30 +216,31 @@ pub(super) async fn carry(relay: &Arc<Relay>, channel: &str, headers: &HeaderMap
 /// address belongs to. Only the channel's own tower may ask, each channel only so often, and nothing of what
 /// is passed on can be read here. Neither the address nor the notification is logged or kept.
 pub(super) async fn wake_phone(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, headers: HeaderMap, body: Bytes) -> Response {
-    let answer = |code: StatusCode, sent: bool, gone: bool, reason: &str| (code, axum::Json(PushAnswer { sent, gone, reason: reason.into() })).into_response();
+    let not = |code: StatusCode, why: NotPushed| (code, axum::Json(PushAnswer::not_sent(why))).into_response();
     if !relay.limits.lock().unwrap().push_by_address.allow(&caller(&headers), Instant::now()) {
-        return answer(StatusCode::TOO_MANY_REQUESTS, false, false, "too many notifications from this address; try again later");
+        return not(StatusCode::TOO_MANY_REQUESTS, NotPushed::TooManyFromAddress);
     }
     match relay.with_tower(&channel, &headers, |ch| push::allow(&mut ch.pushed, Instant::now())) {
         Err(no) => return *no,
-        Ok(false) => return answer(StatusCode::TOO_MANY_REQUESTS, false, false, "too many notifications from this channel; try again later"),
+        Ok(false) => return not(StatusCode::TOO_MANY_REQUESTS, NotPushed::TooManyOnChannel),
         Ok(true) => {}
     }
-    let Ok(ask) = serde_json::from_slice::<PushRequest>(&body) else { return answer(StatusCode::BAD_REQUEST, false, false, "not a push request") };
+    let Ok(ask) = serde_json::from_slice::<PushRequest>(&body) else { return not(StatusCode::BAD_REQUEST, NotPushed::NotARequest) };
     if !ask.well_formed() {
-        return answer(StatusCode::BAD_REQUEST, false, false, "the address or the sealed notification is not the right shape");
+        return not(StatusCode::BAD_REQUEST, NotPushed::WrongShape);
     }
     match relay.push.send(ask.provider, &ask.to, &ask.sealed, ask.question).await {
-        None => answer(StatusCode::SERVICE_UNAVAILABLE, false, false, "this relay has no such push service"),
-        Some(push::Outcome::Sent) => answer(StatusCode::OK, true, false, ""),
-        Some(push::Outcome::Gone) => answer(StatusCode::GONE, false, true, "the phone's address is no longer good"),
+        None => not(StatusCode::SERVICE_UNAVAILABLE, NotPushed::NoSuchService),
+        Some(push::Outcome::Sent) => (StatusCode::OK, axum::Json(PushAnswer { sent: true, ..PushAnswer::default() })).into_response(),
+        Some(push::Outcome::Gone) => not(StatusCode::GONE, NotPushed::Gone),
         Some(push::Outcome::Refused(said)) => {
+            // the service's own words are for this log only; the tower is told the status, as a fact
             eprintln!("airband-relay: a notification was refused: {said}");
-            answer(StatusCode::BAD_GATEWAY, false, false, &said.to_string())
+            not(StatusCode::BAD_GATEWAY, NotPushed::Refused { status: said.status })
         }
         Some(push::Outcome::Failed(why)) => {
             eprintln!("airband-relay: a notification could not be sent: {why}");
-            answer(StatusCode::BAD_GATEWAY, false, false, &why.to_string())
+            not(StatusCode::BAD_GATEWAY, why.told())
         }
     }
 }
@@ -460,6 +461,7 @@ mod tests {
                         match to.as_str() {
                             "aa11" => (StatusCode::OK, axum::Json(serde_json::json!({}))),
                             "bb22" => (StatusCode::GONE, axum::Json(serde_json::json!({ "reason": "Unregistered" }))),
+                            "dd44" => (StatusCode::SERVICE_UNAVAILABLE, axum::Json(serde_json::json!({ "reason": "ServiceUnavailable" }))),
                             _ => (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({ "reason": "BadDeviceToken" }))),
                         }
                     }
@@ -483,22 +485,24 @@ mod tests {
                 let res = wake_phone(State(relay), Path(channel), headers, Bytes::from(body)).await;
                 let status = res.status().as_u16();
                 let answer: PushAnswer = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), 1 << 16).await.unwrap()).unwrap_or_default();
-                (status, answer.sent, answer.gone, answer.reason)
+                (status, answer.sent, answer.gone, answer.why)
             }
         };
         // not the channel's tower: nothing is sent
         assert_eq!(ask("someone-else", airband_core::relay::PushService::Apns, "aa11").await.0, 403);
         assert_eq!(seen.load(Ordering::SeqCst), 0);
-        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "aa11").await, (200, true, false, String::new()));
-        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "bb22").await, (410, false, true, "the phone's address is no longer good".into()));
-        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "cc33").await, (410, false, true, "the phone's address is no longer good".into()));
-        assert_eq!(seen.load(Ordering::SeqCst), 3);
+        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "aa11").await, (200, true, false, None));
+        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "bb22").await, (410, false, true, Some(NotPushed::Gone)));
+        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "cc33").await, (410, false, true, Some(NotPushed::Gone)));
+        // the service's own word for a refusal is never passed on: the tower is told its status
+        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "dd44").await, (502, false, false, Some(NotPushed::Refused { status: 503 })));
+        assert_eq!(seen.load(Ordering::SeqCst), 4);
         // a service this relay does not have, and an address that is not one
         assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Unknown, "aa11").await.0, 503);
         assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "aa11/../x").await.0, 400);
         // and only so many from one channel
         relay.channels.lock().unwrap().get_mut(&keys.channel).unwrap().pushed = Some((Instant::now(), push::PUSHES));
         assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "aa11").await.0, 429);
-        assert_eq!(seen.load(Ordering::SeqCst), 3);
+        assert_eq!(seen.load(Ordering::SeqCst), 4);
     }
 }

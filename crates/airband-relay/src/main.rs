@@ -44,7 +44,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{Notify, oneshot};
-use airband_core::relay::{HELD_MOST, MAX_MESSAGE, PushAnswer, PushRequest, token_hash};
+use airband_core::relay::{HELD_MOST, MAX_MESSAGE, NotPushed, PushAnswer, PushRequest, token_hash};
 use airband_core::encode::random_hex;
 
 mod auth;

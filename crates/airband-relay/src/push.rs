@@ -53,6 +53,17 @@ pub(crate) enum Unsent {
     TimedOut,
     Unreachable,
 }
+impl Unsent {
+    /// What the tower is told.
+    pub(crate) fn told(&self) -> airband_core::relay::NotPushed {
+        use airband_core::relay::NotPushed;
+        match self {
+            Unsent::CannotSign => NotPushed::CannotSign,
+            Unsent::TimedOut => NotPushed::TimedOut,
+            Unsent::Unreachable => NotPushed::Unreachable,
+        }
+    }
+}
 impl std::fmt::Display for Unsent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {

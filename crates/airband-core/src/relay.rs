@@ -319,9 +319,67 @@ pub struct PushAnswer {
     /// The phone no longer takes notifications at that address: the tower forgets it.
     #[serde(default)]
     pub gone: bool,
-    /// Why not, in the push service's own word for it or the relay's.
+    /// Why not, as a fact a tower can act on. None from a relay older than this field, or when it was sent.
+    #[serde(default)]
+    pub why: Option<NotPushed>,
+    /// Why not, in the relay's own words ([`NotPushed`]'s), for a tower older than `why`. Never the push
+    /// service's own words: those stay in the relay's log.
     #[serde(default)]
     pub reason: String,
+}
+
+impl PushAnswer {
+    /// Not sent, for this reason.
+    pub fn not_sent(why: NotPushed) -> PushAnswer {
+        PushAnswer { sent: false, gone: why == NotPushed::Gone, reason: why.to_string(), why: Some(why) }
+    }
+}
+
+/// Why the relay did not hand a notification on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotPushed {
+    /// Too many from the tower's internet address lately.
+    TooManyFromAddress,
+    /// Too many on this channel lately.
+    TooManyOnChannel,
+    /// The body was not a [`PushRequest`].
+    NotARequest,
+    /// The address or the sealed notification was not the right shape ([`PushRequest::well_formed`]).
+    WrongShape,
+    /// This relay has no such push service.
+    NoSuchService,
+    /// The phone no longer takes notifications at that address.
+    Gone,
+    /// The push service said no, with this status.
+    Refused { status: u16 },
+    /// The relay could not sign what the push service asks for.
+    CannotSign,
+    /// The push service did not answer in time.
+    TimedOut,
+    /// The push service could not be reached.
+    Unreachable,
+    /// A reason a newer relay has and this build does not.
+    #[serde(other)]
+    Other,
+}
+
+impl std::fmt::Display for NotPushed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NotPushed::TooManyFromAddress => f.write_str("too many notifications from this address; try again later"),
+            NotPushed::TooManyOnChannel => f.write_str("too many notifications from this channel; try again later"),
+            NotPushed::NotARequest => f.write_str("not a push request"),
+            NotPushed::WrongShape => f.write_str("the address or the sealed notification is not the right shape"),
+            NotPushed::NoSuchService => f.write_str("this relay has no such push service"),
+            NotPushed::Gone => f.write_str("the phone's address is no longer good"),
+            NotPushed::Refused { status } => write!(f, "the push service said no (status {status})"),
+            NotPushed::CannotSign => f.write_str("the push key could not sign"),
+            NotPushed::TimedOut => f.write_str("the push service did not answer in time"),
+            NotPushed::Unreachable => f.write_str("the push service could not be reached"),
+            NotPushed::Other => f.write_str("the relay did not send it"),
+        }
+    }
 }
 
 /// The largest sealed notification, in bytes before base64: what fits in one push with room for the rest.
