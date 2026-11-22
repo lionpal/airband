@@ -1,16 +1,16 @@
 //! The first half of the dispatcher: how much of his attention a message deserves, and what to tell him of it.
-//! Also the fuller version, for "say more". The model is whatever command the configuration names.
+//! Also the fuller version, for "say more". The model is the one chosen to read (`models`).
 use super::*;
 use crate::providers::{By, Interface, Job, Offer};
 
 mod brief;
+mod chosen;
 mod later;
 mod models;
 use brief::*;
 pub(in crate::tower) use later::{JUDGE_NOW, judge_entry, judge_later};
+pub(in crate::tower) use chosen::*;
 pub(crate) use models::*;
-pub(super) use models::offered;
-pub(super) use models::{ask_model, failed, reader, set_reader};
 
 /// A model that did not answer: why, and anything more for this computer's own log. The second part is never
 /// sent to a phone.

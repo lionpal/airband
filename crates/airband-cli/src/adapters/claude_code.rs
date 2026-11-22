@@ -1,7 +1,8 @@
-//! The Claude Code adapter. Claude Code runs `airband hook claude-code` from its own hooks (SessionStart, Stop,
-//! Notification, UserPromptSubmit, SessionEnd, and PostToolUse for the tools that touch pictures) with the
-//! hook's JSON on standard input.
-use super::claude_accounts::HARNESS;
+//! The Claude Code adapter. Claude Code runs `airband hook claude-code` from its own hooks (`HOOKS`: the
+//! session's start and end, each prompt and stop, its notifications and permission requests, and the tools its
+//! row gives a role, before and after they run) with the hook's JSON on standard input.
+/// Claude Code's id: its row's, and the harness its agents report under.
+pub(crate) const HARNESS: &str = "claude-code";
 use super::env;
 use super::hooks::{On, on, text};
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk};
@@ -96,8 +97,7 @@ fn files_sent(hook: &Value) -> Vec<String> {
         .collect()
 }
 
-/// Claude Code: installed for SessionStart, Stop, Notification, UserPromptSubmit and SessionEnd, and after the
-/// tools that look at or hand over a picture.
+/// What one of Claude Code's hooks (`HOOKS`) reports.
 pub(crate) fn events(hook: &Value) -> Vec<AgentEvent> {
     if headless() {
         return Vec::new();

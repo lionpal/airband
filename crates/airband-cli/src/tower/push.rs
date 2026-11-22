@@ -75,10 +75,11 @@ pub(super) fn there(call: Option<&Call>, rev: u64) -> bool {
 /// The notification for a line, as the phone will open it.
 pub(super) fn notice(inner: &Inner, e: &Entry, station: &str) -> Notice {
     let m = inner.message(e);
-    let text = airband_core::prose::clip(&m.text, 400);
+    const MOST: usize = 400;
+    let text = airband_core::prose::clip(&m.text, MOST);
     // A request for leave that does not fit is shown by its opening and offers no answer from the lock screen:
     // he opens it, reads all of what would run, and answers there.
-    let cut = m.permission && text != m.text;
+    let cut = m.permission && m.text.chars().count() > MOST;
     Notice { id: m.id, from: m.from, agent: m.agent, badge: m.badge, group: m.group, team: m.team, station: station.into(), text, kind: m.kind, options: if cut { Vec::new() } else { m.options.iter().take(4).map(|o| airband_core::prose::clip(o, 40)).collect() }, permission: m.permission && !cut }
 }
 

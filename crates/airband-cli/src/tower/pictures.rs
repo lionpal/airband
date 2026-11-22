@@ -41,7 +41,6 @@ pub(super) fn keep(path: &Path) -> Option<Picture> {
     keep_as(airband_core::encode::hex(&digest[..12]), || image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.decode().ok())
 }
 
-/// Keep a copy of a picture he pasted in, given as its bytes.
 /// The pictures he pasted in with each thing he typed at an agent's keyboard, kept: one list per thing typed,
 /// empty for what was not his.
 pub(super) fn pasted(told: &[crate::adapters::Told]) -> Vec<Vec<airband_core::radio::Picture>> {

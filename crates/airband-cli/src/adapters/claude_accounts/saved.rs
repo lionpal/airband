@@ -75,7 +75,7 @@ pub(super) fn resolve(here: &Here, query: &str) -> Res<String> {
 
 /// A saved login's refresh token, compared whole to tell whether it is the very login in use.
 pub(super) fn refresh_token_of(here: &Here, email: &str) -> Option<String> {
-    saved(here, email).ok().flatten()?.get(&super::login_key())?.get("refreshToken")?.as_str().map(String::from)
+    saved(here, email).ok().flatten()?.get(super::login_key())?.get("refreshToken")?.as_str().map(String::from)
 }
 
 /// The saved login's own record, or a reason to sign in again.

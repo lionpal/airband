@@ -20,7 +20,6 @@ use tower::ServiceExt;
 use airband_core::relay::{Answer, Call, FRESH_MS, Keys, fresh};
 
 
-/// What a radio whose clock is wrong is told.
 /// Why a request too far from this computer's clock is refused, said from the limit itself.
 fn wrong_clock() -> String {
     format!("the clocks of your phone and your computer are more than {} minutes apart", FRESH_MS / 60_000)
@@ -171,7 +170,11 @@ impl Serve {
                 Ok(mut res) => match res.status().as_u16() {
                     200 => {
                         wait = 1;
-                        let id = res.headers().get(REQUEST_HEADER).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+                        // a request with no id could never be answered: the relay has broken its side of the contract
+                        let Some(id) = res.headers().get(REQUEST_HEADER).and_then(|v| v.to_str().ok()).map(String::from) else {
+                            log(format!("{relay} handed over a request for \"{}\" with no id; it cannot be answered", self.name));
+                            continue;
+                        };
                         // the relay says outright when it had been keeping this one; nothing is read from the id
                         let kept = res.headers().contains_key(airband_core::relay::KEPT_HEADER);
                         if let Ok(sealed) = res.body_mut().read_to_vec() {

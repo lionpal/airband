@@ -16,8 +16,6 @@ pub(super) async fn accounts_use(State(app): State<Arc<App>>, Json(to): Json<air
     })
 }
 
-/// A harness asks whether its agent may do something. The answer is fetched separately, so nothing is held open
-/// across a tower restart.
 /// A radio says where it can be woken when it is not listening (its address at a push service), or takes that back.
 pub(super) async fn push_target(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Json(target): Json<airband_core::radio::PushTarget>) -> Json<Value> {
     push::register(&app, &radio, target);

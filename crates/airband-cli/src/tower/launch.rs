@@ -2,8 +2,7 @@
 //! lately worked in) and says what the agent should do; the tower runs the configured launcher there. One the
 //! tower runs itself is held by it; one handed off reports in like any other, through its own adapter.
 //!
-//! Only into known places: his teams' folders, and folders his coding tools have had sessions in. A launcher is
-//! a command template, so another agent tool is another entry in `launchers`, not code here.
+//! A launcher is a command template, so another agent tool is another entry in `launchers`, not code here.
 use super::*;
 
 /// A new agent he asked for: where, on what, and to do what. The place is nothing until it is known; the model

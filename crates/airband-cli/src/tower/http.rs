@@ -1,4 +1,4 @@
-//! The tower's HTTP surface: `airband.agent/1` in, `airband.radio/2` both ways, and a status page for the
+//! The tower's HTTP surface: `airband.agent/1` in, `airband.radio/3` both ways, and a status page for the
 //! command line. Handlers are thin: they lock, call into the other modules, and answer.
 use super::*;
 
@@ -39,8 +39,8 @@ async fn auth(State(app): State<Arc<App>>, req: Request, next: Next) -> Response
         return (StatusCode::UNAUTHORIZED, Json(refused("bad token"))).into_response();
     }
     let mut req = req;
-    // A radio must say which one it is. The computer's own command line (the tower's token) is no radio: it
-    // may ask what any radio may ask that is not kept per radio (accounts, the feed), and says no name.
+    // A radio must say which one it is. A caller with the tower's own token (the hooks, `airband status`) is no
+    // radio: it may ask what any radio may ask that is not kept per radio (accounts, the feed), naming none.
     let named = req.headers().get(RADIO_HEADER).is_some();
     if req.uri().path().starts_with(airband_core::radio::PATH) && req.extensions().get::<RadioId>().is_none() && (radio || named) {
         match req.headers().get(RADIO_HEADER).and_then(|v| v.to_str().ok()).filter(|v| !v.is_empty()).map(String::from) {
@@ -64,11 +64,11 @@ async fn presence_said(State(app): State<Arc<App>>, req: Request, next: Next) ->
     next.run(req).await
 }
 
-/// Every route the tower serves. The relay link hands sealed requests to this same router, so a request is
-/// handled identically however it arrived.
 /// The route something he said comes by: the one request a relay may keep while the tower is away.
 pub(super) const UTTERANCE: &str = "/v1/radio/utterance";
 
+/// Every route the tower serves. The relay link hands sealed requests to this same router, so a request is
+/// handled identically however it arrived.
 pub(super) fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/v1/agent/events", post(events))

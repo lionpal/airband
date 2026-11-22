@@ -14,10 +14,10 @@ pub(super) struct Item {
     /// chatter along the way.
     pub(super) asked: Option<String>,
 }
-/// One line of the chat log. For an agent's message, `aloud` says where it stands with being read out.
 /// What a message of his is shown as coming from. Only a label: whether a message is his is `Entry::his`.
 pub(super) const HIM: &str = "you";
 
+/// One line of the chat log. For an agent's message, `aloud` says where it stands with being read out.
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub(super) struct Entry {
     pub(super) seq: u64,

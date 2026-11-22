@@ -242,8 +242,7 @@ mod tests {
 
     #[test]
     fn two_recent_folders_that_would_be_called_alike_are_both_places_to_start_in() {
-        let mut inner = Inner::default();
-        inner.worked = vec![("/a/x/shop".into(), vec!["codex".into()], 9), ("/b/y/shop".into(), vec!["codex".into()], 7)];
+        let inner = Inner { worked: vec![("/a/x/shop".into(), vec!["codex".into()], 9), ("/b/y/shop".into(), vec!["codex".into()], 7)], ..Inner::default() };
         let folders: Vec<String> = inner.launchable().into_iter().map(|p| p.folder).collect();
         assert_eq!(folders, ["/a/x/shop", "/b/y/shop"]);
     }

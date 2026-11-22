@@ -1,6 +1,6 @@
 //! Adapters: each turns one harness's own notifications into `airband.agent/1` events and posts them to the tower
-//! on this machine. An adapter never holds its harness up: any failure is silent and it gives up after a second
-//! and a half.
+//! on this machine. An adapter never holds its harness up: it gives up on the tower after a second and a half,
+//! and keeps what the tower did not answer for when it is back (`tower_client`).
 //!
 //! To put another harness on the radio:
 //! - with no code, call `airband report` from whatever the harness can run (see `report.rs`);

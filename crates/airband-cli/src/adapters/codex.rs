@@ -1,4 +1,4 @@
-//! OpenAI's Codex, in a terminal he opened himself.
+//! Codex, in a terminal he opened himself or reached through its own server.
 //!
 //! Codex has hooks in the same shape as Claude Code's: a command run on an event, the event as JSON on its
 //! standard input, and for a permission request the decision as JSON on its standard output. So this adapter

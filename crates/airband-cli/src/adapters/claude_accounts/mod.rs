@@ -31,7 +31,7 @@ use std::time::Duration;
 
 type Res<T> = Result<T, String>;
 
-pub(crate) const HARNESS: &str = "claude-code";
+use super::claude_code::HARNESS;
 const ADD_AGAIN: &str = "Sign in to it again on the computer: airband accounts add";
 
 /// What Claude Code's row says about it.
@@ -148,7 +148,7 @@ fn save_live(here: &Here) -> Res<String> {
 /// once, but only when `may_refresh`: never while the login in use may be this one.
 fn saved_token(here: &Here, email: &str, may_refresh: bool) -> Res<String> {
     let entry = saved::entry(here, email)?;
-    let o = entry.get(&login_key()).ok_or(ADD_AGAIN)?;
+    let o = entry.get(login_key()).ok_or(ADD_AGAIN)?;
     let token = o.get("accessToken").and_then(|x| x.as_str()).unwrap_or("");
     let now = airband_core::clock::now_ms() as i64;
     // also while the refresh token has under a week left, so a login unused for weeks never lapses
@@ -236,7 +236,7 @@ fn switch_in(here: &Here, id: &str) -> Res<std::thread::JoinHandle<()>> {
         // without it there is no switch, rather than a record made up from the email
         let token = saved_token(here, &target, true)?;
         let acct = service::profile(here, &token).map(|(_, a)| a).ok_or_else(|| format!("Did not switch: {} would not say whose login that is just now. Try again in a moment.", maker()))?;
-        let incoming = saved::entry(here, &target)?.get(&login_key()).cloned().ok_or(ADD_AGAIN)?;
+        let incoming = saved::entry(here, &target)?.get(login_key()).cloned().ok_or(ADD_AGAIN)?;
         let blob = live::blob(here).map_err(|e| format!("Did not switch: {e}"))?;
         // keep the outgoing account's newest login: its refresh token has changed since it was saved
         if let (Some(email), Some(blob)) = (&outgoing, &blob) {
@@ -321,7 +321,7 @@ pub(crate) fn add() -> Res<String> {
             return Err("The sign-in did not finish.".into());
         }
         let blob: Value = serde_json::from_str(&here.vault.read(&service, here.user()?)?.ok_or("The sign-in saved no login.")?).map_err(|e| e.to_string())?;
-        let oauth = blob.get(&login_key()).cloned().ok_or("The sign-in saved no login for an account.")?;
+        let oauth = blob.get(login_key()).cloned().ok_or("The sign-in saved no login for an account.")?;
         let acct = live::oauth_account(&tmp.join(row("account_file"))).ok_or("The sign-in saved no account record.")?;
         let email = acct.get("emailAddress").and_then(|e| e.as_str()).map(String::from).ok_or("The account record has no email.")?;
         locked(&here, || saved::keep(&here, &email, &oauth, &acct))?;

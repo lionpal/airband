@@ -49,7 +49,6 @@ impl Store {
              create table if not exists state (key text primary key, value text not null);",
         )
         .map_err(|e| format!("cannot prepare {}: {e}", path.display()))?;
-        // what a request for leave asked and where it stands; a database made before this has no such column
         // columns added since the table was first made: what a request for leave asked and where it stands,
         // and what airband says around the tool's words
         for (column, kind) in [("request", "text"), ("note", "text"), ("his", "integer")] {
