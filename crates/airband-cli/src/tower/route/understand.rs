@@ -367,8 +367,9 @@ fn answered(mut judged: Out, scene: &Scene, listed: &[Listed], menus: &Menus, pr
 }
 
 /// He was asked who something he said was for, and has said something more. The agents his words name, or
-/// nothing when they are not an answer to that (or no model said): then they are a message of their own.
-pub(super) async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope: Option<&str>) -> Option<Vec<Session>> {
+/// nothing when they are not an answer to that: then they are a message of their own. `Err` when no model
+/// could say.
+pub(super) async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope: Option<&str>) -> Result<Option<Vec<Session>>, String> {
     let all: Vec<Session> = app.read().sessions.iter().filter(|s| scope.is_none_or(|g| s.team == g)).cloned().collect();
     let letters = |s: &Session| s.callsign.badge();
     let prompt = format!(
@@ -397,7 +398,7 @@ pub(super) async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope:
         "required": ["to", "all"],
         "additionalProperties": false
     });
-    let judged: Out = judge::ask_json(&app.cfg, "who he meant", prompt, Some(shape)).await.ok()?;
+    let judged: Out = judge::ask_json(&app.cfg, "who he meant", prompt, Some(shape)).await?;
     let meant: Vec<Session> = if judged.all { all } else { judged.to.iter().filter_map(|n| judge::listed(Some(*n), &all).cloned()).collect() };
-    (!meant.is_empty()).then_some(meant)
+    Ok((!meant.is_empty()).then_some(meant))
 }

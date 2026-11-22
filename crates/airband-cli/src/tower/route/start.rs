@@ -18,8 +18,8 @@ fn picked_shape() -> Value {
 }
 
 /// He was asked which place an idea belongs in, and has said something. The place his words name, or nothing
-/// when they are not an answer to that (or no model said).
-pub(super) async fn named_project(app: &Arc<App>, idea: &str, said: &str, projects: &[Place]) -> Option<Place> {
+/// when they are not an answer to that. `Err` when no model could say: then nothing is known either way.
+pub(super) async fn named_project(app: &Arc<App>, idea: &str, said: &str, projects: &[Place]) -> Result<Option<Place>, String> {
     let prompt = format!(
         "{name} wanted a new coding agent started on this: \"{idea}\"\nHe was asked which of his projects it is for:\n{list}\n\n\
          He now says: \"{said}\"\n\n\
@@ -32,8 +32,8 @@ pub(super) async fn named_project(app: &Arc<App>, idea: &str, said: &str, projec
         name = app.cfg.name,
         list = projects.iter().enumerate().map(|(i, p)| format!("{}. {}", i + 1, p.name)).collect::<Vec<_>>().join("\n"),
     );
-    let picked: Picked = judge::ask_json(&app.cfg, "which project he named", prompt, Some(picked_shape())).await.ok()?;
-    judge::listed(picked.project, projects).cloned()
+    let picked: Picked = judge::ask_json(&app.cfg, "which project he named", prompt, Some(picked_shape())).await?;
+    Ok(judge::listed(picked.project, projects).cloned())
 }
 
 /// Start the new agent he asked for. Where it goes was read with his words (`understand`): a place he named or
