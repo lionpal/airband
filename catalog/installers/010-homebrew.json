@@ -1,0 +1,1 @@
+{"id": "homebrew", "name": "Homebrew", "install": ["brew", "install", "lionpal/airband/airband"], "lasting": ["brew", "--prefix", "airband"], "bin": "bin"}

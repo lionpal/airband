@@ -1,5 +1,4 @@
 {
-  "install": "brew install lionpal/airband/airband",
   "start": "airband start",
   "start_without_relay": "airband relay off && airband start"
 }

@@ -45,7 +45,7 @@ impl Callsign {
         // his name for it usually starts with the team's or its folder's ("shop 2", "back office fixes"): that part
         // is not said twice
         let words: Vec<&str> = title.split(' ').filter(|w| !w.is_empty()).collect();
-        let leads: Vec<String> = std::iter::once(project.clone()).chain(team_names(folder)).map(|l| l.replace(' ', "")).collect();
+        let leads: Vec<String> = std::iter::once(project.clone()).chain(team_names(folder).into_iter().map(TeamName::into_string)).map(|l| l.replace(' ', "")).collect();
         let lead = (1..=words.len()).rev().find(|&n| leads.contains(&words[..n].concat())).unwrap_or(0);
         let rest: Vec<String> = words[lead..].iter().take(4).map(|w| number_word(w)).collect();
         (!rest.is_empty()).then(|| Callsign { project, number: rest.join(" "), named: true })
@@ -135,24 +135,27 @@ fn figure(number: &str) -> Option<u32> {
 mod tests {
     #[test]
     fn a_team_is_named_by_the_last_part_of_a_folder_and_a_callsign_is_shown_with_a_figure() {
-        assert_eq!(team_names("/work/Shop Front/").first().map(String::as_str), Some("shop front"));
+        let names = |folder: &str| team_names(folder).into_iter().map(TeamName::into_string).collect::<Vec<_>>();
+        let tn = |t: &str| TeamName::new(t).unwrap();
+        assert_eq!(names("/work/Shop Front/").first().map(String::as_str), Some("shop front"));
         assert_eq!(team_name("garden").as_deref(), Some("garden"));
         // a name he typed is never read as a path
         assert_eq!(team_name("shop/front").as_deref(), Some("shop front"));
         // nothing a team could be called
         assert_eq!((team_name("/"), team_name("  "), team_name("!!")), (None, None, None));
-        assert_eq!(team_names("/a/Work/shop/"), ["shop", "work shop", "a work shop"]);
-        assert_eq!(team_names("/"), Vec::<String>::new());
-        assert_eq!(team_on("Charles's Laptop", "shop"), "charless laptop shop");
+        assert!(TeamName::new("!!").is_err() && TeamName::new("a name far longer than any team may have").is_err());
+        assert_eq!(names("/a/Work/shop/"), ["shop", "work shop", "a work shop"]);
+        assert_eq!(names("/"), Vec::<String>::new());
+        assert_eq!(team_on("Charles's Laptop", &tn("shop")), "charless laptop shop");
         // N22: a folder's names and a computer's in front keep to the length he may name a team, so the tower
         // never gives a team a name it would refuse him
         let long = team_names("/work/an extremely long client project name/the actual repository");
-        assert!(!long.is_empty() && long.iter().all(|n| chosen_team_name(n).as_deref() == Ok(n.as_str())), "{long:?}");
+        assert!(!long.is_empty() && long.iter().all(|n| TeamName::new(n.as_str()).as_ref() == Ok(n)), "{long:?}");
         assert_eq!(long[0], "the actual repository");
-        assert_eq!(team_names("/x/abcdefghijklmnopqrstuvwxyz0123"), ["abcdefghijklmnopqrstuvwx"]);
-        let on = team_on("Charles's MacBook Pro", "the actual repository");
-        assert!(chosen_team_name(&on).as_deref() == Ok(on.as_str()), "{on}");
-        assert_eq!(team_on("Charles's MacBook Pro", "shop"), "charless macbook shop");
+        assert_eq!(names("/x/abcdefghijklmnopqrstuvwxyz0123"), ["abcdefghijklmnopqrstuvwx"]);
+        let on = team_on("Charles's MacBook Pro", &long[0]);
+        assert!(TeamName::new(on.as_str()).as_ref() == Ok(&on), "{on}");
+        assert_eq!(team_on("Charles's MacBook Pro", &tn("shop")), "charless macbook shop");
         let c = |project: &str, number: &str, named: bool| Callsign { project: project.into(), number: number.into(), named };
         assert_eq!((c("shop", "three", false).shown(), c("warehouse", "removals", true).shown(), c("shop", "13", false).shown()), ("shop 3".to_string(), "warehouse removals".to_string(), "shop 13".to_string()));
     }

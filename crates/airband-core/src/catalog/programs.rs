@@ -39,6 +39,34 @@ impl Frames {
     }
 }
 
+/// A package manager airband is put on a computer with (`catalog/installers/`): what is pasted in a terminal to
+/// install it, and how to ask it for the folder its copy stays reachable at across its updates. Each is one
+/// argument, never read by a shell.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Installer {
+    pub id: String,
+    /// What it is called, to tell him which copy is used.
+    pub name: String,
+    /// The words that install airband with it.
+    pub install: Vec<String>,
+    /// A run of it that prints, alone on its output, the folder that stays airband's own across its updates.
+    pub lasting: Vec<String>,
+    /// The folder under that one the binary is in.
+    pub bin: String,
+}
+
+impl Installer {
+    /// What is pasted in a terminal to install airband with it.
+    pub fn install_line(&self) -> String {
+        self.install.join(" ")
+    }
+}
+
+/// The package manager this build tells him to install airband with, when it has one.
+pub fn installer() -> Option<Installer> {
+    current().installers.first().cloned()
+}
+
 /// The program this build pulls frames out of a video with, when it has one.
 pub fn frames() -> Option<Frames> {
     current().frames.first().cloned()

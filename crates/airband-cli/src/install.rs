@@ -14,29 +14,31 @@ fn plist_path() -> PathBuf {
     config::home().join("Library/LaunchAgents").join(format!("{LABEL}.plist"))
 }
 
-/// The lasting path to this binary when Homebrew installed it, given where the binary really is. Homebrew keeps
-/// each version in a folder of its own and points `<prefix>/opt/airband` at the current one, so that path still
-/// works after `brew upgrade`. Homebrew is asked where that is (`brew --prefix airband`, which prints the path
-/// alone); the caller keeps it only when it leads to this very binary.
-fn homebrew_exe(real: &Path) -> Option<PathBuf> {
-    let out = std::process::Command::new("brew").args(["--prefix", "airband"]).stderr(std::process::Stdio::null()).output().ok().filter(|o| o.status.success())?;
-    let opt = PathBuf::from(String::from_utf8(out.stdout).ok()?.trim_end_matches('\n'));
-    Some(in_opt(&opt, real))
+/// The lasting path to this binary when a package manager installed it, given where the binary really is. A
+/// package manager keeps each version in a folder of its own and points one folder at the current one, so a path
+/// through that one still works after it updates airband. The installer's row says how it is asked for that
+/// folder (a run that prints the path alone) and where the binary is under it; the caller keeps the path only
+/// when it leads to this very binary.
+fn packaged_exe(installer: &airband_core::catalog::Installer, real: &Path) -> Option<PathBuf> {
+    let (program, args) = installer.lasting.split_first()?;
+    let out = std::process::Command::new(program).args(args).stderr(std::process::Stdio::null()).output().ok().filter(|o| o.status.success())?;
+    let lasting = PathBuf::from(String::from_utf8(out.stdout).ok()?.trim_end_matches('\n'));
+    Some(in_lasting(installer, &lasting, real))
 }
-/// This binary's place under Homebrew's lasting folder for the formula.
-fn in_opt(opt: &Path, real: &Path) -> PathBuf {
-    opt.join("bin").join(real.file_name().unwrap_or_default())
+/// This binary's place under the package manager's lasting folder.
+fn in_lasting(installer: &airband_core::catalog::Installer, lasting: &Path, real: &Path) -> PathBuf {
+    lasting.join(&installer.bin).join(real.file_name().unwrap_or_default())
 }
 
 pub(crate) fn install() -> Result<(), String> {
     config::load();
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
     let real = fs::canonicalize(&me).unwrap_or_else(|_| me.clone());
-    // Homebrew's copy is used where it is, so `brew upgrade` changes what the hooks and the tower run
-    let brewed = homebrew_exe(&real).filter(|lasting| fs::canonicalize(lasting).is_ok_and(|to| to == real));
-    let exe = match brewed {
-        Some(lasting) => {
-            println!("Using the package manager's copy at {}. After it updates airband, run `airband install` again to restart airband.", lasting.display());
+    // a package manager's copy is used where it is, so its updates change what the hooks and the tower run
+    let packaged = airband_core::catalog::installer().and_then(|i| packaged_exe(&i, &real).filter(|lasting| fs::canonicalize(lasting).is_ok_and(|to| to == real)).map(|lasting| (i.name, lasting)));
+    let exe = match packaged {
+        Some((name, lasting)) => {
+            println!("Using {name}\u{2019}s copy at {}. After {name} updates airband, run `airband install` again to restart airband.", lasting.display());
             lasting
         }
         None => {
@@ -124,7 +126,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_homebrew_binary_is_used_from_the_path_that_outlives_an_upgrade() {
-        assert_eq!(in_opt(Path::new("/opt/homebrew/opt/airband"), Path::new("/opt/homebrew/Cellar/airband/0.1.1/bin/airband")), PathBuf::from("/opt/homebrew/opt/airband/bin/airband"));
+    fn a_packaged_binary_is_used_from_the_path_that_outlives_an_update() {
+        let installer = airband_core::catalog::installer().expect("an installer row is compiled in");
+        assert!(!installer.lasting.is_empty() && !installer.install.is_empty());
+        let lasting = Path::new("/pm/opt/airband");
+        assert_eq!(in_lasting(&installer, lasting, Path::new("/pm/Cellar/airband/0.1.1/bin/airband")), lasting.join(&installer.bin).join("airband"));
     }
 }

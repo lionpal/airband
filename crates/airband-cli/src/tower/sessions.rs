@@ -189,7 +189,7 @@ impl Inner {
     pub(super) fn move_to(&mut self, id: &str, team: &str, by: Mover) -> Option<(Callsign, Callsign)> {
         let was = self.find(id)?.callsign.clone();
         let name = self.teams.get(team)?.name.clone();
-        let to = was.moved_to(&name, &self.taken_callsigns(Some(id)))?;
+        let to = was.moved_to(name.as_str(), &self.taken_callsigns(Some(id)))?;
         if self.find(id)?.team == team {
             // already there: if it was he who said so, it now stays
             if by == Mover::Him {
