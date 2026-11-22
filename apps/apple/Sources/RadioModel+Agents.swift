@@ -84,9 +84,9 @@ extension RadioModel {
     }
 
     /// Try again a message that was not sent.
-    func sendAgain(_ o: Outgoing) { desk.sendAgain(id: o.id) }
+    func sendAgain(_ o: DeskOutgoing) { desk.sendAgain(id: o.id) }
     /// Let go of a message that was not sent.
-    func discardUnsent(_ o: Outgoing) { _ = desk.discardUnsent(id: o.id) }
+    func discardUnsent(_ o: DeskOutgoing) { _ = desk.discardUnsent(id: o.id) }
     /// How each computer was last reached, as this phone saw it.
     func reach() -> [DeskReach] { desk.reach() }
     /// The record of failed requests, for him to copy. Made here and sent nowhere.

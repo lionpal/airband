@@ -50,10 +50,13 @@ impl Desk {
         let radios = self.shared.state.lock().unwrap().named_radios();
         // one after another, not all at once: two computers on the same account asking Anthropic in the same
         // moment is how one of them gets refused
-        radios
-            .into_iter()
-            .map(|(computer, radio)| {
-                radio.accounts(&computer, fresh).unwrap_or_else(|e| StationAccounts {
+        let told: Vec<(DeskComputer, Result<airband_core::radio::Accounts, RadioError>)> = radios.into_iter().map(|(computer, radio)| { let got = radio.accounts(fresh); (computer, got) }).collect();
+        let answered: Vec<(DeskComputer, airband_core::radio::Accounts)> = told.iter().filter_map(|(c, got)| got.as_ref().ok().map(|a| (c.clone(), a.clone()))).collect();
+        let mut filled = StationAccounts::across(&answered).into_iter();
+        told.into_iter()
+            .map(|(computer, got)| match got {
+                Ok(_) => filled.next().expect("one for each that answered"),
+                Err(e) => StationAccounts {
                     station: computer.id,
                     name: computer.name,
                     accounts: Vec::new(),
@@ -63,11 +66,9 @@ impl Desk {
                         _ => "This computer would not say.".into(),
                     }),
                     checked_at: 0,
-                })
+                },
             })
             .collect()
-        // Each computer's accounts are as it told them. Two computers' accounts are never taken for one by what
-        // they are called: nothing a computer says names an account the same way on another.
     }
     /// Move one computer's sessions to another of its accounts. `station`, `harness` and `id` are as
     /// [`Desk::accounts`] gave them. Blocks: call it off the main thread.

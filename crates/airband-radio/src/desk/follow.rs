@@ -37,7 +37,10 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, gener
                     station.answered_at = Some(std::time::Instant::now());
                     reached = !station.online || station.reads != feed.reads || station.reads_failed != feed.reads_failed;
                     station.online = true;
-                    station.name = feed.station.clone();
+                    if !feed.station.is_empty() && station.name != feed.station {
+                        station.name = feed.station.clone();
+                        station.radio.store.change(|s| s.computer = feed.station.clone());
+                    }
                     station.reads = feed.reads.clone();
                     // what reads there has stopped working: he is told once, when it stops, and each message
                     // comes as it was written until it works again

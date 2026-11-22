@@ -97,8 +97,8 @@ pub enum RadioStatus {
     Sending,
 }
 
-/// What the host app provides. Calls arrive on the radio's own thread, one at a time, and may block.
-#[uniffi::export(with_foreign)]
+/// What a radio's host provides: the desk, for each computer on a phone, or a terminal. Calls arrive on the
+/// radio's own thread, one at a time, and may block. An app never implements it; it talks to the desk.
 pub trait RadioHost: Send + Sync {
     /// Show this, for a radio started on its own ([`Radio::start`]: a terminal, which prints); return when it
     /// has. Never asked of a phone, where what speaks is what he chose in the app.
@@ -155,8 +155,9 @@ pub(crate) enum Listened {
     Cannot,
 }
 
-/// A message he typed that is on its way.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, uniffi::Record)]
+/// A message he typed that is on its way, as it is kept on the device and sent. A host sees it as a
+/// [`desk::DeskOutgoing`].
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Outgoing {
     pub id: String,
     pub text: String,
@@ -173,15 +174,15 @@ pub struct Outgoing {
     /// Files that go with it, by the ids they reached the tower under.
     #[serde(default)]
     pub attachments: Vec<String>,
-    /// For the tower, not for a host to read: the agents on his screen that other computers have, as JSON.
+    /// The agents on his screen that other computers have, for the tower to know who else he could mean.
     #[serde(default)]
-    pub others: String,
+    pub others: Vec<airband_core::radio::Other>,
     /// The agents he picked for it on his screen, by id.
     #[serde(default)]
     pub to: Vec<String>,
-    /// For the tower, not for a host to read: what a button of his stood for, as JSON. Empty for words.
+    /// What a button of his stood for. Nothing for words.
     #[serde(default)]
-    pub act: String,
+    pub act: Option<Act>,
     /// The question of his computer's this answers, by its id: set when it is the next thing he said after
     /// the computer asked him something back.
     #[serde(default)]
@@ -247,24 +248,20 @@ pub enum Stage {
 
 impl Outgoing {
     /// Something he has just said, not yet tried.
-    pub(crate) fn new(id: String, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, attachments: Vec<String>, others: String) -> Outgoing {
-        Outgoing { id, text, re, at: now_ms(), scope, label, attachments, others, to: Vec::new(), act: String::new(), answers: None, tries: 0, last_tried: 0, trail: Vec::new(), failed: None, stage: Stage::Trying }
+    pub(crate) fn new(id: String, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, attachments: Vec<String>, others: Vec<airband_core::radio::Other>) -> Outgoing {
+        Outgoing { id, text, re, at: now_ms(), scope, label, attachments, others, to: Vec::new(), act: None, answers: None, tries: 0, last_tried: 0, trail: Vec::new(), failed: None, stage: Stage::Trying }
     }
     /// Words to send, under a new id, with nothing else yet: the rest is set by whoever sends them.
     pub(crate) fn of(text: String) -> Outgoing {
-        Outgoing::new(random_hex(12), text, None, None, None, Vec::new(), String::new())
+        Outgoing::new(random_hex(12), text, None, None, None, Vec::new(), Vec::new())
     }
-    /// What a button of his stood for goes with it, kept as the tower will read it.
+    /// What a button of his stood for goes with it.
     pub(crate) fn with_act(self, act: Option<&Act>) -> Outgoing {
-        Outgoing { act: act.and_then(|a| serde_json::to_string(a).ok()).unwrap_or_default(), ..self }
+        Outgoing { act: act.cloned(), ..self }
     }
-    /// What the tower is sent for it: the one place an utterance is made from something he said. None when
-    /// what was kept with it (a button's act, who else is on his screen) no longer reads: it is then never
-    /// sent as plain words in its place.
-    pub(crate) fn utterance(&self) -> Option<Utterance> {
-        let act = if self.act.is_empty() { None } else { Some(serde_json::from_str(&self.act).ok()?) };
-        let others = if self.others.is_empty() { Vec::new() } else { serde_json::from_str(&self.others).ok()? };
-        Some(Utterance { text: self.text.clone(), id: self.id.clone(), re: self.re.clone(), scope: self.scope.clone(), label: self.label.clone(), attachments: self.attachments.clone(), others, to: self.to.clone(), act, answers: self.answers.clone() })
+    /// What the tower is sent for it: the one place an utterance is made from something he said.
+    pub(crate) fn utterance(&self) -> Utterance {
+        Utterance { text: self.text.clone(), id: self.id.clone(), re: self.re.clone(), scope: self.scope.clone(), label: self.label.clone(), attachments: self.attachments.clone(), others: self.others.clone(), to: self.to.clone(), act: self.act.clone(), answers: self.answers.clone() }
     }
 }
 
@@ -289,22 +286,12 @@ impl RadioError {
     }
 }
 
-/// An address with its query, each value encoded: the one way an address with a query is put together, for
-/// a service and for the tower alike.
+/// An address of a service with its query, each value encoded. The tower's own addresses are made by core
+/// ([`airband_core::radio::wire::address`]).
 pub(crate) fn with_query(base: &str, pairs: &[(&str, &str)]) -> String {
     let mut q = url::form_urlencoded::Serializer::new(String::new());
     q.extend_pairs(pairs);
     format!("{base}?{}", q.finish())
-}
-
-/// A tower that speaks another version of the radio protocol is told apart from one that cannot be reached:
-/// he is asked to update, not left looking at a chat that half works. One that says no version is not taken
-/// to speak this one.
-fn spoken_alike(feed: &Feed) -> Result<(), RadioError> {
-    if feed.schema == airband_core::radio::SCHEMA {
-        return Ok(());
-    }
-    Err(RadioError::Told { reason: "This computer runs another version of airband. Update it and this app.".into() })
 }
 
 impl std::fmt::Display for RadioError {
@@ -318,14 +305,20 @@ impl std::fmt::Display for RadioError {
     }
 }
 
+/// The one reading of a failed request for him. What may work in a moment is told first, as nothing coming
+/// back; then his computer's trouble, which may pass and is not a no; then its refusals, by their tag.
 impl From<LinkError> for RadioError {
     fn from(e: LinkError) -> Self {
         match e {
+            e if e.retry() == Retry::Soon => RadioError::Offline,
+            e @ LinkError::Trouble(500..=599) => RadioError::Told { reason: e.said() },
+            // not now, with its reason: it may work later, and is told as it is, never as a no
+            LinkError::Refused(airband_core::radio::wire::Refusal::NotNow { reason }) => RadioError::Told { reason },
+            // a tower that speaks another version: he is asked to update, not left looking at a chat that half works
+            e @ LinkError::Refused(airband_core::radio::wire::Refusal::OtherVersion { .. }) => RadioError::Told { reason: e.said() },
             // his computer's own reason, when it gave one, is what he should read
-            LinkError::Tower { error, .. } if !error.is_empty() => RadioError::Told { reason: error },
-            // trouble of its own, which may pass, is not a no
-            e @ LinkError::Tower { status: 500..=599, .. } => RadioError::Told { reason: e.said() },
-            LinkError::Tower { .. } => RadioError::Refused,
+            LinkError::Refused(r) if r.reason().is_some() => RadioError::Told { reason: r.reason().unwrap_or_default().to_string() },
+            LinkError::Refused(_) | LinkError::Trouble(_) => RadioError::Refused,
             // it will not go however often it is tried: he is told why, never that it goes when it can
             e if e.retry() == Retry::Never => RadioError::Told { reason: e.said() },
             _ => RadioError::Offline,

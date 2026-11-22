@@ -22,11 +22,17 @@ pub(crate) enum LinkError {
     HoldRefused(u16),
     /// An answer came that this pairing's key does not open, or that was to another request.
     Unreadable(Way),
-    /// His computer answered, and the answer was no: the status and its own explanation, when it gave one.
-    Tower { status: u16, error: String },
+    /// His computer answered, and the answer was no, as it said it ([`Refusal`]).
+    Refused(Refusal),
+    /// His computer answered with a status that carried neither its answer nor a refusal: trouble of its own
+    /// (5xx), which may pass, or a no it gave no reason for.
+    Trouble(u16),
     /// His computer took something he said and would not act on it, for the reason it gave.
     Rejected(airband_core::radio::Rejected),
 }
+
+/// What he is told when his computer speaks another version of the radio protocol. No capital, no full stop.
+pub(crate) const OTHER_VERSION: &str = "this computer runs another version of airband: update it and this app";
 
 /// What to do after a failure.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -52,13 +58,21 @@ impl LinkError {
             LinkError::Relay(500..=599) | LinkError::HoldRefused(500..=506 | 508..=599) => Retry::Soon,
             LinkError::Relay(_) | LinkError::HoldRefused(_) | LinkError::Unreadable(_) => Retry::Later,
             // the computer is in trouble of its own, which may pass; anything else it refuses, it refuses for good
-            LinkError::Tower { status: 500..=599, .. } => Retry::Later,
-            LinkError::Tower { .. } | LinkError::Rejected(_) => Retry::Never,
+            LinkError::Trouble(500..=599) | LinkError::Refused(Refusal::NotNow { .. }) => Retry::Later,
+            LinkError::Refused(_) | LinkError::Trouble(_) | LinkError::Rejected(_) => Retry::Never,
+        }
+    }
+    /// What a status other than 200 from his computer comes to: the refusal its body carries, read by its tag
+    /// (never by the status), or, when it carries none, its trouble.
+    pub(crate) fn refusal(status: u16, body: Value) -> LinkError {
+        match serde_json::from_value::<Refusal>(body) {
+            Ok(refusal) => LinkError::Refused(refusal),
+            Err(_) => LinkError::Trouble(status),
         }
     }
     /// His computer answered and said no.
     pub(crate) fn refused(&self) -> bool {
-        matches!(self, LinkError::Tower { .. } | LinkError::Rejected(_))
+        self.retry() == Retry::Never && matches!(self, LinkError::Refused(_) | LinkError::Rejected(_) | LinkError::Trouble(_))
     }
     /// What happened, as a sentence of its own.
     pub(crate) fn said(&self) -> String {
@@ -83,10 +97,16 @@ impl LinkError {
             LinkError::HoldRefused(status) => format!("the relay could not keep it ({status})"),
             LinkError::Unreadable(Way::Near | Way::Paired) => "your computer sent an answer that could not be read".into(),
             LinkError::Unreadable(_) => "an answer came through the relay that could not be read".into(),
-            LinkError::Tower { error, .. } if !error.is_empty() => format!("your computer refused it: {error}"),
+            LinkError::Refused(Refusal::Told { reason } | Refusal::BadAsk { reason }) => format!("your computer refused it: {reason}"),
+            LinkError::Refused(Refusal::OtherVersion { .. }) => OTHER_VERSION.into(),
+            LinkError::Refused(Refusal::NotNow { reason }) => format!("your computer could not do it just now: {reason}"),
+            LinkError::Refused(Refusal::TooBig) => "it is more than your computer takes in one message".into(),
+            LinkError::Refused(Refusal::Gone) => "your computer no longer has what it names".into(),
+            LinkError::Refused(Refusal::NotAllowed) => "your computer does not let this phone do that".into(),
+            LinkError::Refused(Refusal::Unknown) => "your computer refused it".into(),
             // trouble of its own, which may pass: not a no
-            LinkError::Tower { status: status @ 500..=599, .. } => format!("your computer ran into trouble with it ({status})"),
-            LinkError::Tower { status, .. } => format!("your computer refused it ({status})"),
+            LinkError::Trouble(status @ 500..=599) => format!("your computer ran into trouble with it ({status})"),
+            LinkError::Trouble(status) => format!("your computer refused it ({status})"),
             LinkError::Rejected(airband_core::radio::Rejected::TooOld) => "your computer got it more than a week after you said it, and did nothing with it".into(),
             LinkError::Rejected(airband_core::radio::Rejected::Unknown) => "your computer would not take it".into(),
         }

@@ -23,6 +23,9 @@ pub(crate) struct Saved {
     /// This radio's name for itself, made once.
     #[serde(default)]
     pub(crate) radio: String,
+    /// What the computer last said it is called: known at launch, before it is reached again.
+    #[serde(default)]
+    pub(crate) computer: String,
 }
 
 pub(crate) struct Store {

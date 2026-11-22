@@ -67,8 +67,8 @@ impl Session {
     pub(crate) fn say(&self, link: &Link, text: &str, re: Option<String>, scope: Option<String>, act: Option<Act>) -> Result<Option<Reply>, LinkError> {
         let attachments = self.take_armed();
         let answers = self.take_question();
-        let out = Outgoing { answers: answers.clone(), ..Outgoing::new(random_hex(12), text.to_string(), re, scope, None, attachments.clone(), String::new()).with_act(act.as_ref()) };
-        let u = out.utterance().expect("made here, so it reads");
+        let out = Outgoing { answers: answers.clone(), ..Outgoing::new(random_hex(12), text.to_string(), re, scope, None, attachments.clone(), Vec::new()).with_act(act.as_ref()) };
+        let u = out.utterance();
         let got = link.say_and_wait(&u);
         match &got {
             Ok(Some(reply)) => self.asked(reply),

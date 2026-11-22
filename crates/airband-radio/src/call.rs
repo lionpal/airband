@@ -117,7 +117,7 @@ pub(crate) fn work(with: Working) {
             // He turned reading aloud off: what was on its way is not read, and what is being read stops at
             // once. It is all in the chat.
             Job::Transmission(_) if !calling.load(Ordering::SeqCst) => {
-                link.tell("/ready", &serde_json::json!({}));
+                link.tell::<airband_core::radio::wire::at::Ready>(&airband_core::radio::wire::Nothing {});
             }
             Job::Transmission(t) => {
                 host.status(RadioStatus::Speaking { agent: Some(t.agent.clone()).filter(|a| !a.is_empty()), callsign: Some(t.callsign.clone()) });
@@ -126,16 +126,16 @@ pub(crate) fn work(with: Working) {
                 // times. What made no sound was not heard: the tower is told why and keeps it.
                 match heard {
                     voice::Said::Aloud => {
-                        link.tell("/heard", &Heard { id: t.id.clone() });
+                        link.tell::<airband_core::radio::wire::at::Heard>(&Heard { id: t.id.clone() });
                     }
                     voice::Said::Nothing(why) => {
-                        link.tell("/unheard", &airband_core::radio::Unheard { id: t.id.clone(), why });
+                        link.tell::<airband_core::radio::wire::at::Unheard>(&airband_core::radio::Unheard { id: t.id.clone(), why });
                     }
                 }
                 // A question is read to him and then waits in the chat, where he answers it when he chooses, by
                 // its own buttons or its microphone. The microphone never opens by itself: he may be in the
                 // middle of saying something to someone else.
-                link.tell("/ready", &serde_json::json!({}));
+                link.tell::<airband_core::radio::wire::at::Ready>(&airband_core::radio::wire::Nothing {});
             }
             Job::Talk(re, scope) => {
                 let _here = still_here(&link, &calling);

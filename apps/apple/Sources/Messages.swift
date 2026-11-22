@@ -249,17 +249,11 @@ struct Mine: View {
 /// last try went, each way it was tried. One that was given up on says why and stays, to send again or delete.
 struct Unsent: View {
     @EnvironmentObject var model: RadioModel
-    let o: Outgoing
-
-    /// Said only once it has been trying for ten seconds: before that it is simply on its way.
-    private var trying: String? {
-        guard o.failed == nil, !o.trail.isEmpty, o.lastTried >= o.at + 10_000 else { return nil }
-        return "Trying. " + o.trail.joined(separator: " ") + (o.tries > 1 ? " \(o.tries) tries." : "")
-    }
+    let o: DeskOutgoing
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 5) {
-            Text(o.label ?? o.text).font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.ground)
+            Text(o.shown).font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.ground)
                 .padding(.horizontal, 14).padding(.vertical, 9)
                 .background(Palette.ink.opacity(o.failed == nil ? 0.45 : 0.3), in: RoundedRectangle(cornerRadius: 18))
             if let failed = o.failed {
@@ -271,13 +265,13 @@ struct Unsent: View {
                 .font(.system(size: 14, weight: .semibold)).buttonStyle(.plain)
             } else if o.stage == .left {
                 Text("With the relay. Your computer gets it when it is back.").font(.system(size: 13)).foregroundStyle(Palette.quiet).multilineTextAlignment(.trailing)
-            } else if let trying {
+            } else if let trying = o.trying {
                 Text(trying).font(.system(size: 13)).foregroundStyle(Palette.quiet).multilineTextAlignment(.trailing)
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(o.failed == nil ? "Sending: \(o.label ?? o.text)" : "Not sent: \(o.label ?? o.text)")
+        .accessibilityLabel(o.failed == nil ? "Sending: \(o.shown)" : "Not sent: \(o.shown)")
     }
 }
 

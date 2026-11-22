@@ -136,7 +136,7 @@ fn n28_a_question_is_still_waiting_while_the_microphone_is_open_for_it() {
 // N30: a refusal that gives his computer's reason in words is told as that reason, whatever status it came with.
 #[test]
 fn n30_a_refusal_with_a_reason_is_told_as_that_reason() {
-    let port = tower_saying(400, r#"{"error":"That folder is not there."}"#);
+    let port = tower_saying(409, r#"{"refusal":"told","reason":"That folder is not there."}"#);
     let radio = Radio::start(format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A{port}&token=t"), String::new(), Arc::new(Quiet)).unwrap();
     radio.stop();
     let got = radio.folders("/nowhere".into());
@@ -147,11 +147,30 @@ fn n30_a_refusal_with_a_reason_is_told_as_that_reason() {
 // is told it will go, never that his computer refused it.
 #[test]
 fn n31_a_notification_answer_kept_for_later_is_not_told_as_refused() {
-    let port = tower_saying(503, r#"{"error":"Busy, try again."}"#);
+    let port = tower_saying(503, "{}");
     let radio = Radio::start(format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A{port}&token=t"), String::new(), Arc::new(Quiet)).unwrap();
     radio.stop();
     let got = radio.answer_now("Leave".into(), "q1".into(), Some(Act::Option { index: 1 }));
     let kept: Vec<Option<String>> = radio.unsent().into_iter().map(|o| o.re).collect();
     assert_eq!(kept, [Some("q1".to_string())], "it was not kept to go later");
     assert!(matches!(got, Err(RadioError::Kept { .. })), "kept to go later, but told as {got:?}");
+}
+
+// A computer is shown by the name it last said, kept on the phone, from the moment the app opens: never by its
+// place in the list.
+#[test]
+fn a_computer_is_called_what_it_last_said_from_the_moment_the_app_opens() {
+    let dir = temp_dir("named");
+    let desk = opened(&dir);
+    desk.set_links(vec![nobody(1), nobody(2)]);
+    radio_at(&desk, 1).store.change(|s| s.computer = "Studio".into());
+    desk.stop();
+    // the app is opened again, and neither computer has answered yet
+    let desk = opened(&dir);
+    desk.set_links(vec![nobody(1), nobody(2)]);
+    let names: Vec<String> = desk.view(None, None).stations.into_iter().map(|c| c.name).collect();
+    desk.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(names[1], "Studio");
+    assert!(!names[0].starts_with("Computer"), "{names:?}");
 }

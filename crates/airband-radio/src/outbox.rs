@@ -58,12 +58,7 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, session: Arc<Session>, store: Arc<
             }
             _ => {}
         }
-        // what a button stood for, and who else is on his screen, as they were kept: one this version cannot
-        // read is not sent as plain words instead, and he is told
-        let Some(utterance) = next.utterance() else {
-            gave_up("This was kept by an older version of the app and cannot be sent as it was. Tap or say it again.".into());
-            continue;
-        };
+        let utterance = next.utterance();
         link.keeps_at_relay(outbox.iter().any(|o| o.stage == Stage::Left && o.failed.is_none() && o.id != next.id));
         let (got, steps) = link.utterance_once(&utterance);
         // It went straight to his computer while the relay still keeps earlier words of his for it: these
@@ -282,31 +277,12 @@ mod tests {
     }
 
     #[test]
-    fn a_button_kept_in_a_form_this_version_cannot_read_is_not_sent_as_words() {
-        let host = Arc::new(Watching::default());
-        let radio = Radio::start(format!("airband://pair?relay=http%3A%2F%2F127.0.0.1%3A9&secret={}", "cd".repeat(32)), String::new(), host.clone()).unwrap();
-        radio.store.change(|s| s.outbox.push(Outgoing { act: r#"{"kind":"no-such-act"}"#.into(), ..Outgoing::new("old".into(), "Allow".into(), Some("q1".into()), None, None, Vec::new(), String::new()) }));
-        radio.wake.ring();
-        let failed = || radio.store.saved.lock().unwrap().outbox.iter().find(|o| o.id == "old").and_then(|o| o.failed.clone());
-        for _ in 0..200 {
-            if failed().is_some() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
-        assert_eq!(failed().as_deref(), Some("This was kept by an older version of the app and cannot be sent as it was. Tap or say it again."));
-        // it was never tried as words
-        assert_eq!(radio.store.saved.lock().unwrap().outbox[0].tries, 0);
-        radio.stop();
-    }
-
-    #[test]
     fn a_message_stays_until_the_tower_says_what_came_of_it() {
         use airband_core::radio::{Outcome, Rejected};
         let host = Watching::default();
         let store = Store::open("", None);
         let put = |id: &str, stage: Stage| {
-            store.change(|s| s.outbox.push(Outgoing { stage, ..Outgoing::new(id.into(), format!("words of {id}"), None, None, None, Vec::new(), String::new()) }));
+            store.change(|s| s.outbox.push(Outgoing { stage, ..Outgoing::new(id.into(), format!("words of {id}"), None, None, None, Vec::new(), Vec::new()) }));
         };
         let ids = || store.saved.lock().unwrap().outbox.iter().map(|o| o.id.clone()).collect::<Vec<_>>();
         let last = || host.0.lock().unwrap().last().cloned().unwrap();
