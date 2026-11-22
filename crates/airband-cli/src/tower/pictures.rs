@@ -42,6 +42,12 @@ pub(super) fn keep(path: &Path) -> Option<Picture> {
 }
 
 /// Keep a copy of a picture he pasted in, given as its bytes.
+/// The pictures he pasted in with each thing he typed at an agent's keyboard, kept: one list per thing typed,
+/// empty for what was not his.
+pub(super) fn pasted(told: &[crate::adapters::Told]) -> Vec<Vec<airband_core::radio::Picture>> {
+    told.iter().map(|t| if t.his { t.images.iter().filter_map(|bytes| keep_bytes(bytes)).collect() } else { Vec::new() }).collect()
+}
+
 pub(super) fn keep_bytes(bytes: &[u8]) -> Option<Picture> {
     if bytes.len() as u64 > TOO_LARGE {
         return None;

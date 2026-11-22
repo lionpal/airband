@@ -1,7 +1,8 @@
 //! Files he attaches from the radio: a photo, a video. They arrive in parts (one sealed message through a relay
 //! carries about 250 KB) and are kept in a folder of the tower's own on this computer, where any agent can open
 //! them by path. There is no limit on size from the model's side, because the model is handed a path, not the
-//! bytes. A video cannot be watched by an agent, so when ffmpeg is here a frame a second is pulled out beside it.
+//! bytes. A video cannot be watched by an agent, so a frame a second is pulled out beside it, with the program the
+//! frames row names, when that program is here.
 //!
 //! A radio can write only here, only under names the tower makes safe, and only so much.
 use super::*;
@@ -50,12 +51,30 @@ static GOT: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// One part of a file. Answers with how many bytes the tower now has, which is where the next part starts; a
 /// part sent again (its answer was lost) lands in the same place.
 pub(super) fn take(part: AttachmentPart) -> Result<u64, String> {
+    take_in(&root(), part)
+}
+
+/// [`take`], into the attachments folder `root`. The file is called what the first part to come says, made
+/// safe, and written down beside it: every later part goes into that one file, whatever name it carries.
+fn take_in(root: &Path, part: AttachmentPart) -> Result<u64, String> {
     if !hex(&part.id) {
         return Err("not an attachment id".into());
     }
-    let dir = root().join(&part.id);
+    let dir = root.join(&part.id);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join(safe(&part.name));
+    let name = {
+        let _guard = GOT.lock().unwrap();
+        let named = dir.join(".name");
+        match std::fs::read_to_string(&named) {
+            Ok(name) if !name.is_empty() => name,
+            _ => {
+                let name = safe(&part.name);
+                std::fs::write(&named, &name).map_err(|e| e.to_string())?;
+                name
+            }
+        }
+    };
+    let path = dir.join(name);
     let bytes = airband_core::encode::unbase64(&part.data).ok_or("that part could not be read")?;
     let mut file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&path).map_err(|e| e.to_string())?;
     if part.from + bytes.len() as u64 > MOST || part.total > MOST {
@@ -218,5 +237,18 @@ mod tests {
         let text = file("c.jpg", b"only words");
         assert_eq!((what(&png), what(&mp4), what(&text)), (What::Image, What::Video, What::Other));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_parts_of_one_file_go_into_one_file_whatever_names_they_carry() {
+        let root = std::env::temp_dir().join(format!("airband-parts-{}", config::random_hex(4)));
+        let part = |name: &str, from: u64, data: &[u8]| AttachmentPart { id: "a1b2c3d4e5f6".into(), name: name.into(), from, total: 6, data: airband_core::encode::base64(data) };
+        assert_eq!(take_in(&root, part("photo.png", 0, b"abc")), Ok(3));
+        // the second part says another name: it is still the same file, and the file is now whole
+        assert_eq!(take_in(&root, part("other.png", 3, b"def")), Ok(6));
+        let dir = root.join("a1b2c3d4e5f6");
+        assert_eq!(std::fs::read(dir.join("photo.png")).unwrap(), b"abcdef");
+        assert!(!dir.join("other.png").exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

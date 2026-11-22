@@ -1,6 +1,8 @@
 //! Getting his words to an agent, by whichever way that agent said it can be reached (`Deliver` in
-//! airband-core). A new way to reach an agent is a new variant there and a new arm here; a new tool that
-//! takes his words in a way of its own is none of that, only its adapter (`Deliver::Harness`).
+//! airband-core). A new way to reach an agent is a new variant there and a new arm here. Each arm writes what
+//! its variant is defined to take: `Socket` the one line of JSON its doc gives, `Command` the words on standard
+//! input, and so on. A tool that takes his words in a way of its own that is none of these goes through its
+//! adapter (`Deliver::Harness`).
 use super::*;
 
 /// A new id for one delivery, in the form a tool's own records keep ids in.

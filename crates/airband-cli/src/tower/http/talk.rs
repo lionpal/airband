@@ -43,7 +43,7 @@ pub(super) async fn next(State(app): State<Arc<App>>, Extension(RadioId(radio)):
 pub(super) async fn unheard(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Json(u): Json<airband_core::radio::Unheard>) -> Json<Value> {
     let mut inner = app.change();
     let id = u.id.as_str();
-    let who = inner.log.iter().find(|e| e.id == id).map(|e| e.from.clone()).unwrap_or_default();
+    let who = inner.log.iter().find(|e| e.id == id).map(|e| inner.sender_name(e)).unwrap_or_else(|| "a line it no longer has".to_string());
     log(format!("{radio} could not read {who} aloud ({}); it stays queued (line {id}), and nothing more goes to that radio for a minute", u.why));
     if inner.log.iter().any(|e| e.id == id && matches!(&e.aloud, Aloud::Handed { radio: r, .. } if *r == radio)) {
         inner.set_aloud(id, Aloud::Waiting);

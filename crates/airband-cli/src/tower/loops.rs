@@ -27,7 +27,7 @@ pub(super) async fn activity_loop(app: Arc<App>) {
             let typed: Vec<_> = typed
                 .into_iter()
                 .map(|((told, now), id, was)| {
-                    let pictures: Vec<Vec<airband_core::radio::Picture>> = told.iter().map(|t| if t.his { t.images.iter().filter_map(|bytes| pictures::keep_bytes(bytes)).collect() } else { Vec::new() }).collect();
+                    let pictures = pictures::pasted(&told);
                     ((told, now), pictures, id, was)
                 })
                 .collect();

@@ -29,8 +29,8 @@ pub(super) struct Wake {
 }
 
 impl Wake {
-    pub(super) fn load(store: &Store) -> Wake {
-        Wake { targets: Mutex::new(store.push_targets()) }
+    pub(super) fn load(store: &Store) -> Result<Wake, String> {
+        Ok(Wake { targets: Mutex::new(store.push_targets()?) })
     }
     /// Is there any phone to wake at all?
     pub(super) fn any(&self) -> bool {
@@ -186,7 +186,7 @@ mod tests {
     }
     fn tower() -> Inner {
         let mut inner = Inner::default();
-        inner.check_in(&Agent { id: "a".into(), harness: "test".into(), cwd: Some("/x/shop".into()), name: None, title: None, pid: None, deliver: None, meta: Default::default() });
+        let _ = inner.check_in(&Agent { id: "a".into(), harness: "test".into(), cwd: Some("/x/shop".into()), name: None, title: None, pid: None, deliver: None, meta: Default::default() });
         inner
     }
 

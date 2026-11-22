@@ -1,6 +1,35 @@
-//! How an adapter reaches the tower on this machine: posting an event (kept in a folder while the tower is away,
-//! and handed over when it is back), and asking him for leave on a tool's behalf and waiting for his answer.
+//! How the command line and the adapters reach the tower on this machine ([`TowerHere`]): posting an event (kept
+//! in a folder while the tower is away, and handed over when it is back), and asking him for leave on a tool's
+//! behalf and waiting for his answer.
 use super::*;
+
+/// The tower on this computer, asked with its own token. Every status comes back as an answer, for the caller
+/// to read; only a tower that cannot be reached is an error. The one way the command line and the hooks reach it.
+pub(crate) struct TowerHere {
+    agent: ureq::Agent,
+    base: String,
+    auth: String,
+}
+
+impl TowerHere {
+    pub(crate) fn here(cfg: &config::Config, timeout: std::time::Duration) -> TowerHere {
+        TowerHere { agent: airband_core::net::agent(timeout), base: format!("http://127.0.0.1:{}", cfg.port), auth: format!("Bearer {}", cfg.token) }
+    }
+    pub(crate) fn get(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+        self.agent.get(format!("{}{path}", self.base)).header("authorization", &self.auth)
+    }
+    pub(crate) fn post(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithBody> {
+        self.agent.post(format!("{}{path}", self.base)).header("authorization", &self.auth)
+    }
+    pub(crate) fn delete(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+        self.agent.delete(format!("{}{path}", self.base)).header("authorization", &self.auth)
+    }
+}
+
+/// A request's answer, when the tower took it (200).
+pub(crate) fn taken(res: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Option<ureq::http::Response<ureq::Body>> {
+    res.ok().filter(|r| r.status().as_u16() == 200)
+}
 
 /// Requests for leave a watcher puts to him itself, each by a key (the request's id, or its session's): one is
 /// put to him once at a time; one that found nobody there is tried again after a while; one answered or left
@@ -68,8 +97,8 @@ pub(crate) fn ask_him(request: &PermissionAsk) -> Option<(bool, String)> {
 pub(crate) fn ask_him_while(request: &PermissionAsk, still: Option<&dyn Fn() -> bool>) -> Answer {
     let Some(cfg) = config::read() else { return Answer::Nobody };
     const BASE: &str = "/v1/agent/permission";
-    let here = config::Tower::here(&cfg, Duration::from_secs(40));
-    let asked: Option<PermissionState> = config::taken(here.post(BASE).send_json(request)).and_then(|mut res| res.body_mut().read_json().ok());
+    let here = TowerHere::here(&cfg, Duration::from_secs(40));
+    let asked: Option<PermissionState> = taken(here.post(BASE).send_json(request)).and_then(|mut res| res.body_mut().read_json().ok());
     let Some(asked) = asked.filter(|a| a.state == airband_core::agent::Leave::Pending) else { return Answer::Nobody };
     let until = std::time::Instant::now() + Duration::from_secs(asked.wait_seconds.max(5));
     while std::time::Instant::now() < until {
@@ -77,7 +106,7 @@ pub(crate) fn ask_him_while(request: &PermissionAsk, still: Option<&dyn Fn() -> 
             break;
         }
         let left = until.saturating_duration_since(std::time::Instant::now()).as_secs().clamp(1, if still.is_some() { 3 } else { 20 });
-        let now: Option<PermissionState> = config::taken(here.get(&format!("{BASE}/{}?wait={left}", asked.id)).call()).and_then(|mut res| res.body_mut().read_json().ok());
+        let now: Option<PermissionState> = taken(here.get(&format!("{BASE}/{}?wait={left}", asked.id)).call()).and_then(|mut res| res.body_mut().read_json().ok());
         // the tower went away mid-wait: stop waiting and let the harness ask
         let Some(now) = now else { return Answer::Unanswered };
         use airband_core::agent::Leave;
@@ -94,24 +123,46 @@ pub(crate) fn ask_him_while(request: &PermissionAsk, still: Option<&dyn Fn() -> 
     Answer::Unanswered
 }
 
+/// What came of posting an event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Posted {
+    /// The tower took it.
+    Taken,
+    /// The tower did not answer, and it is kept to be handed over when the tower is back.
+    Kept,
+    /// The tower did not answer, and it could not be kept.
+    Lost,
+}
+
 /// Post one event to the tower on this machine. One the tower did not take (it is being restarted or
 /// updated) is kept in a folder and handed over when the tower is back: a report is not lost because it was
 /// made in those few seconds.
-pub(crate) fn post(event: &AgentEvent) -> bool {
+pub(crate) fn post(event: &AgentEvent) -> Posted {
     if send(event) {
-        return true;
+        return Posted::Taken;
     }
-    let dir = config::dir().join("spool");
-    if std::fs::create_dir_all(&dir).is_ok() && std::fs::read_dir(&dir).map(|d| d.count()).unwrap_or(0) < 500 {
-        let name = format!("{:020}-{}.json", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0), config::random_hex(4));
-        let _ = config::write_private(&dir.join(name), serde_json::to_vec(event).unwrap_or_default());
+    spool(&config::dir().join("spool"), event)
+}
+
+/// Keep an event the tower did not take in `dir`, under a name that sorts by when it was made. A full folder
+/// (500 waiting) or one that cannot be written keeps nothing.
+fn spool(dir: &std::path::Path, event: &AgentEvent) -> Posted {
+    let Ok(()) = std::fs::create_dir_all(dir) else { return Posted::Lost };
+    let Ok(waiting) = std::fs::read_dir(dir).map(|d| d.count()) else { return Posted::Lost };
+    if waiting >= 500 {
+        return Posted::Lost;
     }
-    false
+    let Ok(at) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else { return Posted::Lost };
+    let Ok(body) = serde_json::to_vec(event) else { return Posted::Lost };
+    match config::write_private(&dir.join(format!("{:020}-{}.json", at.as_nanos(), config::random_hex(4))), body) {
+        Ok(_) => Posted::Kept,
+        Err(_) => Posted::Lost,
+    }
 }
 
 fn send(event: &AgentEvent) -> bool {
     let Some(cfg) = config::read() else { return false };
-    config::taken(config::Tower::here(&cfg, Duration::from_millis(1500)).post("/v1/agent/events").send_json(event)).is_some()
+    taken(TowerHere::here(&cfg, Duration::from_millis(1500)).post("/v1/agent/events").send_json(event)).is_some()
 }
 
 /// The tower takes what was kept for it, oldest first, by `take`: it is the tower that calls this, and it
@@ -129,5 +180,19 @@ pub(crate) fn drain_spool(take: impl Fn(AgentEvent) -> bool) {
                 return;
             }
         let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_event_the_tower_did_not_take_is_kept_and_said_to_be() {
+        let dir = std::env::temp_dir().join(format!("airband-spool-{}", config::random_hex(4)));
+        let event = AgentEvent { schema: airband_core::agent::SCHEMA.into(), agent: airband_core::agent::Agent { id: "a".into(), harness: "test".into(), cwd: None, name: None, title: None, pid: None, deliver: None, meta: Default::default() }, event: airband_core::agent::Event::Checkin, via: None };
+        assert_eq!(spool(&dir, &event), Posted::Kept);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

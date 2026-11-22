@@ -63,9 +63,8 @@ pub(crate) fn glance(agent: &Agent) -> super::Glance {
 /// A request for leave, as he is asked it: whole, never cut, because what he reads is what will run.
 pub(crate) fn permission(hook: &Value) -> Option<PermissionAsk> {
     let (tool, input) = super::hooks::permission_hook(hook)?;
-    // the row's words for one of Codex's own tools; any other says what it is doing itself, or is named
-    let row = super::hooks::tool_use(NAME, tool);
-    let what = if row.is_null() { text(input, "description") } else { super::hooks::fill(&row["asks"], input) }.unwrap_or_else(|| format!("use {tool}"));
+    // the row's words for one of Codex's own tools; any other says what it is doing itself
+    let what = super::hooks::asking(NAME, tool, input, text(input, "description"));
     // one too long to put in front of him whole is not asked on the phone: Codex asks at its keyboard
     super::hooks::leave(agent_of(hook)?, tool, what, input, super::hooks::AT_KEYBOARD, None)
 }

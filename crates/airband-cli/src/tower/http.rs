@@ -66,6 +66,9 @@ async fn presence_said(State(app): State<Arc<App>>, req: Request, next: Next) ->
 
 /// Every route the tower serves. The relay link hands sealed requests to this same router, so a request is
 /// handled identically however it arrived.
+/// The route something he said comes by: the one request a relay may keep while the tower is away.
+pub(super) const UTTERANCE: &str = "/v1/radio/utterance";
+
 pub(super) fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/v1/agent/events", post(events))
@@ -77,7 +80,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/radio/presence", post(presence))
         .route("/v1/radio/unheard", post(unheard))
         .route("/v1/radio/ready", post(ready))
-        .route("/v1/radio/utterance", post(utterance))
+        .route(UTTERANCE, post(utterance))
         .route("/v1/radio/feed", get(feed))
         .route("/v1/radio/picture/{id}", get(picture_part))
         .route("/v1/radio/reads", get(reads_offered).post(feed::reads))
@@ -115,7 +118,7 @@ pub(super) mod tests {
         let _ = std::fs::remove_file(&path);
         let store = Store::open(&path).unwrap();
         let cfg: Config = serde_json::from_str(r#"{"token":"own","radio_token":"radio"}"#).unwrap();
-        let push = push::Wake::load(&store);
+        let push = push::Wake::load(&store).unwrap();
         Arc::new(App { push, cfg, store, inner: Mutex::new(Inner::default()), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default() })
     }
 
@@ -148,5 +151,13 @@ pub(super) mod tests {
         let res = router(app.clone()).oneshot(presence(None, None)).await.unwrap();
         assert_eq!(res.status(), StatusCode::BAD_REQUEST);
         assert!(!app.read().calls.contains_key("radio"));
+    }
+
+    #[tokio::test]
+    async fn a_feed_asked_with_a_number_that_is_not_one_is_refused_and_not_read_as_none() {
+        let app = app("feed-query");
+        let ask = |query: &str| Request::builder().method("GET").uri(format!("/v1/radio/feed?{query}")).header("authorization", "Bearer radio").extension(RadioId("phone".into())).body(axum::body::Body::empty()).unwrap();
+        assert_eq!(router(app.clone()).oneshot(ask("after=0&wait=0")).await.unwrap().status(), 200);
+        assert_eq!(router(app.clone()).oneshot(ask("after=seven&wait=0")).await.unwrap().status(), 400);
     }
 }

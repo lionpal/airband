@@ -85,11 +85,10 @@ fn start_local_model(cfg: &Config) {
 /// The tower's state as it was kept, settled for this run, and written again if settling changed it.
 fn open(cfg: Config) -> Result<Arc<App>, String> {
     let store = Store::open(&config::dir().join("airband.db"))?;
-    let (saved, entries) = store.load(LOG_KEEP);
-    let (seq, rev) = store.last_counts();
+    let (saved, entries) = store.load(LOG_KEEP)?;
+    let (seq, rev) = store.last_counts()?;
     let mut inner = Inner { sessions: saved.sessions, teams: saved.teams, here: config::station(&cfg), held: saved.held, menus: saved.menus, tools: saved.tools, placed: saved.placed, seq, rev, log: entries, ..Inner::default() };
-    inner.configure_teams(&cfg.projects);
-    inner.settle_teams(saved.projects, saved.named_teams);
+    inner.teams_at_start(saved.projects, saved.named_teams, &cfg.projects);
     inner.links = links::Book::load();
     inner.reap();
     inner.close_requests_from_before();
@@ -102,7 +101,7 @@ fn open(cfg: Config) -> Result<Arc<App>, String> {
     pictures::prune();
     attachments::prune();
     inner.settle_reading();
-    let push = push::Wake::load(&store);
+    let push = push::Wake::load(&store)?;
     let app = Arc::new(App { push, cfg, store, inner: Mutex::new(inner), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default() });
     // what was changed while starting (a credential masked in a kept message) is written now, not at the next
     // thing an agent says

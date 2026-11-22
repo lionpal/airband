@@ -285,7 +285,7 @@ fn ask_leave(held: &Held, params: Value, request: Value, me: Agent) {
 /// long to put in front of him whole.
 fn leave(params: &Value, agent: Agent) -> Option<airband_core::agent::PermissionAsk> {
     let call = &params["toolCall"];
-    let title = call["title"].as_str().map(str::trim).filter(|t| !t.is_empty()).unwrap_or("use a tool");
+    let title = call["title"].as_str().map(str::trim).filter(|t| !t.is_empty());
     let command = match &call["rawInput"]["command"] {
         Value::String(line) => Some(line.trim().to_string()),
         Value::Array(parts) => Some(parts.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(" ")),
@@ -293,9 +293,13 @@ fn leave(params: &Value, agent: Agent) -> Option<airband_core::agent::Permission
     };
     let what = match command.filter(|c| !c.is_empty() && call["kind"] == "execute") {
         Some(command) => adapters::hooks::to_run(&agent.harness, &command),
-        None => title.chars().next().map(|c| c.to_lowercase().collect::<String>() + &title[c.len_utf8()..]).unwrap_or_default(),
+        // with neither a command nor a title it says nothing he could answer, and nothing is made up for it: it is
+        // not asked, and so not allowed
+        None => title.and_then(|t| t.chars().next().map(|c| c.to_lowercase().collect::<String>() + &t[c.len_utf8()..]))?,
     };
-    adapters::hooks::leave(agent, title, what, &call["rawInput"], "", None)
+    // what the request is called: its title, or with none the protocol's own kind for the call
+    let tool = title.or_else(|| call["kind"].as_str())?;
+    adapters::hooks::leave(agent, tool, what, &call["rawInput"], "", None)
 }
 
 /// The one of the agent's own choices that is his answer: this once, never for always.
@@ -342,5 +346,11 @@ mod tests {
         assert_eq!(offers(&Value::Null), Offers::default());
         assert_eq!(no_such("effort", "an effort", "huge", Some(&s)), "it has no effort called huge. It can be low, high");
         assert_eq!(no_such("model", "a model", "x", None), "it cannot be given a model");
+    }
+
+    #[test]
+    fn a_request_with_neither_a_command_nor_a_title_is_not_put_to_him_under_made_up_words() {
+        let me = Agent { id: "a".into(), harness: "codex".into(), cwd: None, name: None, title: None, pid: None, deliver: Some(Deliver::Held), meta: Default::default() };
+        assert!(leave(&json!({ "toolCall": { "rawInput": {} } }), me).is_none());
     }
 }

@@ -4,7 +4,7 @@ use super::*;
 pub(crate) fn triage(cfg: Config) -> Result<(), String> {
     let mut full = String::new();
     std::io::Read::read_to_string(&mut std::io::stdin(), &mut full).map_err(|e| e.to_string())?;
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
+    let rt = runtime()?;
     let item = Item { id: String::new(), notice: false, full: full.trim().to_string(), kind: None, say: None, asked: None };
     let j = rt.block_on(prepare(&cfg, &item));
     println!("{}\t{}\t{}", super::store::word(&j.kind).unwrap_or_default(), j.say, j.options.iter().enumerate().map(|(i, o)| if j.recommended == Some(i as u32) { format!("[{o}]") } else { o.clone() }).collect::<Vec<_>>().join(" | "));
@@ -13,7 +13,7 @@ pub(crate) fn triage(cfg: Config) -> Result<(), String> {
 
 /// Does the model that reads for the tower answer? For `airband setup`.
 pub(crate) fn try_model(cfg: &Config) -> Result<String, String> {
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
+    let rt = runtime()?;
     // a model on this computer is fetched the first time: wait through that, and say so
     local::listen_after(cfg.port);
     local::wait_for_it(true);
@@ -33,7 +33,12 @@ pub(crate) fn progress(cfg: Config) -> Result<(), String> {
     let mut text = String::new();
     std::io::Read::read_to_string(&mut std::io::stdin(), &mut text).map_err(|e| e.to_string())?;
     let steps: Vec<String> = text.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect();
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
+    let rt = runtime()?;
     println!("{}", rt.block_on(judge::progress(&cfg, &steps)).unwrap_or_else(|| "none".into()));
     Ok(())
+}
+
+/// The runtime each of these commands runs its one question on.
+fn runtime() -> Result<tokio::runtime::Runtime, String> {
+    tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())
 }

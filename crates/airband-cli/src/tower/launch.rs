@@ -1,19 +1,18 @@
-//! Starting a new agent. He names a project the tower knows and says what the agent should do; the tower runs
-//! the configured launcher there. The new agent then reports in like any other, through its own adapter: the
-//! tower does not own it, wrap it or watch it.
+//! Starting a new agent. He picks a place the tower knows (one of his teams, or a folder his coding tools have
+//! lately worked in) and says what the agent should do; the tower runs the configured launcher there. One the
+//! tower runs itself is held by it; one handed off reports in like any other, through its own adapter.
 //!
-//! Only into known projects: folders agents have already worked in, or ones listed in the configuration. A
-//! launcher is a command template, so another agent tool is another entry in `launchers`, not code here.
+//! Only into known places: his teams' folders, and folders his coding tools have had sessions in. A launcher is
+//! a command template, so another agent tool is another entry in `launchers`, not code here.
 use super::*;
 
-/// A new agent he asked for: where, on what, and to do what. The project is nothing until it is known; the
-/// model and effort are as he named them, by a name the launcher offers when it offers one like it
-/// (`held::offers`), or nothing for the tool's own defaults.
+/// A new agent he asked for: where, on what, and to do what. The place is nothing until it is known; the model
+/// and effort are as he named them (`chosen`), or nothing for the tool's own defaults.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(super) struct Idea {
     /// The harness he asked for by name ("a codex agent"), when he did and a launcher starts it.
     pub(super) tool: Option<String>,
-    pub(super) project: Option<String>,
+    pub(super) project: Option<Place>,
     pub(super) model: Option<Pick>,
     pub(super) effort: Option<Pick>,
     pub(super) task: String,
@@ -45,12 +44,10 @@ fn chosen(asked: Option<&Pick>, choices: &[airband_core::tools::Choice], agent_s
     }
 }
 
-pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply {
+pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Reply {
     let task = idea.task.as_str();
     let say = |s: String| Reply { say: s, listen: false, ..Reply::default() };
-    let Some(cwd) = app.read().launchable().get(project).cloned() else {
-        return say(format!("I do not know a project called {project}."));
-    };
+    let (project, cwd) = (place.name.as_str(), place.folder.clone());
     if !std::path::Path::new(&cwd).is_dir() {
         return say(format!("The folder for {project} is gone."));
     }
@@ -105,7 +102,7 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
             }
             Ok(id) => {
                 log(format!("started {named}{with} in {project}, held by the tower: {task}"));
-                say(launched(app, project, &with, task, Some(id)))
+                say(launched(app, place, &with, task, Some(id)))
             }
             Err(e) => {
                 log(format!("launch in {project} failed: {e}"));
@@ -124,7 +121,7 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
         Ok(Ok(out)) if out.status.success() => {
             log(format!("launched {named}{with} in {project} ({session}): {task}"));
             // handed off to a program of its own: nothing says which agent it becomes when it reports in
-            say(launched(app, project, &with, task, None))
+            say(launched(app, place, &with, task, None))
         }
         Ok(Ok(out)) => {
             log(format!("launch in {project} failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
@@ -143,13 +140,17 @@ pub(super) fn launch_label(project: &str) -> String {
     format!("a new agent in {project}")
 }
 
-/// A new agent was started with a task: the task is written into the chat as his words to it, and he is
-/// told it is on its way. `agent` is the new agent's id, when the tower runs it and so knows it: the task is
-/// then its first instruction.
-fn launched(app: &App, project: &str, with: &str, task: &str, agent: Option<String>) -> String {
+/// A new agent was started with a task: the task is written into the chat as his words to it, under the team
+/// of the folder it was started in (made now, when the folder had none), and he is told it is on its way.
+/// `agent` is the new agent's id, when the tower runs it and so knows it: the task is then its first
+/// instruction.
+fn launched(app: &App, place: &Place, with: &str, task: &str, agent: Option<String>) -> String {
     let mut inner = app.change();
-    let team = inner.team_called(project).unwrap_or_default();
-    inner.record(Entry { id: config::random_hex(8), from: HIM.into(), his: true, team, to: vec![launch_label(project)], to_agents: agent.into_iter().collect(), short: Some(task.into()), full: task.into(), ..Entry::default() });
+    let project = &place.name;
+    match inner.folder_team(&place.folder) {
+        Some(team) => inner.record(Entry { id: config::random_hex(8), from: HIM.into(), his: true, team, to: vec![launch_label(project)], to_agents: agent.into_iter().collect(), short: Some(task.into()), full: task.into(), ..Entry::default() }),
+        None => log(format!("the task for the new agent in {project} is not written in the chat: its folder has no name to give a team")),
+    }
     format!("Launching in {project}{with}.")
 }
 
@@ -171,5 +172,18 @@ mod tests {
         // an agent that lists its own settings is asked for exactly what he said
         assert_eq!(id(chosen(Some(&Pick::Said("luna".into())), &models, true)), Ok(Some("luna".into())));
         assert_eq!(id(chosen(None, &models, false)), Ok(None));
+    }
+
+    #[test]
+    fn a_task_started_in_a_folder_with_no_team_yet_is_written_under_that_folders_team() {
+        let app = crate::tower::http::tests::app("launched");
+        let folder = std::env::temp_dir().join(format!("airband-launched-{}", config::random_hex(4))).join("shop");
+        std::fs::create_dir_all(&folder).unwrap();
+        let folder = folder.display().to_string();
+        launched(&app, &Place { name: "shop".into(), folder: folder.clone() }, "", "fix the cart", None);
+        let inner = app.read();
+        let line = inner.log.last().unwrap();
+        assert_eq!(line.team, real_folder(&folder));
+        assert_eq!(inner.team_name(&line.team), "shop");
     }
 }

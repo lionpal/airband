@@ -21,7 +21,10 @@ use airband_core::relay::{Answer, Call, FRESH_MS, Keys, fresh};
 
 
 /// What a radio whose clock is wrong is told.
-const WRONG_CLOCK: &str = "the clocks of your phone and your computer are more than two minutes apart";
+/// Why a request too far from this computer's clock is refused, said from the limit itself.
+fn wrong_clock() -> String {
+    format!("the clocks of your phone and your computer are more than {} minutes apart", FRESH_MS / 60_000)
+}
 
 /// Every pairing being served, by its channel: a request that comes straight to the tower is answered by the
 /// same code, with the same key, as one pulled from the relay.
@@ -210,7 +213,7 @@ impl Serve {
         let call = self.keys.open_call(sealed)?;
         let now = now_ms();
         let (status, body) = if !fresh(call.t, now) {
-            self.refused(&call, "his own network", 408, WRONG_CLOCK)
+            self.refused(&call, "his own network", 408, &wrong_clock())
         } else {
             if !self.first_time(&call.id, now) {
                 return None;
@@ -235,21 +238,22 @@ impl Serve {
         // Only something he said is taken that way, and only with an id: the tower takes each id once, for good,
         // so neither its age nor a second copy can make it happen again.
         let (status, body) = if kept {
-            let said = call.method == "POST" && call.path == "/v1/radio/utterance" && call.body["id"].as_str().is_some_and(|id| !id.is_empty());
-            if said && now.saturating_sub(call.t) <= airband_core::relay::HELD_FOR_MS {
+            // something he said, read as what it is: its id, as the tower takes it
+            let said: Option<String> = (call.method == "POST" && call.path == super::http::UTTERANCE).then(|| serde_json::from_value::<airband_core::radio::Utterance>(call.body.clone()).ok()).flatten().map(|u| u.id).filter(|id| !id.is_empty());
+            if said.is_some() && now.saturating_sub(call.t) <= airband_core::relay::HELD_FOR_MS {
                 log(format!("\"{}\" said this while the tower was away", self.name));
                 self.dispatch(&call, "the relay, kept while the tower was away", false).await
             } else {
                 // Nobody is waiting on this answer. Something he said that came too late is told to his
                 // radio, in its feed, under the id it was said with: he was told it would get here.
-                if said {
-                    self.app.passing().settle(&self.name, call.body["id"].as_str().unwrap_or_default(), airband_core::radio::Outcome::Rejected { why: airband_core::radio::Rejected::TooOld });
+                if let Some(id) = &said {
+                    self.app.passing().settle(&self.name, id, airband_core::radio::Outcome::Rejected { why: airband_core::radio::Rejected::TooOld });
                 }
                 self.refused(&call, "the relay, kept while the tower was away", 400, "only something he said, sent in the last week, is taken late")
             }
         } else if !fresh(call.t, now) {
             // answered, not dropped, so a phone with a wrong clock is told why nothing works
-            self.refused(&call, "the relay", 408, WRONG_CLOCK)
+            self.refused(&call, "the relay", 408, &wrong_clock())
         } else {
             if !self.first_time(&call.id, now) {
                 return log(format!("dropped a replayed request on \"{}\"'s channel", self.name));
@@ -319,10 +323,14 @@ impl Serve {
         };
         let Ok(res) = self.router.clone().oneshot(req).await;
         let status = res.status().as_u16();
-        // an answer too large to read here is said as that, never passed on as an empty one with its status
-        match axum::body::to_bytes(res.into_body(), 1 << 20).await {
-            Ok(bytes) => (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null)),
-            Err(_) => self.refused(call, via, 413, "the answer is too large to send"),
+        // an answer bigger than the relay takes could never reach the radio: it is told so instead of waiting
+        let Ok(bytes) = axum::body::to_bytes(res.into_body(), airband_core::relay::MAX_MESSAGE).await else {
+            return self.refused(call, via, 413, "That answer is too big to send through the relay.");
+        };
+        match serde_json::from_slice(&bytes) {
+            Ok(body) => (status, body),
+            Err(_) if bytes.is_empty() => (status, Value::Null),
+            Err(e) => (500, serde_json::json!({ "error": format!("airband made an answer that is not JSON ({e}).") })),
         }
     }
 }

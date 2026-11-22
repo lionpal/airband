@@ -7,7 +7,7 @@ use super::*;
 /// changes it, and it writes down every change with its reason.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
-pub(super) enum Aloud {
+pub(crate) enum Aloud {
     /// Not for reading out: his own words.
     #[default]
     No,

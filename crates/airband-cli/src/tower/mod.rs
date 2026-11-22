@@ -13,7 +13,8 @@
 //! - this file: the pieces every module shares; `serve` starts the tower up and runs its background loops
 //! - `state`: what the tower remembers, all of it in one place (`Inner`), and what is asked of the whole
 //! - `sessions`: the agents on the radio, what each is called and which team it is in
-//! - `teams`: his teams and recent folders as places to start agents in
+//! - `teams`: his teams by id, how each is named, made, renamed and settled at the start, and the places a new
+//!   agent can be started in
 //! - `entries`: the chat log's lines
 //! - `aloud`: where each thing said stands on its way to being heard on a call
 //! - `calls`: each radio's place in a call
@@ -21,7 +22,8 @@
 //! - `judge`: what is worth his attention, and in how few words (asks the model), and the short versions made
 //!   behind the requests that want them
 //! - `place`: whether an agent is in the right team
-//! - `route`: who a reply is for, and the controls the tower answers itself
+//! - `route`: who a reply is for, and the controls the tower answers itself (`understand` also reads his answer
+//!   to "Who is that for?")
 //! - `deliver`: the ways of getting his words to an agent
 //! - `launch` and `held`: starting a new agent, and the ones the tower runs itself
 //! - `pump`: call mode's one-at-a-time queue
@@ -31,8 +33,9 @@
 //! - `store`: the database: the chat log, the raw event record, receipts, delivery attempts
 //! - `relay_link`: the outbound connection to the relay, one per paired radio
 //! - `push`: waking his phone with a sealed notification when a message deserves it and he is not looking
-//! - `accounts`, `local`, `links`, `access`, `loops`, `probe`: a tool's accounts, a model run on this computer,
-//!   links in messages, folder access, the timers, and the commands that try a model
+//! - `accounts`, `local`, `links`, `access`, `loops`, `probe`, `status`: a tool's accounts, a model run on this
+//!   computer, links in messages, the locks on the tower's state, the timers, the commands that try a model, and
+//!   the tower's page about itself
 mod accounts;
 mod aloud;
 mod attachments;
@@ -61,8 +64,10 @@ mod access;
 mod loops;
 mod probe;
 mod serve;
+mod status;
 pub(crate) use probe::{progress, triage, try_model};
 pub(crate) use serve::run;
+pub(crate) use status::Status;
 use loops::*;
 
 use aloud::*;
@@ -75,6 +80,7 @@ use permit::Permit;
 use pump::*;
 use route::*;
 use sessions::*;
+use teams::*;
 use state::*;
 use store::*;
 

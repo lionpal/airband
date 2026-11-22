@@ -1,13 +1,18 @@
 //! airband: one channel for every coding agent on this machine.
 //!
 //!   airband run                  the tower itself, in the foreground
+//!   airband setup [--no-start]   choose the coding tools and what reads, then install
+//!   airband start                install, and show the code a phone scans when none is paired
 //!   airband install              add the hooks of the coding tools he uses and start the tower at login
 //!   airband uninstall            remove both
 //!   airband status               agents, and what is waiting to be heard
 //!   airband relay <url>          reach radios through this relay (`airband relay off` to stop)
+//!   airband lan [on | off]       whether a phone on the same network may reach this computer straight
 //!   airband model [<provider>]   what reads your agents' messages (listening and voice are chosen on the phone)
 //!   airband pair [name]          print the link that sets up a radio (default name: phone)
 //!   airband unpair <name>        cut a paired radio off
+//!   airband quick [add | remove] the quick messages a phone offers
+//!   airband accounts             the logins of a coding tool, and which one its agents run under
 //!   airband radio [--link <pairing link>]
 //!                              a radio in this terminal: transmissions are printed, typed lines are replies
 //!                              (it makes no sound: voice is the phone's)
@@ -20,6 +25,9 @@
 //!                              the keys he gave, one per provider
 //!   airband hook <tool>          run by a coding tool's own hooks, as its row names them
 //!   airband report ...           put any other agent on the radio from a script (see `airband report` with no arguments)
+//!   airband hold ...             run by the tower: drive a coding tool's program it holds
+//!   airband catalog ...          the catalogue built into this program: export, sign, check, stamp
+//!   airband triage | progress    try what reads messages by hand, on standard input
 //!   airband --version            which version this is
 #[cfg(unix)]
 mod acp;
@@ -41,6 +49,35 @@ pub(crate) fn option(args: &[String], name: &str) -> Option<String> {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
 }
 
+/// A command's words, read by [`words`].
+pub(crate) struct Words {
+    /// Each flag it was given, without its dashes, with the value after it.
+    pub(crate) flags: std::collections::BTreeMap<String, String>,
+    /// Every other word, in order.
+    pub(crate) rest: Vec<String>,
+    /// Everything after a lone `--`, as it is.
+    pub(crate) after: Vec<String>,
+}
+
+/// Read a command's words: each flag of `takes` (as written, `--model`) with the value after it, everything
+/// after a lone `--` as it is, and every other word in order. A flag that is not one of `takes`, or one with no
+/// value, is refused: the one way a command's words are read.
+pub(crate) fn words(command: &str, args: &[String], takes: &[&str]) -> Result<Words, String> {
+    let mut read = Words { flags: Default::default(), rest: Vec::new(), after: Vec::new() };
+    let mut it = args.iter();
+    while let Some(word) = it.next() {
+        match word.as_str() {
+            "--" => read.after = it.by_ref().cloned().collect(),
+            flag if takes.contains(&flag) => {
+                read.flags.insert(flag[2..].to_string(), it.next().cloned().ok_or_else(|| format!("airband {command}: {flag} needs a value"))?);
+            }
+            flag if flag.starts_with("--") => return Err(format!("airband {command} does not take \"{flag}\"")),
+            plain => read.rest.push(plain.to_string()),
+        }
+    }
+    Ok(read)
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // The catalogue: the newest signed copy this computer has kept, for everything but the small commands a
@@ -49,7 +86,8 @@ fn main() {
         Some("hook" | "report" | "hold" | "catalog") => {}
         Some("setup" | "model") => {
             catalog::load();
-            catalog::refresh();
+            // what the copy had to say (one refused, rows this build cannot use) is said before he chooses
+            catalog::refresh().1.iter().for_each(|line| eprintln!("catalogue: {line}"));
         }
         _ => catalog::load(),
     }

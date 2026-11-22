@@ -15,7 +15,7 @@ pub(super) fn by_him(app: &App, agent: &str, to: &airband_core::radio::TeamPick)
     let team = match to {
         airband_core::radio::TeamPick::Team { id } if inner.teams.contains_key(id) => id.clone(),
         airband_core::radio::TeamPick::Team { .. } => return Err("That team is not on this computer any more.".into()),
-        airband_core::radio::TeamPick::New { name } => inner.named_team(name).ok_or("Give the team a name.")?,
+        airband_core::radio::TeamPick::New { name } => inner.team_he_named(name)?,
     };
     inner.move_to(agent, &team, Mover::Him);
     inner.tell();
@@ -91,7 +91,9 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
     if inner.find(&agent_id).is_none_or(|s| s.moved == Some(Mover::Him) || s.team != team_id) {
         return;
     }
-    let Some(to) = listed.filter(|id| inner.teams.contains_key(id)).or_else(|| out.new_team.as_deref().and_then(|n| inner.named_team(n))) else { return };
+    // a new team only by a name no team has, and not as his: the model named it; one of his teams is picked by
+    // its number and never by a name
+    let Some(to) = listed.filter(|id| inner.teams.contains_key(id)).or_else(|| out.new_team.as_deref().and_then(|n| inner.new_team(n, false).ok())) else { return };
     let Some((was, _)) = inner.move_to(&agent_id, &to, Mover::Tower) else { return };
     // said in the chat and not aloud: the name he knew it by has changed
     if let Some(s) = inner.find(&agent_id).cloned() {

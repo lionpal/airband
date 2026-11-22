@@ -71,7 +71,7 @@ fn which_tool(args: &mut Vec<String>) -> Result<&'static str, String> {
 pub(crate) fn accounts_command(cfg: &config::Config, args: &[String]) -> Result<(), String> {
     let mut args = args.to_vec();
     let harness = which_tool(&mut args)?;
-    let here = config::Tower::here(cfg, Duration::from_secs(60));
+    let here = super::TowerHere::here(cfg, Duration::from_secs(60));
     let show = |a: &Accounts| {
         for acct in &a.accounts {
             let limits: Vec<String> = acct.limits.iter().map(|l| format!("{} {:.0}%", l.name, l.used * 100.0)).collect();

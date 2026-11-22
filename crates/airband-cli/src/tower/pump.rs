@@ -41,7 +41,6 @@ pub(super) async fn pump(app: &Arc<App>) {
     }
     // what was just read is written down when this is let go, whatever follows
     // read out under what its agent is called now, or was called when it said it, if it has gone
-    let name = |inner: &Inner, e: &Entry| inner.sender(e).map(|s| s.callsign.text()).unwrap_or_else(|| e.from.clone());
     let ready: Vec<Entry> = inner.log.iter().filter(|e| e.aloud == Aloud::Waiting && e.short.is_some()).cloned().collect();
     // one transmission goes to one radio: whichever is on a call and free
     let Some(radio) = inner.free_radio() else { return };
@@ -49,8 +48,8 @@ pub(super) async fn pump(app: &Arc<App>) {
         // a reminder is a matter of the call, which is not kept
         return remind(app, inner.unkept(), &radio);
     };
-    let callsign = name(&inner, next);
-    let say = next.short.clone().unwrap_or_default();
+    let callsign = inner.sender_name(next);
+    let say = next.line();
     let kind = next.kind.unwrap_or(Kind::Unjudged);
     log(format!("→ {radio}: {callsign} ({kind:?}): {say}"));
     let spoken_line = format!("{}. {say}", airband_core::prose::capital(&callsign));
@@ -108,8 +107,8 @@ fn remind(app: &Arc<App>, inner: &mut Inner, radio: &str) {
     let due = inner.log.iter().find(|e| e.at >= began && open.contains(&e.id) && e.short.is_some() && inner.offered.get(&e.id).is_none_or(|(n, when)| when.elapsed() >= remind_after(*n))).cloned();
     let Some(e) = due else { return };
     let first = !inner.offered.contains_key(&e.id);
-    let say = e.short.clone().unwrap_or_default();
-    let from = inner.sender(&e).map(|s| s.callsign.text()).unwrap_or_else(|| e.from.clone());
+    let say = e.line();
+    let from = inner.sender_name(&e);
     log(format!("→ {radio}: {from} ({}): {say}", if first { "waiting" } else { "reminder" }));
     let spoken_line = if first { format!("{} is waiting. {say}", airband_core::prose::capital(&from)) } else { format!("Still waiting: {from}. {say}") };
     transmit(app, inner, radio, Transmission { id: e.id.clone(), agent: e.agent.clone().unwrap_or_default(), callsign: from, kind: Kind::NeedsYou, say: spoken_line, waiting: 0 });

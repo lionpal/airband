@@ -237,9 +237,10 @@ impl Inner {
         let teams: HashSet<&String> = e.to_agents.iter().filter_map(|id| self.find(id)).map(|s| &s.team).collect();
         if teams.len() == 1 && e.to_agents.iter().all(|id| self.find(id).is_some()) { teams.into_iter().next().unwrap().clone() } else { e.team.clone() }
     }
-    /// What a team's agents last said, newest first, in a few words each: for a model choosing where new work goes.
-    pub(super) fn lately(&self, team: &str) -> Vec<String> {
-        let Some(id) = self.team_called(team) else { return Vec::new() };
+    /// What the agents of the team in this folder last said, newest first, in a few words each: for a model
+    /// choosing where new work goes. Nothing for a folder with no team yet.
+    pub(super) fn lately(&self, folder: &str) -> Vec<String> {
+        let Some(id) = self.team_at(folder) else { return Vec::new() };
         self.log.iter().rev().filter(|e| e.team == id && !e.his && e.kind != Some(Kind::Fyi)).take(2).map(Entry::line).collect()
     }
     /// A logged line as a radio sees it. The sender's name is what it is called now, if it is still here.

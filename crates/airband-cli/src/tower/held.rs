@@ -145,9 +145,10 @@ async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Started, Stri
     holder.arg("hold").arg("--sock").arg(&sock).arg("--cwd").arg(&kept.cwd).arg("--id").arg(&kept.id).arg("--harness").arg(&launcher.harness);
     // whether the program was started under the id the tower chose: one that was reports under it by itself
     let mut given_id = false;
+    holder.arg("--by").arg(crate::hold::By::of(held).word());
     let program: Vec<String> = match held {
         config::Held::Lines { fresh: new, resume, line, stop } => {
-            holder.arg("--by").arg("lines").arg("--line").arg(line);
+            holder.arg("--line").arg(line);
             if let Some(stop) = stop {
                 holder.arg("--stop").arg(stop);
             }
@@ -160,7 +161,6 @@ async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Started, Stri
             argv.into_iter().chain(session).collect()
         }
         config::Held::Acp { program, mode } => {
-            holder.arg("--by").arg("acp");
             if let Some(mode) = mode {
                 holder.arg("--mode").arg(mode);
             }
@@ -251,7 +251,7 @@ pub(super) async fn tell(app: &Arc<App>, id: &str, text: &str, lines: &[String])
     Ok(())
 }
 async fn told_under(app: &Arc<App>, id: &str, text: &str, receipt: &str) -> Result<(), String> {
-    let kept = app.read().held.iter().find(|k| k.id == id).cloned().ok_or("airband is no longer running this agent")?;
+    let kept = app.read().kept_held(id).ok_or("airband is no longer running this agent")?;
     #[cfg(unix)]
     {
         let words = || crate::hold::Tell::Say(text.to_string(), receipt.to_string());
@@ -312,7 +312,7 @@ pub(super) async fn stop(app: &Arc<App>, id: &str) -> Result<(), String> {
         if s.agent.deliver != Some(Deliver::Held) {
             return Err("Only an agent airband runs can be stopped from here. Take it over first.".into());
         }
-        let kept = inner.held.iter().find(|k| k.id == id).cloned().ok_or("airband is no longer running this agent.")?;
+        let kept = inner.kept_held(id).ok_or("airband is no longer running this agent.")?;
         // a program that reads lines can be stopped only if its launcher says what line stops it
         if matches!(app.cfg.launchers.get(&kept.launcher).and_then(|l| l.held.as_ref()), None | Some(config::Held::Lines { stop: None, .. })) {
             return Err("Its launcher has no way to stop it.".into());
@@ -361,6 +361,13 @@ pub(super) fn unsend(app: &App, line: &str) -> Result<(), String> {
     inner.touch(line);
     inner.tell();
     Ok(())
+}
+
+impl Inner {
+    /// What is kept about an agent the tower runs, by its id.
+    pub(super) fn kept_held(&self, id: &str) -> Option<Kept> {
+        self.held.iter().find(|k| k.id == id).cloned()
+    }
 }
 
 /// Start a new held agent in `cwd` and give it its task. It returns once the agent is there, and not before:
@@ -413,7 +420,7 @@ pub(super) async fn carry_on(app: &Arc<App>) {
 
 /// Let a held agent go: its input is closed, and it ends by itself and signs off.
 pub(super) async fn end(app: &Arc<App>, id: &str) -> bool {
-    let kept = app.read().held.iter().find(|k| k.id == id).cloned();
+    let kept = app.read().kept_held(id);
     #[cfg(unix)]
     let was = match &kept {
         Some(kept) => tell_holder(kept, crate::hold::Tell::End).await.is_ok(),
@@ -477,7 +484,9 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
     let mut agent = session.agent.clone();
     agent.deliver = Some(Deliver::Held);
     agent.pid = None;
-    inner.check_in(&agent);
+    if inner.check_in(&agent).is_none() {
+        return Err("It has no team airband can put it in.".into());
+    }
     if !inner.keep_name(id, session.callsign.clone()) {
         log(format!("{} was taken while it moved, so it keeps the name it came back with", session.callsign.text()));
     }

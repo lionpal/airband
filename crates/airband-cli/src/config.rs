@@ -220,34 +220,6 @@ fn new_token() -> String {
     random_hex(24)
 }
 
-/// The tower on this computer, asked with its own token. Every status comes back as an answer, for the caller
-/// to read; only a tower that cannot be reached is an error. The one way the command line and the hooks reach it.
-pub(crate) struct Tower {
-    agent: ureq::Agent,
-    base: String,
-    auth: String,
-}
-
-impl Tower {
-    pub(crate) fn here(cfg: &Config, timeout: std::time::Duration) -> Tower {
-        Tower { agent: airband_core::net::agent(timeout), base: format!("http://127.0.0.1:{}", cfg.port), auth: format!("Bearer {}", cfg.token) }
-    }
-    pub(crate) fn get(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
-        self.agent.get(format!("{}{path}", self.base)).header("authorization", &self.auth)
-    }
-    pub(crate) fn post(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithBody> {
-        self.agent.post(format!("{}{path}", self.base)).header("authorization", &self.auth)
-    }
-    pub(crate) fn delete(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
-        self.agent.delete(format!("{}{path}", self.base)).header("authorization", &self.auth)
-    }
-}
-
-/// A request's answer, when the tower took it (200).
-pub(crate) fn taken(res: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Option<ureq::http::Response<ureq::Body>> {
-    res.ok().filter(|r| r.status().as_u16() == 200)
-}
-
 pub(crate) fn home() -> PathBuf {
     std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).expect("no home directory (HOME or USERPROFILE)")
 }

@@ -33,15 +33,15 @@ pub(crate) fn station(cfg: &Config) -> String {
     if let Some(s) = cfg.station.clone().filter(|s| !s.trim().is_empty()) {
         return s;
     }
-    // Asked of the system once: this is called for every answer to a radio. A Mac has a name he gave it
-    // ("Charles's Mac mini"), which is what he knows it by; elsewhere the host's own name, up to its first dot.
-    // The name is used as it is given: nothing is cut out of it.
+    // Asked of the system once: this is called for every answer to a radio. A computer that keeps a name he
+    // gave it has that asked for; elsewhere the system's own short host name (`hostname -s`). Each is used as
+    // the system gives it: nothing is cut out of it here.
     static HOST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     let said = |program: &str, args: &[&str]| std::process::Command::new(program).args(args).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|name| !name.is_empty());
     let short = HOST
         .get_or_init(|| {
             let given = if cfg!(target_os = "macos") { said("scutil", &["--get", "ComputerName"]) } else { None };
-            given.or_else(|| said("hostname", &[]).map(|host| host.split('.').next().unwrap_or_default().to_string())).unwrap_or_default()
+            given.or_else(|| said("hostname", &["-s"])).unwrap_or_default()
         })
         .clone();
     if short.is_empty() { "computer".into() } else { short }

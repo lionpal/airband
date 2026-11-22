@@ -71,10 +71,9 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
         held::forget(&mut inner, &id);
         return Ok(());
     }
-    if !inner.placeable(&ev.agent) {
-        return Err("airband cannot place an agent that has no name and no folder with a name. Start it in a project\u{2019}s folder, or report it with --name.".into());
-    }
-    let callsign = inner.check_in(&ev.agent).text();
+    let Some(callsign) = inner.check_in(&ev.agent).map(|c| c.text()) else {
+        return Err("airband cannot place an agent that has no name it can give a team and no folder with a name. Start it in a project\u{2019}s folder, or report it with --name.".into());
+    };
     match ev.event {
         Event::Working => {
             let s = inner.session(&id).unwrap();
@@ -169,7 +168,7 @@ fn typed_at_keyboard(app: &App, ev: &AgentEvent) -> Option<(Vec<crate::adapters:
     let known = app.read().find(&ev.agent.id).map(|s| (s.agent.clone(), s.told_upto));
     known.filter(|_| matches!(ev.event, Event::Working | Event::Said { .. })).map(|(agent, upto)| crate::adapters::told(&agent, upto)).map(|(told, upto)| {
         // pictures he pasted in with them, kept before anything is locked
-        let with: Vec<Vec<airband_core::radio::Picture>> = told.iter().map(|t| if t.his { t.images.iter().filter_map(|bytes| pictures::keep_bytes(bytes)).collect() } else { Vec::new() }).collect();
+        let with = pictures::pasted(&told);
         (told, with, upto)
     })
 }
