@@ -286,7 +286,7 @@ fn switch_in(here: &Here, id: &str) -> Res<std::thread::JoinHandle<()>> {
                 if SWITCHES.load(std::sync::atomic::Ordering::SeqCst) != mine {
                     return;
                 }
-                if live::oauth_account(&file).as_ref().and_then(|a| a.get("emailAddress")).and_then(|e| e.as_str()) != Some(target.as_str())
+                if !same_account(live::oauth_account(&file).as_ref(), &acct)
                     && let Err(e) = live::set_oauth_account(&file, &acct)
                 {
                     eprintln!("airband: the account file could not be set back to the account chosen: {e}");
@@ -294,6 +294,12 @@ fn switch_in(here: &Here, id: &str) -> Res<std::thread::JoinHandle<()>> {
             }
         }))
     })
+}
+
+/// Whether the account file holds this account: by the account's own id, never by its email.
+fn same_account(file: Option<&Value>, acct: &Value) -> bool {
+    let id = |a: &Value| a.get("accountUuid").and_then(|u| u.as_str()).map(String::from);
+    matches!((file.and_then(id), id(acct)), (Some(a), Some(b)) if a == b)
 }
 
 // ── what the rest of airband calls ──

@@ -125,7 +125,7 @@ impl Store {
                 id: r.get(1)?,
                 at: r.get::<_, i64>(2)? as u64,
                 from: r.get(3)?,
-                team: TeamId::new(r.get::<_, String>(4)?),
+                team: Some(r.get::<_, String>(4)?).filter(|t| !t.is_empty()).map(TeamId::new),
                 to: read_json(seq, "recipients", column(5)?).unwrap_or_default(),
                 kind: read_word(seq, "kind", column(6)?),
                 short: r.get(7)?,
@@ -205,7 +205,7 @@ impl Store {
                 db.execute(
                     "insert into messages (seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
                      on conflict (seq) do update set grp = excluded.grp, kind = excluded.kind, short = excluded.short, full = excluded.full, detail = excluded.detail, options = excluded.options, recommended = excluded.recommended, rev = excluded.rev, read = excluded.read, waiting = excluded.waiting, seen = excluded.seen, leave = excluded.leave, request = excluded.request, own_session = excluded.own_session, aloud = excluded.aloud",
-                    params![e.seq as i64, e.id, e.at as i64, e.from, e.team.as_str(), serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, e.held.as_ref().and_then(word), e.seen.map(|t| t as i64), e.leave.is_some() as i64, e.own_session as i64, serde_json::to_string(&e.aloud).unwrap(), e.notice as i64, e.leave.as_ref().map(|r| serde_json::to_string(r).unwrap()), e.note.as_ref().and_then(word), e.his],
+                    params![e.seq as i64, e.id, e.at as i64, e.from, e.team.as_ref().map_or("", |t| t.as_str()), serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, e.held.as_ref().and_then(word), e.seen.map(|t| t as i64), e.leave.is_some() as i64, e.own_session as i64, serde_json::to_string(&e.aloud).unwrap(), e.notice as i64, e.leave.as_ref().map(|r| serde_json::to_string(r).unwrap()), e.note.as_ref().and_then(word), e.his],
                 ),
             );
         }
@@ -342,12 +342,12 @@ mod tests {
     fn whether_a_line_is_his_is_kept_as_itself_and_never_read_from_the_sender() {
         let (s, path) = store("his");
         // an agent that calls itself what his lines are labelled, and a line of his
-        s.put_messages(&[Entry { seq: 1, id: "a".into(), from: HIM.into(), team: "/w/shop".into(), ..Entry::default() }, Entry { seq: 2, id: "b".into(), from: HIM.into(), his: true, ..Entry::default() }]);
+        s.put_messages(&[Entry { seq: 1, id: "a".into(), from: HIM.into(), team: Some("/w/shop".into()), ..Entry::default() }, Entry { seq: 2, id: "b".into(), from: HIM.into(), his: true, ..Entry::default() }]);
         let (_, kept) = s.load(10).unwrap();
         assert_eq!(kept.iter().map(|e| (e.id.as_str(), e.his)).collect::<Vec<_>>(), [("a", false), ("b", true)]);
         // a line saved again under its team's id is kept under it
-        s.put_messages(&[Entry { seq: 1, id: "a".into(), team: "/w/garden".into(), ..Entry::default() }]);
-        assert_eq!(s.load(10).unwrap().1[0].team, "/w/garden");
+        s.put_messages(&[Entry { seq: 1, id: "a".into(), team: Some("/w/garden".into()), ..Entry::default() }]);
+        assert_eq!(s.load(10).unwrap().1[0].team, Some("/w/garden".into()));
         let _ = std::fs::remove_file(path);
     }
 

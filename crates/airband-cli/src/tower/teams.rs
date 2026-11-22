@@ -2,13 +2,6 @@
 //! settled at the start, and the listings of the places a new agent can be started in.
 use super::*;
 
-/// A folder as it really is on disk, links followed: two ways of writing one folder are one team. One that is
-/// not there any more is read by its parts, as the system reads a path.
-pub(super) fn real_folder(path: &str) -> String {
-    let at = std::path::Path::new(path);
-    at.canonicalize().unwrap_or_else(|_| at.components().collect()).display().to_string()
-}
-
 /// A place a new agent can be started in: what it is called, and its folder. Its team is the folder's, made
 /// when an agent is started there if there is none yet.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -18,8 +11,8 @@ pub(super) struct Place {
 }
 
 /// One folder in the recent list, shown as he would read its path.
-fn recent_folder(folder: String, name: String, team: Option<TeamId>, tools: Vec<String>, at: u64) -> airband_core::radio::RecentFolder {
-    airband_core::radio::RecentFolder { shown: shown(std::path::Path::new(&folder)), name, team, tools, at, folder }
+fn recent_folder(disk: &dyn super::edges::folders::Folders, folder: String, name: String, team: Option<TeamId>, tools: Vec<String>, at: u64) -> airband_core::radio::RecentFolder {
+    airband_core::radio::RecentFolder { shown: disk.shown(std::path::Path::new(&folder)), name, team, tools, at, folder }
 }
 
 impl Inner {
@@ -29,7 +22,7 @@ impl Inner {
     }
     /// The id of the team that works in this folder, if one does.
     pub(super) fn team_at(&self, folder: &str) -> Option<TeamId> {
-        let real = real_folder(folder);
+        let real = self.disk.real(folder);
         self.teams.iter().find(|(_, t)| t.folder.as_deref() == Some(real.as_str())).map(|(id, _)| id.clone())
     }
     /// The id of the team called this, if one is. Names are kept distinct, so there is at most one.
@@ -41,7 +34,7 @@ impl Inner {
     /// one only a team on another of his computers has takes this computer's name in front instead ("laptop
     /// shop"). Nothing when the path has no name in it (the top of a disk).
     pub(super) fn name_for_folder(&self, folder: &str) -> Option<TeamName> {
-        let real = real_folder(folder);
+        let real = self.disk.real(folder);
         let real_id = TeamId::new(real.clone());
         let here = |name: &TeamName| self.taken_here(name.as_str(), Some(&real_id));
         let there = |name: &TeamName| self.taken_there(name.as_str());
@@ -81,7 +74,7 @@ impl Inner {
     /// A new team in a folder, called `name`, with `named` when he chose that name. Its id: the folder as it
     /// really is. The one way a folder's team is made.
     pub(super) fn new_folder_team(&mut self, folder: &str, name: TeamName, named: bool) -> TeamId {
-        let real = real_folder(folder);
+        let real = self.disk.real(folder);
         let id = TeamId::new(real.clone());
         self.teams.insert(id.clone(), Team { name, folder: Some(real), named });
         id
@@ -182,7 +175,7 @@ impl Inner {
             let callsign = if self.callsign_free(&same, Some(&id)) { same } else { self.next_free(to.as_str(), Some(&id), &[]) };
             self.rename(&id, callsign);
         }
-        let lines: Vec<String> = self.log.iter().filter(|e| &e.team == team).map(|e| e.id.clone()).collect();
+        let lines: Vec<String> = self.log.iter().filter(|e| e.team.as_ref() == Some(team)).map(|e| e.id.clone()).collect();
         for line in lines {
             self.touch(&line);
         }
@@ -200,7 +193,7 @@ impl Inner {
     /// or that another team already has, is left out and said in the log.
     pub(super) fn configure_teams(&mut self, listed: &BTreeMap<String, String>) {
         for (name, folder) in listed {
-            let id = TeamId::new(real_folder(folder));
+            let id = TeamId::new(self.disk.real(folder));
             if self.teams.contains_key(&id) {
                 continue;
             }
@@ -217,7 +210,7 @@ impl Inner {
     /// moved goes back to its own folder's team, and each kept folder is written as it really is on disk.
     pub(super) fn settle_teams(&mut self, old: BTreeMap<String, String>, named: BTreeSet<String>) {
         for (name, folder) in old {
-            let id = TeamId::new(real_folder(&folder));
+            let id = TeamId::new(self.disk.real(&folder));
             let is_named = named.contains(&name);
             let Ok(name) = TeamName::new(&name) else {
                 log(format!("a kept team called {name} is not read: a team cannot have that name"));
@@ -265,9 +258,9 @@ impl Inner {
             }
         }
         let by_name: BTreeMap<String, TeamId> = self.teams.iter().map(|(id, t)| (t.name.to_string(), id.clone())).collect();
-        for e in self.log.iter_mut().filter(|e| !e.team.is_empty() && !self.teams.contains_key(&e.team)) {
-            if let Some(id) = by_name.get(e.team.as_str()) {
-                e.team = id.clone();
+        for e in self.log.iter_mut().filter(|e| e.team.as_ref().is_some_and(|t| !self.teams.contains_key(t))) {
+            if let Some(id) = e.team.as_ref().and_then(|t| by_name.get(t.as_str())) {
+                e.team = Some(id.clone());
                 self.unsaved.borrow_mut().insert(e.id.clone());
             }
         }
@@ -293,7 +286,7 @@ impl Inner {
                 t.live_folder().is_none()
                     && !self.sessions.iter().any(|s| &s.team == *id)
                     && !self.placed.values().any(|(team, _)| team == *id)
-                    && !self.log.iter().any(|e| &e.team == *id)
+                    && !self.log.iter().any(|e| e.team.as_ref() == Some(*id))
             })
             .map(|(id, _)| id.clone())
             .collect();
@@ -323,7 +316,7 @@ impl Inner {
     pub(super) fn launchable(&self) -> Vec<Place> {
         let mut all: Vec<Place> = self.folder_teams().into_iter().map(|(name, folder)| Place { name, folder }).collect();
         for recent in self.recent().into_iter().filter(|r| r.team.is_none() && !r.name.is_empty()).take(20) {
-            if all.iter().any(|p| real_folder(&p.folder) == real_folder(&recent.folder)) {
+            if all.iter().any(|p| self.disk.real(&p.folder) == self.disk.real(&recent.folder)) {
                 continue;
             }
             let name = if all.iter().any(|p| p.name == recent.name) { recent.shown } else { recent.name };
@@ -347,13 +340,13 @@ impl Inner {
             .cloned()
             .map(|(folder, tools, at)| {
                 let (name, team) = self.folder_called(&folder);
-                recent_folder(folder, name.unwrap_or_default(), team, tools, at)
+                recent_folder(&*self.disk, folder, name.unwrap_or_default(), team, tools, at)
             })
             .collect();
         for (name, folder) in teams {
-            if !all.iter().any(|r| real_folder(&r.folder) == real_folder(&folder)) {
+            if !all.iter().any(|r| self.disk.real(&r.folder) == self.disk.real(&folder)) {
                 let id = self.team_at(&folder);
-                all.push(recent_folder(folder, name, id, Vec::new(), 0));
+                all.push(recent_folder(&*self.disk, folder, name, id, Vec::new(), 0));
             }
         }
         all

@@ -150,7 +150,7 @@ fn launched(app: &App, place: &Place, with: &str, task: &str, agent: Option<Stri
     let mut inner = app.change();
     let project = &place.name;
     match inner.folder_team(&place.folder) {
-        Some(team) => inner.record(Entry { id: config::random_hex(8), from: HIM.into(), his: true, team, to: vec![launch_label(project)], to_agents: agent.into_iter().collect(), short: Some(task.into()), full: task.into(), ..Entry::default() }),
+        Some(team) => inner.record(Entry { id: config::random_hex(8), from: HIM.into(), his: true, team: Some(team), to: vec![launch_label(project)], to_agents: agent.into_iter().collect(), short: Some(task.into()), full: task.into(), ..Entry::default() }),
         None => log(format!("the task for the new agent in {project} is not written in the chat: its folder has no name to give a team")),
     }
     format!("Launching in {project}{with}.")
@@ -190,7 +190,7 @@ mod tests {
         launched(&app, &Place { name: "shop".into(), folder: folder.clone() }, "", "fix the cart", None);
         let inner = app.read();
         let line = inner.log.last().unwrap();
-        assert_eq!(line.team, real_folder(&folder));
-        assert_eq!(inner.team_name(&line.team), Some("shop"));
+        assert_eq!(line.team, Some(edges::folders::Folders::real(&edges::folders::Disk, &folder).into()));
+        assert_eq!(line.team.as_ref().and_then(|t| inner.team_name(t)), Some("shop"));
     }
 }

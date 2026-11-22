@@ -289,3 +289,12 @@ fn n39_a_switch_whose_account_record_cannot_be_written_leaves_the_login_as_it_wa
     assert!(matches!(&switched, Err(e) if e.starts_with("Did not switch")), "{:?}", switched.as_ref().err());
     assert_eq!(live["claudeAiOauth"]["accessToken"], "a-access", "the login was swapped and the record was not");
 }
+
+#[test]
+fn the_account_file_is_known_to_hold_an_account_by_its_id_never_by_its_email() {
+    let chosen = json!({"accountUuid": "person-1", "emailAddress": "a@x"});
+    assert!(same_account(Some(&json!({"accountUuid": "person-1", "emailAddress": "renamed@x"})), &chosen));
+    assert!(!same_account(Some(&json!({"accountUuid": "person-2", "emailAddress": "a@x"})), &chosen), "same email, another person");
+    assert!(!same_account(Some(&json!({"emailAddress": "a@x"})), &chosen), "no id says nothing");
+    assert!(!same_account(None, &chosen));
+}
