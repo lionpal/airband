@@ -26,12 +26,16 @@ pub(super) fn news(taken: &Taken, speaks: &dyn Fn(&crate::providers::Offer) -> b
 /// what is worth a line in a log. The one place a kept catalogue is read, for the app and the tower alike.
 pub fn load_kept(dir: &Path, speaks: &dyn Fn(&crate::providers::Offer) -> bool) -> Vec<String> {
     let at = dir.join(KEPT);
-    match (std::fs::read(&at), std::fs::read_to_string(at.with_extension("json.sig"))) {
+    let (doc, sig) = (std::fs::read(&at), std::fs::read_to_string(at.with_extension("json.sig")));
+    let absent = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
+    match (doc, sig) {
         (Ok(doc), Ok(sig)) => match accept(&doc, &sig) {
             Ok(taken) => news(&taken, speaks),
             Err(why) => vec![format!("catalogue: the copy kept here was not used ({why})")],
         },
-        _ => Vec::new(),
+        // none kept yet: nothing to say
+        (Err(a), Err(b)) if absent(&a) && absent(&b) => Vec::new(),
+        (Err(e), _) | (_, Err(e)) => vec![format!("catalogue: the copy kept here could not be read, so the one built in is used ({e})")],
     }
 }
 

@@ -334,6 +334,25 @@ mod tests {
     }
 
     #[test]
+    fn a_kept_copy_that_cannot_be_read_is_said_and_a_copy_without_an_end_is_refused_as_such() {
+        let dir = std::env::temp_dir().join(format!("airband-kept-catalog-{}", crate::encode::random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        // nothing kept: nothing said
+        assert!(load_kept(&dir, &|_| true).is_empty());
+        // a copy kept without its signature: said, never passed over unseen
+        std::fs::write(dir.join(kept::KEPT), b"{}").unwrap();
+        assert_eq!(load_kept(&dir, &|_| true).len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+        // a copy that does not say when it ends is told as that, never as one that has run out
+        let said = offered(&|d| {
+            d.as_object_mut().unwrap().remove("expires");
+        })
+        .err()
+        .unwrap();
+        assert!(said.contains("does not say until when"), "{said}");
+    }
+
+    #[test]
     fn two_copies_taken_at_once_always_leave_the_newer_in_use() {
         let doc = |up: u64| {
             let mut doc: Value = serde_json::from_str(BUILT_IN).unwrap();

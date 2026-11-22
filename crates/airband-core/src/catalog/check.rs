@@ -93,7 +93,7 @@ pub(super) fn weigh(text: &str, now: u64, have: &Catalog) -> Result<(Option<Cata
 
 /// The same, held to what `built` has in place of this build's own catalogue.
 pub(super) fn weigh_against(text: &str, now: u64, have: &Catalog, built: &Catalog) -> Result<(Option<Catalog>, Taken), String> {
-    let expires = serde_json::from_str::<Value>(text).map_err(|e| format!("the catalogue does not read: {e}"))?["expires"].as_u64().unwrap_or(0);
+    let expires = serde_json::from_str::<Value>(text).map_err(|e| format!("the catalogue does not read: {e}"))?["expires"].as_u64().ok_or("this copy of the catalogue does not say until when it may be taken")?;
     // a signed copy says until when it may be taken, so one that was replaced long ago cannot be served again
     if expires <= now {
         return Err("this copy of the catalogue has run out".into());
