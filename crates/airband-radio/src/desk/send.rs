@@ -50,7 +50,7 @@ impl Desk {
     fn owner_or_say(&self, message_id: &str) -> Option<Arc<Radio>> {
         let radio = self.radio_of(message_id);
         if radio.is_none() {
-            self.shared.host.note("That computer is no longer paired.".into());
+            self.shared.host.note(UNPAIRED.into());
         }
         radio
     }
@@ -66,7 +66,7 @@ impl Desk {
             state.station_at(&station).or(state.owner(&message_id)).map(|i| state.stations[i].radio.clone())
         };
         self.shared.host.changed();
-        radio.ok_or(RadioError::Told { reason: "That computer is no longer paired.".into() })?.answer_now(match &tapped { Some(t @ (Tapped::Allow | Tapped::Deny)) => t.words(), _ => text }, message_id, tapped.map(|t| t.act()))
+        radio.ok_or(crate::choices::told(UNPAIRED))?.answer_now(match &tapped { Some(t @ (Tapped::Allow | Tapped::Deny)) => t.words(), _ => text }, message_id, tapped.map(|t| t.act()))
     }
     /// Send what he typed. Who it is for, in this order: tags at its start (`@shop2`, `@shop`, `@all`); the
     /// message `re` if he picked one; the `agent` he is looking at; otherwise the tower works it out from his
@@ -79,19 +79,14 @@ impl Desk {
     /// computer that has the message if the chat holds only their opening. Blocks while it fetches: call it
     /// off the main thread.
     pub fn resend(&self, message_id: String, agent_id: String) {
-        let (text, known) = {
+        let found = {
             let state = self.shared.state.lock().unwrap();
-            let found = state.message(&message_id).map(|(_, m)| (m.text.clone(), m.long));
-            let known = state.stations.iter().flat_map(|s| s.agents.iter()).any(|a| a.id == agent_id);
-            (found, known)
+            state.message(&message_id).map(|(_, m)| (m.text.clone(), m.long)).zip(state.radio_with_agent(&agent_id))
         };
-        let (Some((text, long)), true) = (text, known) else { return };
+        let Some(((text, long), radio)) = found else { return };
         let text = if long { self.full(message_id).unwrap_or(text) } else { text };
         // to the agent he picked, whatever tags the words start with: he chose who, so nothing in them is read
-        let radio = self.shared.state.lock().unwrap().radio_with_agent(&agent_id);
-        if let Some(radio) = radio {
-            radio.queue_out(Outgoing { to: vec![agent_id], ..Outgoing::of(text) });
-        }
+        radio.queue_out(Outgoing { to: vec![agent_id], ..Outgoing::of(text) });
         self.shared.host.changed();
     }
     /// Send a quick message: the feed shows `label`, the agent gets `text`. Who it is for is worked out as for

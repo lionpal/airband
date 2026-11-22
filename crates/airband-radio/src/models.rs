@@ -253,7 +253,7 @@ mod tests {
         let (dir, kind) = (std::env::var("AIRBAND_MODEL_DIR").unwrap(), std::env::var("AIRBAND_MODEL").unwrap());
         let began = std::time::Instant::now();
         // a phone that has every engine the catalogue names
-        let device = HostDevice { engines: airband_core::catalog::current().models.iter().map(|m| m.engine.clone()).collect(), os: "ios".into(), os_version: u32::MAX };
+        let device = HostDevice { engines: airband_core::catalog::current().models.iter().map(|m| m.engine.clone()).collect(), os: "ios".into(), os_version: u32::MAX, team_colours: 0 };
         let m = model(&kind, &device).unwrap();
         fetch_local_model(dir.clone(), &m).unwrap();
         assert!(fetched(&dir, &m) && local_model_progress() == 100);

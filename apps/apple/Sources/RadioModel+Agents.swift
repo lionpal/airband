@@ -65,14 +65,17 @@ extension RadioModel {
     /// Start a new agent in a team. It appears in the list at once, with nothing to do until he speaks to it.
     /// `tool` is one of the coding tools he uses; nothing is the one he uses when there is only one.
     func newAgent(in room: String, tool: CodingTool? = nil) {
-        desk.newAgent(room: room, tool: tool ?? (usedTools.count == 1 ? usedTools.first : nil))
+        desk.newAgent(room: room, tool: tool ?? onlyTool)
     }
 
     /// The coding tools he uses, as the catalogue describes them, the one he uses most first.
-    var usedTools: [CodingTool] {
-        let all = codingTools()
-        return tools.compactMap { id in all.first { $0.id == id } }
-    }
+    var usedTools: [CodingTool] { tools.compactMap(tool(of:)) }
+    /// The coding tool he uses, when he uses just one: then it is never asked which.
+    var onlyTool: CodingTool? { usedTools.count == 1 ? usedTools[0] : nil }
+    /// A coding tool, by its id, as the catalogue describes it.
+    func tool(of id: String) -> CodingTool? { codingTools().first { $0.id == id } }
+    /// His computer, by its id, when he has just one: then it is never asked which.
+    var onlyComputer: String? { view.stations.count == 1 ? view.stations[0].id : nil }
 
     /// Let a question go without answering it.
     func dismiss(_ m: ChatMessage) {

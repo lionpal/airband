@@ -342,7 +342,7 @@ fn teams_on_two_computers_get_different_colours_that_last() {
     let dir = std::env::temp_dir().join(format!("airband-colours-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let mut colours = super::colours::Colours::open(dir.to_str().unwrap());
+    let mut colours = super::colours::Colours::open(dir.to_str().unwrap(), 6);
     // a team called shop on each of two computers: two rooms, by computer and team id, each its own colour
     let _ = colours.see(["mini//w/shop".to_string(), "mini//w/shop".to_string()]);
     let _ = colours.see(["laptop//w/shop".to_string()]);
@@ -350,8 +350,8 @@ fn teams_on_two_computers_get_different_colours_that_last() {
     // a room not seen yet has none
     assert_eq!(colours.of("laptop//w/garden"), None);
     // renaming a team changes neither its room nor its colour, which last
-    assert_eq!(super::colours::Colours::open(dir.to_str().unwrap()).of("laptop//w/shop"), colours.of("laptop//w/shop"));
-    assert_eq!(super::colours::Colours::open(dir.to_str().unwrap()).of("mini//w/shop"), colours.of("mini//w/shop"));
+    assert_eq!(super::colours::Colours::open(dir.to_str().unwrap(), 6).of("laptop//w/shop"), colours.of("laptop//w/shop"));
+    assert_eq!(super::colours::Colours::open(dir.to_str().unwrap(), 6).of("mini//w/shop"), colours.of("mini//w/shop"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -511,7 +511,7 @@ fn a_new_team_colour_counts_only_teams_on_his_screen() {
     // six rooms kept from before, gone now, each with its own colour but the last
     let gone: std::collections::BTreeMap<String, u8> = (0..5u8).map(|c| (format!("old//w/{c}"), c)).collect();
     std::fs::write(dir.join("colours.json"), serde_json::to_string(&gone).unwrap()).unwrap();
-    let mut colours = super::colours::Colours::open(dir.to_str().unwrap());
+    let mut colours = super::colours::Colours::open(dir.to_str().unwrap(), 6);
     let _ = colours.see(["mini//w/shop".to_string()]);
     let _ = colours.see(["mini//w/garden".to_string()]);
     // nothing on his screen has a colour yet: the first two are the first two colours

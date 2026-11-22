@@ -49,6 +49,8 @@ pub struct HostDevice {
     /// The operating system, as a model's row names it under `min_os` ("ios"), and its major version.
     pub os: String,
     pub os_version: u32,
+    /// How many team colours the host draws with: the phone hands out places in that list, and no more.
+    pub team_colours: u8,
 }
 
 /// Can this build, on this device, run the model? Its engine is here or the host's, and where the row says
@@ -122,7 +124,7 @@ mod tests {
 
     #[test]
     fn a_model_is_offered_only_where_its_engine_and_its_system_are() {
-        let phone = HostDevice { engines: vec!["host-new".into()], os: "ios".into(), os_version: 18 };
+        let phone = HostDevice { engines: vec!["host-new".into()], os: "ios".into(), os_version: 18, team_colours: 0 };
         // an engine nobody here has: not offered
         assert!(!runs(&row("unheard-of", serde_json::json!({})), &phone));
         // the host's own, with nothing said about the system

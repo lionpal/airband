@@ -27,7 +27,7 @@ extension RadioModel {
     }
 
     func device() -> HostDevice {
-        HostDevice(engines: engines.keys.sorted(), os: "ios", osVersion: UInt32(ProcessInfo.processInfo.operatingSystemVersion.majorVersion))
+        HostDevice(engines: engines.keys.sorted(), os: "ios", osVersion: UInt32(ProcessInfo.processInfo.operatingSystemVersion.majorVersion), teamColours: UInt8(TeamColours.rgb.count))
     }
 
     /// The core asks for a model to be run by one of the engines above.

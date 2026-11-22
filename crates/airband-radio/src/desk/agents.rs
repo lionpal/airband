@@ -83,7 +83,7 @@ impl Desk {
         let pick = match to {
             DeskTeamPick::Room { room } => {
                 let state = self.shared.state.lock().unwrap();
-                let (there, team, _) = state.room(&room).ok_or(RadioError::Told { reason: "That team has no agents now.".into() })?;
+                let (there, team, _) = state.room(&room).ok_or(crate::choices::told(NO_TEAM))?;
                 if !Arc::ptr_eq(&there, &radio) {
                     return Err(RadioError::Told { reason: "An agent can only move to a team on its own computer.".into() });
                 }
@@ -110,7 +110,7 @@ impl Desk {
     /// changes: its agents, its room and its colour stay. Answers with the name it now has. Blocks: call it
     /// off the main thread.
     pub fn rename_team(&self, room: String, to: String) -> Result<String, RadioError> {
-        let (radio, team, _) = self.shared.state.lock().unwrap().room(&room).ok_or(RadioError::Told { reason: "That team has no agents now.".into() })?;
+        let (radio, team, _) = self.shared.state.lock().unwrap().room(&room).ok_or(crate::choices::told(NO_TEAM))?;
         let now = radio.rename_team(team, to)?;
         {
             // shown as the tower now has it, without waiting for the next look at the feed

@@ -153,7 +153,7 @@ fn cannot(what: &str, job: ChoiceJob) -> String {
     format!("This version of airband cannot {what}. Choose another in Settings, under {section}.")
 }
 
-fn told(reason: impl Into<String>) -> RadioError {
+pub(crate) fn told(reason: impl Into<String>) -> RadioError {
     RadioError::Told { reason: reason.into() }
 }
 
@@ -297,7 +297,7 @@ mod tests {
     }
     /// A phone whose host runs every engine the catalogue names.
     fn phone() -> HostDevice {
-        HostDevice { engines: airband_core::catalog::current().models.iter().map(|m| m.engine.clone()).collect(), os: "ios".into(), os_version: u32::MAX }
+        HostDevice { engines: airband_core::catalog::current().models.iter().map(|m| m.engine.clone()).collect(), os: "ios".into(), os_version: u32::MAX, team_colours: 0 }
     }
     fn chosen(list: &[Choice]) -> Vec<&str> {
         list.iter().filter(|c| c.chosen).map(|c| c.id.as_str()).collect()

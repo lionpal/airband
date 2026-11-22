@@ -118,13 +118,13 @@ struct NewAgentSheet: View {
         .presentationSizing(.page)
         .onAppear {
             // nothing is picked for him: the one there is, when there is only one; otherwise he picks
-            computer = model.view.stations.count == 1 ? model.view.stations[0].id : ""
-            tool = model.usedTools.count == 1 ? model.usedTools[0].id : ""
+            computer = model.onlyComputer ?? ""
+            tool = model.onlyTool?.id ?? ""
             load()
         }
         // the computers can become known after the sheet opens: the only one is taken, as above
-        .onChange(of: model.view.stations) { _, stations in
-            if computer.isEmpty, stations.count == 1 { computer = stations[0].id; load() }
+        .onChange(of: model.view.stations) { _, _ in
+            if computer.isEmpty, let only = model.onlyComputer { computer = only; load() }
         }
     }
 

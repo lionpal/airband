@@ -106,6 +106,10 @@ pub(crate) struct Station {
     /// This computer's recent chat, oldest first.
     messages: Vec<ChatMessage>,
 }
+/// What he is told when what he acted on is on a computer he is no longer paired with.
+pub(super) const UNPAIRED: &str = "That computer is no longer paired.";
+/// What he is told when the team he picked has no agents left, so no computer has it.
+pub(super) const NO_TEAM: &str = "That team has no agents now.";
 impl Station {
     /// What this computer is known by on this device ([`station_id`]).
     pub(crate) fn id(&self) -> String {
@@ -276,8 +280,9 @@ impl Desk {
     /// kept in a folder under it. Nothing is connected until [`Desk::set_links`].
     #[uniffi::constructor]
     pub fn open(data_dir: String, host: Arc<dyn DeskHost>) -> Arc<Self> {
-        let state = State { read: ReadMarks::load(&data_dir), colours: Colours::open(&data_dir), ..State::default() };
-        let chooser = crate::choices::Chooser::open(&data_dir, host.device());
+        let device = host.device();
+        let state = State { read: ReadMarks::load(&data_dir), colours: Colours::open(&data_dir, device.team_colours), ..State::default() };
+        let chooser = crate::choices::Chooser::open(&data_dir, device);
         let senses: Arc<Senses> = Arc::default();
         // what he chose to listen and speak with is in use from the start
         chooser.apply(&*host, &senses);
