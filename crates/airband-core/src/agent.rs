@@ -12,12 +12,28 @@ pub const SCHEMA: &str = "airband.agent/1";
 pub struct AgentEvent {
     /// Always `airband.agent/1`.
     pub schema: String,
+    /// Random, made when the event is: a report sent again after a timeout is the same report, and the tower
+    /// takes it once.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
     pub agent: Agent,
     pub event: Event,
     /// How it came to be reported, when the reporter says. A tool that is heard two ways (its hooks and its
     /// own server) is heard through its hooks once they have reported, and this is how the tower knows they have.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub via: Option<Via>,
+}
+
+impl AgentEvent {
+    /// A new event of this agent's, with a fresh id.
+    pub fn new(agent: Agent, event: Event) -> Self {
+        AgentEvent { schema: SCHEMA.into(), id: crate::encode::random_hex(12), agent, event, via: None }
+    }
+    /// Reported this way.
+    pub fn via(mut self, via: Via) -> Self {
+        self.via = Some(via);
+        self
+    }
 }
 
 /// How an event came to be reported.

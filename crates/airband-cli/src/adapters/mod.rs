@@ -280,7 +280,7 @@ fn look(h: &dyn Harness, tower: &Tower, told: &mut std::collections::HashMap<Str
     }
     for id in listed.iter().filter(|id| !open.iter().any(|o| o.agent.id == **id)) {
         let gone = Agent { id: id.clone(), harness: h.name().into(), cwd: None, name: None, title: None, pid: None, deliver: None, meta: Default::default() };
-        if (tower.event)(AgentEvent { schema: airband_core::agent::SCHEMA.into(), agent: gone, event: airband_core::agent::Event::Signoff, via: None }) {
+        if (tower.event)(AgentEvent::new(gone, airband_core::agent::Event::Signoff)) {
             told.remove(id);
         }
     }

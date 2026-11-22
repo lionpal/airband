@@ -142,7 +142,7 @@ fn watch_tools(app: &Arc<App>) {
 fn found(app: &Arc<App>, agent: Agent, idle: bool) -> bool {
     let id = agent.id.clone();
     let new = app.read().find(&id).is_none();
-    let event = AgentEvent { schema: agent::SCHEMA.into(), agent, event: Event::Checkin, via: None };
+    let event = AgentEvent::new(agent, Event::Checkin);
     if intake::record_and_take(app, event).is_err() {
         return false;
     }

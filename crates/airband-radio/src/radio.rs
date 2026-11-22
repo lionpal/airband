@@ -169,7 +169,7 @@ impl Radio {
         struct Words {
             text: String,
         }
-        let words: Words = match self.asked(Method::Get, &format!("/message/{id}?{}", airband_core::radio::MessageAsk { form: Some(airband_core::radio::Form::Spoken), part }.query()), None) {
+        let words: Words = match self.asked(Method::Get, &format!("/message/{id}?{}", airband_core::radio::wire::query_of(&airband_core::radio::wire::MessageQuery { form: Some(airband_core::radio::Form::Spoken), part })), None) {
             Ok(words) => words,
             Err(e) => {
                 self.host.told(match e {
@@ -290,8 +290,8 @@ impl Radio {
         // with an address of the tower's still to try, this request does not wait for news: it only finds out
         // whether the tower is there, so the straight path is in use (and shown) within a moment
         let wait = if self.link.untried() { 0 } else { wait_seconds };
-        let ask = airband_core::radio::FeedAsk { since: Some(since), roster: Some(roster), wait, ..Default::default() };
-        let feed: Feed = self.asked(Method::Get, &format!("/feed?{}", ask.query()), None)?;
+        let ask = airband_core::radio::wire::FeedQuery { since: Some(since), roster: Some(roster), wait, ..Default::default() };
+        let feed: Feed = self.asked(Method::Get, &format!("/feed?{}", airband_core::radio::wire::query_of(&ask)), None)?;
         spoken_alike(&feed)?;
         self.roster.store(feed.roster_rev, Ordering::SeqCst);
         self.link.set_direct(feed.direct.clone());
@@ -344,8 +344,8 @@ impl Radio {
     /// each message cut to a line or two. Waits up to `wait_seconds` (25 at most) for something new. Blocks:
     /// call it off the main thread.
     pub fn feed(&self, team: Option<String>, agent: Option<String>, after: u64, wait_seconds: u32) -> Result<ChatFeed, RadioError> {
-        let ask = airband_core::radio::FeedAsk { team, agent, after, wait: wait_seconds, ..Default::default() };
-        let feed: Feed = self.asked(Method::Get, &format!("/feed?{}", ask.query()), None)?;
+        let ask = airband_core::radio::wire::FeedQuery { team: team.map(Into::into), agent: agent.map(Into::into), after, wait: wait_seconds, ..Default::default() };
+        let feed: Feed = self.asked(Method::Get, &format!("/feed?{}", airband_core::radio::wire::query_of(&ask)), None)?;
         spoken_alike(&feed)?;
         self.link.set_direct(feed.direct.clone());
         Ok(chat_feed(feed))

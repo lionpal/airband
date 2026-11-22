@@ -102,24 +102,7 @@ pub(crate) use airband_core::clock::now_ms;
 /// The way an answer came: the last way its request was tried, as its steps were written down. Every way that
 /// brings an answer writes its step before handing the answer back, so an answer always has one.
 /// How a request is made of the tower.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Method {
-    Get,
-    Post,
-}
-impl Method {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Method::Get => "GET",
-            Method::Post => "POST",
-        }
-    }
-}
-impl std::fmt::Display for Method {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+pub(crate) use airband_core::radio::wire::Method;
 
 impl Link {
     /// `radio` is this radio's own name for itself, the same every launch: the tower keeps each radio's place
@@ -174,7 +157,7 @@ impl Link {
     /// A request as it is sealed for the tower: made now, under an id of its own, saying where this radio
     /// stands.
     fn call(&self, method: Method, path: &str, body: Value) -> Call {
-        Call { t: now_ms(), id: random_hex(12), method: method.as_str().into(), path: path.into(), body, schema: airband_core::radio::SCHEMA.into(), presence: self.presence() }
+        Call { t: now_ms(), id: random_hex(12), method, path: path.into(), body, schema: airband_core::radio::SCHEMA.into(), presence: self.presence() }
     }
 
     /// Add a line to the trail, and to its file.
@@ -318,6 +301,7 @@ impl Link {
                 let res = match method {
                     Method::Get => self.agent.get(format!("{url}{path}")).header("authorization", auth).header(airband_core::radio::RADIO_HEADER, radio).header(airband_core::radio::PRESENCE_HEADER, &presence).call(),
                     Method::Post => self.agent.post(format!("{url}{path}")).header("authorization", auth).header(airband_core::radio::RADIO_HEADER, radio).header(airband_core::radio::PRESENCE_HEADER, &presence).send_json(body.unwrap_or_else(|| serde_json::json!({}))),
+                    Method::Delete => self.agent.delete(format!("{url}{path}")).header("authorization", auth).header(airband_core::radio::RADIO_HEADER, radio).header(airband_core::radio::PRESENCE_HEADER, &presence).call(),
                 };
                 let got = match res {
                     Err(e) => Err(unsent(&e, Way::Paired)),

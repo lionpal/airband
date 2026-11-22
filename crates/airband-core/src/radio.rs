@@ -1,6 +1,7 @@
-//! `airband.radio/3` ([`SCHEMA`]): what goes between the tower and a radio (the app on the phone, in the car, on a desk).
+//! `airband.radio/4` ([`SCHEMA`]): what goes between the tower and a radio (the app on the phone, in the car, on a desk).
 //!
-//! The radio asks; the tower answers. All under `/v1/radio/`. Sent straight to the tower with
+//! The radio asks; the tower answers. All under `/v1/radio/`; every route, with the types it takes and gives,
+//! is one [`wire::Endpoint`] in [`wire::at`]. Sent straight to the tower with
 //! `Authorization: Bearer <token>`, or sealed and passed through a relay (`airband.relay/1`):
 //! - `GET next`: held open up to 25 seconds. 200 with a [`Transmission`], or 204 when nothing is waiting.
 //!   A transmission is words: the radio speaks them with the voice he chose on it. The tower makes no sound
@@ -14,7 +15,7 @@
 //!   Said when either changes; every other request carries it too.
 //!
 //! Those are call mode: one transmission at a time, spoken. Chat mode reads the same messages as a feed:
-//! - `GET feed?…` [`FeedAsk`] → [`Feed`]: what was said, each cut to a line or two; all of it, one team's or
+//! - `GET feed?…` [`wire::FeedQuery`] → [`Feed`]: what was said, each cut to a line or two; all of it, one team's or
 //!   one agent's.
 //! - `GET message/<id>?form=detail|full` → [`More`]: the fuller spoken version, or exactly what the agent wrote.
 //! - `POST utterance` is also how chat sends: leading `@tags` say who it is for (`@shop2`, `@shop`, `@all`).
@@ -23,10 +24,11 @@ use serde::{Deserialize, Serialize};
 
 mod asks;
 mod feed;
+pub mod wire;
 pub use asks::*;
 pub use feed::*;
 
-pub const SCHEMA: &str = "airband.radio/3";
+pub const SCHEMA: &str = "airband.radio/4";
 
 /// Where every request of a radio's goes on the tower. A radio's token opens these and nothing else.
 pub const PATH: &str = "/v1/radio/";
@@ -287,97 +289,9 @@ pub enum Part {
     Asked,
 }
 
-/// What a radio asks of one message: its query string.
-#[derive(Debug, Default, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
-pub struct MessageAsk {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub form: Option<Form>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub part: Option<Part>,
-}
-
-impl MessageAsk {
-    /// The query string, as the tower reads it back.
-    pub fn query(&self) -> String {
-        let mut q = url::form_urlencoded::Serializer::new(String::new());
-        if let Some(f) = &self.form {
-            q.append_pair("form", &crate::encode::word(f).unwrap_or_default());
-        }
-        if let Some(p) = &self.part {
-            q.append_pair("part", &crate::encode::word(p).unwrap_or_default());
-        }
-        q.finish()
-    }
-}
-
-/// `GET feed`: which part of the chat, from where, and how long to wait for something new. The radio writes it
-/// into the address with [`FeedAsk::query`]; the tower reads it back as this type (a query extractor) and waits
-/// [`FeedAsk::wait_for`]. Both ends use this one type.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FeedAsk {
-    /// Only this team's, by its id.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub team: Option<String>,
-    /// Only this agent's, by its id.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent: Option<String>,
-    /// How a radio follows the chat: everything new or changed after this change count. 0 starts from nothing.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub since: Option<u64>,
-    /// With no `since`: the lines added after this position.
-    #[serde(default)]
-    pub after: u64,
-    /// The most lines to send.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<usize>,
-    /// The roster's change count this radio last saw: a change to the roster alone also ends the wait.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub roster: Option<u64>,
-    /// How many seconds to wait for something new; no more than [`FeedAsk::WAIT_MOST`].
-    #[serde(default)]
-    pub wait: u32,
-}
-
-impl FeedAsk {
-    /// The longest a request for the feed is held open, in seconds.
-    pub const WAIT_MOST: u32 = 25;
-
-    /// The query string, as the tower reads it back.
-    pub fn query(&self) -> String {
-        let mut q = url::form_urlencoded::Serializer::new(String::new());
-        let mut add = |k: &str, v: Option<String>| {
-            if let Some(v) = v {
-                q.append_pair(k, &v);
-            }
-        };
-        add("team", self.team.clone());
-        add("agent", self.agent.clone());
-        add("since", self.since.map(|n| n.to_string()));
-        add("after", Some(self.after.to_string()));
-        add("limit", self.limit.map(|n| n.to_string()));
-        add("roster", self.roster.map(|n| n.to_string()));
-        add("wait", Some(self.wait.min(Self::WAIT_MOST).to_string()));
-        q.finish()
-    }
-    /// How long the tower holds the request open for something new: what was asked, no more than
-    /// [`FeedAsk::WAIT_MOST`].
-    pub fn wait_for(&self) -> std::time::Duration {
-        std::time::Duration::from_secs(self.wait.min(Self::WAIT_MOST).into())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_feed_ask_reads_back_as_it_was_written() {
-        let ask = FeedAsk { team: Some("t 1&x".into()), since: Some(4), after: 9, roster: Some(2), wait: 99, ..Default::default() };
-        let back: FeedAsk = serde_json::from_value(serde_json::Value::Object(url::form_urlencoded::parse(ask.query().as_bytes()).map(|(k, v)| (k.to_string(), v.parse::<u64>().map_or(serde_json::Value::String(v.to_string()), Into::into))).collect())).unwrap();
-        assert_eq!(back, FeedAsk { wait: FeedAsk::WAIT_MOST, ..ask.clone() });
-        // read back as it came, unclipped, the wait is still held to the most
-        assert_eq!(ask.wait_for(), std::time::Duration::from_secs(FeedAsk::WAIT_MOST.into()));
-    }
 
     #[test]
     fn a_feed_from_a_newer_tower_still_reads() {

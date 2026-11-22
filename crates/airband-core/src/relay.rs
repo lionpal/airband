@@ -195,7 +195,7 @@ pub struct Call {
     pub t: u64,
     /// Random; the tower answers each id once.
     pub id: String,
-    pub method: String,
+    pub method: crate::radio::wire::Method,
     /// Under `/v1/radio/`.
     pub path: String,
     #[serde(default)]

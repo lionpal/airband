@@ -18,7 +18,7 @@
 #![cfg(unix)]
 use crate::adapters;
 use crate::hold::{Held, Msg, Tell};
-use airband_core::agent::{Agent, AgentEvent, Deliver, Event, SCHEMA};
+use airband_core::agent::{Agent, AgentEvent, Deliver, Event};
 use airband_core::tools::{Choice, Offers};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
@@ -96,7 +96,7 @@ pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>, aske
 
 /// Tell the tower what the agent did.
 fn post(me: &Agent, event: Event) {
-    adapters::post(&AgentEvent { schema: SCHEMA.into(), agent: me.clone(), event, via: None });
+    adapters::post(&AgentEvent::new(me.clone(), event));
 }
 
 fn send(held: &Held, message: Value) {

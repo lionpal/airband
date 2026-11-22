@@ -1,6 +1,6 @@
 # Protocols
 
-Three versioned protocols: `airband.agent/1` (agents → tower), `airband.radio/2` (phone ↔ tower) and
+Three versioned protocols: `airband.agent/1` (agents → tower), `airband.radio/4` (phone ↔ tower) and
 `airband.relay/1` (how the second one travels sealed). The first two are plain JSON over HTTP with
 `Authorization: Bearer <token>` when sent to the tower's own port. The types are in `crates/airband-core`
 and are the source of truth; this page explains them.
@@ -14,7 +14,7 @@ pairing link carries, opens `/v1/radio/` only.
 
 ## `airband.agent/1`: agents → tower
 
-`POST /v1/agent/events`, one document per event:
+`POST /v1/agent/events`, one document per event. Each carries a random `id`, made when the event is: a report sent again after a timeout is the same report, and the tower takes it once.
 
 ```json
 {
@@ -66,8 +66,8 @@ the question to him on the radio.
 | Call | Body → answer | Meaning |
 |---|---|---|
 | `POST /v1/agent/permission` | `{ schema, agent, what, detail, question }` → `PermissionState` | `what` finishes the words "wants to …" and is shown to him exactly as given: "run \`npm run deploy\`". `detail` is the whole request, for the more-info page. `question`, `{ text, choices }`, is set when the agent is asking him something through its harness's own asking tool: it is shown as that question with its choices, and whatever he answers is the reply. |
-| `GET /v1/agent/permission/<id>?wait=<s>` | → `PermissionState` | Held open up to `wait` seconds (25 at most) or until he answers. |
-| `DELETE /v1/agent/permission/<id>` | | The harness has stopped waiting. The card closes. |
+| `GET /v1/agent/permission/{id}?wait=<s>` | → `PermissionState` | Held open up to `wait` seconds (25 at most) or until he answers. |
+| `DELETE /v1/agent/permission/{id}` | | The harness has stopped waiting. The card closes. |
 
 `PermissionState` is `{ id, state, message, wait_seconds }`:
 
@@ -95,12 +95,20 @@ answers only.
   (his reason on standard output), 2 for no answer.
 - An adapter: a module in `crates/airband-cli/src/adapters/`, selected as `airband hook <harness>`.
 
+`DELETE /v1/agent/held/{id}`: the program of an agent the tower runs is gone.
+
 A hook that runs with `AIRBAND_HELD_ID` set belongs to an agent the tower runs: `airband hook` reports it under
 that id with `deliver.kind` `held`.
 
-## `airband.radio/2`: radio ↔ tower
+## `airband.radio/4`: radio ↔ tower
 
-The radio always asks; the tower never calls the phone. All under `/v1/radio/`. A radio names itself in the
+The radio always asks; the tower never calls the phone. All under `/v1/radio/`. Every route, with the types of
+its query, body and answer, is one `Endpoint` in `airband_core::radio::wire::at`, and both ends use those
+types. A 200 carries the route's answer and nothing else; "nothing to say back" is `Done` (`{}`). A refusal is a
+4xx whose body is a `Refusal`: `{ refusal: "told", reason }` (words for him), `bad_ask` (the request itself
+was wrong, such as a query value that is not a number), `other_version` (`speaks` the version the tower takes),
+`too_big`, `gone` or `not_allowed`. A reader goes by `refusal`, never by the status, and a 200 never carries an
+error. A radio names itself in the
 `x-airband-radio` header so the tower can keep its place in a call apart from another radio's; for a sealed
 request the tower uses the pairing's name.
 
@@ -108,12 +116,12 @@ Call mode, one spoken transmission at a time:
 
 | Call | Body → answer | Meaning |
 |---|---|---|
-| `GET next` | → `Transmission`, or 204 | Held open up to 25 s. Answered only for a radio that says it is on a call (see `POST presence`). A transmission is words: the radio says them with the voice he chose on it, and the tower makes no sound. `joined=1` on the first request after he turns reading aloud on: what was said more than ten minutes before is left for the chat. `have=<id>` is the last transmission the radio got: if the tower handed it another since, in an answer that never arrived, it hands that one over again. |
-| `POST heard` | `{ id }` | That transmission was spoken to the end. Only now is it off the queue. |
-| `POST unheard` | `{ id, why }` | It was handed over and no sound came of it. It goes back in the queue, and that radio is handed nothing for a minute. |
-| `POST presence` | `Presence` `{ on_call, showing_chat }` | Where the radio stands: reading aloud on or off, the chat in front of him or not. Sent when either changes, and every quarter of a minute while the radio has nothing else to ask (the microphone is open). Every other request says the same: in the sealed request's `presence`, or for a radio paired directly in the header `x-airband-presence`. The tower infers none of it from which requests a radio makes. A radio it has not heard from for 60 s is gone. |
-| `POST utterance` | `Utterance` → `Outcome` | What he said. Chat mode sends through it too. Answered at once: `{ state: "taken" }`. See "What he says". |
-| `POST ready` | | Free for the next transmission. Something it took and said nothing about goes back in the queue. |
+| `GET /v1/radio/next` | → `Transmission`, or `null` when nothing is waiting | Held open up to 25 s. Answered only for a radio that says it is on a call (see `POST presence`). A transmission is words: the radio says them with the voice he chose on it, and the tower makes no sound. `joined=true` on the first request after he turns reading aloud on: what was said more than ten minutes before is left for the chat. `have={id}` is the last transmission the radio got: if the tower handed it another since, in an answer that never arrived, it hands that one over again. |
+| `POST /v1/radio/heard` | `{ id }` → `Done` | That transmission was spoken to the end. Only now is it off the queue. |
+| `POST /v1/radio/unheard` | `{ id, why }` → `Done` | It was handed over and no sound came of it. It goes back in the queue, and that radio is handed nothing for a minute. |
+| `POST /v1/radio/presence` | `Presence` `{ on_call, showing_chat }` | Where the radio stands: reading aloud on or off, the chat in front of him or not. Sent when either changes, and every quarter of a minute while the radio has nothing else to ask (the microphone is open). Every other request says the same: in the sealed request's `presence`, or for a radio paired directly in the header `x-airband-presence`. The tower infers none of it from which requests a radio makes. A radio it has not heard from for 60 s is gone. |
+| `POST /v1/radio/utterance` | `Utterance` → `Outcome` | What he said. Chat mode sends through it too. Answered at once: `{ state: "taken" }`. See "What he says". |
+| `POST /v1/radio/ready` | → `{ waiting }` | Free for the next transmission. Something it took and said nothing about goes back in the queue. |
 
 ```json
 { "id": "9a41…", "callsign": "shop two", "kind": "needs-you", "say": "Shop two. The checker passes…", "waiting": 2 }
@@ -138,26 +146,27 @@ Chat mode and the rest:
 
 | Call | Body → answer | Meaning |
 |---|---|---|
-| `GET feed?scope=…&since=<rev>&wait=<s>` | → `Feed` | Every line new or changed after change count `since`, oldest change first; pass `rev` back next time. `since=0` gets the newest lines. `scope`: `all`, `group:<name>`, `agent:<callsign>`. Held open up to 25 s. `roster=<roster_rev>`: also answer when the roster changes. `answers` holds what came of things this radio said (see "What he says"); one arriving ends the wait too. `after=<seq>` is the older form (new lines only) and is still answered. |
-| `GET message/<id>?form=detail\|full\|spoken` | `{ text }` | The fuller spoken version, exactly what the agent wrote, or (`spoken`) the whole message as it is read aloud, for the radio to say in the voice he chose on it. |
-| `GET picture/<id>?from=<byte>` | `{ data, next, done }` | One part (120 KB at most, base64) of a picture's kept copy. |
-| `POST attachment` | `{ id, name, from, data, total }` → `{ next }`, or `{ error }` | One part of a file he is attaching, 120 KB at most. `total` is how long the whole file is; the parts may come in any order, several at once, and `next` says how much of the file is whole from its start. |
-| `POST dismiss` | `{ message }` → `{}`, or `{ error }` | He does not mean to answer this question. It stops being open. The agent is told nothing. |
-| `POST unsend` | `{ message }` → `{}`, or `{ error }` | Take back something he said that is still `queued`. |
-| `POST taken` | `{ callsigns }` → `{}` | The names agents go by on his other computers, as his radio shows them ("shop 1"). The tower moves any of its own agents with one of those numbered names to the next free number. A radio tells only the later of two computers. |
-| `POST team` | `{ agent, team }` → `{ callsign, team }`, or `{ error }` | Put an agent in another team, one that exists or a new one. A name he gave the agent goes with it; a number is replaced by the next free one there. |
-| `POST folders` | `{ under }` → `{ path, shown, up, folders }`, or `{ error }` | The folders inside one on this computer, by name and without the hidden ones, for choosing where a new agent works. `under` empty is his home folder, where the walk starts; `up` is the folder above, and is left out at the top of the disk. Any folder can be walked to, on any disk. |
-| `GET recent` | → `{ folders: [{ folder, shown, name, team, tools, at }] }` | The folders the coding tools on this computer have had sessions in, newest first, read from each tool's own records, then his teams no tool has a record of. `name` is the team an agent started there is in, `team` whether one works there already, `tools` the tools by id, `at` when the last session was. Folders that are gone, and ones in the temporary folders, are left out. |
-| `POST project` | `{ name, folder, make, tool }` → `{ say, team }`, or `{ error }` | Start an agent in a folder: in a new team of this name, or as another agent of the team that already works there. The name is written as a callsign is (letters and numbers, 24 at most); `make` makes the folder first; `team` is the name as the tower writes it. |
-| `POST takeover` | `{ agent }` → `{}`, or `{ error }` | Have the tower take over an agent he started in a terminal: that session ends there and carries on under a held launcher of the agent's own harness. Refused while it is in the middle of something. |
-| `GET reads` | `{ now: { provider, offer }, offers: [{ provider, offer, label, about, price, preferred, free, login, key, has_key, key_name, keys_at, asks }] }` | What can read the agents' messages on this tower, from the tower's own catalogue and in the order to show it, and which one reads now (`now` is absent when none does). `has_key` says only that the tower keeps a key for that provider; one key serves all a provider's offers. |
-| `POST reads` | `{ kind, offer, key, set }` → `{ reads }`, or `{ error }` | Choose what reads, by a `provider` (as `kind`) and `offer` from `GET reads`. `key` empty uses one the tower keeps. The tower tries it with a real call before keeping it. A radio cannot name a command to run. |
-| `POST stop` | `{ agent }` → `{}`, or `{ error }` | Stop what an agent the tower runs is doing. What he said to it meanwhile it then reads as one turn. |
-| `POST end` | `{ agent }` → `{}`, or `{ error }` | End an agent the tower runs: its input is closed, and it finishes and signs off. |
-| `GET accounts?fresh=1` | → `{ schema, accounts, note, checked_at }` | Every account of every harness whose sessions can be moved between logins. Kept for five minutes; `fresh` checks again. |
-| `POST accounts/use` | `{ harness, id }` → the same, or `{ error }` | Move that harness's sessions to that account. |
-| `POST push` | `{ provider, token }` → `{}` | Where this radio can be woken: its address at a push service (`apns` is Apple's). An empty `token` takes it away. |
-| `POST tools` | `{ tools }` → `{}` | The coding tools he uses, by the ids their rows give, the one he uses most first. A new agent asked for without naming a tool is started with the first; with none said and no usual launcher set, he is asked. |
+| `GET /v1/radio/feed?since=<rev>&wait=<s>` | `FeedQuery` → `Feed` | Every line new or changed after change count `since`, oldest change first; pass `rev` back next time. `since=0` gets the newest lines. `team=<id>` or `agent=<id>` narrows it to one team or one agent. `after=<seq>` with no `since`: the lines added after that position. Held open up to `wait` seconds, 25 at most. `roster=<roster_rev>`: also answer when the roster changes. `answers` holds what came of things this radio said (see "What he says"); one arriving ends the wait too. A query value that is not a number is refused (`bad_ask`). |
+| `GET /v1/radio/message/{id}?form=detail\|full\|spoken` | `{ text }` | The fuller spoken version, exactly what the agent wrote, or (`spoken`) the whole message as it is read aloud, for the radio to say in the voice he chose on it. |
+| `GET /v1/radio/picture/{id}?from=<byte>` | `{ data, next, done }` | One part (120 KB at most, base64) of a picture's kept copy. |
+| `POST /v1/radio/attachment` | `{ id, name, from, data, total }` → `{ next }`, or a refusal | One part of a file he is attaching, 120 KB at most. `total` is how long the whole file is; the parts may come in any order, several at once, and `next` says how much of the file is whole from its start. |
+| `POST /v1/radio/dismiss` | `{ message }` → `Done`, or a refusal | He does not mean to answer this question. It stops being open. The agent is told nothing. |
+| `POST /v1/radio/unsend` | `{ message }` → `Done`, or a refusal | Take back something he said that is still `queued`. |
+| `POST /v1/radio/taken` | `{ callsigns }` → `Done` | The names agents go by on his other computers, as his radio shows them ("shop 1"). The tower moves any of its own agents with one of those numbered names to the next free number. A radio tells only the later of two computers. |
+| `POST /v1/radio/team` | `{ agent, team }` → `{ callsign, team }`, or a refusal | Put an agent in another team, one that exists or a new one. A name he gave the agent goes with it; a number is replaced by the next free one there. |
+| `POST /v1/radio/team/rename` | `{ team, to }` → `{ team }`, or a refusal | Rename one of his teams, by its id. `team` is the name as the tower writes it. |
+| `POST /v1/radio/folders` | `{ under }` → `{ path, shown, up, folders }`, or a refusal | The folders inside one on this computer, by name and without the hidden ones, for choosing where a new agent works. `under` empty is his home folder, where the walk starts; `up` is the folder above, and is left out at the top of the disk. Any folder can be walked to, on any disk. |
+| `GET /v1/radio/recent` | → `{ folders: [{ folder, shown, name, team, tools, at }] }` | The folders the coding tools on this computer have had sessions in, newest first, read from each tool's own records, then his teams no tool has a record of. `name` is the team an agent started there is in, `team` whether one works there already, `tools` the tools by id, `at` when the last session was. Folders that are gone, and ones in the temporary folders, are left out. |
+| `POST /v1/radio/project` | `{ name, folder, make, tool }` → `{ say, team }`, or a refusal | Start an agent in a folder: in a new team of this name, or as another agent of the team that already works there. The name is written as a callsign is (letters and numbers, 24 at most); `make` makes the folder first; `team` is the name as the tower writes it. |
+| `POST /v1/radio/takeover` | `{ agent }` → `Done`, or a refusal | Have the tower take over an agent he started in a terminal: that session ends there and carries on under a held launcher of the agent's own harness. Refused while it is in the middle of something. |
+| `GET /v1/radio/reads` | `{ now: { provider, offer }, offers: [{ provider, offer, label, about, price, preferred, free, login, key, has_key, key_name, keys_at, asks }] }` | What can read the agents' messages on this tower, from the tower's own catalogue and in the order to show it, and which one reads now (`now` is absent when none does). `has_key` says only that the tower keeps a key for that provider; one key serves all a provider's offers. |
+| `POST /v1/radio/reads` | `{ kind, offer, key, set }` → `{ reads }`, or a refusal | Choose what reads, by a `provider` (as `kind`) and `offer` from `GET reads`. `key` empty uses one the tower keeps. The tower tries it with a real call before keeping it. A radio cannot name a command to run. |
+| `POST /v1/radio/stop` | `{ agent }` → `Done`, or a refusal | Stop what an agent the tower runs is doing. What he said to it meanwhile it then reads as one turn. |
+| `POST /v1/radio/end` | `{ agent }` → `Done`, or a refusal | End an agent the tower runs: its input is closed, and it finishes and signs off. |
+| `GET /v1/radio/accounts?fresh=true` | → `{ schema, accounts, note, checked_at }` | Every account of every harness whose sessions can be moved between logins. Kept for five minutes; `fresh` checks again. Each account's `identity` says who it is as its tool records it: `{ kind: "id", id, org }`, `{ kind: "key", fingerprint, last4 }` for an API key (SHA-256 of the key with its provider in front, made on the computer; the key never leaves it), or `{ kind: "none" }`. A radio takes two computers' accounts for one only by the same `id` and `org` or the same `fingerprint`, never by `label`. Where each tool keeps it is its row's `with.account_id`. |
+| `POST /v1/radio/accounts/use` | `{ harness, id }` → the same, or a refusal | Move that harness's sessions to that account. |
+| `POST /v1/radio/push` | `{ provider, token }` → `Done` | Where this radio can be woken: its address at a push service (`apns` is Apple's). An empty `token` takes it away. |
+| `POST /v1/radio/tools` | `{ tools }` → `Done` | The coding tools he uses, by the ids their rows give, the one he uses most first. A new agent asked for without naming a tool is started with the first; with none said and no usual launcher set, he is asked. |
 
 ### The feed
 
@@ -300,7 +309,7 @@ HKDF-SHA256, the channel's name, the pull token that lets only the tower pull fr
 that lets only the radio send to it (`Keys::radio_token`), and one ChaCha20-Poly1305 key per direction (RFC
 8439, a random 96-bit nonce on each message). The relay stores the hash of each token.
 
-Inside each sealed request is `{ t, id, method, path, body, schema }`: an `airband.radio/2` call with the time
+Inside each sealed request is `{ t, id, method, path, body, schema }`: an `airband.radio/4` call with the time
 and a random id. The tower answers 408 to one more than two minutes off its clock, drops one it has answered
 before, answers 400 to a `schema` it does not speak, and serves only `/v1/radio/`. The answer is
 `{ id, status, body }`, and the phone refuses one that is not to its own request.
