@@ -1,0 +1,1 @@
+{"id": "ffmpeg", "name": "ffmpeg", "program": "ffmpeg", "args": ["-y", "-loglevel", "error", "-i", "{video}", "-vf", "fps=1,scale='min(1280,iw)':-2", "-frames:v", "{frames}", "{out}/%02d.jpg"]}

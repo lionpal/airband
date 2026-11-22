@@ -29,7 +29,8 @@ fn content_hash(doc: &serde_json::Value) -> String {
         }
     }
     let mut rows = String::new();
-    // the kinds of link, the shapes of credentials and the terminals are not in it: a build only ever uses its own
+    // the kinds of link, the shapes of credentials, the terminals and the frame programs are not in it: a build
+    // only ever uses its own
     for part in ["providers", "models", "tools", "servers", "phrases"] {
         canon(&doc[part], &mut rows);
     }

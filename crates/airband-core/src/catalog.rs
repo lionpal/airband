@@ -65,6 +65,9 @@ pub struct Catalog {
     /// Terminals a message can be typed into (`catalog/terminals/`): the program, and the words that type a
     /// line into one of its panes and press Enter. Always the ones compiled in: they are programs run.
     pub terminals: Vec<Terminal>,
+    /// A program that pulls frames out of a video (`catalog/frames/`). Always the ones compiled in: they are
+    /// programs run.
+    pub frames: Vec<Frames>,
     /// Words of the trade that a recogniser otherwise hears as everyday ones ("sync" as "sink").
     pub phrases: Vec<String>,
     /// Providers that are no more, by id. One this build has compiled in and a later copy neither lists nor
@@ -212,6 +215,14 @@ pub fn built_in(expires: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_frames_program_is_this_builds_own_row_and_fills_its_words() {
+        let f = frames().expect("a frames row is compiled in");
+        let run = f.run("/v/clip.mov", 30, "/v/frames");
+        assert!(run.contains(&"/v/clip.mov".to_string()) && run.contains(&"30".to_string()) && run.contains(&"/v/frames/%02d.jpg".to_string()), "{run:?}");
+        assert!(!run.iter().any(|w| w.contains('{')), "{run:?}");
+    }
 
     #[test]
     fn every_voice_row_names_a_usual_voice_it_has() {

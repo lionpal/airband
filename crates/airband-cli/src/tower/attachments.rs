@@ -105,20 +105,20 @@ pub(super) fn take(part: AttachmentPart) -> Result<u64, String> {
     Ok(next)
 }
 
-/// Pull a frame a second out of a video, beside it, so an agent has something it can look at. Without ffmpeg
-/// the video is still there and the agent is told to pull frames itself.
+/// Pull a frame a second out of a video, beside it, so an agent has something it can look at, with the program
+/// the frames row names. Without it the video is still there and the agent is told to pull frames itself.
 fn frames(video: &Path) {
     let (video, dir) = (video.to_path_buf(), video.parent().map(Path::to_path_buf).unwrap_or_default());
     std::thread::spawn(move || {
         let out = dir.join("frames");
         let _ = std::fs::create_dir_all(&out);
-        let ran = std::process::Command::new("ffmpeg")
-            .args(["-y", "-loglevel", "error", "-i"])
-            .arg(&video)
-            .args(["-vf", "fps=1,scale='min(1280,iw)':-2", "-frames:v", &FRAMES.to_string()])
-            .arg(out.join("%02d.jpg"))
-            .stdin(std::process::Stdio::null())
-            .output();
+        let ran = airband_core::catalog::frames().ok_or(()).and_then(|f| {
+            std::process::Command::new(&f.program)
+                .args(f.run(&video.display().to_string(), FRAMES, &out.display().to_string()))
+                .stdin(std::process::Stdio::null())
+                .output()
+                .map_err(|_| ())
+        });
         if !matches!(&ran, Ok(o) if o.status.success()) {
             let _ = std::fs::remove_dir_all(&out);
         }
@@ -173,7 +173,10 @@ pub(super) async fn describe(ids: &[String]) -> (String, Vec<airband_core::radio
                 ));
                 pictures.extend(pictures::keep(&a.frames[0]));
             }
-            What::Video => lines.push(format!("- {} (a video, {size}). You cannot watch it: pull frames out of it to look at, with ffmpeg if it is installed.", a.path.display())),
+            What::Video => lines.push(match airband_core::catalog::frames() {
+                Some(f) => format!("- {} (a video, {size}). You cannot watch it: pull frames out of it to look at, with {} if it is installed.", a.path.display(), f.name),
+                None => format!("- {} (a video, {size}). You cannot watch it: pull frames out of it to look at.", a.path.display()),
+            }),
             What::Other => lines.push(format!("- {} ({size})", a.path.display())),
         }
     }

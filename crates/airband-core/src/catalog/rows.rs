@@ -21,6 +21,8 @@ pub(super) struct Document {
     #[serde(default)]
     terminals: Vec<Value>,
     #[serde(default)]
+    frames: Vec<Value>,
+    #[serde(default)]
     phrases: Vec<String>,
     #[serde(default)]
     retired: Vec<String>,
@@ -110,6 +112,7 @@ pub(super) fn read(text: &str) -> Result<Catalog, String> {
     let servers = doc.servers.into_iter().filter_map(|row| serde_json::from_value::<Server>(row).ok()).collect();
     let links = doc.links.into_iter().filter_map(|row| serde_json::from_value::<crate::links::LinkKind>(row).ok()).collect();
     let terminals = doc.terminals.into_iter().filter_map(|row| serde_json::from_value::<Terminal>(row).ok()).collect();
+    let frames = doc.frames.into_iter().filter_map(|row| serde_json::from_value::<Frames>(row).ok()).collect();
     let secrets = doc.secrets.into_iter().filter_map(|row| serde_json::from_value::<crate::redact::Shape>(row).ok()).collect();
     let tools = doc
         .tools
@@ -120,7 +123,7 @@ pub(super) fn read(text: &str) -> Result<Catalog, String> {
             Tool { id: t.id, name: t.name, maker: t.maker, first: t.first, launchers, with: t.with }
         })
         .collect();
-    Ok(Catalog { rev: doc.rev, hash: doc.hash, providers, tools, models, servers, links, secrets, terminals, phrases: doc.phrases, retired: doc.retired, left_out })
+    Ok(Catalog { rev: doc.rev, hash: doc.hash, providers, tools, models, servers, links, secrets, terminals, frames, phrases: doc.phrases, retired: doc.retired, left_out })
 }
 
 /// A terminal a message can be typed into, as its row has it. In `type` and `enter`, `{pane}` is the pane and
@@ -143,6 +146,29 @@ impl Terminal {
 }
 
 /// The terminal a row by this id describes.
+/// A program that pulls a frame a second out of a video, so an agent has pictures it can look at.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct Frames {
+    pub id: String,
+    /// What it is called, for telling an agent which program to use.
+    pub name: String,
+    pub program: String,
+    /// The words it is run with: `{video}` the video, `{frames}` how many at most, `{out}` the folder they go in.
+    pub args: Vec<String>,
+}
+
+impl Frames {
+    /// The words to run it with, for this video, this many frames, into this folder.
+    pub fn run(&self, video: &str, frames: usize, out: &str) -> Vec<String> {
+        self.args.iter().map(|w| w.replace("{video}", video).replace("{frames}", &frames.to_string()).replace("{out}", out)).collect()
+    }
+}
+
+/// The program this build pulls frames out of a video with, when it has one.
+pub fn frames() -> Option<Frames> {
+    current().frames.first().cloned()
+}
+
 pub fn terminal(id: &str) -> Option<Terminal> {
     current().terminals.iter().find(|t| t.id == id).cloned()
 }
