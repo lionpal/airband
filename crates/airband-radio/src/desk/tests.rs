@@ -1,4 +1,5 @@
 use super::*;
+use airband_core::radio::SetReads;
 
 struct Quiet;
 impl RadioHost for Quiet {
@@ -351,4 +352,180 @@ fn teams_on_two_computers_get_different_colours_that_last() {
     assert_eq!(super::colours::Colours::open(dir.to_str().unwrap()).of("laptop//w/shop"), colours.of("laptop//w/shop"));
     assert_eq!(super::colours::Colours::open(dir.to_str().unwrap()).of("mini//w/shop"), colours.of("mini//w/shop"));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn desk_of(state: State) -> Desk {
+    let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
+    Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend }), data_dir: String::new() }
+}
+
+#[test]
+fn words_sent_again_go_to_the_agent_he_picked_whatever_tag_they_start_with() {
+    let mut state = two();
+    // what he first said tagged the agent on the other computer
+    state.stations[0].messages[0].text = "@ff1 stop that".into();
+    let picked = state.stations[0].agents[1].id.clone();
+    let desk = desk_of(state);
+    desk.resend("q1".into(), picked.clone());
+    let state = desk.shared.state.lock().unwrap();
+    let here: Vec<Vec<String>> = state.stations[0].radio.unsent().into_iter().map(|o| o.to).collect();
+    assert_eq!(here, vec![vec![picked]]);
+    assert!(state.stations[1].radio.unsent().is_empty());
+}
+
+#[test]
+fn unplaced_words_he_places_keep_the_files_they_took() {
+    let mut state = two();
+    let mut message = Outgoing::new("u1".into(), "look at this".into(), None, None, None, vec!["f1".into()], String::new());
+    message.label = None;
+    state.asking = Some(Asking { message, guesses: Vec::new(), at: 0 });
+    let agent = state.stations[0].agents[0].id.clone();
+    let desk = desk_of(state);
+    desk.choose(agent);
+    let sent: Vec<Vec<String>> = desk.shared.state.lock().unwrap().stations[0].radio.unsent().into_iter().map(|o| o.attachments).collect();
+    assert_eq!(sent, vec![vec!["f1".to_string()]]);
+}
+
+#[test]
+fn a_tapped_answer_kept_for_later_is_still_what_the_button_stood_for() {
+    // nobody is at this address: the answer cannot go now and is kept
+    let radio = Radio::start("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t".into(), String::new(), Arc::new(Quiet)).unwrap();
+    radio.stop();
+    let act = Act::Option { index: 1 };
+    assert!(radio.answer_now("Leave".into(), "q1".into(), Some(act.clone())).is_err());
+    let kept: Vec<(Option<String>, String)> = radio.unsent().into_iter().map(|o| (o.re, o.act)).collect();
+    assert_eq!(kept, [(Some("q1".to_string()), serde_json::to_string(&act).unwrap())]);
+}
+
+/// A computer on this machine that answers every request with 200 and `body`. Its port.
+fn tower_answering(body: &'static str) -> u16 {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut buf = [0u8; 65536];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()).as_bytes());
+        }
+    });
+    port
+}
+fn temp_dir(what: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("airband-{what}-{}", random_hex(4)));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+fn kept_reads(dir: &std::path::Path) -> serde_json::Value {
+    serde_json::from_slice::<serde_json::Value>(&std::fs::read(dir.join("choices.json")).unwrap()).unwrap()["reads"].clone()
+}
+
+#[test]
+fn a_summary_choice_made_offline_waits_for_every_computer() {
+    let dir = temp_dir("reads");
+    std::fs::write(dir.join("choices.json"), r#"{"reads":{"id":"anthropic","offer":"haiku","his":true}}"#).unwrap();
+    let state = State { stations: vec![station("mini", tower_answering("{}"), &[], vec![]), station("laptop", 9, &[], vec![])], ..State::default() };
+    let mini = state.stations[0].radio.clone();
+    let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
+    let shared = Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open(dir.to_str().unwrap(), HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend };
+    crate::choices::computer_reached(&shared, &mini);
+    // the first computer has it, and it still waits for the other
+    assert_eq!(kept_reads(&dir)["taken"], serde_json::json!([shared.state.lock().unwrap().stations[0].id()]));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn when_a_second_computer_refuses_a_summary_choice_he_hears_the_first_switched() {
+    let mini = station("mini", tower_answering("{}"), &[], vec![]);
+    let laptop = station("laptop", tower_answering(r#"{"error":"That service is not offered here."}"#), &[], vec![]);
+    let radios = [("mini".to_string(), mini.id(), mini.radio.clone()), ("laptop".to_string(), laptop.id(), laptop.radio.clone())];
+    let wanted = SetReads { kind: "anthropic".into(), offer: "haiku".into(), key: String::new(), set: Default::default() };
+    let e = crate::choices::switch_all(&radios, &wanted).unwrap_err();
+    assert!(matches!(&e, RadioError::Told { reason } if reason == "mini switched. laptop did not: That service is not offered here."), "{e:?}");
+    assert_eq!(crate::choices::switch_all(&radios[..1], &wanted).unwrap(), [mini.id()]);
+}
+
+#[test]
+fn a_summary_service_whose_key_his_computer_keeps_is_chosen_with_no_key_on_the_phone() {
+    let dir = temp_dir("kept-there");
+    let offered = serde_json::json!({ "offered": { "offers": [{ "provider": "anthropic", "offer": "haiku", "label": "Haiku", "key": true, "has_key": true, "key_name": "API key", "preferred": true }] } });
+    std::fs::write(dir.join("choices.json"), offered.to_string()).unwrap();
+    let state = State { stations: vec![station("mini", tower_answering("{}"), &[], vec![])], ..State::default() };
+    let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
+    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open(dir.to_str().unwrap(), HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend }), data_dir: String::new() };
+    let id = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "anthropic").map(|c| c.id).unwrap();
+    let chose = desk.choose_for(ChoiceJob::Reads, id, None, HashMap::new(), false);
+    assert!(chose.is_ok(), "{chose:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_new_team_colour_counts_only_teams_on_his_screen() {
+    let dir = temp_dir("colours");
+    // six rooms kept from before, gone now, each with its own colour but the last
+    let gone: std::collections::BTreeMap<String, u8> = (0..5u8).map(|c| (format!("old//w/{c}"), c)).collect();
+    std::fs::write(dir.join("colours.json"), serde_json::to_string(&gone).unwrap()).unwrap();
+    let mut colours = super::colours::Colours::open(dir.to_str().unwrap());
+    colours.see(["mini//w/shop".to_string()]);
+    colours.see(["mini//w/garden".to_string()]);
+    // nothing on his screen has a colour yet: the first two are the first two colours
+    assert_eq!((colours.of("mini//w/shop"), colours.of("mini//w/garden")), (Some(0), Some(1)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn lines_kept_on_the_phone_are_in_their_room_before_any_computer_answers() {
+    let dir = temp_dir("kept-lines");
+    // nobody is at this address
+    let link = "airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t".to_string();
+    let saved = serde_json::json!({ "history": [{ "seq": 1, "id": "m1", "at": 1, "from": "shop two", "group": "shop", "team": "shop", "text": "done" }], "outbox": [], "after": 1 });
+    let folder = dir.join(super::folder(&link));
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("radio.json"), saved.to_string()).unwrap();
+    let desk = Desk::alone(dir.to_str().unwrap(), Arc::new(Watching(std::sync::atomic::AtomicBool::new(true))));
+    desk.set_links(vec![link]);
+    let state = desk.shared.state.lock().unwrap();
+    let rooms: Vec<String> = state.stations[0].messages.iter().map(|m| m.room.clone()).collect();
+    assert_eq!(rooms, [room_id(&state.stations[0].id(), "shop")]);
+    drop(state);
+    desk.shared.state.lock().unwrap().stations.iter().for_each(|s| s.radio.stop());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_message_that_cannot_be_fetched_to_read_aloud_says_why() {
+    struct Telling(Mutex<Vec<String>>);
+    impl RadioHost for Telling {
+        fn told(&self, text: String) {
+            self.0.lock().unwrap().push(text);
+        }
+        fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
+        fn unplaced(&self, _: Outgoing, _: Option<String>, _: Vec<String>) {}
+        fn speak(&self, _: String) {}
+        fn listen(&self) -> Option<String> {
+            None
+        }
+        fn status(&self, _: RadioStatus) {}
+        fn play(&self, _: u32, _: Vec<u8>, _: bool) {}
+        fn record_start(&self, _: u32) -> bool {
+            false
+        }
+        fn record_read(&self) -> Vec<u8> {
+            Vec::new()
+        }
+        fn record_stop(&self) {}
+        fn outbox(&self, _: Vec<Outgoing>, _: Option<String>) {}
+        fn hearing(&self, _: String) {}
+        fn run_model(&self, _: String, _: String, _: ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
+            None
+        }
+    }
+    let host = Arc::new(Telling(Mutex::new(Vec::new())));
+    let radio = Radio::start("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t".into(), String::new(), host.clone()).unwrap();
+    radio.stop();
+    // a voice is chosen, so it is the fetching that fails
+    radio.senses.mouth.set(Some(crate::mouth::Own::Service(crate::services::service_of("gemini", "flash-lite-tts", "k", HashMap::new()))));
+    assert!(!radio.read_aloud("m1"));
+    assert_eq!(host.0.lock().unwrap().as_slice(), ["That could not be read aloud: cannot reach your computer."]);
 }

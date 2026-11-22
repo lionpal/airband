@@ -104,11 +104,6 @@ pub(crate) fn synth(voice: &Use) -> Made {
     (voicing.make)(voice, &offer.by, &provider)
 }
 
-/// The same, for a caller with nothing to say about why not.
-pub(crate) fn synth_for(voice: &Use) -> Option<Box<dyn Synth>> {
-    synth(voice).ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

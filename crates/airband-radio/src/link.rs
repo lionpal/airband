@@ -62,8 +62,6 @@ pub(crate) struct Link {
     /// For the tower's own addresses: quick to give up when it is not there.
     near: ureq::Agent,
     direct: Mutex<Direct>,
-    /// Files he has attached and that have reached the tower: the next thing he says takes them with it.
-    armed: Mutex<Vec<String>>,
     /// Every try that failed, every try at sending something he said, and the first that worked after one
     /// that did not: the last few hundred, for him to copy when something is wrong. Kept in a file of the
     /// app's own on this device, so it is still there after the app was closed, and sent nowhere.
@@ -81,9 +79,6 @@ pub(crate) struct Link {
     /// has told it.
     awaited: Mutex<std::collections::HashMap<String, Option<Reply>>>,
     told: std::sync::Condvar,
-    /// The question his computer last asked him back, by its id, until the next thing he says to it, which
-    /// carries it as its answer. Not kept across restarts.
-    question: Mutex<Option<String>>,
 }
 
 /// What a failed send came to: nothing answered, or it took too long.
@@ -118,7 +113,7 @@ impl Link {
             Pairing::Direct { url, token } => Route::Direct { url, auth: format!("Bearer {token}"), radio: radio.to_string() },
             Pairing::Relay { relay, secret } => Route::Relay { relay, keys: Keys::derive(&secret)? },
         };
-        Ok(Link { route, agent, near: crate::net::agent_quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct { addrs: at, ..Direct::default() }), trail: Mutex::new(trail), trail_file, presence: Mutex::default(), kept_at_relay: Default::default(), lost: Mutex::default(), awaited: Mutex::default(), told: std::sync::Condvar::new(), question: Mutex::default(), armed: Mutex::new(Vec::new()) })
+        Ok(Link { route, agent, near: crate::net::agent_quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct { addrs: at, ..Direct::default() }), trail: Mutex::new(trail), trail_file, presence: Mutex::default(), kept_at_relay: Default::default(), lost: Mutex::default(), awaited: Mutex::default(), told: std::sync::Condvar::new() })
     }
 
     /// The tower said where it can be reached without the relay. Anything new is tried at the next request.
@@ -215,7 +210,6 @@ impl Link {
 
     /// The feed told what came of something he said. Whoever is waiting for it here is given it.
     pub(crate) fn answered(&self, id: &str, reply: &Reply) {
-        self.asked_back(reply);
         if let Some(slot) = self.awaited.lock().unwrap().get_mut(id) {
             *slot = Some(reply.clone());
             self.told.notify_all();
@@ -436,25 +430,6 @@ impl Link {
             (status, v) => Err(Self::no(status, &v)),
         }
     }
-    /// Retried, because a reply lost in a tunnel is worse than a short wait. Every try carries the same id, so
-    /// the tower delivers it once however many arrive.
-    /// One try. The id makes a later retry of the same message safe.
-    pub(crate) fn arm(&self, id: String) {
-        let mut armed = self.armed.lock().unwrap();
-        if !armed.contains(&id) {
-            armed.push(id);
-        }
-    }
-    pub(crate) fn disarm(&self, id: &str) {
-        self.armed.lock().unwrap().retain(|a| a != id);
-    }
-    pub(crate) fn armed(&self) -> Vec<String> {
-        self.armed.lock().unwrap().clone()
-    }
-    pub(crate) fn take_armed(&self) -> Vec<String> {
-        std::mem::take(&mut *self.armed.lock().unwrap())
-    }
-
     /// One part of a file he is attaching. Returns where the next part starts.
     /// Returns how far the tower has the file whole from its start, and whether it takes parts in any order.
     pub(crate) fn attachment_part(&self, part: &airband_core::radio::AttachmentPart) -> Result<u64, LinkError> {
@@ -472,34 +447,13 @@ impl Link {
     /// takes it at once; its answer comes by the feed, or to this asking again, and is waited for as long as a
     /// person on a call would. Nothing, when the tower has it and has not said what came of it in that time:
     /// it is in the chat when it does.
-    /// His computer asked him something back: what he says next to it answers that.
-    pub(crate) fn asked_back(&self, reply: &Reply) {
-        if let Some(question) = &reply.question {
-            *self.question.lock().unwrap() = Some(question.clone());
-        }
-    }
-    /// The question his next words answer, taken: only the next thing he says carries it.
-    pub(crate) fn take_question(&self) -> Option<String> {
-        self.question.lock().unwrap().take()
-    }
-
-    pub(crate) fn utterance(&self, text: &str, re: Option<String>, scope: Option<String>, act: Option<airband_core::radio::Act>) -> Result<Option<Reply>, LinkError> {
-        // what he has attached goes with what he says; if this fails for good they are his to send again
-        let attachments = self.take_armed();
-        let u = Utterance { text: text.to_string(), id: random_hex(12), re, scope, attachments: attachments.clone(), act, answers: self.take_question(), ..Default::default() };
+    pub(crate) fn say_and_wait(&self, u: &Utterance) -> Result<Option<Reply>, LinkError> {
         self.awaited.lock().unwrap().insert(u.id.clone(), None);
-        let got = self.say_and_wait(&u);
-        if let Ok(Some(reply)) = &got {
-            self.asked_back(reply);
-        }
+        let got = self.keep_trying(u);
         self.awaited.lock().unwrap().remove(&u.id);
-        if got.is_err() {
-            // it never got there: what was attached is still his to send
-            attachments.into_iter().for_each(|id| self.arm(id));
-        }
         got
     }
-    fn say_and_wait(&self, u: &Utterance) -> Result<Option<Reply>, LinkError> {
+    fn keep_trying(&self, u: &Utterance) -> Result<Option<Reply>, LinkError> {
         /// How long his answer is waited for before the microphone is given back to him.
         const WAIT: Duration = Duration::from_secs(90);
         /// The longest the tower goes unasked meanwhile, for a radio that is not following the feed. It is

@@ -34,6 +34,8 @@ pub struct Radio {
     pub(crate) stop: Arc<AtomicBool>,
     pub(crate) calling: Arc<AtomicBool>,
     pub(crate) link: Arc<Link>,
+    /// What the next thing he says takes with it: files he attached, the question it answers.
+    pub(crate) session: Arc<Session>,
     pub(crate) store: Arc<Store>,
     pub(crate) host: Arc<dyn RadioHost>,
     pub(crate) wake: Arc<Wake>,
@@ -89,9 +91,10 @@ impl Radio {
         let busy = Arc::new(AtomicBool::new(false));
         let calling = Arc::new(AtomicBool::new(false));
         let wake = Arc::new(Wake::default());
+        let session = Arc::new(Session::default());
         {
-            let (link, host, stop, busy, calling, senses) = (link.clone(), host.clone(), stop.clone(), busy.clone(), calling.clone(), senses.clone());
-            thread::spawn(move || work(rx, link, host, stop, busy, calling, senses));
+            let (link, session, host, stop, busy, calling, senses) = (link.clone(), session.clone(), host.clone(), stop.clone(), busy.clone(), calling.clone(), senses.clone());
+            thread::spawn(move || work(call::Working { jobs: rx, link, session, host, stop, busy, calling, senses }));
         }
         {
             let (tx, stop, link, calling, host, wake, senses) = (tx.clone(), stop.clone(), link.clone(), calling.clone(), host.clone(), wake.clone(), senses.clone());
@@ -99,10 +102,10 @@ impl Radio {
         }
         store.prune_pictures();
         {
-            let (link, store, host, stop, wake) = (link.clone(), store.clone(), host.clone(), stop.clone(), wake.clone());
-            thread::spawn(move || deliver_outbox(link, store, host, stop, wake));
+            let (link, session, store, host, stop, wake) = (link.clone(), session.clone(), store.clone(), host.clone(), stop.clone(), wake.clone());
+            thread::spawn(move || deliver_outbox(link, session, store, host, stop, wake));
         }
-        Ok(Arc::new(Radio { jobs: Mutex::new(tx), stop, calling, link, store, host, wake, senses, roster: std::sync::atomic::AtomicU64::new(0), reading: std::sync::atomic::AtomicU64::new(0) }))
+        Ok(Arc::new(Radio { jobs: Mutex::new(tx), stop, calling, link, session, store, host, wake, senses, roster: std::sync::atomic::AtomicU64::new(0), reading: std::sync::atomic::AtomicU64::new(0) }))
     }
 
     /// Ask this computer something and read its answer. A reason it gives in words (`error`) is told to him
@@ -141,15 +144,27 @@ impl Radio {
         let mine = self.reading.fetch_add(1, Ordering::SeqCst) + 1;
         // With no voice chosen nothing can read it: he is told where to choose one, before anything is asked
         // of his computer.
-        if !voice::can_speak(&self.senses.mouth) {
+        if !self.senses.mouth.ready() {
             self.host.told(voice::NOTHING_CHOSEN.into());
             return false;
         }
         // His computer is asked for the words as they are read, and they are said here. When the voice he chose
         // cannot speak he is told why (`say_until` does), and nothing else reads it in its place.
-        let Ok((200, v)) = self.link.request("GET", &format!("/message/{id}?{}", airband_core::radio::MessageAsk { form: Some(airband_core::radio::Form::Spoken), part }.query()), None) else { return false };
-        let Some(text) = v["text"].as_str() else { return false };
-        matches!(voice::say_until(&*self.host, &self.senses.mouth, text, &|| self.reading.load(Ordering::SeqCst) != mine), voice::Said::Aloud)
+        #[derive(serde::Deserialize)]
+        struct Words {
+            text: String,
+        }
+        let words: Words = match self.asked("GET", &format!("/message/{id}?{}", airband_core::radio::MessageAsk { form: Some(airband_core::radio::Form::Spoken), part }.query()), None) {
+            Ok(words) => words,
+            Err(e) => {
+                self.host.told(match e {
+                    RadioError::Told { reason } => reason,
+                    e => format!("That could not be read aloud: {e}."),
+                });
+                return false;
+            }
+        };
+        matches!(voice::say_until(&*self.host, &self.senses.mouth, &words.text, &|| self.reading.load(Ordering::SeqCst) != mine), voice::Said::Aloud)
     }
     /// Leave off reading aloud.
     pub(crate) fn hush(&self) {
@@ -166,13 +181,12 @@ impl Radio {
     /// is then what the chat shows for it.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn queue_as(&self, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, others: String, to: Vec<String>, act: Option<Act>) -> String {
-        let act = act.map(|a| serde_json::to_string(&a).unwrap_or_default()).unwrap_or_default();
         let id = random_hex(12);
         let waiting = self.store.change(|s| {
-            // whatever he attached and has reached the tower goes with this
-            // the next thing he says after his computer asked him something back is his answer to it
-            let answers = self.link.take_question();
-            s.outbox.push(Outgoing { to, act, answers, ..Outgoing::new(id.clone(), text, re, scope, label, self.link.take_armed(), others) });
+            // whatever he attached and has reached the tower goes with this, and the next thing he says after
+            // his computer asked him something back is his answer to it
+            let answers = self.session.take_question();
+            s.outbox.push(Outgoing { to, answers, ..Outgoing::new(id.clone(), text, re, scope, label, self.session.take_armed(), others).with_act(act.as_ref()) });
             s.outbox.clone()
         });
         self.wake.ring();
@@ -223,15 +237,15 @@ impl Radio {
 
     /// A file he attached has reached the tower: the next thing he says or sends from this radio takes it along.
     pub(crate) fn arm(&self, id: String) {
-        self.link.arm(id);
+        self.session.arm(id);
     }
     /// He took it off again before sending.
     pub(crate) fn disarm(&self, id: String) {
-        self.link.disarm(&id);
+        self.session.disarm(&id);
     }
     /// The attached files still waiting for something to go with.
     pub(crate) fn armed(&self) -> Vec<String> {
-        self.link.armed()
+        self.session.armed()
     }
 
     /// What he typed that has not been dealt with yet: on its way, with the relay, or given up on.
@@ -264,6 +278,7 @@ impl Radio {
         // something said aloud is given its answer
         for told in &feed.answers {
             if let airband_core::radio::Outcome::Answered { reply } = &told.outcome {
+                self.session.asked(reply);
                 self.link.answered(&told.id, reply);
             }
             settle(&self.store, &*self.host, &told.id, told.outcome.clone());
@@ -321,14 +336,14 @@ impl Radio {
     /// With no tag it goes to whoever spoke last. Returns the tower's one-line answer ("Sent to shop two.").
     /// `re` is the id of the message he is replying to, when he picked one.
     pub fn send(&self, text: String, re: Option<String>) -> Result<String, RadioError> {
-        Ok(self.link.utterance(&text, re, None, None)?.map(|reply| reply.say).unwrap_or_default())
+        Ok(self.session.say(&self.link, &text, re, None, None)?.map(|reply| reply.say).unwrap_or_default())
     }
 
     /// Start a new agent in one of his teams, by the team's id, from a command line. Returns the tower's
     /// one-line answer.
     pub fn launch(&self, team: String, tool: Option<String>, model: Option<String>, effort: Option<String>, task: String) -> Result<String, RadioError> {
         let shown = "New agent".to_string();
-        Ok(self.link.utterance(&shown, None, None, Some(Act::Launch(airband_core::radio::Launch { team, tool, model, effort, task })))?.map(|reply| reply.say).unwrap_or_default())
+        Ok(self.session.say(&self.link, &shown, None, None, Some(Act::Launch(airband_core::radio::Launch { team, tool, model, effort, task })))?.map(|reply| reply.say).unwrap_or_default())
     }
 
     /// A picture, as a JPEG file on the device: fetched from the tower the first time and kept, so it is there
@@ -401,13 +416,15 @@ impl Radio {
     /// to send it in (a notification's button, with the app behind the lock screen). If it cannot be sent in
     /// that time it is left in the outbox under the same id, to go when it can, and the caller is told.
     pub(crate) fn answer_now(&self, text: String, re: String, act: Option<Act>) -> Result<(), RadioError> {
-        let id = random_hex(12);
+        // one record of it, tried now and kept as it is: a button's answer stays what the button stood for
+        let out = Outgoing::new(random_hex(12), text, Some(re), None, None, Vec::new(), String::new()).with_act(act.as_ref());
+        let u = out.utterance().expect("made here, so it reads");
         let mut failed = LinkError::Unreachable(Way::Relay);
         for attempt in 0..3 {
             if attempt > 0 {
                 thread::sleep(Duration::from_secs(2));
             }
-            match self.link.utterance_once(&airband_core::radio::Utterance { text: text.clone(), id: id.clone(), re: Some(re.clone()), act: act.clone(), ..Default::default() }).0 {
+            match self.link.utterance_once(&u).0 {
                 // left with the relay for a computer that is away: it will get there, and he should know it has not yet
                 Ok(Sent::Left { away: true }) => return Err(RadioError::Told { reason: AWAY.into() }),
                 // his computer has it: that is the answer given
@@ -418,7 +435,7 @@ impl Radio {
             }
         }
         let waiting = self.store.change(|s| {
-            s.outbox.push(Outgoing::new(id, text, Some(re), None, None, Vec::new(), String::new()));
+            s.outbox.push(out);
             s.outbox.clone()
         });
         self.wake.ring();

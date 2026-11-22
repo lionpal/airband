@@ -60,7 +60,10 @@ impl Desk {
         let the_key = || key.clone().or_else(|| host.secret(provider.clone())).unwrap_or_default();
         // A service that takes a key is asked, by this device, whether it takes this one: the request its row
         // names, which costs nothing. A key that does not pass is not kept and goes nowhere else.
-        let row = airband_core::providers::provider(&provider).filter(|p| p.key && choice.place == ChoicePlace::Service);
+        // A summary service whose key his computer keeps: that key is the computer's own, and the phone has none
+        // to test or send.
+        let kept_there = job == ChoiceJob::Reads && key.is_none() && host.secret(provider.clone()).is_none_or(|k| k.is_empty()) && choice.has_key;
+        let row = airband_core::providers::provider(&provider).filter(|p| p.key && choice.place == ChoicePlace::Service && !kept_there);
         if let Some(p) = &row {
             let with = crate::services::service_of(&provider, &offer, &the_key(), set.clone().into_iter().collect());
             if with.key.is_empty() {
@@ -82,28 +85,38 @@ impl Desk {
                 && let Err(why) = keep(host, &provider, key) {
                     return done(Err(why));
                 }
-            let radios: Vec<Arc<Radio>> = self.shared.state.lock().unwrap().stations.iter().filter(|s| s.online).map(|s| s.radio.clone()).collect();
+            let (radios, everyone) = {
+                let state = self.shared.state.lock().unwrap();
+                let online = state.stations.iter().enumerate().filter(|(_, s)| s.online).map(|(i, s)| (state.computer_name(i), s.id(), s.radio.clone())).collect::<Vec<_>>();
+                (online, state.stations.len())
+            };
             // no computer to ask: it waits for one
             if radios.is_empty() {
-                chooser.change(|s| s.reads = Some(Waiting { id: provider, offer, set, his: true }));
+                chooser.change(|s| s.reads = Some(Waiting { id: provider, offer, set, his: true, taken: Vec::new() }));
                 return done(Ok(()));
             }
             chooser.work(job, &id, "Asking your computer to switch", false);
             host.changed();
-            let wanted = SetReads { kind: provider.clone(), offer, key: the_key(), set };
-            let sent = radios.iter().try_for_each(|radio| radio.set_reads(&wanted));
-            if sent.is_ok() {
+            let wanted = SetReads { kind: provider.clone(), offer: offer.clone(), key: the_key(), set: set.clone() };
+            let sent = switch_all(&radios, &wanted);
+            // computers not reached now take it when they are
+            if let Ok(switched) = &sent {
+                if switched.len() < everyone {
+                    chooser.change(|s| s.reads = Some(Waiting { id: provider.clone(), offer: offer.clone(), set: set.clone(), his: true, taken: switched.clone() }));
+                }
                 // what is offered and in use is the main computer's: the one he chose, or the only one
                 let main = { let state = self.shared.state.lock().unwrap(); state.main().map(|i| state.stations[i].radio.clone()) };
                 let offered = main.and_then(|radio| radio.reads_offered());
                 chooser.change(|s| {
-                    s.reads = None;
+                    if switched.len() == everyone {
+                        s.reads = None;
+                    }
                     if offered.is_some() {
                         s.offered = offered;
                     }
                 });
             }
-            return done(sent);
+            return done(sent.map(|_| ()));
         }
         let pick = match choice.place {
             ChoicePlace::Service => {
@@ -216,21 +229,51 @@ impl Desk {
 
 }
 
+/// Ask each computer, by name, id and radio, to read with `wanted`, one after another. The ids of those that
+/// switched; when one says no, why, naming those that switched before it, which stay switched.
+pub(crate) fn switch_all(radios: &[(String, String, Arc<Radio>)], wanted: &SetReads) -> Result<Vec<String>, RadioError> {
+    let mut switched: Vec<(&str, String)> = Vec::new();
+    for (name, station, radio) in radios {
+        if let Err(e) = radio.set_reads(wanted) {
+            return Err(match switched.is_empty() {
+                true => e,
+                false => told(format!("{} switched. {name} did not: {e}", switched.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", "))),
+            });
+        }
+        switched.push((name, station.clone()));
+    }
+    Ok(switched.into_iter().map(|(_, id)| id).collect())
+}
+
 /// A computer can be reached. What waits to write his summaries is sent to it, and it is asked what it can
 /// read with and what it reads with now. Blocks: called on a thread of its own.
 pub(crate) fn computer_reached(shared: &Shared, radio: &Radio) {
     let chooser = &shared.chooser;
-    if let Some(waiting) = chooser.saved().reads {
+    let (me, everyone) = {
+        let state = shared.state.lock().unwrap();
+        let me = state.stations.iter().find(|s| std::ptr::eq(&*s.radio, radio)).map(|s| s.id());
+        (me, state.stations.iter().map(|s| s.id()).collect::<Vec<_>>())
+    };
+    if let (Some(waiting), Some(me)) = (chooser.saved().reads, me)
+        && !waiting.taken.contains(&me) {
         let wanted = SetReads { kind: waiting.id.clone(), offer: waiting.offer.clone(), key: shared.host.secret(waiting.id.clone()).unwrap_or_default(), set: waiting.set.clone() };
-        match radio.set_reads(&wanted) {
-            Ok(()) => chooser.change(|s| s.reads = None),
-            // the computer would not take it: it is let go and said, and he picks again where he chooses
-            Err(RadioError::Told { reason }) => {
-                chooser.change(|s| s.reads = None);
-                shared.host.note(reason);
+        // what changes is the choice that was sent: one he made meanwhile is left as it is
+        let went = radio.set_reads(&wanted);
+        chooser.change(|s| {
+            let Some(now) = s.reads.as_mut().filter(|w| w.same(&waiting)) else { return };
+            match &went {
+                Ok(()) => now.taken.push(me.clone()),
+                // the computer would not take it: it is let go, and he picks again where he chooses
+                Err(RadioError::Told { .. }) => s.reads = None,
+                // not reached after all: it goes on waiting
+                Err(_) => {}
             }
-            // not reached after all: it goes on waiting
-            Err(_) => {}
+            if s.reads.as_ref().is_some_and(|w| everyone.iter().all(|id| w.taken.contains(id))) {
+                s.reads = None;
+            }
+        });
+        if let Err(RadioError::Told { reason }) = went {
+            shared.host.note(reason);
         }
     }
     // what can write summaries, and what does now, as the main computer says: another computer's word on it
