@@ -83,6 +83,12 @@ pub(super) struct Team {
     #[serde(default)]
     pub(super) named: bool,
 }
+impl Team {
+    /// Its folder, when it has one that is still there.
+    pub(super) fn live_folder(&self) -> Option<String> {
+        self.folder.clone().filter(|f| std::path::Path::new(f).is_dir())
+    }
+}
 #[derive(Serialize, Deserialize, Default)]
 pub(crate) struct Saved {
     pub(super) sessions: Vec<Session>,
@@ -127,12 +133,12 @@ impl Inner {
         }
         // a permission request nobody is waiting on any more: its line stops offering an answer
         let over: Vec<String> = self.permits.iter().filter(|(_, p)| !p.live()).map(|(id, _)| id.clone()).collect();
-        for id in over {
-            self.close_permit(&id, permit::Ended::Gone);
+        for id in &over {
+            self.close_permit(id, permit::Ended::Gone);
         }
         // a radio not heard from in a day has nothing worth keeping
         self.calls.retain(|_, c| c.seen.is_some_and(|t| t.elapsed() < Duration::from_secs(86_400)));
-        !dead.is_empty()
+        !dead.is_empty() || !over.is_empty()
     }
     /// What an agent is doing.
     ///
@@ -232,6 +238,14 @@ mod tests {
         inner.worked = vec![(back.clone(), vec!["codex".into()], 9)];
         assert_eq!(inner.recent().iter().map(|r| (r.name.as_str(), r.team, r.at)).collect::<Vec<_>>(), [("back office", false, 9), ("shop", true, 0)]);
         let _ = std::fs::remove_dir_all(&here);
+    }
+
+    #[test]
+    fn two_recent_folders_that_would_be_called_alike_are_both_places_to_start_in() {
+        let mut inner = Inner::default();
+        inner.worked = vec![("/a/x/shop".into(), vec!["codex".into()], 9), ("/b/y/shop".into(), vec!["codex".into()], 7)];
+        let folders: Vec<String> = inner.launchable().into_iter().map(|p| p.folder).collect();
+        assert_eq!(folders, ["/a/x/shop", "/b/y/shop"]);
     }
 
     #[test]

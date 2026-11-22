@@ -114,6 +114,13 @@
     "account_file": ".claude.json",
     "keychain_service": "Claude Code-credentials",
     "login_key": "claudeAiOauth",
+    "pid_env": "CLAUDE_PID",
+    "inbox_env": "CLAUDE_CODE_MESSAGING_SOCKET",
+    "inbox_scheme": "uds:",
+    "inbox_token_env": "CLAUDE_CODE_MESSAGING_TOKEN",
+    "entry_env": "CLAUDE_CODE_ENTRYPOINT",
+    "headless_entry": "sdk-cli",
+    "artifact_link": "claude-artifact",
     "oauth_client": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
     "oauth_beta": "oauth-2025-04-20",
     "beta_header": "anthropic-beta",
@@ -138,23 +145,28 @@
       },
       "Read": {
         "doing": "Reading {file_path.file}",
-        "asks": "read the file {file_path}"
+        "asks": "read the file {file_path}",
+        "touches": "{file_path}"
       },
       "Write": {
         "doing": "Editing {file_path|notebook_path.file}",
-        "asks": "write the file {file_path}"
+        "asks": "write the file {file_path}",
+        "touches": "{file_path|notebook_path}"
       },
       "Edit": {
         "doing": "Editing {file_path|notebook_path.file}",
-        "asks": "edit the file {file_path|notebook_path}"
+        "asks": "edit the file {file_path|notebook_path}",
+        "touches": "{file_path|notebook_path}"
       },
       "MultiEdit": {
         "doing": "Editing {file_path|notebook_path.file}",
-        "asks": "edit the file {file_path|notebook_path}"
+        "asks": "edit the file {file_path|notebook_path}",
+        "touches": "{file_path|notebook_path}"
       },
       "NotebookEdit": {
         "doing": "Editing {file_path|notebook_path.file}",
-        "asks": "edit the file {file_path|notebook_path}"
+        "asks": "edit the file {file_path|notebook_path}",
+        "touches": "{file_path|notebook_path}"
       },
       "Grep": {
         "doing": "Searching for {pattern}"
@@ -175,7 +187,8 @@
       },
       "Bash": {
         "doing": "{command.line}",
-        "asks": "run `{command}`"
+        "asks": "run `{command}`",
+        "touches": "{command.line}"
       },
       "Agent": {
         "role": "subagent"

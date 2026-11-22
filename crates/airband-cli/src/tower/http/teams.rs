@@ -56,10 +56,8 @@ pub(super) async fn folders(State(app): State<Arc<App>>, Json(ask): Json<airband
     Json(match tokio::time::timeout(Duration::from_secs(5), read).await {
         Ok(Ok(Ok(mut f))) => {
             // the team that works here, or the name one would have
-            let inner = app.read();
-            let team = inner.team_at(&f.path);
-            f.has_team = team.is_some();
-            f.team = team.map(|id| inner.team_name(&id)).or_else(|| inner.name_for_folder(&f.path)).unwrap_or_default();
+            let (name, has_team) = app.read().folder_called(&f.path);
+            (f.team, f.has_team) = (name.unwrap_or_default(), has_team);
             serde_json::to_value(f).unwrap()
         }
         Ok(Ok(Err(why))) => refused(why),
@@ -128,8 +126,10 @@ pub(super) async fn project(State(app): State<Arc<App>>, Json(new): Json<airband
         }
     };
     // its first agent, with nothing to do yet, when the tower runs agents itself: the team is then there to see
-    let held = held::launcher_for(&app, new.tool.as_deref()).is_some_and(|(_, l)| l.held.is_some());
-    if !held {
+    let launcher = held::launcher_for(&app, new.tool.as_deref());
+    // a tool he named that cannot be started here is told him by the launch, not dropped
+    let unknown = new.tool.is_some() && launcher.is_none();
+    if !unknown && !launcher.is_some_and(|(_, l)| l.held.is_some()) {
         return Json(json!(airband_core::radio::ProjectMade { say: format!("{name} is ready. Say launch {name}, then what it should do."), team: name, id }));
     }
     let place = Place { name: name.clone(), folder: at };

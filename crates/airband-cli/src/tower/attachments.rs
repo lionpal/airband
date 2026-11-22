@@ -20,7 +20,7 @@ fn root() -> PathBuf {
     config::dir().join("attachments")
 }
 fn hex(id: &str) -> bool {
-    (8..=40).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_hexdigit())
+    airband_core::encode::is_hex(id, 8..=40)
 }
 /// A file name that cannot leave its folder or surprise a shell: letters, digits, dot, dash and underscore.
 fn safe(name: &str) -> String {

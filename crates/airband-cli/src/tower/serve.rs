@@ -195,10 +195,7 @@ async fn tidy(app: Arc<App>) {
             let app = app.clone();
             tokio::task::spawn_blocking(move || app.store.prune());
         }
-        let mut inner = app.change();
-        if inner.unkept().reap() {
-            inner.keep();
-        }
+        app.reap();
     }
 }
 

@@ -95,7 +95,7 @@ fn start_at_login(exe: &std::path::Path) -> Result<(), String> {
         out = start()?;
     }
     if !out.status.success() {
-        return Err(format!("airband could not be started. launchctl said: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        return Err(format!("airband could not be set to start at login: {}", String::from_utf8_lossy(&out.stderr).trim()));
     }
     println!("airband is running, and starts again when you log in. Its log: {}", log.display());
     Ok(())

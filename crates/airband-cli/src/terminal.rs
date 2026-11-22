@@ -16,6 +16,26 @@ struct Terminal {
     window: Duration,
 }
 
+/// What a radio in a terminal does with sound: nothing. No sound is played or recorded, no model is run on
+/// this side, and no words are shown as they are heard. The same for every terminal host.
+macro_rules! no_sound {
+    () => {
+        fn play(&self, _: u32, _: Vec<u8>, _: bool) {}
+        fn record_start(&self, _: u32) -> bool {
+            false
+        }
+        fn record_read(&self) -> Vec<u8> {
+            Vec::new()
+        }
+        fn record_stop(&self) {}
+        fn hearing(&self, _: String) {}
+        fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
+        fn run_model(&self, _: String, _: String, _: airband_radio::ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
+            None
+        }
+    };
+}
+
 impl RadioHost for Terminal {
     fn told(&self, text: String) {
         println!("{text}");
@@ -29,21 +49,9 @@ impl RadioHost for Terminal {
         self.listening.store(false, Ordering::SeqCst);
         heard.filter(|l| !l.trim().is_empty())
     }
-    fn play(&self, _: u32, _: Vec<u8>, _: bool) {}
-    fn record_start(&self, _rate: u32) -> bool {
-        false
-    }
-    fn record_read(&self) -> Vec<u8> {
-        Vec::new()
-    }
-    fn record_stop(&self) {}
     fn outbox(&self, _: Vec<Outgoing>, _: Option<String>) {}
-    fn hearing(&self, _text: String) {}
     // a terminal prints what is said and takes a typed line as what he said
-    fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
-    fn run_model(&self, _: String, _: String, _: airband_radio::ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
-        None
-    }
+    no_sound!();
     fn unplaced(&self, message: airband_radio::Outgoing, elsewhere: Option<String>, ask: Vec<String>) {
         match elsewhere {
             Some(callsign) => println!("Not sent: “{}” is for {callsign}, on another computer.", message.text),
@@ -102,24 +110,12 @@ impl RadioHost for Silent {
     fn listen(&self) -> Option<String> {
         None
     }
-    fn play(&self, _: u32, _: Vec<u8>, _: bool) {}
-    fn record_start(&self, _: u32) -> bool {
-        false
-    }
-    fn record_read(&self) -> Vec<u8> {
-        Vec::new()
-    }
-    fn record_stop(&self) {}
     fn status(&self, _: RadioStatus) {}
+    no_sound!();
     fn outbox(&self, _: Vec<Outgoing>, note: Option<String>) {
         if let Some(n) = note.filter(|n| !n.is_empty()) {
             println!("{n}");
         }
-    }
-    fn hearing(&self, _text: String) {}
-    fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
-    fn run_model(&self, _: String, _: String, _: airband_radio::ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
-        None
     }
     fn unplaced(&self, message: airband_radio::Outgoing, elsewhere: Option<String>, ask: Vec<String>) {
         match elsewhere {

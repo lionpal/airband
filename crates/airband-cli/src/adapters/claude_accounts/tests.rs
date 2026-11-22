@@ -135,6 +135,9 @@ fn a_field_the_profile_does_not_have_is_left_out_of_the_record_not_made_up() {
     let (_, r) = service::account_record(&profile).unwrap();
     assert!(r.get("hasExtraUsageEnabled").is_none(), "made up: {r}");
     assert!(r.get("ccOnboardingFlags").is_none(), "made up: {r}");
+    for field in ["accountCreatedAt", "claudeCodeTrialEndsAt", "claudeCodeTrialDurationDays", "seatTier"] {
+        assert!(r.get(field).is_none(), "made up: {r}");
+    }
 }
 
 #[test]

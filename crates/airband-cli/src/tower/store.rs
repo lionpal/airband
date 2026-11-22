@@ -24,6 +24,8 @@ pub(super) enum Receipt {
     Begun,
     /// Already answered: this is what was said.
     Done(Reply),
+    /// Whether it was answered could not be read just now, so it is not answered now: it could be a second time.
+    Unknown(String),
 }
 
 impl Store {
@@ -211,7 +213,10 @@ impl Store {
     /// stopped part way.
     pub(super) fn begin_receipt(&self, id: &str) -> Receipt {
         let db = self.db.lock().unwrap();
-        let found = db.query_row("select reply from receipts where id = ?1", params![id], |r| r.get::<_, Option<String>>(0)).optional().ok().flatten();
+        let found = match db.query_row("select reply from receipts where id = ?1", params![id], |r| r.get::<_, Option<String>>(0)).optional() {
+            Ok(found) => found,
+            Err(e) => return Receipt::Unknown(e.to_string()),
+        };
         match found {
             Some(Some(reply)) => Receipt::Done(serde_json::from_str(&reply).unwrap_or_default()),
             // A receipt with no answer: the tower stopped part way. If the words had already reached their

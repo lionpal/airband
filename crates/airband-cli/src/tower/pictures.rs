@@ -29,7 +29,7 @@ fn folder() -> PathBuf {
 
 /// Where the copy with this id is. Nothing for an id that is not one of ours, so a request cannot name another file.
 fn file(id: &str) -> Option<PathBuf> {
-    (id.len() == 24 && id.bytes().all(|b| b.is_ascii_hexdigit())).then(|| folder().join(format!("{id}.jpg")))
+    airband_core::encode::is_hex(id, 24..=24).then(|| folder().join(format!("{id}.jpg")))
 }
 
 /// Keep a copy of the picture at `path`. Nothing if it is not there, not a picture, or too large. Slow (it

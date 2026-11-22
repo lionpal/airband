@@ -15,7 +15,7 @@ use std::io::Read;
 ///
 /// `--meta key=value` (repeatable) records anything else about the agent: its model, a branch, a ticket.
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
-    let mut agent = Agent { id: String::new(), harness: "custom".into(), cwd: std::env::current_dir().ok().map(|p| p.display().to_string()), name: None, title: None, pid: None, deliver: None, meta: Default::default() };
+    let mut agent = Agent { id: String::new(), harness: String::new(), cwd: std::env::current_dir().ok().map(|p| p.display().to_string()), name: None, title: None, pid: None, deliver: None, meta: Default::default() };
     let mut rest = Vec::new();
     let (mut terminal, mut pane) = (None, None);
     let mut it = args.iter();
@@ -61,6 +61,9 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     }
     if agent.id.is_empty() {
         return Err("--id is required: any name that stays the same for this agent's session".into());
+    }
+    if agent.harness.is_empty() {
+        return Err("--harness is required: the coding tool the agent runs in, by its id (claude-code, codex, opencode, or your own)".into());
     }
     let body = || -> Result<String, String> {
         let words = rest[1..].join(" ");

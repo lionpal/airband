@@ -148,7 +148,7 @@ fn scene(app: &App, radio: &str, re: Option<&str>, room: Option<&str>) -> Result
                 spoken.push((s.clone(), e.clone()));
             }
     }
-    let focus = inner.calls.get(radio).and_then(|c| c.focus.clone()).and_then(|f| inner.find(&f).filter(|s| within(s)).cloned());
+    let focus = inner.focused(radio).filter(|s| within(s)).cloned();
     // the last thing he said and who it went to, so "and keep the price next to it" can be read as carrying on
     let before = inner.log.iter().rev().find(|e| e.his && !e.to_agents.is_empty()).and_then(|e| {
         let to: Vec<String> = e.to_agents.iter().filter_map(|id| inner.find(id)).filter(|s| within(s)).map(|s| s.callsign.text()).collect();

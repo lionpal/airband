@@ -28,7 +28,8 @@ pub(crate) fn overlay_addrs() -> Vec<std::net::Ipv4Addr> {
         .collect()
 }
 
-/// This computer's name for a phone paired with several: the configured one, else the short host name.
+/// This computer's name for a phone paired with several: the configured one, else the short host name. Empty
+/// when the system gives none: a phone knows each computer by its id, and shows no name rather than a made-up one.
 pub(crate) fn station(cfg: &Config) -> String {
     if let Some(s) = cfg.station.clone().filter(|s| !s.trim().is_empty()) {
         return s;
@@ -38,11 +39,9 @@ pub(crate) fn station(cfg: &Config) -> String {
     // the system gives it: nothing is cut out of it here.
     static HOST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     let said = |program: &str, args: &[&str]| std::process::Command::new(program).args(args).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|name| !name.is_empty());
-    let short = HOST
-        .get_or_init(|| {
-            let given = if cfg!(target_os = "macos") { said("scutil", &["--get", "ComputerName"]) } else { None };
-            given.or_else(|| said("hostname", &["-s"])).unwrap_or_default()
-        })
-        .clone();
-    if short.is_empty() { "computer".into() } else { short }
+    HOST.get_or_init(|| {
+        let given = if cfg!(target_os = "macos") { said("scutil", &["--get", "ComputerName"]) } else { None };
+        given.or_else(|| said("hostname", &["-s"])).unwrap_or_default()
+    })
+    .clone()
 }

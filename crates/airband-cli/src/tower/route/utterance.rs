@@ -82,7 +82,7 @@ pub(in crate::tower) async fn on_utterance(app: &Arc<App>, radio: &str, text: &s
         };
     }
     if to.targets.is_empty() {
-        return if to.names.is_empty() { say("No agents are running.".into()) } else { ask(format!("Who is that for? {}.", to.names.join(", "))) };
+        return if to.names.is_empty() { say("No agents are running.".into()) } else { ask(format!("Who is that for? {}.", either(&to.names))) };
     }
     // The line in the chat takes the id the radio gave what he said, when it is not in use: the radio can then
     // tell that the message it is still showing as on its way has arrived, and swap one for the other without a gap.
@@ -164,8 +164,8 @@ async fn new_agent(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
 /// when that settles it some other way (another computer, a new agent, a question back).
 async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core::radio::Utterance, control: Option<Control>, files: String, projects: &[Place]) -> Result<Addressed, Reply> {
     let (parsed, mut named, roster, names, pending, held) = {
+        app.reap();
         let mut inner = app.passing();
-        inner.reap();
         // a control carries no words; what it shows in the chat is not for anyone to read
         let parsed = if control.is_some() { airband_core::routing::Parsed { to: Vec::new(), rest: String::new() } } else { parse_utterance(text, &inner.callsigns()) };
         // the agents he picked on his screen, by id; else the ones his tags name
@@ -215,7 +215,7 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
     } else if control.is_some() {
         // "say more" and "repeat" are about whoever he last heard
         let inner = app.read();
-        inner.calls.get(radio).and_then(|c| c.focus.clone()).and_then(|f| inner.find(&f).cloned()).or((inner.sessions.len() == 1).then(|| inner.sessions[0].clone())).into_iter().collect()
+        inner.focused(radio).cloned().or((inner.sessions.len() == 1).then(|| inner.sessions[0].clone())).into_iter().collect()
     } else {
         match route(app, radio, &rest, said.re.as_deref(), said.scope.as_deref(), &said.others).await {
             Routed::Sure(t) => t,
@@ -234,7 +234,7 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
                 app.passing().call(radio).asked = Some((question.clone(), rest.clone(), files.clone()));
                 let names: Vec<String> = options.iter().map(|s| s.callsign.text()).collect();
                 log(format!("← radio: \"{text}\" → unsure; asking between {}", names.join(", ")));
-                return Err(Reply { ask: options.iter().map(|s| s.agent.id.clone()).collect(), question: Some(question), ..ask(format!("Who is that for? {}.", names.join(", or "))) });
+                return Err(Reply { ask: options.iter().map(|s| s.agent.id.clone()).collect(), question: Some(question), ..ask(format!("Who is that for? {}.", either(&names))) });
             }
         }
     };
@@ -260,7 +260,13 @@ async fn controlled(app: &Arc<App>, radio: &str, control: Control, to: &Addresse
         c @ (Control::More | Control::Repeat) => {
             let last = to.targets.first().and_then(|s| s.last_heard.clone().map(|l| (s.clone(), l))).and_then(|(s, id)| app.read().log.iter().find(|e| e.id == id).map(|e| (s, id, e.line())));
             let Some((s, last, said)) = last else { return say("Nothing to repeat yet.".into()) };
-            let body = if c == Control::Repeat { said } else { detail_of(app, &last).await.unwrap_or_default() };
+            let body = match c {
+                Control::Repeat => said,
+                _ => match detail_of(app, &last).await {
+                    Some(more) => more,
+                    None => return say("That message is no longer here.".into()),
+                },
+            };
             app.passing().call(radio).focus = Some(s.agent.id.clone());
             ask(format!("{}. {body}", s.callsign.spoken()))
         }
@@ -331,7 +337,7 @@ fn answering(app: &App, re: Option<&str>) -> impl Fn(&str) -> String {
         let at = inner.log.iter().position(|e| e.id == id)?;
         let asked = &inner.log[at];
         let agent = asked.agent.clone()?;
-        let since = inner.log[at + 1..].iter().any(|e| e.agent.as_deref() == Some(agent.as_str()) && e.kind != Some(super::Kind::Fyi) || e.to_agents.contains(&agent));
+        let since = inner.log[at + 1..].iter().any(|e| e.worth_from(&agent) || e.to_agents.contains(&agent));
         since.then(|| (agent, asked.line()))
     });
     move |agent: &str| answers.as_ref().filter(|(a, _)| a == agent).map(|(_, q)| format!("This answers what you asked earlier (as he was shown it): \"{q}\"\n\n")).unwrap_or_default()
@@ -388,6 +394,20 @@ mod tests {
         let to = Addressed { rest: String::new(), files: String::new(), named: Vec::new(), targets: vec![s], roster: String::new(), names: Vec::new(), pending: 0 };
         let reply = controlled(&app, "radio", Control::Repeat, &to).await;
         assert!(reply.say.ends_with("The deploy is done."), "{}", reply.say);
+    }
+
+    #[tokio::test]
+    async fn an_agent_found_gone_while_he_speaks_is_let_go_for_good_and_the_radios_told() {
+        let app = crate::tower::http::tests::app("reaped");
+        {
+            let mut inner = app.change();
+            let a = Agent { id: "a".into(), harness: "test".into(), cwd: Some("/x/shop".into()), name: None, title: None, pid: Some(i32::MAX as u32), deliver: None, meta: Default::default() };
+            inner.check_in(&a).unwrap();
+        }
+        assert_eq!(app.store.load(10).unwrap().0.sessions.len(), 1);
+        let _ = addressed(&app, "radio", "hello", &airband_core::radio::Utterance { text: "hello".into(), ..Default::default() }, None, String::new(), &[]).await;
+        assert!(app.read().sessions.is_empty());
+        assert!(app.store.load(10).unwrap().0.sessions.is_empty(), "written down as gone");
     }
 
     fn answering(text: &str, question: &str) -> airband_core::radio::Utterance {

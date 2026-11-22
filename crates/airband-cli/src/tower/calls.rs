@@ -110,8 +110,11 @@ impl Inner {
             let call = self.call(radio);
             (call.began, call.ready, call.outbox) = (now_ms(), true, None);
             self.give_back(radio);
-            self.reap();
         }
+    }
+    /// The agent this radio last heard or spoke to, while it is still on the radio.
+    pub(super) fn focused(&self, radio: &str) -> Option<&Session> {
+        self.calls.get(radio).and_then(|c| c.focus.as_deref()).and_then(|f| self.find(f))
     }
     pub(super) fn call(&mut self, radio: &str) -> &mut Call {
         let call = self.calls.entry(radio.to_string()).or_default();

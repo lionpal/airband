@@ -102,6 +102,10 @@ pub(super) enum Held {
     Cancelled,
 }
 impl Entry {
+    /// Something this agent said that was worth his attention (not a passing note).
+    pub(super) fn worth_from(&self, agent_id: &str) -> bool {
+        self.agent.as_deref() == Some(agent_id) && self.kind != Some(Kind::Fyi)
+    }
     /// The line in a few words: its summary, else the opening of what it says.
     pub(super) fn line(&self) -> String {
         self.short.clone().unwrap_or_else(|| opening(&self.said_whole()))
@@ -341,6 +345,6 @@ impl Inner {
     }
     /// The last thing an agent said that was worth his attention.
     pub(super) fn last_said(&self, agent_id: &str) -> Option<&Entry> {
-        self.log.iter().rev().find(|e| e.agent.as_deref() == Some(agent_id) && e.kind != Some(Kind::Fyi))
+        self.log.iter().rev().find(|e| e.worth_from(agent_id))
     }
 }

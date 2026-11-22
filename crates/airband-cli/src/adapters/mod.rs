@@ -191,7 +191,14 @@ pub(crate) struct AccountBook {
 /// What a coding tool's row tells the code that speaks to it (`Tool::with`): the program's name, an address.
 /// Always from the rows this build came with. Empty when the row does not say.
 pub(crate) fn row_says(tool: &str, what: &str) -> String {
-    airband_core::catalog::built().tools.iter().find(|t| t.id == tool).map(|t| t.told(what).to_string()).unwrap_or_default()
+    tool_row(tool).map(|t| t.told(what).to_string()).unwrap_or_default()
+}
+
+/// A coding tool's row as built into this program: what the code that speaks to it does is never a fetched
+/// copy's to change. The one lookup of a tool's row by its id for that; only names shown to him come from the
+/// copy in use (`called`).
+pub(crate) fn tool_row(tool: &str) -> Option<&'static airband_core::catalog::Tool> {
+    airband_core::catalog::built().tools.iter().find(|t| t.id == tool)
 }
 
 /// What a coding tool and its maker are called, as its row has them.
@@ -340,6 +347,20 @@ pub(crate) fn names() -> Vec<&'static str> {
 
 pub(crate) fn env(k: &str) -> Option<String> {
     std::env::var(k).ok().filter(|v| !v.is_empty())
+}
+
+/// The folder a coding tool was told to keep its own files in instead of its usual one, by the variable its row
+/// names (`home_env`).
+pub(crate) fn moved_home(tool: &str) -> Option<std::path::PathBuf> {
+    env(&row_says(tool, "home_env")).map(std::path::PathBuf::from)
+}
+/// Where a coding tool keeps its own files: the moved folder, or its usual one under his home (`home`), as its
+/// row has them. The one rule for every tool.
+pub(crate) fn tool_home(tool: &str) -> std::path::PathBuf {
+    home_given(tool, moved_home(tool))
+}
+fn home_given(tool: &str, moved: Option<std::path::PathBuf>) -> std::path::PathBuf {
+    moved.unwrap_or_else(|| crate::config::home().join(row_says(tool, "home")))
 }
 
 /// `airband hook <harness>`: read the harness's notification from standard input, translate it, post it.

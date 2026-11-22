@@ -62,8 +62,8 @@ pub(super) async fn feed(State(app): State<Arc<App>>, Extension(RadioId(radio)):
     loop {
         // the lines to send, and the change count this answer is good up to
         let (hits, upto, roster_same, settled): (Vec<Entry>, u64, bool, bool) = {
-            let mut inner = app.passing();
-            inner.reap();
+            app.reap();
+            let inner = app.read();
             let roster_same = roster_seen.is_none_or(|seen| seen == inner.roster_rev());
             let settled = !inner.settled_for(&radio, since).is_empty();
             let wanted = |e: &&Entry| inner.in_view(e, team.as_deref(), agent.as_deref());
@@ -140,15 +140,11 @@ pub(super) async fn message(State(app): State<Arc<App>>, Path(id): Path<String>,
         let text: Option<String> = inner.log.iter().find(|e| e.id == id).map(|e| match q.part {
             Some(airband_core::radio::Part::Asked) => {
                 let short = spoken(&e.line());
-                let choices = match e.options.as_slice() {
-                    [] => String::new(),
-                    [one] => format!(" You can say {one}, or answer in your own words."),
-                    [first @ .., last] => format!(" You can say {}, or {last}, or answer in your own words.", first.join(", ")),
-                };
+                let choices = if e.options.is_empty() { String::new() } else { format!(" You can say {}, or answer in your own words.", either(&e.options)) };
                 format!("{}. {short}{choices}", inner.sender_name(e))
             }
             // the whole of it, read from its blocks: no mark is said, a table goes row by row, code is passed over
-            None => spoken(&e.full).chars().take(3000).collect(),
+            None => airband_core::prose::clip(&spoken(&e.full), 3000),
         });
         return match text {
             Some(text) => Json(json!({ "text": text })).into_response(),

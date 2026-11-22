@@ -12,11 +12,19 @@ use start::*;
 use understand::*;
 pub(super) use utterance::on_utterance;
 
-pub(super) fn list(names: &[String]) -> String {
+/// Names as said in English, all of them: "a, b and c".
+pub(super) fn list<S: AsRef<str>>(names: &[S]) -> String {
+    joined(names, "and")
+}
+/// Names as said in English, one of them: "a, b or c".
+pub(super) fn either<S: AsRef<str>>(names: &[S]) -> String {
+    joined(names, "or")
+}
+fn joined<S: AsRef<str>>(names: &[S], word: &str) -> String {
     match names {
         [] => String::new(),
-        [one] => one.clone(),
-        [init @ .., last] => format!("{} and {last}", init.join(", ")),
+        [one] => one.as_ref().to_string(),
+        [init @ .., last] => format!("{} {word} {}", init.iter().map(AsRef::as_ref).collect::<Vec<_>>().join(", "), last.as_ref()),
     }
 }
 

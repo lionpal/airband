@@ -87,9 +87,14 @@ fn main() {
         Some("setup" | "model") => {
             catalog::load();
             // what the copy had to say (one refused, rows this build cannot use) is said before he chooses
-            catalog::refresh().1.iter().for_each(|line| eprintln!("catalogue: {line}"));
+            catalog::refresh().1.iter().for_each(|line| eprintln!("{line}"));
         }
-        _ => catalog::load(),
+        // the tower says it in its log, with what fetching a newer copy had to say
+        Some("run") => catalog::load(),
+        _ => {
+            catalog::load();
+            catalog::said().iter().for_each(|line| eprintln!("{line}"));
+        }
     }
     let result = match args.first().map(String::as_str) {
         Some("--version" | "-V" | "version") => {

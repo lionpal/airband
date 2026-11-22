@@ -90,6 +90,15 @@ impl App {
     pub(super) fn change(&self) -> Changing<'_> {
         Changing { app: self, inner: self.inner.lock().unwrap(), changed: false, tell: false }
     }
+    /// Let go of the agents that have gone and the requests for leave nobody waits on: written down, and the
+    /// radios told, when there were any.
+    pub(super) fn reap(&self) {
+        let mut inner = self.change();
+        if inner.unkept().reap() {
+            inner.keep();
+            inner.tell();
+        }
+    }
     /// Change what is not kept from one run of the tower to the next. Nothing is written.
     pub(super) fn passing(&self) -> Passing<'_> {
         Passing(self.inner.lock().unwrap())

@@ -327,9 +327,10 @@ impl Serve {
         };
         let Ok(res) = self.router.clone().oneshot(req).await;
         let status = res.status().as_u16();
-        // an answer bigger than the relay takes could never reach the radio: it is told so instead of waiting
-        let Ok(bytes) = axum::body::to_bytes(res.into_body(), airband_core::relay::MAX_MESSAGE).await else {
-            return self.refused(call, via, 413, "That answer is too big to send through the relay.");
+        // the whole answer: one too big for the relay is told so when it is sealed for the relay
+        // (`seal_answer_for_relay`), and one given straight has no such bound
+        let Ok(bytes) = axum::body::to_bytes(res.into_body(), usize::MAX).await else {
+            return (500, serde_json::json!({ "error": "airband could not read its own answer." }));
         };
         match serde_json::from_slice(&bytes) {
             Ok(body) => (status, body),

@@ -12,11 +12,16 @@ mod transcript;
 use sessions::*;
 use transcript::*;
 
+/// What Claude Code set the variable its row names under `what` to, for this hook.
+fn row_env(what: &str) -> Option<String> {
+    env(&super::row_says(HARNESS, what))
+}
+
 /// The name he gave this session, if he gave one: with `/rename`, or as the name of its remote control
 /// (`/remote-control shop 2`). A title Claude Code made up by itself is not used: those go stale.
 fn session_name(hook: &Value) -> Option<String> {
     // Claude Code keeps one small file per running session, by process
-    let renamed = env("CLAUDE_PID")
+    let renamed = row_env("pid_env")
         .and_then(|pid| record(&claude_home(), &pid))
         .filter(|s| s["nameSource"].as_str() == Some("user") && s["sessionId"].as_str() == hook["session_id"].as_str())
         .and_then(|s| s["name"].as_str().map(str::trim).filter(|n| !n.is_empty()).map(String::from));
@@ -33,9 +38,9 @@ fn agent_of(hook: &Value) -> Option<Agent> {
         // one the tower holds keeps the name it has: a session carried on in a new process comes with a name of
         // the harness's own making, which is not one he gave it
         title: if env("AIRBAND_HELD").is_some() { None } else { session_name(hook) },
-        pid: env("CLAUDE_PID").and_then(|p| p.parse().ok()),
+        pid: row_env("pid_env").and_then(|p| p.parse().ok()),
         // one the tower started and holds is reached through the input it holds, and no other way
-        deliver: if env("AIRBAND_HELD").is_some() { Some(Deliver::Held) } else { env("CLAUDE_CODE_MESSAGING_SOCKET").map(|s| Deliver::Socket { path: s.trim_start_matches("uds:").to_string(), token: env("CLAUDE_CODE_MESSAGING_TOKEN") }) },
+        deliver: if env("AIRBAND_HELD").is_some() { Some(Deliver::Held) } else { row_env("inbox_env").map(|s| Deliver::Socket { path: s.trim_start_matches(super::row_says(HARNESS, "inbox_scheme").as_str()).to_string(), token: row_env("inbox_token_env") }) },
         // where its transcript is, so the tower can ask what it is doing without a hook on every step
         meta: text(hook, "transcript_path").map(|t| serde_json::Map::from_iter([("transcript".to_string(), Value::String(t))])).unwrap_or_default(),
     })
@@ -105,8 +110,7 @@ pub(crate) fn events(hook: &Value) -> Vec<AgentEvent> {
             _ => Vec::new(),
         },
         // it is handing part of the work to a subagent
-        Some("PreToolUse") if is_subagent(hook) => vec![Event::Subagent { done: false, what: hook["tool_input"]["description"].as_str().unwrap_or("").to_string() }],
-        Some("PostToolUse") if is_subagent(hook) => vec![Event::Subagent { done: true, what: hook["tool_input"]["description"].as_str().unwrap_or("").to_string() }],
+        Some(at @ ("PreToolUse" | "PostToolUse")) if is_subagent(hook) => vec![Event::Subagent { done: at == "PostToolUse", what: hook["tool_input"]["description"].as_str().unwrap_or("").to_string() }],
         // it sent him a file
         Some("PostToolUse") if role(hook).as_deref() == Some("files") => files_sent(hook).into_iter().map(|path| Event::Picture { path, shown: true }).collect(),
         // it published a page: the tool's own answer says where it is and what it is called
@@ -120,9 +124,6 @@ pub(crate) fn events(hook: &Value) -> Vec<AgentEvent> {
 
 // ---- setting Claude Code up to report: its hooks, in its own settings file ----
 
-/// The kind of link (`catalog/links`) a page published by Claude Code's tool for that is.
-const ARTIFACT_KIND: &str = "claude-artifact";
-
 /// The page the Artifact tool just published, from the tool's own answer. The tool says which of its actions
 /// it was asked for (publishing is the one it does when none is named); reading a page, listing them or
 /// adding a file to one publishes nothing.
@@ -134,14 +135,14 @@ fn made_artifact(hook: &Value) -> Option<Event> {
     let answer = &hook["tool_response"];
     let address = answer["url"].as_str().filter(|a| airband_core::links::secure(a))?;
     let title = answer["title"].as_str().map(str::trim).filter(|t| !t.is_empty()).map(String::from);
-    Some(Event::Made { address: address.to_string(), title, kind: Some(ARTIFACT_KIND.to_string()) })
+    Some(Event::Made { address: address.to_string(), title, kind: Some(super::row_says(HARNESS, "artifact_link")) })
 }
 
 /// Where Claude Code keeps its settings and sessions, as its row has it.
 /// Is this a script calling `claude -p`? Those have nobody waiting on them, unless he asked to hear them or the
 /// tower runs it.
 fn headless() -> bool {
-    env("CLAUDE_CODE_ENTRYPOINT").as_deref() == Some("sdk-cli") && env("AIRBAND_INCLUDE_HEADLESS").is_none() && env("AIRBAND_HELD").is_none()
+    row_env("entry_env") == Some(super::row_says(HARNESS, "headless_entry")) && env("AIRBAND_INCLUDE_HEADLESS").is_none() && env("AIRBAND_HELD").is_none()
 }
 
 /// A session id that can name a file: nothing in it may leave the folder.
@@ -149,17 +150,9 @@ fn file_safe(session: &str) -> bool {
     !session.is_empty() && session.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
-/// The folder Claude Code was told to keep everything in instead of its usual one, by the variable its row names.
-pub(super) fn moved_home() -> Option<std::path::PathBuf> {
-    super::env(&super::row_says(HARNESS, "home_env")).map(std::path::PathBuf::from)
-}
-
-/// Where Claude Code keeps its settings, sessions and transcripts: the moved folder, or its usual one.
+/// Where Claude Code keeps its settings, sessions and transcripts.
 fn claude_home() -> std::path::PathBuf {
-    home_given(moved_home())
-}
-fn home_given(moved: Option<std::path::PathBuf>) -> std::path::PathBuf {
-    moved.unwrap_or_else(|| crate::config::home().join(super::row_says(HARNESS, "home")))
+    super::tool_home(HARNESS)
 }
 
 /// The Claude Code tools worth hearing about once they have run, by its row: the one that hands him a file,
@@ -233,8 +226,10 @@ mod tests {
     fn a_moved_home_is_where_hooks_and_sessions_are_looked_for_as_the_accounts_look() {
         // the variable is the row's, the same one the accounts and a sign-in use
         assert_eq!(super::super::row_says(HARNESS, "home_env"), "CLAUDE_CONFIG_DIR");
-        assert_eq!(home_given(Some("/elsewhere/claude".into())), std::path::PathBuf::from("/elsewhere/claude"));
-        assert_eq!(home_given(None), crate::config::home().join(".claude"));
+        assert_eq!(super::super::home_given(HARNESS, Some("/elsewhere/claude".into())), std::path::PathBuf::from("/elsewhere/claude"));
+        assert_eq!(super::super::home_given(HARNESS, None), crate::config::home().join(".claude"));
+        // every tool by the same rule, from its own row
+        assert_eq!(super::super::home_given("opencode", None), crate::config::home().join(".local/state"));
     }
 
     #[test]

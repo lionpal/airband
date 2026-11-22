@@ -195,7 +195,9 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let state = Arc::new(Mutex::new(State::Starting));
     let (tx, rx) = mpsc::channel::<Msg>();
     listen(&sock, state.clone(), tx.clone())?;
-    let cwd = named.get("cwd").cloned().unwrap_or_else(|| std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default());
+    // where it works, and who it is: the tower always says, and nothing is made up when it does not
+    let cwd = named.get("cwd").cloned().ok_or("airband hold needs --cwd")?;
+    let (id, harness) = (named.get("id").cloned().ok_or("airband hold needs --id")?, named.get("harness").cloned().ok_or("airband hold needs --harness")?);
     let mut command = Command::new(program);
     command.args(rest).current_dir(&cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     // A program whose holder reports for it stays quiet itself, hooks and all: two reports of the same thing
@@ -209,7 +211,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         Ok(mut child) => {
             pass_output(&mut child, tx, by == By::Acp);
             keep_errors(&mut child, errors.clone());
-            let held = Held { id: named.get("id").cloned().unwrap_or_default(), harness: named.get("harness").cloned().unwrap_or_default(), cwd, rx, to_program: Arc::new(Mutex::new(child.stdin.take())), state: state.clone(), errors };
+            let held = Held { id, harness, cwd, rx, to_program: Arc::new(Mutex::new(child.stdin.take())), state: state.clone(), errors };
             let done = match by {
                 By::Lines => lines(&held, named.get("line").ok_or("airband hold --by lines needs --line")?, named.get("stop").map(String::as_str)),
                 By::Acp => crate::acp::run(&held, named.get("session").cloned(), named.get("mode").map(String::as_str), crate::acp::Asked { model: named.get("model").cloned(), effort: named.get("effort").cloned() }),

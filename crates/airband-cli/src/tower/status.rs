@@ -52,8 +52,8 @@ pub(crate) struct Pending {
 
 impl Status {
     pub(super) fn of(app: &App) -> Status {
-        let mut inner = app.passing();
-        inner.reap();
+        app.reap();
+        let inner = app.read();
         let open = inner.open_ids();
         Status {
             phone: inner.connected(),

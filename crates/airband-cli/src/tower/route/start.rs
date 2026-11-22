@@ -59,5 +59,5 @@ pub(super) async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, p
 
 /// The question when the place a new agent is for is not known.
 fn which_project(projects: &[Place]) -> String {
-    format!("Which project is that for? {}.", projects.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", "))
+    format!("Which project is that for? {}.", either(&projects.iter().map(|p| p.name.as_str()).collect::<Vec<_>>()))
 }

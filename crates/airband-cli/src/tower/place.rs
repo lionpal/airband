@@ -37,7 +37,7 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
         let inner = app.read();
         // one he placed himself is where he wants it
         let Some(s) = inner.find(&agent_id).filter(|s| s.moved != Some(Mover::Him)).cloned() else { return };
-        let said: Vec<String> = inner.log.iter().rev().filter(|e| e.agent.as_deref() == Some(agent_id.as_str()) && e.kind != Some(Kind::Fyi)).take(3).map(Entry::line).collect();
+        let said: Vec<String> = inner.log.iter().rev().filter(|e| e.worth_from(&agent_id)).take(3).map(Entry::line).collect();
         // his teams by id, each with what it is called and its folder when it has one
         let teams: Vec<(String, Team)> = inner.teams.iter().map(|(id, t)| (id.clone(), t.clone())).collect();
         (s, said, teams)
@@ -80,7 +80,13 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
         #[serde(default)]
         sure: bool,
     }
-    let Ok(out) = judge::ask_json::<Out>(&app.cfg, "placing", prompt, None).await else { return };
+    let shape = json!({
+        "type": "object",
+        "properties": { "team": { "type": ["integer", "null"] }, "new_team": { "type": ["string", "null"] }, "sure": { "type": "boolean" } },
+        "required": ["team", "new_team", "sure"],
+        "additionalProperties": false
+    });
+    let Ok(out) = judge::ask_json::<Out>(&app.cfg, "placing", prompt, Some(shape)).await else { return };
     if !out.sure {
         return;
     }

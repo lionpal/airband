@@ -30,13 +30,17 @@ const QUIET: u64 = 2 * 3600 * 1000;
 
 /// Where OpenCode's server is and the password for it, when it is running.
 fn service() -> Option<(String, String)> {
-    let state = std::env::var_os("XDG_STATE_HOME").map(std::path::PathBuf::from).unwrap_or_else(|| crate::config::home().join(".local").join("state"));
-    let v: Value = serde_json::from_slice(&std::fs::read(state.join(super::row_says(NAME, "state")).join(super::row_says(NAME, "service"))).ok()?).ok()?;
+    let v: Value = serde_json::from_slice(&std::fs::read(super::tool_home(NAME).join(super::row_says(NAME, "state")).join(super::row_says(NAME, "service"))).ok()?).ok()?;
     Some((v["url"].as_str()?.trim_end_matches('/').to_string(), v["password"].as_str()?.to_string()))
 }
 
 fn client() -> ureq::Agent {
-    ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(4))).http_status_as_error(false).build().into()
+    airband_core::net::agent(Duration::from_secs(4))
+}
+
+/// The sessions the server lists that may be on the radio: the newest few.
+fn listed() -> Option<Value> {
+    get("/api/session?limit=40")
 }
 fn auth(password: &str) -> String {
     format!("Basic {}", airband_core::encode::base64(format!("{}:{password}", super::row_says(NAME, "user")).as_bytes()))
@@ -128,7 +132,7 @@ fn current(sessions: &[Value], now: u64) -> Vec<&Value> {
 
 /// The sessions open now, as the server lists them. Nothing when OpenCode is not running.
 fn open() -> Option<Vec<super::Open>> {
-    let list = get("/api/session?limit=40")?;
+    let list = listed()?;
     Some(current(list["data"].as_array()?, airband_core::clock::now_ms()).into_iter().filter_map(|s| Some(super::Open { agent: agent(s["id"].as_str()?, s["location"]["directory"].as_str()), // idle only when its own clocks say so: one with no idle time is not taken to be idle
         idle: s["time"]["idle"].as_u64().is_some_and(|idle| s["time"]["busy"].as_u64().is_none_or(|busy| idle >= busy)) })).collect())
 }
@@ -153,7 +157,7 @@ fn watch(tower: Tower) {
     let mut first = true;
     loop {
         std::thread::sleep(Duration::from_secs(if service().is_some() { 2 } else { 20 }));
-        let Some(list) = get("/api/session?limit=40") else { continue };
+        let Some(list) = listed() else { continue };
         let Some(sessions) = list["data"].as_array() else { continue };
         let send = |id: &str, cwd: Option<&str>, event: Event| (tower.event)(AgentEvent { schema: SCHEMA.into(), agent: agent(id, cwd), event, via: None });
         // not the ones the tower runs itself: their driver reports for them

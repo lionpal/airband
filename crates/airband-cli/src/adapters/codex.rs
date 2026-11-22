@@ -48,8 +48,7 @@ fn agent_of(hook: &Value) -> Option<Agent> {
 
 pub(crate) fn events(hook: &Value) -> Vec<AgentEvent> {
     let events = super::hooks::session_events(hook).unwrap_or_else(|| match hook["hook_event_name"].as_str() {
-        Some("SubagentStart") => vec![Event::Subagent { done: false, what: text(hook, "agent_type").unwrap_or_default() }],
-        Some("SubagentStop") => vec![Event::Subagent { done: true, what: text(hook, "agent_type").unwrap_or_default() }],
+        Some(at @ ("SubagentStart" | "SubagentStop")) => vec![Event::Subagent { done: at == "SubagentStop", what: text(hook, "agent_type").unwrap_or_default() }],
         _ => Vec::new(),
     });
     super::hooks::from_agent(agent_of(hook), events)
@@ -72,7 +71,7 @@ pub(crate) fn permission(hook: &Value) -> Option<PermissionAsk> {
 /// His words into that session as a turn of his own, by Codex's own queue.
 fn deliver(session: &str, words: &str) -> Result<(), String> {
     let done = std::process::Command::new(super::row_says(NAME, "program")).args(["queue", "--thread", session, "--resume", "--message", words]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped()).output().map_err(|e| format!("{} could not be started: {e}", super::called(NAME).0))?;
-    if done.status.success() { Ok(()) } else { Err(format!("{} did not take it: {}", super::called(NAME).0, String::from_utf8_lossy(&done.stderr).trim().chars().take(200).collect::<String>())) }
+    if done.status.success() { Ok(()) } else { Err(format!("{} did not take it: {}", super::called(NAME).0, airband_core::prose::clip(String::from_utf8_lossy(&done.stderr).trim(), 200))) }
 }
 
 // ---- what Codex itself says is open, and where it has worked ----
@@ -371,7 +370,7 @@ fn control_socket() -> PathBuf {
     home().join(super::row_says(NAME, "control_socket"))
 }
 fn home() -> PathBuf {
-    std::env::var_os(super::row_says(NAME, "home_env")).map(PathBuf::from).unwrap_or_else(|| crate::config::home().join(super::row_says(NAME, "home")))
+    super::tool_home(NAME)
 }
 
 pub(crate) struct Codex;

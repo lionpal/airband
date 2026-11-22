@@ -71,15 +71,20 @@ fn sha8(s: &str) -> String {
     airband_core::encode::hex(&Sha256::digest(s.as_bytes())[..4])
 }
 
+/// The keychain item Claude Code keeps its login in for a home folder: named after the folder when it was moved
+/// from the usual one.
+fn login_item(moved: Option<&std::path::Path>) -> String {
+    match moved {
+        Some(d) => format!("{}-{}", row("keychain_service"), sha8(&d.to_string_lossy())),
+        None => row("keychain_service"),
+    }
+}
+
 impl Here {
     fn this_computer() -> Here {
         let place = |key: &str, default: String| super::env(key).unwrap_or(default);
-        let moved = super::claude_code::moved_home();
-        let live_service = super::env("AIRBAND_CLAUDE_LIVE_SERVICE").unwrap_or_else(|| match &moved {
-            // Claude Code names the item for a moved home after that folder
-            Some(d) => format!("{}-{}", row("keychain_service"), sha8(&d.to_string_lossy())),
-            None => row("keychain_service"),
-        });
+        let moved = super::moved_home(HARNESS);
+        let live_service = super::env("AIRBAND_CLAUDE_LIVE_SERVICE").unwrap_or_else(|| login_item(moved.as_deref()));
         Here {
             vault: Box::new(vault::Keychain),
             api: place("AIRBAND_CLAUDE_API", row("accounts_api")),
@@ -306,7 +311,7 @@ pub(crate) fn add() -> Res<String> {
     std::fs::create_dir_all(&here.dir).map_err(|e| e.to_string())?;
     let tmp = here.dir.join(format!("login-{}", airband_core::clock::now_ms()));
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
-    let service = format!("{}-{}", row("keychain_service"), sha8(&tmp.to_string_lossy()));
+    let service = login_item(Some(&tmp));
     std::fs::write(tmp.join(row("account_file")), "{\"hasCompletedOnboarding\":true}").map_err(|e| e.to_string())?;
     println!("A browser opens: sign in to the account to add. The login in use now is not touched.");
     let program = row("program");

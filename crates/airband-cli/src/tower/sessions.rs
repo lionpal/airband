@@ -60,6 +60,11 @@ pub(super) enum Mover {
     Him,
     Tower,
 }
+/// The callsign the name he gave an agent's session makes, in this team.
+fn titled(team_name: &str, agent: &Agent, title: &str) -> Option<Callsign> {
+    Callsign::titled(team_name, agent.cwd.as_deref().unwrap_or_default(), title)
+}
+
 impl Inner {
     /// The team an agent goes in, by id: the one it is in; where it was put before it went away; the team of the
     /// name it was started under; or its folder's team. A team found by the name is written down as where it
@@ -113,7 +118,7 @@ impl Inner {
         };
         let team_name = self.team_name(&team);
         // the name he gave the session, when it is new to the tower or has changed
-        let wanted = agent.title.as_deref().filter(|t| self.find(&agent.id).is_none_or(|s| s.agent.title.as_deref() != Some(*t))).and_then(|t| Callsign::titled(&team_name, agent.cwd.as_deref().unwrap_or_default(), t));
+        let wanted = agent.title.as_deref().filter(|t| self.find(&agent.id).is_none_or(|s| s.agent.title.as_deref() != Some(*t))).and_then(|t| titled(&team_name, agent, t));
         if let Some(want) = &wanted {
             self.make_room(&agent.id, want, &team_name);
         }
@@ -159,7 +164,7 @@ impl Inner {
     /// arrived in, that one moves to the next free number; one that was given the name by him keeps it.
     fn make_room(&mut self, id: &str, want: &Callsign, team_name: &str) {
         let Some(holder) = self.sessions.iter().find(|s| s.callsign == *want && s.agent.id != id).cloned() else { return };
-        if holder.agent.title.as_deref().and_then(|t| Callsign::titled(team_name, holder.agent.cwd.as_deref().unwrap_or_default(), t)).as_ref() == Some(want) {
+        if holder.agent.title.as_deref().and_then(|t| titled(team_name, &holder.agent, t)).as_ref() == Some(want) {
             return;
         }
         let to = self.next_free(team_name, Some(&holder.agent.id), std::slice::from_ref(want));

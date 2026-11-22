@@ -65,11 +65,18 @@ pub(super) struct Judged {
     pub(crate) own_session: bool,
 }
 
+impl Judged {
+    /// The message as its agent wrote it, of this kind, with nothing read into it.
+    fn as_written(item: &Item, kind: Kind) -> Judged {
+        Judged { kind, say: spoken(&item.full), options: Vec::new(), recommended: None, read: None, background: false, own_session: false }
+    }
+}
+
 /// The tower's main job: decide how much of his attention a message deserves, what to tell him of it, and, when
 /// it is a question he can answer by picking, what the picks are.
 pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
     if item.notice {
-        return Judged { kind: Kind::NeedsYou, say: spoken(&item.full), options: Vec::new(), recommended: None, read: None, background: false, own_session: false };
+        return Judged::as_written(item, Kind::NeedsYou);
     }
     let parsed = ask_json::<Answer>(cfg, "reading a message", reading(cfg, item), Some(answer_shape())).await;
     match parsed {
@@ -81,7 +88,7 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
             if let Err(e) = other {
                 log(format!("no summary, giving him the message as written: {e}"));
             }
-            Judged { kind: item.kind.unwrap_or(Kind::Unjudged), say: spoken(&item.full), options: Vec::new(), recommended: None, read: None, background: false, own_session: false }
+            Judged::as_written(item, item.kind.unwrap_or(Kind::Unjudged))
         }
     }
 }
@@ -153,7 +160,7 @@ fn reading(cfg: &Config, item: &Item) -> String {
          a payment, a sign-in, a setting only his account can change, a choice he has not made), whether or not \
          the agent has stopped for it: an agent that went on with other work has still left that part blocked on \
          him. Say it in its own sentence, beginning \"Waiting on you:\", with what he has to do and what it \
-         unblocks (\"Waiting on you: request the CarPlay entitlement from Apple, before the car screen can ship.\"). \
+         unblocks (\"Waiting on you: approve the payment provider's form, before refunds can go out.\"). \
          If there are several, name each. This comes before detail about what was done.\n\
          - Always keep what the work left outside the conversation, each with the number or name that finds it: \
          a push or commit (its short id), a pull request or ticket (its number), a build or release (its number or \
@@ -333,7 +340,7 @@ pub(super) async fn detail(cfg: &Config, item: &Item) -> String {
         Ok(t) => spoken(&t),
         Err(e) => {
             log(format!("no detail, reading the message instead: {e}"));
-            spoken(&item.full).chars().take(900).collect()
+            airband_core::prose::clip(&spoken(&item.full), 900)
         }
     }
 }
