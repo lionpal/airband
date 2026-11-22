@@ -17,6 +17,11 @@
   "with": {
     "state": "opencode",
     "service": "service.json",
-    "user": "opencode"
+    "user": "opencode",
+    "tools": {
+      "shell": {
+        "asks": "run `{command}`"
+      }
+    }
   }
 }

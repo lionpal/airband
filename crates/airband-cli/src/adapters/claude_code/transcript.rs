@@ -47,7 +47,7 @@ pub(super) enum FirstLook {
 /// transcript that shrank was replaced, and is read again from its start. Returns the note as it now stands.
 pub(super) fn new_lines(transcript: &str, session: &str, note: &str, first: FirstLook, mut each: impl FnMut(&[u8], &mut Value)) -> Option<Value> {
     // the session id names a file of ours: nothing in it may leave the folder
-    if !session.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+    if !super::file_safe(session) {
         return None;
     }
     let path = super::super::claude_accounts::dir().join(format!("{session}.{note}"));

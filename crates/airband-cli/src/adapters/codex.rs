@@ -62,16 +62,12 @@ pub fn glance(agent: &Agent) -> super::Glance {
 
 /// A request for leave, as he is asked it: whole, never cut, because what he reads is what will run.
 pub fn permission(hook: &Value) -> Option<PermissionAsk> {
-    if hook["hook_event_name"].as_str() != Some("PermissionRequest") {
-        return None;
-    }
-    let tool = hook["tool_name"].as_str().unwrap_or("a tool");
-    let input = &hook["tool_input"];
+    let (tool, input) = super::hooks::permission_hook(hook)?;
     // the row's words for one of Codex's own tools; any other says what it is doing itself, or is named
     let row = super::hooks::tool_use(NAME, tool);
     let what = if row.is_null() { text(input, "description") } else { super::hooks::fill(&row["asks"], input) }.unwrap_or_else(|| format!("use {tool}"));
     // one too long to put in front of him whole is not asked on the phone: Codex asks at its keyboard
-    super::hooks::leave(agent_of(hook)?, tool, what, input, " The rest is at the keyboard.", None)
+    super::hooks::leave(agent_of(hook)?, tool, what, input, super::hooks::AT_KEYBOARD, None)
 }
 
 /// His words into that session as a turn of his own, by Codex's own queue.
@@ -209,18 +205,7 @@ fn leave_of(agent: Agent, request: &Value) -> Option<PermissionAsk> {
             input.insert(key.into(), said.into());
         }
     }
-    super::hooks::leave(agent, "shell", format!("run `{command}`"), &Value::Object(input), " The rest is at the keyboard.", None)
-}
-
-/// Sessions with a request for leave that the tower is putting to him, or has.
-#[derive(Default)]
-struct Asking {
-    /// Being put to him now.
-    busy: std::collections::HashSet<String>,
-    /// Put to him and left where it was, at the keyboard: not asked again while the session still waits on it.
-    passed: std::collections::HashSet<String>,
-    /// Found nobody there to ask: tried again, no sooner than this.
-    again: std::collections::HashMap<String, std::time::Instant>,
+    super::hooks::leave(agent, "shell", super::hooks::to_run(NAME, &command), &Value::Object(input), super::hooks::AT_KEYBOARD, None)
 }
 
 /// Put a session's pending request for leave to him and give Codex his answer. The server sends a request to
@@ -228,7 +213,7 @@ struct Asking {
 /// meanwhile: then the server says it is settled and the question is taken back from the phone. Nothing is
 /// answered unless he answered. Runs for as long as he takes.
 #[cfg(unix)]
-fn put_to_him(agent: Agent, asking: std::sync::Arc<std::sync::Mutex<Asking>>) {
+fn put_to_him(agent: Agent, asking: std::sync::Arc<std::sync::Mutex<super::Asking>>) {
     use std::cell::{Cell, RefCell};
     let thread = agent.id.clone();
     let outcome = (|| {
@@ -280,19 +265,9 @@ fn put_to_him(agent: Agent, asking: std::sync::Arc<std::sync::Mutex<Asking>>) {
         }
         Some(answer)
     })();
-    let mut asking = asking.lock().unwrap();
-    asking.busy.remove(&thread);
-    match outcome {
-        // nobody there to ask, or the server could not be followed just now: tried again in a while
-        Some(super::Answer::Nobody) | None => {
-            asking.again.insert(thread, std::time::Instant::now() + std::time::Duration::from_secs(20));
-        }
-        // answered, here or at the keyboard, or left: not asked again while the session waits on the same one
-        Some(_) => {
-            asking.again.remove(&thread);
-            asking.passed.insert(thread);
-        }
-    }
+    // nobody there to ask, or the server could not be followed just now: tried again in a while; answered, here
+    // or at the keyboard, or left: not asked again while the session waits on the same one
+    asking.lock().unwrap().over(&thread, outcome.as_ref());
 }
 
 /// Watch Codex's server for as long as the tower runs: what each open session's newest turn has come to.
@@ -304,7 +279,7 @@ fn watch(tower: super::Tower) {
     // each thread seen: its newest turn as far as the tower has been told, and whether that turn was over.
     // Something the tower did not take is not marked, and is told again on the next look.
     let mut heard: std::collections::HashMap<String, Option<(String, bool)>> = Default::default();
-    let asking: std::sync::Arc<std::sync::Mutex<Asking>> = Default::default();
+    let asking: std::sync::Arc<std::sync::Mutex<super::Asking>> = Default::default();
     let asking_for_threads = asking.clone();
     loop {
         std::thread::sleep(std::time::Duration::from_secs(if control_socket().exists() { 2 } else { 20 }));
@@ -317,12 +292,11 @@ fn watch(tower: super::Tower) {
         // not asked a second time this way.
         {
             let mut asking = asking.lock().unwrap();
-            asking.passed.retain(|id| found.iter().any(|(a, waits)| a.id == *id && *waits));
+            asking.keep_only(|id| found.iter().any(|(a, waits)| a.id == id && *waits));
             for (agent, _) in found.iter().filter(|(a, waits)| *waits && !(tower.hooked)(&a.id)) {
-                if asking.busy.contains(&agent.id) || asking.passed.contains(&agent.id) || asking.again.get(&agent.id).is_some_and(|at| *at > std::time::Instant::now()) {
+                if !asking.take(&agent.id) {
                     continue;
                 }
-                asking.busy.insert(agent.id.clone());
                 let (agent, asking) = (agent.clone(), asking_for_threads.clone());
                 std::thread::spawn(move || put_to_him(agent, asking));
             }

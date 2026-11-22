@@ -353,12 +353,10 @@ pub fn use_account(harness: &str, id: &str) -> Result<std::thread::JoinHandle<()
 pub fn accounts_command(cfg: &config::Config, args: &[String]) -> Result<(), String> {
     let harness = HARNESSES.iter().find(|h| h.accounts().is_some()).map(|h| h.name()).ok_or("None of your coding tools has accounts to switch between here.")?;
     let tower = |method: &str, path: &str, body: Option<Value>| -> Option<Result<Accounts, String>> {
-        let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(60))).http_status_as_error(false).build().into();
-        let url = format!("http://127.0.0.1:{}{path}", cfg.port);
-        let auth = format!("Bearer {}", cfg.token);
+        let here = config::Tower::here(cfg, Duration::from_secs(60));
         let mut res = match (method, body) {
-            ("POST", Some(b)) => agent.post(&url).header("authorization", &auth).header("content-type", "application/json").send(b.to_string()),
-            _ => agent.get(&url).header("authorization", &auth).call(),
+            ("POST", Some(b)) => here.post(path).send_json(b),
+            _ => here.get(path).call(),
         }
         .ok()?;
         let text = res.body_mut().read_to_string().ok()?;
@@ -440,6 +438,46 @@ pub fn hook(name: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
+/// Requests for leave a watcher puts to him itself, each by a key (the request's id, or its session's): one is
+/// put to him once at a time; one that found nobody there is tried again after a while; one answered or left
+/// is not put again while it is still waiting.
+#[derive(Default)]
+pub(crate) struct Asking {
+    busy: std::collections::HashSet<String>,
+    done: std::collections::HashSet<String>,
+    again: std::collections::HashMap<String, std::time::Instant>,
+}
+
+impl Asking {
+    /// How long one that found nobody there waits before it is tried again.
+    const AGAIN: Duration = Duration::from_secs(20);
+    /// Take this one to put to him now. False while it is being put, once it was, or before it is due again.
+    pub(crate) fn take(&mut self, key: &str) -> bool {
+        let due = !self.busy.contains(key) && !self.done.contains(key) && self.again.get(key).is_none_or(|at| *at <= std::time::Instant::now());
+        if due {
+            self.busy.insert(key.to_string());
+        }
+        due
+    }
+    /// What came of putting it to him. Nothing is a try that could not be made (the tool could not be followed).
+    pub(crate) fn over(&mut self, key: &str, came: Option<&Answer>) {
+        self.busy.remove(key);
+        match came {
+            Some(Answer::Nobody) | None => {
+                self.again.insert(key.to_string(), std::time::Instant::now() + Self::AGAIN);
+            }
+            Some(_) => {
+                self.again.remove(key);
+                self.done.insert(key.to_string());
+            }
+        }
+    }
+    /// Forget the ones put to him that are no longer waiting: one waiting again is a new request.
+    pub(crate) fn keep_only(&mut self, waiting: impl Fn(&str) -> bool) {
+        self.done.retain(|k| waiting(k));
+    }
+}
+
 /// What came of putting a request to him.
 pub(crate) enum Answer {
     /// He answered: yes or no, and with a no the reason he gave, if any.
@@ -465,10 +503,9 @@ pub(crate) fn ask_him(request: &PermissionAsk) -> Option<(bool, String)> {
 /// taken back.
 pub(crate) fn ask_him_while(request: &PermissionAsk, still: Option<&dyn Fn() -> bool>) -> Answer {
     let Some(cfg) = config::read() else { return Answer::Nobody };
-    let base = format!("http://127.0.0.1:{}/v1/agent/permission", cfg.port);
-    let auth = format!("Bearer {}", cfg.token);
-    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(40))).build().into();
-    let asked: Option<PermissionState> = agent.post(&base).header("authorization", &auth).send_json(request).ok().and_then(|mut res| res.body_mut().read_json().ok());
+    const BASE: &str = "/v1/agent/permission";
+    let here = config::Tower::here(&cfg, Duration::from_secs(40));
+    let asked: Option<PermissionState> = config::taken(here.post(BASE).send_json(request)).and_then(|mut res| res.body_mut().read_json().ok());
     let Some(asked) = asked.filter(|a| a.state == airband_core::agent::Leave::Pending) else { return Answer::Nobody };
     let until = std::time::Instant::now() + Duration::from_secs(asked.wait_seconds.max(5));
     while std::time::Instant::now() < until {
@@ -476,7 +513,7 @@ pub(crate) fn ask_him_while(request: &PermissionAsk, still: Option<&dyn Fn() -> 
             break;
         }
         let left = until.saturating_duration_since(std::time::Instant::now()).as_secs().clamp(1, if still.is_some() { 3 } else { 20 });
-        let now: Option<PermissionState> = agent.get(format!("{base}/{}?wait={left}", asked.id)).header("authorization", &auth).call().ok().and_then(|mut res| res.body_mut().read_json().ok());
+        let now: Option<PermissionState> = config::taken(here.get(&format!("{BASE}/{}?wait={left}", asked.id)).call()).and_then(|mut res| res.body_mut().read_json().ok());
         // the tower went away mid-wait: stop waiting and let the harness ask
         let Some(now) = now else { return Answer::Unanswered };
         use airband_core::agent::Leave;
@@ -489,7 +526,7 @@ pub(crate) fn ask_him_while(request: &PermissionAsk, still: Option<&dyn Fn() -> 
     }
     // he did not answer, or it was answered elsewhere: take the question back, so the feed does not offer an
     // answer that no longer does anything
-    let _ = agent.delete(format!("{base}/{}", asked.id)).header("authorization", &auth).call();
+    let _ = here.delete(&format!("{BASE}/{}", asked.id)).call();
     Answer::Unanswered
 }
 
@@ -510,8 +547,7 @@ pub fn post(event: &AgentEvent) -> bool {
 
 fn send(event: &AgentEvent) -> bool {
     let Some(cfg) = config::read() else { return false };
-    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_millis(1500))).build().into();
-    agent.post(format!("http://127.0.0.1:{}/v1/agent/events", cfg.port)).header("authorization", format!("Bearer {}", cfg.token)).send_json(event).is_ok()
+    config::taken(config::Tower::here(&cfg, Duration::from_millis(1500)).post("/v1/agent/events").send_json(event)).is_some()
 }
 
 /// The tower takes what was kept for it, oldest first, by `take`: it is the tower that calls this, and it

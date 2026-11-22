@@ -6,7 +6,7 @@
 //!
 //! A key is kept once, under a name, with the provider it is for (`Config::keys`). What reads uses a key by
 //! its value, and the settings file writes that as the key's name, so a provider can have several keys.
-use crate::config::{self, Config, StoredKey};
+use crate::config::{self, Config};
 use crate::providers::{self, Job, Provider, Use};
 use serde_json::json;
 use std::io::{BufRead, IsTerminal, Write};
@@ -45,11 +45,10 @@ fn secret(ask: &str) -> String {
 
 /// The key to use with a provider: one already kept for it, or a new one he pastes, kept under a name.
 fn key_for(cfg: &mut Config, p: &Provider) -> Option<String> {
-    let kept: Vec<String> = cfg.keys.iter().filter(|(_, k)| k.provider == p.id).map(|(name, _)| name.clone()).collect();
-    for name in &kept {
-        let answer = line(&format!("  Use the key you already gave, \"{name}\"? [Y/n] "));
+    if let Some(kept) = cfg.key_of(&p.id) {
+        let answer = line(&format!("  Use the {} you already gave? [Y/n] ", p.key_name));
         if answer.is_empty() || answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes") {
-            return cfg.keys.get(name).map(|k| k.secret.clone());
+            return Some(kept);
         }
     }
     if !p.keys_at.is_empty() {
@@ -59,9 +58,7 @@ fn key_for(cfg: &mut Config, p: &Provider) -> Option<String> {
     if pasted.is_empty() {
         return None;
     }
-    // the provider's own name for the first, then a number
-    let name = (1..).map(|n| if n == 1 { p.id.to_string() } else { format!("{}-{n}", p.id) }).find(|n| !cfg.keys.contains_key(n)).unwrap();
-    cfg.keys.insert(name, StoredKey { provider: p.id.clone(), secret: pasted.clone() });
+    cfg.keep_key(&p.id, pasted.clone());
     Some(pasted)
 }
 
@@ -177,21 +174,19 @@ pub fn keys(args: &[String]) -> Result<(), String> {
                 let uses = used_for(&cfg, &k.secret);
                 println!("  {name}  ({})  {}", airband_core::catalog::current().providers.iter().find(|p| p.id == k.provider).map(|p| &p.name).unwrap_or(&k.provider), if uses.is_empty() { "not in use".to_string() } else { format!("used for {}", uses.join(", ")) });
             }
-            println!("Change them:  airband setup  |  airband keys add <name> <provider>  |  airband keys remove <name>");
+            println!("Change them:  airband setup  |  airband keys add <provider>  |  airband keys remove <name>");
         }
         Some("add") => {
-            let (name, provider) = (args.get(1).ok_or("airband keys add <name> <provider>")?, args.get(2).ok_or("airband keys add <name> <provider>")?);
+            let provider = args.get(1).ok_or("airband keys add <provider>")?;
             let p = providers::provider(provider).filter(|p| p.key).ok_or_else(|| format!("no provider called \"{provider}\" takes a key: {}", airband_core::catalog::current().providers.iter().filter(|p| p.key).map(|p| p.id.as_str()).collect::<Vec<_>>().join(", ")))?;
-            if name.starts_with('-') || cfg.keys.contains_key(name) {
-                return Err(format!("\"{name}\" is taken or is not a name."));
-            }
             let pasted = secret("Paste the key (it will not show): ");
             if pasted.is_empty() {
                 return Err("No key given.".into());
             }
-            cfg.keys.insert(name.clone(), StoredKey { provider: p.id.clone(), secret: pasted });
+            // a provider has one key: this one takes the place of any before it
+            cfg.keep_key(&p.id, pasted);
             config::save(&cfg)?;
-            println!("Kept as \"{name}\". Choose what uses it with:  airband setup");
+            println!("Kept as \"{}\". Choose what uses it with:  airband setup", p.id);
         }
         Some("remove") => {
             let name = args.get(1).ok_or("airband keys remove <name>")?;

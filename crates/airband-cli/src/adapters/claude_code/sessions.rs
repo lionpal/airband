@@ -19,6 +19,14 @@ pub(super) fn running(pid: u32, started: &str) -> bool {
     }
 }
 
+/// The record Claude Code keeps of one running session, by its process: `sessions/<process>.json` in its folder.
+pub(super) fn record(claude: &std::path::Path, pid: &str) -> Option<Value> {
+    if !pid.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    std::fs::read(claude.join("sessions").join(format!("{pid}.json"))).ok().and_then(|b| serde_json::from_slice(&b).ok())
+}
+
 /// The sessions he has open in a terminal, from the record Claude Code keeps of each while it runs
 /// (`sessions/<process>.json` in its folder: the session, its folder, the socket it takes messages on) and
 /// the token for that socket beside it. A one-off run (`claude -p`) and a session another program drives
@@ -63,7 +71,7 @@ pub(super) fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> b
 /// Where a session's transcript is: the file named for the session, in one of the folders Claude Code keeps
 /// per project.
 pub(super) fn transcript_of(claude: &std::path::Path, session: &str) -> Option<String> {
-    if !session.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+    if !super::file_safe(session) {
         return None;
     }
     std::fs::read_dir(claude.join("projects")).ok()?.flatten().map(|d| d.path().join(format!("{session}.jsonl"))).find(|p| p.is_file()).map(|p| p.display().to_string())

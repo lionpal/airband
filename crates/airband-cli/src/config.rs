@@ -119,16 +119,19 @@ impl Config {
             own.next().filter(|_| own.next().is_none())
         })
     }
-    /// The key he gave for a provider. A provider has one key here, kept under the provider's own id.
+    /// The key he gave for a provider. The one rule: a provider has one key here, found by the provider it is
+    /// for (a key kept by an older version under another name is still found by that).
     pub fn key_of(&self, provider: &str) -> Option<String> {
-        self.keys.get(provider).filter(|k| k.provider == provider).map(|k| k.secret.clone())
+        self.keys.values().find(|k| k.provider == provider).map(|k| k.secret.clone())
     }
-    /// Keep a provider's key. A new one takes the place of the one before, wherever that one was in use.
+    /// Keep a provider's key, under the provider's own id. A new one takes the place of the one before, wherever
+    /// that one was in use.
     pub fn keep_key(&mut self, provider: &str, secret: String) {
         let was = self.key_of(provider);
         if self.summarizer.kind == provider && Some(&self.summarizer.key) == was.as_ref() {
             self.summarizer.key = secret.clone();
         }
+        self.keys.retain(|_, k| k.provider != provider);
         self.keys.insert(provider.to_string(), StoredKey { provider: provider.to_string(), secret });
     }
     /// The harnesses a new agent can be started with, the usual one first.
@@ -213,6 +216,34 @@ fn default_permission_wait() -> u64 {
 }
 fn new_token() -> String {
     random_hex(24)
+}
+
+/// The tower on this computer, asked with its own token. Every status comes back as an answer, for the caller
+/// to read; only a tower that cannot be reached is an error. The one way the command line and the hooks reach it.
+pub(crate) struct Tower {
+    agent: ureq::Agent,
+    base: String,
+    auth: String,
+}
+
+impl Tower {
+    pub(crate) fn here(cfg: &Config, timeout: std::time::Duration) -> Tower {
+        Tower { agent: airband_core::net::agent(timeout), base: format!("http://127.0.0.1:{}", cfg.port), auth: format!("Bearer {}", cfg.token) }
+    }
+    pub(crate) fn get(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+        self.agent.get(format!("{}{path}", self.base)).header("authorization", &self.auth)
+    }
+    pub(crate) fn post(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithBody> {
+        self.agent.post(format!("{}{path}", self.base)).header("authorization", &self.auth)
+    }
+    pub(crate) fn delete(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+        self.agent.delete(format!("{}{path}", self.base)).header("authorization", &self.auth)
+    }
+}
+
+/// A request's answer, when the tower took it (200).
+pub(crate) fn taken(res: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Option<ureq::http::Response<ureq::Body>> {
+    res.ok().filter(|r| r.status().as_u16() == 200)
 }
 
 pub fn home() -> PathBuf {

@@ -292,7 +292,7 @@ fn leave(params: &Value, agent: Agent) -> Option<airband_core::agent::Permission
         _ => None,
     };
     let what = match command.filter(|c| !c.is_empty() && call["kind"] == "execute") {
-        Some(command) => format!("run `{command}`"),
+        Some(command) => adapters::hooks::to_run(&agent.harness, &command),
         None => title.chars().next().map(|c| c.to_lowercase().collect::<String>() + &title[c.len_utf8()..]).unwrap_or_default(),
     };
     adapters::hooks::leave(agent, title, what, &call["rawInput"], "", None)

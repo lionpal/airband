@@ -60,9 +60,8 @@ impl RadioHost for Terminal {
 }
 
 pub fn run(cfg: &Config, args: &[String]) -> Result<(), String> {
-    let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
-    // with no link: straight to the tower on this machine
-    let link = flag("--link").unwrap_or_else(|| Pairing::Direct { url: format!("http://127.0.0.1:{}", cfg.port), token: cfg.radio_token.clone() }.link());
+    let flag = |name: &str| crate::option(args, name);
+    let link = link_or_here(cfg, args);
     let route = match Pairing::parse(&link)? {
         Pairing::Relay { relay, .. } => format!("through the relay at {relay}"),
         Pairing::Near { at, .. } => format!("directly to {}, encrypted", at.join(" or ")),
@@ -135,7 +134,12 @@ fn link_from(cfg: &Config, args: &[String]) -> String {
         eprintln!("airband: this needs airband's keys, which are in the keychain and could not be read here: {why}");
         std::process::exit(2);
     }
-    args.iter().position(|a| a == "--link").and_then(|i| args.get(i + 1)).cloned().unwrap_or_else(|| Pairing::Direct { url: format!("http://127.0.0.1:{}", cfg.port), token: cfg.radio_token.clone() }.link())
+    link_or_here(cfg, args)
+}
+
+/// The pairing link he gave with `--link`, or with none, straight to the tower on this machine.
+fn link_or_here(cfg: &Config, args: &[String]) -> String {
+    crate::option(args, "--link").unwrap_or_else(|| Pairing::Direct { url: format!("http://127.0.0.1:{}", cfg.port), token: cfg.radio_token.clone() }.link())
 }
 
 /// `airband feed [--team <team> | --agent "<callsign>"] [--once]`: the chat, in a terminal. Each message is the
@@ -143,7 +147,7 @@ fn link_from(cfg: &Config, args: &[String]) -> String {
 pub fn feed(cfg: &Config, args: &[String]) -> Result<(), String> {
     let radio = Radio::start(link_from(cfg, args), String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
     let once = args.iter().any(|a| a == "--once");
-    let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
+    let flag = |name: &str| crate::option(args, name);
     let team = flag("--team");
     // the agent he named, by the id its callsign has now
     let agent = match flag("--agent") {

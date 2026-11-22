@@ -37,6 +37,26 @@ pub fn tool_use(harness: &str, tool: &str) -> Value {
     airband_core::catalog::built().tools.iter().find(|t| t.id == harness).map(|t| t.with["tools"][tool].clone()).unwrap_or(Value::Null)
 }
 
+/// A command a tool asks leave to run, as he is asked it: in its row's words for its `shell` tool, else the
+/// command itself, whole.
+pub fn to_run(harness: &str, command: &str) -> String {
+    fill(&tool_use(harness, "shell")["asks"], &serde_json::json!({ "command": command })).unwrap_or_else(|| command.to_string())
+}
+
+/// A tool's `PermissionRequest` hook: the tool it asks for, and what that tool is given. Nothing for any other
+/// hook.
+pub fn permission_hook(hook: &Value) -> Option<(&str, &Value)> {
+    (hook["hook_event_name"].as_str() == Some("PermissionRequest")).then(|| (hook["tool_name"].as_str().unwrap_or("a tool"), &hook["tool_input"]))
+}
+
+/// What he said when he said no from his phone, for the tool to read.
+pub fn said_no(reason: &str) -> String {
+    if reason.is_empty() { "He said no from his phone.".to_string() } else { format!("He said no from his phone: {reason}") }
+}
+
+/// Where the rest of a request too long to show is: at the tool's own keyboard.
+pub const AT_KEYBOARD: &str = " The rest is at the keyboard.";
+
 /// The mark on a hook airband put in a tool's settings: an argument the hook command passes over.
 const OURS: &str = "--put-there-by-airband";
 
@@ -203,7 +223,7 @@ pub fn decision(allow: bool, reason: &str, answered: bool) -> String {
     } else if allow {
         json!({ "behavior": "allow" })
     } else {
-        json!({ "behavior": "deny", "message": if reason.is_empty() { "He said no from his phone.".to_string() } else { format!("He said no from his phone: {reason}") } })
+        json!({ "behavior": "deny", "message": said_no(reason) })
     };
     json!({ "hookSpecificOutput": { "hookEventName": "PermissionRequest", "decision": decision } }).to_string()
 }
@@ -264,7 +284,7 @@ mod tests {
     fn a_request_is_put_whole_or_not_at_all_and_a_long_input_says_it_was_cut() {
         let agent = || Agent { id: "a".into(), harness: "x".into(), cwd: None, name: None, title: None, pid: None, deliver: None, meta: Default::default() };
         assert!(leave(agent(), "Bash", "x".repeat(SHOWN_WHOLE + 1), &json!({}), "", None).is_none());
-        let long = leave(agent(), "Bash", "run `x`".into(), &json!({ "command": "y".repeat(7000) }), " The rest is at the keyboard.", None).unwrap();
+        let long = leave(agent(), "Bash", "run `x`".into(), &json!({ "command": "y".repeat(7000) }), AT_KEYBOARD, None).unwrap();
         assert!(long.detail.starts_with("Bash\n") && long.detail.ends_with("characters. The rest is at the keyboard.)"));
         assert!(decision(false, "not now", false).contains("not now") && decision(true, "", false).contains("\"behavior\":\"allow\""));
     }

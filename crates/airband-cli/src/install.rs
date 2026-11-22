@@ -140,7 +140,7 @@ pub fn relay(mut cfg: Config, args: &[String]) -> Result<(), String> {
                 return Err(format!("a relay address is a web address, like {}", config::RELAY));
             }
             cfg.relay = Some(url.trim_end_matches('/').to_string());
-            cfg.relay_admission = args.iter().position(|a| a == "--admission").and_then(|i| args.get(i + 1)).cloned();
+            cfg.relay_admission = crate::option(args, "--admission");
             config::save(&cfg)?;
             println!("Relay set to {url}. If airband is running it picks this up within ten seconds. Next: airband pair");
         }
@@ -196,11 +196,10 @@ pub fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
                 u.key = match crate::option(args, "--key-env") {
                     Some(var) => std::env::var(&var).ok().filter(|k| !k.is_empty()).ok_or_else(|| format!("{var} is not set"))?,
                     // one he already gave for this provider will do
-                    None => cfg.keys.values().find(|k| k.provider == p.id).map(|k| k.secret.clone()).ok_or_else(|| format!("{} needs a key: --key-env <VARIABLE>, or give one first with  airband keys add {id} {id}", p.name))?,
+                    None => cfg.key_of(&p.id).ok_or_else(|| format!("{} needs a key: --key-env <VARIABLE>, or give one first with  airband keys add {id}", p.name))?,
                 };
-                if !cfg.keys.values().any(|k| k.secret == u.key) {
-                    let name = (1..).map(|n| if n == 1 { id.to_string() } else { format!("{id}-{n}") }).find(|n| !cfg.keys.contains_key(n)).unwrap();
-                    cfg.keys.insert(name, config::StoredKey { provider: id.into(), secret: u.key.clone() });
+                if cfg.key_of(&p.id).as_ref() != Some(&u.key) {
+                    cfg.keep_key(&p.id, u.key.clone());
                 }
             }
             for a in &o.asks {
@@ -326,8 +325,8 @@ pub fn quick(mut cfg: Config, args: &[String]) -> Result<(), String> {
 }
 
 pub fn status(cfg: &Config) {
-    let res = ureq::get(format!("http://127.0.0.1:{}/v1/status", cfg.port)).header("authorization", format!("Bearer {}", cfg.token)).call();
-    let Ok(j) = res.and_then(|mut r| r.body_mut().read_json::<Value>()) else {
+    let res = crate::config::taken(crate::config::Tower::here(cfg, std::time::Duration::from_secs(5)).get("/v1/status").call());
+    let Some(j) = res.and_then(|mut r| r.body_mut().read_json::<Value>().ok()) else {
         println!("airband is not running.");
         return;
     };

@@ -96,7 +96,7 @@ Each key you give is kept once, under a name, and goes only to the provider it i
 
 ```sh
 airband keys                          # every key by name and what uses it, never its value
-airband keys add <name> <provider>    # paste a key; choose what uses it with airband setup
+airband keys add <provider>           # paste its key (one per provider); choose what uses it with airband setup
 airband keys remove <name>
 ```
 

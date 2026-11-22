@@ -15,11 +15,9 @@ use transcript::*;
 /// The name he gave this session, if he gave one: with `/rename`, or as the name of its remote control
 /// (`/remote-control shop 2`). A title Claude Code made up by itself is not used: those go stale.
 fn session_name(hook: &Value) -> Option<String> {
-    let home = std::path::PathBuf::from(env("HOME")?);
     // Claude Code keeps one small file per running session, by process
     let renamed = env("CLAUDE_PID")
-        .and_then(|pid| std::fs::read_to_string(home.join(".claude/sessions").join(format!("{pid}.json"))).ok())
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|pid| record(&claude_home(), &pid))
         .filter(|s| s["nameSource"].as_str() == Some("user") && s["sessionId"].as_str() == hook["session_id"].as_str())
         .and_then(|s| s["name"].as_str().map(str::trim).filter(|n| !n.is_empty()).map(String::from));
     renamed.or_else(|| remote_control_name(hook["transcript_path"].as_str()?, hook["session_id"].as_str()?))
@@ -46,15 +44,7 @@ fn agent_of(hook: &Value) -> Option<Agent> {
 /// Claude Code is about to show a permission prompt (its `PermissionRequest` hook): the request to put to him.
 /// What he reads is the thing itself, not a description of it: the command, the file, the address.
 pub fn permission(hook: &Value) -> Option<PermissionAsk> {
-    if hook["hook_event_name"].as_str() != Some("PermissionRequest") {
-        return None;
-    }
-    // scripts calling `claude -p` have nobody waiting on them
-    if env("CLAUDE_CODE_ENTRYPOINT").as_deref() == Some("sdk-cli") && env("AIRBAND_INCLUDE_HEADLESS").is_none() && env("AIRBAND_HELD").is_none() {
-        return None;
-    }
-    let tool = hook["tool_name"].as_str().unwrap_or("a tool");
-    let input = &hook["tool_input"];
+    let (tool, input) = super::hooks::permission_hook(hook).filter(|_| !headless())?;
     // whole, never cut: what he reads is what will run
     let row = super::hooks::tool_use(HARNESS, tool);
     let what = super::hooks::fill(&row["asks"], input).unwrap_or_else(|| format!("use {tool}"));
@@ -71,7 +61,7 @@ pub fn permission(hook: &Value) -> Option<PermissionAsk> {
     })
     .filter(|q| !q.text.is_empty());
     // one too long to put in front of him whole is not asked on the phone: Claude Code asks at its keyboard
-    super::hooks::leave(agent_of(hook)?, tool, what, input, " The rest is at the keyboard.", question)
+    super::hooks::leave(agent_of(hook)?, tool, what, input, super::hooks::AT_KEYBOARD, question)
 }
 
 /// Which part of Claude Code's this tool call is, as its row has it.
@@ -104,8 +94,7 @@ fn files_sent(hook: &Value) -> Vec<String> {
 /// Claude Code: installed for SessionStart, Stop, Notification, UserPromptSubmit and SessionEnd, and after the
 /// tools that look at or hand over a picture.
 pub fn events(hook: &Value) -> Vec<AgentEvent> {
-    // scripts calling `claude -p` have nobody waiting on them
-    if env("CLAUDE_CODE_ENTRYPOINT").as_deref() == Some("sdk-cli") && env("AIRBAND_INCLUDE_HEADLESS").is_none() && env("AIRBAND_HELD").is_none() {
+    if headless() {
         return Vec::new();
     }
     let events = super::hooks::session_events(hook).unwrap_or_else(|| match hook["hook_event_name"].as_str() {
@@ -149,6 +138,17 @@ fn made_artifact(hook: &Value) -> Option<Event> {
 }
 
 /// Where Claude Code keeps its settings and sessions, as its row has it.
+/// Is this a script calling `claude -p`? Those have nobody waiting on them, unless he asked to hear them or the
+/// tower runs it.
+fn headless() -> bool {
+    env("CLAUDE_CODE_ENTRYPOINT").as_deref() == Some("sdk-cli") && env("AIRBAND_INCLUDE_HEADLESS").is_none() && env("AIRBAND_HELD").is_none()
+}
+
+/// A session id that can name a file: nothing in it may leave the folder.
+fn file_safe(session: &str) -> bool {
+    !session.is_empty() && session.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
 fn claude_home() -> std::path::PathBuf {
     crate::config::home().join(super::row_says(HARNESS, "home"))
 }
