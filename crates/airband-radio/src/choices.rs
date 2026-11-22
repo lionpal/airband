@@ -245,6 +245,16 @@ fn megabytes(m: &Model) -> u32 {
     (m.files.iter().map(|f| f.1).sum::<u64>() as f64 / 1e6).round() as u32
 }
 
+/// Have the phone keep a key, and see that it did: a key the phone could not keep is not taken for kept, and
+/// the service is not chosen with nothing to call it with.
+fn keep(host: &dyn DeskHost, provider: &str, key: &str) -> Result<(), RadioError> {
+    host.keep_secret(provider.to_string(), Some(key.to_string()));
+    match host.secret(provider.to_string()) {
+        Some(kept) if kept == key => Ok(()),
+        _ => Err(RadioError::Told { reason: "This phone could not keep the key, so nothing was changed. Try again.".into() }),
+    }
+}
+
 /// The line under a service's name: what it needs from him and what it costs.
 fn line(s: &Service, has_key: bool) -> String {
     if !s.key {
@@ -556,9 +566,10 @@ impl Desk {
             }
         }
         if job == ChoiceJob::Reads {
-            if let Some(key) = &key {
-                host.keep_secret(provider.clone(), Some(key.clone()));
-            }
+            if let Some(key) = &key
+                && let Err(why) = keep(host, &provider, key) {
+                    return done(Err(why));
+                }
             let radios: Vec<Arc<Radio>> = self.shared.state.lock().unwrap().stations.iter().filter(|s| s.online).map(|s| s.radio.clone()).collect();
             // no computer to ask: it waits for one
             if radios.is_empty() {
@@ -593,9 +604,10 @@ impl Desk {
                         return done(Err(told(why)));
                     }
                 }
-                if let Some(key) = key {
-                    host.keep_secret(provider.clone(), Some(key));
-                }
+                if let Some(key) = key
+                    && let Err(why) = keep(host, &provider, &key) {
+                        return done(Err(why));
+                    }
                 Pick { place: ChoicePlace::Service, id: provider, offer, set, voice: String::new() }
             }
             ChoicePlace::Phone => {

@@ -108,14 +108,7 @@ struct ServiceEntry: View {
                     Button("More settings") { more = true }.font(.system(size: 14, weight: .medium)).foregroundStyle(Palette.quiet).buttonStyle(.plain)
                 }
             }
-            Button {
-                (checking, wrong) = (true, nil)
-                let fresh = key.trimmingCharacters(in: .whitespaces)
-                use(fresh.isEmpty ? nil : fresh, told.filter { !$0.value.trimmingCharacters(in: .whitespaces).isEmpty }) { problem in
-                    (checking, wrong) = (false, problem)
-                    if problem == nil { key = ""; replacing = false }
-                }
-            } label: {
+            Button(action: tryIt) {
                 HStack(spacing: 8) { Text("Use it"); if checking { ProgressView().controlSize(.small) } }
                     .font(.system(size: 16, weight: .semibold)).foregroundStyle(Palette.ground)
                     .frame(maxWidth: .infinity, minHeight: 44).background(ready ? Palette.ink : Palette.dim, in: RoundedRectangle(cornerRadius: 12))
@@ -126,6 +119,33 @@ struct ServiceEntry: View {
         .onChange(of: typing) { _, now in
             // after the keyboard has taken its room
             if now { DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { reveal(choice.id) } }
+        }
+        // what came of trying the key is under the button: bring it into view
+        .onChange(of: wrong) { _, now in
+            if now != nil { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { reveal(choice.id) } }
+        }
+        #if DEBUG
+        // development only: with `-airband.devOpen <service>`, the key in AIRBAND_DEV_KEY and the settings in
+        // AIRBAND_DEV_SETTINGS ("region=eastus") are filled in and "Use it" is pressed, to see the key tried
+        .onAppear {
+            guard UserDefaults.standard.string(forKey: "airband.devOpen") == choice.id, let dev = ProcessInfo.processInfo.environment["AIRBAND_DEV_KEY"] else { return }
+            key = dev
+            for pair in (ProcessInfo.processInfo.environment["AIRBAND_DEV_SETTINGS"] ?? "").split(separator: ",") {
+                let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+                if parts.count == 2 { told[parts[0]] = parts[1]; more = true }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { tryIt() }
+        }
+        #endif
+    }
+
+    /// Have the key tried and, if it passes, kept and the service used.
+    private func tryIt() {
+        (checking, wrong) = (true, nil)
+        let fresh = key.trimmingCharacters(in: .whitespaces)
+        use(fresh.isEmpty ? nil : fresh, told.filter { !$0.value.trimmingCharacters(in: .whitespaces).isEmpty }) { problem in
+            (checking, wrong) = (false, problem)
+            if problem == nil { key = ""; replacing = false }
         }
     }
 }
@@ -234,7 +254,15 @@ struct ChoicePicker: View {
             MoreServices(shown: $more)
             if let wrong { Text(wrong).font(.system(size: 13)).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading) }
         }
-        .onAppear { model.refreshChoices(); model.refreshCatalog() }
+        .onAppear {
+            model.refreshChoices(); model.refreshCatalog()
+            #if DEBUG
+            // development only: `-airband.devOpen <service>` opens that service's card, as a tap on it would
+            if let dev = UserDefaults.standard.string(forKey: "airband.devOpen") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { if all.contains(where: { $0.id == dev }) { (open, more) = (dev, true) } }
+            }
+            #endif
+        }
         .onChange(of: model.catalogRev) { _, _ in model.refreshChoices() }
         // while something is being fetched, how far along it is
         .onReceive(tick) { _ in if working { model.refreshChoices() } }
