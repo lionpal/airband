@@ -89,20 +89,11 @@ use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Notify;
 use airband_core::agent::{self, Agent, AgentEvent, Deliver, Event};
+use airband_core::radio::{PRESENCE_HEADER, RADIO_HEADER, VIA_HEADER};
 use airband_core::radio::{Act, AgentState, Feed, Heard, Kind, Message, More, Reply, RosterEntry, Transmission, Utterance};
 use airband_core::routing::{Callsign, Control, parse_utterance};
 use airband_core::prose::{opening, plain as spoken};
 
-/// The header a radio names itself in, so each has its own place in a call. A radio that comes through the
-/// relay is named by its pairing; one that sends nothing is "radio".
-pub(crate) const RADIO_HEADER: &str = "x-airband-radio";
-
-/// The header the tower's own link puts on a radio's request to say how it came: `the relay`, `his own
-/// network`, or `the relay, kept while the tower was away`. Only for the log.
-pub(crate) const VIA_HEADER: &str = "x-airband-via";
-/// The header a radio says where it stands in, as JSON (`airband.radio/2`'s `Presence`). A radio that comes
-/// through the relay says it inside the sealed request, and the relay link puts it here.
-pub(crate) const PRESENCE_HEADER: &str = "x-airband-presence";
 
 /// How long `GET next` is held open.
 const HOLD: Duration = Duration::from_secs(25);

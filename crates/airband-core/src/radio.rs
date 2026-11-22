@@ -27,6 +27,18 @@ pub use feed::*;
 
 pub const SCHEMA: &str = "airband.radio/3";
 
+/// Where every request of a radio's goes on the tower. A radio's token opens these and nothing else.
+pub const PATH: &str = "/v1/radio/";
+/// The header a radio names itself in, so each has its own place in a call. A radio that comes through the
+/// relay is named by its pairing; one that sends nothing is "radio".
+pub const RADIO_HEADER: &str = "x-airband-radio";
+/// The header the tower's own link puts on a radio's request to say how it came: `the relay`, `his own
+/// network`, or `the relay, kept while the tower was away`. Only for the log.
+pub const VIA_HEADER: &str = "x-airband-via";
+/// The header a radio says where it stands in, as JSON ([`Presence`]). A radio that comes through the relay
+/// says it inside the sealed request, and the relay link puts it here.
+pub const PRESENCE_HEADER: &str = "x-airband-presence";
+
 /// How much a message deserves his attention. Deciding this is the tower's main job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Kind {

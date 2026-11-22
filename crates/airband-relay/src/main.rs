@@ -24,6 +24,7 @@
 //!   POST /v1/channels/{c}/queue       radio: a sealed message to keep for a tower that is away (x-airband-id names it)
 //!   POST /v1/waitlist                 the homepage's sign-up: {"email": "…"} (airband.dev only, by CORS)
 //!   GET  /healthz
+use airband_core::relay::{ADMISSION_HEADER, ID_HEADER, ORDERED_HEADER, RADIO_HASH_HEADER, REQUEST_HEADER};
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -126,7 +127,7 @@ fn say(code: StatusCode, why: &str) -> Response {
 }
 /// A token's hash as a tower sends it: 64 hex characters.
 fn radio_hash_given(headers: &HeaderMap) -> Option<&str> {
-    headers.get("x-airband-radio-hash").and_then(|v| v.to_str().ok()).filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+    headers.get(RADIO_HASH_HEADER).and_then(|v| v.to_str().ok()).filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 /// What a radio's request gets when it may not use the channel. The same whether the token is missing or wrong
 /// or there is no such channel, so asking tells a stranger nothing about which channels exist.
@@ -192,7 +193,7 @@ async fn open(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, head
         return answer;
     }
     if let Some(want) = &relay.admission {
-        let given = headers.get("x-airband-admission").and_then(|v| v.to_str().ok()).unwrap_or("");
+        let given = headers.get(ADMISSION_HEADER).and_then(|v| v.to_str().ok()).unwrap_or("");
         if !same(given, want) {
             return say(StatusCode::UNAUTHORIZED, "this relay needs an admission key to open a channel");
         }
@@ -234,7 +235,7 @@ async fn pull(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, head
             // a radio that gave up leaves its request behind; skip those
             while let Some((id, sealed)) = ch.queue.pop_front() {
                 if ch.waiting.contains_key(&id) {
-                    return ([("x-airband-request", id)], sealed).into_response();
+                    return ([(REQUEST_HEADER, id)], sealed).into_response();
                 }
             }
             // then what was kept while it was away: one at a time, the oldest first, the next only once this one is taken
@@ -248,7 +249,7 @@ async fn pull(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, head
                     if let Some(ch) = relay.channels.lock().unwrap().get_mut(&channel) {
                         ch.holding = Some((id.clone(), Instant::now()));
                     }
-                    return ([("x-airband-request", id.to_string()), (airband_core::relay::KEPT_HEADER, "1".to_string())], sealed).into_response();
+                    return ([(REQUEST_HEADER, id.to_string()), (airband_core::relay::KEPT_HEADER, "1".to_string())], sealed).into_response();
                 }
                 Ok(None) => {
                     if let Some(ch) = relay.channels.lock().unwrap().get_mut(&channel) {
@@ -330,7 +331,7 @@ async fn hold(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, head
     answer
 }
 async fn keep(relay: &Arc<Relay>, channel: &str, headers: &HeaderMap, sealed: Bytes) -> Response {
-    let id = headers.get("x-airband-id").and_then(|v| v.to_str().ok()).unwrap_or("");
+    let id = headers.get(ID_HEADER).and_then(|v| v.to_str().ok()).unwrap_or("");
     if !(8..=40).contains(&id.len()) || !id.bytes().all(|b| b.is_ascii_hexdigit()) || sealed.is_empty() {
         return say(StatusCode::BAD_REQUEST, "a kept message needs an id and a body");
     }
@@ -372,7 +373,7 @@ async fn carry(relay: &Arc<Relay>, channel: &str, headers: &HeaderMap, sealed: B
         }
         // what he says must arrive in the order he said it: while older words are still being handed over, new
         // ones are turned back to join the end of that line
-        if ch.has_held && headers.contains_key("x-airband-ordered") {
+        if ch.has_held && headers.contains_key(ORDERED_HEADER) {
             return say(StatusCode::CONFLICT, "earlier messages are still on their way to the tower");
         }
         if ch.waiting.len() >= MAX_IN_FLIGHT {
@@ -519,12 +520,12 @@ mod tests {
     /// A tower opens its channel, saying who its radio is.
     async fn open_as(relay: &Arc<Relay>, keys: &Keys, admission: &str) -> u16 {
         let (auth, hash) = (token(&keys.pull_token), token_hash(&keys.radio_token));
-        open(State(relay.clone()), Path(keys.channel.clone()), with(&[(auth.0, &auth.1), ("x-airband-radio-hash", &hash), ("x-airband-admission", admission)])).await.status().as_u16()
+        open(State(relay.clone()), Path(keys.channel.clone()), with(&[(auth.0, &auth.1), (RADIO_HASH_HEADER, &hash), (ADMISSION_HEADER, admission)])).await.status().as_u16()
     }
     /// A radio leaves a message, showing `shown` as its token (none when empty).
     async fn leave(relay: &Arc<Relay>, channel: &str, shown: &str, id: &str) -> (u16, String) {
         let auth = token(shown);
-        let mut headers = with(&[("x-airband-id", id)]);
+        let mut headers = with(&[(ID_HEADER, id)]);
         if !shown.is_empty() {
             headers.insert(auth.0, auth.1.parse().unwrap());
         }
@@ -606,7 +607,7 @@ mod tests {
         assert_eq!(open_as(&relay, &mine, "").await, 204);
         let theirs = token(&other.pull_token);
         let their_radio = token_hash(&other.radio_token);
-        let as_other = || with(&[(theirs.0, &theirs.1), ("x-airband-admission", "key"), ("x-airband-radio-hash", &their_radio)]);
+        let as_other = || with(&[(theirs.0, &theirs.1), (ADMISSION_HEADER, "key"), (RADIO_HASH_HEADER, &their_radio)]);
         let channel = || Path(mine.channel.clone());
         assert_eq!(open(State(relay.clone()), channel(), as_other()).await.status().as_u16(), 403);
         // and so is everything else a tower does, with another channel's token or with none
@@ -622,7 +623,7 @@ mod tests {
         // a channel is not opened without saying who its radio is
         let fresh = Keys::derive(&airband_core::relay::new_secret()).unwrap();
         let own = token(&fresh.pull_token);
-        assert_eq!(open(State(relay.clone()), Path(fresh.channel.clone()), with(&[(own.0, &own.1), ("x-airband-admission", "key")])).await.status().as_u16(), 400);
+        assert_eq!(open(State(relay.clone()), Path(fresh.channel.clone()), with(&[(own.0, &own.1), (ADMISSION_HEADER, "key")])).await.status().as_u16(), 400);
         // its own tower closes it, and it is gone
         let own = token(&mine.pull_token);
         assert_eq!(close(State(relay.clone()), channel(), with(&[(own.0, &own.1)])).await.status().as_u16(), 204);
@@ -636,7 +637,7 @@ mod tests {
         let keys = Keys::derive(&airband_core::relay::new_secret()).unwrap();
         assert_eq!(open_as(&relay, &keys, "").await, 201);
         let auth = token(&keys.radio_token);
-        let from = |address: &str| with(&[(auth.0, &auth.1), ("x-airband-id", "dddddddd01"), ("x-forwarded-for", address)]);
+        let from = |address: &str| with(&[(auth.0, &auth.1), (ID_HEADER, "dddddddd01"), ("x-forwarded-for", address)]);
         let leave = |address: &'static str| hold(State(relay.clone()), Path(keys.channel.clone()), from(address), Bytes::from_static(b"sealed"));
         // the channel's share for a minute, from two addresses, and then no more from anywhere
         for i in 0..KEPT_A_MINUTE {
@@ -644,7 +645,7 @@ mod tests {
         }
         assert_eq!(leave("198.51.100.3").await.status().as_u16(), 429);
         // one address asking about channels it has no token for uses up its own share and nobody else's
-        let stranger = || hold(State(relay.clone()), Path("0".repeat(32)), with(&[("x-airband-id", "dddddddd01"), ("x-forwarded-for", "203.0.113.9")]), Bytes::from_static(b"sealed"));
+        let stranger = || hold(State(relay.clone()), Path("0".repeat(32)), with(&[(ID_HEADER, "dddddddd01"), ("x-forwarded-for", "203.0.113.9")]), Bytes::from_static(b"sealed"));
         for _ in 0..KEPT_A_MINUTE * 2 {
             assert_eq!(stranger().await.status().as_u16(), 401);
         }

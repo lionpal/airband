@@ -6,6 +6,7 @@
 //! dropped here.
 use crate::config::{self, PairedRadio};
 use super::{App, PRESENCE_HEADER, VIA_HEADER, log, now_ms};
+use airband_core::relay::{ADMISSION_HEADER, RADIO_HASH_HEADER, REQUEST_HEADER};
 use axum::Router;
 use axum::body::Body;
 use axum::http::Request;
@@ -135,9 +136,9 @@ impl Serve {
         while !self.stop.load(Ordering::SeqCst) {
             if !open {
                 // who its radio is goes with the opening, so the relay knows from the first moment whose channel it is
-                let mut req = agent.put(&base).header("authorization", &auth).header("x-airband-radio-hash", airband_core::relay::token_hash(&self.keys.radio_token));
+                let mut req = agent.put(&base).header("authorization", &auth).header(RADIO_HASH_HEADER, airband_core::relay::token_hash(&self.keys.radio_token));
                 if let Some(a) = &self.admission {
-                    req = req.header("x-airband-admission", a);
+                    req = req.header(ADMISSION_HEADER, a);
                 }
                 match req.send_empty().map(|r| r.status().as_u16()) {
                     Ok(201 | 204) => {
@@ -163,7 +164,7 @@ impl Serve {
                 Ok(mut res) => match res.status().as_u16() {
                     200 => {
                         wait = 1;
-                        let id = res.headers().get("x-airband-request").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+                        let id = res.headers().get(REQUEST_HEADER).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
                         // the relay says outright when it had been keeping this one; nothing is read from the id
                         let kept = res.headers().contains_key(airband_core::relay::KEPT_HEADER);
                         if let Ok(sealed) = res.body_mut().read_to_vec() {
@@ -305,7 +306,7 @@ impl Serve {
             log(format!("a radio spoke {}, and this version of airband takes {}", call.schema, airband_core::radio::SCHEMA));
             return self.refused(call, via, 400, "This computer runs another version of airband. Update it and the app.");
         }
-        if !call.path.starts_with("/v1/radio/") || !matches!(call.method.as_str(), "GET" | "POST") {
+        if !call.path.starts_with(airband_core::radio::PATH) || !matches!(call.method.as_str(), "GET" | "POST") {
             return self.refused(call, via, 403, "a radio may only use /v1/radio/");
         }
         let body = if call.body.is_null() { Body::empty() } else { Body::from(serde_json::to_vec(&call.body).unwrap()) };

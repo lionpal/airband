@@ -37,7 +37,7 @@ fn same(given: &[u8], want: &[u8]) -> bool {
 async fn auth(State(app): State<Arc<App>>, req: Request, next: Next) -> Response {
     let given = req.headers().get("authorization").and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).unwrap_or("").as_bytes();
     let own = same(given, app.cfg.token.as_bytes());
-    let radio = same(given, app.cfg.radio_token.as_bytes()) && req.uri().path().starts_with("/v1/radio/");
+    let radio = same(given, app.cfg.radio_token.as_bytes()) && req.uri().path().starts_with(airband_core::radio::PATH);
     if !(own || radio) {
         return (StatusCode::UNAUTHORIZED, Json(refused("bad token"))).into_response();
     }
@@ -45,7 +45,7 @@ async fn auth(State(app): State<Arc<App>>, req: Request, next: Next) -> Response
     // A radio must say which one it is. The computer's own command line (the tower's token) is no radio: it
     // may ask what any radio may ask that is not kept per radio (accounts, the feed), and says no name.
     let named = req.headers().get(RADIO_HEADER).is_some();
-    if req.uri().path().starts_with("/v1/radio/") && req.extensions().get::<RadioId>().is_none() && (radio || named) {
+    if req.uri().path().starts_with(airband_core::radio::PATH) && req.extensions().get::<RadioId>().is_none() && (radio || named) {
         match req.headers().get(RADIO_HEADER).and_then(|v| v.to_str().ok()).filter(|v| !v.is_empty()).map(String::from) {
             Some(name) => {
                 req.extensions_mut().insert(RadioId(name));
@@ -59,7 +59,7 @@ async fn auth(State(app): State<Arc<App>>, req: Request, next: Next) -> Response
 /// Every request from a radio says where the radio stands: on a call or not, showing the chat or not. It is
 /// written down before the request is run, so every rule about whether he is there reads what the radio said.
 async fn presence_said(State(app): State<Arc<App>>, req: Request, next: Next) -> Response {
-    if req.uri().path().starts_with("/v1/radio/")
+    if req.uri().path().starts_with(airband_core::radio::PATH)
         && let Some(said) = req.headers().get(PRESENCE_HEADER).and_then(|v| v.to_str().ok()).and_then(|v| serde_json::from_str::<airband_core::radio::Presence>(v).ok())
         && let Some(RadioId(radio)) = req.extensions().get::<RadioId>() {
             app.passing().radio_says(radio, said);

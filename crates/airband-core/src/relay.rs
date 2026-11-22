@@ -29,6 +29,17 @@ pub const FRESH_MS: u64 = 120_000;
 /// The largest sealed message a relay passes.
 pub const MAX_MESSAGE: usize = 256 * 1024;
 
+/// The hash of the radio's own key, on a tower's opening of a channel: which radio the channel is for.
+pub const RADIO_HASH_HEADER: &str = "x-airband-radio-hash";
+/// The relay's admission key, when the relay asks for one.
+pub const ADMISSION_HEADER: &str = "x-airband-admission";
+/// The id of a request the relay hands a tower, which the tower's answer carries back.
+pub const REQUEST_HEADER: &str = "x-airband-request";
+/// The same id, on the tower's answer.
+pub const ID_HEADER: &str = "x-airband-id";
+/// On a radio's request: keep it in order behind the ones the relay is keeping for the tower.
+pub const ORDERED_HEADER: &str = "x-airband-ordered";
+
 /// On what the relay hands a tower, and on the tower's reply to it: this is one the relay had been keeping while
 /// the tower was away. Each side goes by this and never by how the request's id reads.
 pub const KEPT_HEADER: &str = "x-airband-kept";

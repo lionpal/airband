@@ -276,16 +276,16 @@ impl Link {
     /// holding for it. The relay turns it back (`Behind`) while there is, and it is left with the relay too.
     /// `steps` is given each way it was tried and how that went.
     fn request_as(&self, method: &str, path: &str, body: Option<Value>, ordered: bool, steps: &mut Vec<Step>) -> Result<(u16, Value), LinkError> {
-        let path = format!("/v1/radio{path}");
+        let path = format!("{}{}", airband_core::radio::PATH.trim_end_matches('/'), path);
         let what = format!("{method} {path}");
         match &self.route {
             Route::Direct { url, auth, radio } => {
                 let began = std::time::Instant::now();
                 let presence = serde_json::to_string(&self.presence()).unwrap();
                 let res = if method == "GET" {
-                    self.agent.get(format!("{url}{path}")).header("authorization", auth).header("x-airband-radio", radio).header("x-airband-presence", &presence).call()
+                    self.agent.get(format!("{url}{path}")).header("authorization", auth).header(airband_core::radio::RADIO_HEADER, radio).header(airband_core::radio::PRESENCE_HEADER, &presence).call()
                 } else {
-                    self.agent.post(format!("{url}{path}")).header("authorization", auth).header("x-airband-radio", radio).header("x-airband-presence", &presence).send_json(body.unwrap_or_else(|| serde_json::json!({})))
+                    self.agent.post(format!("{url}{path}")).header("authorization", auth).header(airband_core::radio::RADIO_HEADER, radio).header(airband_core::radio::PRESENCE_HEADER, &presence).send_json(body.unwrap_or_else(|| serde_json::json!({})))
                 };
                 let got = match res {
                     Err(e) => Err(unsent(&e, Way::Paired)),
@@ -317,7 +317,7 @@ impl Link {
                 // the token shows the relay this is the channel's own radio: it takes nothing on the channel from anyone else
                 let mut req = self.agent.post(format!("{relay}/v1/channels/{}/call", keys.channel)).header("authorization", format!("Bearer {}", keys.radio_token)).header("content-type", "application/octet-stream");
                 if ordered {
-                    req = req.header("x-airband-ordered", "1");
+                    req = req.header(airband_core::relay::ORDERED_HEADER, "1");
                 }
                 let got = match req.send(&sealed[..]) {
                     Err(e) => Err(unsent(&e, Way::Relay)),
@@ -381,7 +381,7 @@ impl Link {
         let id = &u.id;
         let began = std::time::Instant::now();
         let sealed = keys.seal_call(&self.call("POST", "/v1/radio/utterance", serde_json::to_value(u).unwrap()));
-        let kept = match self.agent.post(format!("{relay}/v1/channels/{}/queue", keys.channel)).header("authorization", format!("Bearer {}", keys.radio_token)).header("content-type", "application/octet-stream").header("x-airband-id", id).send(&sealed[..]) {
+        let kept = match self.agent.post(format!("{relay}/v1/channels/{}/queue", keys.channel)).header("authorization", format!("Bearer {}", keys.radio_token)).header("content-type", "application/octet-stream").header(airband_core::relay::ID_HEADER, id).send(&sealed[..]) {
             Err(e) => Err(unsent(&e, Way::Kept)),
             Ok(res) if res.status().as_u16() == 202 => Ok(202),
             Ok(res) => Err(LinkError::HoldRefused(res.status().as_u16())),
