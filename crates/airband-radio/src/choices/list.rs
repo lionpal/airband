@@ -75,7 +75,7 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
         };
         // what reads now could not, the last time his computer asked it: it stays chosen and says why
         let reads_failed = saved.offered.as_ref().and_then(|o| o.failed);
-        let chosen = saved.reads.as_ref().map(|w| OfferName { provider: w.id.clone(), offer: w.offer.clone() }).or(now);
+        let chosen = saved.reads.as_ref().map(|w| OfferName { provider: w.wanted.id.clone(), offer: w.wanted.offer.clone() }).or(now);
         // what uses the sign-in of a coding tool is offered to someone who uses that tool, those first
         let (mine, rest): (Vec<_>, Vec<_>) = offers.into_iter().filter(|(s, _)| s.login.is_empty() || saved.tools.contains(&s.login)).partition(|(s, _)| !s.login.is_empty());
         return mine
@@ -86,7 +86,7 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
                 let has_key = there || (facts.has_key)(&s.kind);
                 let state = working(&service_id(&s.kind, &s.offer)).unwrap_or(match () {
                     // no computer has it yet
-                    _ if is && saved.reads.as_ref().is_some_and(|w| w.taken.is_empty()) => ChoiceState::Waiting,
+                    _ if is && saved.reads.as_ref().is_some_and(|w| !w.taken()) => ChoiceState::Waiting,
                     _ if is && reads_failed.is_some() => ChoiceState::Failed { why: reads_failed.map(|t| t.said(&s.name)).unwrap_or_default() },
                     _ if s.key && !has_key => ChoiceState::NeedsKey,
                     _ => ChoiceState::Ready,

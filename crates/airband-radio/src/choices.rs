@@ -20,7 +20,7 @@ use crate::engines::HostDevice;
 use crate::models::{Model, VoiceChoice};
 use crate::services::{Service, ServiceAsk};
 use airband_core::providers::Job;
-use airband_core::radio::{OfferName, ReadsOffered, SetReads};
+use airband_core::radio::{OfferName, ReadsOffered};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
@@ -28,10 +28,11 @@ mod desk;
 mod list;
 mod saved;
 pub(crate) use desk::computer_reached;
-#[cfg(test)]
-pub(crate) use desk::switch_all;
 use list::*;
-use saved::{Pick, Saved, Waiting};
+use saved::{Pick, Saved};
+pub(crate) use saved::ReadsWanted;
+#[cfg(test)]
+pub(crate) use saved::NO_KEY;
 
 /// The jobs he chooses something for, in the order a first run asks about them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -168,6 +169,11 @@ impl Chooser {
     /// The coding tools he uses, by id, the one he uses most first.
     pub(crate) fn tools(&self) -> Vec<String> {
         self.saved().tools
+    }
+
+    /// What writes his summaries, as it is being sent to his computers: none once every computer has it.
+    pub(crate) fn reads_intent(&self) -> Option<crate::desk::Intent<ReadsWanted>> {
+        self.saved().reads
     }
 
     fn saved(&self) -> Saved {
@@ -373,7 +379,7 @@ mod tests {
         assert_eq!(chosen(&all), vec!["b/x"]);
         assert!(all[2].has_key && all[2].state == ChoiceState::Ready && all[1].state == ChoiceState::NeedsKey);
         // what he picked while it could not be reached is the one shown, as waiting
-        let waiting = Saved { reads: Some(Waiting { id: "a".into(), offer: "x".into(), set: BTreeMap::new(), his: true, taken: Vec::new(), refused: Vec::new() }), ..saved };
+        let waiting = Saved { reads: Some(crate::desk::Intent::after(None, ReadsWanted { id: "a".into(), offer: "x".into(), set: BTreeMap::new(), his: true })), ..saved };
         let all = list(ChoiceJob::Reads, &waiting, &facts(HERE, &|_| true));
         assert_eq!(chosen(&all), vec!["a/x"]);
         assert_eq!(all[1].state, ChoiceState::Waiting);
@@ -431,17 +437,17 @@ mod tests {
         let (one, two) = (logins[0].clone(), logins.iter().find(|s| s.login != logins[0].login).expect("two tools with a sign-in that reads").clone());
         let mut saved = Saved::default();
         saved.use_tools(vec![one.login.clone()]);
-        assert_eq!(saved.reads.as_ref().map(|w| (w.id.as_str(), w.his)), Some((one.kind.as_str(), false)));
+        assert_eq!(saved.reads.as_ref().map(|w| (w.wanted.id.as_str(), w.wanted.his)), Some((one.kind.as_str(), false)));
         // the other tool's sign-in is not offered to him, and his own is the one shown as chosen
         let all = list(ChoiceJob::Reads, &saved, &facts(HERE, NO_KEYS));
         assert!(chosen(&all) == vec![service_id(&one.kind, &one.offer).as_str()] && all.iter().all(|c| c.provider != two.kind));
         // he changes the tool: it follows
         saved.use_tools(vec![two.login.clone(), one.login.clone()]);
-        assert_eq!(saved.reads.as_ref().map(|w| w.id.as_str()), Some(two.kind.as_str()));
+        assert_eq!(saved.reads.as_ref().map(|w| w.wanted.id.as_str()), Some(two.kind.as_str()));
         // he picks for himself: a change of tool leaves that alone
-        saved.reads = Some(Waiting { id: "anthropic".into(), offer: "haiku".into(), set: BTreeMap::new(), his: true, taken: Vec::new(), refused: Vec::new() });
+        saved.reads = Some(crate::desk::Intent::after(None, ReadsWanted { id: "anthropic".into(), offer: "haiku".into(), set: BTreeMap::new(), his: true }));
         saved.use_tools(vec![one.login.clone()]);
-        assert_eq!(saved.reads.as_ref().map(|w| w.id.as_str()), Some("anthropic"));
+        assert_eq!(saved.reads.as_ref().map(|w| w.wanted.id.as_str()), Some("anthropic"));
         // and once a computer has said what it reads with, nothing is made to wait by a change of tool
         let mut said = Saved { offered: Some(ReadsOffered::default()), ..Saved::default() };
         said.use_tools(vec![one.login]);

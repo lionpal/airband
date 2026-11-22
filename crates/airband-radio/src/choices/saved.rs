@@ -1,5 +1,6 @@
 //! What he picked, as it is kept in `choices.json`.
 use super::*;
+use crate::desk::Intent;
 
 /// What he picked for a job done on this device.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -19,36 +20,38 @@ pub(super) struct Pick {
     pub(super) voice: String,
 }
 
-/// What is to write his summaries, chosen while no computer could be reached. It is sent to each computer as
-/// it can be reached.
+/// Why a computer was not sent what writes his summaries: it needs a key, and neither it nor this phone has one.
+pub(crate) const NO_KEY: &str = "It has no key for this. Add one here.";
+
+/// What is to write his summaries, sent to every computer ([`Intent`]): it waits for each that has not
+/// answered, and is let go once every computer has it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub(super) struct Waiting {
+pub(crate) struct ReadsWanted {
     /// The provider's id, and which of its offers.
-    pub(super) id: String,
+    pub(crate) id: String,
     #[serde(default)]
-    pub(super) offer: String,
+    pub(crate) offer: String,
     #[serde(default)]
-    pub(super) set: BTreeMap<String, String>,
+    pub(crate) set: BTreeMap<String, String>,
     /// He picked it himself. Otherwise it follows from the coding tool he said he uses most, and changes when
     /// that does.
     #[serde(default)]
-    pub(super) his: bool,
-    /// The computers that have taken it, by `Computer::id`. It waits for the rest.
-    #[serde(default)]
-    pub(super) taken: Vec<String>,
-    /// The computers that said no to it, by `Computer::id`: they are not asked again, and he was told why.
-    #[serde(default)]
-    pub(super) refused: Vec<String>,
+    pub(crate) his: bool,
 }
 
-impl Waiting {
-    /// The same choice, whichever computers have taken it.
-    pub(super) fn same(&self, other: &Waiting) -> bool {
-        (&self.id, &self.offer, &self.set) == (&other.id, &other.offer, &other.set)
-    }
-    /// That computer has given its answer to it, yes or no: it is not asked again.
-    pub(super) fn answered(&self, computer: &str) -> bool {
-        self.taken.iter().chain(&self.refused).any(|c| c == computer)
+impl ReadsWanted {
+    /// What one computer is sent: with the key on this phone when there is one; with none when that computer
+    /// keeps its own, or the provider takes none. Err, in words for him, when it needs a key neither has.
+    /// `there` is what that computer says it can read with, when it could say.
+    pub(crate) fn body_for(&self, phone_key: Option<&str>, there: Option<&ReadsOffered>) -> Result<airband_core::radio::SetReads, String> {
+        let offer = there.and_then(|o| o.offers.iter().find(|r| r.provider == self.id && r.offer == self.offer));
+        let needs_key = offer.map_or_else(|| airband_core::providers::provider(&self.id).is_some_and(|p| p.key), |r| r.key);
+        let key = match phone_key.filter(|k| !k.is_empty()) {
+            Some(key) => key.to_string(),
+            None if !needs_key || offer.is_some_and(|r| r.has_key) => String::new(),
+            None => return Err(NO_KEY.into()),
+        };
+        Ok(airband_core::radio::SetReads { kind: self.id.clone(), offer: self.offer.clone(), key, set: self.set.clone() })
     }
 }
 
@@ -66,7 +69,7 @@ pub(super) struct Saved {
     #[serde(default, deserialize_with = "pick_or_nothing")]
     pub(super) voice: Option<Pick>,
     #[serde(default)]
-    pub(super) reads: Option<Waiting>,
+    pub(super) reads: Option<Intent<ReadsWanted>>,
     /// The coding tools he uses, by id, the one he uses most first.
     #[serde(default)]
     pub(super) tools: Vec<String>,
@@ -98,9 +101,10 @@ impl Saved {
     /// picked for himself, what waits to write his summaries is the sign-in of the one he uses most.
     pub(super) fn use_tools(&mut self, tools: Vec<String>) {
         self.tools = tools;
-        if self.offered.is_none() && self.reads.as_ref().is_none_or(|w| !w.his) {
+        if self.offered.is_none() && self.reads.as_ref().is_none_or(|w| !w.wanted.his) {
             let most = self.tools.first().cloned().unwrap_or_default();
-            self.reads = crate::services::services(Job::Summary).into_iter().find(|s| !most.is_empty() && s.login == most).map(|s| Waiting { id: s.kind, offer: s.offer, set: BTreeMap::new(), his: false, taken: Vec::new(), refused: Vec::new() });
+            let before = self.reads.take();
+            self.reads = crate::services::services(Job::Summary).into_iter().find(|s| !most.is_empty() && s.login == most).map(|s| Intent::after(before.as_ref(), ReadsWanted { id: s.kind, offer: s.offer, set: BTreeMap::new(), his: false }));
         }
     }
 }

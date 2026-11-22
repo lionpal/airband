@@ -10,8 +10,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Condvar;
 mod agents;
 mod colours;
+mod fanout;
 mod follow;
 mod ids;
+mod intents;
 mod notice;
 mod reading;
 mod records;
@@ -35,6 +37,10 @@ use send::*;
 use station_host::*;
 pub use airband_core::relay::PushService;
 use tell::*;
+pub(crate) use fanout::{fan_out, Reach};
+pub(crate) use intents::Intent;
+#[cfg(test)]
+use intents::Delivery;
 use uploads::*;
 use view::*;
 
@@ -154,14 +160,10 @@ pub(crate) struct State {
     epochs: u64,
     calling: bool,
     uploads: Vec<Upload>,
-    /// Where this device can be woken with a notification (a push service's name and the device's address
-    /// there), and the links of the computers that have been told.
-    push: Option<(PushService, String)>,
     /// Each team's colour, chosen here across every computer.
     pub(crate) colours: Colours,
-    push_told: HashSet<String>,
-    /// The coding tools each computer was last told he uses, by its link.
-    tools_told: HashMap<String, Vec<String>>,
+    /// What every computer is to be told about this device, with how each stands with it.
+    pub(crate) intents: intents::KeptIntents,
     read: ReadMarks,
 }
 impl State {
@@ -304,7 +306,7 @@ impl Desk {
     #[uniffi::constructor]
     pub fn open(data_dir: String, host: Arc<dyn DeskHost>) -> Arc<Self> {
         let device = host.device();
-        let state = State { read: ReadMarks::load(&data_dir), colours: Colours::open(&data_dir, device.team_colours), ..State::default() };
+        let state = State { read: ReadMarks::load(&data_dir), colours: Colours::open(&data_dir, device.team_colours), intents: intents::KeptIntents::open(&data_dir), ..State::default() };
         let chooser = crate::choices::Chooser::open(&data_dir, device);
         let senses: Arc<Senses> = Arc::default();
         // what he chose to listen and speak with is in use from the start
