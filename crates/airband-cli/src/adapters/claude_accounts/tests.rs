@@ -239,3 +239,31 @@ fn a_switch_saves_the_outgoing_login_and_keeps_what_is_beside_it() {
     assert_eq!(saved::refresh_token_of(&b.here, "a@x").as_deref(), Some("r-a2"));
     assert_eq!(live::oauth_account(&b.here.account_file).unwrap()["emailAddress"], "b@x");
 }
+
+#[test]
+fn a_switch_the_account_file_cannot_take_changes_nothing() {
+    let b = bench(Service { tokens: HashMap::from([("a-access".into(), "a@x".into()), ("b-access".into(), "b@x".into())]), ..Default::default() });
+    put_live(&b, login("a-access", "r-a", true));
+    put_saved(&b, "b@x", login("b-access", "r-b", true));
+    std::fs::remove_file(&b.here.account_file).unwrap();
+    let said = switch_in(&b.here, "b@x").map(|_| ()).unwrap_err();
+    assert!(said.starts_with("Did not switch"), "{said}");
+    let live: Value = serde_json::from_str(&b.here.vault.read("live", "me").unwrap().unwrap()).unwrap();
+    assert_eq!(live["claudeAiOauth"]["accessToken"], "a-access");
+}
+
+#[test]
+fn a_switch_away_from_an_account_known_only_by_its_refresh_token_goes_ahead() {
+    // the server does not know the live access token (it has just been refreshed elsewhere, say): the saved copy
+    // that shares its refresh token says whose it is
+    let b = bench(Service { tokens: HashMap::from([("b-access".into(), "b@x".into())]), ..Default::default() });
+    put_saved(&b, "a@x", login("a-old", "r-a", true));
+    put_live(&b, login("a-new", "r-a", true));
+    put_saved(&b, "b@x", login("b-access", "r-b", true));
+    switch_in(&b.here, "b@x").unwrap();
+    let live: Value = serde_json::from_str(&b.here.vault.read("live", "me").unwrap().unwrap()).unwrap();
+    assert_eq!(live["claudeAiOauth"]["accessToken"], "b-access");
+    // the outgoing login is kept as it was last, under its own account
+    let kept: Value = serde_json::from_str(&b.here.vault.read("saved", "a@x").unwrap().unwrap()).unwrap();
+    assert_eq!(kept["claudeAiOauth"]["accessToken"], "a-new");
+}

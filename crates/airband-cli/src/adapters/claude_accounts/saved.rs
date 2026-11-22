@@ -44,7 +44,11 @@ pub(super) fn saved(here: &Here, email: &str) -> Res<Option<Value>> {
 pub(super) fn keep(here: &Here, email: &str, oauth: &Value, account: &Value) -> Res<()> {
     // the list first: one that cannot be read stops this before anything is written
     let mut list = index(here)?;
-    here.vault.write(&here.vault_service, email, &json!({ "email": email, "claudeAiOauth": oauth, "oauthAccount": account, "savedAt": airband_core::clock::now_ms() }).to_string())?;
+    here.vault.write(&here.vault_service, email, &{
+        let mut entry = json!({ "email": email, "oauthAccount": account, "savedAt": airband_core::clock::now_ms() });
+        entry[super::login_key()] = oauth.clone();
+        entry
+    }.to_string())?;
     if !list.iter().any(|e| e == email) {
         list.push(email.into());
         write_index(here, &list)?;
@@ -71,7 +75,7 @@ pub(super) fn resolve(here: &Here, query: &str) -> Res<String> {
 
 /// A saved login's refresh token, compared whole to tell whether it is the very login in use.
 pub(super) fn refresh_token_of(here: &Here, email: &str) -> Option<String> {
-    saved(here, email).ok().flatten()?.get("claudeAiOauth")?.get("refreshToken")?.as_str().map(String::from)
+    saved(here, email).ok().flatten()?.get(&super::login_key())?.get("refreshToken")?.as_str().map(String::from)
 }
 
 /// The saved login's own record, or a reason to sign in again.
