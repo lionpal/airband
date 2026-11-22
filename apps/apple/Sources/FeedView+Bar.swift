@@ -21,7 +21,11 @@ extension FeedView {
         return model.replyingTo.map { name(of: $0) } ?? model.onlyName
     }
     /// The agent it will go to, by id: the one that wrote the message he picked, or the one he is looking at.
-    private var aimedAgent: String? { model.replyingTo.map { $0.agent ?? "" }.flatMap { $0.isEmpty ? nil : $0 } ?? model.only }
+    private var aimedAgent: String? {
+        // a message he picked says who, even when that is nobody: the agent he is looking at does not stand in
+        if let re = model.replyingTo { return re.agent.flatMap { $0.isEmpty ? nil : $0 } }
+        return model.only
+    }
     /// One quiet line above the buttons: who he is answering, or what the radio is doing.
     private var statusLine: String? {
         // who it will go to, whenever that is already settled: the message he picked, or the agent he is looking at

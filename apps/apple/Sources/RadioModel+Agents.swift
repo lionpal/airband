@@ -164,7 +164,7 @@ extension RadioModel {
     /// Move one computer's sessions to another of its accounts. Everything about how is the tower's business.
     func useAccount(_ station: String, _ a: AccountEntry) {
         guard switching == nil, !a.live else { return }
-        switching = station + "|" + a.id
+        switching = Switching(station: station, account: a.id)
         accountsProblem = nil
         ask("It did not switch.", { try self.desk.useAccount(station: station, harness: a.harness, id: a.id) }) { now, wrong in
             self.switching = nil

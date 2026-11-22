@@ -548,3 +548,16 @@ fn what_he_said_that_the_phone_could_not_keep_is_told_once() {
     assert_eq!(told.len(), 1, "{told:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn an_unnamed_computer_can_be_chosen_as_main_by_its_id() {
+    let mut state = two();
+    // neither computer has said its name
+    state.stations.iter_mut().for_each(|s| s.name.clear());
+    let desk = desk_of(state);
+    let shown = desk.view(None, None).stations;
+    assert_eq!(shown.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["Computer 1", "Computer 2"]);
+    desk.set_main_computer(shown[1].id.clone());
+    assert_eq!(desk.shared.state.lock().unwrap().main(), Some(1));
+    assert_eq!(desk.view(None, None).main_computer, Some(shown[1].id.clone()));
+}

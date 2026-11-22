@@ -97,7 +97,7 @@ extension FeedView {
                     Button { model.look(room: team.id) } label: {
                         chip(team.name, on: model.only == nil, dot: team.state, working: team.members.contains { $0.state == .working }, colour: team.colour, unread: team.unread)
                     }
-                    .buttonStyle(.plain).id("team:" + team.name).accessibilityLabel(team.unread > 0 && model.only != nil ? "\(team.name), \(team.unread) unread" : team.name)
+                    .buttonStyle(.plain).id("team:" + team.id).accessibilityLabel(team.unread > 0 && model.only != nil ? "\(team.name), \(team.unread) unread" : team.name)
                     ForEach(team.members, id: \.id) { agent in
                         let short = agent.number.isEmpty ? agent.callsign : agent.number
                         Button { model.look(room: team.id, agent: model.only == agent.id ? nil : agent.id) } label: {

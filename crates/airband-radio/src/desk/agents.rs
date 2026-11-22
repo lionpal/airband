@@ -51,9 +51,10 @@ impl Desk {
         // moment is how one of them gets refused
         let mut all: Vec<StationAccounts> = radios
             .into_iter()
-            .map(|(name, radio)| {
-                radio.accounts(name.clone(), fresh).unwrap_or_else(|e| StationAccounts {
-                    station: name,
+            .map(|(computer, radio)| {
+                radio.accounts(&computer, fresh).unwrap_or_else(|e| StationAccounts {
+                    station: computer.id,
+                    name: computer.name,
                     accounts: Vec::new(),
                     note: Some(match e {
                         RadioError::Told { reason } => reason,
@@ -79,7 +80,8 @@ impl Desk {
     /// [`Desk::accounts`] gave them. Blocks: call it off the main thread.
     pub fn use_account(&self, station: String, harness: String, id: String) -> Result<StationAccounts, RadioError> {
         let radio = self.station_radio(&station)?;
-        radio.use_account(station, harness, id)
+        let computer = self.shared.state.lock().unwrap().named_radios().into_iter().map(|(c, _)| c).find(|c| c.id == station).ok_or(RadioError::Offline)?;
+        radio.use_account(&computer, harness, id)
     }
     /// Put an agent in another team: a room on screen with that agent's computer ([`DeskRoom::id`]), or a new
     /// team of the name he gave. `agent` is its id. The list shows it there at once. Blocks: call it off the

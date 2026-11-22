@@ -55,7 +55,9 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     @Published var tray: [TrayItem] = [] // photos and videos he has attached and not yet sent
     @Published var accounts: [StationAccounts] = [] // each computer's accounts, as last read
     @Published var accountsLoading = false
-    @Published var switching: String? // the account being switched to, as "station|id"
+    /// The account being switched to: on which computer, and which account.
+    struct Switching: Equatable { let station: String; let account: String }
+    @Published var switching: Switching?
     @Published var accountsProblem: String?
 
     let voice = Voice()
@@ -176,8 +178,10 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     func badge(of agent: String) -> (String, UInt8?)? {
         member(agent).map { ($0.agent.badge, $0.team.colour) }
     }
-    /// His computers that gave themselves a name.
-    var computers: [String] { view.stations.filter { !$0.isEmpty } }
+    /// His computers, each with what it is called to him.
+    var computers: [DeskComputer] { view.stations }
+    /// What a computer is called to him, by its id.
+    func computerName(_ id: String) -> String { view.stations.first { $0.id == id }?.name ?? "" }
     /// What he is told when a computer cannot be reached: which, when more than one could be meant.
     var cannotReach: String { view.away.isEmpty ? "Can\u{2019}t reach your computer" : "Can\u{2019}t reach " + view.away.joined(separator: ", ") }
     /// A state as it is read out for someone who cannot see its dot.
@@ -304,8 +308,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
     }
 
-    /// The picture he chose for each of his computers, by its name: a system symbol's name.
-    @Published var computerIcons: [String: String] = Stored.settings.load("airband.computers.icons", or: [:])
+    /// The picture he chose for each of his computers, by its id: a system symbol's name.
+    @Published var computerIcons: [String: String] = Stored.settings.load("airband.computers.icons.byid", or: [:])
     /// The pictures a computer can have.
     static let computerSymbols = ["laptopcomputer", "macmini", "desktopcomputer", "macstudio", "macpro.gen3", "server.rack", "pc"]
 
@@ -318,7 +322,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     }
     func setIcon(_ symbol: String, of computer: String) {
         computerIcons[computer] = symbol
-        Stored.settings.keep("airband.computers.icons", computerIcons)
+        Stored.settings.keep("airband.computers.icons.byid", computerIcons)
     }
 
     /// The folders inside one of his on a computer. Calls back with them, or with what is wrong.

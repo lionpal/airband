@@ -23,7 +23,7 @@ struct AgentsMenu: View {
     /// An agent's name; with its computer when another computer has an agent of the same name.
     private func titled(_ agent: DeskMember, in room: DeskRoom) -> String {
         let twins = room.members.filter { $0.callsign == agent.callsign }.count > 1
-        return twins && !agent.station.isEmpty ? "\(agent.callsign) (\(agent.station))" : agent.callsign
+        return twins && !agent.station.isEmpty ? "\(agent.callsign) (\(model.computerName(agent.station)))" : agent.callsign
     }
 
     /// The small line under an agent's name, after its model: how hard it thinks, and "terminal" for one the

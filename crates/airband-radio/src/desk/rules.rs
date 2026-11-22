@@ -23,6 +23,17 @@ mod tests {
     }
 }
 
+/// How airband is put on a computer: the one place the app's first run takes it from.
+const INSTALL: &str = "brew install lionpal/airband/airband";
+
+/// What to paste in a terminal on his computer to put airband there and start it. With `relay` false, it is
+/// set up to be reached with no relay between.
+#[uniffi::export]
+pub fn install_command(relay: bool) -> String {
+    let start = if relay { "airband start" } else { "airband relay off && airband start" };
+    format!("{INSTALL} && {start}")
+}
+
 /// Is this a pairing link a computer gave (`airband pair`)? Read by the one parser that pairs with it.
 #[uniffi::export]
 pub fn is_pairing_link(link: String) -> bool {

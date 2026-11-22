@@ -20,13 +20,10 @@ struct OnboardingView: View {
     @State private var typing = false
     private let tick = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
 
-    private static let command = "brew install lionpal/airband/airband && airband start"
-    /// The same, for a computer that is to be reached with no relay between.
-    private static let straight = "brew install lionpal/airband/airband && airband relay off && airband start"
     /// He asked for the pairing with no relay.
     // (development only: `-airband.devNoRelay YES` opens with it asked for, for a screenshot)
     @State private var noRelay = Dev.flag("devNoRelay")
-    private var command: String { noRelay ? Self.straight : Self.command }
+    private var command: String { installCommand(relay: !noRelay) }
     /// The first step waits for him to pick the coding agent he uses: none is picked for him.
     private var unchosen: Bool { step == 0 && model.usedTools.isEmpty }
     /// The steps: the coding agent, each job, then the computer.
@@ -118,7 +115,7 @@ struct OnboardingView: View {
     private var computer: some View {
         VStack(alignment: .leading, spacing: 18) {
             headline("Last, your computer.")
-            Text("airband runs on the Mac where your agents work. Open Terminal there and paste this.").font(.system(size: 16)).foregroundStyle(Palette.soft)
+            Text("airband runs on the computer where your agents work. Open a terminal there and paste this.").font(.system(size: 16)).foregroundStyle(Palette.soft)
             VStack(alignment: .leading, spacing: 14) {
                 Text(command).font(.system(size: 14, weight: .medium, design: .monospaced)).foregroundStyle(Palette.signal).textSelection(.enabled)
                 HStack(spacing: 10) {
@@ -126,7 +123,7 @@ struct OnboardingView: View {
                         UIPasteboard.general.string = command
                         copied = true
                     } label: { tile(copied ? "Copied" : "Copy") }
-                    ShareLink(item: command) { tile("AirDrop or share") }
+                    ShareLink(item: command) { tile("Send to your computer") }
                 }
                 .buttonStyle(.plain)
             }

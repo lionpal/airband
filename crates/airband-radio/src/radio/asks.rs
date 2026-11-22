@@ -14,14 +14,14 @@ impl Radio {
 
     /// The accounts the agents on this computer can run under, and how much of each is used. `fresh` asks the
     /// tower to check again now. Blocks: call it off the main thread.
-    pub(crate) fn accounts(&self, station: String, fresh: bool) -> Result<StationAccounts, RadioError> {
-        Ok(StationAccounts::from(&station, self.asked("GET", if fresh { "/accounts?fresh=1" } else { "/accounts" }, None)?))
+    pub(crate) fn accounts(&self, computer: &crate::DeskComputer, fresh: bool) -> Result<StationAccounts, RadioError> {
+        Ok(StationAccounts::from(computer, self.asked("GET", if fresh { "/accounts?fresh=1" } else { "/accounts" }, None)?))
     }
 
     /// Move this computer's sessions of one harness to another account. Returns how things stand afterwards.
     /// Blocks: call it off the main thread.
-    pub(crate) fn use_account(&self, station: String, harness: String, id: String) -> Result<StationAccounts, RadioError> {
-        Ok(StationAccounts::from(&station, self.asked("POST", "/accounts/use", Some(serde_json::json!({ "harness": harness, "id": id })))?))
+    pub(crate) fn use_account(&self, computer: &crate::DeskComputer, harness: String, id: String) -> Result<StationAccounts, RadioError> {
+        Ok(StationAccounts::from(computer, self.asked("POST", "/accounts/use", Some(serde_json::json!({ "harness": harness, "id": id })))?))
     }
 
     /// Put an agent in another team: one that exists, or a new one of that name. Returns what the agent is

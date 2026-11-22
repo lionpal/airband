@@ -12,7 +12,7 @@ pub(super) struct ReadMarks {
     pub(super) since: u64,
     pub(super) upto: HashMap<String, u64>,
     /// His main computer, by name, once he has chosen one: where his words go when nothing says which
-    /// computer they are for. It works out who they are for and passes them on.
+    /// computer they are for, by its [`DeskComputer::id`]. It works out who they are for and passes them on.
     #[serde(default)]
     pub(super) main: Option<String>,
 }
@@ -33,8 +33,8 @@ impl ReadMarks {
 }
 #[uniffi::export]
 impl Desk {
-    /// Make one of his computers the main one: where his words go when nothing says which computer they are
-    /// for. Kept on the device.
+    /// Make one of his computers the main one, by its [`DeskComputer::id`]: where his words go when nothing
+    /// says which computer they are for. Kept on the device.
     pub fn set_main_computer(&self, computer: String) {
         {
             let mut state = self.shared.state.lock().unwrap();
@@ -91,7 +91,7 @@ impl Desk {
         // what an agent is waiting on him for: its newest question still open
         let asked = |a: &ChatAgent| all.iter().rev().find(|m| m.needs_you && m.agent.as_deref() == Some(a.id.as_str()) && state.is_open(&m.id));
         for a in &agents {
-            let member = DeskMember { id: a.id.clone(), callsign: a.callsign.clone(), state: a.state, subagents: a.subagents, doing: a.doing.clone(), held: a.held, terminal: a.terminal, ends: a.ends, unread: unread_from.get(a.id.as_str()).copied().unwrap_or(0), question: asked(a).map(|m| m.text.clone()).unwrap_or_default(), question_id: asked(a).map(|m| m.id.clone()).unwrap_or_default(), harness: a.harness.clone(), badge: a.badge.clone(), model: a.model.clone().unwrap_or_default(), effort: a.effort.clone().unwrap_or_default(), number: a.number.clone(), station: if state.stations.len() > 1 { state.stations.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(|s| s.name.clone()).unwrap_or_default() } else { String::new() } };
+            let member = DeskMember { id: a.id.clone(), callsign: a.callsign.clone(), state: a.state, subagents: a.subagents, doing: a.doing.clone(), held: a.held, terminal: a.terminal, ends: a.ends, unread: unread_from.get(a.id.as_str()).copied().unwrap_or(0), question: asked(a).map(|m| m.text.clone()).unwrap_or_default(), question_id: asked(a).map(|m| m.id.clone()).unwrap_or_default(), harness: a.harness.clone(), badge: a.badge.clone(), model: a.model.clone().unwrap_or_default(), effort: a.effort.clone().unwrap_or_default(), number: a.number.clone(), station: if state.stations.len() > 1 { state.stations.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(Station::id).unwrap_or_default() } else { String::new() } };
             // what the team is doing is said in the name of whoever is doing it, without the team's own name
             let doing = a.doing.as_ref().map(|d| match Some(a.number.as_str()).filter(|rest| !rest.is_empty()) {
                 Some(who) => format!("{who}: {d}"),
@@ -137,8 +137,8 @@ impl Desk {
                 .iter()
                 .flat_map(|s| s.sending.iter().filter(|o| !s.messages.iter().any(|m| m.id == o.id)).cloned().chain(s.landing.iter().filter(|(o, at)| at.elapsed() < Duration::from_secs(15) && !s.messages.iter().any(|m| m.id == o.id)).map(|(o, _)| o.clone())))
                 .collect(),
-            stations: state.stations.iter().map(|s| s.name.clone()).collect(),
-            main_computer: state.main().map(|i| state.stations[i].name.clone()),
+            stations: state.stations.iter().enumerate().map(|(i, s)| DeskComputer { id: s.id(), name: state.computer_name(i) }).collect(),
+            main_computer: state.main().map(|i| state.stations[i].id()),
             choose_main: state.stations.len() > 1 && state.main().is_none(),
             uploads: state.uploads.iter().map(|u| u.shown.clone()).collect(),
             asking: state.asking.as_ref().map(|asking| {
