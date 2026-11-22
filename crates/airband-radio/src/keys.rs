@@ -20,7 +20,10 @@ pub(crate) fn pretend(_: &Check, key: &str, _: &BTreeMap<String, String>) -> Key
 /// a region), as set or as usual. Blocks for one request.
 pub(crate) fn check(check: &Check, key: &str, settings: &BTreeMap<String, String>) -> KeyCheck {
     // an address that names a setting he has not filled in cannot be asked
-    let Some(url) = check.address(settings) else { return KeyCheck::Unreachable };
+    let url = match check.address(settings) {
+        Ok(url) => url,
+        Err(bad_setting) => return bad_setting,
+    };
     let agent = crate::net::agent(Duration::from_secs(20));
     let with = |name: &str, value: &str| (name.to_string(), value.to_string());
     let headers: Vec<(String, String)> = std::iter::once(with(&check.auth.header, &check.auth.value(key))).chain(check.headers.iter().map(|(k, v)| with(k, v))).collect();
@@ -36,8 +39,8 @@ pub(crate) fn check(check: &Check, key: &str, settings: &BTreeMap<String, String
 
 /// What he is told when a key did not pass, for each way it can go, in the words every failure of a service
 /// is told in (`Trouble`). Nothing for one that did.
-pub(crate) fn said(outcome: KeyCheck, p: &Provider) -> Option<String> {
-    outcome.trouble().map(|trouble| trouble.said_of_key(&p.name))
+pub(crate) fn said(outcome: &KeyCheck, p: &Provider) -> Option<String> {
+    outcome.said(&p.name)
 }
 
 /// What he is told after a key passed a test the service charges for.
@@ -49,6 +52,13 @@ pub(crate) fn charged(p: &Provider) -> String {
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+
+    #[test]
+    fn a_missing_setting_is_not_told_as_no_connection() {
+        let set = BTreeMap::new();
+        assert_ne!(check(&row("https://{region}.example/models"), "good", &set), KeyCheck::Unreachable);
+    }
+
 
     /// A service on this machine that answers each request with the status its path names (`/401/models`), and
     /// 200 only when the key it was sent is `good`. Returns its address and what it was sent.
@@ -100,7 +110,11 @@ mod tests {
         assert!(seen.lock().unwrap().last().unwrap().starts_with("POST /token "));
         // nobody there, or a setting the address names that he has not filled in: nothing is known of the key
         assert_eq!(check(&row("http://127.0.0.1:9/models"), "good", &set), KeyCheck::Unreachable);
-        assert_eq!(check(&row("https://{region}.example/models"), "good", &set), KeyCheck::Unreachable);
+        // a setting the address names that he has not filled in is said as that, never as no connection
+        let unset = check(&row("https://{region}.example/models"), "good", &set);
+        assert!(matches!(&unset, KeyCheck::BadSetting { why } if why.contains("region")), "{unset:?}");
+        let p = airband_core::catalog::current().providers[0].clone();
+        assert!(!said(&unset, &p).unwrap().contains("connection"));
     }
 
     #[test]
@@ -113,10 +127,10 @@ mod tests {
             for o in &p.offers {
                 // each filled as it usually is, or with a word where the row has no usual (a region)
                 let asked: BTreeMap<String, String> = o.asks.iter().map(|a| (a.field.clone(), if a.usual.is_empty() { "x".to_string() } else { a.usual.clone() })).collect();
-                assert!(c.address(&asked).is_some(), "{} {}: the check names a setting this offer does not have", p.id, o.id);
+                assert!(c.address(&asked).is_ok(), "{} {}: the check names a setting this offer does not have", p.id, o.id);
             }
-            let all = [KeyCheck::WrongKey, KeyCheck::Refused, KeyCheck::Unreachable, KeyCheck::Unexpected { status: 500 }].map(|o| said(o, p).unwrap());
-            assert!(all.iter().all(|a| all.iter().filter(|b| *b == a).count() == 1) && said(KeyCheck::Good { paid: false }, p).is_none());
+            let all = [KeyCheck::WrongKey, KeyCheck::Refused, KeyCheck::Unreachable, KeyCheck::Unexpected { status: 500 }].map(|o| said(&o, p).unwrap());
+            assert!(all.iter().all(|a| all.iter().filter(|b| *b == a).count() == 1) && said(&KeyCheck::Good { paid: false }, p).is_none());
         }
         assert!(catalog.providers.iter().filter(|p| !p.key).all(|p| p.check.is_none()));
     }

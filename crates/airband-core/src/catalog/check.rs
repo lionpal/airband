@@ -1,4 +1,5 @@
-//! Whether a catalogue is taken: its signature, and what it may and may not change in the copy in hand.
+//! Whether a catalogue is taken: its signature, and what it may and may not change in the copy in hand. Whether
+//! it is well formed is `form`.
 use super::*;
 
 /// What became of a copy that was offered.
@@ -33,12 +34,24 @@ fn own_start(built: &Catalog, id: &str) -> (Vec<crate::tools::Launcher>, BTreeMa
 pub fn accept(document: &[u8], signature: &str) -> Result<Taken, String> {
     signed(document, signature)?;
     let text = std::str::from_utf8(document).map_err(|e| e.to_string())?;
-    let (newer, taken) = weigh(text, crate::clock::now_secs(), &current())?;
+    take(&CURRENT, text, crate::clock::now_secs())
+}
+
+/// Weigh a copy against the one in use in `slot` and put it in its place, in one hold of the lock: two copies
+/// taken at once (the kept one at start and a fetched one) can never leave the older in use.
+pub(super) fn take(slot: &RwLock<Option<Arc<Catalog>>>, text: &str, now: u64) -> Result<Taken, String> {
+    let mut slot = slot.write().unwrap_or_else(|e| e.into_inner());
+    let in_use = slot.get_or_insert_with(|| built_shared().clone()).clone();
+    let (newer, taken) = weigh(text, now, &in_use)?;
     if let Some(newer) = newer {
-        *CURRENT.write().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(newer));
+        *slot = Some(Arc::new(newer));
     }
     Ok(taken)
 }
+
+/// Where airband's own on-device models are published: only those may be offered by a later copy.
+const MODELS_HOST: &str = "airband.dev";
+const MODELS_PATH: &str = "/models/";
 
 /// Is this document signed by airband's catalogue key?
 pub fn signed(document: &[u8], signature: &str) -> Result<(), String> {
@@ -190,7 +203,10 @@ pub(super) fn allowed(newer: &Catalog, built: &Catalog) -> Result<(), String> {
         }
     }
     for m in &newer.models {
-        if !m.base.starts_with("https://airband.dev/models/") {
+        // fetched from airband's own site, as the address is built: its host and its path, read by the rules for
+        // web addresses
+        let ours = crate::links::web(&m.base).is_some_and(|u| u.scheme() == "https" && u.host_str() == Some(MODELS_HOST) && u.path().starts_with(MODELS_PATH));
+        if !ours {
             return Err(format!("the catalogue names a model that is not airband's to offer: {}", m.kind));
         }
         if built.models.iter().any(|b| b.kind == m.kind && b.version == m.version && b.files != m.files) {
@@ -204,68 +220,3 @@ pub(super) fn allowed(newer: &Catalog, built: &Catalog) -> Result<(), String> {
 pub(super) fn reach(o: &Offer) -> Vec<(String, String)> {
     o.asks.iter().filter(|a| a.reach).map(|a| (a.field.clone(), a.usual.clone())).collect()
 }
-
-/// A name that is safe as a setting, a folder and a part of an address: lower-case letters, digits, `.`, `-`
-/// and `_`, starting with a letter or a digit.
-pub(super) fn plain(name: &str) -> bool {
-    name.bytes().next().is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit()) && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'.' | b'_'))
-}
-
-/// Is this catalogue well formed? Run on every copy before it is taken, on the one built in by the tests,
-/// and on a document about to be published (`airband catalog check`).
-pub fn check(c: &Catalog) -> Result<(), String> {
-    if c.providers.is_empty() {
-        return Err("the catalogue has no providers in it".into());
-    }
-    for p in &c.providers {
-        if !plain(&p.id) || crate::providers::NOT_AN_ID.contains(&p.id.as_str()) {
-            return Err(format!("\"{}\" cannot be a provider's id", p.id));
-        }
-        if c.providers.iter().filter(|o| o.id == p.id).count() != 1 {
-            return Err(format!("{} is listed twice", p.id));
-        }
-        for o in &p.offers {
-            // an offer's id sits beside the provider's where a choice is written down
-            if !plain(&o.id) || crate::providers::NOT_AN_ID.contains(&o.id.as_str()) || p.offers.iter().filter(|x| x.id == o.id).count() != 1 {
-                return Err(format!("{}: \"{}\" cannot be an offer's id, or is there twice", p.id, o.id));
-            }
-            if !plain(&o.by.interface) {
-                return Err(format!("{}: \"{}\" cannot be an interface's name", p.id, o.by.interface));
-            }
-            for a in &o.asks {
-                // a setting sits beside `kind`, `offer` and `key` where it is written down
-                if !plain(&a.field) || crate::providers::NOT_AN_ID.contains(&a.field.as_str()) || o.asks.iter().filter(|x| x.field == a.field).count() != 1 {
-                    return Err(format!("{}: \"{}\" cannot be a setting's name, or is there twice", p.id, a.field));
-                }
-            }
-            if o.voices.iter().any(|v| v.id.is_empty() || v.name.is_empty()) {
-                return Err(format!("{}: a voice with no name", p.id));
-            }
-        }
-    }
-    // a model's name, its version and its files' paths are parts of a folder on the device: none may lead
-    // out of it
-    let part = |name: &str| !name.is_empty() && !name.starts_with('.') && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_'));
-    for m in &c.models {
-        if !plain(&m.kind) || !(m.version.is_empty() || plain(&m.version)) || c.models.iter().filter(|o| o.kind == m.kind).count() != 1 {
-            return Err(format!("\"{}\" cannot be a model's name, or is there twice", m.kind));
-        }
-        if m.files.is_empty() || m.files.iter().any(|(path, size, sha)| path.split('/').any(|p| !part(p)) || *size == 0 || sha.len() != 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit())) {
-            return Err(format!("{}: a file outside its own folder, or one with no size or hash", m.kind));
-        }
-        if !m.base.starts_with("https://") {
-            return Err(format!("{}: its files are not fetched over https", m.kind));
-        }
-    }
-    crate::links::check(&c.links)?;
-    for s in &c.servers {
-        if !plain(&s.id) || !s.base.starts_with("https://") || s.archives.iter().any(|a| !part(&a.file) || a.sha256.len() != 64) || s.program.split('/').any(|p| !part(p)) {
-            return Err(format!("{}: not a program that can be fetched safely", s.id));
-        }
-    }
-    Ok(())
-}
-
-// The document as written. A row is the struct it is read into (`Offer`, `PhoneModel`, `Server`), so a file
-// says only what is so and nothing is copied field by field. Rows are read one at a time: one this build
-// cannot read is left out and counted, and the rest are kept.

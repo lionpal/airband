@@ -25,11 +25,15 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 mod check;
+mod form;
 mod kept;
+mod programs;
 mod rows;
 pub use check::*;
+pub use form::*;
 pub use kept::*;
-pub use rows::*;
+pub use programs::*;
+use rows::*;
 
 /// Where the signed copy is kept.
 pub(crate) const ADDRESS: &str = "https://airband.dev/catalog/catalog.json";
@@ -109,6 +113,16 @@ pub(crate) fn row_text(said: Option<&Value>) -> &str {
     said.and_then(Value::as_str).unwrap_or_default()
 }
 
+/// A value a row or a setting gives as the text it is used as: words as they are, a number or a yes/no as
+/// written. Empty for anything else, or nothing. The one rule for a value told to an engine or a service.
+pub(crate) fn scalar_text(said: Option<&Value>) -> String {
+    match said {
+        Some(Value::String(s)) => s.clone(),
+        Some(v @ (Value::Number(_) | Value::Bool(_))) => v.to_string(),
+        _ => String::new(),
+    }
+}
+
 /// A model that runs on the phone itself.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct PhoneModel {
@@ -154,15 +168,9 @@ impl PhoneModel {
     pub fn voice<'a>(&'a self, named: &'a str) -> &'a str {
         if named.is_empty() { &self.usual_voice } else { named }
     }
-}
-
-impl PhoneModel {
     /// One of the things its engine is told, as text. Empty when the row does not say.
     pub fn told(&self, name: &str) -> String {
-        match self.with.get(name) {
-            Some(Value::Number(n)) => n.to_string(),
-            other => row_text(other).to_string(),
-        }
+        scalar_text(self.with.get(name))
     }
 }
 
@@ -237,16 +245,22 @@ mod tests {
     }
 
     #[test]
-    fn every_voice_row_names_a_usual_voice_it_has() {
-        for m in built().models.iter().filter(|m| m.job == Job::Voice) {
-            assert!(m.voices.iter().any(|(name, _)| *name == m.usual_voice), "{} names no usual voice of its own", m.kind);
-        }
-        for p in &built().providers {
-            for o in p.offers.iter().filter(|o| !o.voices.is_empty()) {
-                let usual = o.usual("voice").unwrap_or_default();
-                assert!(o.voices.iter().any(|v| v.id == usual), "{} {} names no usual voice of its own", p.id, o.id);
-            }
-        }
+    fn a_copy_whose_voice_row_names_no_usual_voice_of_its_own_is_not_well_formed() {
+        check(built()).unwrap();
+        let mut c = read(BUILT_IN).unwrap();
+        let (p, o) = c.providers.iter().enumerate().find_map(|(i, p)| p.offers.iter().position(|o| !o.voices.is_empty()).map(|j| (i, j))).unwrap();
+        let mut provider = (*c.providers[p]).clone();
+        let mut offer = (*provider.offers[o]).clone();
+        offer.asks.retain(|a| a.field != "voice");
+        provider.offers[o] = Arc::new(offer);
+        c.providers[p] = Arc::new(provider);
+        assert!(check(&c).unwrap_err().contains("usual voice"));
+        let mut c = read(BUILT_IN).unwrap();
+        let m = c.models.iter().position(|m| m.job == Job::Voice).unwrap();
+        let mut model = (*c.models[m]).clone();
+        model.usual_voice = "nobody".into();
+        c.models[m] = Arc::new(model);
+        assert!(check(&c).unwrap_err().contains("usual voice"));
     }
 
     /// The built-in document with a change made to it, weighed as a copy offered to this build.
@@ -302,6 +316,42 @@ mod tests {
         // three offers and one provider and one model did not read, and each is named
         assert_eq!(c.left_out.len(), 5, "{:?}", c.left_out);
         assert!(c.left_out[0].starts_with("x: an offer") && c.left_out[3].starts_with("y:") && c.left_out[4].starts_with("m:"));
+    }
+
+    #[test]
+    fn two_copies_taken_at_once_always_leave_the_newer_in_use() {
+        let doc = |up: u64| {
+            let mut doc: Value = serde_json::from_str(BUILT_IN).unwrap();
+            doc["rev"] = (built().rev + up).into();
+            doc["expires"] = (crate::clock::now_secs() + 3600).into();
+            doc.to_string()
+        };
+        let (one, two) = (doc(1), doc(2));
+        for _ in 0..50 {
+            let slot: &'static RwLock<Option<Arc<Catalog>>> = Box::leak(Box::new(RwLock::new(None)));
+            let (a, b) = (one.clone(), two.clone());
+            let older = std::thread::spawn(move || check::take(slot, &a, crate::clock::now_secs()));
+            let newer = std::thread::spawn(move || check::take(slot, &b, crate::clock::now_secs()));
+            older.join().unwrap().unwrap();
+            newer.join().unwrap().unwrap();
+            assert_eq!(slot.read().unwrap().as_ref().unwrap().rev, built().rev + 2);
+        }
+    }
+
+    #[test]
+    fn a_server_link_terminal_frames_or_secret_row_that_cannot_be_used_is_left_out_and_said() {
+        let c = read(
+            r#"{"rev":9,"providers":[],"models":[],
+            "servers":[{"id":"s1"}],
+            "links":[{"id":"l1"}],
+            "terminals":[{"id":"t1","program":"x"}],
+            "frames":[{"id":"f1"}],
+            "secrets":[{"id":"k1","prefix":"sk-"},{"id":"k2","prefix":"","least":8},{"id":"k3","prefix":"ab-","least":0}]}"#,
+        )
+        .unwrap();
+        let named: Vec<&str> = c.left_out.iter().map(|l| l.split(':').next().unwrap_or("")).collect();
+        assert_eq!(named, ["s1", "l1", "t1", "f1", "k1", "k2", "k3"], "{:?}", c.left_out);
+        assert!(c.secrets.is_empty() && c.servers.is_empty() && c.terminals.is_empty());
     }
 
     #[test]

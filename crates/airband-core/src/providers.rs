@@ -27,8 +27,10 @@ use std::sync::Arc;
 
 mod check;
 mod setting;
+mod trouble;
 pub use check::*;
 pub use setting::Use;
+pub use trouble::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -210,10 +212,6 @@ impl Offer {
     }
 }
 
-/// Words that stand where a provider's id or a setting's name would (a choice on the phone, the fields of a
-/// `Use` as written down). No provider, offer or setting may take one of these as its name.
-pub(crate) const NOT_AN_ID: &[&str] = &["none", "kind", "offer", "key"];
-
 pub fn provider(id: &str) -> Option<Arc<Provider>> {
     crate::catalog::current().providers.iter().find(|p| p.id == id).cloned()
 }
@@ -255,9 +253,12 @@ mod tests {
         assert!(fill("https://{region.example", &set(&[])).is_err());
         // the key check asks only an address that passes
         let check = |url: &str| serde_json::from_value::<Check>(serde_json::json!({ "method": "GET", "url": url, "auth": { "header": "authorization", "scheme": "Bearer" }, "good": [200], "wrong_key": [401] })).unwrap();
-        assert_eq!(check("{url}/models").address(&BTreeMap::from([("url".to_string(), "https://api.example/v1".to_string())])).as_deref(), Some("https://api.example/v1/models"));
-        assert_eq!(check("{url}/models").address(&BTreeMap::from([("url".to_string(), "https://api.example@evil.example".to_string())])), None);
-        assert_eq!(check("{url}/models").address(&BTreeMap::new()), None);
+        assert_eq!(check("{url}/models").address(&BTreeMap::from([("url".to_string(), "https://api.example/v1".to_string())])).as_deref(), Ok("https://api.example/v1/models"));
+        assert!(check("{url}/models").address(&BTreeMap::from([("url".to_string(), "https://api.example@evil.example".to_string())])).is_err());
+        // one not set says which, and is never taken for a service that could not be reached
+        let unset = check("{url}/models").address(&BTreeMap::new()).unwrap_err();
+        assert!(matches!(&unset, KeyCheck::BadSetting { why } if why.contains("url")), "{unset:?}");
+        assert_ne!(unset.trouble(), Some(Trouble::Unreachable));
     }
 
     #[test]

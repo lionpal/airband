@@ -64,7 +64,7 @@ pub(crate) fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
             println!("{}", crate::tower::try_model(&cfg)?);
             return Ok(());
         }
-        Some("none") => Use::default(),
+        Some(word) if word == Use::NONE => Use::default(),
         Some(id) => {
             let p = providers::offering(job).into_iter().find(|p| p.id == id).ok_or_else(|| format!("nothing called \"{id}\" does this: {} or none", offered()))?;
             // which of its offers: the one named after it, or the only one it has for this job. With several

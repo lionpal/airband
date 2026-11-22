@@ -16,6 +16,18 @@ pub struct Use {
 }
 
 impl Use {
+    /// The word for no provider, where he types or reads a choice (`airband reads none`). No provider, offer or
+    /// setting may be called it.
+    pub const NONE: &'static str = "none";
+
+    /// Is this a name no provider, offer or setting may take: [`Use::NONE`], or the name of one of the fields a
+    /// `Use` is written down with, which a setting of that name would stand in the place of. The fields are read
+    /// from the type itself, as it is written.
+    pub fn reserved(name: &str) -> bool {
+        let written = serde_json::to_value(Use { kind: "x".into(), offer: "x".into(), key: "x".into(), set: BTreeMap::new() }).unwrap_or_default();
+        name == Use::NONE || written.as_object().is_some_and(|fields| fields.contains_key(name))
+    }
+
     /// This offer of this provider, with no key and everything as usual.
     pub fn of(kind: &str, offer: &str) -> Use {
         Use { kind: kind.into(), offer: offer.into(), key: String::new(), set: BTreeMap::new() }
@@ -34,15 +46,14 @@ impl Use {
     /// A setting for this job: what was set, else what the row usually uses.
     pub fn get(&self, job: Job, field: &str) -> String {
         match self.set.get(field) {
-            Some(Value::String(s)) => s.clone(),
-            Some(other) => other.to_string(),
+            Some(set) => crate::catalog::scalar_text(Some(set)),
             None => self.offer(job).and_then(|(_, o)| o.usual(field)).unwrap_or_default(),
         }
     }
     /// One line for him: the provider and what it is set to. Never the key.
     pub fn describe(&self, job: Job) -> String {
         match self.offer(job) {
-            None if self.kind.is_empty() => "none".into(),
+            None if self.kind.is_empty() => Use::NONE.into(),
             None => format!("\"{} {}\", which this version of airband does not have", self.kind, self.offer),
             Some((_, o)) => {
                 let told: Vec<String> = o.asks.iter().map(|a| format!("{} {}", a.question.to_lowercase(), self.get(job, &a.field))).collect();

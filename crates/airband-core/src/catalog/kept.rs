@@ -46,12 +46,17 @@ pub fn refresh(dir: &Path, speaks: &dyn Fn(&crate::providers::Offer) -> bool) ->
     let sig = String::from_utf8_lossy(&sig).to_string();
     match accept(&doc, &sig) {
         Ok(taken) => {
+            let mut lines = news(&taken, speaks);
             if taken.newer {
+                // each written whole; a pair that could not both be written is said (the next start then reads
+                // the one built in, as the signature no longer fits)
                 let at = dir.join(KEPT);
-                let _ = std::fs::write(&at, &doc);
-                let _ = std::fs::write(at.with_extension("json.sig"), sig);
+                let kept = crate::kept::write_atomic(&at, &doc).and_then(|_| crate::kept::write_atomic(&at.with_extension("json.sig"), sig));
+                if let Err(e) = kept {
+                    lines.push(format!("catalogue: the copy taken could not be kept for next time ({e})"));
+                }
             }
-            (taken.newer, news(&taken, speaks))
+            (taken.newer, lines)
         }
         Err(why) => (false, vec![format!("catalogue: the published copy was not taken ({why})")]),
     }
