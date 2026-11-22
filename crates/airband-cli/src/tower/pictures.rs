@@ -67,7 +67,7 @@ fn keep_as(id: String, decode: impl FnOnce() -> Option<image::DynamicImage>) -> 
     let rgb = img.to_rgb8();
     let mut bytes = Vec::new();
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 75).encode_image(&rgb).ok()?;
-    airband_core::kept::write_atomic(&out, &bytes).ok()?;
+    airband_io::files::write_atomic(&out, &bytes).ok()?;
     Some(Picture { id, width: rgb.width(), height: rgb.height(), bytes: bytes.len() as u32 })
 }
 
@@ -121,7 +121,7 @@ pub(super) fn part(id: &str, from: usize) -> Option<PicturePart> {
 
 /// Drop copies nobody will ask for again.
 pub(super) fn prune() {
-    airband_core::kept::prune_older(&folder(), KEEP);
+    airband_io::files::prune_older(&folder(), KEEP);
 }
 
 #[cfg(test)]

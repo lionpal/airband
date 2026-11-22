@@ -118,7 +118,7 @@ mod tests {
     #[test]
     fn a_tower_that_took_the_request_and_did_not_answer_in_time_is_not_taken_for_no_tower() {
         let (_held, port) = silent_tower();
-        let agent = airband_core::net::agent(Duration::from_millis(500));
+        let agent = airband_io::http::agent(Duration::from_millis(500));
         match by_tower(agent.post(format!("http://127.0.0.1:{port}/v1/radio/accounts/use")).send_json(serde_json::json!({}))) {
             ByTower::Said(Err(why)) => assert!(why.contains("did not answer in time"), "{why}"),
             other => panic!("a slow tower must not make the switch run here as well: {other:?}"),
@@ -131,7 +131,7 @@ mod tests {
             let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             l.local_addr().unwrap().port()
         };
-        let agent = airband_core::net::agent(Duration::from_secs(5));
+        let agent = airband_io::http::agent(Duration::from_secs(5));
         assert!(matches!(by_tower(agent.get(format!("http://127.0.0.1:{port}/v1/radio/accounts")).call()), ByTower::NotRunning));
     }
 }

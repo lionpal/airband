@@ -26,33 +26,30 @@ pub(crate) struct Saved {
 }
 
 pub(crate) struct Store {
-    file: Option<std::path::PathBuf>,
     pub(crate) saved: Mutex<Saved>,
     /// Who is told when what he said could not be kept, once until it can be again.
     host: Option<Arc<dyn RadioHost>>,
-    keeping: crate::kept::Keeping,
+    keeper: airband_io::kept::Keeper,
 }
 
 impl Store {
     pub(crate) fn open(data_dir: &str, host: Option<Arc<dyn RadioHost>>) -> Store {
-        let file = (!data_dir.is_empty()).then(|| std::path::Path::new(data_dir).join("radio.json"));
-        let saved = file.as_deref().map(crate::kept::load_or_set_aside).unwrap_or_default();
-        Store { file, saved: Mutex::new(saved), host, keeping: Default::default() }
+        let (saved, keeper) = crate::kept::open(crate::kept::file(data_dir, "radio.json"));
+        Store { saved: Mutex::new(saved), host, keeper }
     }
     /// Where fetched pictures are kept: beside the saved chat, or in the system's temporary folder when the
     /// host keeps nothing.
     pub(crate) fn pictures(&self) -> std::path::PathBuf {
-        self.file.as_ref().and_then(|f| f.parent().map(|d| d.join("pictures"))).unwrap_or_else(|| std::env::temp_dir().join("airband-pictures"))
+        self.keeper.path().and_then(|f| f.parent().map(|d| d.join("pictures"))).unwrap_or_else(|| std::env::temp_dir().join("airband-pictures"))
     }
     /// Drop pictures fetched long ago; one that is wanted again is fetched again.
     pub(crate) fn prune_pictures(&self) {
-        airband_core::kept::prune_older(&self.pictures(), PICTURES_KEEP);
+        airband_io::files::prune_older(&self.pictures(), PICTURES_KEEP);
     }
     pub(crate) fn change<T>(&self, f: impl FnOnce(&mut Saved) -> T) -> T {
         let mut saved = self.saved.lock().unwrap();
         let out = f(&mut saved);
-        if let Some(file) = &self.file
-            && let Some(told) = self.keeping.save(file, &*saved, "What you send and the chat are lost if the app closes.")
+        if let Some(told) = crate::kept::told(self.keeper.save(&*saved), "What you send and the chat are lost if the app closes.")
             && let Some(host) = &self.host
         {
             host.told(told);

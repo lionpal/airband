@@ -227,7 +227,7 @@ pub(crate) fn dir() -> PathBuf {
     home().join(".airband")
 }
 
-pub(crate) use airband_core::kept::write_private;
+pub(crate) use airband_io::files::write_private;
 
 /// The config as it is on disk now, or None if there is none yet.
 pub(crate) fn read() -> Option<Config> {

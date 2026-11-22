@@ -209,7 +209,7 @@ pub(super) async fn describe(ids: &[String]) -> (String, Vec<airband_core::radio
 
 /// Old attachments are cleared when the tower starts.
 pub(super) fn prune() {
-    airband_core::kept::prune_older(&root(), Duration::from_secs(KEEP_DAYS * 86_400));
+    airband_io::files::prune_older(&root(), Duration::from_secs(KEEP_DAYS * 86_400));
 }
 
 #[cfg(test)]

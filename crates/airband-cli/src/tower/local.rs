@@ -68,7 +68,7 @@ fn fetch(server: &airband_core::catalog::Server) -> Result<PathBuf, String> {
 }
 
 fn healthy() -> bool {
-    let agent = airband_core::net::agent(Duration::from_secs(2));
+    let agent = airband_io::http::agent(Duration::from_secs(2));
     agent.get(format!("{}/health", address())).call().is_ok_and(|r| r.status().as_u16() == 200)
 }
 

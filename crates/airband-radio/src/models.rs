@@ -50,14 +50,14 @@ pub fn voice_setting() -> String {
 /// the one built in. Nothing is fetched. Call once at the start.
 #[uniffi::export]
 pub fn load_catalog(dir: String) {
-    airband_core::catalog::load_kept(Path::new(&dir), &crate::can_use).iter().for_each(|line| eprintln!("{line}"));
+    airband_io::catalog::load_kept(Path::new(&dir), &crate::can_use).iter().for_each(|line| eprintln!("{line}"));
 }
 
 /// Fetch the published catalogue and, if it is airband's and newer, use it and keep it in `dir`. True when
 /// what a chooser lists may have changed. Blocks for a few seconds at most; does nothing with no network.
 #[uniffi::export]
 pub fn refresh_catalog(dir: String) -> bool {
-    let (changed, lines) = airband_core::catalog::refresh(Path::new(&dir), &crate::can_use);
+    let (changed, lines) = airband_io::catalog::refresh(Path::new(&dir), &crate::can_use);
     lines.iter().for_each(|line| eprintln!("{line}"));
     changed
 }

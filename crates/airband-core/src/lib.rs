@@ -1,7 +1,6 @@
-//! Every rule the tower and the radio share. The network is reached in one place, fetching the published
-//! catalogue (`catalog::refresh`), through the one client in [`net`]; `providers::Answering::sent` reads what a
-//! service answered a request the caller sent. Files are touched only through [`kept`] and the kept copy of the
-//! catalogue (`catalog::load_kept`). Everything else is tested directly.
+//! Every rule the tower, the relay and the radio share. Core touches neither the disk nor the network: it has no
+//! HTTP client to reach it with, and files are `airband-io`'s (kept files, the catalogue fetched and kept, the
+//! client). `providers::Answering::status` reads what a service answered. Everything here is tested directly.
 //!
 //! Two versioned protocols meet at the tower (docs/protocols.md):
 //! - [`agent`], `airband.agent/1`: how any coding agent, on any harness or model, reports in and is spoken to.
@@ -16,9 +15,7 @@ pub mod audio;
 pub mod catalog;
 pub mod clock;
 pub mod encode;
-pub mod kept;
 pub mod links;
-pub mod net;
 pub mod pairing;
 pub mod prose;
 pub mod providers;

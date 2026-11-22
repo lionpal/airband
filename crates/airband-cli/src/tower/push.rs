@@ -143,7 +143,7 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
         }
     };
     let sealed = airband_core::encode::base64(&sealed);
-    let agent = airband_core::net::agent(Duration::from_secs(20));
+    let agent = airband_io::http::agent(Duration::from_secs(20));
     for target in targets {
         let ask = PushRequest { provider: target.provider, to: target.token.clone(), sealed: sealed.clone(), question: note.kind == Some(Kind::NeedsYou) };
         let res = agent.post(keys.at(&relay, "/push")).header("authorization", keys.as_tower()).send_json(&ask);

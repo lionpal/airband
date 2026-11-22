@@ -36,9 +36,9 @@ pub(super) struct Book {
     /// By agent: what its tool has made since it last spoke.
     #[serde(skip)]
     pending: HashMap<String, Vec<String>>,
-    /// The file there could not be read, nor moved aside: it is never written over.
+    /// Where it is kept: one that could not be read, nor moved aside, is never written over.
     #[serde(skip)]
-    unwritable: bool,
+    keeper: airband_io::kept::Keeper,
 }
 
 fn file() -> std::path::PathBuf {
@@ -47,28 +47,24 @@ fn file() -> std::path::PathBuf {
 
 impl Book {
     pub(super) fn load() -> Book {
-        Self::load_from(&file())
+        let book = Self::load_from(&file());
+        // a test's book is not the tower's: it is read, never written
+        if cfg!(test) { Book { keeper: airband_io::kept::Keeper::nowhere(), ..book } } else { book }
     }
     fn load_from(path: &std::path::Path) -> Book {
-        let mut book: Book = match airband_core::kept::load(path) {
-            Ok(found) => found.unwrap_or_default(),
-            Err(why) => {
-                log(format!("links: {why}"));
-                // one that could not be read and is still there could not be moved aside: nothing is written over it
-                Book { unwritable: !why.set_aside, ..Book::default() }
-            }
-        };
+        let (book, keeper, loaded) = airband_io::kept::Keeper::open::<Book>(Some(path.to_path_buf()));
+        if let Some(trouble) = loaded.trouble() {
+            log(format!("links: {trouble}"));
+        }
+        let mut book = Book { keeper, ..book };
         let oldest = airband_core::clock::now_secs().saturating_sub(KEPT_FOR);
         book.known.retain(|_, k| k.at >= oldest);
         book
     }
     fn keep(&self) {
         // a test's book is not the tower's
-        if cfg!(test) || self.unwritable {
-            return;
-        }
-        if let Err(e) = airband_core::kept::save(&file(), self) {
-            log(format!("links: what is known about them could not be written ({e})"));
+        if let Some(why) = self.keeper.save(self).news() {
+            log(format!("links: what is known about them could not be written ({why})"));
         }
     }
     /// An agent's tool made something. It goes with the next thing that agent says.
@@ -137,7 +133,7 @@ mod tests {
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
         let book = Book::load_from(&path);
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
-        assert!(book.unwritable);
+        book.keep();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "not json");
         let _ = std::fs::remove_dir_all(&dir);
     }

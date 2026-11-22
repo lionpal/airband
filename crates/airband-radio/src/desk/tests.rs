@@ -253,7 +253,9 @@ fn what_he_is_not_looking_at_stays_unread_and_is_counted() {
     let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
     let dir = std::env::temp_dir().join(format!("airband-read-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(two()), floor: Floor::default(), host: host.clone(), chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend }), data_dir: dir.display().to_string() };
+    let mut read = ReadMarks::load(&dir.display().to_string());
+    read.since = 0;
+    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(State { read, ..two() }), floor: Floor::default(), host: host.clone(), chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend }), data_dir: dir.display().to_string() };
     let counts = |v: &DeskView| (v.unread, v.rooms.iter().map(|r| (r.name.clone(), r.unread)).collect::<Vec<_>>());
     // looking at one team: what it said is read, and the other two teams' one thing each is not
     let (shop, ff) = { let s = desk.shared.state.lock().unwrap(); (room(&s, "shop"), room(&s, "ff")) };

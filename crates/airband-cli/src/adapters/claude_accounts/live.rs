@@ -44,7 +44,7 @@ pub(super) fn with_oauth_account(file: &Path, acct: &Value) -> Res<String> {
 }
 /// His own file, which holds his login: whole or not at all, and as private as it was.
 pub(super) fn write_account_file(file: &Path, text: String) -> Res<()> {
-    airband_core::kept::write_keeping(file, text).map_err(|e| format!("{}: {e}", file.display()))
+    airband_io::files::write_keeping(file, text).map_err(|e| format!("{}: {e}", file.display()))
 }
 
 /// Which account the live login is.

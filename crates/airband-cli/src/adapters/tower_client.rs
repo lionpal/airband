@@ -13,7 +13,7 @@ pub(crate) struct TowerHere {
 
 impl TowerHere {
     pub(crate) fn here(cfg: &config::Config, timeout: std::time::Duration) -> TowerHere {
-        TowerHere { agent: airband_core::net::agent(timeout), base: format!("http://127.0.0.1:{}", cfg.port), auth: format!("Bearer {}", cfg.token) }
+        TowerHere { agent: airband_io::http::agent(timeout), base: format!("http://127.0.0.1:{}", cfg.port), auth: format!("Bearer {}", cfg.token) }
     }
     pub(crate) fn get(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
         self.agent.get(format!("{}{path}", self.base)).header("authorization", &self.auth)

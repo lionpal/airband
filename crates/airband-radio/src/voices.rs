@@ -82,7 +82,7 @@ impl Reach {
 
     /// The request, sent: its answer when it gives the sound, else what went wrong, in words for him.
     fn sent(&self, res: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<ureq::http::Response<ureq::Body>, String> {
-        self.service.sent(res)
+        airband_io::http::sent(&self.service, res)
     }
 }
 

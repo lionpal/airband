@@ -18,15 +18,9 @@ url = "2"
 # what an agent wrote, read as the markdown it is (prose.rs)
 pulldown-cmark = { version = "0.13", default-features = false }
 linkify = "0.10"
-# the HTTP client every part uses (net.rs)
-ureq.workspace = true
 # the phone core builds these types for Swift
 uniffi = { workspace = true, optional = true }
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
-
-# telling a failure to read that passes from one that stays (kept.rs)
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
 
 [build-dependencies]
 serde_json.workspace = true

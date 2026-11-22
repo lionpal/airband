@@ -1,6 +1,6 @@
 //! The catalogue on this computer: a newer signed copy is fetched now and then and kept beside the settings,
 //! and `airband catalog` puts out what is built in, for publishing. See `airband_core::catalog`. Reading a
-//! kept copy and fetching a new one are the phone core's (`airband_core::catalog::load_kept`, `refresh`),
+//! kept copy and fetching a new one are the phone core's (`airband_io::catalog::load_kept`, `refresh`),
 //! the same code the app runs.
 use crate::config;
 use airband_core::catalog;
@@ -11,7 +11,7 @@ static SAID: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// Use the newest copy this computer has kept, if it is newer than the one built in. Nothing is fetched.
 pub(crate) fn load() {
-    *SAID.lock().unwrap() = airband_core::catalog::load_kept(&config::dir(), &crate::providers::speaks);
+    *SAID.lock().unwrap() = airband_io::catalog::load_kept(&config::dir(), &crate::providers::speaks);
 }
 
 /// What loading the kept copy had to say, taken: for a command that fetches nothing.
@@ -24,7 +24,7 @@ pub(crate) fn said() -> Vec<String> {
 /// is worth a line in a log (rows this build cannot use, a copy that was refused).
 pub(crate) fn refresh() -> (bool, Vec<String>) {
     let mut lines = said();
-    let (changed, more) = airband_core::catalog::refresh(&config::dir(), &crate::providers::speaks);
+    let (changed, more) = airband_io::catalog::refresh(&config::dir(), &crate::providers::speaks);
     lines.extend(more);
     (changed, lines)
 }

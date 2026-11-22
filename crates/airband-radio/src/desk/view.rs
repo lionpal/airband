@@ -16,20 +16,17 @@ pub(super) struct ReadMarks {
     #[serde(default)]
     pub(super) main: Option<String>,
     #[serde(skip)]
-    keeping: crate::kept::Keeping,
+    keeper: airband_io::kept::Keeper,
 }
 impl ReadMarks {
     pub(super) fn load(dir: &str) -> Self {
-        let kept: Option<ReadMarks> = if dir.is_empty() { None } else { crate::kept::load_or_set_aside(&std::path::Path::new(dir).join("read.json")) };
-        kept.unwrap_or_else(|| ReadMarks { since: airband_core::clock::now_ms(), ..ReadMarks::default() })
+        let (kept, keeper) = crate::kept::open::<Option<ReadMarks>>(crate::kept::file(dir, "read.json"));
+        ReadMarks { keeper, ..kept.unwrap_or_else(|| ReadMarks { since: airband_core::clock::now_ms(), ..ReadMarks::default() }) }
     }
     /// Keep them on the device. The words to tell him when they could not be kept.
     #[must_use]
-    pub(super) fn keep(&self, dir: &str) -> Option<String> {
-        if dir.is_empty() {
-            return None;
-        }
-        self.keeping.save(&std::path::Path::new(dir).join("read.json"), self, "What you have read, and your main computer, are not kept if the app closes.")
+    pub(super) fn keep(&self) -> Option<String> {
+        crate::kept::told(self.keeper.save(self), "What you have read, and your main computer, are not kept if the app closes.")
     }
     pub(super) fn unread(&self, m: &ChatMessage) -> bool {
         !m.his && !m.fyi && m.at > self.upto.get(m.agent.as_deref().unwrap_or_default()).copied().unwrap_or(self.since)
@@ -43,7 +40,7 @@ impl Desk {
         let lost = {
             let mut state = self.shared.state.lock().unwrap();
             state.read.main = Some(computer);
-            state.read.keep(&self.data_dir)
+            state.read.keep()
         };
         if let Some(lost) = lost {
             self.shared.host.note(lost);
@@ -68,7 +65,7 @@ impl Desk {
                 }
             }
             if moved {
-                lost = state.read.keep(&self.data_dir);
+                lost = state.read.keep();
             }
         }
         let state = state;

@@ -74,7 +74,7 @@ pub(crate) struct Link {
     /// that did not: the last few hundred, for him to copy when something is wrong. Kept in a file of the
     /// app's own on this device, so it is still there after the app was closed, and sent nowhere.
     trail: Mutex<std::collections::VecDeque<Line>>,
-    trail_file: Option<std::path::PathBuf>,
+    trail_keeper: airband_io::kept::Keeper,
     /// Where this radio stands, which every request says: on a call or not, showing the chat or not.
     presence: Mutex<airband_core::radio::Presence>,
     /// The relay still keeps something he said for his computer. While it does, what he says next goes by the
@@ -127,7 +127,7 @@ impl Link {
     /// `trail_file` is where the trail is kept between launches; nothing keeps it in memory only.
     pub(crate) fn new(pairing: Pairing, radio: &str, trail_file: Option<std::path::PathBuf>) -> Result<Self, String> {
         let agent = crate::net::agent(POLL_TIMEOUT);
-        let trail = trail_file.as_deref().map(crate::kept::load_or_set_aside).unwrap_or_default();
+        let (trail, trail_keeper) = crate::kept::open(trail_file);
         let mut at = Vec::new();
         let route = match pairing {
             Pairing::Near { at: given, secret } => {
@@ -137,7 +137,7 @@ impl Link {
             Pairing::Direct { url, token } => Route::Direct { url, auth: format!("Bearer {token}"), radio: radio.to_string() },
             Pairing::Relay { relay, secret } => Route::Relay { relay, keys: Keys::derive(&secret)? },
         };
-        Ok(Link { route, agent, near: crate::net::agent_quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct { addrs: at, ..Direct::default() }), trail: Mutex::new(trail), trail_file, presence: Mutex::default(), kept_at_relay: Default::default(), lost: Mutex::default(), awaited: Mutex::default(), told: std::sync::Condvar::new() })
+        Ok(Link { route, agent, near: crate::net::agent_quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct { addrs: at, ..Direct::default() }), trail: Mutex::new(trail), trail_keeper, presence: Mutex::default(), kept_at_relay: Default::default(), lost: Mutex::default(), awaited: Mutex::default(), told: std::sync::Condvar::new() })
     }
 
     /// The tower said where it can be reached without the relay. Anything new is tried at the next request.
@@ -184,10 +184,8 @@ impl Link {
         while trail.len() > TRAIL {
             trail.pop_front();
         }
-        if let Some(file) = &self.trail_file {
-            // the record of what failed is for him to copy; one not kept is missing those lines, nothing more
-            let _ = crate::kept::save(file, &*trail);
-        }
+        // the record of what failed is for him to copy; one not kept is missing those lines, nothing more
+        let _ = self.trail_keeper.save(&*trail);
     }
     /// Something worth a line in the trail that is not a step. Never anything he or an agent said.
     pub(crate) fn remark(&self, what: String) {
