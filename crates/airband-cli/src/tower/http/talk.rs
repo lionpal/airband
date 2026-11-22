@@ -154,11 +154,12 @@ pub(super) async fn utterance(State(app): State<Arc<App>>, Extension(RadioId(rad
             Some(text) => on_utterance(&app, &radio, text, &u).await,
             None => Reply::default(),
         };
-        app.store.finish_receipt(&u.id, &reply);
         // one line for everything he says: its id (the same on the phone and at the relay), how it came, what
         // became of it and how long that took
         let took = began.elapsed();
         log(format!("utterance {} from {radio} by {via}: answered in {:.1} s{}{}", u.id, took.as_secs_f32(), if reply.say.is_empty() { String::new() } else { format!(" (\"{}\")", reply.say.chars().take(80).collect::<String>()) }, if took > SLOW { ", which is slow" } else { "" }));
+        // the line is written before the answer can be read back, so it is there whenever the answer is
+        app.store.finish_receipt(&u.id, &reply);
         let mut inner = app.passing();
         inner.answering.remove(&u.id);
         inner.settle(&radio, &u.id, Outcome::Answered { reply });
