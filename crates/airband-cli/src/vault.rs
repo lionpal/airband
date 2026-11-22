@@ -87,9 +87,13 @@ pub fn open(doc: &mut Value, kept: &Map<String, Value>) -> Result<(), String> {
     missing.map_or(Ok(()), |name| Err(format!("the keychain has no \"{name}\"")))
 }
 
-/// Does this text have secrets kept elsewhere?
+/// Do these settings have secrets kept elsewhere: is one of the places that holds a secret marked as kept in the
+/// keychain? Read as settings, never by looking for the mark in the text. Text that is not settings has none.
 pub fn sealed(text: &str) -> bool {
-    text.contains(&format!("\"{MARK}\""))
+    let Ok(mut doc) = serde_json::from_str::<Value>(text) else { return false };
+    let mut marked = false;
+    each(&mut doc, &mut |_, v| marked |= v.as_str() == Some(MARK));
+    marked
 }
 
 #[cfg(target_os = "macos")]
@@ -100,11 +104,7 @@ mod mac {
 
     /// The keychain is only touched in his real home: under a test's made-up one there is no keychain to find.
     fn at_home() -> bool {
-        let real = unsafe {
-            let pw = libc::getpwuid(libc::getuid());
-            if pw.is_null() { return false }
-            std::ffi::CStr::from_ptr((*pw).pw_dir).to_string_lossy().into_owned()
-        };
+        let Some(real) = crate::config::account().map(|a| a.home) else { return false };
         std::env::var("HOME").is_ok_and(|h| h.trim_end_matches('/') == real.trim_end_matches('/'))
     }
 
@@ -373,6 +373,8 @@ mod tests {
         let kept = seal(&mut doc, &Map::new());
         let text = doc.to_string();
         assert!(sealed(&text));
+        // the mark where no secret is kept (his name), or text that is not settings, is not sealed
+        assert!(!sealed(&json!({"name": MARK}).to_string()) && !sealed(&format!("\"{MARK}\"")));
         assert_eq!(doc["token"], "local");
         for secret in ["t2", "vk", "s1", "s2"] {
             assert!(!text.contains(&format!("\"{secret}\"")), "{secret} is still in the file");
