@@ -22,7 +22,7 @@ use std::thread;
 use std::time::Duration;
 use serde_json::Value;
 use airband_core::pairing::Pairing;
-use airband_core::radio::{Feed, Heard, Kind, Reply, Transmission, Utterance};
+use airband_core::radio::{Act, Feed, Heard, Kind, Reply, Transmission, Utterance};
 use airband_core::relay::{Call, Direction, Keys, random_hex};
 
 mod call;
@@ -145,7 +145,7 @@ pub struct Outgoing {
     pub re: Option<String>,
     /// When he sent it, in milliseconds since 1970.
     pub at: u64,
-    /// The room he was looking at when he sent it (`group:<name>`), if he was in one.
+    /// The room he was looking at when he sent it  by its team's name, if he was in one.
     #[serde(default)]
     pub scope: Option<String>,
     /// For a quick message: the words on the button. `text` is then the whole instruction.
@@ -157,6 +157,12 @@ pub struct Outgoing {
     /// For the tower, not for a host to read: the agents on his screen that other computers have, as JSON.
     #[serde(default)]
     pub others: String,
+    /// The agents he picked for it on his screen, by id.
+    #[serde(default)]
+    pub to: Vec<String>,
+    /// For the tower, not for a host to read: what a button of his stood for, as JSON. Empty for words.
+    #[serde(default)]
+    pub act: String,
     /// How many times it has been tried.
     #[serde(default)]
     pub tries: u32,
@@ -175,6 +181,33 @@ pub struct Outgoing {
     /// How far it has got.
     #[serde(default)]
     pub stage: Stage,
+}
+
+/// What an agent is doing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, uniffi::Enum)]
+pub enum AgentState {
+    Working,
+    /// It has a question open for him.
+    Asking,
+    /// It stopped without finishing or asking: a poke sets it going again.
+    Stalled,
+    /// It finished and reported.
+    Idle,
+    /// His computer did not say, or said something this build does not know.
+    #[default]
+    Unknown,
+}
+impl From<airband_core::radio::AgentState> for AgentState {
+    fn from(s: airband_core::radio::AgentState) -> Self {
+        use airband_core::radio::AgentState as S;
+        match s {
+            S::Working => Self::Working,
+            S::Asking => Self::Asking,
+            S::Stalled => Self::Stalled,
+            S::Idle => Self::Idle,
+            S::Unknown => Self::Unknown,
+        }
+    }
 }
 
 /// How far something he typed has got on its way.
@@ -207,20 +240,20 @@ fn not_read(why: airband_core::radio::NotRead) -> &'static str {
 impl Outgoing {
     /// Something he has just said, not yet tried.
     pub(crate) fn new(id: String, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, attachments: Vec<String>, others: String) -> Outgoing {
-        Outgoing { id, text, re, at: now_ms(), scope, label, attachments, others, tries: 0, last_tried: 0, trail: Vec::new(), failed: None, stage: Stage::Trying }
+        Outgoing { id, text, re, at: now_ms(), scope, label, attachments, others, to: Vec::new(), act: String::new(), tries: 0, last_tried: 0, trail: Vec::new(), failed: None, stage: Stage::Trying }
     }
 }
 
 fn chat(m: airband_core::radio::Message) -> ChatMessage {
     use airband_core::routing::shown;
-    ChatMessage { seq: m.seq, id: m.id, at: m.at, from: shown(&m.from), group: m.group, to: m.to.iter().map(|t| shown(t)).collect(), needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), text: m.text, long: m.long, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links, agent: m.agent, station: String::new(), open: m.open, badge: String::new(), colour: 0, read: m.read, own_session: m.own_session, not_read: m.not_read.map(not_read).unwrap_or_default().to_string() }
+    ChatMessage { seq: m.seq, id: m.id, at: m.at, his: m.his, from: shown(&m.from), group: m.group, to: m.to.iter().map(|t| shown(t)).collect(), needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), text: m.text, long: m.long, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links, agent: m.agent, station: String::new(), open: m.open, badge: String::new(), colour: 0, read: m.read, own_session: m.own_session, not_read: m.not_read.map(not_read).unwrap_or_default().to_string() }
 }
 
 fn chat_feed(feed: Feed) -> ChatFeed {
     ChatFeed {
         seq: feed.seq,
         messages: feed.messages.into_iter().map(chat).collect(),
-        agents: feed.roster.into_iter().map(|r| ChatAgent { id: r.id, callsign: airband_core::routing::shown(&r.callsign), group: r.group, number: airband_core::routing::shown_number(&r.number), harness: r.harness, waiting: r.waiting, reachable: r.reachable, state: r.state, subagents: r.subagents, doing: r.doing, held: r.held, ends: r.ends, model: r.model, effort: r.effort }).collect(),
+        agents: feed.roster.into_iter().map(|r| ChatAgent { id: r.id, callsign: airband_core::routing::shown(&r.callsign), group: r.group, number: airband_core::routing::shown_number(&r.number), named: r.named, harness: r.harness, waiting: r.waiting, reachable: r.reachable, state: r.state.into(), subagents: r.subagents, doing: r.doing, held: r.held, ends: r.ends, model: r.model, effort: r.effort }).collect(),
         quick: feed.quick.into_iter().map(|q| QuickMessage { label: q.label, text: q.text }).collect(),
         projects: feed.projects,
         colours: feed.colours.into_iter().collect(),
@@ -280,8 +313,10 @@ pub struct ChatMessage {
     pub id: String,
     /// Milliseconds since 1970.
     pub at: u64,
-    /// A callsign, or "you".
+    /// What to show it as coming from: a callsign, or a label for him.
     pub from: String,
+    /// He said it.
+    pub his: bool,
     pub group: String,
     /// For his messages: who it went to.
     pub to: Vec<String>,
@@ -347,11 +382,12 @@ pub struct ChatAgent {
     pub group: String,
     /// What tells it from the others of its team: the part of its callsign after the team's name.
     pub number: String,
+    /// That part is a name he gave the session, not a number his computer handed out.
+    pub named: bool,
     pub harness: String,
     pub waiting: bool,
     pub reachable: bool,
-    /// `working`, `asking` (a question of its is open), `stalled` (it stopped without finishing: poke it) or `idle`.
-    pub state: String,
+    pub state: AgentState,
     /// How many subagents it has running.
     pub subagents: u32,
     /// What it is doing right now, in a few words, while it works and its harness can say.
@@ -497,8 +533,8 @@ impl Radio {
     /// so, after half an hour.
     ///
     /// Who it is for: tags at the start of the text if there are any; else the message `re` if he picked one;
-    /// else the tower works it out from what he wrote, among the agents in `scope` (`group:<name>` for one
-    /// project's room; nothing for all of them).
+    /// else the tower works it out from what he wrote, among the agents of the team `scope` names
+    /// (nothing for all of them).
     /// `label`, for a quick message, is the button's words: the chat shows those and the agent gets `text`.
     pub fn queue(&self, text: String, re: Option<String>, scope: Option<String>, label: Option<String>) {
         self.queue_with(text, re, scope, label, String::new());
@@ -595,9 +631,17 @@ impl Radio {
 
     /// As [`Radio::queue`], with the agents on his screen that other computers have (JSON, for the tower).
     pub(crate) fn queue_with(&self, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, others: String) {
+        self.queue_as(text, re, scope, label, others, Vec::new(), None);
+    }
+
+    /// As [`Radio::queue`], for the agents he picked (by id) and for what a button of his stood for. `text`
+    /// is then what the chat shows for it.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn queue_as(&self, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, others: String, to: Vec<String>, act: Option<Act>) {
+        let act = act.map(|a| serde_json::to_string(&a).unwrap_or_default()).unwrap_or_default();
         let waiting = self.store.change(|s| {
             // whatever he attached and has reached the tower goes with this
-            s.outbox.push(Outgoing::new(random_hex(12), text, re, scope, label, self.link.take_armed(), others));
+            s.outbox.push(Outgoing { to, act, ..Outgoing::new(random_hex(12), text, re, scope, label, self.link.take_armed(), others) });
             s.outbox.clone()
         });
         self.wake.ring();
@@ -743,7 +787,13 @@ impl Radio {
     /// With no tag it goes to whoever spoke last. Returns the tower's one-line answer ("Sent to shop two.").
     /// `re` is the id of the message he is replying to, when he picked one.
     pub fn send(&self, text: String, re: Option<String>) -> Result<String, RadioError> {
-        Ok(self.link.utterance(&text, re, None)?.map(|reply| reply.say).unwrap_or_default())
+        Ok(self.link.utterance(&text, re, None, None)?.map(|reply| reply.say).unwrap_or_default())
+    }
+
+    /// Start a new agent in one of his teams, from a command line. Returns the tower's one-line answer.
+    pub fn launch(&self, project: String, tool: Option<String>, model: Option<String>, effort: Option<String>, task: String) -> Result<String, RadioError> {
+        let shown = format!("New agent in {project}");
+        Ok(self.link.utterance(&shown, None, None, Some(Act::Launch(airband_core::radio::Launch { project, tool, model, effort, task })))?.map(|reply| reply.say).unwrap_or_default())
     }
 
     /// The rest of a message: the fuller spoken version, or with `full` exactly what the agent wrote.
@@ -868,7 +918,7 @@ impl Radio {
 
     /// He wants to say something unprompted (a button, Siri, a shortcut): open the microphone when free. `re` is
     /// the id of the message he means to answer, when he picked one; without it the tower works out who it is for.
-    /// `scope` is the room he is looking at (`group:<name>`), which narrows that; nothing for all agents.
+    /// `scope` is the team whose room he is looking at, by name, which narrows that; nothing for all agents.
     pub fn talk(&self, re: Option<String>, scope: Option<String>) {
         let _ = self.jobs.lock().unwrap().send(Job::Talk(re, scope));
     }
@@ -915,14 +965,14 @@ impl Radio {
     /// Send an answer now and wait for the tower to have it: for an answer given where there are only seconds
     /// to send it in (a notification's button, with the app behind the lock screen). If it cannot be sent in
     /// that time it is left in the outbox under the same id, to go when it can, and the caller is told.
-    pub(crate) fn answer_now(&self, text: String, re: String) -> Result<(), RadioError> {
+    pub(crate) fn answer_now(&self, text: String, re: String, act: Option<Act>) -> Result<(), RadioError> {
         let id = random_hex(12);
         let mut failed = LinkError::Unreachable(Way::Relay);
         for attempt in 0..3 {
             if attempt > 0 {
                 thread::sleep(Duration::from_secs(2));
             }
-            match self.link.utterance_once(&airband_core::radio::Utterance { text: text.clone(), id: id.clone(), re: Some(re.clone()), scope: None, label: None, attachments: Vec::new(), others: Vec::new() }).0 {
+            match self.link.utterance_once(&airband_core::radio::Utterance { text: text.clone(), id: id.clone(), re: Some(re.clone()), scope: None, label: None, attachments: Vec::new(), others: Vec::new(), to: Vec::new(), act: act.clone() }).0 {
                 // left with the relay for a computer that is away: it will get there, and he should know it has not yet
                 Ok(Sent::Left { away: true }) => return Err(RadioError::Told { reason: AWAY.into() }),
                 // his computer has it: that is the answer given

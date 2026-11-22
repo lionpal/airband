@@ -298,7 +298,9 @@ impl Serve {
     /// kept says where the radio stood when he said it, which is not news.
     async fn dispatch(&self, call: &Call, via: &str, now: bool) -> (u16, Value) {
         if call.schema != airband_core::radio::SCHEMA {
-            return self.refused(call, via, 400, &format!("this version of airband takes {}, not \"{}\"", airband_core::radio::SCHEMA, call.schema));
+            // in words for him: it is what his phone shows
+            log(format!("a radio spoke {}, and this version of airband takes {}", call.schema, airband_core::radio::SCHEMA));
+            return self.refused(call, via, 400, "This computer runs another version of airband. Update it and the app.");
         }
         if !call.path.starts_with("/v1/radio/") || !matches!(call.method.as_str(), "GET" | "POST") {
             return self.refused(call, via, 403, "a radio may only use /v1/radio/");

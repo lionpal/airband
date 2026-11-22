@@ -26,7 +26,7 @@ impl RadioHost for Quiet {
 }
 
 fn msg(id: &str, seq: u64, from: &str, group: &str, needs: bool) -> ChatMessage {
-    ChatMessage { seq, id: id.into(), at: seq, from: from.into(), group: group.into(), to: Vec::new(), needs_you: needs, fyi: false, stalled: false, text: id.into(), long: false, queued: false, seen: 0, options: Vec::new(), recommended: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: Some(from.into()), station: String::new(), open: needs, badge: String::new(), colour: 0, read: None, own_session: false, not_read: String::new() }
+    ChatMessage { seq, id: id.into(), at: seq, his: from == "you", from: from.into(), group: group.into(), to: Vec::new(), needs_you: needs, fyi: false, stalled: false, text: id.into(), long: false, queued: false, seen: 0, options: Vec::new(), recommended: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: Some(from.into()), station: String::new(), open: needs, badge: String::new(), colour: 0, read: None, own_session: false, not_read: String::new() }
 }
 fn station(name: &str, port: u16, agents: &[(&str, &str)], messages: Vec<ChatMessage>) -> Station {
     let link = format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A{port}&token=t");
@@ -43,7 +43,7 @@ fn station(name: &str, port: u16, agents: &[(&str, &str)], messages: Vec<ChatMes
         failing_since: None,
         reads: String::new(),
         reads_failed: String::new(),
-        agents: agents.iter().map(|(c, g)| ChatAgent { id: c.to_string(), callsign: c.to_string(), group: g.to_string(), number: String::new(), harness: "h".into(), waiting: false, reachable: true, state: "working".into(), subagents: 0, doing: None, held: false, ends: false, model: None, effort: None }).collect(),
+        agents: agents.iter().map(|(c, g)| ChatAgent { id: c.to_string(), callsign: c.to_string(), group: g.to_string(), number: c.strip_prefix(g).unwrap_or(c).trim().to_string(), named: false, harness: "h".into(), waiting: false, reachable: true, state: AgentState::Working, subagents: 0, doing: None, held: false, ends: false, model: None, effort: None }).collect(),
         open: messages.iter().filter(|m| m.needs_you).map(|m| m.id.clone()).collect(),
         sending: Vec::new(),
         landing: Vec::new(),

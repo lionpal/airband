@@ -15,13 +15,19 @@ pub(super) struct Item {
     pub(super) asked: Option<String>,
 }
 /// One line of the chat log. For an agent's message, `aloud` says where it stands with being read out.
+/// What a message of his is shown as coming from. Only a label: whether a message is his is `Entry::his`.
+pub(super) const HIM: &str = "you";
+
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub(super) struct Entry {
     pub(super) seq: u64,
     pub(super) id: String,
     pub(super) at: u64,
-    /// What the sender was called when it said this, or "you". For showing a message whose agent has gone.
+    /// What the sender was called when it said this. For showing a message whose agent has gone.
     pub(super) from: String,
+    /// He said it. Nothing is told from the sender's name: an agent could be called anything.
+    #[serde(default)]
+    pub(super) his: bool,
     /// The project it belongs to.
     pub(super) group: String,
     /// For his messages: what the agents it went to were called.
@@ -115,7 +121,7 @@ impl Entry {
     pub(super) fn his(id: String, to: &[Session], text: String) -> Entry {
         let projects: HashSet<&String> = to.iter().map(|s| &s.callsign.project).collect();
         let group = if projects.len() == 1 { to[0].callsign.project.clone() } else { String::new() };
-        Entry { id, from: "you".into(), group, to: to.iter().map(|s| s.callsign.text()).collect(), to_agents: to.iter().map(|s| s.agent.id.clone()).collect(), short: Some(text.clone()), full: text, ..Entry::default() }
+        Entry { id, from: HIM.into(), his: true, group, to: to.iter().map(|s| s.callsign.text()).collect(), to_agents: to.iter().map(|s| s.agent.id.clone()).collect(), short: Some(text.clone()), full: text, ..Entry::default() }
     }
 }
 /// How many log lines the tower keeps in memory. The database keeps them all.
@@ -134,7 +140,7 @@ impl Inner {
         let oldest = self.log.first().map(|e| e.at).unwrap_or_else(|| now_ms().saturating_sub(24 * 3600 * 1000));
         // what the tower passed on, now taken in by the agent: his message is marked read, the oldest unread first
         for t in told.iter().filter(|t| !t.his) {
-            let read = self.log.iter().position(|e| e.from == "you" && e.seen.is_none() && !e.queued && !e.cancelled && e.to_agents.iter().any(|a| a == agent_id) && e.at <= t.at + 5000 && t.text.contains(e.full.trim()));
+            let read = self.log.iter().position(|e| e.his && e.seen.is_none() && !e.queued && !e.cancelled && e.to_agents.iter().any(|a| a == agent_id) && e.at <= t.at + 5000 && t.text.contains(e.full.trim()));
             if let Some(i) = read {
                 self.log[i].seen = Some(t.at);
                 let id = self.log[i].id.clone();
@@ -210,6 +216,7 @@ impl Inner {
         let to = if e.to_agents.is_empty() { e.to.clone() } else { e.to_agents.iter().zip(&e.to).map(|(id, was)| self.find(id).map(|s| s.callsign.text()).unwrap_or_else(|| was.clone())).collect() };
         Message {
             seq: e.seq,
+            his: e.his,
             id: e.id.clone(),
             at: e.at,
             from: sender.map(|s| s.callsign.text()).unwrap_or_else(|| e.from.clone()),
@@ -233,7 +240,7 @@ impl Inner {
             // only while the harness is still waiting on it
             permission: e.leave && e.permit.as_ref().is_some_and(|id| self.permits.get(id).is_some_and(|p| p.decided.is_none())),
             pictures: e.pictures.clone(),
-            links: if e.from == "you" { Vec::new() } else { airband_core::speech::links(&e.full) },
+            links: if e.his { Vec::new() } else { airband_core::speech::links(&e.full) },
             agent: e.agent.clone(),
             rev: e.rev,
             open: false,
@@ -247,6 +254,8 @@ impl Inner {
         // What the agent goes on to report does not close it at once: he still has not answered. But one it
         // has spoken past three times, or that is six hours old, is let go: by then it has decided for itself
         // or asked again, and it should not keep calling for him.
+        // That last part is a rule of this product and not a fact about the agent: nothing an agent's tool
+        // reports says that a question no longer stands.
         const SPOKEN_PAST: u32 = 3;
         const TOO_OLD_MS: u64 = 6 * 3600 * 1000;
         let mut latest: HashMap<&str, (&str, u64, u32)> = HashMap::new();
@@ -277,10 +286,10 @@ impl Inner {
             .map(|(_, (id, _, _))| id.to_string())
             .collect()
     }
-    /// The last thing he said to an agent: a message addressed to it, or the task it was launched with.
+    /// The last thing he said to an agent: a message addressed to it by its id. The task an agent the tower
+    /// runs was started with is one (`launch::launched`).
     pub(super) fn last_instruction(&self, agent_id: &str) -> Option<String> {
-        let launched = self.find(agent_id).map(|s| launch::launch_label(&s.callsign.project));
-        self.log.iter().rev().find(|e| e.from == "you" && (e.to_agents.iter().any(|a| a == agent_id) || (e.to_agents.is_empty() && e.to.first() == launched.as_ref()))).map(|e| e.full.clone())
+        self.log.iter().rev().find(|e| e.his && e.to_agents.iter().any(|a| a == agent_id)).map(|e| e.full.clone())
     }
     /// The last thing an agent said that was worth his attention.
     pub(super) fn last_said(&self, agent_id: &str) -> Option<&Entry> {

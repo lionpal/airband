@@ -1,6 +1,6 @@
 # Protocols
 
-Three versioned protocols: `airband.agent/1` (agents → tower), `airband.radio/1` (phone ↔ tower) and
+Three versioned protocols: `airband.agent/1` (agents → tower), `airband.radio/2` (phone ↔ tower) and
 `airband.relay/1` (how the second one travels sealed). The first two are plain JSON over HTTP with
 `Authorization: Bearer <token>` when sent to the tower's own port. The types are in `crates/airband-core`
 and are the source of truth; this page explains them.
@@ -97,7 +97,7 @@ answers only.
 A hook that runs with `AIRBAND_HELD_ID` set belongs to an agent the tower runs: `airband hook` reports it under
 that id with `deliver.kind` `held`.
 
-## `airband.radio/1`: radio ↔ tower
+## `airband.radio/2`: radio ↔ tower
 
 The radio always asks; the tower never calls the phone. All under `/v1/radio/`. A radio names itself in the
 `x-airband-radio` header so the tower can keep its place in a call apart from another radio's; for a sealed
@@ -123,7 +123,7 @@ One transmission is out at a time; questions go before reports; each agent has a
 
 An `Utterance` is `{ text, id, re, scope, label, attachments, others }`. `id` is random and the same on every
 retry: the tower takes each id once. `re` is the message he is answering, when he picked one. `scope` is the
-room he was in (`group:<name>`). `label` is the button's words when it is a quick message. `attachments` are
+room he was in (the team's name). `label` is the button's words when it is a quick message. `attachments` are
 ids of files sent with `POST attachment`. `others` are the agents on his screen that another of his computers
 has, each `{ callsign, group, said, ago }`.
 
@@ -250,12 +250,21 @@ Nothing is decided by matching his words.
   agent, or says he wants a new one: "with fable high, find out why checkout is slow". Only a project the tower
   knows and names a launcher lists are taken from its answer. When it is not sure, the tower asks "Who is that
   for?" and gives the candidates in `ask`.
-- When no model answers: with one agent running it is for that one, with several he is asked.
+- When no model answers: with one agent running and no way to start another it is for that one; otherwise he
+  is asked.
 
-Tower commands come only from a radio's buttons, as a word behind a slash and nothing after it: `/poke`,
-`/more`, `/repeat`, `/status`, `/skip`, `/hold`, `/resume` (`COMMANDS` in `routing.rs`). `/poke` sends "Keep
-going." to every stalled agent, within `scope` if one is given. `/launch <project> [with <model> [<effort>]:]
-<task>` starts a new agent. The same words said or typed without the slash are a message for an agent.
+What a button does is never sent as words. An utterance carries it in `act`, as what it is:
+
+- `{"kind":"verdict","allow":true|false}`: yes or no to the request for leave that `re` names. Only this allows
+  or refuses outright; words of his own in reply to a request are read by a model, and only a plain yes allows.
+- `{"kind":"control","control":"poke"|"more"|"repeat"|"status"|"skip"|"hold"|"resume"}`: a control the tower
+  answers itself. A poke sends "Keep going." to every stalled agent, within `scope` if one is given.
+- `{"kind":"launch","project":…,"tool":…,"model":…,"effort":…,"task":…}`: start a new agent. Each is an id from
+  a list the tower gave.
+- `{"kind":"option","index":n}`: he tapped the nth answer the message `re` offered; `text` is its words.
+
+`to` lists the agents he picked on his screen, by id. `text` is then only ever what he said or what the chat
+shows for a button: "/poke", "Allow" or "launch shop" typed or said are words for an agent, like any others.
 
 A callsign is the project's folder name plus a number in order of arrival ("shop one"), unless he named the
 session himself: then it is the project plus that name ("shop 2" → shop two, "removals" → warehouse removals).
@@ -285,7 +294,7 @@ HKDF-SHA256, the channel's name, the pull token that lets only the tower pull fr
 that lets only the radio send to it (`Keys::radio_token`), and one ChaCha20-Poly1305 key per direction (RFC
 8439, a random 96-bit nonce on each message). The relay stores the hash of each token.
 
-Inside each sealed request is `{ t, id, method, path, body, schema }`: an `airband.radio/1` call with the time
+Inside each sealed request is `{ t, id, method, path, body, schema }`: an `airband.radio/2` call with the time
 and a random id. The tower answers 408 to one more than two minutes off its clock, drops one it has answered
 before, answers 400 to a `schema` it does not speak, and serves only `/v1/radio/`. The answer is
 `{ id, status, body }`, and the phone refuses one that is not to its own request.

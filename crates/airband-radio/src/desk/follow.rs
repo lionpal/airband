@@ -51,7 +51,7 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, gener
                     station.messages = radio.history();
                     // on screen in front of him now: read, so a call started later does not read it out
                     if !calling && shared.host.watching() {
-                        seen = feed.messages.iter().filter(|m| m.from != "you" && !m.needs_you).map(|m| m.id.clone()).collect();
+                        seen = feed.messages.iter().filter(|m| !m.his && !m.needs_you).map(|m| m.id.clone()).collect();
                     }
                 }
                 // one request lost is not a computer out of reach: it is asked again at once, and only a second

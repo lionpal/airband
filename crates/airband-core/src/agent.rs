@@ -14,6 +14,21 @@ pub struct AgentEvent {
     pub schema: String,
     pub agent: Agent,
     pub event: Event,
+    /// How it came to be reported, when the reporter says. A tool that is heard two ways (its hooks and its
+    /// own server) is heard through its hooks once they have reported, and this is how the tower knows they have.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub via: Option<Via>,
+}
+
+/// How an event came to be reported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Via {
+    /// The tool's own hook ran `airband hook`.
+    Hook,
+    /// A way this build does not know.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Who is reporting. Sent in full with every event, so the tower can restart without losing anyone.
@@ -103,27 +118,36 @@ pub struct Asked {
     pub choices: Vec<String>,
 }
 
+/// Where a request for leave stands, for the harness that asked.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Leave {
+    /// No answer yet: ask again.
+    Pending,
+    /// His answer.
+    Allow,
+    Deny,
+    /// No radio is there to ask, so the harness should ask in its own way at once.
+    Nobody,
+    /// The tower no longer knows this request, or said something this build does not know.
+    #[default]
+    #[serde(other)]
+    Gone,
+}
+
 /// Where a permission request stands.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PermissionState {
     /// For asking again.
     #[serde(default)]
     pub id: String,
-    /// `pending`: no answer yet, ask again. `allow` or `deny`: his answer. `nobody`: no radio is there to ask, so
-    /// the harness should ask in its own way at once. `gone`: the tower no longer knows this request.
-    pub state: String,
+    pub state: Leave,
     /// With `deny`: his own words, if he gave a reason. The agent should be told them.
     #[serde(default)]
     pub message: String,
     /// With `pending`: how many seconds in all the harness should keep waiting before asking in its own way.
     #[serde(default)]
     pub wait_seconds: u64,
-}
-
-/// Does this path name a picture the tower can keep a copy of? What an adapter reports as a `picture`.
-pub fn is_picture(path: &str) -> bool {
-    let lower = path.to_lowercase();
-    [".png", ".jpg", ".jpeg", ".gif", ".webp"].iter().any(|ext| lower.ends_with(ext))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

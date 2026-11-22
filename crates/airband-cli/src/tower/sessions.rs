@@ -202,7 +202,7 @@ impl Inner {
     pub(super) fn taken_elsewhere(&mut self, shown: &[String]) -> bool {
         use airband_core::routing::shown as as_shown;
         // as callsigns: the team is everything before the last word
-        self.elsewhere = shown.iter().filter_map(|c| c.rsplit_once(' ')).map(|(project, number)| Callsign { project: project.to_string(), number: number.to_string() }).collect();
+        self.elsewhere = shown.iter().filter_map(|c| c.rsplit_once(' ')).map(|(project, number)| Callsign { project: project.to_string(), number: number.to_string(), named: false }).collect();
         let clashing: Vec<String> = self.sessions.iter().filter(|s| s.callsign.numbered() && shown.iter().any(|c| *c == as_shown(&s.callsign.text()))).map(|s| s.agent.id.clone()).collect();
         for id in &clashing {
             let Some(project) = self.find(id).map(|s| s.callsign.project.clone()) else { continue };
@@ -210,7 +210,7 @@ impl Inner {
             let mut n = 1;
             let free = loop {
                 let c = Callsign::next_for(&project, &[]);
-                let candidate = Callsign { project: c.project.clone(), number: airband_core::routing::number_name(n) };
+                let candidate = Callsign { project: c.project.clone(), number: airband_core::routing::number_name(n), named: false };
                 let text = as_shown(&candidate.text());
                 if !shown.contains(&text) && !self.sessions.iter().any(|s| as_shown(&s.callsign.text()) == text) {
                     break candidate;

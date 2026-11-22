@@ -268,7 +268,7 @@ fn look(h: &dyn Harness, tower: &Tower, told: &mut std::collections::HashMap<Str
     }
     for id in listed.iter().filter(|id| !open.iter().any(|o| o.agent.id == **id)) {
         let gone = Agent { id: id.clone(), harness: h.name().into(), cwd: None, name: None, title: None, pid: None, deliver: None, meta: Default::default() };
-        if (tower.event)(AgentEvent { schema: airband_core::agent::SCHEMA.into(), agent: gone, event: airband_core::agent::Event::Signoff }) {
+        if (tower.event)(AgentEvent { schema: airband_core::agent::SCHEMA.into(), agent: gone, event: airband_core::agent::Event::Signoff, via: None }) {
             told.remove(id);
         }
     }
@@ -291,9 +291,11 @@ pub fn worked_all() -> Vec<(String, Vec<String>, u64)> {
             }
         }
     }
-    // not the ones that are gone, nor the ones in the computer's temporary folders: nothing lasting is there
-    let passing: Vec<std::path::PathBuf> = [std::env::temp_dir(), "/tmp".into(), "/private/tmp".into(), "/var/folders".into(), "/private/var/folders".into()].into_iter().collect();
-    all.retain(|(folder, _, _)| std::path::Path::new(folder).is_dir() && !passing.iter().any(|temp| std::path::Path::new(folder).starts_with(temp)));
+    // Not the ones that are gone, nor the ones in a temporary folder: nothing lasting is there. Which folders
+    // are temporary is the system's to say: the one it gives this user (`temp_dir`), and `/tmp`, which POSIX
+    // sets aside for that. Each is compared as the disk has it, links followed.
+    let passing: Vec<std::path::PathBuf> = [std::env::temp_dir(), "/tmp".into()].into_iter().filter_map(|temp| temp.canonicalize().ok()).collect();
+    all.retain(|(folder, _, _)| std::path::Path::new(folder).canonicalize().is_ok_and(|real| real.is_dir() && !passing.iter().any(|temp| real.starts_with(temp))));
     all.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
     all
 }
@@ -466,7 +468,7 @@ pub(crate) fn ask_him_while(request: &PermissionAsk, still: Option<&dyn Fn() -> 
     let auth = format!("Bearer {}", cfg.token);
     let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(40))).build().into();
     let asked: Option<PermissionState> = agent.post(&base).header("authorization", &auth).send_json(request).ok().and_then(|mut res| res.body_mut().read_json().ok());
-    let Some(asked) = asked.filter(|a| a.state == "pending") else { return Answer::Nobody };
+    let Some(asked) = asked.filter(|a| a.state == airband_core::agent::Leave::Pending) else { return Answer::Nobody };
     let until = std::time::Instant::now() + Duration::from_secs(asked.wait_seconds.max(5));
     while std::time::Instant::now() < until {
         if still.is_some_and(|still| !still()) {
@@ -476,11 +478,12 @@ pub(crate) fn ask_him_while(request: &PermissionAsk, still: Option<&dyn Fn() -> 
         let now: Option<PermissionState> = agent.get(format!("{base}/{}?wait={left}", asked.id)).header("authorization", &auth).call().ok().and_then(|mut res| res.body_mut().read_json().ok());
         // the tower went away mid-wait: stop waiting and let the harness ask
         let Some(now) = now else { return Answer::Unanswered };
-        match now.state.as_str() {
-            "allow" => return Answer::Said(true, String::new()),
-            "deny" => return Answer::Said(false, now.message),
-            "pending" => {}
-            _ => return Answer::Unanswered,
+        use airband_core::agent::Leave;
+        match now.state {
+            Leave::Allow => return Answer::Said(true, String::new()),
+            Leave::Deny => return Answer::Said(false, now.message),
+            Leave::Pending => {}
+            Leave::Nobody | Leave::Gone => return Answer::Unanswered,
         }
     }
     // he did not answer, or it was answered elsewhere: take the question back, so the feed does not offer an

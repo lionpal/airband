@@ -117,7 +117,9 @@ impl Held {
 
 /// The driver for a program that reads one message a line and reports by itself.
 fn lines(held: &Held, line: &str, stop: Option<&str>) -> Result<(), String> {
-    // a program that cannot run ends at once; one still there after a moment is taking input
+    // A program that cannot run ends at once. One still there after a moment is taken to be reading its
+    // input: a rule, not a fact, since a program driven this way gives no sign of its own that it is ready
+    // (one that speaks the Agent Client Protocol does, and is waited for: `acp`).
     match held.rx.recv_timeout(Duration::from_millis(400)) {
         Ok(Msg::Gone) => return Err(held.why("it ended as soon as it started")),
         Ok(Msg::Tell(first)) => {
@@ -161,7 +163,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
     }
     let sock = named.get("sock").cloned().ok_or("airband hold needs --sock")?;
     let (program, rest) = argv.split_first().ok_or("airband hold needs a program after --")?;
-    let by = named.get("by").map(String::as_str).unwrap_or("lines");
+    // which of the two drivers: the tower always says, and nothing is assumed when it does not
+    let by = named.get("by").map(String::as_str).ok_or("airband hold needs --by")?;
     // a terminal closing, or the tower that started this going away, must not take the agent with it
     unsafe {
         libc::signal(libc::SIGHUP, libc::SIG_IGN);

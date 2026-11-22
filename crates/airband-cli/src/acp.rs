@@ -123,7 +123,7 @@ pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>, aske
     }
     let me = Agent { id: held.id.clone(), harness: held.harness.clone(), cwd: Some(held.cwd.clone()), name: None, title: None, pid: None, deliver: Some(Deliver::Held), meta: Default::default() };
     let tell = |event: Event| {
-        adapters::post(&AgentEvent { schema: SCHEMA.into(), agent: me.clone(), event });
+        adapters::post(&AgentEvent { schema: SCHEMA.into(), agent: me.clone(), event, via: None });
     };
     // What it can be set to, as it opens. Then what he asked for, the model first: which efforts there are
     // can depend on it, and the agent lists its settings again after each change. One it does not have is

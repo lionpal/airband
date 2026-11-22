@@ -72,7 +72,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let agents = model.agents
         // Who is waiting on him: choosing one has its question read out, then opens the microphone for the
         // answer. What it asked is heard, not shown.
-        let waiting = agents.filter { $0.state == "asking" }.map { agent -> CPListItem in
+        let waiting = agents.filter { $0.state == .asking }.map { agent -> CPListItem in
             let item = CPListItem(text: agent.callsign, detailText: "Waiting on you", image: avatar(of: agent.callsign, side: 44))
             item.handler = { [weak self] _, done in
                 self?.start(then: agent.callsign)
@@ -81,7 +81,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             return item
         }
         if !waiting.isEmpty { sections.append(CPListSection(items: waiting, header: "Waiting on you", sectionIndexTitle: nil)) }
-        let working = agents.filter { $0.state == "working" }.map { agent -> CPListItem in
+        let working = agents.filter { $0.state == .working }.map { agent -> CPListItem in
             let item = CPListItem(text: agent.callsign, detailText: "Working", image: avatar(of: agent.callsign, side: 44))
             item.handler = { [weak self] _, done in
                 self?.model.only = agent.callsign
@@ -131,10 +131,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         // the longest that fits.
         let with = model.only
         let screen = CPVoiceControlTemplate(voiceControlStates: [
-            state("idle", with.map { ["Waiting for \($0)", "Waiting"] } ?? ["Waiting for your agents", "Waiting"], "ellipsis", talk: "Talk"),
-            state("listening", with.map { ["Listening, for \($0)", "Listening"] } ?? ["Listening"], "mic.fill", talk: "Send", other: ("Cancel", { [weak self] in self?.model.cancelTalk() })),
+            state("idle", with.map { ["Waiting for \($0)", "Waiting"] } ?? ["Waiting for your agents", "Waiting"], "ellipsis", talk: ("Talk", "mic.fill")),
+            state("listening", with.map { ["Listening, for \($0)", "Listening"] } ?? ["Listening"], "mic.fill", talk: ("Send", "arrow.up"), other: ("Cancel", "xmark", { [weak self] in self?.model.cancelTalk() })),
             state("sending", ["Sending"], "arrow.up.circle.fill", talk: nil),
-            state("speaking", with.map { ["\($0) is speaking", "Speaking"] } ?? ["Speaking"], "speaker.wave.2.fill", picture: with.flatMap { avatar(of: $0, side: 120) }, talk: "Talk", other: ("Quiet", { [weak self] in self?.model.voice.hush() })),
+            state("speaking", with.map { ["\($0) is speaking", "Speaking"] } ?? ["Speaking"], "speaker.wave.2.fill", picture: with.flatMap { avatar(of: $0, side: 120) }, talk: ("Talk", "mic.fill"), other: ("Quiet", "speaker.slash.fill", { [weak self] in self?.model.voice.hush() })),
             state("offline", ["Can\u{2019}t reach your computer", "Offline"], "wifi.slash", talk: nil),
         ])
         if #available(iOS 26.4, *) {
@@ -167,21 +167,21 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     /// One state of the voice screen: its words, its picture, and its buttons. The talk button is the same
     /// toggle as the big button on the phone: the first press opens the microphone and the second sends.
-    private func state(_ id: String, _ titles: [String], _ symbol: String, picture: UIImage? = nil, talk: String?, other: (String, () -> Void)? = nil) -> CPVoiceControlState {
+    private func state(_ id: String, _ titles: [String], _ symbol: String, picture: UIImage? = nil, talk: (String, String)?, other: (String, String, () -> Void)? = nil) -> CPVoiceControlState {
         let picture = picture ?? UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 72, weight: .semibold))
         let made = CPVoiceControlState(identifier: id, titleVariants: titles, image: picture, repeats: false)
         if #available(iOS 26.4, *) {
             var buttons: [CPButton] = []
             if let talk {
-                let button = CPButton(image: UIImage(systemName: talk == "Send" ? "arrow.up" : "mic.fill") ?? UIImage()) { [weak self] _ in
+                let button = CPButton(image: UIImage(systemName: talk.1) ?? UIImage()) { [weak self] _ in
                     guard let self else { return }
                     Task { @MainActor in await self.model.talk() }
                 }
-                button.title = talk
+                button.title = talk.0
                 buttons.append(button)
             }
             if let other {
-                let button = CPButton(image: UIImage(systemName: other.0 == "Cancel" ? "xmark" : "speaker.slash.fill") ?? UIImage()) { _ in other.1() }
+                let button = CPButton(image: UIImage(systemName: other.1) ?? UIImage()) { _ in other.2() }
                 button.title = other.0
                 buttons.append(button)
             }

@@ -332,26 +332,42 @@ fn limits_in(usage: &Value) -> Vec<Limit> {
 }
 
 /// How much of an account is used. Costs nothing: it is the same question Claude Code's own usage page asks.
-fn usage(token: &str) -> Res<Vec<Limit>> {
+fn usage(token: &str) -> Result<Vec<Limit>, Unchecked> {
     let mut res = http()
         .get(format!("{}/api/oauth/usage", api()))
         .header("authorization", format!("Bearer {token}"))
         .header("anthropic-beta", "oauth-2025-04-20")
         .call()
-        .map_err(|_| format!("Could not reach {} to check it.", maker()))?;
+        .map_err(|_| Unchecked::Said(format!("Could not reach {} to check it.", maker())))?;
     match res.status().as_u16() {
-        200 => Ok(limits_in(&serde_json::from_str(&res.body_mut().read_to_string().map_err(|e| e.to_string())?).unwrap_or(json!({})))),
-        401 | 403 => Err("Its login has run out.".into()),
-        n => Err(format!("{} would not say how much is used ({n}).", maker())),
+        200 => Ok(limits_in(&serde_json::from_str(&res.body_mut().read_to_string().map_err(|e| Unchecked::Said(e.to_string()))?).unwrap_or(json!({})))),
+        401 | 403 => Err(Unchecked::Expired),
+        n => Err(Unchecked::Said(format!("{} would not say how much is used ({n}).", maker()))),
     }
 }
 
 // ── what the rest of airband calls ──
 
-fn account(email: String, live: bool, checked: Res<Vec<Limit>>) -> Account {
+/// Why an account's allowance could not be read.
+enum Unchecked {
+    /// The service refused the login it was asked with.
+    Expired,
+    /// Anything else, in words for him.
+    Said(String),
+}
+impl From<String> for Unchecked {
+    fn from(said: String) -> Self {
+        Unchecked::Said(said)
+    }
+}
+
+fn account(email: String, live: bool, checked: Result<Vec<Limit>, Unchecked>) -> Account {
     let (limits, problem) = match checked {
         Ok(l) => (l, None),
-        Err(e) => (Vec::new(), Some(e)),
+        // the login in use is refreshed by the sessions that use it, so a refusal means none has lately
+        Err(Unchecked::Expired) if live => (Vec::new(), Some("Not checked: no session has used it lately.".to_string())),
+        Err(Unchecked::Expired) => (Vec::new(), Some("Its login has run out.".to_string())),
+        Err(Unchecked::Said(e)) => (Vec::new(), Some(e)),
     };
     Account { id: email.clone(), harness: HARNESS.into(), label: email, live, limits, problem }
 }
@@ -373,15 +389,13 @@ pub fn list() -> (Vec<Account>, Option<String>) {
             .map(|e| {
                 let is_live = live.as_deref() == Some(e.as_str());
                 std::thread::spawn(move || {
-                    let checked = if is_live { live_token().ok_or_else(|| format!("{} is not signed in.", tool())).and_then(|t| usage(&t)) } else { saved_token(&e).and_then(|t| usage(&t)) };
+                    let token = if is_live { live_token().ok_or_else(|| format!("{} is not signed in.", tool())) } else { saved_token(&e) };
+                    let checked = token.map_err(Unchecked::from).and_then(|t| usage(&t));
                     account(e, is_live, checked)
                 })
             })
             .collect();
-        let mut accounts: Vec<Account> = checks.into_iter().filter_map(|h| h.join().ok()).collect();
-        for a in accounts.iter_mut().filter(|a| a.live && a.problem.as_deref() == Some("Its login has run out.")) {
-            a.problem = Some("Not checked: no session has used it lately.".into());
-        }
+        let accounts: Vec<Account> = checks.into_iter().filter_map(|h| h.join().ok()).collect();
         let note = match accounts.len() {
             0 => Some(format!("{} is not signed in on this computer.", tool())),
             1 => Some("To add another account, on the computer: airband accounts add".into()),

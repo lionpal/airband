@@ -27,7 +27,7 @@ pub fn session_events(hook: &Value) -> Option<Vec<Event>> {
 /// Events as the tower takes them, each from this agent. None of them when the hook did not say who it is.
 pub fn from_agent(agent: Option<Agent>, events: Vec<Event>) -> Vec<AgentEvent> {
     let Some(agent) = agent else { return Vec::new() };
-    events.into_iter().map(|event| AgentEvent { schema: SCHEMA.into(), agent: agent.clone(), event }).collect()
+    events.into_iter().map(|event| AgentEvent { schema: SCHEMA.into(), agent: agent.clone(), event, via: Some(airband_core::agent::Via::Hook) }).collect()
 }
 
 /// The command a tool wants to run, as he is shown it: whole, whether the tool gives it as one line or as its

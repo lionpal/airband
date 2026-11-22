@@ -3,7 +3,6 @@
 //! hook's JSON on standard input.
 use super::env;
 use super::hooks::{On, on, text};
-use airband_core::agent::is_picture;
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk};
 use serde_json::Value;
 
@@ -65,19 +64,20 @@ fn whole_lines(mut file: std::fs::File, from: u64, mut each: impl FnMut(&[u8])) 
     }
 }
 
-/// The name in one transcript line, if that line is him running `/remote-control <name>`. A line that only
-/// quotes such a command (a tool's output, a pasted log) is not one.
+/// The name in one transcript line, if that line is Claude Code's own record of him running
+/// `/remote-control <name>`: an entry of its own kind with the command and what he gave it as fields
+/// (`commandRun`). Nothing is read out of a line's words, so one that only quotes such a command is not one.
 fn remote_control_line(line: &[u8]) -> Option<String> {
-    const MARK: &[u8] = b"/remote-control</command-name>";
+    // a quick look before parsing: transcripts run to tens of megabytes
+    const MARK: &[u8] = b"\"commandRun\"";
     if !line.windows(MARK.len()).any(|w| w == MARK) {
         return None;
     }
     let entry: Value = serde_json::from_slice(line).ok()?;
-    if entry["type"].as_str() != Some("system") || entry["subtype"].as_str() != Some("local_command") {
+    if entry["type"].as_str() != Some("system") || entry["subtype"].as_str() != Some("local_command") || entry["commandRun"]["command"].as_str() != Some("remote-control") {
         return None;
     }
-    let content = entry["content"].as_str()?;
-    let args = content.split_once("<command-args>")?.1.split_once("</command-args>")?.0.trim();
+    let args = entry["commandRun"]["args"].as_str()?.trim();
     (!args.is_empty() && args.len() <= 60).then(|| args.to_string())
 }
 
@@ -317,28 +317,16 @@ fn engine_in(tail: &str) -> Option<(String, Option<String>)> {
     })
 }
 
-/// A model's id as a person would say it: "claude-opus-4-7" is "Opus 4.7", "claude-haiku-4-5-20251001" is
-/// "Haiku 4.5". Nothing for a line the harness wrote itself and not a model.
+/// What a model is called, from its id: the name its row gives it (`model_names` in the tool's row). An id the
+/// row does not have is shown as it is written. Nothing for what the row lists as no model at all: the value
+/// Claude Code writes on a line it made itself.
 fn model_name(id: &str) -> Option<String> {
-    let id = id.split('[').next().unwrap_or(id).trim();
-    let (mut words, mut numbers): (Vec<String>, Vec<&str>) = (Vec::new(), Vec::new());
-    for part in id.split('-').filter(|p| !p.is_empty() && *p != "claude") {
-        if part.chars().all(|c| c.is_ascii_digit()) {
-            // a long run of digits is the date a model was made, not part of its name
-            if part.len() <= 2 {
-                numbers.push(part);
-            }
-        } else if part.chars().all(|c| c.is_ascii_alphanumeric()) {
-            let mut c = part.chars();
-            words.push(c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default());
-        } else {
-            return None;
-        }
-    }
-    if words.is_empty() {
+    let rows = airband_core::catalog::built();
+    let row = rows.tools.iter().find(|t| t.id == "claude-code")?;
+    if row.with.get("not_models").and_then(Value::as_array).is_some_and(|none| none.iter().any(|n| n.as_str() == Some(id))) {
         return None;
     }
-    Some(if numbers.is_empty() { words.join(" ") } else { format!("{} {}", words.join(" "), numbers.join(".")) })
+    Some(row.with.get("model_names").and_then(|names| names.get(id)).and_then(Value::as_str).unwrap_or(id).to_string())
 }
 
 /// The latest step named in a piece of a transcript, newest line first.
@@ -441,20 +429,22 @@ fn is_subagent(hook: &Value) -> bool {
     matches!(hook["tool_name"].as_str(), Some("Agent" | "Task"))
 }
 
-/// Every picture file named in a tool's input, whatever the tool calls the field.
-fn pictures_in(input: &Value, cwd: Option<&str>, out: &mut Vec<String>) {
-    match input {
-        Value::String(s) if is_picture(s) => {
+/// The files Claude Code's own tool for handing him a file was given: its `files` field, a list of paths.
+/// Whether one is a picture is found out from the file itself, when the tower makes its copy.
+fn files_sent(hook: &Value) -> Vec<String> {
+    let cwd = hook["cwd"].as_str();
+    hook["tool_input"]["files"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(|s| {
             let path = std::path::Path::new(s);
-            let path = if path.is_absolute() { path.to_path_buf() } else { std::path::Path::new(cwd.unwrap_or(".")).join(path) };
-            if path.is_file() {
-                out.push(path.display().to_string());
-            }
-        }
-        Value::Array(list) => list.iter().for_each(|v| pictures_in(v, cwd, out)),
-        Value::Object(map) => map.values().for_each(|v| pictures_in(v, cwd, out)),
-        _ => {}
-    }
+            if path.is_absolute() { path.to_path_buf() } else { std::path::Path::new(cwd.unwrap_or(".")).join(path) }
+        })
+        .filter(|path| path.is_file())
+        .map(|path| path.display().to_string())
+        .collect()
 }
 
 /// Claude Code: installed for SessionStart, Stop, Notification, UserPromptSubmit and SessionEnd, and after the
@@ -474,13 +464,8 @@ pub fn events(hook: &Value) -> Vec<AgentEvent> {
         // it is handing part of the work to a subagent
         Some("PreToolUse") if is_subagent(hook) => vec![Event::Subagent { done: false, what: hook["tool_input"]["description"].as_str().unwrap_or("").to_string() }],
         Some("PostToolUse") if is_subagent(hook) => vec![Event::Subagent { done: true, what: hook["tool_input"]["description"].as_str().unwrap_or("").to_string() }],
-        // it read a picture, took a screenshot, or sent him a file
-        Some("PostToolUse") => {
-            let mut paths = Vec::new();
-            pictures_in(&hook["tool_input"], hook["cwd"].as_str(), &mut paths);
-            let shown = hook["tool_name"].as_str() == Some("SendUserFile");
-            paths.into_iter().map(|path| Event::Picture { path, shown }).collect()
-        }
+        // it sent him a file
+        Some("PostToolUse") if hook["tool_name"].as_str() == Some(SENDS_FILES) => files_sent(hook).into_iter().map(|path| Event::Picture { path, shown: true }).collect(),
         _ => Vec::new(),
     });
     super::hooks::from_agent(agent_of(hook), events)
@@ -488,9 +473,11 @@ pub fn events(hook: &Value) -> Vec<AgentEvent> {
 
 // ---- setting Claude Code up to report: its hooks, in its own settings file ----
 
-/// The Claude Code tools worth hearing about once they have run: the ones that look at a picture, make one, or
-/// hand him one, and the one that runs a subagent.
-const AFTER_TOOLS: &str = "Read|SendUserFile|Agent|Task|mcp__.*screenshot.*";
+/// Claude Code's tool for handing him a file.
+const SENDS_FILES: &str = "SendUserFile";
+/// The Claude Code tools worth hearing about once they have run: the one that hands him a file, and the one
+/// that runs a subagent.
+const AFTER_TOOLS: &str = "SendUserFile|Agent|Task";
 /// The ones worth hearing about as they start: a subagent.
 const BEFORE_TOOLS: &str = "Agent|Task";
 /// Permission is asked on the radio first. The time allowed is long because he is the one being waited for; the
@@ -621,12 +608,15 @@ mod tests {
     }
     #[test]
     fn the_remote_control_name_is_read_only_from_his_own_command() {
-        let ran = json!({ "type": "system", "subtype": "local_command", "content": "<command-name>/remote-control</command-name>\n <command-message>remote-control</command-message>\n <command-args>shop 2</command-args>" });
+        // as Claude Code writes it: the command and what he gave it are fields of the entry
+        let ran = json!({ "type": "system", "subtype": "local_command", "content": "<local-command-stdout></local-command-stdout>", "commandRun": { "command": "remote-control", "args": "shop 2" } });
         assert_eq!(remote_control_line(ran.to_string().as_bytes()), Some("shop 2".into()));
-        let bare = json!({ "type": "system", "subtype": "local_command", "content": "<command-name>/remote-control</command-name>\n <command-args></command-args>" });
+        let bare = json!({ "type": "system", "subtype": "local_command", "commandRun": { "command": "remote-control", "args": "" } });
         assert_eq!(remote_control_line(bare.to_string().as_bytes()), None);
-        // the same text quoted inside a tool's output is not him naming the session
-        let quoted = json!({ "type": "user", "message": { "content": [{ "type": "tool_result", "content": ran.to_string() }] } });
+        // another command, and words that only quote this one, name nothing
+        let other = json!({ "type": "system", "subtype": "local_command", "commandRun": { "command": "rename", "args": "shop 2" } });
+        assert_eq!(remote_control_line(other.to_string().as_bytes()), None);
+        let quoted = json!({ "type": "user", "message": { "content": "<command-name>/remote-control</command-name> <command-args>shop 9</command-args> \"commandRun\"" } });
         assert_eq!(remote_control_line(quoted.to_string().as_bytes()), None);
     }
     #[test]
@@ -669,8 +659,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("shot.PNG"), b"x").unwrap();
         let cwd = dir.display().to_string();
-        let looked = events(&json!({ "session_id": "s1", "cwd": cwd, "hook_event_name": "PostToolUse", "tool_name": "Read", "tool_input": { "file_path": "shot.PNG" } }));
-        assert_eq!(looked[0].event, Event::Picture { path: dir.join("shot.PNG").display().to_string(), shown: false });
+        // one it only read is not reported: only what it handed him, by the field its tool gives the files in
+        assert!(events(&json!({ "session_id": "s1", "cwd": cwd, "hook_event_name": "PostToolUse", "tool_name": "Read", "tool_input": { "file_path": "shot.PNG" } })).is_empty());
         let sent = events(&json!({ "session_id": "s1", "cwd": cwd, "hook_event_name": "PostToolUse", "tool_name": "SendUserFile", "tool_input": { "files": [dir.join("shot.PNG"), "notes.md", "gone.png"] } }));
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0].event, Event::Picture { path: dir.join("shot.PNG").display().to_string(), shown: true });
@@ -725,10 +715,10 @@ mod tests {
         .join("\n");
         assert_eq!(engine_in(&transcript), Some(("Fable 5.2".to_string(), Some("high".to_string()))));
         assert_eq!(engine_in(r#"{"type":"user","message":{"content":"hello"}}"#), None);
+        // a name comes from the row; an id the row does not have is shown as written, never taken apart
         assert_eq!(model_name("claude-haiku-4-5-20251001").as_deref(), Some("Haiku 4.5"));
-        assert_eq!(model_name("claude-opus-4-7[1m]").as_deref(), Some("Opus 4.7"));
-        assert_eq!(model_name("claude-3-5-sonnet-20241022").as_deref(), Some("Sonnet 3.5"));
-        assert_eq!(model_name("gpt-5").as_deref(), Some("Gpt 5"));
+        assert_eq!(model_name("some-new-model-9").as_deref(), Some("some-new-model-9"));
+        assert_eq!(model_name("<synthetic>"), None);
     }
 
     #[test]

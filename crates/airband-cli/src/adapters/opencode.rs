@@ -19,6 +19,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const NAME: &str = "opencode";
+/// What the tool is called, as its row has it.
+fn tool() -> String {
+    super::called(NAME).0
+}
 /// A session that has not changed for this long is not on the radio. OpenCode's server keeps every session
 /// there has been and does not say which have a window open (it runs a session's turns itself, window or no
 /// window), so there is no fact to go by but this and whether one was put away.
@@ -80,7 +84,7 @@ fn leave(request: &Value, cwd: Option<&str>) -> Option<PermissionAsk> {
         _ => format!("{action}: {}", on.join(", ")),
     };
     // one too long to put in front of him whole is not asked on the phone: it stays on OpenCode's own screen
-    super::hooks::leave(agent(session, cwd), action, what, request, " The rest is on OpenCode's own screen.", None)
+    super::hooks::leave(agent(session, cwd), action, what, request, &format!(" The rest is on the screen of {} itself.", tool()), None)
 }
 
 /// Requests for leave that are being put to him, or were: each is asked once.
@@ -152,7 +156,7 @@ fn watch(tower: Tower) {
         std::thread::sleep(Duration::from_secs(if service().is_some() { 2 } else { 20 }));
         let Some(list) = get("/api/session?limit=40") else { continue };
         let Some(sessions) = list["data"].as_array() else { continue };
-        let send = |id: &str, cwd: Option<&str>, event: Event| (tower.event)(AgentEvent { schema: SCHEMA.into(), agent: agent(id, cwd), event });
+        let send = |id: &str, cwd: Option<&str>, event: Event| (tower.event)(AgentEvent { schema: SCHEMA.into(), agent: agent(id, cwd), event, via: None });
         // not the ones the tower runs itself: their driver reports for them
         let here: Vec<&Value> = current(sessions, airband_core::clock::now_ms()).into_iter().filter(|s| s["id"].as_str().is_some_and(|id| !(tower.holds)(id))).collect();
         for s in &here {
@@ -206,21 +210,21 @@ fn watch(tower: Tower) {
 
 /// His words into that session as a turn of his own.
 fn deliver(session: &str, words: &str) -> Result<(), String> {
-    service().ok_or("OpenCode is not running on this computer.")?;
+    service().ok_or_else(|| format!("{} is not running on this computer.", tool()))?;
     match post(&format!("/api/session/{session}/prompt"), json!({ "text": words })) {
         Some(200..=299) => Ok(()),
-        Some(code) => Err(format!("OpenCode did not take it ({code}).")),
-        None => Err("OpenCode could not be reached.".into()),
+        Some(code) => Err(format!("{} did not take it ({code}).", tool())),
+        None => Err(format!("{} could not be reached.", tool())),
     }
 }
 
 /// Put a session away in OpenCode (its own "archive"): it keeps what was done and stops listing it as current.
 fn put_away(session: &str) -> Result<(), String> {
-    let (url, password) = service().ok_or("OpenCode is not running on this computer.")?;
+    let (url, password) = service().ok_or_else(|| format!("{} is not running on this computer.", tool()))?;
     match client().patch(format!("{url}/api/session/{session}")).header("authorization", auth(&password)).send_json(json!({ "archived": true })) {
         Ok(res) if (200..300).contains(&res.status().as_u16()) => Ok(()),
-        Ok(res) => Err(format!("OpenCode did not put it away ({}).", res.status().as_u16())),
-        Err(_) => Err("OpenCode could not be reached.".into()),
+        Ok(res) => Err(format!("{} did not put it away ({}).", tool(), res.status().as_u16())),
+        Err(_) => Err(format!("{} could not be reached.", tool())),
     }
 }
 

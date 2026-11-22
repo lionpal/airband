@@ -66,41 +66,16 @@ fn keep_as(id: String, decode: impl FnOnce() -> Option<image::DynamicImage>) -> 
     Some(Picture { id, width: rgb.width(), height: rgb.height(), bytes: bytes.len() as u32 })
 }
 
-/// May a picture that is only named in an agent's text be copied for the phone? Only from where an agent makes
-/// pictures: its own project, and the temporary folders. A path in a message is words, not an action the
-/// agent took, so it does not reach into the rest of the disk. (A picture the agent read or sent him is
-/// reported by its harness as an event and is not limited this way.)
-/// Could this path, going by how it is written, be within reach? Decided without touching the disk.
-fn near(path: &Path, cwd: Option<&str>) -> bool {
-    let mut roots: Vec<PathBuf> = vec![std::env::temp_dir(), "/tmp".into(), "/private/tmp".into(), "/var/folders".into(), "/private/var/folders".into()];
-    roots.extend(cwd.map(PathBuf::from));
-    !path.components().any(|c| c == std::path::Component::ParentDir) && roots.iter().any(|root| path.starts_with(root))
-}
-
-fn within_reach(path: &Path, cwd: Option<&str>) -> bool {
-    let Ok(real) = path.canonicalize() else { return false };
-    let mut roots: Vec<PathBuf> = vec![std::env::temp_dir(), "/tmp".into(), "/var/folders".into()];
-    roots.extend(cwd.map(PathBuf::from));
-    roots.iter().filter_map(|r| r.canonicalize().ok()).any(|root| real.starts_with(root))
-}
-
-/// Picture files an agent named in what it wrote, in order. Only ones that exist and are [`within_reach`].
-pub(super) fn named_in(text: &str, cwd: Option<&str>) -> Vec<PathBuf> {
+/// The picture files an agent put in what it wrote as pictures: Markdown images (`![chart](out/chart.png)`),
+/// as the Markdown parser finds them, in order. A path that is only mentioned is words, and stays words: an
+/// agent that means him to see a picture sends it (its tool's own way) or writes it as an image.
+pub(super) fn in_markdown(text: &str, cwd: Option<&str>) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
-    for word in text.split(|c: char| c.is_whitespace() || "`\"'()[]<>".contains(c)) {
-        let word = word.trim_end_matches(['.', ',', ';', ':', '!', '?']).trim_start_matches("file://");
-        if !agent::is_picture(word) {
-            continue;
-        }
-        let path = if let Some(rest) = word.strip_prefix("~/") {
-            std::env::var("HOME").map(|home| Path::new(&home).join(rest)).unwrap_or_else(|_| PathBuf::from(word))
-        } else if Path::new(word).is_absolute() {
-            PathBuf::from(word)
-        } else {
-            Path::new(cwd.unwrap_or(".")).join(word)
-        };
-        // by its name first, before the disk is touched: a path on another drive is never even looked at
-        if near(&path, cwd) && path.is_file() && within_reach(&path, cwd) && !out.contains(&path) {
+    for named in airband_radio::prose::images(text) {
+        // only a file that is here is one: a picture on the web is not looked for
+        let path = PathBuf::from(&named);
+        let path = if path.is_absolute() { path } else { Path::new(cwd.unwrap_or(".")).join(path) };
+        if path.is_file() && !out.contains(&path) {
             out.push(path);
         }
     }
@@ -158,18 +133,16 @@ mod tests {
         assert_eq!(ids, ["b", "n"]);
     }
     #[test]
-    fn finds_pictures_named_in_a_message() {
+    fn a_picture_written_as_a_markdown_image_is_found_and_one_only_mentioned_is_not() {
         let dir = std::env::temp_dir().join(format!("airband-pictures-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("chart.png"), b"x").unwrap();
         let abs = dir.join("chart.png").display().to_string();
-        let found = named_in(&format!("See `chart.png`, also ({abs}). Not missing.png or notes.md."), Some(&dir.display().to_string()));
-        assert_eq!(found, vec![dir.join("chart.png")]);
-        // a picture elsewhere on the disk is not copied because a message mentions it
-        let home = std::path::PathBuf::from(std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap()).join(format!(".airband-test-{}.png", std::process::id()));
-        std::fs::write(&home, b"x").unwrap();
-        assert!(named_in(&format!("Look at {}", home.display()), Some(&dir.display().to_string())).is_empty());
-        std::fs::remove_file(&home).unwrap();
+        let cwd = dir.display().to_string();
+        assert_eq!(in_markdown("Here it is: ![the chart](chart.png)", Some(&cwd)), vec![dir.join("chart.png")]);
+        assert_eq!(in_markdown(&format!("![]({abs}) and again ![]({abs})"), Some(&cwd)), vec![dir.join("chart.png")]);
+        // words that name a file, a file that is not there, and a picture on the web
+        assert!(in_markdown(&format!("See `chart.png`, also ({abs}). ![gone](missing.png) ![web](https://example.com/a.png)"), Some(&cwd)).is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
     }
     #[test]

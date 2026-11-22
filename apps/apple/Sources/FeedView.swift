@@ -188,9 +188,9 @@ struct FeedView: View {
     /// What is selected, as the id of its chip: for scrolling the row to it.
     private var chosen: String { model.only.map { "agent:" + $0 } ?? model.room.map { "team:" + $0 } ?? "all" }
 
-    private func chip(_ label: String, on: Bool, dot: String? = nil, working: Bool = false, colour: UInt8? = nil, badge: (String, UInt8)? = nil, unread: UInt32 = 0) -> some View {
+    private func chip(_ label: String, on: Bool, dot: AgentState? = nil, working: Bool = false, colour: UInt8? = nil, badge: (String, UInt8)? = nil, unread: UInt32 = 0) -> some View {
         HStack(spacing: 7) {
-            if let dot { StateDot(state: dot, working: working).id(dot + (working ? "+" : "")) }
+            if let dot { StateDot(state: dot, working: working).id("\(dot)" + (working ? "+" : "")) }
             if let badge { Badge(text: badge.0, colour: badge.1, size: 20) }
             Text(label).font(.system(size: 14, weight: on ? .semibold : .medium)).lineLimit(1)
                 .padding(.bottom, 2).overlay(alignment: .bottom) { if let colour { Capsule().fill(Palette.team(colour)).frame(height: 2) } }
@@ -220,7 +220,7 @@ struct FeedView: View {
                 if let team {
                     // inside a team: the team itself, then its agents
                     Button { model.look(room: team.name) } label: {
-                        chip(team.name, on: model.only == nil, dot: team.state, working: team.members.contains { $0.state == "working" }, colour: team.colour, unread: team.unread)
+                        chip(team.name, on: model.only == nil, dot: team.state, working: team.members.contains { $0.state == .working }, colour: team.colour, unread: team.unread)
                     }
                     .buttonStyle(.plain).id("team:" + team.name).accessibilityLabel(team.unread > 0 && model.only != nil ? "\(team.name), \(team.unread) unread" : team.name)
                     ForEach(team.members, id: \.id) { agent in
@@ -240,7 +240,7 @@ struct FeedView: View {
                         model.look(room: on ? nil : room.name)
                     } label: {
                         HStack(spacing: 7) {
-                            StateDot(state: room.state, working: room.members.contains { $0.state == "working" }).id(room.state + (room.members.contains { $0.state == "working" } ? "+" : ""))
+                            StateDot(state: room.state, working: room.members.contains { $0.state == .working }).id("\(room.state)" + (room.members.contains { $0.state == .working } ? "+" : ""))
                             Text(room.name).font(.system(size: 14, weight: on ? .semibold : .medium))
                                 .padding(.bottom, 2).overlay(alignment: .bottom) { Capsule().fill(Palette.team(room.colour)).frame(height: 2) }
                             if room.subagents > 0 {
@@ -371,8 +371,8 @@ struct FeedView: View {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     ForEach(model.view.feed, id: \.id) { m in
                         Group {
-                            if m.from == "you" {
-                                Mine(m: m, latest: m.id == model.view.feed.last(where: { $0.from == "you" })?.id)
+                            if m.his {
+                                Mine(m: m, latest: m.id == model.view.feed.last(where: { $0.his })?.id)
                             } else if m.needsYou {
                                 Question(m: m)
                             } else {

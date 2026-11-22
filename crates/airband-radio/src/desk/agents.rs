@@ -59,11 +59,13 @@ impl Desk {
             }
         };
         if let Some(radio) = radio {
-            // the typed command, which the tower takes as it is; the chat shows the words beside it
-            match tool {
-                Some(tool) => radio.queue(format!("/launch {room} tool:{}", tool.id), None, None, Some(format!("New {} agent in {room}", tool.name))),
-                None => radio.queue(format!("/launch {room}"), None, None, Some(format!("New agent in {room}"))),
-            }
+            // sent as what it is; the words are only what the chat shows for it
+            let shown = match &tool {
+                Some(tool) => format!("New {} agent in {room}", tool.name),
+                None => format!("New agent in {room}"),
+            };
+            let launch = airband_core::radio::Launch { project: room, tool: tool.map(|t| t.id), ..Default::default() };
+            radio.queue_as(shown, None, None, None, String::new(), Vec::new(), Some(Act::Launch(launch)));
         }
     }
     /// Every paired computer's accounts, in the order the computers were paired. A computer that cannot be

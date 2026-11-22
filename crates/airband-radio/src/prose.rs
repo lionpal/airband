@@ -7,6 +7,14 @@
 
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
+/// Where each picture in a piece of Markdown points (`![alt](here)`), in order, as the parser finds them.
+pub fn images(text: &str) -> Vec<String> {
+    Parser::new_ext(text, Options::empty()).filter_map(|event| match event {
+        Event::Start(Tag::Image { dest_url, .. }) => Some(dest_url.to_string()),
+        _ => None,
+    }).collect()
+}
+
 /// A run of words in one style.
 #[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
 pub struct ProseSpan {

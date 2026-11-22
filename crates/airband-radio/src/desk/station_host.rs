@@ -58,12 +58,11 @@ impl RadioHost for StationHost {
                 s.landing.retain(|(o, _)| o.id != message.id);
             }
             // the tower read his words as for an agent another computer has: they go there, addressed to it
-            let there = elsewhere.as_ref().and_then(|c| state.stations.iter().enumerate().find(|(i, s)| *i != self.index && s.agents.iter().any(|a| a.callsign == *c)).map(|(_, s)| s.radio.clone()));
+            let there = elsewhere.as_ref().and_then(|c| state.stations.iter().enumerate().filter(|(i, _)| *i != self.index).find_map(|(_, s)| s.agents.iter().find(|a| a.callsign == *c).map(|a| (s.radio.clone(), a.id.clone()))));
             match (there, elsewhere) {
-                (Some(radio), Some(callsign)) => {
-                    let text = addressed(&callsign, &message.text);
+                (Some((radio, agent)), Some(_)) => {
                     drop(state);
-                    radio.queue_with(text, None, None, message.label.clone(), String::new());
+                    radio.queue_as(message.text.clone(), None, None, message.label.clone(), String::new(), vec![agent], None);
                 }
                 (_, gone) => state.asking = Some(Asking { message, guesses: gone.into_iter().chain(ask).collect() }),
             }
@@ -92,7 +91,7 @@ impl RadioHost for StationHost {
             let mut state = self.shared.state.lock().unwrap();
             if let Some(waiting) = state.stations.get(self.index).map(|s| s.radio.armed()) {
                 let before = state.uploads.len();
-                state.uploads.retain(|u| !(u.station == self.index && u.shown.state == "ready" && !waiting.contains(&u.shown.id)));
+                state.uploads.retain(|u| !(u.station == self.index && u.shown.state == UploadState::Ready && !waiting.contains(&u.shown.id)));
                 if state.uploads.len() != before {
                     drop(state);
                     self.shared.host.changed();

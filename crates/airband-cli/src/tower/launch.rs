@@ -93,9 +93,9 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
                 log(format!("started {named}{with} in {project}, held by the tower, with nothing to do yet"));
                 say(format!("A new agent is ready in {project}{with}."))
             }
-            Ok(_) => {
+            Ok(id) => {
                 log(format!("started {named}{with} in {project}, held by the tower: {task}"));
-                say(launched(app, project, &with, task))
+                say(launched(app, project, &with, task, Some(id)))
             }
             Err(e) => {
                 log(format!("launch in {project} failed: {e}"));
@@ -113,7 +113,8 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
     match tokio::time::timeout(Duration::from_secs(20), run).await {
         Ok(Ok(out)) if out.status.success() => {
             log(format!("launched {named}{with} in {project} ({session}): {task}"));
-            say(launched(app, project, &with, task))
+            // handed off to a program of its own: nothing says which agent it becomes when it reports in
+            say(launched(app, project, &with, task, None))
         }
         Ok(Ok(out)) => {
             log(format!("launch in {project} failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
@@ -133,9 +134,10 @@ pub(super) fn launch_label(project: &str) -> String {
 }
 
 /// A new agent was started with a task: the task is written into the chat as his words to it, and he is
-/// told it is on its way.
-fn launched(app: &App, project: &str, with: &str, task: &str) -> String {
+/// told it is on its way. `agent` is the new agent's id, when the tower runs it and so knows it: the task is
+/// then its first instruction.
+fn launched(app: &App, project: &str, with: &str, task: &str, agent: Option<String>) -> String {
     let mut inner = app.change();
-    inner.record(Entry { id: config::random_hex(8), from: "you".into(), group: project.into(), to: vec![launch_label(project)], short: Some(task.into()), full: task.into(), ..Entry::default() });
+    inner.record(Entry { id: config::random_hex(8), from: HIM.into(), his: true, group: project.into(), to: vec![launch_label(project)], to_agents: agent.into_iter().collect(), short: Some(task.into()), full: task.into(), ..Entry::default() });
     format!("Launching in {project}{with}.")
 }

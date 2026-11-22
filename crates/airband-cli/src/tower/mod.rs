@@ -7,7 +7,7 @@
 //! to whoever spoke last. The tower delivers it the way that agent said it can be reached.
 //!
 //! Radios reach it through a relay (relay_link.rs), sealed end to end, or directly: it listens on 127.0.0.1
-//! and this machine's Tailscale address only, and every direct request needs the token.
+//! and this machine's address on a private network laid over the internet, if it has one (`config::overlay_addrs`), and every direct request needs the token.
 //!
 //! Where things are:
 //! - this file: starting the tower up, and the pieces every module shares
@@ -82,7 +82,7 @@ use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Notify;
 use airband_core::agent::{self, Agent, AgentEvent, Deliver, Event};
-use airband_core::radio::{Feed, Heard, Kind, Message, More, Reply, RosterEntry, Transmission, Utterance, in_scope};
+use airband_core::radio::{Act, AgentState, Feed, Heard, Kind, Message, More, Reply, RosterEntry, Transmission, Utterance, in_scope};
 use airband_core::routing::{Callsign, Control, parse_utterance};
 use airband_core::speech::{opening, spoken};
 
@@ -93,7 +93,7 @@ pub(crate) const RADIO_HEADER: &str = "x-airband-radio";
 /// The header the tower's own link puts on a radio's request to say how it came: `the relay`, `his own
 /// network`, or `the relay, kept while the tower was away`. Only for the log.
 pub(crate) const VIA_HEADER: &str = "x-airband-via";
-/// The header a radio says where it stands in, as JSON (`airband.radio/1`'s `Presence`). A radio that comes
+/// The header a radio says where it stands in, as JSON (`airband.radio/2`'s `Presence`). A radio that comes
 /// through the relay says it inside the sealed request, and the relay link puts it here.
 pub(crate) const PRESENCE_HEADER: &str = "x-airband-presence";
 
@@ -107,6 +107,9 @@ const THERE: Duration = Duration::from_secs(60);
 const STILL_NEWS: Duration = Duration::from_secs(600);
 /// A radio that took a transmission and never said "ready" is assumed free again after this.
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long an agent that stopped to wait for background work of its own still counts as working. A product
+/// rule: no tool says whether that work is still running.
+const STILL_ITS_OWN_WORK_MS: u64 = 20 * 60 * 1000;
 
 /// One radio's line: what it said is worked on in the order it was put here.
 type Line = tokio::sync::mpsc::UnboundedSender<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>;
@@ -490,7 +493,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
                         let _here = entering.enter();
                         let id = agent.id.clone();
                         let new = finding.read().find(&id).is_none();
-                        let event = AgentEvent { schema: agent::SCHEMA.into(), agent, event: Event::Checkin };
+                        let event = AgentEvent { schema: agent::SCHEMA.into(), agent, event: Event::Checkin, via: None };
                         finding.store.event(&serde_json::to_value(&event).unwrap_or_default());
                         if http::take_event(&finding, event).is_err() {
                             return false;
@@ -569,13 +572,13 @@ pub fn run(cfg: Config) -> Result<(), String> {
             let router = router.clone();
             tokio::spawn(async move { axum::serve(local, router).await });
         }
-        // Tailscale may come up after the tower does, or change address; so may the local network. On the local
+        // A private network may come up after the tower does, or change address; so may the local network. On the local
         // network, when that is allowed (`airband lan`), only sealed requests are served: nothing there is
         // trusted with a token.
         let lan = app.cfg.lan;
         let mut bound = HashSet::new();
         loop {
-            let wanted = config::tailscale_addrs().into_iter().map(|a| (a, false)).chain(config::lan_addrs().into_iter().filter(|_| lan).map(|a| (a, true)));
+            let wanted = config::overlay_addrs().into_iter().map(|a| (a, false)).chain(config::lan_addrs().into_iter().filter(|_| lan).map(|a| (a, true)));
             for (addr, sealed_only) in wanted {
                 if bound.contains(&addr) {
                     continue;

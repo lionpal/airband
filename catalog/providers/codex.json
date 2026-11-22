@@ -49,9 +49,12 @@
             "skill_search",
             "--disable",
             "unified_exec",
-            "--output-schema",
-            "{shape}",
+            "{with_shape}",
             "-"
+          ],
+          "with_shape": [
+            "--output-schema",
+            "{shape}"
           ]
         }
       },

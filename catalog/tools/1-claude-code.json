@@ -90,6 +90,24 @@
   "with": {
     "program": "claude",
     "accounts_api": "https://api.anthropic.com",
-    "accounts_token": "https://platform.claude.com/v1/oauth/token"
+    "accounts_token": "https://platform.claude.com/v1/oauth/token",
+    "model_names": {
+      "claude-fable-5-2": "Fable 5.2",
+      "claude-fable-5-1": "Fable 5.1",
+      "claude-fable-5": "Fable 5",
+      "claude-opus-5-5": "Opus 5.5",
+      "claude-sonnet-5-5": "Sonnet 5.5",
+      "claude-haiku-5-5": "Haiku 5.5",
+      "claude-opus-4-7": "Opus 4.7",
+      "claude-opus-4-6": "Opus 4.6",
+      "claude-opus-4-5": "Opus 4.5",
+      "claude-sonnet-4-6": "Sonnet 4.6",
+      "claude-sonnet-4-5": "Sonnet 4.5",
+      "claude-haiku-4-5": "Haiku 4.5",
+      "claude-haiku-4-5-20251001": "Haiku 4.5"
+    },
+    "not_models": [
+      "<synthetic>"
+    ]
   }
 }

@@ -85,6 +85,8 @@ impl Store {
                     recommended: r.get::<_, Option<i64>>(11)?.map(|n| n as u32),
                     pictures: r.get::<_, Option<String>>(12)?.and_then(|p| serde_json::from_str(&p).ok()).unwrap_or_default(),
                     agent: r.get(13)?,
+                    // how the sender column keeps it: his own lines are written under the one label
+                    his: r.get::<_, String>(3)? == HIM,
                     to_agents: r.get::<_, Option<String>>(14)?.and_then(|p| serde_json::from_str(&p).ok()).unwrap_or_default(),
                     rev: r.get::<_, Option<i64>>(15)?.unwrap_or(0) as u64,
                     read: r.get(16)?,

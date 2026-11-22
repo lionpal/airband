@@ -145,7 +145,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     func pushAddress(_ token: String) { desk.setPush(provider: "apns", token: token) }
 
     /// An answer given on a notification. Blocks until the computer has it, or says why it does not.
-    func answerNow(station: String, message: String, text: String) throws { try desk.answerNow(station: station, messageId: message, text: text) }
+    func answerNow(station: String, message: String, text: String, tapped: Tapped?) throws { try desk.answerNow(station: station, messageId: message, text: text, tapped: tapped) }
 
     /// Look at everyone, at one team, or at one agent. Whatever he was answering is let go: it may no longer be
     /// in view. Every place that changes who he is looking at goes through here.
@@ -167,7 +167,15 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// What he is told when a computer cannot be reached: which, when more than one could be meant.
     var cannotReach: String { view.away.isEmpty ? "Can\u{2019}t reach your computer" : "Can\u{2019}t reach " + view.away.joined(separator: ", ") }
     /// A state as it is read out for someone who cannot see its dot.
-    static func spoken(state: String) -> String { state == "asking" ? "waiting on you" : state == "stalled" ? "stopped" : state }
+    static func spoken(state: AgentState) -> String {
+        switch state {
+        case .asking: "waiting on you"
+        case .stalled: "stopped"
+        case .working: "working"
+        case .idle: "idle"
+        case .unknown: "state not known"
+        }
+    }
 
     /// A message's words whole, once they have been fetched; as it came until then.
     func whole(_ m: ChatMessage) -> String { full[m.id] ?? m.text }
@@ -244,7 +252,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// While he is on a call, each agent that is waiting on him has a banner: on the lock screen, and on a
     /// car's screen when another app is in front. It comes down when the agent has its answer or the call ends.
     private func syncBanners() {
-        let waiting = calling ? agents.filter { $0.state == "asking" } : []
+        let waiting = calling ? agents.filter { $0.state == .asking } : []
         for (callsign, banner) in banners where !waiting.contains(where: { $0.callsign == callsign }) {
             banners[callsign] = nil
             Task { await banner.end(nil, dismissalPolicy: .immediate) }
@@ -399,10 +407,15 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
     }
 
-    /// One tap on an answer button: send it as the answer to that message.
-    func answer(_ m: ChatMessage, _ choice: String) {
+    /// One tap on an answer button: it goes as what the button stood for.
+    func tap(_ m: ChatMessage, _ tapped: Tapped) {
         if replyingTo?.id == m.id { replyingTo = nil }
-        desk.answer(messageId: m.id, text: choice)
+        desk.tap(messageId: m.id, tapped: tapped)
+    }
+    /// Words sent as the answer to that message.
+    func answer(_ m: ChatMessage, _ words: String) {
+        if replyingTo?.id == m.id { replyingTo = nil }
+        desk.answer(messageId: m.id, text: words)
     }
 
     /// Send what he typed: to the message he picked if he picked one, else to whoever the desk and the tower
@@ -422,7 +435,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// The agents he could stop right now: at work, run by their computer, and in the room or agent he is looking at.
     var stoppable: [DeskMember] {
-        view.rooms.filter { room == nil || $0.name == room }.flatMap(\.members).filter { $0.held && $0.state == "working" && (only == nil || $0.callsign == only) }
+        view.rooms.filter { room == nil || $0.name == room }.flatMap(\.members).filter { $0.held && $0.state == .working && (only == nil || $0.callsign == only) }
     }
 
     /// Stop what an agent is doing, now. What he said to it meanwhile it then reads together.

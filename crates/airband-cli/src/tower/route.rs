@@ -1,7 +1,8 @@
-//! The second half of the dispatcher: what his words are for. What needs no reading comes first: a typed
-//! command, tags (airband-core's parser), the message he tapped. Everything he says in his own words a model
-//! reads: which agent it is for (a callsign he says, a team, all of them), or that he wants a new agent, where,
-//! and on which model and effort. Also the controls the tower answers itself (`/more`, `/status`, `/hold`).
+//! The second half of the dispatcher: what his words are for. What needs no reading comes first: what a
+//! button sent as what it is (a verdict, a control, a new agent), the agents he picked, tags (airband-core's
+//! parser), the message he tapped. Everything he says in his own words a model reads: which agent it is for
+//! (a callsign he says, a team, all of them), or that he wants a new agent, where, and on which model and
+//! effort.
 use super::*;
 
 pub(super) fn list(names: &[String]) -> String {
@@ -24,25 +25,12 @@ pub(super) enum Routed {
     Elsewhere(String),
 }
 
-/// A typed command to start an agent: `/launch shop with opus: …`. It says what it is; everything he says in
-/// his own words is the model's to read.
-fn new_by_command(app: &App, text: &str, projects: &[String]) -> Option<Idea> {
-    let l = airband_core::routing::parse_launch(text, projects)?;
-    // the models and efforts that can be named are the ones of the tool the command names, or of the usual one
-    let menu = held::launcher_for(app, l.tool.as_deref()).map(|(name, l)| held::offers(&app.read(), &name, &l)).unwrap_or_default();
-    let (models, efforts) = (menu.model_words(), menu.effort_words());
-    Some(match airband_core::routing::parse_with(&l.task, &models, &efforts).filter(|w| !w.rest.is_empty()) {
-        Some(w) => Idea { tool: l.tool, project: l.project, model: Some(w.model), effort: w.effort, task: w.rest },
-        None => Idea { tool: l.tool, project: l.project, model: None, effort: None, task: l.task },
-    })
-}
-
 /// Who an untagged reply is for, or that it asks for a new agent. What is certain without reading comes first
 /// (the message he tapped). After that a model reads his words: against what each agent has been saying, and
 /// against the projects, models and efforts a new agent could be started with.
 pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&str>, scope: Option<&str>, others: &[airband_core::radio::Other]) -> Routed {
     // the room he was looking at, when he was in one: only its agents can be meant
-    let room = scope.and_then(|s| s.strip_prefix("group:")).map(str::to_string);
+    let room = scope.map(str::to_string);
     let within = |s: &Session| room.as_ref().is_none_or(|g| s.callsign.project == *g);
     // candidates: every agent that has said something since he last spoke, newest first
     let (candidates, focus, all, quiet) = {
@@ -52,7 +40,7 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
         if let Some(target) = re.and_then(|id| inner.log.iter().find(|e| e.id == id)).and_then(|e| inner.sender(e)) {
             return Routed::Sure(vec![target.clone()]);
         }
-        let since = inner.log.iter().rposition(|e| e.from == "you").map(|i| i + 1).unwrap_or(0);
+        let since = inner.log.iter().rposition(|e| e.his).map(|i| i + 1).unwrap_or(0);
         let mut seen: Vec<(Session, Entry)> = Vec::new();
         for e in inner.log[since..].iter().rev().filter(|e| e.kind != Some(Kind::Fyi)) {
             if let Some(s) = inner.sender(e).filter(|s| within(s))
@@ -62,7 +50,7 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
         }
         let focus = inner.calls.get(radio).and_then(|c| c.focus.clone()).and_then(|f| inner.find(&f).filter(|s| within(s)).cloned());
         // the last thing he said and who it went to, so "and keep the price next to it" can be read as carrying on
-        let before = inner.log.iter().rev().find(|e| e.from == "you" && !e.to_agents.is_empty()).and_then(|e| {
+        let before = inner.log.iter().rev().find(|e| e.his && !e.to_agents.is_empty()).and_then(|e| {
             let to: Vec<String> = e.to_agents.iter().filter_map(|id| inner.find(id)).filter(|s| within(s)).map(|s| s.callsign.text()).collect();
             (!to.is_empty()).then(|| (e.at, to, opening(&e.full)))
         });
@@ -154,7 +142,7 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                             .iter()
                             .enumerate()
                             .map(|(i, p)| {
-                                let said: Vec<String> = inner.log.iter().rev().filter(|e| e.group == *p && e.from != "you" && e.kind != Some(Kind::Fyi)).take(2).map(|e| e.short.clone().unwrap_or_else(|| opening(&e.full))).collect();
+                                let said: Vec<String> = inner.log.iter().rev().filter(|e| e.group == *p && !e.his && e.kind != Some(Kind::Fyi)).take(2).map(|e| e.short.clone().unwrap_or_else(|| opening(&e.full))).collect();
                                 format!("{}. {p}{}", i + 1, if said.is_empty() { String::new() } else { format!(": lately, {}", said.join(" / ")) })
                             })
                             .collect()
@@ -262,11 +250,11 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
             }
             let judged = judge::ask_json::<Out>(&app.cfg, "routing", prompt, None).await.ok();
             let Some(mut judged) = judged else {
-                // No model answered. Nothing is read into his words: with one agent it is for that one, and
-                // with several he is asked.
+                // No model answered. Nothing is read into his words. With one agent, and no way to start
+                // another, there is only one thing they can be for. Otherwise he is asked.
                 return match all.as_slice() {
                     [] => Routed::Ask(Vec::new()),
-                    [only] => Routed::Sure(vec![only.clone()]),
+                    [only] if !can_start => Routed::Sure(vec![only.clone()]),
                     several => Routed::Ask(several.iter().take(3).map(|s| s.callsign.text()).collect()),
                 };
             };
@@ -348,7 +336,7 @@ async fn place_idea(app: &Arc<App>, idea: &str, projects: &[String]) -> Result<S
             .iter()
             .enumerate()
             .map(|(i, p)| {
-                let lately: Vec<String> = inner.log.iter().rev().filter(|e| e.group == *p && e.from != "you" && e.kind != Some(Kind::Fyi)).take(2).map(|e| e.short.clone().unwrap_or_else(|| opening(&e.full))).collect();
+                let lately: Vec<String> = inner.log.iter().rev().filter(|e| e.group == *p && !e.his && e.kind != Some(Kind::Fyi)).take(2).map(|e| e.short.clone().unwrap_or_else(|| opening(&e.full))).collect();
                 format!("{}. {p} (folder {}){}", i + 1, folders.get(p).map(String::as_str).unwrap_or("?"), if lately.is_empty() { String::new() } else { format!(": lately, {}", lately.join(" / ")) })
             })
             .collect()
@@ -392,7 +380,7 @@ async fn named_project(app: &Arc<App>, idea: &str, said: &str, projects: &[Strin
 /// He was asked who something he said was for, and has said something more. The agents his words name, or
 /// nothing when they are not an answer to that (or no model said): then they are a message of their own.
 async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope: Option<&str>) -> Option<Vec<Session>> {
-    let room = scope.and_then(|s| s.strip_prefix("group:"));
+    let room = scope;
     let all: Vec<Session> = app.read().sessions.iter().filter(|s| room.is_none_or(|g| s.callsign.project == g)).cloned().collect();
     let letters = |s: &Session| airband_core::routing::badge(&s.callsign.project, &s.callsign.text());
     let prompt = format!(
@@ -458,8 +446,11 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
         permit::Leave::No => None,
         // an answer to a request that is over answers nothing, and is not passed to the agent as if it did
         permit::Leave::Over => return Reply { say: "That request is no longer waiting. Nothing was allowed.".into(), ..Reply::default() },
-        permit::Leave::Waiting if text.trim() == permit::ALLOW => Some(true),
-        permit::Leave::Waiting if text.trim() == permit::DENY => Some(false),
+        // a button's answer is what it is, and only a button gives one
+        permit::Leave::Waiting if matches!(said.act, Some(Act::Verdict { .. })) => match said.act {
+            Some(Act::Verdict { allow }) => Some(allow),
+            _ => None,
+        },
         // The model is given his words and nothing of the request, which the asking agent wrote.
         permit::Leave::Waiting => match judge::consent(&app.cfg, text).await {
             Some(true) => Some(true),
@@ -471,6 +462,10 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
     if let Some(reply) = permit::answer(app, text, re, verdict) {
         return reply;
     }
+    // a yes or a no that answers no request for leave answers nothing
+    if matches!(said.act, Some(Act::Verdict { .. })) {
+        return Reply { say: "That request is no longer waiting. Nothing was allowed.".into(), ..Reply::default() };
+    }
     // files that came with his words: where each is on this computer, for whoever the words go to, and the
     // pictures to show beside them in the chat
     let (mut files, shown_files) = if attached.is_empty() { (String::new(), Vec::new()) } else { attachments::describe(attached).await };
@@ -480,26 +475,34 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
     // Words that are about something else leave the idea waiting for its answer, for as long as it would have.
     let held_idea = app.passing().call(radio).unplaced_idea.take().filter(|(_, when)| when.elapsed() < Duration::from_secs(90));
     if let Some((idea, when)) = held_idea {
-        if !text.trim_start().starts_with(['/', '@'])
+        if said.act.is_none() && said.to.is_empty()
             && let Some(project) = named_project(app, &idea.task, text, &projects).await {
                 log(format!("← radio: \"{text}\" → launch in {project}"));
                 return launch(app, &project, &idea).await;
             }
         app.passing().call(radio).unplaced_idea = Some((idea, when));
     }
-    // a typed command says what it is and needs no reading
-    if text.trim_start().starts_with('/')
-        && let Some(mut idea) = new_by_command(app, text, &projects) {
-            idea.task.push_str(&files);
-            return start(app, radio, text, idea, &projects, true).await;
-        }
+    // a new agent asked for from a radio's own screen says what it is and needs no reading
+    if let Some(Act::Launch(new)) = &said.act {
+        let idea = Idea { tool: new.tool.clone(), project: Some(new.project.clone()), model: new.model.clone(), effort: new.effort.clone(), task: format!("{}{files}", new.task) };
+        return start(app, radio, text, idea, &projects, false).await;
+    }
+    let control = match said.act {
+        Some(Act::Control { control }) => Some(control),
+        _ => None,
+    };
     let say = |s: String| Reply { say: s, ..Reply::default() };
     let ask = |s: String| Reply { say: s, listen: true, ..Reply::default() };
     let (mut parsed, named, roster, names, pending, held) = {
         let mut inner = app.passing();
         inner.reap();
-        let parsed = parse_utterance(text, &inner.callsigns());
-        let named: Vec<Session> = parsed.to.iter().map(|&i| inner.sessions[i].clone()).collect();
+        // a control carries no words; what it shows in the chat is not for anyone to read
+        let parsed = if control.is_some() { airband_core::routing::Parsed { to: Vec::new(), rest: String::new() } } else { parse_utterance(text, &inner.callsigns()) };
+        // the agents he picked on his screen, by id; else the ones his tags name
+        let named: Vec<Session> = if said.to.is_empty() { parsed.to.iter().map(|&i| inner.sessions[i].clone()).collect() } else { said.to.iter().filter_map(|id| inner.find(id).cloned()).collect() };
+        if !said.to.is_empty() && named.is_empty() {
+            return say("That agent is no longer running.".into());
+        }
         if let [one] = named.as_slice() {
             inner.call(radio).focus = Some(one.agent.id.clone());
         }
@@ -510,7 +513,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
     // "Who is that for?" was just asked. A tag and nothing else answers it; so do words of his that a model
     // reads as naming someone. Either way what goes out is what he said the first time.
     let mut named = named;
-    if let (Some((words, their_files)), None) = (&held, parsed.control) {
+    if let (Some((words, their_files)), None) = (&held, control) {
         if parsed.rest.is_empty() && !named.is_empty() {
             (parsed.rest, files) = (words.clone(), their_files.clone());
         } else if named.is_empty() && !parsed.rest.is_empty()
@@ -522,9 +525,9 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
     // work out who it is for only when there is something to deliver
     let mut targets: Vec<Session> = if !named.is_empty() {
         named.clone()
-    } else if parsed.rest.is_empty() && !matches!(parsed.control, Some(Control::More | Control::Repeat)) {
+    } else if parsed.rest.is_empty() && !matches!(control, Some(Control::More | Control::Repeat)) {
         Vec::new()
-    } else if parsed.control.is_some() {
+    } else if control.is_some() {
         // "say more" and "repeat" are about whoever he last heard
         let inner = app.read();
         inner.calls.get(radio).and_then(|c| c.focus.clone()).and_then(|f| inner.find(&f).cloned()).or((inner.sessions.len() == 1).then(|| inner.sessions[0].clone())).into_iter().collect()
@@ -551,21 +554,22 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
     // A poke sets going again everyone who has stopped without finishing or asking: the ones he named, or in the
     // room he is looking at, or all of them. From here on it is an ordinary message to those agents.
     let mut shown = label.map(String::from);
-    if parsed.control == Some(Control::Poke) {
-        let room = scope.and_then(|s| s.strip_prefix("group:"));
+    let mut control = control;
+    if control == Some(Control::Poke) {
+        let room = scope;
         let stopped = app.read().stalled();
         targets = stopped.into_iter().filter(|s| if named.is_empty() { room.is_none_or(|g| s.callsign.project == g) } else { named.iter().any(|n| n.agent.id == s.agent.id) }).collect();
         if targets.is_empty() {
             return say("Nobody has stopped.".into());
         }
-        parsed.control = None;
+        control = None;
         // shown as it is sent: there is nothing more behind it to open
         parsed.rest = "Keep going.".into();
         shown = None;
     }
-    log(format!("← radio: \"{text}\" → {} {:?} \"{}\"", if targets.is_empty() { "nobody".into() } else { list(&targets.iter().map(|s| s.callsign.text()).collect::<Vec<_>>()) }, parsed.control, parsed.rest));
+    log(format!("← radio: \"{text}\" → {} {:?} \"{}\"", if targets.is_empty() { "nobody".into() } else { list(&targets.iter().map(|s| s.callsign.text()).collect::<Vec<_>>()) }, control, parsed.rest));
 
-    match parsed.control {
+    match control {
         Some(Control::Status) => return say(roster),
         Some(Control::Skip) => return say(String::new()),
         Some(Control::Hold) => {

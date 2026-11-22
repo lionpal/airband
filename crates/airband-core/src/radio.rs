@@ -1,4 +1,4 @@
-//! `airband.radio/1`: what goes between the tower and a radio (the app on the phone, in the car, on a desk).
+//! `airband.radio/2`: what goes between the tower and a radio (the app on the phone, in the car, on a desk).
 //!
 //! The radio asks; the tower answers. All under `/v1/radio/`. Sent straight to the tower with
 //! `Authorization: Bearer <token>`, or sealed and passed through a relay (`airband.relay/1`):
@@ -17,10 +17,10 @@
 //!   line or two. `scope` is `all`, `group:<name>` or `agent:<callsign>`.
 //! - `GET message/<id>?form=detail|full` → [`More`]: the fuller spoken version, or exactly what the agent wrote.
 //! - `POST utterance` is also how chat sends: leading `@tags` say who it is for (`@shop2`, `@shop`, `@all`).
-//! - Starting a new agent is an utterance too: `/launch <project> <task>`, for a project the feed lists.
+//! - Starting a new agent is an utterance too: one whose `act` is a launch, for a project the feed lists.
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA: &str = "airband.radio/1";
+pub const SCHEMA: &str = "airband.radio/2";
 
 /// How much a message deserves his attention. Deciding this is the tower's main job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,8 +74,8 @@ pub struct Utterance {
     /// replied to. With it the tower need not work out who it is for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub re: Option<String>,
-    /// Where he was looking when he said it: `group:<name>` for one project's room. With it, and no tag or
-    /// `re`, the tower chooses only among that project's agents. Left out, it chooses among all of them.
+    /// The team whose room he was looking at when he said it, by name. With it, and no tag or `re`, the
+    /// tower chooses only among that team's agents. Left out, it chooses among all of them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
     /// When this is a quick message: the two words on the button he tapped. `text` is then the whole
@@ -89,6 +89,46 @@ pub struct Utterance {
     /// tower reads his words against everything he can see, and can answer that they are for one of these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub others: Vec<Other>,
+    /// The agents he addressed by picking them on his screen, by id. With these the tower reads nothing to
+    /// find who it is for.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub to: Vec<String>,
+    /// What he did, when it was a button and not words. Words are never read as one of these: text is only
+    /// ever what he said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub act: Option<Act>,
+}
+
+/// Something he did with a button.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Act {
+    /// Yes or no to the request for leave that `re` names. `text` is then only what the chat shows.
+    Verdict { allow: bool },
+    /// One of the controls the tower answers itself.
+    Control { control: crate::routing::Control },
+    /// Start a new agent.
+    Launch(Launch),
+    /// He tapped one of the answers the message `re` offered: which, by its place in the list. `text` is its
+    /// words, which are what the agent gets.
+    Option { index: u32 },
+}
+
+/// A new agent to start: where, with what, and on what. Each is an id from a list the tower gave.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Launch {
+    /// The team it joins, by name, as the feed lists it.
+    pub project: String,
+    /// The coding tool, by id. Nothing is the computer's usual one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    /// What it should do, in his words. Empty for one that waits for his first message.
+    #[serde(default)]
+    pub task: String,
 }
 
 /// Where something he said stands with the tower.
@@ -344,8 +384,8 @@ pub struct EndAgent {
     pub agent: String,
 }
 
-/// What the Allow and Deny buttons send in reply to a request for leave: the two answers a tower takes without
-/// reading. Every radio sends these and no words of its own.
+/// The words on the two buttons that answer a request for leave, and what the chat shows for each. They are
+/// never read: the answer itself is [`Act::Verdict`].
 pub const ALLOW: &str = "Allow";
 pub const DENY: &str = "Deny";
 
@@ -572,8 +612,11 @@ pub struct Message {
     pub id: String,
     /// Milliseconds since 1970.
     pub at: u64,
-    /// A callsign, or "you".
+    /// What to show it as coming from: a callsign, or a label for him.
     pub from: String,
+    /// He said it. A client goes by this and never by what `from` reads.
+    #[serde(default)]
+    pub his: bool,
     /// The group (the project's name) this belongs to; empty for a message of his to several groups.
     pub group: String,
     /// For his messages: the callsigns it went to.
@@ -643,6 +686,23 @@ pub struct Message {
     pub not_read: Option<NotRead>,
 }
 
+/// What an agent is doing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentState {
+    Working,
+    /// It has a question open for him.
+    Asking,
+    /// It stopped without finishing or asking: a poke sets it going again.
+    Stalled,
+    /// It finished and reported.
+    Idle,
+    /// A state this build does not know, or none given. Shown as not known, never as one of the others.
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RosterEntry {
     /// The agent's id: stable while it runs. What messages refer to.
@@ -653,13 +713,15 @@ pub struct RosterEntry {
     /// What tells it from the others of its team: the part of its callsign after the team's name.
     #[serde(default)]
     pub number: String,
+    /// That part is a name he gave the session, not a number the tower handed out.
+    #[serde(default)]
+    pub named: bool,
     pub harness: String,
     /// Finished a turn and waiting on him.
     pub waiting: bool,
-    /// What it is doing, in one word a client can show as a colour: `working`; `asking` (it has a question open
-    /// for him); `stalled` (it stopped without finishing or asking: poke it); `idle` (it finished and reported).
+    /// What it is doing.
     #[serde(default)]
-    pub state: String,
+    pub state: AgentState,
     /// How many subagents it has running, when its harness reports them.
     #[serde(default)]
     pub subagents: u32,
@@ -685,7 +747,7 @@ pub struct RosterEntry {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Feed {
-    /// Always `airband.radio/1` from a tower that says; a client need not check it, but can.
+    /// Always `airband.radio/2` from a tower that says; a client need not check it, but can.
     #[serde(default)]
     pub schema: String,
     /// The log's change count as of this answer: pass it back as `since`. Lower than the one a client holds
@@ -756,7 +818,7 @@ mod tests {
     use super::*;
 
     fn m(from: &str, group: &str, to: &[&str]) -> Message {
-        Message { seq: 1, id: "x".into(), at: 0, from: from.into(), group: group.into(), to: to.iter().map(|s| s.to_string()).collect(), kind: None, text: String::new(), long: false, options: Vec::new(), recommended: None, read: None, own_session: false, permission: false, pictures: Vec::new(), links: Vec::new(), agent: None, rev: 0, open: false, queued: false, seen: None, cancelled: false, not_read: None }
+        Message { seq: 1, id: "x".into(), at: 0, his: from == "you", from: from.into(), group: group.into(), to: to.iter().map(|s| s.to_string()).collect(), kind: None, text: String::new(), long: false, options: Vec::new(), recommended: None, read: None, own_session: false, permission: false, pictures: Vec::new(), links: Vec::new(), agent: None, rev: 0, open: false, queued: false, seen: None, cancelled: false, not_read: None }
     }
     #[test]
     fn a_feed_from_a_newer_tower_still_reads() {

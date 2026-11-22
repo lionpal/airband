@@ -79,7 +79,7 @@ pub fn permission(hook: &Value) -> Option<PermissionAsk> {
 
 /// His words into that session as a turn of his own, by Codex's own queue.
 fn deliver(session: &str, words: &str) -> Result<(), String> {
-    let done = std::process::Command::new(super::row_says(NAME, "program")).args(["queue", "--thread", session, "--resume", "--message", words]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped()).output().map_err(|e| format!("Codex could not be started: {e}"))?;
+    let done = std::process::Command::new(super::row_says(NAME, "program")).args(["queue", "--thread", session, "--resume", "--message", words]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped()).output().map_err(|e| format!("{} could not be started: {e}", super::called(NAME).0))?;
     if done.status.success() { Ok(()) } else { Err(format!("{} did not take it: {}", super::called(NAME).0, String::from_utf8_lossy(&done.stderr).trim().chars().take(200).collect::<String>())) }
 }
 
@@ -192,11 +192,15 @@ fn waits_for_leave(thread: &Value) -> bool {
     thread["status"]["activeFlags"].as_array().is_some_and(|flags| flags.iter().any(|f| f == "waitingOnApproval"))
 }
 
+/// The requests for approval Codex's server sends, by their method: to run a command (the one that can be put
+/// to him from here), and to change files.
+const APPROVALS: [&str; 2] = ["item/commandExecution/requestApproval", "item/fileChange/requestApproval"];
+
 /// A request of Codex's server to run a command, as he is asked it: the command whole, where it runs, and the
 /// reason Codex gave. Any other kind of request (a change to files, which the server describes only by a
 /// reference) is not put to him from here: it stays at Codex's keyboard.
 fn leave_of(agent: Agent, request: &Value) -> Option<PermissionAsk> {
-    if request["method"] != "item/commandExecution/requestApproval" {
+    if request["method"] != APPROVALS[0] {
         return None;
     }
     let params = &request["params"];
@@ -241,7 +245,7 @@ fn put_to_him(agent: Agent, asking: std::sync::Arc<std::sync::Mutex<Asking>>) {
             if said["id"] == 1_000_000 && said.get("error").is_some() {
                 return None;
             }
-            if said["params"]["threadId"] == thread.as_str() && !said["id"].is_null() && said["method"].as_str().is_some_and(|m| m.ends_with("/requestApproval")) {
+            if said["params"]["threadId"] == thread.as_str() && !said["id"].is_null() && said["method"].as_str().is_some_and(|m| APPROVALS.contains(&m)) {
                 request = Some(said);
                 break;
             }
@@ -335,7 +339,7 @@ fn watch(tower: super::Tower) {
                 // A turn that was already over when the thread was first seen has been said, or was said
                 // before the tower started: nothing of it is said again. One under way is working.
                 let told = match &now {
-                    Some((_, false)) => (tower.event)(AgentEvent { schema: SCHEMA.into(), agent: agent.clone(), event: Event::Working }).then(|| now.clone()),
+                    Some((_, false)) => (tower.event)(AgentEvent { schema: SCHEMA.into(), agent: agent.clone(), event: Event::Working, via: None }).then(|| now.clone()),
                     _ => Some(now.clone()),
                 };
                 if let Some(told) = told {
@@ -347,7 +351,7 @@ fn watch(tower: super::Tower) {
                 continue;
             }
             let Some(event) = turn_event(turn) else { continue };
-            if (tower.event)(AgentEvent { schema: SCHEMA.into(), agent: agent.clone(), event }) {
+            if (tower.event)(AgentEvent { schema: SCHEMA.into(), agent: agent.clone(), event, via: None }) {
                 heard.insert(agent.id.clone(), now);
             }
         }

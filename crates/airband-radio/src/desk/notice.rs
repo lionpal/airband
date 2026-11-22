@@ -34,10 +34,36 @@ pub(super) fn station_key(link: &str) -> Option<String> {
         Pairing::Direct { .. } => None,
     }
 }
-/// What a button answers a request for leave with: `true` for the one that allows. A host's buttons send this
-/// and have no words of their own for it.
+/// What a button under a question stood for.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum Tapped {
+    /// Yes to a request for leave.
+    Allow,
+    /// No to one.
+    Deny,
+    /// One of the answers the message offered, by its place in the list.
+    Option { index: u32 },
+}
+impl Tapped {
+    pub(super) fn act(&self) -> Act {
+        match self {
+            Tapped::Allow => Act::Verdict { allow: true },
+            Tapped::Deny => Act::Verdict { allow: false },
+            Tapped::Option { index } => Act::Option { index: *index },
+        }
+    }
+    /// What the chat shows for a yes or a no. Nothing for an option, whose words are the message's.
+    pub(super) fn words(&self) -> String {
+        match self {
+            Tapped::Allow => airband_core::radio::ALLOW.to_string(),
+            Tapped::Deny => airband_core::radio::DENY.to_string(),
+            Tapped::Option { .. } => String::new(),
+        }
+    }
+}
+/// The word on the button that allows a request for leave, or on the one that refuses it.
 #[uniffi::export]
-pub fn leave_answer(allow: bool) -> String {
+pub fn leave_word(allow: bool) -> String {
     if allow { airband_core::radio::ALLOW } else { airband_core::radio::DENY }.to_string()
 }
 /// Open a sealed notification with whichever pairing sealed it. `links` are the pairing links the host keeps;

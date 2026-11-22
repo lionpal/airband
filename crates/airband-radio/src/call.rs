@@ -170,7 +170,7 @@ pub(crate) fn converse(link: &Arc<Link>, host: &dyn RadioHost, ears: &ears::Ears
         host.status(RadioStatus::Listening);
         let Listened::Said(text) = ears.hear(host, false) else { return };
         host.status(RadioStatus::Sending);
-        let reply = match link.utterance(&text, re.take(), scope.clone()) {
+        let reply = match link.utterance(&text, re.take(), scope.clone(), None) {
             Ok(Some(reply)) => reply,
             // his computer has it and has not said what came of it yet: that is in the chat when it does
             Ok(None) => return,

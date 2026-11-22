@@ -154,7 +154,7 @@ impl Keys {
     }
 }
 
-/// What the radio seals and sends: one `airband.radio/1` request.
+/// What the radio seals and sends: one `airband.radio/2` request.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Call {
     /// When it was made, in milliseconds since 1970.
@@ -166,7 +166,7 @@ pub struct Call {
     pub path: String,
     #[serde(default)]
     pub body: serde_json::Value,
-    /// The radio protocol the request is in (`airband.radio/1`). A tower that does not speak it says so, in
+    /// The radio protocol the request is in (`airband.radio/2`). A tower that does not speak it says so, in
     /// place of guessing. (The relay protocol's own version needs no field: it is part of how the keys are
     /// derived, so two versions cannot read each other at all.)
     pub schema: String,

@@ -48,5 +48,5 @@
     ]
   ],
   "credit": "Phonon-2.5 English by Fermion Research, from NVIDIA's Parakeet TDT 0.6B v3. CC BY 4.0.",
-  "with": {"prepare": "Getting it ready for this phone. About a minute, once.", "min_os": {"ios": 18}}
+  "with": {"usual": true, "prepare": "Getting it ready for this phone. About a minute, once.", "min_os": {"ios": 18}}
 }

@@ -24,7 +24,7 @@ pub(super) enum Aloud {
         missed: bool,
     },
 }
-/// Why something an agent said is not read out: the same reasons a radio is told (`airband.radio/1`).
+/// Why something an agent said is not read out: the same reasons a radio is told (`airband.radio/2`).
 pub(super) use airband_core::radio::NotRead as Dropped;
 /// Does a line dropped for this reason count as one he missed, when it was dropped while he had reading aloud
 /// on? Not one that was never for his ears, and not one said before he turned reading on.

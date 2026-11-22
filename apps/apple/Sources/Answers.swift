@@ -51,12 +51,17 @@ struct Answers: View {
     static let yolo = "Do whatever you think is best."
 
     /// Three answers, or a long one, do not fit side by side: each then gets a row of its own.
-    private var stacked: Bool { m.options.count > 2 || m.options.contains { $0.count > 16 } }
+    private var stacked: Bool { buttons.count > 2 || buttons.contains { $0.0.count > 16 } }
+    /// The buttons, each with what it stands for. A request for leave has two of its own, Allow and Deny; any
+    /// other question has the answers it offered.
+    private var buttons: [(String, Tapped)] {
+        m.permission ? [(leaveWord(allow: true), .allow), (leaveWord(allow: false), .deny)] : m.options.enumerated().map { ($0.element, .option(index: UInt32($0.offset))) }
+    }
 
     private func choice(_ i: Int) -> some View {
-        let text = m.options[i]
-        let marked = m.recommended == UInt32(i)
-        return Button { model.answer(m, text); after() } label: {
+        let (text, tapped) = buttons[i]
+        let marked = !m.permission && m.recommended == UInt32(i)
+        return Button { model.tap(m, tapped); after() } label: {
             // a long answer wraps to two lines inside the button, then shrinks; it never touches the edges
             Text(text).font(.system(size: 17, weight: .semibold)).lineLimit(2).minimumScaleFactor(0.75)
                 .multilineTextAlignment(.center).lineSpacing(-1).padding(.horizontal, 12).padding(.vertical, 6)
@@ -137,17 +142,17 @@ struct Answers: View {
             takeOver(agent)
         } else if stacked {
             VStack(spacing: 10) {
-                ForEach(m.options.indices.dropLast(), id: \.self) { i in choice(i) }
+                ForEach(buttons.indices.dropLast(), id: \.self) { i in choice(i) }
                 HStack(spacing: 10) {
-                    choice(m.options.count - 1)
+                    choice(buttons.count - 1)
                     if !m.permission { respond(wide: false); yolo }
                 }
             }
         } else {
             HStack(spacing: 10) {
-                ForEach(m.options.indices, id: \.self) { i in choice(i) }
+                ForEach(buttons.indices, id: \.self) { i in choice(i) }
                 // permission to do something on his computer is a yes or a no: it is never handed back to the agent
-                if !m.permission { respond(wide: m.options.isEmpty); yolo }
+                if !m.permission { respond(wide: buttons.isEmpty); yolo }
             }
         }
     }
@@ -180,7 +185,7 @@ struct ContextView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         ForEach(before, id: \.id) { b in
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(b.from == "you" ? "you" : b.from).font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.quiet)
+                                Text(b.from).font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.quiet)
                                 Text(b.text).font(.system(size: 16)).lineSpacing(3).foregroundStyle(Palette.soft)
                             }
                         }

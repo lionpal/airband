@@ -51,9 +51,10 @@ struct Unread: View {
     }
 }
 /// What a team or an agent is doing, as a dot: green and pulsing while working, amber when waiting on him, gray
-/// and still when it has stopped without finishing, an empty ring when it has finished and has nothing on.
+/// and still when it has stopped without finishing, an empty ring when it has finished and has nothing on. A
+/// state his computer did not give is a broken ring: it is not drawn as any of the others.
 struct StateDot: View {
-    let state: String
+    let state: AgentState
     /// Someone here is at work, whatever else the dot says: a team with a question waiting and an agent busy
     /// is amber with the green ring going.
     var working = false
@@ -61,18 +62,21 @@ struct StateDot: View {
 
     private var color: Color {
         switch state {
-        case "asking": Palette.ask
-        case "working": Palette.signal
-        case "stalled": Palette.quiet
-        default: Palette.dim
+        case .asking: Palette.ask
+        case .working: Palette.signal
+        case .stalled: Palette.quiet
+        case .idle, .unknown: Palette.dim
         }
     }
 
     var body: some View {
-        Circle().fill(state == "idle" || state.isEmpty ? Color.clear : color).frame(width: 8, height: 8)
-            .overlay { if state == "idle" || state.isEmpty { Circle().strokeBorder(Palette.dim, lineWidth: 1.5) } }
+        Circle().fill(state == .idle || state == .unknown ? Color.clear : color).frame(width: 8, height: 8)
             .overlay {
-                if state == "working" || working {
+                if state == .idle { Circle().strokeBorder(Palette.dim, lineWidth: 1.5) }
+                if state == .unknown { Circle().strokeBorder(Palette.dim, style: StrokeStyle(lineWidth: 1.5, dash: [2, 2])) }
+            }
+            .overlay {
+                if state == .working || working {
                     Circle().stroke(Palette.signal.opacity(out ? 0 : 0.6), lineWidth: 2).scaleEffect(out ? 2.4 : 1)
                         .onAppear { withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) { out = true } }
                 }

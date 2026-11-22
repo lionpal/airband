@@ -89,7 +89,7 @@ fn main() {
         Some("setup") => setup::setup(config::load(), !args.iter().any(|a| a == "--no-start")),
         Some("model") => install::model(config::load(), &args[1..]),
         Some("radio") => terminal::run(&config::load(), &args[1..]),
-        Some("launch") => terminal::send(&config::load(), &[vec!["/launch".to_string()], args[1..].to_vec()].concat()),
+        Some("launch") => terminal::launch(&config::load(), &args[1..]),
         Some("triage") => tower::triage(config::load()),
         Some("progress") => tower::progress(config::load()),
         Some("feed") => terminal::feed(&config::load(), &args[1..]),

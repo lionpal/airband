@@ -170,6 +170,28 @@ pub fn feed(cfg: &Config, args: &[String]) -> Result<(), String> {
     }
 }
 
+/// `airband launch <team> [--tool <id>] [--model <name>] [--effort <name>] [task…]`: start a new agent in one of
+/// his teams. The flags are this command's own; the task is everything else, in his words.
+pub fn launch(cfg: &Config, args: &[String]) -> Result<(), String> {
+    let mut rest: Vec<String> = Vec::new();
+    let mut flags: std::collections::HashMap<&str, String> = Default::default();
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        match ["--tool", "--model", "--effort", "--link"].into_iter().find(|flag| flag == word) {
+            Some(flag) => {
+                flags.insert(flag, words.next().cloned().ok_or(format!("{flag} needs a value"))?);
+            }
+            None => rest.push(word.clone()),
+        }
+    }
+    let Some((project, task)) = rest.split_first() else {
+        return Err("say which team: airband launch <team> [--tool <id>] [--model <name>] [--effort <name>] [task]".into());
+    };
+    let radio = Radio::start(link_from(cfg, args), String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
+    println!("{}", radio.launch(project.clone(), flags.remove("--tool"), flags.remove("--model"), flags.remove("--effort"), task.join(" ")).map_err(|e| e.to_string())?);
+    Ok(())
+}
+
 /// `airband send "@shop2 leave them"`: say something from the terminal.
 pub fn send(cfg: &Config, args: &[String]) -> Result<(), String> {
     let words: Vec<&str> = args.iter().take_while(|a| *a != "--link").map(String::as_str).collect();

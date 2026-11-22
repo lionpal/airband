@@ -328,7 +328,6 @@ pub fn load() -> Config {
     cfg
 }
 
-/// This machine's Tailscale addresses (100.64.0.0/10): the only way in from outside the machine.
 fn yes() -> bool {
     true
 }
@@ -345,7 +344,10 @@ pub fn lan_addrs() -> Vec<std::net::Ipv4Addr> {
         .collect()
 }
 
-pub fn tailscale_addrs() -> Vec<std::net::Ipv4Addr> {
+/// This machine's addresses in the shared address space, 100.64.0.0/10 (RFC 6598): the range a private
+/// network laid over the internet gives its machines. The tower listens on these besides the machine itself.
+/// Which product made the network is not known here and not asked.
+pub fn overlay_addrs() -> Vec<std::net::Ipv4Addr> {
     if_addrs::get_if_addrs()
         .unwrap_or_default()
         .into_iter()
@@ -361,12 +363,17 @@ pub fn station(cfg: &Config) -> String {
     if let Some(s) = cfg.station.clone().filter(|s| !s.trim().is_empty()) {
         return s;
     }
-    // asked of the system once: this is called for every answer to a radio
+    // Asked of the system once: this is called for every answer to a radio. A Mac has a name he gave it
+    // ("Charles's Mac mini"), which is what he knows it by; elsewhere the host's own name, up to its first dot.
+    // The name is used as it is given: nothing is cut out of it.
     static HOST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    let host = HOST.get_or_init(|| std::process::Command::new("hostname").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default());
-    let short = host.split('.').next().unwrap_or("").to_lowercase();
-    // "someones-mac-mini" says more than it needs to: keep what kind of machine it is
-    let short = short.rsplit("s-").next().unwrap_or(&short).to_string();
+    let said = |program: &str, args: &[&str]| std::process::Command::new(program).args(args).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|name| !name.is_empty());
+    let short = HOST
+        .get_or_init(|| {
+            let given = if cfg!(target_os = "macos") { said("scutil", &["--get", "ComputerName"]) } else { None };
+            given.or_else(|| said("hostname", &[]).map(|host| host.split('.').next().unwrap_or_default().to_string())).unwrap_or_default()
+        })
+        .clone();
     if short.is_empty() { "computer".into() } else { short }
 }
 

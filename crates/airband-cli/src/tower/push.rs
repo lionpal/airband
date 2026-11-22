@@ -65,7 +65,7 @@ pub(super) fn register(app: &App, radio: &str, target: PushTarget) {
 
 /// Does this line deserve a notification at all?
 pub(super) fn deserves(e: &Entry, now_ms: u64) -> bool {
-    e.from != "you" && e.agent.is_some() && e.short.is_some() && deserves_notice(e.kind) && now_ms.saturating_sub(e.at) < STALE_MS
+    !e.his && e.agent.is_some() && e.short.is_some() && deserves_notice(e.kind) && now_ms.saturating_sub(e.at) < STALE_MS
 }
 
 /// Does this radio already have the line (as of change count `rev`) in front of him?

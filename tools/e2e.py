@@ -422,8 +422,8 @@ try:
         check("with a frame from each second pulled out for the agent to look at", len(os.listdir(os.path.join(home, ".airband", "attachments", video, "frames"))) == 3 and "frames" in received("page"))
 
     print("Poke")
-    check("a poke sets the stalled agent going, and only it", say("/poke") == "Sent to logistics rates." and "Keep going" in received("rates") and "Keep going" not in received("import"))
-    check("with nobody stalled, a poke says so", say("/poke") == "Nobody has stopped.")
+    check("a poke sets the stalled agent going, and only it", say("Keep going.", act={"kind": "control", "control": "poke"}) == "Sent to logistics rates." and "Keep going" in received("rates") and "Keep going" not in received("import"))
+    check("with nobody stalled, a poke says so", say("Keep going.", act={"kind": "control", "control": "poke"}) == "Nobody has stopped.")
 
     print("A new idea, with no project named")
     check("it starts in the team it belongs to (model)", say("new idea: check carrier prices every night and switch to whichever is cheapest") == "Launching in logistics."
@@ -492,9 +492,9 @@ Send it as written, or do you want changes?""")
     card = pending_card("orders deploy")
     check("the request is put to him word for word, as a yes or no", card and card["text"] == "Wants to run `npm run deploy`. Allow?" and card["options"] == ["Allow", "Deny"] and card.get("permission"), card)
     check("handing the decision back is refused", say("Do whatever you think is best.", re=card["id"]) == "That one needs a yes or a no from you.")
-    check("Allow goes back to the harness as yes", say("Allow", re=card["id"]) == "Allowed." and (t.join(30) or out == [(0, "")]), out)
+    check("Allow goes back to the harness as yes", say("Allow", re=card["id"], act={"kind": "verdict", "allow": True}) == "Allowed." and (t.join(30) or out == [(0, "")]), out)
     before = len(feed()["messages"])
-    check("a second tap on a request that is over allows nothing and reaches nobody", say("Allow", re=card["id"]) == "That request is no longer waiting. Nothing was allowed." and len(feed()["messages"]) == before)
+    check("a second tap on a request that is over allows nothing and reaches nobody", say("Allow", re=card["id"], act={"kind": "verdict", "allow": True}) == "That request is no longer waiting. Nothing was allowed." and len(feed()["messages"]) == before)
     out = []
     t = threading.Thread(target=ask_permission, args=("deploy", "orders", "run `./migrate --env production`", out)); t.start()
     card = pending_card("orders deploy")
@@ -562,7 +562,7 @@ Send it as written, or do you want changes?""")
         check("Claude Code's permission prompt arrives as a question", card is not None, done)
         if card:
             check("it says exactly what will run", "touch made-by-claude.txt" in card["text"], card["text"])
-            say("Allow", re=card["id"])
+            say("Allow", re=card["id"], act={"kind": "verdict", "allow": True})
         t.join(180)
         check("after Allow from the radio, Claude ran it", os.path.exists(os.path.join(proj, "made-by-claude.txt")), done)
     print("An answer that comes late")

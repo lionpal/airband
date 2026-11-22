@@ -107,22 +107,25 @@ impl Inner {
         self.calls.retain(|_, c| c.seen.is_some_and(|t| t.elapsed() < Duration::from_secs(86_400)));
         !dead.is_empty()
     }
-    /// What an agent is doing, as one word: `working`, `asking` (a question of its is open), `stalled` (it
-    /// stopped without finishing or asking), or `idle` (it finished and said so).
-    pub(super) fn state_of(&self, s: &Session, open: &HashSet<String>) -> &'static str {
+    /// What an agent is doing.
+    ///
+    /// One part of this is a rule and not a fact: an agent that stopped to wait for background work of its own
+    /// counts as working for [`STILL_ITS_OWN_WORK_MS`] and as stalled after. No tool says whether that work is
+    /// still running.
+    pub(super) fn state_of(&self, s: &Session, open: &HashSet<String>) -> AgentState {
         if !s.waiting {
-            return "working";
+            return AgentState::Working;
         }
         // It stopped only to wait for something of its own that is still running: that is still work, for a
         // while. If nothing has come of it after twenty minutes it is not coming back by itself: it has
         // stalled, and a poke is offered.
         if let Some(e) = self.log.iter().rev().find(|e| e.agent.as_deref() == Some(s.agent.id.as_str())).filter(|e| e.background) {
-            return if now_ms().saturating_sub(e.at) < 20 * 60 * 1000 { "working" } else { "stalled" };
+            return if now_ms().saturating_sub(e.at) < STILL_ITS_OWN_WORK_MS { AgentState::Working } else { AgentState::Stalled };
         }
         match self.last_said(&s.agent.id) {
-            Some(e) if open.contains(&e.id) => "asking",
-            Some(e) if e.kind == Some(Kind::Stalled) => "stalled",
-            _ => "idle",
+            Some(e) if open.contains(&e.id) => AgentState::Asking,
+            Some(e) if e.kind == Some(Kind::Stalled) => AgentState::Stalled,
+            _ => AgentState::Idle,
         }
     }
     /// A number that changes when anything a radio shows about the agents does: who is there, what each is
@@ -137,11 +140,11 @@ impl Inner {
     /// The agents that have stopped without finishing or asking: the ones a poke is for.
     pub(super) fn stalled(&self) -> Vec<Session> {
         let open = self.open_ids();
-        self.sessions.iter().filter(|s| self.state_of(s, &open) == "stalled").cloned().collect()
+        self.sessions.iter().filter(|s| self.state_of(s, &open) == AgentState::Stalled).cloned().collect()
     }
     pub(super) fn roster_entries(&self) -> Vec<RosterEntry> {
         let open = self.open_ids();
-        self.sessions.iter().map(|s| RosterEntry { id: s.agent.id.clone(), callsign: s.callsign.text(), group: s.callsign.project.clone(), number: s.callsign.number.clone(), harness: s.agent.harness.clone(), waiting: s.waiting, state: self.state_of(s, &open).into(), subagents: s.subagents, reachable: s.agent.deliver.is_some(), doing: s.doing.clone().filter(|_| !s.waiting), held: s.agent.deliver == Some(Deliver::Held), ends: match &s.agent.deliver { Some(Deliver::Held) => true, Some(Deliver::Harness { name, .. }) => crate::adapters::puts_away(name), _ => false }, model: s.model.clone(), effort: s.effort.clone() }).collect()
+        self.sessions.iter().map(|s| RosterEntry { id: s.agent.id.clone(), callsign: s.callsign.text(), group: s.callsign.project.clone(), number: s.callsign.number.clone(), named: s.callsign.named, harness: s.agent.harness.clone(), waiting: s.waiting, state: self.state_of(s, &open), subagents: s.subagents, reachable: s.agent.deliver.is_some(), doing: s.doing.clone().filter(|_| !s.waiting), held: s.agent.deliver == Some(Deliver::Held), ends: match &s.agent.deliver { Some(Deliver::Held) => true, Some(Deliver::Harness { name, .. }) => crate::adapters::puts_away(name), _ => false }, model: s.model.clone(), effort: s.effort.clone() }).collect()
     }
     /// His teams that have a folder: what the configuration lists, then wherever agents have been seen.
     pub(super) fn teams(&self, cfg: &Config) -> BTreeMap<String, String> {
@@ -423,7 +426,7 @@ mod tests {
         let open = inner.open_ids();
         assert_eq!(open, HashSet::from([q]));
         let state = |id: &str| inner.state_of(inner.find(id).unwrap(), &open);
-        assert_eq!([state("w"), state("q"), state("s"), state("d")], ["working", "asking", "stalled", "idle"]);
+        assert_eq!([state("w"), state("q"), state("s"), state("d")], [AgentState::Working, AgentState::Asking, AgentState::Stalled, AgentState::Idle]);
         assert_eq!(inner.stalled().iter().map(|s| s.agent.id.as_str()).collect::<Vec<_>>(), ["s"]);
     }
 

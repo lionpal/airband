@@ -27,6 +27,8 @@ struct OnboardingView: View {
     // (development only: `-airband.devNoRelay YES` opens with it asked for, for a screenshot)
     @State private var noRelay = UserDefaults.standard.bool(forKey: "airband.devNoRelay")
     private var command: String { noRelay ? Self.straight : Self.command }
+    /// The first step waits for him to pick the coding agent he uses: none is picked for him.
+    private var unchosen: Bool { step == 0 && model.usedTools.isEmpty }
     /// The steps: the coding agent, each job, then the computer.
     private var jobs: [ChoiceJob] { model.jobs }
     private var last: Int { jobs.count + 1 }
@@ -76,9 +78,9 @@ struct OnboardingView: View {
                     Text(step == last ? "Scan the code" : "Continue").font(.system(size: 18, weight: .semibold))
                 }
                 .foregroundStyle(Palette.ground).frame(maxWidth: .infinity, minHeight: 56)
-                .background(finishing ? Palette.dim : Palette.ink, in: RoundedRectangle(cornerRadius: 18))
+                .background(finishing || unchosen ? Palette.dim : Palette.ink, in: RoundedRectangle(cornerRadius: 18))
             }
-            .buttonStyle(.plain).disabled(finishing)
+            .buttonStyle(.plain).disabled(finishing || unchosen)
             HStack {
                 if step > 0 && !finishing { Button("Back") { withAnimation(.snappy(duration: 0.2)) { step -= 1 } } }
                 Spacer()
@@ -139,7 +141,7 @@ struct OnboardingView: View {
                 }
                 .font(.system(size: 15, weight: .medium)).foregroundStyle(Palette.quiet).buttonStyle(.plain)
                 if noRelay {
-                    Text("Your phone then connects directly to your computer, on the same network or over Tailscale. Notifications need the relay, so you get none this way.")
+                    Text("Your phone then connects directly to your computer, on the same network, or over a private network both are on. Notifications need the relay, so you get none this way.")
                         .font(.system(size: 14)).foregroundStyle(Palette.quiet).fixedSize(horizontal: false, vertical: true)
                 }
             }

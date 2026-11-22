@@ -56,6 +56,7 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
         let info = response.notification.request.content.userInfo
         let (room, agent) = (info["room"] as? String ?? "", info["agent"] as? String ?? "")
         let text: String?
+        var tapped: Tapped?
         switch response.actionIdentifier {
         case UNNotificationDefaultActionIdentifier:
             // a tap on the notification itself: open on that agent
@@ -64,12 +65,14 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
                 done()
             }
             return
-        case NoticeButtons.allow: text = leaveAnswer(allow: true)
-        case NoticeButtons.deny: text = leaveAnswer(allow: false)
+        case NoticeButtons.allow: (text, tapped) = (leaveWord(allow: true), .allow)
+        case NoticeButtons.deny: (text, tapped) = (leaveWord(allow: false), .deny)
         case NoticeButtons.typed: text = (response as? UNTextInputNotificationResponse)?.userText
         case let id where id.hasPrefix(NoticeButtons.option):
             let options = info["options"] as? [String] ?? []
-            text = Int(id.dropFirst(NoticeButtons.option.count)).flatMap { options.indices.contains($0) ? options[$0] : nil }
+            let index = Int(id.dropFirst(NoticeButtons.option.count)).flatMap { options.indices.contains($0) ? $0 : nil }
+            text = index.map { options[$0] }
+            tapped = index.map { .option(index: UInt32($0)) }
         default: text = nil
         }
         guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty, let station = info["station"] as? String, let message = info["message"] as? String else { return done() }
@@ -78,7 +81,7 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
         let finished = DispatchSemaphore(value: 0)
         let failure = Failure()
         DispatchQueue.global(qos: .userInitiated).async {
-            do { try RadioModel.shared.answerNow(station: station, message: message, text: text) }
+            do { try RadioModel.shared.answerNow(station: station, message: message, text: text, tapped: tapped) }
             catch RadioError.Told(let reason) { failure.set(reason) }
             catch RadioError.Refused { failure.set("That computer refused it.") }
             catch { failure.set("No connection. It goes when there is one.") }

@@ -133,8 +133,8 @@ private struct TrayThumb: View {
     @EnvironmentObject var model: RadioModel
     let item: TrayItem
     let upload: DeskUpload?
-    private var ready: Bool { upload?.state == "ready" }
-    private var failed: Bool { item.failed || upload?.state == "failed" }
+    private var ready: Bool { upload?.state == .ready }
+    private var failed: Bool { item.failed || upload?.state == .failed }
     /// How much of it has reached his computer, from 0 to 1. Nothing while the phone is still preparing it.
     private var progress: Double? {
         guard let upload, upload.total > 0 else { return nil }
@@ -321,7 +321,7 @@ extension RadioModel {
     }
 
     /// Everything attached has reached his computer.
-    var trayReady: Bool { !tray.isEmpty && tray.allSatisfy { item in view.uploads.first { $0.id == item.attachment }?.state == "ready" } }
+    var trayReady: Bool { !tray.isEmpty && tray.allSatisfy { item in view.uploads.first { $0.id == item.attachment }?.state == .ready } }
 
     /// He tapped one of his newest photos or videos: it goes the way a picked one does. Returns which item in
     /// the tray it became.

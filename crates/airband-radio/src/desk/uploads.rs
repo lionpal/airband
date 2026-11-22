@@ -38,7 +38,7 @@ pub(super) fn send_file(shared: Arc<Shared>, radio: Arc<Radio>, id: String, file
             let mut state = shared.state.lock().unwrap();
             // only if this is still the sending that counts: it may have been taken off, or started again elsewhere
             if let Some(u) = state.uploads.iter_mut().find(|u| u.shown.id == id && Arc::ptr_eq(&u.dropped, &dropped)) {
-                u.shown.state = if outcome.is_ok() { "ready".into() } else { "failed".into() };
+                u.shown.state = if outcome.is_ok() { UploadState::Ready } else { UploadState::Failed };
                 if outcome.is_ok() {
                     radio.arm(id.clone());
                 }
@@ -63,7 +63,7 @@ impl Desk {
             }
             // everything attached to one message goes to one computer: the first file's
             let station = state.uploads.first().map(|u| u.station).unwrap_or_else(|| pick_station(&state, "", re.as_deref(), room.as_deref(), agent.as_deref()));
-            state.uploads.push(Upload { shown: DeskUpload { id: id.clone(), name: name.clone(), sent: 0, total, state: "sending".into() }, station, dropped: dropped.clone(), file_path: file_path.clone(), name: name.clone() });
+            state.uploads.push(Upload { shown: DeskUpload { id: id.clone(), name: name.clone(), sent: 0, total, state: UploadState::Sending }, station, dropped: dropped.clone(), file_path: file_path.clone(), name: name.clone() });
             state.stations[station].radio.clone()
         };
         self.shared.host.changed();

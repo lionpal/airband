@@ -5,9 +5,8 @@ use super::*;
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct DeskRoom {
     pub name: String,
-    /// What the team is doing, the most pressing first: `asking` (one of them is waiting on him), `stalled` (one
-    /// has stopped without finishing), `working`, or `idle`.
-    pub state: String,
+    /// What the team is doing: the state of whichever of its agents most needs him.
+    pub state: AgentState,
     pub agents: u32,
     /// Subagents running under its agents.
     pub subagents: u32,
@@ -26,8 +25,7 @@ pub struct DeskRoom {
 pub struct DeskMember {
     pub id: String,
     pub callsign: String,
-    /// `working`, `asking`, `stalled` or `idle`.
-    pub state: String,
+    pub state: AgentState,
     pub subagents: u32,
     pub doing: Option<String>,
     /// Two characters to stand for it: "S3", "CP".
@@ -119,7 +117,17 @@ pub struct DeskUpload {
     pub name: String,
     pub sent: u64,
     pub total: u64,
-    pub state: String,
+    pub state: UploadState,
+}
+/// How far a file he attached has got.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum UploadState {
+    /// On its way to his computer.
+    Sending,
+    /// His computer has it: it goes with the next thing he says.
+    Ready,
+    /// It did not get there.
+    Failed,
 }
 /// How one computer was last reached. Each is a few words ("answered", "the relay says your computer is not
 /// connected"), or empty when that way has not been tried or has only ever worked.

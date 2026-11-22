@@ -145,14 +145,14 @@ try:
     # the card was put while the chat was open and he has not seen it change since: a second card, now
     check("the card he saw arrive wakes nothing", quiet(2, 6))
     card = [m for m in http("GET", "/v1/radio/feed?since=0", showing=False)[1]["messages"] if m.get("permission") and m["open"]]
-    if card: http("POST", "/v1/radio/utterance", {"text": "Deny", "id": os.urandom(6).hex(), "re": card[-1]["id"]})
+    if card: http("POST", "/v1/radio/utterance", {"text": "Deny", "id": os.urandom(6).hex(), "re": card[-1]["id"], "act": {"kind": "verdict", "allow": False}})
     asking.join(40)
     asking = threading.Thread(target=ask_permission); asking.start()
     check("a permission card wakes the phone that was there a moment ago", pushed(3))
     if len(pushes) >= 3:
         note = opened(pushes[2]["sealed"])
         check("it says what will run, word for word, and that it is a permission card", note.get("permission") is True and note["text"] == "Wants to run `npm run deploy`. Allow?" and pushes[2]["question"] is True, note)
-        allow = {"text": "Allow", "id": os.urandom(6).hex(), "re": note["id"]}
+        allow = {"text": "Allow", "id": os.urandom(6).hex(), "re": note["id"], "act": {"kind": "verdict", "allow": True}}
         reply = None
         for _ in range(300):
             took = http("POST", "/v1/radio/utterance", allow)[1]

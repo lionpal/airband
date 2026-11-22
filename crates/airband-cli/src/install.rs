@@ -256,11 +256,11 @@ pub fn pair(mut cfg: Config, name: &str) -> Result<(), String> {
         }
         None => {
             // where a radio can find this computer: its private network, and its own when that is allowed
-            let at: Vec<String> = config::tailscale_addrs().into_iter().chain(config::lan_addrs().into_iter().filter(|_| cfg.lan)).map(|a| format!("http://{a}:{}", cfg.port)).collect();
+            let at: Vec<String> = config::overlay_addrs().into_iter().chain(config::lan_addrs().into_iter().filter(|_| cfg.lan)).map(|a| format!("http://{a}:{}", cfg.port)).collect();
             if at.is_empty() {
-                return Err("with no relay a phone must reach this computer itself, and it has no address a phone could use: join a network (and `airband lan on`), start Tailscale, or `airband relay on`".into());
+                return Err("with no relay a phone must reach this computer itself, and it has no address a phone could use: join a network (and `airband lan on`), join a private network that the phone is on too, or `airband relay on`".into());
             }
-            println!("Pairing \"{name}\" with no relay. It works where the phone can reach this computer: on its network, or over Tailscale. Notifications need the relay, so none are sent.");
+            println!("Pairing \"{name}\" with no relay. It works where the phone can reach this computer: on its network, or over a private network both are on. Notifications need the relay, so none are sent.");
             Pairing::Near { at, secret }
         }
     };

@@ -38,11 +38,11 @@ impl From<Trouble> for Failed {
     }
 }
 
-/// The JSON object in what a model wrote, which may have words or a code fence around it. None when there is
-/// no object there (a closing brace before any opening one is not one).
-pub(super) fn json_in(out: &str) -> Option<&str> {
-    let (a, b) = (out.find('{')?, out.rfind('}')?);
-    out.get(a..=b)
+/// What a model wrote, read as JSON of one shape. A service held to a schema answers with the JSON and
+/// nothing else. One asked in words may put words or a code fence around it: then the JSON parser is tried
+/// from each place an object could begin, and the first that reads as this shape is the answer.
+pub(super) fn json_of<T: serde::de::DeserializeOwned>(out: &str) -> Option<T> {
+    serde_json::from_str(out.trim()).ok().or_else(|| out.char_indices().filter(|(_, c)| *c == '{').find_map(|(i, _)| serde_json::Deserializer::from_str(&out[i..]).into_iter::<T>().next()?.ok()))
 }
 
 /// What reads, when he has changed it from a radio since this tower started: used from then on, with no
@@ -112,7 +112,7 @@ pub(super) async fn ask_json<T: serde::de::DeserializeOwned>(cfg: &Config, what:
     if let Some(prompt) = traced {
         log(format!("{what} asked:\n{prompt}\nand was told: {answer:?}"));
     }
-    serde_json::from_str(json_in(&answer?).ok_or("no JSON in the answer")?).map_err(|e| e.to_string())
+    json_of(&answer?).ok_or_else(|| "the answer was not JSON of the shape asked for".to_string())
 }
 
 /// What a list holds under the number a model answered with. The lists it is shown are numbered from one.
@@ -236,8 +236,11 @@ async fn command(model: &Summarizer, by: &By, prompt: String, shape: Option<Valu
     // and `{model}`, or any other setting the row asks for, is what he set or the row's usual
     let asked: Vec<(String, String)> = model.offer(Job::Summary).map(|(_, o)| o.asks.iter().map(|a| (format!("{{{}}}", a.field), model.get(Job::Summary, &a.field))).collect()).unwrap_or_default();
     let mut argv: Vec<String> = argv.into_iter().map(|a| asked.iter().fold(a.replace("{brief}", &folder.join("brief.md").display().to_string()), |a, (name, value)| a.replace(name, value))).collect();
-    // `{shape}` is a file holding the shape the answer must take, for a tool that can be held to one. A call
-    // that wants no shape leaves that argument out, and the flag before it.
+    // `{with_shape}` stands where the row's `with_shape` arguments go when the answer must take a shape: one
+    // of them holds `{shape}`, a file with that shape. A call that wants no shape has none of them.
+    if let Some(at) = argv.iter().position(|a| a == "{with_shape}") {
+        argv.splice(at..=at, if shape.is_some() { by.list("with_shape") } else { Vec::new() });
+    }
     if let Some(at) = argv.iter().position(|a| a.contains("{shape}")) {
         match &shape {
             Some(shape) => {
@@ -248,9 +251,6 @@ async fn command(model: &Summarizer, by: &By, prompt: String, shape: Option<Valu
             }
             None => {
                 argv.remove(at);
-                if at > 0 && argv[at - 1].starts_with('-') {
-                    argv.remove(at - 1);
-                }
             }
         }
     }
@@ -462,7 +462,7 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
     );
     #[derive(Deserialize)]
     struct Out {
-        kind: String,
+        kind: Kind,
         say: String,
         #[serde(default)]
         options: Vec<String>,
@@ -496,13 +496,9 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
     });
     let parsed = ask_json::<Out>(cfg, "reading a message", prompt, Some(shape)).await;
     match parsed {
-        Ok(o) if !o.say.trim().is_empty() => {
-            let judged = match o.kind.as_str() {
-                "needs-you" | "question" => Kind::NeedsYou,
-                "fyi" => Kind::Fyi,
-                "stalled" => Kind::Stalled,
-                _ => Kind::Report,
-            };
+        // a kind the model made up is no verdict: he gets the message as written, below
+        Ok(o) if !o.say.trim().is_empty() && o.kind != Kind::Unknown => {
+            let judged = o.kind;
             // His agent's own words beat a rewording of them, when the model that read the message says they
             // are already short and plain enough to show as they are. That is its verdict, never a guess made
             // here from the look of the text. Anything longer is cut down, because a card he has to read
@@ -575,7 +571,7 @@ pub(super) async fn consent(cfg: &Config, said: &str) -> Option<bool> {
     let prompt = format!(
         "A coding agent asked {name} for permission to do one thing on his computer. He was shown exactly what, \
          and answered in his own words.\n\nHis answer:\n<answer>\n{said}\n</answer>\n\n\
-         Reply with one word and nothing else:\n\
+         Reply with one line of JSON and nothing else, {{\"verdict\": one of \"allow\", \"refuse\", \"unclear\"}}:\n\
          - allow: he plainly says yes to exactly what was asked, with no condition and no change.\n\
          - refuse: he says no, or tells it what to do instead or first, or attaches a condition or a change \
          (\"run it on staging first\", \"not that folder\", \"only the tests\", \"yes but skip the migration\"). An \
@@ -586,16 +582,28 @@ pub(super) async fn consent(cfg: &Config, said: &str) -> Option<bool> {
         name = cfg.name,
         said = tail(said, 1000)
     );
-    let out = ask_model(cfg, prompt).await.ok()?;
-    if std::env::var_os("AIRBAND_TRACE").is_some() {
-        log(format!("asked whether \"{said}\" allows it, and was told: {out}"));
+    #[derive(Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Verdict {
+        Allow,
+        Refuse,
+        Unclear,
     }
-    // one word was asked for; a model that wraps it in JSON all the same has still said it
-    let word = json_in(&out).and_then(|j| serde_json::from_str::<Value>(j).ok()).and_then(|v| v.as_object().and_then(|o| o.values().find_map(|x| x.as_str().map(String::from)))).unwrap_or(out.clone());
-    match word.trim().trim_matches(|c: char| !c.is_ascii_alphabetic()).to_ascii_lowercase().as_str() {
-        "allow" => Some(true),
-        "refuse" => Some(false),
-        _ => None,
+    #[derive(Deserialize)]
+    struct Out {
+        verdict: Verdict,
+    }
+    let shape = json!({
+        "type": "object",
+        "properties": { "verdict": { "type": "string", "enum": ["allow", "refuse", "unclear"] } },
+        "required": ["verdict"],
+        "additionalProperties": false
+    });
+    // anything that is not exactly this shape with one of these three values settles nothing
+    match ask_json::<Out>(cfg, "whether his words allow it", prompt, Some(shape)).await.ok()?.verdict {
+        Verdict::Allow => Some(true),
+        Verdict::Refuse => Some(false),
+        Verdict::Unclear => None,
     }
 }
 

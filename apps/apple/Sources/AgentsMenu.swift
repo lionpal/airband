@@ -113,7 +113,7 @@ struct AgentsMenu: View {
                             if !agent.held {
                                 Button { taking = agent } label: { Label("Take over from the terminal", systemImage: "arrow.down.to.line") }
                             }
-                            if agent.held, agent.state == "working" {
+                            if agent.held, agent.state == .working {
                                 Button { model.stop(agent) } label: { Label("Stop what it is doing", systemImage: "stop.fill") }
                             }
                             if agent.ends {
@@ -168,7 +168,7 @@ struct AgentsMenu: View {
         }
     }
 
-    private func row(dot: String?, title: String, detail: String?, strong: Bool, on: Bool, inset: CGFloat, colour: UInt8? = nil, badge: String? = nil, lead: String = "", engine: String = "", doing: String? = nil, pick: @escaping () -> Void) -> some View {
+    private func row(dot: AgentState?, title: String, detail: String?, strong: Bool, on: Bool, inset: CGFloat, colour: UInt8? = nil, badge: String? = nil, lead: String = "", engine: String = "", doing: String? = nil, pick: @escaping () -> Void) -> some View {
         Button {
             pick()
             model.replyingTo = nil

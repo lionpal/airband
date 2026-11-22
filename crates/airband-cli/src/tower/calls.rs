@@ -34,7 +34,7 @@ pub(super) struct Call {
     /// so a voice that is not answering does not run the whole queue past him in silence.
     pub(super) quiet_until: Option<Instant>,
 }
-/// Whether a radio is there: what it last said of itself (`airband.radio/1`'s `Presence`, which every request
+/// Whether a radio is there: what it last said of itself (`airband.radio/2`'s `Presence`, which every request
 /// of its carries), and when. The tower infers nothing from which requests it makes. Every rule that turns on
 /// "is he there" reads this, by the one clock [`THERE`]: who can be handed something to read out, whether there
 /// is anyone to ask for leave, whether a notification is needed, whether it is worth asking the harnesses what

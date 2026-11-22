@@ -78,18 +78,24 @@ fn healthy() -> bool {
     agent.get(format!("{}/health", address())).call().is_ok_and(|r| r.status().as_u16() == 200)
 }
 
+/// When a process started, as the system says it: what tells it from another that was later given its number.
+fn started(pid: u32) -> Option<String> {
+    let out = Command::new("ps").args(["-p", &pid.to_string(), "-o", "lstart="]).env("LC_ALL", "C").env("TZ", "UTC").output().ok().filter(|o| o.status.success())?;
+    Some(String::from_utf8_lossy(&out.stdout).split_whitespace().collect::<Vec<_>>().join(" ")).filter(|s| !s.is_empty())
+}
+
 /// A server left by a tower that was stopped: only the one this tower recorded starting (its process and
-/// the program it was, on two lines), and only if that process is still that program.
+/// the moment that process started, on two lines), and only if a process with that number still started at
+/// that moment. Its number alone could have been given to another program since.
 fn end_the_last_one() {
     let note = dir().join("server.pid");
     let noted = std::fs::read_to_string(&note).unwrap_or_default();
     let mut lines = noted.lines();
-    if let (Some(pid), Some(was)) = (lines.next().and_then(|p| p.trim().parse::<u32>().ok()), lines.next().filter(|p| !p.is_empty())) {
-        let is_ours = Command::new("ps").args(["-p", &pid.to_string(), "-o", "command="]).output().is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains(was));
-        if is_ours {
-            terminate(pid);
-            std::thread::sleep(Duration::from_millis(600));
-        }
+    if let (Some(pid), Some(was)) = (lines.next().and_then(|p| p.trim().parse::<u32>().ok()), lines.next().filter(|p| !p.is_empty()))
+        && started(pid).as_deref() == Some(was)
+    {
+        terminate(pid);
+        std::thread::sleep(Duration::from_millis(600));
     }
     let _ = std::fs::remove_file(note);
 }
@@ -142,7 +148,10 @@ pub(crate) fn ensure(model: &str, server: &str) -> Result<String, String> {
                 .stderr(out)
                 .spawn()
                 .map_err(|e| format!("the program that runs the model did not start: {e}"))?;
-            let _ = std::fs::write(dir().join("server.pid"), format!("{}\n{}\n", child.id(), program.display()));
+            // with the moment it started; one whose start cannot be read is not noted, and so is never ended later
+            if let Some(began) = started(child.id()) {
+                let _ = std::fs::write(dir().join("server.pid"), format!("{}\n{began}\n", child.id()));
+            }
             *running = Some((model.to_string(), child));
         }
     }

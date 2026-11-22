@@ -162,7 +162,7 @@ impl State {
             .iter()
             .flat_map(|s| {
                 s.messages.iter().map(move |m| {
-                    let his = m.from == "you";
+                    let his = m.his;
                     ChatMessage {
                         station: if several { s.name.clone() } else { String::new() },
                         // on his own message, the badge of the agent it went to, when it went to one

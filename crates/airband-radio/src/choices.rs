@@ -176,15 +176,13 @@ struct Saved {
 }
 
 impl Saved {
-    /// A new install: the models that run on this device are chosen for listening and for the voice, because
-    /// they need nothing from him (they are fetched when he finishes the first run), and the first coding tool
-    /// in the catalogue is the one he is taken to use until he says. Where no model for a job runs on this
-    /// device, nothing is chosen for it.
+    /// A new install: for listening and for the voice, the model whose row says it is the usual one
+    /// (`usual` in its row) and that runs on this device, because it needs nothing from him (it is fetched when
+    /// he finishes the first run). Where no row says so for a job, nothing is chosen for it. Which coding
+    /// tools he uses is his to say: none is taken for his until he picks.
     fn fresh(device: &HostDevice) -> Saved {
-        let first = |job: Job| crate::models::models(device).find(|m| m.job == job).map(|m| Pick { place: ChoicePlace::Phone, id: m.kind.clone(), offer: String::new(), set: BTreeMap::new(), voice: String::new() });
-        let mut saved = Saved { ears: first(Job::Ears), voice: first(Job::Voice), ..Saved::default() };
-        saved.use_tools(airband_core::catalog::current().tools.first().map(|t| vec![t.id.to_string()]).unwrap_or_default());
-        saved
+        let usual = |job: Job| crate::models::models(device).find(|m| m.job == job && m.with.get("usual").and_then(|u| u.as_bool()) == Some(true)).map(|m| Pick { place: ChoicePlace::Phone, id: m.kind.clone(), offer: String::new(), set: BTreeMap::new(), voice: String::new() });
+        Saved { ears: usual(Job::Ears), voice: usual(Job::Voice), ..Saved::default() }
     }
 
     /// What is chosen on this device for a job, if anything is.
@@ -919,7 +917,7 @@ mod tests {
     fn a_new_install_starts_with_what_needs_nothing_from_him() {
         let saved = Saved::fresh(&phone());
         for (job, pick) in [(Job::Ears, saved.ears.clone()), (Job::Voice, saved.voice.clone())] {
-            match crate::models::models(&phone()).find(|m| m.job == job) {
+            match crate::models::models(&phone()).find(|m| m.job == job && m.with.get("usual").and_then(|u| u.as_bool()) == Some(true)) {
                 Some(m) => assert!(pick.is_some_and(|p| p.place == ChoicePlace::Phone && p.id == m.kind)),
                 // with no model that runs here, nothing is chosen: nothing else is put in its place
                 None => assert_eq!(pick, None),
@@ -928,7 +926,8 @@ mod tests {
         // a device no model runs on starts with nothing chosen for either
         let bare = Saved::fresh(&HostDevice::default());
         assert!(bare.ears.is_none() || crate::models::models(&HostDevice::default()).any(|m| m.job == Job::Ears));
-        assert_eq!(saved.tools.len(), 1);
+        // which coding tools he uses is his to say
+        assert!(saved.tools.is_empty() && saved.reads.is_none());
         // what is kept comes back as it was
         let dir = std::env::temp_dir().join(format!("airband-choices-{}", random_hex(4)));
         let at = dir.display().to_string();

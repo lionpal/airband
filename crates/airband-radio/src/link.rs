@@ -1,5 +1,5 @@
 //! Reaching the tower: straight to it, or sealed through a relay. Everything above this module makes
-//! `airband.radio/1` requests and does not know which way they travel. A new transport is a new [`Route`].
+//! `airband.radio/2` requests and does not know which way they travel. A new transport is a new [`Route`].
 use super::*;
 
 /// The tower holds `GET /next` open for 25 seconds; anything past this means the connection is dead.
@@ -398,7 +398,7 @@ impl Link {
         Some(Err(last))
     }
 
-    /// One `airband.radio/1` request. `path` is what follows `/v1/radio`. An answer from the tower comes back
+    /// One `airband.radio/2` request. `path` is what follows `/v1/radio`. An answer from the tower comes back
     /// with its status, whatever that is; an error is a request the tower never answered.
     pub(crate) fn request(&self, method: &str, path: &str, body: Option<Value>) -> Result<(u16, Value), LinkError> {
         self.request_as(method, path, body, false, &mut Vec::new())
@@ -593,10 +593,10 @@ impl Link {
     /// takes it at once; its answer comes by the feed, or to this asking again, and is waited for as long as a
     /// person on a call would. Nothing, when the tower has it and has not said what came of it in that time:
     /// it is in the chat when it does.
-    pub(crate) fn utterance(&self, text: &str, re: Option<String>, scope: Option<String>) -> Result<Option<Reply>, LinkError> {
+    pub(crate) fn utterance(&self, text: &str, re: Option<String>, scope: Option<String>, act: Option<airband_core::radio::Act>) -> Result<Option<Reply>, LinkError> {
         // what he has attached goes with what he says; if this fails for good they are his to send again
         let attachments = self.take_armed();
-        let u = Utterance { text: text.to_string(), id: random_hex(12), re, scope, label: None, attachments: attachments.clone(), others: Vec::new() };
+        let u = Utterance { text: text.to_string(), id: random_hex(12), re, scope, label: None, attachments: attachments.clone(), others: Vec::new(), to: Vec::new(), act };
         self.awaited.lock().unwrap().insert(u.id.clone(), None);
         let got = self.say_and_wait(&u);
         self.awaited.lock().unwrap().remove(&u.id);
@@ -664,7 +664,7 @@ mod tests {
     }
 
     fn said(id: &str, text: &str) -> Utterance {
-        Utterance { text: text.into(), id: id.into(), re: None, scope: None, label: None, attachments: Vec::new(), others: Vec::new() }
+        Utterance { text: text.into(), id: id.into(), re: None, scope: None, label: None, attachments: Vec::new(), others: Vec::new(), to: Vec::new(), act: None }
     }
 
     /// A link to a relay nobody is at, with a tower address nobody is at either.
