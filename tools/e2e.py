@@ -285,7 +285,8 @@ try:
     check("what he said to it is now shown as said to it under its new name", his("payments tests")[0]["to"] == ["payouts webhook"], his("payments tests"))
     moved = http("POST", "/v1/radio/team", {"agent": "tr", "team": "returns"})[1]
     f = feed()
-    check("a team that was not there is made by moving an agent into it, with a colour of its own", moved.get("callsign") == "returns webhook" and "returns" in f["colours"], (moved, f["colours"]))
+    check("a team that was not there is made by moving an agent into it", moved.get("callsign") == "returns webhook" and roster(f)["returns webhook"]["group"] == "returns", moved)
+    check("the tower gives no colours: the phone chooses them, across every computer", "colours" not in f, list(f))
     session("tr", "orders", {"type": "working"}, "orders hooks")
     check("renamed afterwards, it stays in the team he put it in", "returns hooks" in roster(feed()), list(roster(feed())))
     session("nb", "orders", {"type": "working"})

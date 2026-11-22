@@ -12,7 +12,7 @@ final class NotificationService: UNNotificationServiceExtension {
     override func didReceive(_ request: UNNotificationRequest, withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void) {
         deliver = contentHandler
         plain = request.content
-        guard let sealed = request.content.userInfo["sealed"] as? String, let note = openNotice(links: Keychain.links(), sealed: sealed),
+        guard let sealed = request.content.userInfo["sealed"] as? String, let note = openNotice(links: Keychain.links(), sealed: sealed, colours: Keychain.teamColours()),
               let content = request.content.mutableCopy() as? UNMutableNotificationContent else { return contentHandler(request.content) }
         content.title = note.title
         content.subtitle = note.subtitle

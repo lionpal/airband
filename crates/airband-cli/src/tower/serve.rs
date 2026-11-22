@@ -88,7 +88,7 @@ fn open(cfg: Config) -> Result<Arc<App>, String> {
     let (saved, entries) = store.load(LOG_KEEP);
     let (seq, rev) = store.last_counts();
     let configured = cfg.projects.iter().map(|(k, v)| (airband_core::routing::team_name(k).unwrap_or_else(|| k.to_lowercase()), v.clone())).collect();
-    let mut inner = Inner { sessions: saved.sessions, projects: saved.projects, named_teams: saved.named_teams, configured, here: config::station(&cfg), colours: saved.colours, held: saved.held, menus: saved.menus, tools: saved.tools, placed: saved.placed, seq, rev, log: entries, ..Inner::default() };
+    let mut inner = Inner { sessions: saved.sessions, projects: saved.projects, named_teams: saved.named_teams, configured, here: config::station(&cfg), held: saved.held, menus: saved.menus, tools: saved.tools, placed: saved.placed, seq, rev, log: entries, ..Inner::default() };
     inner.settle_teams();
     inner.links = links::Book::load();
     inner.reap();

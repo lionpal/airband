@@ -134,6 +134,7 @@ impl Desk {
         {
             // shown as the tower now has it, without waiting for the next look at the feed
             let mut state = self.shared.state.lock().unwrap();
+            state.colours.renamed(&team, &now);
             for a in state.stations.iter_mut().flat_map(|s| s.agents.iter_mut()).filter(|a| a.group == team) {
                 a.callsign = airband_core::routing::Callsign { project: now.clone(), ..a.parts() }.text();
                 a.group = now.clone();

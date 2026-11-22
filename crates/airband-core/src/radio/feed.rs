@@ -60,9 +60,6 @@ pub struct Notice {
     pub badge: String,
     #[serde(default)]
     pub group: String,
-    /// The team's colour: its place in the client's list of team colours.
-    #[serde(default)]
-    pub colour: u8,
     /// What this computer is called.
     #[serde(default)]
     pub station: String,
@@ -330,10 +327,6 @@ pub struct Feed {
     /// `GET feed` also returns when the roster changes, not only when a message does.
     #[serde(default)]
     pub roster_rev: u64,
-    /// Each team's colour, as a number from 0: its place in the client's own list of team colours (it wraps
-    /// round if there are more teams than colours). Given once and kept, so a team keeps its colour.
-    #[serde(default)]
-    pub colours: std::collections::BTreeMap<String, u8>,
     /// What has come of things this radio said, since the change count it asked from: each under its
     /// utterance's id. One may be told more than once; a radio that has dealt with an id ignores it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

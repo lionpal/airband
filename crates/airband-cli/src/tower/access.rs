@@ -99,6 +99,6 @@ impl App {
         let touched: HashSet<String> = inner.unsaved.borrow_mut().drain().collect();
         let entries: Vec<Entry> = inner.log.iter().filter(|e| touched.contains(&e.id)).cloned().collect();
         self.store.put_messages(&entries);
-        self.store.save_state(&Saved { sessions: inner.sessions.clone(), projects: inner.projects.clone(), named_teams: inner.named_teams.clone(), colours: inner.colours.clone(), held: inner.held.clone(), menus: inner.menus.clone(), tools: inner.tools.clone(), placed: inner.placed.clone() });
+        self.store.save_state(&Saved { sessions: inner.sessions.clone(), projects: inner.projects.clone(), named_teams: inner.named_teams.clone(), held: inner.held.clone(), menus: inner.menus.clone(), tools: inner.tools.clone(), placed: inner.placed.clone() });
     }
 }

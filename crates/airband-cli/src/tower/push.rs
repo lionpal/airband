@@ -81,7 +81,7 @@ pub(super) fn notice(inner: &Inner, e: &Entry, station: &str) -> Notice {
     // A request for leave that does not fit is shown by its opening and offers no answer from the lock screen:
     // he opens it, reads all of what would run, and answers there.
     let cut = m.permission && text != m.text;
-    Notice { id: m.id, colour: inner.colours.get(&m.group).copied().unwrap_or(0), from: m.from, agent: m.agent, badge: m.badge, group: m.group, station: station.into(), text, kind: m.kind, options: if cut { Vec::new() } else { m.options.iter().take(4).map(|o| short(o, 40)).collect() }, permission: m.permission && !cut }
+    Notice { id: m.id, from: m.from, agent: m.agent, badge: m.badge, group: m.group, station: station.into(), text, kind: m.kind, options: if cut { Vec::new() } else { m.options.iter().take(4).map(|o| short(o, 40)).collect() }, permission: m.permission && !cut }
 }
 
 /// A line's short version has just been made, or a card was put to him: wake whichever phones should know.
@@ -229,11 +229,10 @@ mod tests {
     #[test]
     fn the_notification_carries_what_the_phone_needs_to_show_and_answer_it() {
         let mut inner = tower();
-        inner.colours.insert("shop".into(), 4);
         let s = inner.sessions[0].clone();
         inner.record(Entry { short: Some("Rewrite or leave?".into()), options: vec!["Rewrite".into(), "Leave".into()], ..Entry::said("q".into(), &s, Some(Kind::NeedsYou), "long".into()) });
         let n = notice(&inner, &inner.log[0], "mini");
-        assert_eq!((n.id.as_str(), n.from.as_str(), n.group.as_str(), n.colour, n.station.as_str(), n.text.as_str()), ("q", "shop 1", "shop", 4, "mini", "Rewrite or leave?"));
+        assert_eq!((n.id.as_str(), n.from.as_str(), n.group.as_str(), n.station.as_str(), n.text.as_str()), ("q", "shop 1", "shop", "mini", "Rewrite or leave?"));
         assert_eq!(n.badge, "S1");
         assert_eq!((n.options, n.permission, n.kind), (vec!["Rewrite".to_string(), "Leave".to_string()], false, Some(Kind::NeedsYou)));
         // sealed, it fits in one push even when the line is as long as a line gets

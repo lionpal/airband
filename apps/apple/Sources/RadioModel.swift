@@ -15,7 +15,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     static let shared = RadioModel()
 
     /// What the screen shows, as the desk last gave it, for the room or agent he is looking at.
-    @Published var view = DeskView(paired: false, online: false, connecting: false, near: false, away: [], feed: [], rooms: [], unread: 0, canPoke: false, quick: [], sending: [], stations: [], mainComputer: nil, chooseMain: false, reads: "", uploads: [], asking: nil)
+    @Published var view = DeskView(paired: false, online: false, connecting: false, near: false, away: [], feed: [], rooms: [], unread: 0, canPoke: false, quick: [], sending: [], stations: [], colours: [:], mainComputer: nil, chooseMain: false, reads: "", uploads: [], asking: nil)
     /// A project: show just its agents, and keep what he says among them.
     @Published var room: String? { didSet { refresh() } }
     /// An agent, by id: show just that agent.
@@ -195,7 +195,11 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     func refresh() {
         // only when something he can see has changed: the chat is not laid out again for nothing
         let now = desk.view(room: room, agent: only)
-        if now != view { view = now }
+        if now != view {
+            // a team given its colour just now: the notification extension shows it the same
+            if now.colours != view.colours { Keychain.keepTeamColours(now.colours) }
+            view = now
+        }
         // what has gone with a message has left the desk's list: it leaves the tray too
         if !tray.isEmpty {
             let gone = tray.filter { item in item.attachment.map { id in !view.uploads.contains { $0.id == id } } ?? false }

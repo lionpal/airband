@@ -3,8 +3,13 @@
 //! their messages, what counts as waiting on him and what as done, which computer a message of his goes to,
 //! which computer has the floor on a call, and marking what he has read. What is left for a host is to draw
 //! the [`DeskView`], make and capture sound, and keep the pairing links somewhere safe.
-use super::*;use airband_core::routing::{Callsign, parse_utterance};use crate::mouth::CodingTool;use std::collections::{HashMap, HashSet};use std::sync::Condvar;
+use super::*;
+use airband_core::routing::{Callsign, parse_utterance};
+use crate::mouth::CodingTool;
+use std::collections::{HashMap, HashSet};
+use std::sync::Condvar;
 mod agents;
+mod colours;
 mod follow;
 mod notice;
 mod reading;
@@ -19,6 +24,7 @@ mod view;
 
 pub use notice::*;
 pub use records::*;
+use colours::Colours;
 use follow::*;
 use send::*;
 use station_host::*;
@@ -92,8 +98,6 @@ pub(crate) struct Station {
     /// Sent, and not yet seen in the chat that comes back from the tower: shown as on their way until they are.
     landing: Vec<(Outgoing, std::time::Instant)>,
     quick: Vec<QuickMessage>,
-    /// Each team's colour, as this computer gave it.
-    colours: std::collections::HashMap<String, u8>,
     /// This computer's recent chat, oldest first.
     messages: Vec<ChatMessage>,
 }
@@ -118,6 +122,8 @@ pub(crate) struct State {
     /// Where this device can be woken with a notification (a push service's name and the device's address
     /// there), and the links of the computers that have been told.
     push: Option<(PushService, String)>,
+    /// Each team's colour, chosen here across every computer.
+    pub(crate) colours: Colours,
     push_told: HashSet<String>,
     /// The coding tools each computer was last told he uses, by its link.
     tools_told: HashMap<String, Vec<String>>,
@@ -145,9 +151,9 @@ impl State {
     fn named_radios(&self) -> Vec<(String, Arc<Radio>)> {
         (0..self.stations.len()).map(|i| (self.computer_name(i), self.stations[i].radio.clone())).collect()
     }
-    /// The colour a team is shown in, as the computer that has it says.
+    /// The colour a team is shown in.
     fn colour(&self, group: &str) -> u8 {
-        self.stations.iter().find_map(|s| s.colours.get(group).copied()).unwrap_or(0)
+        self.colours.of(group)
     }
     /// His main computer: the only one, or the one he chose, while it is still paired.
     fn main(&self) -> Option<usize> {
@@ -173,7 +179,7 @@ impl State {
                 s.messages.iter().map(move |m| {
                     ChatMessage {
                         station: if several { s.name.clone() } else { String::new() },
-                        colour: s.colours.get(&m.group).copied().unwrap_or(0),
+                        colour: self.colours.of(&m.group),
                         ..m.clone()
                     }
                 })
@@ -234,7 +240,7 @@ impl Desk {
     /// kept in a folder under it. Nothing is connected until [`Desk::set_links`].
     #[uniffi::constructor]
     pub fn open(data_dir: String, host: Arc<dyn DeskHost>) -> Arc<Self> {
-        let state = State { read: ReadMarks::load(&data_dir), ..State::default() };
+        let state = State { read: ReadMarks::load(&data_dir), colours: Colours::open(&data_dir), ..State::default() };
         let chooser = crate::choices::Chooser::open(&data_dir, host.device());
         let senses: Arc<Senses> = Arc::default();
         // what he chose to listen and speak with is in use from the start
@@ -280,7 +286,6 @@ impl Desk {
                 sending: Vec::new(),
                 landing: Vec::new(),
                 quick: was.map(|s| s.quick.clone()).unwrap_or_default(),
-                colours: was.map(|s| s.colours.clone()).unwrap_or_default(),
                 link,
             });
         }

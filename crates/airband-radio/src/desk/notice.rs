@@ -68,9 +68,10 @@ pub fn leave_word(allow: bool) -> String {
 }
 /// Open a sealed notification with whichever pairing sealed it. `links` are the pairing links the host keeps;
 /// `sealed` is the notification as the push service delivered it. Nothing when none of them opens it. This
-/// needs no desk: a host calls it from wherever its system hands it a notification.
+/// needs no desk: a host calls it from wherever its system hands it a notification. `colours` is each team's
+/// colour as [`DeskView::colours`] last gave it, from the copy the host keeps; a team not in it takes the first.
 #[uniffi::export]
-pub fn open_notice(links: Vec<String>, sealed: String) -> Option<OpenedNotice> {
+pub fn open_notice(links: Vec<String>, sealed: String, colours: std::collections::HashMap<String, u8>) -> Option<OpenedNotice> {
     let sealed = airband_core::audio::base64_decode(&sealed)?;
     let several = links.len() > 1;
     links.iter().find_map(|link| {
@@ -84,7 +85,7 @@ pub fn open_notice(links: Vec<String>, sealed: String) -> Option<OpenedNotice> {
             subtitle: if several { n.station } else { String::new() },
             body: n.text,
             badge: n.badge,
-            colour: n.colour,
+            colour: colours.get(&n.group).copied().unwrap_or(0),
             room: n.group,
             agent: n.agent.unwrap_or_default(),
             question: n.kind == Some(Kind::NeedsYou),

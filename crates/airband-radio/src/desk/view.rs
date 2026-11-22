@@ -119,6 +119,7 @@ impl Desk {
             }
         }
         DeskView {
+            colours: state.colours.all(),
             paired: !state.stations.is_empty(),
             online: state.stations.iter().any(|s| s.online),
             connecting: !state.stations.iter().any(|s| s.online) && state.stations.iter().any(|s| !s.tried),

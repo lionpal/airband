@@ -25,6 +25,10 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, gener
             }
             let calling = state.calling;
             let open: HashSet<String> = state.stations.iter().flat_map(|s| s.open.iter().cloned()).collect();
+            // the teams this computer has are given their colours here, beside every other computer's
+            if let Ok(feed) = &got {
+                state.colours.see(feed.agents.iter().map(|a| a.group.clone()).chain(feed.messages.iter().map(|m| m.group.clone())));
+            }
             let Some(station) = state.stations.get_mut(index) else { return };
             match &got {
                 Ok(feed) => {
@@ -46,7 +50,6 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, gener
                     station.agents = feed.agents.clone();
                     station.open = feed.open.iter().cloned().collect();
                     station.quick = feed.quick.clone();
-                    station.colours = feed.colours.clone();
                     // the radio keeps the chat itself, each line in its current form
                     station.messages = radio.history();
                     // on screen in front of him now: read, so a call started later does not read it out

@@ -38,7 +38,6 @@ pub(crate) fn chat_feed(feed: Feed) -> ChatFeed {
         }).collect(),
         quick: feed.quick.into_iter().map(|q| QuickMessage { label: q.label, text: q.text }).collect(),
         projects: feed.projects,
-        colours: feed.colours.into_iter().collect(),
         open: feed.open,
         reads_failed: feed.reads_failed.map(|trouble| trouble.said(&feed.reads)).unwrap_or_default(),
         reads: feed.reads,
@@ -191,8 +190,6 @@ pub struct ChatFeed {
     pub seq: u64,
     /// Projects a new agent can be launched in: send "/launch <project> <task>".
     pub projects: Vec<String>,
-    /// Each team's place in the host's list of team colours.
-    pub colours: std::collections::HashMap<String, u8>,
     /// The quick messages to offer: the standard ones, then his own.
     pub quick: Vec<QuickMessage>,
     /// Ids of every message still waiting on him, current as of this answer. The inbox is exactly these.

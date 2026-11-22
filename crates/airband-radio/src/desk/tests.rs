@@ -48,7 +48,6 @@ fn station(name: &str, port: u16, agents: &[(&str, &str)], messages: Vec<ChatMes
         sending: Vec::new(),
         landing: Vec::new(),
         quick: Vec::new(),
-        colours: Default::default(),
         messages,
     }
 }
@@ -245,21 +244,21 @@ fn a_notification_is_opened_by_the_pairing_that_sealed_it_and_no_other() {
     let (mini, laptop, stranger) = (airband_core::relay::new_secret(), airband_core::relay::new_secret(), airband_core::relay::new_secret());
     let keys = Keys::derive(&laptop).unwrap();
     let seal = |n: &Notice| airband_core::audio::base64_encode(&keys.seal(Direction::Push, &serde_json::to_vec(n).unwrap()));
-    let question = Notice { id: "m1".into(), from: "shop 3".into(), agent: Some("a3".into()), badge: "S3".into(), group: "shop".into(), colour: 2, station: "laptop".into(), text: "Rewrite or leave?".into(), kind: Some(Kind::NeedsYou), options: vec!["Rewrite".into(), "Leave".into()], permission: false };
-    let got = open_notice(vec![link(&mini), link(&laptop)], seal(&question)).unwrap();
+    let question = Notice { id: "m1".into(), from: "shop 3".into(), agent: Some("a3".into()), badge: "S3".into(), group: "shop".into(), station: "laptop".into(), text: "Rewrite or leave?".into(), kind: Some(Kind::NeedsYou), options: vec!["Rewrite".into(), "Leave".into()], permission: false };
+    let got = open_notice(vec![link(&mini), link(&laptop)], seal(&question), [("shop".to_string(), 2)].into()).unwrap();
     assert_eq!((got.title.as_str(), got.subtitle.as_str(), got.body.as_str(), got.badge.as_str(), got.colour), ("shop 3", "laptop", "Rewrite or leave?", "S3", 2));
     assert_eq!((got.station.as_str(), got.message.as_str(), got.room.as_str(), got.agent.as_str(), got.question), (keys.channel.as_str(), "m1", "shop", "a3", true));
     assert_eq!(got.options, ["Rewrite", "Leave"]);
     // one computer: its name says nothing he does not know
-    assert_eq!(open_notice(vec![link(&laptop)], seal(&question)).unwrap().subtitle, "");
+    assert_eq!(open_notice(vec![link(&laptop)], seal(&question), Default::default()).unwrap().subtitle, "");
     // a permission card offers its own two answers, not the tower's list
-    let card = open_notice(vec![link(&laptop)], seal(&Notice { permission: true, options: vec!["Allow".into(), "Deny".into()], ..question.clone() })).unwrap();
+    let card = open_notice(vec![link(&laptop)], seal(&Notice { permission: true, options: vec!["Allow".into(), "Deny".into()], ..question.clone() }), Default::default()).unwrap();
     assert!(card.permission && card.options.is_empty());
     // not by another pairing, not as an ordinary answer from the tower, not when it is not base64 at all
-    assert!(open_notice(vec![link(&mini), link(&stranger)], seal(&question)).is_none());
+    assert!(open_notice(vec![link(&mini), link(&stranger)], seal(&question), Default::default()).is_none());
     let answer = airband_core::audio::base64_encode(&keys.seal(Direction::ToRadio, &serde_json::to_vec(&question).unwrap()));
-    assert!(open_notice(vec![link(&laptop)], answer).is_none());
-    assert!(open_notice(vec![link(&laptop)], "not sealed".into()).is_none());
+    assert!(open_notice(vec![link(&laptop)], answer, Default::default()).is_none());
+    assert!(open_notice(vec![link(&laptop)], "not sealed".into(), Default::default()).is_none());
     assert_eq!(station_key(&link(&laptop)), Some(keys.channel.clone()));
 }
 
@@ -290,4 +289,21 @@ fn waiting_is_what_is_open_and_not_just_answered() {
     assert!(!state.is_open("q1"));
     // labelled with its computer, because there are two
     assert_eq!(state.merged().iter().map(|m| (m.id.as_str(), m.station.as_str())).collect::<Vec<_>>(), [("q1", "mini"), ("d1", "mini"), ("q2", "macbook")]);
+}
+
+#[test]
+fn teams_on_two_computers_get_different_colours_that_last() {
+    let dir = std::env::temp_dir().join(format!("airband-colours-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut colours = super::colours::Colours::open(dir.to_str().unwrap());
+    // the same team name on one computer and a laptop's own team on another, as each feed shows them
+    colours.see(["shop".to_string(), "shop".to_string()]);
+    colours.see(["laptop shop".to_string()]);
+    assert_ne!(colours.of("shop"), colours.of("laptop shop"));
+    colours.renamed("laptop shop", "garden");
+    let garden = colours.of("garden");
+    assert_eq!(super::colours::Colours::open(dir.to_str().unwrap()).of("garden"), garden);
+    assert_eq!(super::colours::Colours::open(dir.to_str().unwrap()).of("shop"), colours.of("shop"));
+    let _ = std::fs::remove_dir_all(&dir);
 }

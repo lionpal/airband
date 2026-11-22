@@ -171,7 +171,6 @@ impl Inner {
             self.session(&agent.id).unwrap().agent.name = Some(name);
             self.move_to(&agent.id, &team, Mover::Tower);
         }
-        self.colour_teams();
         let s = self.session(&agent.id).unwrap();
         // an adapter that cannot see something on this event must not erase what an earlier one reported
         if agent.title.is_some() {
@@ -220,7 +219,6 @@ impl Inner {
             let Some(first) = self.placed.keys().next().cloned() else { break };
             self.placed.remove(&first);
         }
-        self.colour_teams();
         Some((was, to))
     }
     /// Call a session something else. Its messages are found by its id, so nothing has to be carried over;
@@ -235,18 +233,6 @@ impl Inner {
         let touched: Vec<String> = self.log.iter().filter(|e| e.agent.as_deref() == Some(id) || e.to_agents.iter().any(|a| a == id)).map(|e| e.id.clone()).collect();
         for entry in touched {
             self.touch(&entry);
-        }
-    }
-    /// Every team on the radio has a colour: a new one takes the first that no team has, and when they have all
-    /// been taken, the one fewest teams share.
-    pub(super) fn colour_teams(&mut self) {
-        const COLOURS: u8 = 6;
-        let teams: Vec<String> = self.sessions.iter().map(|s| s.callsign.project.clone()).collect();
-        for team in teams {
-            if !self.colours.contains_key(&team) {
-                let next = (0..COLOURS).min_by_key(|c| self.colours.values().filter(|have| *have == c).count()).unwrap_or(0);
-                self.colours.insert(team, next);
-            }
         }
     }
     pub(super) fn callsigns(&self) -> Vec<Callsign> {
@@ -323,9 +309,6 @@ impl Inner {
         for (id, callsign) in ids {
             self.rename(&id, callsign);
         }
-        if let Some(colour) = self.colours.remove(from) {
-            self.colours.insert(to.to_string(), colour);
-        }
         for (team, _) in self.placed.values_mut() {
             if team == from {
                 *team = to.to_string();
@@ -352,6 +335,5 @@ impl Inner {
                 self.rename(&id, to);
             }
         }
-        self.colour_teams();
     }
 }

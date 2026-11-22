@@ -86,6 +86,9 @@ pub struct DeskView {
     pub sending: Vec<Outgoing>,
     /// What each paired computer is called.
     pub stations: Vec<String>,
+    /// Each team's place in the host's list of team colours, the same on every computer. A host keeps a copy
+    /// where its notification extension can read it, and hands it to [`open_notice`].
+    pub colours: std::collections::HashMap<String, u8>,
     /// His main computer, by name: the only one, or the one he chose. Nothing while he has several and has
     /// not chosen.
     pub main_computer: Option<String>,

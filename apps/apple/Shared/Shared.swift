@@ -36,9 +36,18 @@ enum Keychain {
     static func links() -> [String] {
         (try? JSONDecoder().decode([String].self, from: Data((read("airband.links") ?? "[]").utf8))) ?? []
     }
+    /// Each team's colour as the phone chose it, kept where the notification extension can read it. Not a secret:
+    /// it is here because this is the one store the app and its extension share.
+    static func teamColours() -> [String: UInt8] {
+        (try? JSONDecoder().decode([String: UInt8].self, from: Data((read("airband.teamColours") ?? "{}").utf8))) ?? [:]
+    }
+    static func keepTeamColours(_ colours: [String: UInt8]) {
+        guard let data = try? JSONEncoder().encode(colours), let text = String(data: data, encoding: .utf8) else { return }
+        write("airband.teamColours", text)
+    }
 }
 
-/// A colour for each team, in the order the tower hands them out: blue, orange, violet, magenta, amber, green.
+/// A colour for each team, in the order the phone hands them out: blue, orange, violet, magenta, amber, green.
 enum TeamColours {
     static let rgb: [(Double, Double, Double)] = [
         (0.224, 0.529, 0.898), (0.851, 0.349, 0.149), (0.565, 0.522, 0.914),

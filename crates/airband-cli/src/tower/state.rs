@@ -41,8 +41,6 @@ pub(super) struct Inner {
     /// The folders his coding tools have had sessions in, as last read from their records
     /// (`adapters::worked_all`): the folder, the tools, when. Never kept: it is read again every minute.
     pub(super) worked: Vec<(String, Vec<String>, u64)>,
-    /// Each team's colour: its place in a radio's list of team colours. Given when the team is first seen.
-    pub(super) colours: BTreeMap<String, u8>,
     /// The agents the tower runs itself.
     pub(super) held: Vec<held::Kept>,
     /// What an agent of each launcher that says so itself last said it can be set to, by the launcher's name
@@ -83,8 +81,6 @@ pub(crate) struct Saved {
     pub(super) projects: BTreeMap<String, String>,
     #[serde(default)]
     pub(super) named_teams: BTreeSet<String>,
-    #[serde(default)]
-    pub(super) colours: BTreeMap<String, u8>,
     #[serde(default)]
     pub(super) held: Vec<held::Kept>,
     #[serde(default)]
@@ -292,10 +288,8 @@ mod tests {
         let mut inner = Inner::default();
         inner.check_in(&agent("a", "/x/shop", Some("refunds")));
         inner.check_in(&agent("b", "/x/shop", None));
-        let colour = inner.colours.get("shop").copied();
         assert_eq!(inner.rename_team("shop", "Store Front"), Ok("store front".to_string()));
         assert_eq!(names(&inner), ["store front refunds", "store front one"]);
-        assert_eq!(inner.colours.get("store front").copied(), colour);
         // its folder is still its folder: a new agent there joins it
         assert_eq!(inner.check_in(&agent("c", "/x/shop", None)).text(), "store front two");
         // a name another team has, or none, is refused in words
