@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 
 pub struct Foreign<T> {
     path: PathBuf,
+    /// What the file held when it was read (none: it was not there), so a write never lands on a change the tool
+    /// made since.
+    read: Option<Vec<u8>>,
     /// What it holds, to change.
     pub value: T,
 }
@@ -16,20 +19,32 @@ impl<T: Serialize + DeserializeOwned + Default> Foreign<T> {
     /// Read it. Err, saying why, when it is there and cannot be read or is not JSON of that shape: then there is
     /// nothing to write it with.
     pub fn open(path: &Path) -> Result<Foreign<T>, String> {
-        let value = match std::fs::read(path) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => T::default(),
-            Err(e) => return Err(format!("{} cannot be read ({e}), so nothing was changed", path.display())),
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| format!("{} is not valid JSON; fix it first ({e})", path.display()))?,
+        let read = now(path)?;
+        let value = match &read {
+            None => T::default(),
+            Some(bytes) => serde_json::from_slice(bytes).map_err(|e| format!("{} is not valid JSON; fix it first ({e})", path.display()))?,
         };
-        Ok(Foreign { path: path.to_path_buf(), value })
+        Ok(Foreign { path: path.to_path_buf(), read, value })
     }
     /// Write it back whole, laid out for a person to read, as tools' own files are.
     pub fn write(&self) -> Result<(), String> {
+        if now(&self.path)? != self.read {
+            return Err(format!("{} changed while airband was changing it, so nothing was written; try again", self.path.display()));
+        }
         let text = serde_json::to_string_pretty(&self.value).map_err(|e| e.to_string())?;
         write_keeping(&self.path, format!("{text}\n")).map_err(|e| format!("{} could not be written ({e})", self.path.display()))
     }
     pub fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+/// What the file holds now: none when it is not there.
+fn now(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    match std::fs::read(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("{} cannot be read ({e}), so nothing was changed", path.display())),
+        Ok(bytes) => Ok(Some(bytes)),
     }
 }
 
@@ -53,6 +68,19 @@ mod tests {
         good.value = json!({"a": 1});
         good.write().unwrap();
         assert_eq!(Foreign::<Value>::open(&dir.join("good.json")).unwrap().value, json!({"a": 1}));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_file_the_tool_changed_since_it_was_read_is_not_written_over() {
+        let dir = folder();
+        let file = dir.join("settings.json");
+        std::fs::write(&file, r#"{"a":1}"#).unwrap();
+        let mut ours = Foreign::<Value>::open(&file).unwrap();
+        std::fs::write(&file, r#"{"a":1,"his":2}"#).unwrap();
+        ours.value = json!({"a": 1, "ours": 3});
+        assert!(ours.write().is_err());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), r#"{"a":1,"his":2}"#);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

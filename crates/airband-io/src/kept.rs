@@ -6,7 +6,7 @@
 //! | no file                               | [`Loaded::Fresh`]: the default, saved as usual                      |
 //! | a file that is not the value          | moved aside beside it ([`Loaded::SetAside`]), the default in its place |
 //! | one that cannot be moved aside        | left as it is ([`Loaded::LeftInPlace`]): every save is refused      |
-//! | a read that fails (out of files, an error of the disk) | tried again twice; then left as it is, saves refused |
+//! | a read that fails (out of files, an error of the disk) | tried again twice; then left as it is, saves refused until a later read works |
 //!
 //! So nothing kept is ever lost by being taken for empty and written over. A file that is a link is written
 //! where it points ([`crate::files`]).
@@ -72,12 +72,20 @@ impl Saved {
     }
 }
 
+/// Why a kept file may not be written, and whether reading it again can change that.
+#[derive(Debug, Clone)]
+struct ReadOnly {
+    why: String,
+    /// The read itself failed (not what it held): it is read again before each save, and once it reads, saves go on.
+    read_failed: bool,
+}
+
 /// Where a kept value is saved, and whether it may be.
 #[derive(Debug, Default)]
 pub struct Keeper {
     path: Option<PathBuf>,
     /// Why nothing may be written there: what is there could not be read, and is still there.
-    read_only: Option<String>,
+    read_only: Mutex<Option<ReadOnly>>,
     failing: AtomicBool,
 }
 
@@ -86,12 +94,8 @@ impl Keeper {
     /// it cannot be read.
     pub fn open<T: DeserializeOwned + Default>(path: Option<PathBuf>) -> (T, Keeper, Loaded) {
         let Some(at) = path.clone() else { return (T::default(), Keeper::default(), Loaded::Fresh) };
-        let (value, loaded) = load(&at);
-        let read_only = match &loaded {
-            Loaded::LeftInPlace { why } => Some(why.clone()),
-            _ => None,
-        };
-        (value.unwrap_or_default(), Keeper { path, read_only, failing: AtomicBool::new(false) }, loaded)
+        let (value, loaded, read_only) = load(&at);
+        (value.unwrap_or_default(), Keeper { path, read_only: Mutex::new(read_only), failing: AtomicBool::new(false) }, loaded)
     }
     /// One that keeps nothing.
     pub fn nowhere() -> Keeper {
@@ -100,8 +104,13 @@ impl Keeper {
     /// Save `value`, whole or not at all.
     pub fn save<T: Serialize + ?Sized>(&self, value: &T) -> Saved {
         let Some(path) = &self.path else { return Saved::Nowhere };
-        let done = match &self.read_only {
-            Some(why) => Err(format!("{why}; nothing is written over it")),
+        // a file that could not be read and has since gone holds nothing to lose
+        let mut read_only = self.read_only.lock().unwrap_or_else(|e| e.into_inner());
+        if read_only.as_ref().is_some_and(|r| r.read_failed) && matches!(std::fs::symlink_metadata(path), Err(e) if e.kind() == std::io::ErrorKind::NotFound) {
+            *read_only = None;
+        }
+        let done = match read_only.as_ref() {
+            Some(r) => Err(format!("{}; nothing is written over it", r.why)),
             None => serde_json::to_vec(value)
                 .map_err(std::io::Error::other)
                 .and_then(|bytes| write_atomic(path, bytes))
@@ -119,7 +128,20 @@ impl Keeper {
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
     }
+    /// When the file could not be read, read it again: what it holds now, once it can be read (`Some(None)` when
+    /// it is gone or was set aside), and saves may go on. `None` while it still cannot be.
+    fn read_again<T: DeserializeOwned>(&self) -> Option<Option<T>> {
+        let path = self.path.as_deref()?;
+        let mut read_only = self.read_only.lock().unwrap_or_else(|e| e.into_inner());
+        if !read_only.as_ref().is_some_and(|r| r.read_failed) {
+            return None;
+        }
+        let (value, _, now) = load(path);
+        *read_only = now;
+        read_only.is_none().then_some(value)
+    }
 }
+
 
 /// A kept value and its file.
 #[derive(Debug, Default)]
@@ -145,6 +167,10 @@ impl<T: Serialize + DeserializeOwned + Default> Kept<T> {
     /// Change the value and save it, under one lock so two changes are never saved out of order.
     pub fn change<R>(&self, f: impl FnOnce(&mut T) -> R) -> (R, Saved) {
         let mut value = self.get();
+        // a file that could not be read is read again first; what it holds is what the change is made to
+        if let Some(found) = self.keeper.read_again::<T>() {
+            *value = found.unwrap_or_default();
+        }
         let out = f(&mut value);
         let saved = self.keeper.save(&*value);
         (out, saved)
@@ -169,21 +195,32 @@ pub fn save<T: Serialize + ?Sized>(path: &Path, value: &T) -> std::io::Result<()
 
 /// The value at `path` and what was found. Only a file that was read and is not the value is moved aside; a
 /// read that failed leaves the file where it is.
-fn load<T: DeserializeOwned>(path: &Path) -> (Option<T>, Loaded) {
+fn load<T: DeserializeOwned>(path: &Path) -> (Option<T>, Loaded, Option<ReadOnly>) {
     let bytes = match read_trying(path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (None, Loaded::Fresh),
-        Err(e) => return (None, Loaded::LeftInPlace { why: format!("{} cannot be read ({e}) and is left as it is", path.display()) }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (None, Loaded::Fresh, None),
+        Err(e) => {
+            let why = format!("{} cannot be read ({e}) and is left as it is", path.display());
+            return (None, Loaded::LeftInPlace { why: why.clone() }, Some(ReadOnly { why, read_failed: true }));
+        }
         Ok(bytes) => bytes,
     };
     let why = match serde_json::from_slice(&bytes) {
-        Ok(value) => return (Some(value), Loaded::Read),
+        Ok(value) => return (Some(value), Loaded::Read, None),
         Err(e) => format!("{} is not what was kept there ({e})", path.display()),
     };
-    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    let aside = path.with_file_name(format!("{name}.unreadable-{}", airband_core::encode::random_hex(4)));
-    match std::fs::rename(path, &aside) {
-        Ok(()) => (None, Loaded::SetAside { why: format!("{why}; it was kept as {}", aside.display()) }),
-        Err(e) => (None, Loaded::LeftInPlace { why: format!("{why}; it could not be moved aside ({e}) and is left as it is") }),
+    // a link stays where it is: the file it points at is what is set aside, so saves go on through the link
+    let file = match std::fs::symlink_metadata(path) {
+        Ok(m) if m.file_type().is_symlink() => std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
+        _ => path.to_path_buf(),
+    };
+    let name = file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let aside = file.with_file_name(format!("{name}.unreadable-{}", airband_core::encode::random_hex(4)));
+    match std::fs::rename(&file, &aside) {
+        Ok(()) => (None, Loaded::SetAside { why: format!("{why}; it was kept as {}", aside.display()) }, None),
+        Err(e) => {
+            let why = format!("{why}; it could not be moved aside ({e}) and is left as it is");
+            (None, Loaded::LeftInPlace { why: why.clone() }, Some(ReadOnly { why, read_failed: false }))
+        }
     }
 }
 
@@ -227,6 +264,42 @@ fn parsed<T: DeserializeOwned>(path: &Path, got: std::io::Result<Vec<u8>>) -> Re
 mod tests {
     use super::*;
     use crate::files::folder;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_that_could_not_be_read_is_written_again_once_it_reads() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = folder();
+        let file = dir.join("marks.json");
+        std::fs::write(&file, "[7]").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let (kept, loaded) = Kept::<Vec<u32>>::open(Some(file.clone()));
+        if !matches!(loaded, Loaded::LeftInPlace { .. }) {
+            return; // run as a user who reads anything: nothing to show
+        }
+        assert!(matches!(kept.change(|v| v.push(1)).1, Saved::Failed { .. }));
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(kept.change(|v| v.push(1)).1, Saved::Kept);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "[7,1]");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_damaged_file_behind_a_link_is_set_aside_and_the_link_stays() {
+        let dir = folder();
+        let real = dir.join("real.json");
+        std::fs::write(&real, "{ half").unwrap();
+        let link = dir.join("marks.json");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let (kept, loaded) = Kept::<Vec<u32>>::open(Some(link.clone()));
+        assert!(matches!(loaded, Loaded::SetAside { .. }), "{loaded:?}");
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert_eq!(kept.change(|v| v.push(2)).1, Saved::Kept);
+        assert_eq!(std::fs::read_to_string(&real).unwrap(), "[2]");
+        assert!(std::fs::read_dir(&dir).unwrap().flatten().any(|e| e.file_name().to_string_lossy().starts_with("real.json.unreadable-")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn a_value_comes_back_as_it_went_in_and_no_file_is_fresh() {
