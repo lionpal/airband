@@ -19,7 +19,6 @@
 //! the keychain is not (a shell over SSH cannot use the login keychain), or agents started there would go
 //! unseen. A command run where the keys cannot be read still works for what needs no key; the tower itself
 //! will not start without them.
-#![allow(clippy::disallowed_methods, reason = "the vault's own files beside the keychain")]
 use serde_json::{Map, Value};
 
 /// What a secret's place in the file holds while the secret is in the keychain.
@@ -203,7 +202,7 @@ mod file {
                     .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
                     .unwrap_or_default()
             } else {
-                ["/etc/machine-id", "/var/lib/dbus/machine-id"].iter().find_map(|p| std::fs::read_to_string(p).ok()).unwrap_or_default().trim().to_string()
+                ["/etc/machine-id", "/var/lib/dbus/machine-id"].iter().find_map(|p| airband_io::files::read_text(std::path::Path::new(p)).ok().flatten()).unwrap_or_default().trim().to_string()
             }
         })
         .clone()
@@ -215,8 +214,8 @@ mod file {
         if machine().is_empty() {
             return Err("this computer gave no id of its own, so airband cannot keep keys on it safely".into());
         }
-        let salt = match std::fs::read(salt_at()) {
-            Ok(salt) if salt.len() == 32 => salt,
+        let salt = match airband_io::files::read_bytes(&salt_at()) {
+            Ok(Some(salt)) if salt.len() == 32 => salt,
             _ if make_salt => {
                 let mut salt = vec![0u8; 32];
                 getrandom::fill(&mut salt).map_err(|e| e.to_string())?;
@@ -235,7 +234,7 @@ mod file {
     }
 
     pub(crate) fn get() -> Result<Map<String, Value>, String> {
-        let sealed = std::fs::read(sealed_at()).map_err(|_| "airband's keys are not on this computer".to_string())?;
+        let sealed = airband_io::files::read_bytes(&sealed_at()).ok().flatten().ok_or_else(|| "airband's keys are not on this computer".to_string())?;
         if sealed.len() < 12 + 16 {
             return Err("the sealed keys are cut short".into());
         }
@@ -252,8 +251,8 @@ mod file {
     }
 
     pub(crate) fn forget() {
-        std::fs::remove_file(sealed_at()).ok();
-        std::fs::remove_file(salt_at()).ok();
+        airband_io::files::remove(&sealed_at()).ok();
+        airband_io::files::remove(&salt_at()).ok();
     }
     #[cfg(test)]
     pub(crate) mod tests_folder {

@@ -9,7 +9,7 @@
 //!
 //! One server, for one model, for as long as that model is what reads. It holds the model in memory the whole
 //! time: about as much as the model's download.
-#![allow(clippy::disallowed_methods, reason = "downloads and runs the local model program")]
+#![allow(clippy::disallowed_methods, reason = "fetches the local model program over the network")]
 use super::*;
 use std::path::PathBuf;
 use std::process::{Child, Command};
@@ -52,7 +52,7 @@ fn fetch(server: &airband_core::catalog::Server) -> Result<PathBuf, String> {
         return Ok(program);
     }
     let archive = server.archives.iter().find(|a| a.os == std::env::consts::OS && a.arch == std::env::consts::ARCH).ok_or("A model cannot be run on this kind of computer yet. Choose another way to read.")?;
-    std::fs::create_dir_all(dir()).map_err(|e| e.to_string())?;
+    airband_io::files::make_folder(&dir()).map_err(|e| e.to_string())?;
     let url = format!("{}/{}", server.base, archive.file);
     log(format!("local model: fetching the program that runs it ({})", archive.file));
     let agent: ureq::Agent = ureq::Agent::config_builder().timeout_connect(Some(Duration::from_secs(15))).timeout_recv_response(Some(Duration::from_secs(30))).build().into();
@@ -64,9 +64,9 @@ fn fetch(server: &airband_core::catalog::Server) -> Result<PathBuf, String> {
         return Err("what came down was not the program that runs the model; nothing was kept".into());
     }
     let packed = dir().join(&archive.file);
-    std::fs::write(&packed, &bytes).map_err(|e| e.to_string())?;
+    airband_io::files::write_atomic(&packed, &bytes).map_err(|e| e.to_string())?;
     let unpacked = Command::new("tar").arg("-xzf").arg(&packed).arg("-C").arg(dir()).status().map_err(|e| format!("could not unpack it: {e}"))?;
-    std::fs::remove_file(&packed).ok();
+    airband_io::files::remove(&packed).ok();
     if !unpacked.success() || !program.is_file() {
         return Err("the program that runs the model could not be unpacked".into());
     }
@@ -89,7 +89,7 @@ fn started(pid: u32) -> Option<String> {
 /// that moment. Its number alone could have been given to another program since.
 fn end_the_last_one() {
     let note = dir().join("server.pid");
-    let noted = std::fs::read_to_string(&note).unwrap_or_default();
+    let noted = airband_io::files::read_text(&note).ok().flatten().unwrap_or_default();
     let mut lines = noted.lines();
     if let (Some(pid), Some(was)) = (lines.next().and_then(|p| p.trim().parse::<u32>().ok()), lines.next().filter(|p| !p.is_empty()))
         && started(pid).as_deref() == Some(was)
@@ -97,7 +97,7 @@ fn end_the_last_one() {
         terminate(pid);
         std::thread::sleep(Duration::from_millis(600));
     }
-    std::fs::remove_file(note).ok();
+    airband_io::files::remove(&note).ok();
 }
 
 /// Ask the server's keeper to end it, and wait until it has: asked, not killed, so the keeper can pass it on.
@@ -113,7 +113,7 @@ pub(crate) fn stop() {
     if let Some((_, mut child)) = RUNNING.lock().unwrap().take() {
         end(&mut child);
     }
-    std::fs::remove_file(dir().join("server.pid")).ok();
+    airband_io::files::remove(&dir().join("server.pid")).ok();
 }
 
 /// How long a caller waits for a model run on this computer to be ready.
@@ -160,7 +160,7 @@ pub(crate) fn ensure(model: &str, server: &str, patience: Patience) -> Result<St
             // with the moment it started; one whose start cannot be read is not noted, and so is never ended later
             if let Some(began) = started(child.id()) {
                 // a note that cannot be kept means a later start cannot end this one: said, and the model still runs
-                if let Err(e) = std::fs::write(dir().join("server.pid"), format!("{}\n{began}\n", child.id())) {
+                if let Err(e) = airband_io::files::write_atomic(&dir().join("server.pid"), format!("{}\n{began}\n", child.id())) {
                     super::log(format!("the model program's note could not be kept: {e}"));
                 }
             }

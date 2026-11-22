@@ -5,7 +5,6 @@
 //! frames row names, when that program is here.
 //!
 //! A radio can write only here, only under names the tower makes safe, and only so much.
-#![allow(clippy::disallowed_methods, reason = "his attachments are written part by part into their folder")]
 use super::*;
 use airband_core::radio::AttachmentPart;
 use std::io::{Seek, SeekFrom, Write};
@@ -62,15 +61,15 @@ fn take_in(root: &Path, part: AttachmentPart) -> Result<u64, String> {
         return Err("not an attachment id".into());
     }
     let dir = root.join(&part.id);
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    airband_io::files::make_folder(&dir).map_err(|e| e.to_string())?;
     let name = {
         let _guard = GOT.lock().unwrap();
         let named = dir.join(".name");
-        match std::fs::read_to_string(&named) {
-            Ok(name) if !name.is_empty() => name,
+        match airband_io::files::read_text(&named) {
+            Ok(Some(name)) if !name.is_empty() => name,
             _ => {
                 let name = safe(&part.name);
-                std::fs::write(&named, &name).map_err(|e| e.to_string())?;
+                airband_io::files::write_atomic(&named, &name).map_err(|e| e.to_string())?;
                 name
             }
         }
@@ -94,7 +93,7 @@ fn take_in(root: &Path, part: AttachmentPart) -> Result<u64, String> {
             file.write_all(&bytes).map_err(|e| e.to_string())?;
             let _guard = GOT.lock().unwrap();
             let note = dir.join(".got");
-            let mut got: Vec<(u64, u64)> = std::fs::read_to_string(&note).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+            let mut got: Vec<(u64, u64)> = airband_io::files::read_text(&note).ok().flatten().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
             got.push((part.from, part.from + bytes.len() as u64));
             got.sort();
             // how far it is whole from the start
@@ -106,21 +105,21 @@ fn take_in(root: &Path, part: AttachmentPart) -> Result<u64, String> {
                 have = have.max(*to);
             }
             if have >= total {
-                std::fs::remove_file(&note).ok();
+                airband_io::files::remove(&note).ok();
             } else {
-                std::fs::write(&note, serde_json::to_string(&got).unwrap_or_default()).map_err(|e| e.to_string())?;
+                airband_io::files::write_atomic(&note, serde_json::to_string(&got).unwrap_or_default()).map_err(|e| e.to_string())?;
             }
             (have, have >= total)
         }
     };
     if whole && !dir.join(".ready").exists() && !dir.join(".whole").exists() {
         // the file is named where it is first whole: what is read back is this name, never whatever the folder lists first
-        std::fs::write(dir.join(".whole"), path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()).map_err(|e| e.to_string())?;
+        airband_io::files::write_atomic(&dir.join(".whole"), path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()).map_err(|e| e.to_string())?;
         log(format!("he attached {} ({} KB)", path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), next / 1024));
         if what(&path) == What::Video {
             frames(&path);
         } else {
-            std::fs::write(dir.join(".ready"), "").map_err(|e| e.to_string())?;
+            airband_io::files::write_atomic(&dir.join(".ready"), "").map_err(|e| e.to_string())?;
         }
     }
     Ok(next)
@@ -132,7 +131,7 @@ fn frames(video: &Path) {
     let (video, dir) = (video.to_path_buf(), video.parent().map(Path::to_path_buf).unwrap_or_default());
     std::thread::spawn(move || {
         let out = dir.join("frames");
-        let ran = std::fs::create_dir_all(&out).map_err(|_| ()).and_then(|_| airband_core::catalog::frames().ok_or(())).and_then(|f| {
+        let ran = airband_io::files::make_folder(&out).map_err(|_| ()).and_then(|_| airband_core::catalog::frames().ok_or(())).and_then(|f| {
             std::process::Command::new(&f.program)
                 .args(f.run(&video.display().to_string(), FRAMES, &out.display().to_string()))
                 .stdin(std::process::Stdio::null())
@@ -143,7 +142,7 @@ fn frames(video: &Path) {
             std::fs::remove_dir_all(&out).ok();
         }
         // without its mark the file is never offered to an agent, so a mark that cannot be made is said
-        if let Err(e) = std::fs::write(dir.join(".ready"), "") {
+        if let Err(e) = airband_io::files::write_atomic(&dir.join(".ready"), "") {
             log(format!("the video {} could not be marked ready: {e}", video.display()));
         }
     });
@@ -168,7 +167,7 @@ pub(super) async fn find(id: &str) -> Option<Attached> {
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
-    let name = std::fs::read_to_string(dir.join(".whole")).ok().filter(|n| !n.is_empty())?;
+    let name = airband_io::files::read_text(&dir.join(".whole")).ok().flatten().filter(|n| !n.is_empty())?;
     let path = Some(dir.join(safe(&name))).filter(|p| p.is_file())?;
     let mut frames: Vec<PathBuf> = std::fs::read_dir(dir.join("frames")).map(|d| d.flatten().map(|e| e.path()).collect()).unwrap_or_default();
     frames.sort();
