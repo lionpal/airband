@@ -404,8 +404,8 @@ mod row_facts {
         // the tool ids each adapter is written for, and what each asks of its row: an empty answer would be a
         // made-up value (an empty home is his home folder itself)
         let asked: &[(&str, &[&str])] = &[
-            ("claude-code", &["home", "home_env", "inbox_scheme", "artifact_link", "headless_entry", "server_tool", "account_file", "accounts_api", "accounts_token", "beta_header", "keychain_service", "login_key", "oauth_beta", "oauth_client", "program"]),
-            ("codex", &["home", "home_env", "program", "control_socket"]),
+            ("claude-code", &["home", "home_env", "inbox_scheme", "artifact_link", "headless_entry", "server_tool", "account_file", "accounts_api", "accounts_token", "beta_header", "keychain_service", "login_key", "oauth_beta", "oauth_client", "program", "hooks_file", "sessions", "projects", "session_kind", "session_entry"]),
+            ("codex", &["home", "home_env", "program", "control_socket", "hooks_file", "sessions"]),
             ("opencode", &["home", "home_env", "service", "user", "state"]),
         ];
         for (tool, facts) in asked {
@@ -413,6 +413,10 @@ mod row_facts {
                 assert!(!super::row_says(tool, fact).is_empty(), "the {tool} row says nothing for {fact}");
             }
         }
+        // Codex is handed words by the command its row gives, his words one whole word of it
+        let run = super::tool_row("codex").unwrap().command("deliver", &[("program", "codex"), ("session", "t1"), ("words", "--yes {session}")]);
+        assert_eq!(run.first().map(String::as_str), Some("codex"));
+        assert!(run.contains(&"t1".to_string()) && run.contains(&"--yes {session}".to_string()) && !run.iter().any(|w| w == "{words}"), "{run:?}");
     }
 }
 

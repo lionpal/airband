@@ -189,7 +189,7 @@ impl super::Harness for ClaudeCode {
         events(hook)
     }
     fn hooks(&self) -> Option<super::hooks::File> {
-        Some(super::hooks::File { name: self.name(), path: claude_home().join("settings.json"), events: HOOKS })
+        Some(super::hooks::File { name: self.name(), path: claude_home().join(super::row_says(HARNESS, "hooks_file")), events: HOOKS })
     }
     fn permission(&self, hook: &Value) -> Option<PermissionAsk> {
         permission(hook)

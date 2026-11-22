@@ -164,6 +164,8 @@ fn watch(tower: Tower) {
         let Some(sessions) = list["data"].as_array() else { continue };
         let send = |id: &str, cwd: Option<&str>, event: Event| (tower.event)(AgentEvent::new(agent(id, cwd), event));
         // not the ones the tower runs itself: their driver reports for them
+        // the requests for leave still waiting on this look, each its own owner
+        let mut waiting: std::collections::HashSet<String> = Default::default();
         let here: Vec<&Value> = current(sessions, airband_core::clock::now_ms()).into_iter().filter(|s| s["id"].as_str().is_some_and(|id| !(tower.holds)(id))).collect();
         for s in &here {
             let (Some(id), time) = (s["id"].as_str(), &s["time"]) else { continue };
@@ -195,6 +197,7 @@ fn watch(tower: Tower) {
             if busy > idle {
                 for request in get(&format!("/api/session/{id}/permission")).and_then(|l| l["data"].as_array().cloned()).unwrap_or_default() {
                     let Some(request_id) = request["id"].as_str() else { continue };
+                    waiting.insert(request_id.to_string());
                     let mut asked_now = asked.lock().unwrap();
                     if asked_now.done(request_id) || !asked_now.take(request_id) {
                         continue;
@@ -207,6 +210,8 @@ fn watch(tower: Tower) {
         }
         // one that is no longer listed is forgotten here; that it has left is said by the look every tool has
         seen.retain(|id, _| here.iter().any(|s| s["id"].as_str() == Some(id.as_str())));
+        // requests no longer waiting are forgotten: an answered one is kept only while it is still listed
+        asked.lock().unwrap().keep_only(|owner| waiting.contains(owner));
         first = false;
     }
 }

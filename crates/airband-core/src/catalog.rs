@@ -106,6 +106,13 @@ impl Tool {
     pub fn told(&self, what: &str) -> &str {
         row_text(self.with.get(what))
     }
+    /// A command its row gives, each word as written, with a word that is wholly `{name}` given the value
+    /// named so. A value is always one whole word: what he said can never become an option. Empty when the
+    /// row does not say.
+    pub fn command(&self, what: &str, values: &[(&str, &str)]) -> Vec<String> {
+        let words = self.with.get(what).and_then(Value::as_array).cloned().unwrap_or_default();
+        words.iter().filter_map(Value::as_str).map(|w| values.iter().find(|(name, _)| w.strip_prefix('{').and_then(|r| r.strip_suffix('}')) == Some(*name)).map_or_else(|| w.to_string(), |(_, v)| v.to_string())).collect()
+    }
 }
 
 /// Something a row tells the code, as text: what is written under one name in its `with`. Empty when the row
