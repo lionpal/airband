@@ -144,6 +144,11 @@ fn a_computer_is_never_picked_for_him() {
     let unsent = |i: usize| desk.shared.state.lock().unwrap().stations[i].radio.unsent().len();
     assert_eq!((unsent(0), unsent(1)), (0, 1));
     assert!(host.0.lock().unwrap().is_empty());
+    // a tap or an answer to a message no computer has now goes to none of them, and he is told why
+    desk.tap("gone".into(), Tapped::Allow);
+    desk.answer("gone".into(), "yes".into());
+    assert_eq!((unsent(0), unsent(1)), (0, 1));
+    assert_eq!(*host.0.lock().unwrap(), ["That computer is no longer paired.", "That computer is no longer paired."]);
     // the same for anything else asked of a computer he did not name
     assert!(matches!(desk.station_radio(""), Err(RadioError::Told { .. })));
     assert!(matches!(desk.station_radio("laptop"), Err(RadioError::Offline)));
@@ -178,6 +183,16 @@ fn a_button_is_sent_as_what_it_stands_for_and_never_as_words_to_be_read() {
             ("ship it".to_string(), None, String::new(), vec!["shop two".to_string()]),
         ]
     );
+}
+
+#[test]
+fn words_that_only_start_with_an_at_sign_address_nobody() {
+    let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
+    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(two()), floor: Floor::default(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend }), data_dir: String::new() };
+    // no agent is called home: the message he picked still says who it is for
+    desk.send("@home is broken".into(), Some("q2".into()), None, None);
+    let sent: Vec<(String, Option<String>)> = desk.shared.state.lock().unwrap().stations[1].radio.unsent().into_iter().map(|o| (o.text, o.re)).collect();
+    assert_eq!(sent, [("@home is broken".to_string(), Some("q2".to_string()))]);
 }
 
 #[test]

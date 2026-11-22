@@ -29,15 +29,16 @@ impl Desk {
     /// He tapped a button under a question: the answer goes as what the button stood for, never as words to
     /// be read. Nothing is sent for an option the message does not have.
     pub fn tap(&self, message_id: String, tapped: Tapped) {
+        let Some(radio) = self.owner_or_say(&message_id) else { return };
         let sent = {
             let mut state = self.shared.state.lock().unwrap();
             let text = match &tapped {
                 Tapped::Option { index } => state.stations.iter().find_map(|s| s.messages.iter().find(|m| m.id == message_id)).and_then(|m| m.options.get(*index as usize).cloned()),
                 Tapped::Allow | Tapped::Deny => Some(tapped.words()),
             };
-            let radio = state.owner(&message_id).or((!state.stations.is_empty()).then_some(0)).map(|i| state.stations[i].radio.clone());
-            text.zip(radio).inspect(|_| {
+            text.map(|text| {
                 state.answered.insert(message_id.clone());
+                (text, radio)
             })
         };
         if let Some((text, radio)) = sent {
@@ -47,15 +48,18 @@ impl Desk {
     }
     /// Words of his own sent as the answer to that message.
     pub fn answer(&self, message_id: String, text: String) {
-        let radio = {
-            let mut state = self.shared.state.lock().unwrap();
-            state.answered.insert(message_id.clone());
-            state.owner(&message_id).or((!state.stations.is_empty()).then_some(0)).map(|i| state.stations[i].radio.clone())
-        };
-        if let Some(radio) = radio {
-            radio.queue(text, Some(message_id), None, None);
-        }
+        let Some(radio) = self.owner_or_say(&message_id) else { return };
+        self.shared.state.lock().unwrap().answered.insert(message_id.clone());
+        radio.queue(text, Some(message_id), None, None);
         self.shared.host.changed();
+    }
+    /// The radio of the computer that has a message; when none has it now, nothing, and he is told why.
+    fn owner_or_say(&self, message_id: &str) -> Option<Arc<Radio>> {
+        let radio = self.radio_of(message_id);
+        if radio.is_none() {
+            self.shared.host.note("That computer is no longer paired.".into());
+        }
+        radio
     }
     /// An answer given from a notification: send it now, as the answer to that message, and wait until the
     /// computer has it. `tapped` is the button, when it was one: `text` is then the button's words for an
@@ -188,8 +192,9 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
         }
         // something new said: whatever was waiting to be placed is let go
         state.asking = None;
-        // tags are the one thing he types that addresses: `@shop2`, `@all`
-        let tagged = text.starts_with('@');
+        // tags are the one thing he types that addresses: `@shop2`, `@all`, read as the tower reads them; words
+        // that only start with an @ ("@home is broken") address nobody
+        let tagged = tags_someone(&state, &text).is_some();
         let re = re.filter(|_| !tagged);
         if let Some(id) = &re {
             state.answered.insert(id.clone());
@@ -276,6 +281,14 @@ fn others(state: &State, pick: usize, room: Option<&str>) -> String {
         .collect();
     if list.is_empty() { String::new() } else { serde_json::to_string(&list).unwrap_or_default() }
 }
+/// The first computer that has someone his words tag, read the way the tower reads tags. Nothing when they tag
+/// nobody.
+fn tags_someone(state: &State, text: &str) -> Option<usize> {
+    state.stations.iter().position(|s| {
+        let live: Vec<Callsign> = s.agents.iter().map(|a| a.parts()).collect();
+        !parse_utterance(text, &live).to.is_empty()
+    })
+}
 /// Which computer a message of his goes to.
 pub(super) fn pick_station(state: &State, text: &str, re: Option<&str>, room: Option<&str>, agent: Option<&str>) -> Option<usize> {
     // the computer that has the message he is answering
@@ -283,14 +296,8 @@ pub(super) fn pick_station(state: &State, text: &str, re: Option<&str>, room: Op
         return Some(i);
     }
     // the computer that has whoever he tagged: read the tags the way the tower will
-    if text.starts_with('@') {
-        let named = state.stations.iter().position(|s| {
-            let live: Vec<Callsign> = s.agents.iter().map(|a| a.parts()).collect();
-            !parse_utterance(text, &live).to.is_empty()
-        });
-        if let Some(i) = named {
-            return Some(i);
-        }
+    if let Some(i) = tags_someone(state, text) {
+        return Some(i);
     }
     if let Some(i) = agent.and_then(|id| state.stations.iter().position(|s| s.agents.iter().any(|a| a.id == id))) {
         return Some(i);
