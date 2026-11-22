@@ -87,9 +87,9 @@ fn open(cfg: Config) -> Result<Arc<App>, String> {
     let store = Store::open(&config::dir().join("airband.db"))?;
     let (saved, entries) = store.load(LOG_KEEP);
     let (seq, rev) = store.last_counts();
-    let configured = cfg.projects.iter().map(|(k, v)| (airband_core::routing::team_name(k).unwrap_or_else(|| k.to_lowercase()), v.clone())).collect();
-    let mut inner = Inner { sessions: saved.sessions, projects: saved.projects, named_teams: saved.named_teams, configured, here: config::station(&cfg), held: saved.held, menus: saved.menus, tools: saved.tools, placed: saved.placed, seq, rev, log: entries, ..Inner::default() };
-    inner.settle_teams();
+    let mut inner = Inner { sessions: saved.sessions, teams: saved.teams, here: config::station(&cfg), held: saved.held, menus: saved.menus, tools: saved.tools, placed: saved.placed, seq, rev, log: entries, ..Inner::default() };
+    inner.configure_teams(&cfg.projects);
+    inner.settle_teams(saved.projects, saved.named_teams);
     inner.links = links::Book::load();
     inner.reap();
     inner.close_requests_from_before();

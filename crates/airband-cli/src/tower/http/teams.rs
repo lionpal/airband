@@ -3,8 +3,8 @@ use super::*;
 
 /// He moved an agent to another team.
 pub(super) async fn team(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::MoveAgent>) -> Json<Value> {
-    Json(match place::by_him(&app, &to.agent, &to.team) {
-        Ok((callsign, team)) => json!({ "callsign": callsign, "team": team }),
+    Json(match place::by_him(&app, &to.agent, &to.to) {
+        Ok((callsign, team, id)) => json!({ "callsign": callsign, "team": team, "id": id }),
         Err(why) => json!({ "error": why }),
     })
 }
@@ -51,8 +51,9 @@ pub(super) async fn folders(State(app): State<Arc<App>>, Json(ask): Json<airband
         Ok(Ok(Ok(mut f))) => {
             // the team that works here, or the name one would have
             let inner = app.read();
-            f.has_team = inner.team_at(&f.path).is_some();
-            f.team = inner.folder_team(&f.path).unwrap_or_default();
+            let team = inner.team_at(&f.path);
+            f.has_team = team.is_some();
+            f.team = team.map(|id| inner.team_name(&id)).or_else(|| inner.name_for_folder(&f.path)).unwrap_or_default();
             serde_json::to_value(f).unwrap()
         }
         Ok(Ok(Err(why))) => json!({ "error": why }),
@@ -107,30 +108,33 @@ pub(super) async fn project(State(app): State<Arc<App>>, Json(new): Json<airband
         Ok(f) => f,
         Err(why) => return Json(json!({ "error": why })),
     };
-    {
+    let id = {
         let mut inner = app.change();
         let at = folder.display().to_string();
         match inner.team_at(&at) {
             // a folder that has a team: another agent joins it
-            Some(team) => name = team,
-            None if inner.teams().contains_key(&name) || inner.sessions.iter().any(|s| s.callsign.project == name) => {
+            Some(team) => {
+                name = inner.team_name(&team);
+                team
+            }
+            None if inner.team_called(&name).is_some() => {
                 return Json(json!({ "error": format!("There is already a team called {name}, in another folder.") }));
             }
             None => {
                 // a name other than the one the folder would give is one he chose, and stays his
-                if inner.folder_team(&at).as_deref() != Some(name.as_str()) {
-                    inner.named_teams.insert(name.clone());
-                }
-                inner.projects.insert(name.clone(), sessions::real_folder(&at));
+                let named = inner.name_for_folder(&at).as_deref() != Some(name.as_str());
+                let id = sessions::real_folder(&at);
+                inner.teams.insert(id.clone(), Team { name: name.clone(), folder: Some(id.clone()), named, configured: false });
                 log(format!("a radio made the team {name}, in {at}"));
+                id
             }
         }
-    }
+    };
     // its first agent, with nothing to do yet, when the tower runs agents itself: the team is then there to see
     let held = held::launcher_for(&app, new.tool.as_deref()).is_some_and(|(_, l)| l.held.is_some());
     if !held {
-        return Json(json!({ "say": format!("{name} is ready. Say launch {name}, then what it should do."), "team": name }));
+        return Json(json!({ "say": format!("{name} is ready. Say launch {name}, then what it should do."), "team": name, "id": id }));
     }
     let reply = launch::launch(&app, &name, &Idea { tool: new.tool.clone(), project: Some(name.clone()), model: None, effort: None, task: String::new() }).await;
-    Json(json!({ "say": reply.say, "team": name }))
+    Json(json!({ "say": reply.say, "team": name, "id": id }))
 }

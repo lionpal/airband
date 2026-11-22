@@ -5,18 +5,21 @@
 //! that is plainly working somewhere else is moved, and he is told.
 use super::*;
 
-/// He moved an agent to a team, from a radio. Returns what it is called now and the team it is in.
-pub(super) fn by_him(app: &App, agent: &str, team: &str) -> Result<(String, String), String> {
+/// He moved an agent to a team, from a radio: one of his teams by its id, or a new one he named. Returns what it
+/// is called now, and the team it is in: what that is called and its id.
+pub(super) fn by_him(app: &App, agent: &str, to: &airband_core::radio::TeamPick) -> Result<(String, String, String), String> {
     let mut inner = app.change();
     if inner.find(agent).is_none() {
         return Err("That agent is no longer running.".into());
     }
-    if airband_core::routing::team_name(team).is_none() {
-        return Err("Give the team a name.".into());
-    }
-    inner.move_to(agent, team, Mover::Him);
+    let team = match to {
+        airband_core::radio::TeamPick::Team { id } if inner.teams.contains_key(id) => id.clone(),
+        airband_core::radio::TeamPick::Team { .. } => return Err("That team is not on this computer any more.".into()),
+        airband_core::radio::TeamPick::New { name } => inner.named_team(name).ok_or("Give the team a name.")?,
+    };
+    inner.move_to(agent, &team, Mover::Him);
     inner.tell();
-    Ok(inner.find(agent).map(|s| (s.callsign.text(), s.callsign.project.clone())).unwrap_or_default())
+    Ok(inner.find(agent).map(|s| (s.callsign.text(), s.callsign.project.clone(), s.team.clone())).unwrap_or_default())
 }
 
 /// Is this report one to look at where the agent belongs on? Its first, so one in the wrong team is not left
@@ -30,17 +33,14 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
     if judge::reader(&app.cfg).is_none() {
         return;
     }
-    let (session, said, teams, folders) = {
+    let (session, said, teams) = {
         let inner = app.read();
         // one he placed himself is where he wants it
         let Some(s) = inner.find(&agent_id).filter(|s| s.moved != Some(Mover::Him)).cloned() else { return };
         let said: Vec<String> = inner.log.iter().rev().filter(|e| e.agent.as_deref() == Some(agent_id.as_str()) && e.kind != Some(Kind::Fyi)).take(3).map(|e| e.short.clone().unwrap_or_else(|| opening(&e.full))).collect();
-        // his teams, each with its folder when the tower knows it
-        let folders = inner.teams();
-        let mut teams: Vec<String> = inner.sessions.iter().map(|s| s.callsign.project.clone()).chain(folders.keys().cloned()).collect();
-        teams.sort();
-        teams.dedup();
-        (s, said, teams, folders)
+        // his teams by id, each with what it is called and its folder when it has one
+        let teams: Vec<(String, Team)> = inner.teams.iter().map(|(id, t)| (id.clone(), t.clone())).collect();
+        (s, said, teams)
     };
     let agent = session.agent.clone();
     let touched = tokio::task::spawn_blocking(move || crate::adapters::touched(&agent)).await.unwrap_or_default();
@@ -49,6 +49,7 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
         return;
     }
     let team = session.callsign.project.clone();
+    let team_id = session.team.clone();
     let prompt = format!(
         "{name} runs several coding agents, grouped into teams by the project each one works on. An agent starts in \
          the team of the folder it was opened in. Sometimes that is not the project it is working on: he opened it \
@@ -68,7 +69,7 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
         folder = session.agent.cwd.as_deref().unwrap_or("a folder the tower does not know"),
         said = if said.is_empty() { "- nothing yet".to_string() } else { said.iter().map(|s| format!("- {s}")).collect::<Vec<_>>().join("\n") },
         touched = touched.iter().map(|t| format!("- {t}")).collect::<Vec<_>>().join("\n"),
-        teams = teams.iter().enumerate().map(|(i, t)| match folders.get(t) { Some(folder) => format!("{}. {t} (in {folder})", i + 1), None => format!("{}. {t}", i + 1) }).collect::<Vec<_>>().join("\n"),
+        teams = teams.iter().enumerate().map(|(i, (_, t))| match &t.folder { Some(folder) => format!("{}. {} (in {folder})", i + 1, t.name), None => format!("{}. {}", i + 1, t.name) }).collect::<Vec<_>>().join("\n"),
     );
     #[derive(Deserialize)]
     struct Out {
@@ -84,12 +85,13 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
         return;
     }
     // one of his teams by the number it was listed under, or a new one by the name the model gave it
-    let Some(to) = judge::listed(out.team, &teams).cloned().or(out.new_team.map(|t| t.trim().to_string()).filter(|t| !t.is_empty())) else { return };
+    let listed = judge::listed(out.team, &teams).map(|(id, _)| id.clone());
     let mut inner = app.change();
     // he may have moved it himself while the model was reading
-    if inner.find(&agent_id).is_none_or(|s| s.moved == Some(Mover::Him) || s.callsign.project != team) {
+    if inner.find(&agent_id).is_none_or(|s| s.moved == Some(Mover::Him) || s.team != team_id) {
         return;
     }
+    let Some(to) = listed.filter(|id| inner.teams.contains_key(id)).or_else(|| out.new_team.as_deref().and_then(|n| inner.named_team(n))) else { return };
     let Some((was, now)) = inner.move_to(&agent_id, &to, Mover::Tower) else { return };
     // said in the chat and not aloud: the name he knew it by has changed
     if let Some(s) = inner.find(&agent_id).cloned() {

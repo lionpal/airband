@@ -28,7 +28,7 @@ pub(super) async fn place_idea(app: &Arc<App>, idea: &str, projects: &[String]) 
             .iter()
             .enumerate()
             .map(|(i, p)| {
-                let lately: Vec<String> = inner.log.iter().rev().filter(|e| e.group == *p && !e.his && e.kind != Some(Kind::Fyi)).take(2).map(|e| e.short.clone().unwrap_or_else(|| opening(&e.full))).collect();
+                let lately: Vec<String> = inner.log.iter().rev().filter(|e| inner.team_called(p).is_some_and(|t| e.team == t) && !e.his && e.kind != Some(Kind::Fyi)).take(2).map(|e| e.short.clone().unwrap_or_else(|| opening(&e.full))).collect();
                 format!("{}. {p} (folder {}){}", i + 1, folders.get(p).map(String::as_str).unwrap_or("?"), if lately.is_empty() { String::new() } else { format!(": lately, {}", lately.join(" / ")) })
             })
             .collect()
@@ -73,7 +73,7 @@ pub(super) async fn named_project(app: &Arc<App>, idea: &str, said: &str, projec
 /// nothing when they are not an answer to that (or no model said): then they are a message of their own.
 pub(super) async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope: Option<&str>) -> Option<Vec<Session>> {
     let room = scope;
-    let all: Vec<Session> = app.read().sessions.iter().filter(|s| room.is_none_or(|g| s.callsign.project == g)).cloned().collect();
+    let all: Vec<Session> = app.read().sessions.iter().filter(|s| room.is_none_or(|g| s.team == g)).cloned().collect();
     let letters = |s: &Session| s.callsign.badge();
     let prompt = format!(
         "{name} said this to his coding agents: \"{first}\"\nIt was not clear who it was for, and he was asked. The agents:\n{list}\n\n\

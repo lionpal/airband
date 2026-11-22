@@ -53,7 +53,7 @@ extension FeedView {
     }
 
     /// An agent's badge and its team's colour, by its callsign.
-    func badge(of callsign: String) -> (String, UInt8)? {
+    func badge(of callsign: String) -> (String, UInt8?)? {
         for room in model.view.rooms {
             if let agent = room.members.first(where: { $0.callsign == callsign }) { return (agent.badge, room.colour) }
         }
@@ -62,7 +62,7 @@ extension FeedView {
 
     /// The team he is in: the one he picked, or the team of the agent he is looking at.
     var team: DeskRoom? {
-        if let room = model.room { return model.view.rooms.first { $0.name == room } }
+        if let room = model.room { return model.view.rooms.first { $0.id == room } }
         if let only = model.only { return model.view.rooms.first { $0.members.contains { $0.id == only } } }
         return nil
     }
@@ -71,7 +71,7 @@ extension FeedView {
     /// What is selected, as the id of its chip: for scrolling the row to it.
     var chosen: String { model.only.map { "agent:" + $0 } ?? model.room.map { "team:" + $0 } ?? "all" }
 
-    private func chip(_ label: String, on: Bool, dot: AgentState? = nil, working: Bool = false, colour: UInt8? = nil, badge: (String, UInt8)? = nil, unread: UInt32 = 0) -> some View {
+    private func chip(_ label: String, on: Bool, dot: AgentState? = nil, working: Bool = false, colour: UInt8? = nil, badge: (String, UInt8?)? = nil, unread: UInt32 = 0) -> some View {
         HStack(spacing: 7) {
             if let dot { StateDot(state: dot, working: working).id("\(dot)" + (working ? "+" : "")) }
             if let badge { Badge(text: badge.0, colour: badge.1, size: 20) }
@@ -102,13 +102,13 @@ extension FeedView {
             HStack(spacing: 6) {
                 if let team {
                     // inside a team: the team itself, then its agents
-                    Button { model.look(room: team.name) } label: {
+                    Button { model.look(room: team.id) } label: {
                         chip(team.name, on: model.only == nil, dot: team.state, working: team.members.contains { $0.state == .working }, colour: team.colour, unread: team.unread)
                     }
                     .buttonStyle(.plain).id("team:" + team.name).accessibilityLabel(team.unread > 0 && model.only != nil ? "\(team.name), \(team.unread) unread" : team.name)
                     ForEach(team.members, id: \.id) { agent in
                         let short = agent.number.isEmpty ? agent.callsign : agent.number
-                        Button { model.look(room: team.name, agent: model.only == agent.id ? nil : agent.id) } label: {
+                        Button { model.look(room: team.id, agent: model.only == agent.id ? nil : agent.id) } label: {
                             chip(short, on: model.only == agent.id, dot: agent.state, badge: (agent.badge, team.colour), unread: agent.unread)
                         }
                         .buttonStyle(.plain).id("agent:" + agent.id).accessibilityLabel(agent.unread > 0 ? "\(agent.callsign), \(agent.unread) unread" : agent.callsign)
@@ -117,10 +117,10 @@ extension FeedView {
                     Button { model.look() } label: { chip("all", on: true) }
                         .buttonStyle(.plain).id("all").accessibilityLabel("all agents").accessibilityAddTraits(.isSelected)
                 }
-                ForEach(team == nil ? model.view.rooms : [], id: \.name) { room in
-                    let on = model.room == room.name
+                ForEach(team == nil ? model.view.rooms : [], id: \.id) { room in
+                    let on = model.room == room.id
                     Button {
-                        model.look(room: on ? nil : room.name)
+                        model.look(room: on ? nil : room.id)
                     } label: {
                         HStack(spacing: 7) {
                             StateDot(state: room.state, working: room.members.contains { $0.state == .working }).id("\(room.state)" + (room.members.contains { $0.state == .working } ? "+" : ""))
@@ -139,7 +139,7 @@ extension FeedView {
                     // what this team is doing right now: a small bubble out of its chip, typed out, one team at a time
                     // It hangs from whichever end of the chip keeps it on the screen.
                     .overlay {
-                        if ticker.room == room.name {
+                        if ticker.room == room.id {
                             GeometryReader { chip in
                                 let (at, screen) = (chip.frame(in: .global), UIScreen.main.bounds.width)
                                 let wide = min(300, screen - 44)
@@ -166,8 +166,8 @@ extension FeedView {
                             .transition(.opacity)
                         }
                     }
-                    .zIndex(ticker.room == room.name ? 1 : 0)
-                    .id("team:" + room.name)
+                    .zIndex(ticker.room == room.id ? 1 : 0)
+                    .id("team:" + room.id)
                 }
             }
             .padding(.leading, team != nil ? 0 : 8).padding(.trailing, 8)

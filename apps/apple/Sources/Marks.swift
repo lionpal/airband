@@ -11,7 +11,7 @@ struct BarHeight: PreferenceKey {
 /// Who an agent is, at a glance: two characters on its team's colour.
 struct Badge: View {
     let text: String
-    let colour: UInt8
+    let colour: UInt8?
     var size: CGFloat = 22
 
     var body: some View {

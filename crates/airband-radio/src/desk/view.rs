@@ -51,7 +51,7 @@ impl Desk {
         // have said stays unread, and is counted for each of them and each team below.
         if self.shared.host.watching() {
             let mut moved = false;
-            for m in all.iter().filter(|m| room.as_ref().is_none_or(|r| m.group == *r) && agent.as_ref().is_none_or(|a| m.agent.as_ref() == Some(a))) {
+            for m in all.iter().filter(|m| room.as_ref().is_none_or(|r| m.room == *r) && agent.as_ref().is_none_or(|a| m.agent.as_ref() == Some(a))) {
                 if state.read.unread(m) {
                     state.read.upto.insert(m.agent.clone().unwrap_or_default(), m.at);
                     moved = true;
@@ -66,14 +66,14 @@ impl Desk {
         let mut unread_in: HashMap<&str, u32> = HashMap::new();
         for m in all.iter().filter(|m| state.read.unread(m)) {
             *unread_from.entry(m.agent.as_deref().unwrap_or_default()).or_default() += 1;
-            *unread_in.entry(m.group.as_str()).or_default() += 1;
+            *unread_in.entry(m.room.as_str()).or_default() += 1;
         }
         let unread: u32 = unread_from.values().sum();
         let agents: Vec<&ChatAgent> = state.everyone();
         // his own messages belong to the room or agent they went to
         let here = |m: &ChatMessage| {
-            let about = |id: &String| agent.as_ref().is_none_or(|a| id == a) && room.as_ref().is_none_or(|r| agents.iter().any(|x| x.id == *id && x.group == *r));
-            if m.his { (room.is_none() && agent.is_none()) || m.to_agents.iter().any(about) } else { room.as_ref().is_none_or(|r| m.group == *r) && agent.as_ref().is_none_or(|a| m.agent.as_ref() == Some(a)) }
+            let about = |id: &String| agent.as_ref().is_none_or(|a| id == a) && room.as_ref().is_none_or(|r| agents.iter().any(|x| x.id == *id && x.room == *r));
+            if m.his { (room.is_none() && agent.is_none()) || m.to_agents.iter().any(about) } else { room.as_ref().is_none_or(|r| m.room == *r) && agent.as_ref().is_none_or(|a| m.agent.as_ref() == Some(a)) }
         };
         let mut feed: Vec<ChatMessage> = all.iter().filter(|&m| !m.fyi && here(m)).cloned().map(|m| ChatMessage { open: state.is_open(&m.id), ..m }).collect();
         let extra = feed.len().saturating_sub(FEED_SHOWN);
@@ -96,7 +96,7 @@ impl Desk {
                 Some(who) => format!("{who}: {d}"),
                 None => d.clone(),
             });
-            match rooms.iter_mut().find(|r| r.name == a.group) {
+            match rooms.iter_mut().find(|r| r.id == a.room) {
                 Some(r) => {
                     r.agents += 1;
                     r.subagents += a.subagents;
@@ -106,7 +106,7 @@ impl Desk {
                     r.doing = r.doing.take().or(doing);
                     r.members.push(member);
                 }
-                None => rooms.push(DeskRoom { name: a.group.clone(), state: a.state, agents: 1, subagents: a.subagents, doing, members: vec![member], unread: unread_in.get(a.group.as_str()).copied().unwrap_or(0), colour: state.colour(&a.group) }),
+                None => rooms.push(DeskRoom { id: a.room.clone(), name: a.group.clone(), state: a.state, agents: 1, subagents: a.subagents, doing, members: vec![member], unread: unread_in.get(a.room.as_str()).copied().unwrap_or(0), colour: state.colour(&a.room) }),
             }
         }
         rooms.sort_by(|a, b| a.name.cmp(&b.name));
@@ -125,7 +125,7 @@ impl Desk {
             connecting: !state.stations.iter().any(|s| s.online) && state.stations.iter().any(|s| !s.tried),
             near: state.stations.iter().any(|s| s.online) && state.stations.iter().filter(|s| s.online).all(|s| s.radio.near()),
             away: if state.stations.len() > 1 { state.stations.iter().enumerate().filter(|(_, s)| s.tried && !s.online).map(|(i, _)| state.computer_name(i)).collect() } else { Vec::new() },
-            can_poke: agents.iter().any(|a| a.state == AgentState::Stalled && room.as_ref().is_none_or(|r| a.group == *r)),
+            can_poke: agents.iter().any(|a| a.state == AgentState::Stalled && room.as_ref().is_none_or(|r| a.room == *r)),
             feed,
             rooms,
             unread,
@@ -149,7 +149,7 @@ impl Desk {
                 let guessed = asking.guesses.iter().filter_map(|id| agents.iter().copied().find(|a| a.id == *id));
                 DeskAsk {
                     text: asking.message.label.clone().unwrap_or_else(|| asking.message.text.clone()),
-                    choices: guessed.chain(rest).take(8).map(|a| DeskChoice { id: a.id.clone(), callsign: a.callsign.clone(), badge: a.badge.clone(), colour: state.colour(&a.group) }).collect(),
+                    choices: guessed.chain(rest).take(8).map(|a| DeskChoice { id: a.id.clone(), callsign: a.callsign.clone(), badge: a.badge.clone(), colour: state.colour(&a.room) }).collect(),
                 }
             }),
         }

@@ -12,16 +12,16 @@ import SwiftUI
     func run(_ rooms: @escaping () -> [DeskRoom]) async {
         while !Task.isCancelled {
             // only what is new: a step a team is still on is shown once, not typed out again and again
-            let busy = rooms().filter { $0.doing != nil && told[$0.name] != $0.doing }
+            let busy = rooms().filter { $0.doing != nil && told[$0.id] != $0.doing }
             guard !busy.isEmpty, !UIAccessibility.isReduceMotionEnabled else {
                 try? await Task.sleep(for: .milliseconds(700))
                 continue
             }
             let pick = busy[turn % busy.count]
             turn += 1
-            told[pick.name] = pick.doing
+            told[pick.id] = pick.doing
             shown = ""
-            room = pick.name
+            room = pick.id
             for letter in pick.doing ?? "" {
                 shown.append(letter)
                 try? await Task.sleep(for: .milliseconds(18))

@@ -32,6 +32,9 @@ pub struct Other {
     pub id: String,
     pub callsign: String,
     pub group: String,
+    /// Its team's id on the computer that has it: what is kept and sent about the team. `group` is only shown.
+    #[serde(default)]
+    pub team: String,
     /// Its two characters, as that computer gave them.
     #[serde(default)]
     pub badge: String,
@@ -60,6 +63,9 @@ pub struct Notice {
     pub badge: String,
     #[serde(default)]
     pub group: String,
+    /// Its team's id on that computer. `group` is only shown.
+    #[serde(default)]
+    pub team: String,
     /// What this computer is called.
     #[serde(default)]
     pub station: String,
@@ -122,8 +128,11 @@ pub struct Message {
     /// He said it. A client goes by this and never by what `from` reads.
     #[serde(default)]
     pub his: bool,
-    /// The group (the project's name) this belongs to; empty for a message of his to several groups.
+    /// What the team this belongs to is called, to show; empty for a message of his to several teams.
     pub group: String,
+    /// That team's id on this computer: what views and colours go by. Empty when `group` is.
+    #[serde(default)]
+    pub team: String,
     /// For his messages: the callsigns it went to, as a screen shows them.
     #[serde(default)]
     pub to: Vec<String>,
@@ -243,6 +252,9 @@ pub struct RosterEntry {
     pub id: String,
     pub callsign: String,
     pub group: String,
+    /// Its team's id on this computer: what views, colours, moves and renames go by. `group` is only shown.
+    #[serde(default)]
+    pub team: String,
     /// What tells it from the others of its team: the part of its callsign after the team's name.
     #[serde(default)]
     pub number: String,
@@ -296,9 +308,6 @@ pub struct Feed {
     pub roster: Vec<RosterEntry>,
     /// The log's latest position, whether or not this scope had anything new.
     pub seq: u64,
-    /// Projects a new agent can be launched in (`/launch <project> <task>` as an utterance).
-    #[serde(default)]
-    pub projects: Vec<String>,
     /// The quick messages to offer: the standard ones, then his own.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub quick: Vec<Quick>,

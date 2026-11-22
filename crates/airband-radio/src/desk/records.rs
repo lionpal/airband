@@ -4,6 +4,9 @@ use super::*;
 /// One team: a project and the agents working in it.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct DeskRoom {
+    /// The room's id: one team on one computer. What every call about the room takes.
+    pub id: String,
+    /// What the team is called, to show.
     pub name: String,
     /// What the team is doing: the state of whichever of its agents most needs him.
     pub state: AgentState,
@@ -15,8 +18,8 @@ pub struct DeskRoom {
     pub doing: Option<String>,
     /// Its agents, by callsign: for a list he can pick one from.
     pub members: Vec<DeskMember>,
-    /// Its place in the host's list of team colours.
-    pub colour: u8,
+    /// Its place in the host's list of team colours. Nothing until the phone has given its team one.
+    pub colour: Option<u8>,
     /// How many things its agents have said that he has not had in front of him.
     pub unread: u32,
 }
@@ -117,7 +120,7 @@ pub struct DeskChoice {
     pub id: String,
     pub callsign: String,
     pub badge: String,
-    pub colour: u8,
+    pub colour: Option<u8>,
 }
 /// One file he attached. `state` is `sending` (with `sent` of `total` bytes there so far), `ready` (it goes with
 /// the next thing he says or sends) or `failed`.
@@ -178,4 +181,11 @@ pub struct DeskRecent {
     pub tools: Vec<String>,
     /// When the last of those sessions was, in milliseconds since 1970; 0 when no tool has a record of one.
     pub at: u64,
+}
+
+/// Which team he moved an agent to: a room on his screen ([`DeskRoom::id`]), or a new team of a name he gave.
+#[derive(Debug, Clone, uniffi::Enum)]
+pub enum DeskTeamPick {
+    Room { room: String },
+    New { name: String },
 }

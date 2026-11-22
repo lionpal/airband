@@ -11,7 +11,7 @@ extension FeedView {
     private var placeholder: String {
         if let re = model.replyingTo { return "reply to \(name(of: re))" }
         if let only = model.onlyName { return "message \(only)" }
-        if let room = model.room { return "message \(room)" }
+        if let room = model.view.rooms.first(where: { $0.id == model.room }) { return "message \(room.name)" }
         return "say anything"
     }
     /// Who the line above the buttons says his words will go to, when it says so: the message he picked or the

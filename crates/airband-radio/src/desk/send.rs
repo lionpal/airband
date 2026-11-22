@@ -100,13 +100,14 @@ impl Desk {
     }
     /// Set going again every agent that has stopped without finishing: in one team, or everywhere.
     pub fn poke(&self, room: Option<String>) {
-        let radios: Vec<Arc<Radio>> = {
+        // each computer with a stopped agent, and in one room, that room's team there by its id
+        let radios: Vec<(Arc<Radio>, Option<String>)> = {
             let state = self.shared.state.lock().unwrap();
-            state.stations.iter().filter(|s| s.agents.iter().any(|a| a.state == AgentState::Stalled && room.as_ref().is_none_or(|r| a.group == *r))).map(|s| s.radio.clone()).collect()
+            state.stations.iter().filter_map(|s| s.agents.iter().find(|a| a.state == AgentState::Stalled && room.as_ref().is_none_or(|r| a.room == *r)).map(|a| (s.radio.clone(), room.as_ref().map(|_| a.team.clone())))).collect()
         };
-        for radio in radios {
+        for (radio, team) in radios {
             // what the chat shows for it is what the stopped agents are told
-            radio.queue_as("Keep going.".into(), None, room.clone(), None, String::new(), Vec::new(), Some(Act::Control { control: airband_core::routing::Control::Poke }));
+            radio.queue_as("Keep going.".into(), None, team, None, String::new(), Vec::new(), Some(Act::Control { control: airband_core::routing::Control::Poke }));
         }
         self.shared.host.changed();
     }
@@ -244,7 +245,8 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
             (Some(id), true) => state.stations[pick].agents.iter().find(|a| a.id == *id).map(|a| a.id.clone()).into_iter().collect(),
             _ => Vec::new(),
         };
-        let scope = room.clone().filter(|_| re.is_none() && agent.is_none() && !tagged);
+        // the room's team on that computer, by its id
+        let scope = room.as_ref().filter(|_| re.is_none() && agent.is_none() && !tagged).and_then(|r| state.stations[pick].agents.iter().find(|a| a.room == *r)).map(|a| a.team.clone());
         // when the tower has to work out who it is for, it is told who else is on his screen
         let others = if tagged || aimed || re.is_some() || state.stations.len() < 2 { String::new() } else { others(&state, pick, room.as_deref()) };
         (state.stations[pick].radio.clone(), text, re, scope, others, to)
@@ -266,10 +268,10 @@ fn others(state: &State, pick: usize, room: Option<&str>) -> String {
         .enumerate()
         .filter(|(i, _)| *i != pick)
         .flat_map(|(_, s)| s.agents.iter().map(move |a| (s, a)))
-        .filter(|(_, a)| room.is_none_or(|r| a.group == r) && seen.insert(a.id.clone()))
+        .filter(|(_, a)| room.is_none_or(|r| a.room == r) && seen.insert(a.id.clone()))
         .map(|(s, a)| {
             let last = s.messages.iter().rev().find(|m| m.agent.as_deref() == Some(a.id.as_str()) && !m.fyi);
-            airband_core::radio::Other { id: a.id.clone(), callsign: a.callsign.clone(), badge: a.badge.clone(), group: a.group.clone(), said: last.map(|m| m.text.chars().take(240).collect()).unwrap_or_default(), ago: last.map(|m| now.saturating_sub(m.at) / 1000).unwrap_or(0) }
+            airband_core::radio::Other { id: a.id.clone(), callsign: a.callsign.clone(), badge: a.badge.clone(), group: a.group.clone(), team: a.team.clone(), said: last.map(|m| m.text.chars().take(240).collect()).unwrap_or_default(), ago: last.map(|m| now.saturating_sub(m.at) / 1000).unwrap_or(0) }
         })
         .collect();
     if list.is_empty() { String::new() } else { serde_json::to_string(&list).unwrap_or_default() }
@@ -295,7 +297,7 @@ pub(super) fn pick_station(state: &State, text: &str, re: Option<&str>, room: Op
     }
     // the room he is looking at, when only one computer has agents in it
     if let Some(r) = room {
-        let mut with = state.stations.iter().enumerate().filter(|(_, s)| s.agents.iter().any(|a| a.group == r)).map(|(i, _)| i);
+        let mut with = state.stations.iter().enumerate().filter(|(_, s)| s.agents.iter().any(|a| a.room == r)).map(|(i, _)| i);
         if let (Some(only), None) = (with.next(), with.next()) {
             return Some(only);
         }

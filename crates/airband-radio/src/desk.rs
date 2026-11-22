@@ -101,6 +101,18 @@ pub(crate) struct Station {
     /// This computer's recent chat, oldest first.
     messages: Vec<ChatMessage>,
 }
+impl Station {
+    /// Each of its agents and messages is put in its room on his screen: this computer and its team, as one id.
+    pub(crate) fn settle_rooms(&mut self) {
+        let sid = station_id(&self.link);
+        for a in &mut self.agents {
+            a.room = room_id(&sid, &a.team);
+        }
+        for m in &mut self.messages {
+            m.room = room_id(&sid, &m.team);
+        }
+    }
+}
 /// Words of his that no tower could place, with who the asked tower thought they might be for.
 struct Asking {
     message: Outgoing,
@@ -152,7 +164,7 @@ impl State {
         (0..self.stations.len()).map(|i| (self.computer_name(i), self.stations[i].radio.clone())).collect()
     }
     /// The colour a team is shown in.
-    fn colour(&self, group: &str) -> u8 {
+    fn colour(&self, group: &str) -> Option<u8> {
         self.colours.of(group)
     }
     /// His main computer: the only one, or the one he chose, while it is still paired.
@@ -162,6 +174,11 @@ impl State {
             1 => Some(0),
             _ => self.read.main.as_ref().and_then(|name| self.stations.iter().position(|s| s.name == *name)),
         }
+    }
+    /// A room on his screen ([`DeskRoom::id`]): the radio of the computer that has it, the team's id there,
+    /// and what the team is called. Nothing for a room no agent is in now.
+    fn room(&self, room: &str) -> Option<(Arc<Radio>, String, String)> {
+        self.stations.iter().find_map(|s| s.agents.iter().find(|a| a.room == room).map(|a| (s.radio.clone(), a.team.clone(), a.group.clone())))
     }
     fn owner(&self, message: &str) -> Option<usize> {
         self.stations.iter().position(|s| s.messages.iter().any(|m| m.id == message))
@@ -179,7 +196,7 @@ impl State {
                 s.messages.iter().map(move |m| {
                     ChatMessage {
                         station: if several { s.name.clone() } else { String::new() },
-                        colour: self.colours.of(&m.group),
+                        colour: self.colours.of(&m.room),
                         ..m.clone()
                     }
                 })
@@ -332,13 +349,17 @@ impl Desk {
     /// The computer called this. With no name it is the one computer he has; with several he has to say
     /// which, and none is picked for him.
     fn station_radio(&self, computer: &str) -> Result<Arc<Radio>, RadioError> {
+        self.station_of(computer).map(|(radio, _)| radio)
+    }
+    /// The same, with what the computer is known by in the rooms of his screen.
+    fn station_of(&self, computer: &str) -> Result<(Arc<Radio>, String), RadioError> {
         let state = self.shared.state.lock().unwrap();
         let found = match (computer.is_empty(), state.stations.as_slice()) {
             (true, [only]) => Some(only),
             (true, [_, _, ..]) => return Err(RadioError::Told { reason: "Choose which computer first.".into() }),
             _ => state.stations.iter().find(|s| s.name == computer),
         };
-        found.filter(|s| s.online).map(|s| s.radio.clone()).ok_or(RadioError::Offline)
+        found.filter(|s| s.online).map(|s| (s.radio.clone(), station_id(&s.link))).ok_or(RadioError::Offline)
     }
     fn radio_of(&self, message: &str) -> Option<Arc<Radio>> {
         let state = self.shared.state.lock().unwrap();

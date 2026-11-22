@@ -340,11 +340,11 @@ try:
     check("one that closed while the tower was away is signed off when it is back", until(lambda: one("codex") is None, 10) and one("claude-code"), feed()["roster"])
     os.remove(record)
     check("and one that closes is signed off, though it said nothing", until(lambda: one("claude-code") is None, 10), feed()["roster"])
-    check("a new agent can be started by name in a folder a tool has worked in", "loft" in http("GET", "/v1/status", token=OWN)[1]["projects"] and say("New agent in loft", act={"kind": "launch", "project": "loft"}) == "A new agent is ready in loft." and until(agent), (http("GET", "/v1/status", token=OWN)[1]["projects"], feed()["roster"]))
+    check("a new agent can be started by name in a folder a tool has worked in", "loft" in http("GET", "/v1/status", token=OWN)[1]["projects"] and http("POST", "/v1/radio/project", {"name": "loft", "folder": http("GET", "/v1/status", token=OWN)[1]["projects"]["loft"]})[1].get("say") == "A new agent is ready in loft." and until(agent), (http("GET", "/v1/status", token=OWN)[1]["projects"], feed()["roster"]))
     http("POST", "/v1/radio/end", {"agent": agent()["id"]}); until(lambda: agent() is None)
 
     print("An agent the tower runs")
-    check("it is started by the tower and reports in, marked as held", say("New agent in shop", act={"kind": "launch", "project": "shop", "task": "say hello to the shop"}) == "Launching in shop." and until(agent), feed()["roster"])
+    check("it is started by the tower and reports in, marked as held", say("New agent in shop", act={"kind": "launch", "team": os.path.realpath(project), "task": "say hello to the shop"}) == "Launching in shop." and until(agent), feed()["roster"])
     me = agent()
     check("its task reaches it as his words and nothing else", until(lambda: arrived() == ["say hello to the shop"]), arrived())
     until(lambda: agent()["state"] != "working")
@@ -392,7 +392,7 @@ try:
 
     print("Started with nothing to do yet, as the + on a team does")
     before = len(arrived())
-    check("it is there at once, having been told nothing", say("New agent in shop", act={"kind": "launch", "project": "shop"}) == "A new agent is ready in shop." and until(agent) and len(arrived()) == before, (feed()["roster"], arrived()))
+    check("it is there at once, having been told nothing", say("New agent in shop", act={"kind": "launch", "team": os.path.realpath(project)}) == "A new agent is ready in shop." and until(agent) and len(arrived()) == before, (feed()["roster"], arrived()))
     fresh = agent()
     check("and it is waiting, not working", fresh and fresh["state"] not in ("working", "asking"), fresh)
     check("his first word reaches it as his own", say("@" + fresh["callsign"].replace(" ", "") + " start with the tests").startswith("Sent to") and until(lambda: arrived()[-1:] == ["start with the tests"]), arrived())
@@ -428,18 +428,18 @@ try:
     made = http("POST", "/v1/radio/project", {"name": there_["team"], "folder": other})[1]
     groups = lambda: sorted({a["group"] for a in feed()["roster"]})
     check("two folders of the same name are two teams, each with its own agents", made and made.get("team") == "other garden" and until(lambda: "other garden" in groups()) and len([a for a in feed()["roster"] if a["group"] == "garden"]) == 2, (made, groups()))
-    renamed = http("POST", "/v1/radio/team/rename", {"team": "other garden", "to": "Back Garden"})[1]
+    renamed = http("POST", "/v1/radio/team/rename", {"team": made["id"], "to": "Back Garden"})[1]
     check("a team he renames keeps its agents, under the new name", renamed and renamed.get("team") == "back garden" and until(lambda: "back garden" in groups() and "other garden" not in groups()) and len([a for a in feed()["roster"] if a["group"] == "back garden"]) == 1, (renamed, groups()))
     joined = http("POST", "/v1/radio/project", {"name": "anything", "folder": other})[1]
     check("and its folder is still its folder: another agent there joins it", joined and joined.get("team") == "back garden" and until(lambda: len([a for a in feed()["roster"] if a["group"] == "back garden"]) == 2), (joined, groups()))
-    check("a name another team has is refused in words", "already" in http("POST", "/v1/radio/team/rename", {"team": "back garden", "to": "garden"})[1].get("error", ""))
+    check("a name another team has is refused in words", "already" in http("POST", "/v1/radio/team/rename", {"team": made["id"], "to": "garden"})[1].get("error", ""))
 
     print("An agent that speaks the Agent Client Protocol")
     noted = lambda: open(os.path.join(got, "acp")).read().split("\n")[:-1] if os.path.exists(os.path.join(got, "acp")) else []
     one = lambda: next((a for a in feed()["roster"] if a.get("harness") == "stand-acp"), None)
     from_it = lambda: [m for m in feed()["messages"] if one() and m.get("agent") == one()["id"]]
     began = time.time()
-    check("he is told it is ready only once it has opened its session", say("New agent in shop", act={"kind": "launch", "project": "shop", "tool": "stand-acp"}) == "A new agent is ready in shop." and time.time() - began >= 1 and noted() == ["new"], (time.time() - began, noted()))
+    check("he is told it is ready only once it has opened its session", say("New agent in shop", act={"kind": "launch", "team": os.path.realpath(project), "tool": "stand-acp"}) == "A new agent is ready in shop." and time.time() - began >= 1 and noted() == ["new"], (time.time() - began, noted()))
     acp = one()
     # its session shows in its tool's own server too, as a real one's does: the driver reports for it, and nothing else
     Fake.sessions = [{"id": "ses-stand-in", "time": {"created": int(time.time() * 1000), "updated": int(time.time() * 1000)}, "location": {"directory": project}}]
@@ -479,7 +479,7 @@ try:
     mark = len(noted())
     since = lambda: noted()[mark:]
     check("he names a model by the agent's own name for it and an effort, and the agent is set to them before it is given its work",
-          say("New agent in shop", act={"kind": "launch", "project": "shop", "tool": "stand-acp", "model": "stand2", "effort": "mid", "task": "say on two"}) == "Launching in shop with Stand 2, Mid." and until(lambda: since()[:4] == ["new", "set model stand-in-2", "set effort mid", "prompt say on two"]), since())
+          say("New agent in shop", act={"kind": "launch", "team": os.path.realpath(project), "tool": "stand-acp", "model": "stand2", "effort": "mid", "task": "say on two"}) == "Launching in shop with Stand 2, Mid." and until(lambda: since()[:4] == ["new", "set model stand-in-2", "set effort mid", "prompt say on two"]), since())
     check("it says what it now runs on, and how hard it thinks", until(lambda: one() and (one().get("model"), one().get("effort")) == ("stand-in-2", "mid")), one())
     second = one()
     holder = subprocess.run(["pgrep", "-f", "hold --sock .* --id " + second["id"]], capture_output=True, text=True).stdout.split()
@@ -490,7 +490,7 @@ try:
     http("POST", "/v1/radio/end", {"agent": second["id"]})
     until(lambda: one() is None)
     mark = len(noted())
-    refused = say("New agent in shop", act={"kind": "launch", "project": "shop", "tool": "stand-acp", "model": "stand-in-2", "effort": "max", "task": "say never"})
+    refused = say("New agent in shop", act={"kind": "launch", "team": os.path.realpath(project), "tool": "stand-acp", "model": "stand-in-2", "effort": "max", "task": "say never"})
     check("an effort the model he named does not have starts nothing, and he is told what it can be", refused == "Could not launch in shop: it has no effort called max. It can be low, mid" and one() is None and "prompt say never" not in since(), (refused, since()))
 
     print("A tool that is a server the tower watches (as OpenCode is)")
@@ -524,9 +524,9 @@ try:
     check("one that is gone from the server leaves the radio, and one put away never joins it", until(lambda: watched() is None, 8), feed()["roster"])
     check("every call to the server carried its password", Fake.unauthorised == 0, Fake.unauthorised)
     began = time.time()
-    told = say("New agent in shop", act={"kind": "launch", "project": "shop", "tool": "broken"})
+    told = say("New agent in shop", act={"kind": "launch", "team": os.path.realpath(project), "tool": "broken"})
     check("one that cannot start is not announced: he is told why, in the program's own words", "Could not launch in shop" in told and "you are not signed in" in told and not [a for a in feed()["roster"] if a.get("harness") == "broken"], told)
-    check("a tool this computer cannot start is refused in words, and nothing is started", "not set up to start nothing agents" in say("New agent in shop", act={"kind": "launch", "project": "shop", "tool": "nothing"}))
+    check("a tool this computer cannot start is refused in words, and nothing is started", "not set up to start nothing agents" in say("New agent in shop", act={"kind": "launch", "team": os.path.realpath(project), "tool": "nothing"}))
 finally:
     tower.terminate()
     try: tower.wait(timeout=10)

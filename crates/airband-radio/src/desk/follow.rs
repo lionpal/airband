@@ -25,10 +25,6 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, gener
             }
             let calling = state.calling;
             let open: HashSet<String> = state.stations.iter().flat_map(|s| s.open.iter().cloned()).collect();
-            // the teams this computer has are given their colours here, beside every other computer's
-            if let Ok(feed) = &got {
-                state.colours.see(feed.agents.iter().map(|a| a.group.clone()).chain(feed.messages.iter().map(|m| m.group.clone())));
-            }
             let Some(station) = state.stations.get_mut(index) else { return };
             match &got {
                 Ok(feed) => {
@@ -52,6 +48,7 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, gener
                     station.quick = feed.quick.clone();
                     // the radio keeps the chat itself, each line in its current form
                     station.messages = radio.history();
+                    station.settle_rooms();
                     // on screen in front of him now: read, so a call started later does not read it out
                     if !calling && shared.host.watching() {
                         seen = feed.messages.iter().filter(|m| !m.his && !m.needs_you).map(|m| m.id.clone()).collect();
@@ -69,6 +66,12 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, gener
                         station.online = false;
                     }
                 }
+            }
+            // the teams this computer has are given their colours here, beside every other computer's
+            if got.is_ok()
+                && let Some(station) = state.stations.get(index) {
+                let rooms: Vec<String> = station.agents.iter().map(|a| a.room.clone()).chain(station.messages.iter().map(|m| m.room.clone())).collect();
+                state.colours.see(rooms);
             }
             // once the tower agrees a message is answered, stop tracking it here
             let now_open: HashSet<String> = state.stations.iter().flat_map(|s| s.open.iter().cloned()).collect();

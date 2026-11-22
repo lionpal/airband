@@ -81,7 +81,7 @@ pub(super) fn notice(inner: &Inner, e: &Entry, station: &str) -> Notice {
     // A request for leave that does not fit is shown by its opening and offers no answer from the lock screen:
     // he opens it, reads all of what would run, and answers there.
     let cut = m.permission && text != m.text;
-    Notice { id: m.id, from: m.from, agent: m.agent, badge: m.badge, group: m.group, station: station.into(), text, kind: m.kind, options: if cut { Vec::new() } else { m.options.iter().take(4).map(|o| short(o, 40)).collect() }, permission: m.permission && !cut }
+    Notice { id: m.id, from: m.from, agent: m.agent, badge: m.badge, group: m.group, team: m.team, station: station.into(), text, kind: m.kind, options: if cut { Vec::new() } else { m.options.iter().take(4).map(|o| short(o, 40)).collect() }, permission: m.permission && !cut }
 }
 
 /// A line's short version has just been made, or a card was put to him: wake whichever phones should know.

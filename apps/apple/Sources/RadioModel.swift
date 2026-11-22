@@ -207,7 +207,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
             tray.removeAll { item in gone.contains { $0.id == item.id } }
         }
         // a room that has gone (its last agent left) is not somewhere he can stay
-        if let room, view.online, !view.rooms.contains(where: { $0.name == room }) { self.room = nil }
+        if let room, view.online, !view.rooms.contains(where: { $0.id == room }) { self.room = nil }
         if full.count > (showWhole ? 400 : 60) { full.removeAll() } // opened long ago: fetched again if he looks again
         refreshChoices()
         syncBanners()
@@ -235,7 +235,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         guard let team = view.rooms.first(where: { $0.members.contains { $0.id == id } }), let agent = team.members.first(where: { $0.id == id }) else { return }
         // look at that agent, so the question is in view and his words go to it
         replyingTo = nil
-        room = team.name
+        room = team.id
         only = id
         let question = view.feed.last { $0.id == agent.questionId }
         guard !agent.questionId.isEmpty else {

@@ -34,7 +34,7 @@ extension RadioModel {
 
     /// The agents he could stop right now: at work, run by their computer, and in the room or agent he is looking at.
     var stoppable: [DeskMember] {
-        view.rooms.filter { room == nil || $0.name == room }.flatMap(\.members).filter { $0.held && $0.state == .working && (only == nil || $0.id == only) }
+        view.rooms.filter { room == nil || $0.id == room }.flatMap(\.members).filter { $0.held && $0.state == .working && (only == nil || $0.id == only) }
     }
 
     /// Stop what an agent is doing, now. What he said to it meanwhile it then reads together.
@@ -47,13 +47,10 @@ extension RadioModel {
         tell("It did not end.", { try self.desk.endAgent(agent: agent.id) }) { if self.only == agent.id { self.only = nil } }
     }
 
-    /// The computers a new agent of this team can be started on, the usual one first.
-    func computers(for room: String) -> [String] { desk.computersFor(room: room) }
-
     /// Start a new agent in a team. It appears in the list at once, with nothing to do until he speaks to it.
     /// `tool` is one of the coding tools he uses; nothing is the one he uses when there is only one.
-    func newAgent(in room: String, on computer: String?, tool: CodingTool? = nil) {
-        desk.newAgent(room: room, computer: computer, tool: tool ?? (usedTools.count == 1 ? usedTools.first : nil))
+    func newAgent(in room: String, tool: CodingTool? = nil) {
+        desk.newAgent(room: room, tool: tool ?? (usedTools.count == 1 ? usedTools.first : nil))
     }
 
     /// The coding tools he uses, as the catalogue describes them, the one he uses most first.
@@ -176,22 +173,19 @@ extension RadioModel {
         }
     }
 
-    /// Put an agent in another team: one that is there, or a new one of that name. If he was looking at that
-    /// agent alone, he still is, under its new name.
-    func renameTeam(_ team: String, to name: String) {
+    /// Rename a team, by its room. Its room stays the same, so whoever was looking at it still is.
+    func renameTeam(_ room: DeskRoom, to name: String) {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, name != team else { return }
-        ask("It was not renamed.", { try self.desk.renameTeam(team: team, to: name) }) { now, wrong in
-            if let wrong { self.problem = wrong; return }
-            // still looking at the same team, under its new name
-            if self.room == team, let now { self.room = now }
+        guard !name.isEmpty, name != room.name else { return }
+        ask("It was not renamed.", { try self.desk.renameTeam(room: room.id, to: name) }) { _, wrong in
+            if let wrong { self.problem = wrong }
         }
     }
 
-    func moveAgent(_ agent: DeskMember, to team: String) {
-        let team = team.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !team.isEmpty else { return }
-        tell("It did not move.", { try self.desk.moveAgent(agent: agent.id, team: team) }) {}
+    /// Put an agent in another team: a room on screen, or a new team of the name he typed.
+    func moveAgent(_ agent: DeskMember, to pick: DeskTeamPick) {
+        if case .new(let name) = pick, name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return }
+        tell("It did not move.", { try self.desk.moveAgent(agent: agent.id, to: pick) }) {}
     }
 
     /// Fetch a picture, once. The core keeps the file, so after the first time this is immediate and works offline.

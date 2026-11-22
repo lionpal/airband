@@ -3,14 +3,6 @@ use super::*;
 
 #[uniffi::export]
 impl Desk {
-    /// The computers a new agent of this team can be started on: the ones where the team already has agents,
-    /// the one with the most of them first. That first one is where a new agent goes unless he says otherwise.
-    pub fn computers_for(&self, room: String) -> Vec<String> {
-        let state = self.shared.state.lock().unwrap();
-        let mut found: Vec<(usize, &Station)> = state.stations.iter().map(|s| (s.agents.iter().filter(|a| a.group == room).count(), s)).filter(|(n, _)| *n > 0).collect();
-        found.sort_by_key(|a| std::cmp::Reverse(a.0));
-        found.into_iter().map(|(_, s)| s.name.clone()).collect()
-    }
     /// The folders inside one of his on a computer, for choosing where a new team works. `computer` is its
     /// name, or empty when he has only one; `under` is a folder's whole path, or empty for his
     /// home folder. Blocks: call it off the main thread.
@@ -30,43 +22,24 @@ impl Desk {
     /// its agents work in (made first with `make`).
     /// Its first agent is started there with nothing to do yet. Blocks: call it off the main thread.
     /// `tool` is the coding tool its first agent is, by id; nothing is the computer's usual one.
-    /// Answers with the team's name as that computer writes it.
+    /// Answers with the team's room on his screen ([`DeskRoom::id`]).
     pub fn new_team(&self, computer: String, name: String, folder: String, make: bool, tool: Option<String>) -> Result<String, RadioError> {
-        self.station_radio(&computer)?.new_project(name, folder, make, tool.filter(|t| !t.is_empty()))
+        let (radio, station) = self.station_of(&computer)?;
+        Ok(room_id(&station, &radio.new_project(name, folder, make, tool.filter(|t| !t.is_empty()))?))
     }
-    /// Start a new agent in a team, on the computer named. With none named it starts on the one computer that
-    /// has that team; when several have it he is asked which, and nothing is started. It is started with
-    /// nothing to do yet and shows up at once, waiting for his first word. Nothing happens for a team no
-    /// computer has.
+    /// Start a new agent in a team: `room` is the room on his screen, as [`DeskRoom::id`] gives it. It is
+    /// started with nothing to do yet and shows up at once, waiting for his first word. Nothing happens for a
+    /// room no computer has now.
     /// `tool` is the coding tool it is, by id, with what to call that tool; nothing is the computer's usual one.
-    pub fn new_agent(&self, room: String, computer: Option<String>, tool: Option<CodingTool>) {
-        let radio = {
-            let state = self.shared.state.lock().unwrap();
-            let has = |s: &&Station| s.agents.iter().any(|a| a.group == room);
-            let there: Vec<&Station> = state.stations.iter().filter(has).collect();
-            match (computer.filter(|c| !c.is_empty()), there.as_slice()) {
-                (Some(named), _) => there.iter().find(|s| s.name == named).map(|s| s.radio.clone()).ok_or_else(|| format!("{named} has no team called {room}.")),
-                (None, [only]) => Ok(only.radio.clone()),
-                (None, []) => return,
-                (None, several) => Err(format!("Which computer should it start on? {} each have a team called {room}.", several.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(" and "))),
-            }
+    pub fn new_agent(&self, room: String, tool: Option<CodingTool>) {
+        let Some((radio, team, name)) = self.shared.state.lock().unwrap().room(&room) else { return };
+        // sent as what it is; the words are only what the chat shows for it
+        let shown = match &tool {
+            Some(tool) => format!("New {} agent in {name}", tool.name),
+            None => format!("New agent in {name}"),
         };
-        let radio = match radio {
-            Ok(radio) => Some(radio),
-            Err(ask) => {
-                self.shared.host.note(ask);
-                None
-            }
-        };
-        if let Some(radio) = radio {
-            // sent as what it is; the words are only what the chat shows for it
-            let shown = match &tool {
-                Some(tool) => format!("New {} agent in {room}", tool.name),
-                None => format!("New agent in {room}"),
-            };
-            let launch = airband_core::radio::Launch { project: room, tool: tool.map(|t| t.id), ..Default::default() };
-            radio.queue_as(shown, None, None, None, String::new(), Vec::new(), Some(Act::Launch(launch)));
-        }
+        let launch = airband_core::radio::Launch { team, tool: tool.map(|t| t.id), ..Default::default() };
+        radio.queue_as(shown, None, None, None, String::new(), Vec::new(), Some(Act::Launch(launch)));
     }
     /// Every paired computer's accounts, in the order the computers were paired. A computer that cannot be
     /// reached, or whose airband is too old, comes back with a note and no accounts. Blocks: call it off the
@@ -108,34 +81,46 @@ impl Desk {
         let radio = self.shared.state.lock().unwrap().stations.iter().find(|s| s.name == station).map(|s| s.radio.clone()).ok_or(RadioError::Refused)?;
         radio.use_account(station, harness, id)
     }
-    /// Put an agent in another team: one of the teams on screen, or a new one of that name. `agent` is its id.
-    /// The list shows it there at once. Blocks: call it off the main thread.
-    pub fn move_agent(&self, agent: String, team: String) -> Result<(), RadioError> {
+    /// Put an agent in another team: a room on screen with that agent's computer ([`DeskRoom::id`]), or a new
+    /// team of the name he gave. `agent` is its id. The list shows it there at once. Blocks: call it off the
+    /// main thread.
+    pub fn move_agent(&self, agent: String, to: DeskTeamPick) -> Result<(), RadioError> {
         let radio = self.agent_radio(&agent)?;
-        let now = radio.move_agent(agent.clone(), team)?;
+        let pick = match to {
+            DeskTeamPick::Room { room } => {
+                let state = self.shared.state.lock().unwrap();
+                let (there, team, _) = state.room(&room).ok_or(RadioError::Told { reason: "That team has no agents now.".into() })?;
+                if !Arc::ptr_eq(&there, &radio) {
+                    return Err(RadioError::Told { reason: "An agent can only move to a team on its own computer.".into() });
+                }
+                airband_core::radio::TeamPick::Team { id: team }
+            }
+            DeskTeamPick::New { name } => airband_core::radio::TeamPick::New { name },
+        };
+        let now = radio.move_agent(agent.clone(), pick)?;
         {
             // shown as the tower now has it, without waiting for the next look at the feed
             let mut state = self.shared.state.lock().unwrap();
-            for a in state.stations.iter_mut().flat_map(|s| s.agents.iter_mut()).filter(|a| a.id == agent) {
-                (a.callsign, a.group) = (now[0].clone(), now[1].clone());
+            for s in state.stations.iter_mut().filter(|s| s.agents.iter().any(|a| a.id == agent)) {
+                for a in s.agents.iter_mut().filter(|a| a.id == agent) {
+                    (a.callsign, a.group, a.team) = (now.callsign.clone(), now.team.clone(), now.id.clone());
+                }
+                s.settle_rooms();
             }
         }
         self.shared.host.changed();
         Ok(())
     }
-    /// Rename one of his teams, on the computer whose team it is. Only what it is called changes: its agents
-    /// stay in it. Answers with the name it now has. Blocks: call it off the main thread.
-    pub fn rename_team(&self, team: String, to: String) -> Result<String, RadioError> {
-        let radio = {
-            let state = self.shared.state.lock().unwrap();
-            state.stations.iter().find(|s| s.agents.iter().any(|a| a.group == team)).map(|s| s.radio.clone())
-        };
-        let now = radio.ok_or(RadioError::Told { reason: "That team has no agents now.".into() })?.rename_team(team.clone(), to)?;
+    /// Rename one of his teams: `room` is its room on his screen ([`DeskRoom::id`]). Only what it is called
+    /// changes: its agents, its room and its colour stay. Answers with the name it now has. Blocks: call it
+    /// off the main thread.
+    pub fn rename_team(&self, room: String, to: String) -> Result<String, RadioError> {
+        let (radio, team, _) = self.shared.state.lock().unwrap().room(&room).ok_or(RadioError::Told { reason: "That team has no agents now.".into() })?;
+        let now = radio.rename_team(team, to)?;
         {
             // shown as the tower now has it, without waiting for the next look at the feed
             let mut state = self.shared.state.lock().unwrap();
-            state.colours.renamed(&team, &now);
-            for a in state.stations.iter_mut().flat_map(|s| s.agents.iter_mut()).filter(|a| a.group == team) {
+            for a in state.stations.iter_mut().flat_map(|s| s.agents.iter_mut()).filter(|a| a.room == room) {
                 a.callsign = airband_core::routing::Callsign { project: now.clone(), ..a.parts() }.text();
                 a.group = now.clone();
             }

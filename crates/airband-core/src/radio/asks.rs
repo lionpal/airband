@@ -75,12 +75,20 @@ pub struct UseAccount {
 
 /// `POST team`: put an agent in another team, one that exists or a new one. The agent keeps a name he gave it
 /// and takes the next free number otherwise; the answer is `{callsign, team}`, what it is called now and the team
-/// it is in, or `{error}`.
+/// it is in, and that team's `id`; or `{error}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MoveAgent {
     /// The agent's id, as the roster gives it.
     pub agent: String,
-    pub team: String,
+    pub to: TeamPick,
+}
+
+/// Which team an agent goes to: one of his teams on that computer, by its id, or a new one he named.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TeamPick {
+    Team { id: String },
+    New { name: String },
 }
 
 /// `POST folders`: the folders inside one of his folders on this computer, for choosing where a new team
@@ -183,6 +191,7 @@ pub const DENY: &str = "Deny";
 /// folder and colour stay with it. `{team}` (the name it now has) or `{error}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RenameTeam {
+    /// The team's id on that computer.
     pub team: String,
     pub to: String,
 }

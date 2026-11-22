@@ -106,7 +106,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private func start(then answer: String?) {
         Task { @MainActor in
             if let answer, let team = self.model.view.rooms.first(where: { $0.members.contains { $0.id == answer } }) {
-                self.model.room = team.name
+                self.model.room = team.id
                 self.model.only = answer
             }
             if !self.model.calling { await self.model.setCalling(true) }

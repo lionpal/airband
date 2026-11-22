@@ -53,8 +53,11 @@ enum TeamColours {
         (0.224, 0.529, 0.898), (0.851, 0.349, 0.149), (0.565, 0.522, 0.914),
         (0.835, 0.318, 0.506), (0.788, 0.522, 0.0), (0.098, 0.620, 0.439),
     ]
-    static func ui(_ place: UInt8) -> UIColor {
-        let c = rgb[Int(place) % rgb.count]
+    /// For a team the phone has not given a colour yet: a plain grey, no team's colour.
+    static let none: (Double, Double, Double) = (0.557, 0.557, 0.576)
+    static func rgb(_ place: UInt8?) -> (Double, Double, Double) { place.map { rgb[Int($0) % rgb.count] } ?? none }
+    static func ui(_ place: UInt8?) -> UIColor {
+        let c = rgb(place)
         return UIColor(red: c.0, green: c.1, blue: c.2, alpha: 1)
     }
 }
@@ -111,6 +114,6 @@ enum NoticeButtons {
 
 /// An agent's badge as a picture: its two characters on its team's colour. The system shows it in a circle, so
 /// the colour fills the square and the characters keep to the middle.
-func badgeImage(_ text: String, colour: UInt8, side: CGFloat = 160) -> Data? {
+func badgeImage(_ text: String, colour: UInt8?, side: CGFloat = 160) -> Data? {
     badgePicture(text, fill: TeamColours.ui(colour), side: side, corner: 0, letters: 0.4, scale: 1).pngData()
 }

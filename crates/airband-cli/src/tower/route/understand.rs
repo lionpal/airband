@@ -112,7 +112,7 @@ pub(in crate::tower) async fn route(app: &Arc<App>, radio: &str, rest: &str, re:
 /// The room as it stands, or (as `Err`) the agent he is answering when he tapped one of its messages: that is
 /// certain, and it goes to the agent that said it, whatever that agent is called now, and to nobody if that agent has gone.
 fn scene(app: &App, radio: &str, re: Option<&str>, room: Option<&str>) -> Result<Scene, Box<Session>> {
-    let within = |s: &Session| room.is_none_or(|g| s.callsign.project == g);
+    let within = |s: &Session| room.is_none_or(|g| s.team == g);
     let inner = app.read();
     if let Some(target) = re.and_then(|id| inner.log.iter().find(|e| e.id == id)).and_then(|e| inner.sender(e)) {
         return Err(Box::new(target.clone()));
@@ -210,7 +210,7 @@ fn starting(app: &App, menus: &Menus, projects: &[String], room: Option<&str>) -
             .iter()
             .enumerate()
             .map(|(i, p)| {
-                let said: Vec<String> = inner.log.iter().rev().filter(|e| e.group == *p && !e.his && e.kind != Some(Kind::Fyi)).take(2).map(|e| e.short.clone().unwrap_or_else(|| opening(&e.full))).collect();
+                let said: Vec<String> = inner.log.iter().rev().filter(|e| inner.team_called(p).is_some_and(|t| e.team == t) && !e.his && e.kind != Some(Kind::Fyi)).take(2).map(|e| e.short.clone().unwrap_or_else(|| opening(&e.full))).collect();
                 format!("{}. {p}{}", i + 1, if said.is_empty() { String::new() } else { format!(": lately, {}", said.join(" / ")) })
             })
             .collect()
@@ -249,7 +249,7 @@ fn starting(app: &App, menus: &Menus, projects: &[String], room: Option<&str>) -
          choice beats asking him: he is told where it started), else null when nothing points to \
          any of them or he named one that is not listed (then \"project_said\" is his own word for it, else null); {tool}{models}{efforts}\"task\" is the work in his own words, without the words \
          about starting an agent, the tool, the model or the effort. Otherwise \"new\" is null. The projects:\n{projects}",
-        room = room.map(|r| format!(" (he is looking at {r})")).unwrap_or_default(),
+        room = room.map(|r| format!(" (he is looking at {})", app.read().team_name(r))).unwrap_or_default(),
         tool = tool,
         by_model = by_model,
         models = offered("model", models),

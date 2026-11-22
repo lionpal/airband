@@ -26,13 +26,13 @@ impl RadioHost for Quiet {
 }
 
 fn msg(id: &str, seq: u64, from: &str, group: &str, needs: bool) -> ChatMessage {
-    ChatMessage { seq, id: id.into(), at: seq, his: from == "you", from: from.into(), group: group.into(), to: Vec::new(), to_agents: Vec::new(), needs_you: needs, fyi: false, unjudged: String::new(), stalled: false, text: id.into(), long: false, queued: false, seen: 0, options: Vec::new(), recommended: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: Some(from.into()), station: String::new(), open: needs, badge: String::new(), colour: 0, read: None, own_session: false, not_read: String::new() }
+    ChatMessage { seq, id: id.into(), at: seq, his: from == "you", from: from.into(), group: group.into(), team: group.into(), room: String::new(), to: Vec::new(), to_agents: Vec::new(), needs_you: needs, fyi: false, unjudged: String::new(), stalled: false, text: id.into(), long: false, queued: false, seen: 0, options: Vec::new(), recommended: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: Some(from.into()), station: String::new(), open: needs, badge: String::new(), colour: None, read: None, own_session: false, not_read: String::new() }
 }
 fn station(name: &str, port: u16, agents: &[(&str, &str)], messages: Vec<ChatMessage>) -> Station {
     let link = format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A{port}&token=t");
     let radio = Radio::start(link.clone(), String::new(), Arc::new(Quiet)).unwrap();
     radio.stop();
-    Station {
+    let mut station = Station {
         link,
         radio,
         name: name.into(),
@@ -43,13 +43,19 @@ fn station(name: &str, port: u16, agents: &[(&str, &str)], messages: Vec<ChatMes
         failing_since: None,
         reads: String::new(),
         reads_failed: String::new(),
-        agents: agents.iter().map(|(c, g)| (c, g, c.strip_prefix(g).unwrap_or(c).trim().to_string())).map(|(c, g, number)| ChatAgent { id: c.to_string(), callsign: c.to_string(), badge: airband_core::routing::Callsign { project: g.to_string(), number: number.clone(), named: false }.badge(), group: g.to_string(), number: number.clone(), number_kept: number, named: false, harness: "h".into(), waiting: false, reachable: true, state: AgentState::Working, subagents: 0, doing: None, held: false, terminal: false, ends: false, model: None, effort: None }).collect(),
+        agents: agents.iter().map(|(c, g)| (c, g, c.strip_prefix(g).unwrap_or(c).trim().to_string())).map(|(c, g, number)| ChatAgent { id: c.to_string(), callsign: c.to_string(), badge: airband_core::routing::Callsign { project: g.to_string(), number: number.clone(), named: false }.badge(), group: g.to_string(), team: g.to_string(), room: String::new(), number: number.clone(), number_kept: number, named: false, harness: "h".into(), waiting: false, reachable: true, state: AgentState::Working, subagents: 0, doing: None, held: false, terminal: false, ends: false, model: None, effort: None }).collect(),
         open: messages.iter().filter(|m| m.needs_you).map(|m| m.id.clone()).collect(),
         sending: Vec::new(),
         landing: Vec::new(),
         quick: Vec::new(),
         messages,
-    }
+    };
+    station.settle_rooms();
+    station
+}
+/// The room on his screen of a team (by its id) on whichever computer has it.
+fn room(state: &State, team: &str) -> String {
+    state.stations.iter().flat_map(|s| s.agents.iter()).find(|a| a.team == team).map(|a| a.room.clone()).unwrap()
 }
 fn two() -> State {
     State {
@@ -128,13 +134,16 @@ fn a_computer_is_never_picked_for_him() {
     // two computers that each have a team called shop
     let state = State { stations: vec![station("mini", 1, &[("shop two", "shop")], Vec::new()), station("macbook", 2, &[("shop one", "shop")], Vec::new())], ..State::default() };
     let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host: host.clone(), chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend }), data_dir: String::new() };
-    // with none named he is asked which, and one that has no such team is not swapped for one that has
-    desk.new_agent("shop".into(), None, None);
-    desk.new_agent("shop".into(), Some("laptop".into()), None);
-    // a team no computer has: nothing happens, and nothing is said
-    desk.new_agent("garden".into(), None, None);
-    let notes = host.0.lock().unwrap().clone();
-    assert_eq!(notes, vec!["Which computer should it start on? mini and macbook each have a team called shop.".to_string(), "laptop has no team called shop.".to_string()]);
+    // a team of the same name on each is two rooms: a new agent goes to the computer of the room it was asked in
+    let (on_mini, on_macbook) = { let s = desk.shared.state.lock().unwrap(); (s.stations[0].agents[0].room.clone(), s.stations[1].agents[0].room.clone()) };
+    assert_ne!(on_mini, on_macbook);
+    desk.new_agent(on_macbook, None);
+    // a room no computer has, or a bare team name: nothing happens, and nothing is said
+    desk.new_agent("garden".into(), None);
+    desk.new_agent("shop".into(), None);
+    let unsent = |i: usize| desk.shared.state.lock().unwrap().stations[i].radio.unsent().len();
+    assert_eq!((unsent(0), unsent(1)), (0, 1));
+    assert!(host.0.lock().unwrap().is_empty());
     // the same for anything else asked of a computer he did not name
     assert!(matches!(desk.station_radio(""), Err(RadioError::Told { .. })));
     assert!(matches!(desk.station_radio("laptop"), Err(RadioError::Offline)));
@@ -155,16 +164,17 @@ fn a_button_is_sent_as_what_it_stands_for_and_never_as_words_to_be_read() {
     desk.tap("q1".into(), Tapped::Option { index: 7 });
     // a poke, and a new agent
     desk.poke(None);
-    desk.new_agent("shop".into(), None, None);
+    let shop = room(&desk.shared.state.lock().unwrap(), "shop");
+    desk.new_agent(shop.clone(), None);
     // words to the agent he is looking at go to it by its id, with no tag written into them
-    desk.send("ship it".into(), None, Some("shop".into()), Some("shop two".into()));
+    desk.send("ship it".into(), None, Some(shop), Some("shop two".into()));
     assert_eq!(
         sent(&desk),
         vec![
             ("Allow".to_string(), Some("q1".to_string()), act(Act::Verdict { allow: true }), vec![]),
             ("Leave".to_string(), Some("q1".to_string()), act(Act::Option { index: 1 }), vec![]),
             ("Keep going.".to_string(), None, act(Act::Control { control: airband_core::routing::Control::Poke }), vec![]),
-            ("New agent in shop".to_string(), None, act(Act::Launch(airband_core::radio::Launch { project: "shop".into(), ..Default::default() })), vec![]),
+            ("New agent in shop".to_string(), None, act(Act::Launch(airband_core::radio::Launch { team: "shop".into(), ..Default::default() })), vec![]),
             ("ship it".to_string(), None, String::new(), vec!["shop two".to_string()]),
         ]
     );
@@ -230,7 +240,8 @@ fn what_he_is_not_looking_at_stays_unread_and_is_counted() {
     let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(two()), floor: Floor::default(), host: host.clone(), chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend }), data_dir: dir.display().to_string() };
     let counts = |v: &DeskView| (v.unread, v.rooms.iter().map(|r| (r.name.clone(), r.unread)).collect::<Vec<_>>());
     // looking at one team: what it said is read, and the other two teams' one thing each is not
-    let v = desk.view(Some("shop".into()), None);
+    let (shop, ff) = { let s = desk.shared.state.lock().unwrap(); (room(&s, "shop"), room(&s, "ff")) };
+    let v = desk.view(Some(shop.clone()), None);
     assert_eq!(counts(&v), (2, vec![("backoffice".into(), 1), ("ff".into(), 1), ("shop".into(), 0)]));
     assert_eq!(v.rooms[0].members[0].unread, 1);
     // something new from the team in front of him is read as it comes; from another, it is one more
@@ -238,13 +249,14 @@ fn what_he_is_not_looking_at_stays_unread_and_is_counted() {
         let mut state = desk.shared.state.lock().unwrap();
         state.stations[0].messages.push(msg("r2", 5, "shop two", "shop", false));
         state.stations[1].messages.push(msg("r3", 6, "ff one", "ff", false));
+        state.stations.iter_mut().for_each(Station::settle_rooms);
     }
-    assert_eq!(counts(&desk.view(Some("shop".into()), None)).0, 3);
+    assert_eq!(counts(&desk.view(Some(shop), None)).0, 3);
     // with the chat not on screen nothing is read: one agent of a team opened behind a sheet clears nothing
     host.0.store(false, std::sync::atomic::Ordering::SeqCst);
-    assert_eq!(desk.view(Some("ff".into()), Some("ff one".into())).unread, 3);
+    assert_eq!(desk.view(Some(ff.clone()), Some("ff one".into())).unread, 3);
     host.0.store(true, std::sync::atomic::Ordering::SeqCst);
-    assert_eq!(counts(&desk.view(Some("ff".into()), Some("ff one".into()))), (1, vec![("backoffice".into(), 1), ("ff".into(), 0), ("shop".into(), 0)]));
+    assert_eq!(counts(&desk.view(Some(ff.clone()), Some("ff one".into()))), (1, vec![("backoffice".into(), 1), ("ff".into(), 0), ("shop".into(), 0)]));
     // what was read is kept on the device: a desk opened again on the same folder starts from there
     assert_eq!(ReadMarks::load(&dir.display().to_string()).upto.get("ff one"), Some(&6));
     // everything at once
@@ -259,10 +271,12 @@ fn a_notification_is_opened_by_the_pairing_that_sealed_it_and_no_other() {
     let (mini, laptop, stranger) = (airband_core::relay::new_secret(), airband_core::relay::new_secret(), airband_core::relay::new_secret());
     let keys = Keys::derive(&laptop).unwrap();
     let seal = |n: &Notice| airband_core::audio::base64_encode(&keys.seal(Direction::Push, &serde_json::to_vec(n).unwrap()));
-    let question = Notice { id: "m1".into(), from: "shop 3".into(), agent: Some("a3".into()), badge: "S3".into(), group: "shop".into(), station: "laptop".into(), text: "Rewrite or leave?".into(), kind: Some(Kind::NeedsYou), options: vec!["Rewrite".into(), "Leave".into()], permission: false };
-    let got = open_notice(vec![link(&mini), link(&laptop)], seal(&question), [("shop".to_string(), 2)].into()).unwrap();
-    assert_eq!((got.title.as_str(), got.subtitle.as_str(), got.body.as_str(), got.badge.as_str(), got.colour), ("shop 3", "laptop", "Rewrite or leave?", "S3", 2));
-    assert_eq!((got.station.as_str(), got.message.as_str(), got.room.as_str(), got.agent.as_str(), got.question), (keys.channel.as_str(), "m1", "shop", "a3", true));
+    let question = Notice { id: "m1".into(), from: "shop 3".into(), agent: Some("a3".into()), badge: "S3".into(), group: "shop".into(), team: "/work/shop".into(), station: "laptop".into(), text: "Rewrite or leave?".into(), kind: Some(Kind::NeedsYou), options: vec!["Rewrite".into(), "Leave".into()], permission: false };
+    let got = open_notice(vec![link(&mini), link(&laptop)], seal(&question), [(format!("{}//work/shop", keys.channel), 2)].into()).unwrap();
+    assert_eq!((got.title.as_str(), got.subtitle.as_str(), got.body.as_str(), got.badge.as_str(), got.colour), ("shop 3", "laptop", "Rewrite or leave?", "S3", Some(2)));
+    assert_eq!((got.station.as_str(), got.message.as_str(), got.room.as_str(), got.agent.as_str(), got.question), (keys.channel.as_str(), "m1", format!("{}//work/shop", keys.channel).as_str(), "a3", true));
+    // a team the phone has given no colour yet is drawn with none, not the first colour
+    assert_eq!(open_notice(vec![link(&laptop)], seal(&question), Default::default()).unwrap().colour, None);
     assert_eq!(got.options, ["Rewrite", "Leave"]);
     // one computer: its name says nothing he does not know
     assert_eq!(open_notice(vec![link(&laptop)], seal(&question), Default::default()).unwrap().subtitle, "");
@@ -288,7 +302,7 @@ fn a_message_goes_to_the_computer_that_has_who_it_is_for() {
     assert_eq!(pick_station(&state, "@shop2 go", None, None, None), Some(0));
     assert_eq!(pick_station(&state, "@backoffice ship it", None, None, None), Some(0));
     // the room or the agent he is looking at
-    assert_eq!(pick_station(&state, "go", None, Some("ff"), None), Some(1));
+    assert_eq!(pick_station(&state, "go", None, Some(&room(&state, "ff")), None), Some(1));
     assert_eq!(pick_station(&state, "go", None, None, Some("backoffice login fix")), Some(0));
     // nothing says, and he has not chosen a main computer: there is no answer, and he is asked
     assert_eq!(pick_station(&state, "go", None, None, None), None);
@@ -312,13 +326,14 @@ fn teams_on_two_computers_get_different_colours_that_last() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let mut colours = super::colours::Colours::open(dir.to_str().unwrap());
-    // the same team name on one computer and a laptop's own team on another, as each feed shows them
-    colours.see(["shop".to_string(), "shop".to_string()]);
-    colours.see(["laptop shop".to_string()]);
-    assert_ne!(colours.of("shop"), colours.of("laptop shop"));
-    colours.renamed("laptop shop", "garden");
-    let garden = colours.of("garden");
-    assert_eq!(super::colours::Colours::open(dir.to_str().unwrap()).of("garden"), garden);
-    assert_eq!(super::colours::Colours::open(dir.to_str().unwrap()).of("shop"), colours.of("shop"));
+    // a team called shop on each of two computers: two rooms, by computer and team id, each its own colour
+    colours.see(["mini//w/shop".to_string(), "mini//w/shop".to_string()]);
+    colours.see(["laptop//w/shop".to_string()]);
+    assert_ne!(colours.of("mini//w/shop"), colours.of("laptop//w/shop"));
+    // a room not seen yet has none
+    assert_eq!(colours.of("laptop//w/garden"), None);
+    // renaming a team changes neither its room nor its colour, which last
+    assert_eq!(super::colours::Colours::open(dir.to_str().unwrap()).of("laptop//w/shop"), colours.of("laptop//w/shop"));
+    assert_eq!(super::colours::Colours::open(dir.to_str().unwrap()).of("mini//w/shop"), colours.of("mini//w/shop"));
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -138,6 +138,7 @@ pub(super) fn launch_label(project: &str) -> String {
 /// then its first instruction.
 fn launched(app: &App, project: &str, with: &str, task: &str, agent: Option<String>) -> String {
     let mut inner = app.change();
-    inner.record(Entry { id: config::random_hex(8), from: HIM.into(), his: true, group: project.into(), to: vec![launch_label(project)], to_agents: agent.into_iter().collect(), short: Some(task.into()), full: task.into(), ..Entry::default() });
+    let team = inner.team_called(project).unwrap_or_default();
+    inner.record(Entry { id: config::random_hex(8), from: HIM.into(), his: true, team, to: vec![launch_label(project)], to_agents: agent.into_iter().collect(), short: Some(task.into()), full: task.into(), ..Entry::default() });
     format!("Launching in {project}{with}.")
 }

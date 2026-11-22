@@ -25,7 +25,7 @@ impl ChatAgent {
 }
 
 pub(crate) fn chat(m: airband_core::radio::Message) -> ChatMessage {
-    ChatMessage { seq: m.seq, id: m.id, at: m.at, his: m.his, from: m.from, badge: m.badge, to_agents: m.to_agents, group: m.group, to: m.to, needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), unjudged: if m.kind == Some(Kind::Unjudged) { "Shown as the agent wrote it. No summary was made.".into() } else { String::new() }, long: m.long || m.text.chars().count() > 140 || m.text.matches('\n').count() > 4, text: m.text, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links.into_iter().map(chat_link).collect(), agent: m.agent, station: String::new(), open: m.open, colour: 0, read: m.read, own_session: m.own_session, not_read: m.not_read.map(not_read).unwrap_or_default().to_string() }
+    ChatMessage { seq: m.seq, id: m.id, at: m.at, his: m.his, from: m.from, badge: m.badge, to_agents: m.to_agents, group: m.group, team: m.team, room: String::new(), to: m.to, needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), unjudged: if m.kind == Some(Kind::Unjudged) { "Shown as the agent wrote it. No summary was made.".into() } else { String::new() }, long: m.long || m.text.chars().count() > 140 || m.text.matches('\n').count() > 4, text: m.text, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links.into_iter().map(chat_link).collect(), agent: m.agent, station: String::new(), open: m.open, colour: None, read: m.read, own_session: m.own_session, not_read: m.not_read.map(not_read).unwrap_or_default().to_string() }
 }
 
 pub(crate) fn chat_feed(feed: Feed) -> ChatFeed {
@@ -34,10 +34,9 @@ pub(crate) fn chat_feed(feed: Feed) -> ChatFeed {
         messages: feed.messages.into_iter().map(chat).collect(),
         agents: feed.roster.into_iter().map(|r| {
             let callsign = airband_core::routing::Callsign { project: r.group.clone(), number: r.number.clone(), named: r.named };
-            ChatAgent { id: r.id, callsign: callsign.shown(), badge: callsign.badge(), group: r.group, number: callsign.shown_rest(), number_kept: r.number, named: r.named, harness: r.harness, waiting: r.waiting, reachable: r.reachable, state: r.state.into(), subagents: r.subagents, doing: r.doing, held: r.held, terminal: r.terminal, ends: r.ends, model: r.model, effort: r.effort }
+            ChatAgent { id: r.id, callsign: callsign.shown(), badge: callsign.badge(), group: r.group, team: r.team, room: String::new(), number: callsign.shown_rest(), number_kept: r.number, named: r.named, harness: r.harness, waiting: r.waiting, reachable: r.reachable, state: r.state.into(), subagents: r.subagents, doing: r.doing, held: r.held, terminal: r.terminal, ends: r.ends, model: r.model, effort: r.effort }
         }).collect(),
         quick: feed.quick.into_iter().map(|q| QuickMessage { label: q.label, text: q.text }).collect(),
-        projects: feed.projects,
         open: feed.open,
         reads_failed: feed.reads_failed.map(|trouble| trouble.said(&feed.reads)).unwrap_or_default(),
         reads: feed.reads,
@@ -56,7 +55,13 @@ pub struct ChatMessage {
     pub from: String,
     /// He said it.
     pub his: bool,
+    /// What its team is called, to show.
     pub group: String,
+    /// Its team's id on the computer that has it.
+    pub team: String,
+    /// The room it belongs to on his screen: that computer and that team, as one id. What views and colours
+    /// go by. Empty for a message of his to several teams.
+    pub room: String,
     /// For his messages: who it went to.
     pub to: Vec<String>,
     /// For his messages: the ids of the agents it went to.
@@ -98,7 +103,7 @@ pub struct ChatMessage {
     /// Two characters for who said it ("S3", "CP"), and its team's place in the host's list of team colours.
     /// A [`Desk`] fills these in; empty and 0 otherwise, and always for his own messages.
     pub badge: String,
-    pub colour: u8,
+    pub colour: Option<u8>,
     /// It holds something to read whole, called this ("the refund email"): offer the full message under that
     /// name. [`Desk::full`] fetches it.
     pub read: Option<String>,
@@ -148,7 +153,12 @@ pub struct ChatAgent {
     pub callsign: String,
     /// Its two characters.
     pub badge: String,
+    /// What its team is called, to show.
     pub group: String,
+    /// Its team's id on the computer that has it.
+    pub team: String,
+    /// Its room on his screen: that computer and that team, as one id.
+    pub room: String,
     /// What tells it from the others of its team: the part of its callsign after the team's name.
     pub number: String,
     /// That part is a name he gave the session, not a number his computer handed out.
@@ -188,8 +198,6 @@ pub struct ChatFeed {
     pub agents: Vec<ChatAgent>,
     /// Pass this as `after` next time.
     pub seq: u64,
-    /// Projects a new agent can be launched in: send "/launch <project> <task>".
-    pub projects: Vec<String>,
     /// The quick messages to offer: the standard ones, then his own.
     pub quick: Vec<QuickMessage>,
     /// Ids of every message still waiting on him, current as of this answer. The inbox is exactly these.

@@ -25,7 +25,7 @@ mod feed;
 pub use asks::*;
 pub use feed::*;
 
-pub const SCHEMA: &str = "airband.radio/2";
+pub const SCHEMA: &str = "airband.radio/3";
 
 /// How much a message deserves his attention. Deciding this is the tower's main job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,7 +83,7 @@ pub struct Utterance {
     /// replied to. With it the tower need not work out who it is for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub re: Option<String>,
-    /// The team whose room he was looking at when he said it, by name. With it, and no tag or `re`, the
+    /// The team whose room he was looking at when he said it, by the team's id. With it, and no tag or `re`, the
     /// tower chooses only among that team's agents. Left out, it chooses among all of them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
@@ -126,8 +126,8 @@ pub enum Act {
 /// A new agent to start: where, with what, and on what. Each is an id from a list the tower gave.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Launch {
-    /// The team it joins, by name, as the feed lists it.
-    pub project: String,
+    /// The team it joins, by the team's id on that computer.
+    pub team: String,
     /// The coding tool, by id. Nothing is the computer's usual one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool: Option<String>,

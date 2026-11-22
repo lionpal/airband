@@ -59,7 +59,7 @@ pub(in crate::tower) async fn on_utterance(app: &Arc<App>, radio: &str, text: &s
     if control == Some(Control::Poke) {
         let stopped = app.read().stalled();
         let room = said.scope.as_deref();
-        to.targets = stopped.into_iter().filter(|s| if to.named.is_empty() { room.is_none_or(|g| s.callsign.project == g) } else { to.named.iter().any(|n| n.agent.id == s.agent.id) }).collect();
+        to.targets = stopped.into_iter().filter(|s| if to.named.is_empty() { room.is_none_or(|g| s.team == g) } else { to.named.iter().any(|n| n.agent.id == s.agent.id) }).collect();
         if to.targets.is_empty() {
             return say("Nobody has stopped.".into());
         }
@@ -136,7 +136,10 @@ async fn new_agent(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
         app.passing().call(radio).unplaced_idea = Some((idea, when));
     }
     let Some(Act::Launch(new)) = &said.act else { return None };
-    let idea = Idea { tool: new.tool.clone(), project: Some(new.project.clone()), model: new.model.clone(), effort: new.effort.clone(), task: format!("{}{files}", new.task) };
+    let Some(project) = app.read().teams.get(&new.team).map(|t| t.name.clone()) else {
+        return Some(say("That team is not on this computer any more.".into()));
+    };
+    let idea = Idea { tool: new.tool.clone(), project: Some(project), model: new.model.clone(), effort: new.effort.clone(), task: format!("{}{files}", new.task) };
     Some(start(app, radio, text, idea, projects, false).await)
 }
 

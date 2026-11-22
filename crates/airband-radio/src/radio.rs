@@ -39,6 +39,14 @@ pub struct Radio {
     pub(crate) reading: std::sync::atomic::AtomicU64,
 }
 
+/// What an agent moved to another team is called now, and that team: what it is called and its id.
+#[derive(serde::Deserialize)]
+pub(crate) struct Moved {
+    pub(crate) callsign: String,
+    pub(crate) team: String,
+    pub(crate) id: String,
+}
+
 #[uniffi::export]
 impl Radio {
     /// Start working with the tower this pairing link leads to (the link `airband pair` prints). Returns at
@@ -318,10 +326,11 @@ impl Radio {
         Ok(self.link.utterance(&text, re, None, None)?.map(|reply| reply.say).unwrap_or_default())
     }
 
-    /// Start a new agent in one of his teams, from a command line. Returns the tower's one-line answer.
-    pub fn launch(&self, project: String, tool: Option<String>, model: Option<String>, effort: Option<String>, task: String) -> Result<String, RadioError> {
-        let shown = format!("New agent in {project}");
-        Ok(self.link.utterance(&shown, None, None, Some(Act::Launch(airband_core::radio::Launch { project, tool, model, effort, task })))?.map(|reply| reply.say).unwrap_or_default())
+    /// Start a new agent in one of his teams, by the team's id, from a command line. Returns the tower's
+    /// one-line answer.
+    pub fn launch(&self, team: String, tool: Option<String>, model: Option<String>, effort: Option<String>, task: String) -> Result<String, RadioError> {
+        let shown = "New agent".to_string();
+        Ok(self.link.utterance(&shown, None, None, Some(Act::Launch(airband_core::radio::Launch { team, tool, model, effort, task })))?.map(|reply| reply.say).unwrap_or_default())
     }
 
     /// The rest of a message: the fuller spoken version, or with `full` exactly what the agent wrote.
@@ -347,14 +356,8 @@ impl Radio {
 
     /// Put an agent in another team: one that exists, or a new one of that name. Returns what the agent is
     /// called now and the team it is in. Blocks: call it off the main thread.
-    pub fn move_agent(&self, agent: String, team: String) -> Result<Vec<String>, RadioError> {
-        #[derive(serde::Deserialize)]
-        struct Moved {
-            callsign: String,
-            team: String,
-        }
-        let moved: Moved = self.asked("POST", "/team", Some(serde_json::json!({ "agent": agent, "team": team })))?;
-        Ok(vec![moved.callsign, moved.team])
+    pub(crate) fn move_agent(&self, agent: String, to: airband_core::radio::TeamPick) -> Result<Moved, RadioError> {
+        self.asked("POST", "/team", Some(serde_json::to_value(airband_core::radio::MoveAgent { agent, to }).unwrap()))
     }
 
     /// Stop what an agent the tower runs is doing, now. Blocks: call it off the main thread.
@@ -403,13 +406,13 @@ impl Radio {
         self.asked("GET", "/recent", None)
     }
     /// Make a new team on this computer, or start another agent in one that is there. Blocks.
-    /// Answers with the team's name as the computer writes it.
+    /// Answers with the team's id on the computer.
     pub(crate) fn new_project(&self, name: String, folder: String, make: bool, tool: Option<String>) -> Result<String, RadioError> {
         #[derive(serde::Deserialize)]
         struct Made {
-            team: String,
+            id: String,
         }
-        Ok(self.asked::<Made>("POST", "/project", Some(serde_json::to_value(airband_core::radio::NewProject { name, folder, make, tool }).unwrap()))?.team)
+        Ok(self.asked::<Made>("POST", "/project", Some(serde_json::to_value(airband_core::radio::NewProject { name, folder, make, tool }).unwrap()))?.id)
     }
 
     pub fn unsend(&self, message: String) -> Result<(), RadioError> {

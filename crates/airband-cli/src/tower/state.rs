@@ -29,13 +29,10 @@ pub(super) struct Inner {
     pub(super) seq: u64,
     /// The change count: see [`Entry::rev`].
     pub(super) rev: u64,
-    /// Every project an agent has been seen working in, by spoken name, with its folder. A new agent can be
-    /// launched in any of these.
-    pub(super) projects: BTreeMap<String, String>,
-    /// The teams he named himself. One of these keeps its name though a team on another of his computers has it.
-    pub(super) named_teams: BTreeSet<String>,
-    /// The teams the configuration lists, by name, with their folders. Never kept: read from it at the start.
-    pub(super) configured: BTreeMap<String, String>,
+    /// His teams on this computer, by id: a folder's team by the folder as it really is on disk, one with no
+    /// folder by an id made when it was. What a team is called is only shown and said; everything kept or sent
+    /// about a team goes by its id.
+    pub(super) teams: BTreeMap<String, Team>,
     /// This computer's name, as a phone paired with several shows it. Never kept.
     pub(super) here: String,
     /// The folders his coding tools have had sessions in, as last read from their records
@@ -51,8 +48,9 @@ pub(super) struct Inner {
     /// Names agents go by on his other computers, as a radio last told it. None of this tower's numbered
     /// agents is called any of them.
     pub(super) elsewhere: Vec<Callsign>,
-    /// Where each agent that was moved to another team was put, by its id. A session that goes away and comes
-    /// back (the computer restarted, he resumed it) is put back there, not in its folder's team again.
+    /// Where each agent that was moved to another team was put (the team's id), by the agent's id. A session
+    /// that goes away and comes back (the computer restarted, he resumed it) is put back there, not in its
+    /// folder's team again.
     pub(super) placed: BTreeMap<String, (String, Mover)>,
     /// Each radio that has been heard from, by the id it gives.
     pub(super) calls: HashMap<String, Call>,
@@ -74,12 +72,29 @@ pub(super) struct Inner {
     /// count it was settled at, the radio, and the outcome under the utterance's id.
     pub(super) settled: VecDeque<(u64, String, airband_core::radio::Settled)>,
 }
+/// One of his teams: what it is called, and the folder its agents work in when it has one.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct Team {
+    pub(super) name: String,
+    #[serde(default)]
+    pub(super) folder: Option<String>,
+    /// He gave it this name. It keeps it though a team on another of his computers has it.
+    #[serde(default)]
+    pub(super) named: bool,
+    /// The configuration lists it. Never kept: read from the configuration at the start.
+    #[serde(skip)]
+    pub(super) configured: bool,
+}
 #[derive(Serialize, Deserialize, Default)]
 pub(crate) struct Saved {
     pub(super) sessions: Vec<Session>,
     #[serde(default)]
+    pub(super) teams: BTreeMap<String, Team>,
+    /// Kept by a tower from before teams had ids: teams by name with their folders, and the names he gave.
+    /// Read once, by `settle_teams`, and never written again.
+    #[serde(default, skip_serializing)]
     pub(super) projects: BTreeMap<String, String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub(super) named_teams: BTreeSet<String>,
     #[serde(default)]
     pub(super) held: Vec<held::Kept>,
@@ -153,20 +168,17 @@ impl Inner {
     }
     pub(super) fn roster_entries(&self) -> Vec<RosterEntry> {
         let open = self.open_ids();
-        self.sessions.iter().map(|s| RosterEntry { id: s.agent.id.clone(), callsign: s.callsign.text(), group: s.callsign.project.clone(), number: s.callsign.number.clone(), named: s.callsign.named, harness: s.agent.harness.clone(), waiting: s.waiting, state: self.state_of(s, &open), subagents: s.subagents, reachable: s.agent.deliver.is_some(), doing: s.doing.clone().filter(|_| !s.waiting), held: s.agent.deliver == Some(Deliver::Held), terminal: matches!(s.agent.deliver, Some(Deliver::Keys { .. } | Deliver::Socket { .. })), ends: match &s.agent.deliver { Some(Deliver::Held) => true, Some(Deliver::Harness { name, .. }) => crate::adapters::puts_away(name), _ => false }, model: s.model.clone(), effort: s.effort.clone() }).collect()
+        self.sessions.iter().map(|s| RosterEntry { id: s.agent.id.clone(), callsign: s.callsign.text(), group: s.callsign.project.clone(), team: s.team.clone(), number: s.callsign.number.clone(), named: s.callsign.named, harness: s.agent.harness.clone(), waiting: s.waiting, state: self.state_of(s, &open), subagents: s.subagents, reachable: s.agent.deliver.is_some(), doing: s.doing.clone().filter(|_| !s.waiting), held: s.agent.deliver == Some(Deliver::Held), terminal: matches!(s.agent.deliver, Some(Deliver::Keys { .. } | Deliver::Socket { .. })), ends: match &s.agent.deliver { Some(Deliver::Held) => true, Some(Deliver::Harness { name, .. }) => crate::adapters::puts_away(name), _ => false }, model: s.model.clone(), effort: s.effort.clone() }).collect()
     }
-    /// His teams that have a folder: what the configuration lists, then wherever agents have been seen.
-    pub(super) fn teams(&self) -> BTreeMap<String, String> {
-        let mut all = self.projects.clone();
-        all.extend(self.configured.clone());
-        // a project whose folder has gone is not offered
-        all.retain(|_, folder| std::path::Path::new(folder).is_dir());
-        all
+    /// His teams that have a folder, by what each is called, with the folder: what the configuration lists
+    /// and wherever agents have been seen. A team whose folder has gone is not offered.
+    pub(super) fn folder_teams(&self) -> BTreeMap<String, String> {
+        self.teams.values().filter_map(|t| t.folder.clone().filter(|f| std::path::Path::new(f).is_dir()).map(|f| (t.name.clone(), f))).collect()
     }
     /// Where a new agent can be started by name: his teams, then the folders his coding tools have lately
     /// had sessions in, each by the name a team there would have. A team's name is never taken from it.
     pub(super) fn launchable(&self) -> BTreeMap<String, String> {
-        let mut all = self.teams();
+        let mut all = self.folder_teams();
         for recent in self.recent().into_iter().filter(|r| !r.team && !r.name.is_empty()).take(20) {
             all.entry(recent.name).or_insert(recent.folder);
         }
@@ -175,15 +187,15 @@ impl Inner {
     /// The folders his coding tools have had sessions in, newest first, with his teams: one that has a team
     /// is called by it, and a team no tool has a record of comes last.
     pub(super) fn recent(&self) -> Vec<airband_core::radio::RecentFolder> {
-        let teams = self.teams();
+        let teams = self.folder_teams();
         let mut all: Vec<airband_core::radio::RecentFolder> = self
             .worked
             .iter()
             .take(60)
             .cloned()
             .map(|(folder, tools, at)| {
-                let team = self.team_at(&folder);
-                airband_core::radio::RecentFolder { shown: shown(std::path::Path::new(&folder)), name: team.clone().or_else(|| self.folder_team(&folder)).unwrap_or_default(), team: team.is_some(), tools, at, folder }
+                let team = self.team_at(&folder).and_then(|id| self.teams.get(&id)).map(|t| t.name.clone());
+                airband_core::radio::RecentFolder { shown: shown(std::path::Path::new(&folder)), name: team.clone().or_else(|| self.name_for_folder(&folder)).unwrap_or_default(), team: team.is_some(), tools, at, folder }
             })
             .collect();
         for (name, folder) in teams {
@@ -243,7 +255,7 @@ mod tests {
         assert_eq!(launchable.get("shop").map(|f| real_folder(f)), Some(real_folder(&shop)));
         assert_eq!(launchable.get("elsewhere shop"), Some(&other_shop));
         assert_eq!(launchable.get("back office"), Some(&back));
-        assert_eq!(inner.teams().len(), 1);
+        assert_eq!(inner.teams.len(), 1);
         // a team no tool has a record of is still listed, last
         inner.worked = vec![(back.clone(), vec!["codex".into()], 9)];
         assert_eq!(inner.recent().iter().map(|r| (r.name.as_str(), r.team, r.at)).collect::<Vec<_>>(), [("back office", false, 9), ("shop", true, 0)]);
@@ -261,8 +273,10 @@ mod tests {
         // a second agent in a folder joins that folder's team, however the path is written
         assert_eq!(inner.check_in(&agent("d", "/b/work/shop/", None)).text(), "work shop two");
         assert_eq!(inner.check_in(&agent("e", "/a/work/shop", None)).text(), "shop two");
-        assert_eq!(inner.team_at("/b/work/shop").as_deref(), Some("work shop"));
-        assert_eq!(inner.folder_team("/d/shop").as_deref(), Some("d shop"));
+        let named = |inner: &Inner, folder: &str| inner.team_name(&inner.team_at(folder).unwrap());
+        assert_eq!(named(&inner, "/b/work/shop"), "work shop");
+        let d = inner.folder_team("/d/shop").unwrap();
+        assert_eq!((d.as_str(), inner.team_name(&d).as_str()), ("/d/shop", "d shop"));
     }
 
     #[test]
@@ -276,9 +290,10 @@ mod tests {
         assert_eq!(inner.check_in(&agent("b", "/x/garden", None)).text(), "garden one");
         assert!(inner.taken_elsewhere(&[theirs("shop"), theirs("garden")]));
         assert_eq!(names(&inner), ["laptop shop one", "laptop garden one"]);
-        assert_eq!(inner.team_at("/x/garden").as_deref(), Some("laptop garden"));
+        let garden = inner.team_at("/x/garden").unwrap();
+        assert_eq!(inner.team_name(&garden), "laptop garden");
         // a name he gave a team is his: it stays, and only numbers that clash move
-        inner.rename_team("laptop garden", "garden").unwrap();
+        inner.rename_team(&garden, "garden").unwrap();
         assert!(inner.taken_elsewhere(&[theirs("shop"), theirs("garden")]));
         assert_eq!(names(&inner), ["laptop shop one", "garden two"]);
     }
@@ -306,26 +321,80 @@ mod tests {
         let mut inner = Inner::default();
         inner.check_in(&agent("a", "/x/shop", Some("refunds")));
         inner.check_in(&agent("b", "/x/shop", None));
-        assert_eq!(inner.rename_team("shop", "Store Front"), Ok("store front".to_string()));
+        let shop = inner.team_at("/x/shop").unwrap();
+        assert_eq!(inner.rename_team(&shop, "Store Front"), Ok("store front".to_string()));
         assert_eq!(names(&inner), ["store front refunds", "store front one"]);
         // its folder is still its folder: a new agent there joins it
         assert_eq!(inner.check_in(&agent("c", "/x/shop", None)).text(), "store front two");
         // a name another team has, or none, is refused in words
         inner.check_in(&agent("d", "/x/garden", None));
-        assert_eq!(inner.rename_team("garden", "store front"), Err("There is already a team called store front.".to_string()));
-        assert!(inner.rename_team("garden", "!!").is_err());
-        assert!(inner.rename_team("nobody", "x").is_err());
+        let garden = inner.team_at("/x/garden").unwrap();
+        assert_eq!(inner.rename_team(&garden, "store front"), Err("There is already a team called store front.".to_string()));
+        assert!(inner.rename_team(&garden, "!!").is_err());
+        // a team is found by its id, and never by what it is called
+        assert!(inner.rename_team("garden", "x").is_err());
+    }
+
+    #[test]
+    fn a_renamed_team_keeps_its_lines_its_folder_and_its_id() {
+        let mut inner = Inner { here: "Laptop".into(), ..Inner::default() };
+        inner.check_in(&agent("a", "/x/shop", None));
+        let shop = inner.team_at("/x/shop").unwrap();
+        says(&mut inner, "a", Kind::Report, "done");
+        // its agent goes away; what it said stays in the team's view after the team is renamed
+        inner.remove("a");
+        inner.rename_team(&shop, "store").unwrap();
+        let line = inner.log.last().unwrap().clone();
+        assert!(inner.in_view(&line, Some(&shop), None));
+        let m = inner.message(&line);
+        assert_eq!((m.team.as_str(), m.group.as_str()), (shop.as_str(), "store"));
+        // renamed by the tower (another computer has the name): the id, and so the phone's room and colour, stay
+        inner.check_in(&agent("b", "/x/garden", None));
+        let garden = inner.team_at("/x/garden").unwrap();
+        let theirs = Callsign { project: "garden".into(), number: "one".into(), named: false };
+        assert!(inner.taken_elsewhere(&[theirs]));
+        let b = inner.find("b").unwrap();
+        assert_eq!((b.team.as_str(), b.callsign.project.as_str()), (garden.as_str(), "laptop garden"));
+        assert_eq!(inner.roster_entries()[0].team, garden);
+    }
+
+    #[test]
+    fn a_configured_team_with_no_agents_is_one_team_and_can_be_renamed() {
+        let here = std::env::temp_dir().join(format!("airband-configured-{}", config::random_hex(6)));
+        std::fs::create_dir_all(here.join("Shop")).unwrap();
+        let folder = here.join("Shop").display().to_string();
+        let listed: BTreeMap<String, String> = [("Shop".to_string(), folder.clone()), ("!!".to_string(), folder.clone())].into();
+        let mut inner = Inner::default();
+        inner.configure_teams(&listed);
+        // listed once, under its configured name; a name with nothing in it is left out
+        assert_eq!(inner.folder_teams().into_iter().collect::<Vec<_>>(), [("shop".to_string(), real_folder(&folder))]);
+        let shop = inner.team_at(&folder).unwrap();
+        assert_eq!(inner.rename_team(&shop, "store"), Ok("store".to_string()));
+        assert_eq!(inner.folder_teams().into_keys().collect::<Vec<_>>(), ["store"]);
+        // read from the configuration again at the next start: his name stays, and there is still one team
+        inner.configure_teams(&listed);
+        assert_eq!(inner.folder_teams().into_keys().collect::<Vec<_>>(), ["store"]);
+        // an agent that starts there joins it
+        assert_eq!(inner.check_in(&agent("a", &folder, None)).text(), "store one");
+        let _ = std::fs::remove_dir_all(&here);
     }
 
     #[test]
     fn kept_agents_from_two_folders_in_one_team_go_back_to_their_own_folders_teams() {
         // as kept before teams went by folder: one name, two folders
-        let session = |id: &str, cwd: &str, number: &str| Session { agent: agent(id, cwd, None), callsign: Callsign { project: "shop".into(), number: number.into(), named: false }, waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false, hooked: false, turn: None };
-        let mut inner = Inner { sessions: vec![session("a", "/a/work/shop", "one"), session("b", "/b/work/shop", "two")], projects: [("shop".to_string(), "/a/work/shop".to_string())].into(), ..Inner::default() };
-        inner.settle_teams();
+        let session = |id: &str, cwd: &str, number: &str| Session { agent: agent(id, cwd, None), callsign: Callsign { project: "shop".into(), number: number.into(), named: false }, team: String::new(), waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false, hooked: false, turn: None };
+        let old: BTreeMap<String, String> = [("shop".to_string(), "/a/work/shop".to_string()), ("garden".to_string(), "/g".to_string())].into();
+        let mut inner = Inner { sessions: vec![session("a", "/a/work/shop", "one"), session("b", "/b/work/shop", "two")], ..Inner::default() };
+        // a line kept under a team's name, and one he said to several teams
+        inner.log.push(Entry { id: "l1".into(), team: "garden".into(), ..Entry::default() });
+        inner.log.push(Entry { id: "l2".into(), ..Entry::default() });
+        inner.settle_teams(old, ["garden".to_string()].into());
         assert_eq!(names(&inner), ["shop one", "work shop one"]);
+        assert_eq!(inner.sessions.iter().map(|s| s.team.as_str()).collect::<Vec<_>>(), ["/a/work/shop", "/b/work/shop"]);
+        assert_eq!(inner.log.iter().map(|e| e.team.as_str()).collect::<Vec<_>>(), ["/g", ""]);
+        assert!(inner.teams["/g"].named && !inner.teams["/a/work/shop"].named);
         // once is enough: doing it again changes nothing
-        inner.settle_teams();
+        inner.settle_teams(BTreeMap::new(), BTreeSet::new());
         assert_eq!(names(&inner), ["shop one", "work shop one"]);
     }
 
@@ -342,7 +411,8 @@ mod tests {
         assert_eq!(inner.check_in(&named).text(), "garden one");
         // one he moved himself is left where he put it
         inner.check_in(&agent("b", "/x/shop", None));
-        inner.move_to("b", "orchard", Mover::Him);
+        let orchard = inner.named_team("orchard").unwrap();
+        inner.move_to("b", &orchard, Mover::Him);
         let mut late = agent("b", "/x/shop", None);
         late.name = Some("garden".into());
         assert_eq!(inner.check_in(&late).project, "orchard");

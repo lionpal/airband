@@ -28,8 +28,8 @@ pub(super) struct Entry {
     /// He said it. Nothing is told from the sender's name: an agent could be called anything.
     #[serde(default)]
     pub(super) his: bool,
-    /// The project it belongs to.
-    pub(super) group: String,
+    /// The team it belongs to, by the team's id. Empty for something he said to agents of several teams.
+    pub(super) team: String,
     /// For his messages: what the agents it went to were called.
     pub(super) to: Vec<String>,
     pub(super) kind: Option<Kind>,
@@ -122,13 +122,13 @@ impl Entry {
 
     /// Something an agent said.
     pub(super) fn said(id: String, s: &Session, kind: Option<Kind>, full: String) -> Entry {
-        Entry { id, from: s.callsign.text(), group: s.callsign.project.clone(), kind, full, agent: Some(s.agent.id.clone()), ..Entry::default() }
+        Entry { id, from: s.callsign.text(), team: s.team.clone(), kind, full, agent: Some(s.agent.id.clone()), ..Entry::default() }
     }
     /// Something he said, to these agents.
     pub(super) fn his(id: String, to: &[Session], text: String) -> Entry {
-        let projects: HashSet<&String> = to.iter().map(|s| &s.callsign.project).collect();
-        let group = if projects.len() == 1 { to[0].callsign.project.clone() } else { String::new() };
-        Entry { id, from: HIM.into(), his: true, group, to: to.iter().map(|s| s.callsign.text()).collect(), to_agents: to.iter().map(|s| s.agent.id.clone()).collect(), short: Some(text.clone()), full: text, ..Entry::default() }
+        let teams: HashSet<&String> = to.iter().map(|s| &s.team).collect();
+        let team = if teams.len() == 1 { to[0].team.clone() } else { String::new() };
+        Entry { id, from: HIM.into(), his: true, team, to: to.iter().map(|s| s.callsign.text()).collect(), to_agents: to.iter().map(|s| s.agent.id.clone()).collect(), short: Some(text.clone()), full: text, ..Entry::default() }
     }
 }
 /// How many log lines the tower keeps in memory. The database keeps them all.
@@ -217,6 +217,15 @@ impl Inner {
             self.set_aloud(id, Aloud::dropped(Dropped::Routine));
         }
     }
+    /// The team a line belongs to now, by id: its sender's, or for something he said, the team of the agents it
+    /// went to while they are all here and in one team; otherwise the team it was written down under.
+    pub(super) fn line_team(&self, e: &Entry) -> String {
+        if let Some(s) = self.sender(e) {
+            return s.team.clone();
+        }
+        let teams: HashSet<&String> = e.to_agents.iter().filter_map(|id| self.find(id)).map(|s| &s.team).collect();
+        if teams.len() == 1 && e.to_agents.iter().all(|id| self.find(id).is_some()) { teams.into_iter().next().unwrap().clone() } else { e.team.clone() }
+    }
     /// A logged line as a radio sees it. The sender's name is what it is called now, if it is still here.
     pub(super) fn message(&self, e: &Entry) -> Message {
         let text = e.short.clone().unwrap_or_else(|| opening(&e.said_whole()));
@@ -236,11 +245,8 @@ impl Inner {
             from: sender.map(|s| s.callsign.shown()).unwrap_or_else(|| e.from.clone()),
             badge,
             to_agents: e.to_agents.clone(),
-            // the team it belongs to now: its sender's, or for something he said, the team of who it went to
-            group: sender.map(|s| s.callsign.project.clone()).unwrap_or_else(|| {
-                let teams: HashSet<&String> = e.to_agents.iter().filter_map(|id| self.find(id)).map(|s| &s.callsign.project).collect();
-                if teams.len() == 1 && e.to_agents.iter().all(|id| self.find(id).is_some()) { teams.into_iter().next().unwrap().clone() } else { e.group.clone() }
-            }),
+            group: self.team_name(&self.line_team(e)),
+            team: self.line_team(e),
             to,
             kind: e.kind,
             long: spoken(&e.full) != text,
@@ -267,9 +273,9 @@ impl Inner {
     /// Does this line belong in one team's view (`team`), or one agent's (`agent`, its id)? With neither, every
     /// line does. His words belong with the agents they went to.
     pub(super) fn in_view(&self, e: &Entry, team: Option<&str>, agent: Option<&str>) -> bool {
-        let of = |id: &String| self.find(id).map(|s| s.callsign.project.as_str());
+        let of = |id: &String| self.find(id).map(|s| s.team.as_str());
         let by_agent = agent.is_none_or(|a| e.agent.as_deref() == Some(a) || e.to_agents.iter().any(|t| t == a));
-        let by_team = team.is_none_or(|t| self.message(e).group == t || e.to_agents.iter().any(|id| of(id) == Some(t)));
+        let by_team = team.is_none_or(|t| self.line_team(e) == t || e.to_agents.iter().any(|id| of(id) == Some(t)));
         by_agent && by_team
     }
     /// The messages that need him and that nothing has answered yet. One at most per agent: its latest, while

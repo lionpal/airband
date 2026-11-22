@@ -1,34 +1,26 @@
 import SwiftUI
 
-/// The + on a team's row: start a new agent in that team. It goes on the computer where the team's others
-/// run. When the team is on several computers, it asks which, with that one first.
+/// The + on a team's row: start a new agent in that team, on the computer the team is on. With several coding
+/// tools in use, it asks which.
 struct NewAgentButton: View {
     @EnvironmentObject var model: RadioModel
-    let room: String
+    let room: DeskRoom
 
     var body: some View {
-        let computers = model.computers(for: room)
         let tools = model.usedTools
         Group {
-            if computers.count > 1 || tools.count > 1 {
-                // one tap to say which tool and where: a row for each pair that can be meant
+            if tools.count > 1 {
                 Menu {
-                    ForEach(tools.isEmpty ? [nil] : tools.map(Optional.some), id: \.?.id) { tool in
-                        ForEach(computers.isEmpty ? [nil] : computers.map(Optional.some), id: \.self) { name in
-                            Button {
-                                model.newAgent(in: room, on: name, tool: tool)
-                            } label: {
-                                Text([tools.count > 1 ? tool?.name : nil, computers.count > 1 ? name.map { "on \($0)" } : nil].compactMap { $0 }.joined(separator: " "))
-                            }
-                        }
+                    ForEach(tools, id: \.id) { tool in
+                        Button(tool.name) { model.newAgent(in: room.id, tool: tool) }
                     }
                 } label: { plus }
             } else {
-                Button { model.newAgent(in: room, on: nil) } label: { plus }
+                Button { model.newAgent(in: room.id) } label: { plus }
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("New agent in \(room)")
+        .accessibilityLabel("New agent in \(room.name)")
     }
 
     private var plus: some View {
@@ -47,7 +39,7 @@ struct AgentsMenu: View {
     /// The agent a new team is being named for.
     @State private var founding: DeskMember?
     /// The team he is renaming, and the name he is typing for it.
-    @State private var renaming: String?
+    @State private var renaming: DeskRoom?
     @State private var newName = ""
     /// The agent he is about to have its computer take over.
     @State private var taking: DeskMember?
@@ -70,9 +62,9 @@ struct AgentsMenu: View {
     }
 
     /// An agent dropped on a team, or on one of its agents, joins that team.
-    private func drop(_ ids: [String], on team: String) -> Bool {
+    private func drop(_ ids: [String], on room: String) -> Bool {
         guard let agent = model.agents.first(where: { $0.id == ids.first }) else { return false }
-        model.moveAgent(agent, to: team)
+        model.moveAgent(agent, to: .room(room: room))
         return true
     }
 
@@ -82,17 +74,17 @@ struct AgentsMenu: View {
                 row(dot: nil, title: "all agents", detail: nil, strong: true, on: model.room == nil && model.only == nil, inset: 0) {
                     model.look()
                 }
-                ForEach(model.view.rooms, id: \.name) { room in
-                    row(dot: room.state, title: room.name, detail: room.subagents > 0 ? "+\(room.subagents) subagents" : nil, strong: true, on: model.room == room.name && model.only == nil, inset: 0, colour: room.colour) {
+                ForEach(model.view.rooms, id: \.id) { room in
+                    row(dot: room.state, title: room.name, detail: room.subagents > 0 ? "+\(room.subagents) subagents" : nil, strong: true, on: model.room == room.id && model.only == nil, inset: 0, colour: room.colour) {
                         // a second tap on the one he is looking at goes back to everyone
-                        let was = model.room == room.name && model.only == nil
-                        model.look(room: was ? nil : room.name)
+                        let was = model.room == room.id && model.only == nil
+                        model.look(room: was ? nil : room.id)
                     }
-                    .contextMenu { Button { newName = room.name; renaming = room.name } label: { Label("Rename team", systemImage: "pencil") } }
-                    .overlay { if over == room.name { RoundedRectangle(cornerRadius: 14).strokeBorder(Palette.team(room.colour), lineWidth: 2) } }
+                    .contextMenu { Button { newName = room.name; renaming = room } label: { Label("Rename team", systemImage: "pencil") } }
+                    .overlay { if over == room.id { RoundedRectangle(cornerRadius: 14).strokeBorder(Palette.team(room.colour), lineWidth: 2) } }
                     // a new agent for this team: one tap starts it where the team's others run
-                    .overlay(alignment: .trailing) { NewAgentButton(room: room.name).padding(.trailing, 6) }
-                    .dropDestination(for: String.self) { ids, _ in drop(ids, on: room.name) } isTargeted: { over = $0 ? room.name : (over == room.name ? nil : over) }
+                    .overlay(alignment: .trailing) { NewAgentButton(room: room).padding(.trailing, 6) }
+                    .dropDestination(for: String.self) { ids, _ in drop(ids, on: room.id) } isTargeted: { over = $0 ? room.id : (over == room.id ? nil : over) }
                     .padding(.top, 4)
                     ForEach(room.members, id: \.id) { agent in
                         row(dot: agent.state, title: titled(agent, in: room), detail: nil, strong: false, on: model.only == agent.id, inset: 22, reserve: 50, colour: room.colour, badge: agent.badge, lead: agent.model, engine: under(agent), doing: agent.doing) {
@@ -109,10 +101,10 @@ struct AgentsMenu: View {
                             }
                             .padding(.horizontal, 12).padding(.vertical, 8).background(Palette.raised, in: RoundedRectangle(cornerRadius: 12))
                         }
-                        .dropDestination(for: String.self) { ids, _ in drop(ids, on: room.name) } isTargeted: { over = $0 ? room.name : (over == room.name ? nil : over) }
+                        .dropDestination(for: String.self) { ids, _ in drop(ids, on: room.id) } isTargeted: { over = $0 ? room.id : (over == room.id ? nil : over) }
                         .contextMenu {
-                            ForEach(model.view.rooms.filter { $0.name != room.name }, id: \.name) { other in
-                                Button("Move to \(other.name)") { model.moveAgent(agent, to: other.name) }
+                            ForEach(model.view.rooms.filter { $0.id != room.id && $0.members.contains { $0.station == agent.station } }, id: \.id) { other in
+                                Button("Move to \(other.name)") { model.moveAgent(agent, to: .room(room: other.id)) }
                             }
                             Button { newTeam = ""; founding = agent } label: { Label("New team", systemImage: "plus") }
                             if !agent.held {
@@ -166,14 +158,14 @@ struct AgentsMenu: View {
         }
         .alert("New team", isPresented: $founding.isSet()) {
             TextField("Name", text: $newTeam).textInputAutocapitalization(.never).autocorrectionDisabled()
-            Button("Move") { if let agent = founding { model.moveAgent(agent, to: newTeam) }; founding = nil }
+            Button("Move") { if let agent = founding { model.moveAgent(agent, to: .new(name: newTeam)) }; founding = nil }
             Button("Cancel", role: .cancel) { founding = nil }
         } message: {
             Text(founding.map { "\($0.callsign) moves to it." } ?? "")
         }
         .alert("Rename team", isPresented: $renaming.isSet()) {
             TextField("Name", text: $newName).textInputAutocapitalization(.never).autocorrectionDisabled()
-            Button("Rename") { if let team = renaming { model.renameTeam(team, to: newName) }; renaming = nil }
+            Button("Rename") { if let room = renaming { model.renameTeam(room, to: newName) }; renaming = nil }
             Button("Cancel", role: .cancel) { renaming = nil }
         } message: {
             Text("Its agents stay in it, and say the new name.")

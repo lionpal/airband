@@ -14,9 +14,10 @@ pub struct OpenedNotice {
     /// The computer's name, when he has more than one.
     pub subtitle: String,
     pub body: String,
-    /// The agent's two characters, and its team's place in the host's list of team colours.
+    /// The agent's two characters, and its team's place in the host's list of team colours: nothing for a team
+    /// the phone has not given one yet, which is drawn with no team colour.
     pub badge: String,
-    pub colour: u8,
+    pub colour: Option<u8>,
     /// The agent's team and its id: where the app opens when he taps the notification.
     pub room: String,
     pub agent: String,
@@ -33,6 +34,15 @@ pub(super) fn station_key(link: &str) -> Option<String> {
         Pairing::Relay { secret, .. } | Pairing::Near { secret, .. } => Keys::derive(&secret).ok().map(|k| k.channel),
         Pairing::Direct { .. } => None,
     }
+}
+/// What a computer is known by in the rooms of his screen: its relay channel, or for a plain direct pairing,
+/// a hash of its link (the link holds a token, and a room's id is kept on disk).
+pub(super) fn station_id(link: &str) -> String {
+    station_key(link).unwrap_or_else(|| airband_core::relay::token_hash(link))
+}
+/// A room on his screen: one team on one computer, as one id. Only ever compared whole.
+pub(crate) fn room_id(station: &str, team: &str) -> String {
+    if team.is_empty() { String::new() } else { format!("{station}/{team}") }
 }
 /// What a button under a question stood for.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -69,7 +79,7 @@ pub fn leave_word(allow: bool) -> String {
 /// Open a sealed notification with whichever pairing sealed it. `links` are the pairing links the host keeps;
 /// `sealed` is the notification as the push service delivered it. Nothing when none of them opens it. This
 /// needs no desk: a host calls it from wherever its system hands it a notification. `colours` is each team's
-/// colour as [`DeskView::colours`] last gave it, from the copy the host keeps; a team not in it takes the first.
+/// colour as [`DeskView::colours`] last gave it, from the copy the host keeps; a team not in it has none.
 #[uniffi::export]
 pub fn open_notice(links: Vec<String>, sealed: String, colours: std::collections::HashMap<String, u8>) -> Option<OpenedNotice> {
     let sealed = airband_core::audio::base64_decode(&sealed)?;
@@ -78,15 +88,16 @@ pub fn open_notice(links: Vec<String>, sealed: String, colours: std::collections
         let Pairing::Relay { secret, .. } = Pairing::parse(link).ok()? else { return None };
         let keys = Keys::derive(&secret).ok()?;
         let n: airband_core::radio::Notice = serde_json::from_slice(&keys.open(Direction::Push, &sealed).ok()?).ok()?;
+        let room = room_id(&keys.channel, &n.team);
         Some(OpenedNotice {
+            colour: colours.get(&room).copied(),
+            room,
             station: keys.channel,
             message: n.id,
             title: n.from.clone(),
             subtitle: if several { n.station } else { String::new() },
             body: n.text,
             badge: n.badge,
-            colour: colours.get(&n.group).copied().unwrap_or(0),
-            room: n.group,
             agent: n.agent.unwrap_or_default(),
             question: n.kind == Some(Kind::NeedsYou),
             options: if n.permission { Vec::new() } else { n.options },

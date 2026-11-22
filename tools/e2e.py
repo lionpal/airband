@@ -280,10 +280,13 @@ try:
     check("something he sends while it is working is added too, and nothing is added twice", len(his("refund webhook")) == 1 and len(his("payments tests")) == 1, (his("refund webhook"), his("payments tests")))
 
     print("Teams")
-    moved = http("POST", "/v1/radio/team", {"agent": "tr", "team": "Payouts"})[1]
-    check("he can move an agent to another team, and a name he gave it goes with it", moved == {"callsign": "payouts webhook", "team": "payouts"} and roster(feed())["payouts webhook"]["group"] == "payouts", moved)
+    # a team is sent by its id; a new one by the name he gave it
+    team_of = lambda name: next(a["team"] for a in feed()["roster"] if a["group"] == name)
+    new = lambda name: {"new": {"name": name}}
+    moved = http("POST", "/v1/radio/team", {"agent": "tr", "to": new("Payouts")})[1]
+    check("he can move an agent to another team, and a name he gave it goes with it", moved.get("callsign") == "payouts webhook" and moved.get("team") == "payouts" and moved.get("id") and roster(feed())["payouts webhook"]["group"] == "payouts", moved)
     check("what he said to it is now shown as said to it under its new name", his("payments tests")[0]["to"] == ["payouts webhook"], his("payments tests"))
-    moved = http("POST", "/v1/radio/team", {"agent": "tr", "team": "returns"})[1]
+    moved = http("POST", "/v1/radio/team", {"agent": "tr", "to": new("returns")})[1]
     f = feed()
     check("a team that was not there is made by moving an agent into it", moved.get("callsign") == "returns webhook" and roster(f)["returns webhook"]["group"] == "returns", moved)
     check("the tower gives no colours: the phone chooses them, across every computer", "colours" not in f, list(f))
@@ -291,9 +294,9 @@ try:
     check("renamed afterwards, it stays in the team he put it in", "returns hooks" in roster(feed()), list(roster(feed())))
     session("nb", "orders", {"type": "working"})
     was = [c for c, a in roster(feed()).items() if a["id"] == "nb"]
-    moved = http("POST", "/v1/radio/team", {"agent": "nb", "team": "catalog"})[1]
+    moved = http("POST", "/v1/radio/team", {"agent": "nb", "to": {"team": {"id": team_of("catalog")}}})[1]
     check("one known only by a number takes the next free number in its new team", was == ["orders one"] and moved.get("callsign") == "catalog one", (was, moved))
-    check("a team with no name, or an agent that has gone, is refused in words", "error" in http("POST", "/v1/radio/team", {"agent": "nb", "team": "  "})[1] and "error" in http("POST", "/v1/radio/team", {"agent": "nobody", "team": "catalog"})[1])
+    check("a team with no name, one that is not there, or an agent that has gone, is refused in words", "error" in http("POST", "/v1/radio/team", {"agent": "nb", "to": new("  ")})[1] and "error" in http("POST", "/v1/radio/team", {"agent": "nb", "to": {"team": {"id": "catalog"}}})[1] and "error" in http("POST", "/v1/radio/team", {"agent": "nobody", "to": {"team": {"id": team_of("catalog")}}})[1])
     session("nb", "orders", {"type": "signoff"})
     session("tr", "orders", {"type": "signoff"})
     # opened in the catalog folder, but every step it takes is in the logistics project
@@ -311,7 +314,7 @@ try:
         time.sleep(1)
     check("an agent opened in one project and working in another is moved to that team by the tower (model)", placed.get("group") == "logistics", placed)
     check("and the chat says what it is called now", [m for m in feed()["messages"] if "is now logistics" in m["text"]], [m["text"] for m in feed()["messages"]][-4:])
-    http("POST", "/v1/radio/team", {"agent": "st", "team": "catalog"})
+    http("POST", "/v1/radio/team", {"agent": "st", "to": {"team": {"id": team_of("catalog")}}})
     for _ in range(2):
         session("st", "catalog", {"type": "working"}, record=stock)
         session("st", "catalog", {"type": "said", "text": "The zone prices for the two new carriers are in as well."}, record=stock)

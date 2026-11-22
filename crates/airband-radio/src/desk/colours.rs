@@ -1,4 +1,4 @@
-//! Each team's colour, chosen here, on the phone, across every paired computer: two teams he can see at once are
+//! Each room's colour (a team on one computer, by its id), chosen here, on the phone, across every paired computer: two teams he can see at once are
 //! not given the same colour by two computers that each chose alone. A team keeps its colour from then on, kept
 //! in `colours.json` in the app's folder, so a notification shows it in the colour the chat does.
 use super::*;
@@ -37,18 +37,9 @@ impl Colours {
             let _ = airband_core::kept::save(path, &self.by_team);
         }
     }
-    /// A team's colour: its place in the host's list of team colours.
-    pub(crate) fn of(&self, team: &str) -> u8 {
-        self.by_team.get(team).copied().unwrap_or(0)
-    }
-    /// A team he renamed keeps its colour under its new name.
-    pub(crate) fn renamed(&mut self, from: &str, to: &str) {
-        if let Some(colour) = self.by_team.remove(from) {
-            self.by_team.insert(to.to_string(), colour);
-            if let Some(path) = &self.path {
-                let _ = airband_core::kept::save(path, &self.by_team);
-            }
-        }
+    /// A room's colour: its place in the host's list of team colours. Nothing for one not seen yet.
+    pub(crate) fn of(&self, room: &str) -> Option<u8> {
+        self.by_team.get(room).copied()
     }
     pub(crate) fn all(&self) -> HashMap<String, u8> {
         self.by_team.iter().map(|(t, c)| (t.clone(), *c)).collect()
