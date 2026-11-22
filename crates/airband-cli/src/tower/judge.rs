@@ -38,11 +38,14 @@ impl From<Trouble> for Failed {
     }
 }
 
-/// What a model wrote, read as JSON of one shape. A service held to a schema answers with the JSON and
-/// nothing else. One asked in words may put words or a code fence around it: then the JSON parser is tried
-/// from each place an object could begin, and the first that reads as this shape is the answer.
+/// What a model wrote, read as JSON of one shape: the one place a model's answer is read. A service held to a
+/// schema answers with the JSON alone. One asked in words may wrap it in a code fence or a sentence: the object
+/// is taken from its first `{` to its last `}` and read whole. Nothing when there is no such object, or it is
+/// not of this shape; the caller says so.
 pub(super) fn json_of<T: serde::de::DeserializeOwned>(out: &str) -> Option<T> {
-    serde_json::from_str(out.trim()).ok().or_else(|| out.char_indices().filter(|(_, c)| *c == '{').find_map(|(i, _)| serde_json::Deserializer::from_str(&out[i..]).into_iter::<T>().next()?.ok()))
+    let out = out.trim();
+    let object = out.find('{').zip(out.rfind('}')).filter(|(a, b)| a < b).map(|(a, b)| &out[a..=b])?;
+    serde_json::from_str(object).ok()
 }
 
 /// What reads, when he has changed it from a radio since this tower started: used from then on, with no

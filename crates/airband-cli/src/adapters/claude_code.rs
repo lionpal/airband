@@ -1,6 +1,7 @@
 //! The Claude Code adapter. Claude Code runs `airband hook claude-code` from its own hooks (SessionStart, Stop,
 //! Notification, UserPromptSubmit, SessionEnd, and PostToolUse for the tools that touch pictures) with the
 //! hook's JSON on standard input.
+use super::claude_accounts::HARNESS;
 use super::env;
 use super::hooks::{On, on, text};
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk};
@@ -19,30 +20,15 @@ fn session_name(hook: &Value) -> Option<String> {
     renamed.or_else(|| remote_control_name(hook["transcript_path"].as_str()?, hook["session_id"].as_str()?))
 }
 
-/// The name last given to `/remote-control` in this session. It is only in the transcript, which can be tens of
-/// megabytes, so the place reached and the name found are kept beside the tower's files and each call reads
-/// only what has been written since.
+/// The name last given to `/remote-control` in this session, read from the whole transcript once and then
+/// from what has been written since.
 fn remote_control_name(transcript: &str, session: &str) -> Option<String> {
-    if !session.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
-        return None;
-    }
-    let note = crate::config::dir().join("claude-code").join(format!("{session}.json"));
-    let kept: Value = airband_core::kept::load(&note).unwrap_or(Value::Null);
-    let (mut at, mut name) = (kept["at"].as_u64().unwrap_or(0), kept["name"].as_str().map(String::from));
-    let file = std::fs::File::open(transcript).ok()?;
-    let len = file.metadata().ok()?.len();
-    if len < at {
-        at = 0; // the transcript was replaced
-    }
-    if len > at {
-        at = whole_lines(file, at, |line| {
-            if let Some(found) = remote_control_line(line) {
-                name = Some(found);
-            }
-        })?;
-        let _ = airband_core::kept::save(&note, &serde_json::json!({ "at": at, "name": name }));
-    }
-    name
+    let kept = new_lines(transcript, session, "json", FirstLook::FromStart, |line, kept| {
+        if let Some(found) = remote_control_line(line) {
+            kept["name"] = found.into();
+        }
+    })?;
+    kept["name"].as_str().map(String::from)
 }
 
 /// The kind of link (`catalog/links`) a pull request is.
@@ -50,37 +36,60 @@ const PULL_KIND: &str = "pull-request";
 
 /// The pull requests this session has opened since the last look. Claude Code writes one line into the
 /// session's transcript for each (`pr-link`: its address, its number and the repository), which is what its
-/// own screen shows them from. The place reached is kept beside the tower's files, so each is reported once.
-/// On the first look at a session nothing is reported: what its transcript already holds was made before
-/// anyone was watching.
+/// own screen shows them from. Each is reported once. On the first look at a session nothing is reported: what
+/// its transcript already holds was made before anyone was watching.
 fn pull_requests(hook: &Value) -> Vec<Event> {
     let (Some(transcript), Some(session)) = (hook["transcript_path"].as_str(), hook["session_id"].as_str()) else { return Vec::new() };
-    if !session.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
-        return Vec::new();
-    }
-    let note = crate::config::dir().join("claude-code").join(format!("{session}.made.json"));
-    // A session that has written nothing yet has no transcript: everything it comes to hold was made while
-    // the tower was watching, so the place reached is its start.
-    let Ok(file) = std::fs::File::open(transcript) else {
-        if !std::path::Path::new(transcript).exists() {
-            let _ = airband_core::kept::save(&note, &serde_json::json!({ "at": 0 }));
-        }
-        return Vec::new();
-    };
-    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
-    let reached = airband_core::kept::load::<Value>(&note).and_then(|kept| kept["at"].as_u64()).filter(|at| *at <= len);
     let mut found: Vec<Event> = Vec::new();
-    let at = match reached {
-        Some(at) => whole_lines(file, at, |line| {
-            if let Some(made) = pull_request_line(line).filter(|made| !found.contains(made)) {
-                found.push(made);
-            }
-        })
-        .unwrap_or(at),
-        None => len,
-    };
-    let _ = airband_core::kept::save(&note, &serde_json::json!({ "at": at }));
+    new_lines(transcript, session, "made.json", FirstLook::FromEnd, |line, _| {
+        if let Some(made) = pull_request_line(line).filter(|made| !found.contains(made)) {
+            found.push(made);
+        }
+    });
     found
+}
+
+/// Where a first look at a session's transcript starts.
+#[derive(Clone, Copy, PartialEq)]
+enum FirstLook {
+    /// From its start: everything in it counts.
+    FromStart,
+    /// From where it ends now: only what is written from now on counts. A session that has written nothing
+    /// yet has no transcript, and everything it comes to hold is then new.
+    FromEnd,
+}
+
+/// Hand each whole line written to a session's transcript since the last look to `each`, with the note kept
+/// for this reader (`<session>.<note>` beside the tower's files) to keep what it finds in. A transcript can run
+/// to tens of megabytes, so the place reached is kept in the note too and only what follows it is read. A
+/// transcript that shrank was replaced, and is read again from its start. Returns the note as it now stands.
+fn new_lines(transcript: &str, session: &str, note: &str, first: FirstLook, mut each: impl FnMut(&[u8], &mut Value)) -> Option<Value> {
+    // the session id names a file of ours: nothing in it may leave the folder
+    if !session.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return None;
+    }
+    let path = super::claude_accounts::dir().join(format!("{session}.{note}"));
+    let mut kept: Value = airband_core::kept::load(&path).filter(Value::is_object).unwrap_or_else(|| serde_json::json!({}));
+    let Ok(file) = std::fs::File::open(transcript) else {
+        if first == FirstLook::FromEnd && !std::path::Path::new(transcript).exists() && kept.get("at").is_none() {
+            kept["at"] = 0.into();
+            let _ = airband_core::kept::save(&path, &kept);
+        }
+        return Some(kept);
+    };
+    let len = file.metadata().ok()?.len();
+    let at = match kept["at"].as_u64() {
+        Some(at) if at <= len => at,
+        Some(_) => 0,
+        None if first == FirstLook::FromEnd => len,
+        None => 0,
+    };
+    let reached = whole_lines(file, at, |line| each(line, &mut kept)).unwrap_or(at);
+    if kept["at"].as_u64() != Some(reached) || reached > at {
+        kept["at"] = reached.into();
+        let _ = airband_core::kept::save(&path, &kept);
+    }
+    Some(kept)
 }
 
 /// The pull request one transcript line records, when the line is Claude Code's own record of one. Such a
@@ -138,7 +147,7 @@ fn remote_control_line(line: &[u8]) -> Option<String> {
 fn agent_of(hook: &Value) -> Option<Agent> {
     Some(Agent {
         id: text(hook, "session_id")?,
-        harness: "claude-code".into(),
+        harness: HARNESS.into(),
         cwd: text(hook, "cwd"),
         name: env("AIRBAND_NAME"),
         // one the tower holds keeps the name it has: a session carried on in a new process comes with a name of
@@ -194,7 +203,7 @@ fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> bool) -> Opt
         let transcript = transcript_of(claude, &id);
         open.push(super::Open {
             agent: Agent {
-                harness: "claude-code".into(),
+                harness: HARNESS.into(),
                 cwd: field("cwd"),
                 name: None,
                 // a name he gave it; one Claude Code made up is not used
@@ -336,22 +345,36 @@ pub fn touched(agent: &Agent) -> Vec<String> {
     tail_of(agent, 256 * 1024).map(|tail| touched_in(&tail)).unwrap_or_default()
 }
 
-fn touched_in(tail: &str) -> Vec<String> {
-    let mut found: Vec<String> = Vec::new();
-    for line in tail.lines().rev().filter(|l| l.contains("\"tool_use\"")) {
-        let Ok(entry) = serde_json::from_str::<Value>(line) else { continue };
+/// Every tool call in a piece of a transcript, oldest first: when its line was written, the tool's name and
+/// what it was given. A subagent's calls are passed over: they are its own, not the session's.
+fn tool_uses(tail: &str) -> Vec<(Option<u64>, String, Value)> {
+    let mut calls = Vec::new();
+    // a quick look before parsing: most lines hold no call
+    for line in tail.lines().filter(|l| l.contains("\"tool_use\"")) {
+        let Ok(mut entry) = serde_json::from_str::<Value>(line) else { continue };
         if entry["isSidechain"] == true {
             continue;
         }
-        for c in entry["message"]["content"].as_array().into_iter().flatten().rev().filter(|c| c["type"] == "tool_use") {
-            let input = &c["input"];
-            let what = ["file_path", "notebook_path", "path", "command"].iter().find_map(|k| input[*k].as_str()).map(|t| t.lines().next().unwrap_or("").trim().chars().take(160).collect::<String>());
-            if let Some(what) = what.filter(|w| !w.is_empty() && !found.contains(w)) {
-                found.push(what);
+        let at = entry["timestamp"].as_str().and_then(super::claude_accounts::iso_ms);
+        let Some(parts) = entry["message"]["content"].as_array_mut() else { continue };
+        for part in parts.iter_mut().filter(|c| c["type"] == "tool_use") {
+            if let Some(name) = part["name"].as_str().map(String::from) {
+                calls.push((at, name, part["input"].take()));
             }
-            if found.len() >= 14 {
-                return found;
-            }
+        }
+    }
+    calls
+}
+
+fn touched_in(tail: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for (_, _, input) in tool_uses(tail).iter().rev() {
+        let what = ["file_path", "notebook_path", "path", "command"].iter().find_map(|k| input[*k].as_str()).map(|t| t.lines().next().unwrap_or("").trim().chars().take(160).collect::<String>());
+        if let Some(what) = what.filter(|w| !w.is_empty() && !found.contains(w)) {
+            found.push(what);
+        }
+        if found.len() >= 14 {
+            break;
         }
     }
     found
@@ -375,19 +398,16 @@ fn engine_in(tail: &str) -> Option<(String, Option<String>)> {
 /// Claude Code writes on a line it made itself.
 fn model_name(id: &str) -> Option<String> {
     let rows = airband_core::catalog::built();
-    let row = rows.tools.iter().find(|t| t.id == "claude-code")?;
+    let row = rows.tools.iter().find(|t| t.id == HARNESS)?;
     if row.with.get("not_models").and_then(Value::as_array).is_some_and(|none| none.iter().any(|n| n.as_str() == Some(id))) {
         return None;
     }
     Some(row.with.get("model_names").and_then(|names| names.get(id)).and_then(Value::as_str).unwrap_or(id).to_string())
 }
 
-/// The latest step named in a piece of a transcript, newest line first.
+/// The latest step named in a piece of a transcript.
 fn step_in(tail: &str) -> Option<String> {
-    tail.lines().rev().filter(|l| l.contains("\"tool_use\"")).find_map(|line| {
-        let entry: Value = serde_json::from_str(line).ok()?;
-        entry["message"]["content"].as_array()?.iter().rev().filter(|c| c["type"] == "tool_use").find_map(|c| step(c["name"].as_str()?, &c["input"]))
-    })
+    tool_uses(tail).iter().rev().find_map(|(_, name, input)| step(name, input))
 }
 
 /// Every step a session has taken since `since`, oldest first. From the end of its transcript only: a turn
@@ -398,17 +418,11 @@ pub fn steps(agent: &Agent, since: u64) -> Vec<String> {
 
 fn steps_in(tail: &str, since: u64) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
-    for line in tail.lines().filter(|l| l.contains("\"tool_use\"")) {
-        let Ok(entry) = serde_json::from_str::<Value>(line) else { continue };
-        if entry["isSidechain"] == true || entry["timestamp"].as_str().and_then(super::claude_accounts::iso_ms).is_none_or(|at| at < since) {
-            continue;
-        }
-        for part in entry["message"]["content"].as_array().into_iter().flatten().filter(|c| c["type"] == "tool_use") {
-            if let Some(label) = part["name"].as_str().and_then(|name| step(name, &part["input"])) {
-                // the same label twice running is one step said twice
-                if found.last() != Some(&label) {
-                    found.push(label);
-                }
+    for (_, name, input) in tool_uses(tail).iter().filter(|(at, _, _)| at.is_some_and(|at| at >= since)) {
+        if let Some(label) = step(name, input) {
+            // the same label twice running is one step said twice
+            if found.last() != Some(&label) {
+                found.push(label);
             }
         }
     }
@@ -419,7 +433,7 @@ fn steps_in(tail: &str, since: u64) -> Vec<String> {
 fn step(tool: &str, input: &Value) -> Option<String> {
     let text = |k: &str| input[k].as_str().map(str::trim).filter(|t| !t.is_empty());
     // what the row says of this tool of Claude Code's own
-    let row = super::hooks::tool_use(NAME_ROW, tool);
+    let row = super::hooks::tool_use(HARNESS, tool);
     let said = if row["bookkeeping"].as_bool() == Some(true) {
         // bookkeeping of its own, not a step in the work: keep looking further back
         return None;
@@ -430,7 +444,7 @@ fn step(tool: &str, input: &Value) -> Option<String> {
     } else {
         // a tool from a server, named by Claude Code as server and tool with its row's mark between: the
         // tool's own name, as words ("take screenshot")
-        let mark = super::row_says(NAME_ROW, "server_tool");
+        let mark = super::row_says(HARNESS, "server_tool");
         let own = if mark.is_empty() { tool } else { tool.rsplit(mark.as_str()).next().unwrap_or(tool) };
         own.replace(['_', '-'], " ")
     };
@@ -451,7 +465,7 @@ pub fn permission(hook: &Value) -> Option<PermissionAsk> {
     let tool = hook["tool_name"].as_str().unwrap_or("a tool");
     let input = &hook["tool_input"];
     // whole, never cut: what he reads is what will run
-    let row = super::hooks::tool_use(NAME_ROW, tool);
+    let row = super::hooks::tool_use(HARNESS, tool);
     let what = super::hooks::fill(&row["asks"], input).unwrap_or_else(|| format!("use {tool}"));
     // Its tool for asking him something is not a thing to allow: it is a question, put to him as one. One
     // question comes with the answers it offered; several are put together, for him to answer in his own words.
@@ -471,7 +485,7 @@ pub fn permission(hook: &Value) -> Option<PermissionAsk> {
 
 /// Which part of Claude Code's this tool call is, as its row has it.
 fn role(hook: &Value) -> Option<String> {
-    super::hooks::tool_use(NAME_ROW, hook["tool_name"].as_str()?)["role"].as_str().map(String::from)
+    super::hooks::tool_use(HARNESS, hook["tool_name"].as_str()?)["role"].as_str().map(String::from)
 }
 /// Is this tool call Claude Code starting a subagent?
 fn is_subagent(hook: &Value) -> bool {
@@ -545,18 +559,17 @@ fn made_artifact(hook: &Value) -> Option<Event> {
 
 /// Where Claude Code keeps its settings and sessions, as its row has it.
 fn claude_home() -> std::path::PathBuf {
-    crate::config::home().join(super::row_says(NAME_ROW, "home"))
+    crate::config::home().join(super::row_says(HARNESS, "home"))
 }
-const NAME_ROW: &str = "claude-code";
 
 /// The Claude Code tools worth hearing about once they have run, by its row: the one that hands him a file,
 /// the one that publishes a page, and the one that runs a subagent.
 fn after_tools() -> String {
-    super::hooks::with_role(NAME_ROW, &["files", "artifact", "subagent"]).join("|")
+    super::hooks::with_role(HARNESS, &["files", "artifact", "subagent"]).join("|")
 }
 /// The ones worth hearing about as they start: a subagent.
 fn before_tools() -> String {
-    super::hooks::with_role(NAME_ROW, &["subagent"]).join("|")
+    super::hooks::with_role(HARNESS, &["subagent"]).join("|")
 }
 /// Permission is asked on the radio first. The time allowed is long because he is the one being waited for; the
 /// tower says how long to wait and the hook gives up by itself well before this.
@@ -577,7 +590,7 @@ pub struct ClaudeCode;
 
 impl super::Harness for ClaudeCode {
     fn name(&self) -> &'static str {
-        "claude-code"
+        HARNESS
     }
     fn events(&self, hook: &Value) -> Vec<AgentEvent> {
         events(hook)

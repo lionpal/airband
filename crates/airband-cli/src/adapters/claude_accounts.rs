@@ -78,7 +78,7 @@ fn claude_json_path() -> PathBuf {
 fn user() -> String {
     super::env("USER").unwrap_or_else(|| "user".into())
 }
-fn dir() -> PathBuf {
+pub(super) fn dir() -> PathBuf {
     config::dir().join("claude-code")
 }
 fn now_ms() -> i64 {

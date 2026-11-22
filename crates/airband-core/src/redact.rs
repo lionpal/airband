@@ -14,72 +14,56 @@ const DOTS: &str = "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2
 pub struct Shape {
     pub id: String,
     pub prefix: String,
+    /// How the body after the prefix is built.
+    #[serde(default)]
+    pub form: Form,
     /// The characters its body is made of besides letters and digits.
     #[serde(default)]
     pub extra: String,
-    /// How many characters its body has at least.
+    /// How many characters its body (each part, for a dotted one) has at least; for a block, how soon after
+    /// the prefix its `head` must come.
     pub least: usize,
+    /// For a block: what follows the prefix to make it one, kept as it is.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub head: String,
+    /// For a block: the marks that end it, found in this order. Everything up to the last is masked.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub end: Vec<String>,
+}
+
+/// How a credential's body is built.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Form {
+    /// One run of letters, digits and `extra`, starting a word.
+    #[default]
+    Run,
+    /// One run of hexadecimal digits, wherever it is.
+    Hex,
+    /// Three runs of letters, digits, `-` and `_` joined by dots, the prefix part of the first, starting a word.
+    Dotted,
+    /// Lines from the prefix to its end marks, wherever it is.
+    Block,
 }
 
 /// `text` with every credential in it replaced by its prefix and a row of dots.
 pub fn redact(text: &str) -> String {
     let shapes = &crate::catalog::built().secrets;
     // nothing that could start one: the usual case, and no copy is made for it beyond the return
-    if !shapes.iter().any(|s| text.contains(s.prefix.as_str())) && !text.contains("PRIVATE KEY-----") && !text.contains("secret=") && !text.contains("eyJ") {
+    if !shapes.iter().any(|s| text.contains(s.prefix.as_str())) {
         return text.to_string();
     }
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     'scan: while !rest.is_empty() {
-        // a private key, from its first line to its last
-        if rest.starts_with("-----BEGIN ")
-            && let Some(head) = rest.find("PRIVATE KEY-----").filter(|i| *i < 40) {
-                let end = rest.find("-----END ").and_then(|e| rest[e..].find("KEY-----").map(|k| e + k + 8)).unwrap_or(rest.len());
-                out.push_str(&rest[..head + 16]);
-                out.push_str(DOTS);
-                rest = &rest[end..];
-                continue;
-            }
         // only at the start of a word: "task-force" holds no key
         let at_word = out.chars().next_back().is_none_or(|c| !c.is_ascii_alphanumeric() && c != '_' && c != '-');
-        if at_word {
-            for Shape { prefix, extra, least, .. } in shapes {
-                if let Some(body) = rest.strip_prefix(prefix.as_str()) {
-                    let n = body.bytes().take_while(|b| b.is_ascii_alphanumeric() || extra.as_bytes().contains(b)).count();
-                    if n >= *least {
-                        out.push_str(prefix);
-                        out.push_str(DOTS);
-                        rest = &body[n..];
-                        continue 'scan;
-                    }
-                }
-            }
-            // a signed token: three runs of base64 joined by dots, the first of them a JSON header
-            if rest.starts_with("eyJ") {
-                let run = |s: &str| s.bytes().take_while(|b| b.is_ascii_alphanumeric() || *b == b'-' || *b == b'_').count();
-                let a = run(rest);
-                if a >= 10 && rest[a..].starts_with('.') {
-                    let b = run(&rest[a + 1..]);
-                    if b >= 10 && rest[a + 1 + b..].starts_with('.') {
-                        let c = run(&rest[a + b + 2..]);
-                        if c >= 10 {
-                            out.push_str("eyJ");
-                            out.push_str(DOTS);
-                            rest = &rest[a + b + c + 2..];
-                            continue;
-                        }
-                    }
-                }
-            }
-        }
-        // a pairing link's secret: the link is the key to his agents
-        if let Some(body) = rest.strip_prefix("secret=") {
-            let n = body.bytes().take_while(|b| b.is_ascii_hexdigit()).count();
-            if n == 64 {
-                out.push_str("secret=");
+        for shape in shapes {
+            if let Some((kept, skip)) = matched(shape, rest, at_word) {
+                out.push_str(&rest[..kept]);
                 out.push_str(DOTS);
-                rest = &body[n..];
-                continue;
+                rest = &rest[skip..];
+                continue 'scan;
             }
         }
         let c = rest.chars().next().unwrap();
@@ -87,6 +71,38 @@ pub fn redact(text: &str) -> String {
         rest = &rest[c.len_utf8()..];
     }
     out
+}
+
+/// Where `rest` starts a credential of this shape: how much of it is kept as it is, and how much the
+/// credential takes.
+fn matched(shape: &Shape, rest: &str, at_word: bool) -> Option<(usize, usize)> {
+    let body = rest.strip_prefix(shape.prefix.as_str())?;
+    let p = shape.prefix.len();
+    let run = |s: &str, also: &[u8]| s.bytes().take_while(|b| b.is_ascii_alphanumeric() || also.contains(b)).count();
+    match shape.form {
+        Form::Run if at_word => Some(run(body, shape.extra.as_bytes())).filter(|n| *n >= shape.least).map(|n| (p, p + n)),
+        Form::Hex => Some(body.bytes().take_while(u8::is_ascii_hexdigit).count()).filter(|n| *n >= shape.least).map(|n| (p, p + n)),
+        Form::Dotted if at_word => {
+            let a = p + run(body, b"-_");
+            let b = a + 1 + run(rest.get(a + 1..)?, b"-_");
+            let c = b + 1 + run(rest.get(b + 1..)?, b"-_");
+            let long = |from: usize, to: usize| to.saturating_sub(from) >= shape.least;
+            (long(0, a) && rest[a..].starts_with('.') && long(a + 1, b) && rest[b..].starts_with('.') && long(b + 1, c)).then_some((p, c))
+        }
+        Form::Block => {
+            let head = body.find(shape.head.as_str()).filter(|i| *i < shape.least)?;
+            let mut at = p + head + shape.head.len();
+            let kept = at;
+            for mark in &shape.end {
+                at = match rest[at..].find(mark.as_str()) {
+                    Some(i) => at + i + mark.len(),
+                    None => return Some((kept, rest.len())),
+                };
+            }
+            Some((kept, at))
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]
