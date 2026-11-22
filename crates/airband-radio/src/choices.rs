@@ -194,7 +194,15 @@ impl Chooser {
     /// cannot be used as things are is handed over as that, with why: nothing takes its place.
     pub(crate) fn apply(&self, host: &dyn DeskHost, senses: &Senses) {
         let saved = self.saved();
-        let key = |id: &str| host.secret(id.to_string()).unwrap_or_default();
+        // his key for a service, or why it cannot be used: one that takes a key and has none here is never
+        // tried with an empty one
+        let key = |id: &str, sense: Sense| -> Result<String, Cannot> {
+            match (host.secret(id.to_string()).filter(|k| !k.is_empty()), airband_core::providers::provider(id).filter(|p| p.key)) {
+                (Some(key), _) => Ok(key),
+                (None, None) => Ok(String::new()),
+                (None, Some(p)) => Err(Cannot::NoKey { sense, key_name: p.key_name.clone() }),
+            }
+        };
         senses.ears.set(saved.pick(ChoiceJob::Ears).map(|ears| match ears.place {
             ChoicePlace::Phone => match self.model(&ears.id).filter(|m| m.job == Job::Ears) {
                 None => crate::ears::Own::Cannot(Cannot::ModelNotRun(Sense::Listening)),
@@ -202,7 +210,11 @@ impl Chooser {
                 Some(m) => crate::ears::Own::Model(senses.ears.held(&m, crate::models::folder(&self.dir, &m))),
             },
             ChoicePlace::Service => {
-                let with = crate::services::service_of(&ears.id, &ears.offer, &key(&ears.id), ears.set.clone().into_iter().collect());
+                let key = match key(&ears.id, Sense::Listening) {
+                    Ok(key) => key,
+                    Err(why) => return crate::ears::Own::Cannot(why),
+                };
+                let with = crate::services::service_of(&ears.id, &ears.offer, &key, ears.set.clone().into_iter().collect());
                 if with.offer(Job::Ears).is_some_and(|(_, o)| crate::hears::listens(&o)) { crate::ears::Own::Service(with) } else { crate::ears::Own::Cannot(Cannot::ServiceNotUsed(Sense::Listening)) }
             }
         }));
@@ -216,7 +228,11 @@ impl Chooser {
                 },
             },
             ChoicePlace::Service => {
-                let with = crate::services::service_of(&voice.id, &voice.offer, &key(&voice.id), voice.set.clone().into_iter().collect());
+                let key = match key(&voice.id, Sense::Voice) {
+                    Ok(key) => key,
+                    Err(why) => return crate::mouth::Own::Cannot(why),
+                };
+                let with = crate::services::service_of(&voice.id, &voice.offer, &key, voice.set.clone().into_iter().collect());
                 if crate::voices::synth(&with).is_ok() { crate::mouth::Own::Service(with) } else { crate::mouth::Own::Cannot(Cannot::ServiceNotUsed(Sense::Voice)) }
             }
         }));

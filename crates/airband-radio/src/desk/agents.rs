@@ -55,7 +55,7 @@ impl Desk {
     pub fn accounts(&self, fresh: bool) -> Vec<StationAccounts> {
         // a computer is always headed by a name: its own, or its place in the list until it has said its own
         let radios = self.shared.state.lock().unwrap().named_radios();
-        // one after another, not all at once: two computers on the same account asking Anthropic in the same
+        // one after another, not all at once: two computers on the same account asking its provider in the same
         // moment is how one of them gets refused
         let told: Vec<(DeskComputer, Result<airband_core::radio::Accounts, RadioError>)> = radios.into_iter().map(|(computer, radio)| { let got = radio.accounts(fresh); (computer, got) }).collect();
         let answered: Vec<(DeskComputer, airband_core::radio::Accounts)> = told.iter().filter_map(|(c, got)| got.as_ref().ok().map(|a| (c.clone(), a.clone()))).collect();

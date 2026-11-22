@@ -41,6 +41,12 @@ pub(crate) mod field {
     pub(crate) const VOICE: &str = "voice";
     /// A service row: further headers each request carries.
     pub(crate) const HEADERS: &str = "headers";
+    /// A service's setting: where it is reached.
+    pub(crate) const URL: &str = "url";
+    /// A service's setting: which of its models does the work.
+    pub(crate) const MODEL: &str = "model";
+    /// A listening service's setting: the language he speaks.
+    pub(crate) const LANGUAGE: &str = "language";
 }
 
 /// The setting a voice service's voice is chosen by, for a host that lays out its own voice picker.
@@ -93,9 +99,8 @@ pub(crate) fn usable(dir: &str, m: &Model) -> Option<PathBuf> {
     if current(dir, m) {
         return Some(version_folder(dir, m));
     }
-    let mut earlier: Vec<PathBuf> = std::fs::read_dir(home(dir, m)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.join(WHOLE).is_file()).collect();
-    earlier.sort();
-    earlier.pop()
+    // the one made whole last, by when its mark was written: a version's name says nothing about its order
+    std::fs::read_dir(home(dir, m)).into_iter().flatten().flatten().map(|e| e.path()).filter_map(|p| std::fs::metadata(p.join(WHOLE)).and_then(|f| f.modified()).ok().map(|at| (at, p))).max_by_key(|(at, _)| *at).map(|(_, p)| p)
 }
 
 /// Where a model's files are, to run it: see [`usable`]. Before any are here, where they will be.

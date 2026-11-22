@@ -27,7 +27,7 @@ pub(crate) struct Service {
     pub about: String,
     /// It takes a key.
     pub key: bool,
-    /// What its key is called, for asking for it ("Gemini API key").
+    /// What its key is called, for asking for it ("API key").
     pub key_name: String,
     /// Where its keys are made.
     pub keys_at: String,

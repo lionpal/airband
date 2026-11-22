@@ -3,7 +3,7 @@
 //!
 //! Each way of reaching a voice service is an interface: a file under `voices/` with an `impl Synth` and a
 //! [`Voicing`] that names it, and a line of [`VOICES`]. A provider's row names the interface it speaks
-//! (`by.interface`) and tells it what it needs (`by.with`). A service that speaks OpenAI's speech interface
+//! (`by.interface`) and tells it what it needs (`by.with`). A service that speaks the common speech interface
 //! is a row and no code; one with a route of its own is one file here and its row.
 #![expect(clippy::disallowed_methods, reason = "asks a voice service")]
 use airband_core::providers::{By, Interface, Job, Offer, Provider, Use};

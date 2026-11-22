@@ -2,7 +2,7 @@
 //! live one (`ears_stream.rs`) is fed while he talks. The phone calls this, with the key of his that is kept on it.
 //!
 //! Each way of sending a recording is an interface: a function here and a line of [`UPLOADS`]. A service that
-//! speaks OpenAI's transcription interface (`POST {url}/audio/transcriptions`) is a row of the catalogue and
+//! speaks the common transcription interface (`POST {url}/audio/transcriptions`) is a row of the catalogue and
 //! no code. There is one such interface today.
 #![expect(clippy::disallowed_methods, reason = "sends audio to a listening service")]
 use airband_core::providers::{By, Interface, Job, Offer, Provider, Use};
@@ -71,14 +71,14 @@ pub fn transcribe(with: &Use, wav: &[u8], phrases: &[String]) -> Result<String, 
     (by.hear)(with, &provider, &offer.by, wav, phrases)
 }
 
-/// OpenAI's transcription interface: one multipart form with the file and the model.
+/// The common transcription interface: one multipart form with the file and the model.
 fn transcriptions(with: &Use, provider: &Provider, by: &By, wav: &[u8], phrases: &[String]) -> Result<String, String> {
     let set = |field: &str| with.get(Job::Ears, field);
     let agent = crate::net::agent(Duration::from_secs(60));
     let edge = format!("airband{}", airband_core::encode::random_hex(12));
     let mut body = Vec::with_capacity(wav.len() + 600);
     let mut field = |name: &str, value: &str| body.extend_from_slice(format!("--{edge}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes());
-    field("model", &set("model"));
+    field("model", &set(crate::models::field::MODEL));
     field("response_format", "json");
     if !phrases.is_empty() {
         // the interface's own place for words to expect
@@ -87,7 +87,7 @@ fn transcriptions(with: &Use, provider: &Provider, by: &By, wav: &[u8], phrases:
     body.extend_from_slice(format!("--{edge}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"said.wav\"\r\nContent-Type: audio/wav\r\n\r\n").as_bytes());
     body.extend_from_slice(wav);
     body.extend_from_slice(format!("\r\n--{edge}--\r\n").as_bytes());
-    let mut req = agent.post(format!("{}/audio/transcriptions", set("url").trim_end_matches('/'))).header("content-type", format!("multipart/form-data; boundary={edge}"));
+    let mut req = agent.post(format!("{}/audio/transcriptions", set(crate::models::field::URL).trim_end_matches('/'))).header("content-type", format!("multipart/form-data; boundary={edge}"));
     // how this service takes a key is its row's to say; one sent no key needs nothing said
     if let Some((header, value)) = by.key_header(&with.key).map_err(|_| "This version of airband was not told how that service takes its key.")? {
         req = req.header(header.as_str(), value.as_str());
