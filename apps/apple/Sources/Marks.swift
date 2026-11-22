@@ -3,11 +3,6 @@ import SwiftUI
 // The small marks that say who and what at a glance: an agent's badge, its tool and computer, a count of
 // what is unread, the dot for what a team is doing.
 
-/// How tall the buttons over the bottom of the chat are, told upward by the buttons themselves.
-struct BarHeight: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
-}
 /// Who an agent is, at a glance: two characters on its team's colour.
 struct Badge: View {
     let text: String

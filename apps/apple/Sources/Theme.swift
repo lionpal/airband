@@ -55,10 +55,6 @@ extension View {
     func darkPage() -> some View {
         background(Palette.ground.ignoresSafeArea()).foregroundStyle(Palette.ink).preferredColorScheme(.dark)
     }
-    /// Asks before an agent he started in a terminal is taken over, and takes it over when he says so.
-    func takeOverAlert(_ agent: Binding<DeskMember?>) -> some View {
-        modifier(TakeOverAlert(agent: agent))
-    }
 }
 extension Binding {
     /// Whether an optional holds something, for an alert or a sheet shown while it does. Set to false, it
@@ -67,23 +63,6 @@ extension Binding {
         Binding<Bool>(get: { wrappedValue != nil }, set: { if !$0 { wrappedValue = nil } })
     }
 }
-/// The question put before a take-over, in one place: what it means, and the two answers.
-struct TakeOverAlert: ViewModifier {
-    @EnvironmentObject var model: RadioModel
-    @Binding var agent: DeskMember?
-    func body(content: Content) -> some View {
-        content.alert("Take over \(agent?.callsign ?? "")?", isPresented: $agent.isSet()) {
-            Button("Take over") {
-                if let agent { model.takeOver(agent) }
-                agent = nil
-            }
-            Button("Cancel", role: .cancel) { agent = nil }
-        } message: {
-            Text("Its terminal session ends, and the same conversation carries on run by airband. What you say then reaches it as your own words.")
-        }
-    }
-}
-
 /// The switches a development build is launched with (`-airband.devPage chat`, for a screenshot or a script that
 /// cannot tap). The one place they are read: a release build has none, and every one reads as unset.
 enum Dev {

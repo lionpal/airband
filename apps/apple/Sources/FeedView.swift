@@ -205,3 +205,9 @@ struct FeedView: View {
     }
 
 }
+
+/// How tall the buttons over the bottom of the chat are, told upward by the buttons themselves.
+struct BarHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
