@@ -114,7 +114,16 @@ async fn status(id: &str) -> Result<crate::hold::State, String> {
 /// Tell a held agent's holder something.
 #[cfg(unix)]
 async fn tell_holder(kept: &Kept, tell: crate::hold::Tell) -> Result<(), String> {
-    say(&kept.id, format!("{}\n", tell.line()).as_bytes()).await.map(|_| ())
+    let answer = say(&kept.id, format!("{}\n", tell.line()).as_bytes()).await?;
+    taken(&answer)
+}
+/// Whether a holder's answer says it took what it was told: only a typed `taken` counts.
+fn taken(answer: &str) -> Result<(), String> {
+    match serde_json::from_str::<crate::hold::Answer>(answer.trim()) {
+        Ok(crate::hold::Answer::Taken) => Ok(()),
+        Ok(crate::hold::Answer::Refused { why }) => Err(why),
+        Err(e) => Err(format!("its holder's answer does not read: {e}")),
+    }
 }
 
 /// A session id of the usual shape, made here so the agent is known by it before it has said a word.
@@ -253,7 +262,12 @@ async fn told_under(app: &Arc<App>, id: &str, text: &str, receipt: &str) -> Resu
         if tell_holder(&kept, words()).await.is_ok() {
             return Ok(());
         }
-        // its holder has gone: carry the session on, then say it
+        // its holder has gone: carry the session on, then say it. One at a time: another delivery may have
+        // started it again while this one waited, and then it is only told
+        let _one = app.reviving.lock().await;
+        if tell_holder(&kept, words()).await.is_ok() {
+            return Ok(());
+        }
         revive(app, &kept).await?;
         tell_holder(&kept, words()).await
     }
@@ -394,8 +408,10 @@ pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, model: Opti
     }
     if task.is_empty() {
         app.kick.notify_one();
-    } else {
-        tell(app, &kept.id, task, &[]).await?;
+    } else if let Err(why) = tell(app, &kept.id, task, &[]).await {
+        // started for this task and it could not be given: it is not left running without it
+        end(app, &kept.id).await;
+        return Err(why);
     }
     Ok(kept.id)
 }
@@ -409,7 +425,9 @@ pub(super) async fn carry_on(app: &Arc<App>) {
         if app.read().find(&k.id).is_none() {
             continue;
         }
-        // its holder outlived the last tower: it is still running, and there is nothing to do
+        // one at a time with a delivery that may be starting it too
+        let _one = app.reviving.lock().await;
+        // its holder outlived the last tower, or a delivery started it: it is running, and there is nothing to do
         #[cfg(unix)]
         if status(&k.id).await.is_ok() {
             continue;
@@ -533,6 +551,13 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn words_count_as_given_only_when_the_holder_says_it_took_them() {
+        assert!(taken(r#"{"answer":"taken"}"#).is_ok());
+        assert_eq!(taken(r#"{"answer":"refused","why":"it has ended"}"#), Err("it has ended".to_string()));
+        assert!(taken("").is_err(), "a holder that answers nothing took nothing");
+    }
     use edges::folders::FakeFolders;
 
     fn kept(id: &str, cwd: &str) -> Kept {

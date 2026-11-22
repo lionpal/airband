@@ -84,10 +84,10 @@ fn start_at_login(exe: &std::path::Path) -> Result<(), String> {
     airband_io::files::make_folder(plist_path().parent().unwrap()).map_err(|e| e.to_string())?;
     airband_io::files::write_atomic(&plist_path(), plist).map_err(|e| e.to_string())?;
     let uid = unsafe { libc::getuid() };
-    Command::new("launchctl").args(["bootout", &format!("gui/{uid}/{LABEL}")]).output().ok();
+    Command::new(crate::platform::LAUNCHCTL).args(["bootout", &format!("gui/{uid}/{LABEL}")]).output().ok();
     // stopping the old one takes a moment, and starting before it has gone fails ("Input/output error"): this left
     // the tower down for some minutes once. Try again until it takes.
-    let start = || Command::new("launchctl").args(["bootstrap", &format!("gui/{uid}"), &plist_path().display().to_string()]).output().map_err(|e| e.to_string());
+    let start = || Command::new(crate::platform::LAUNCHCTL).args(["bootstrap", &format!("gui/{uid}"), &plist_path().display().to_string()]).output().map_err(|e| e.to_string());
     let mut out = start()?;
     for _ in 0..8 {
         if out.status.success() {
@@ -114,7 +114,7 @@ pub(crate) fn uninstall() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let uid = unsafe { libc::getuid() };
-        std::process::Command::new("launchctl").args(["bootout", &format!("gui/{uid}/{LABEL}")]).output().ok();
+        std::process::Command::new(crate::platform::LAUNCHCTL).args(["bootout", &format!("gui/{uid}/{LABEL}")]).output().ok();
         airband_io::files::remove(&plist_path()).ok();
     }
     println!("airband is stopped and will not start at login. Your coding tools no longer report to it.");

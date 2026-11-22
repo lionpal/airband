@@ -64,6 +64,9 @@ pub enum Refusal {
     Gone,
     /// Only a radio may ask this, or only the tower's own reporters.
     NotAllowed,
+    /// The token opens nothing on this computer: the pairing is wrong or was undone, and the phone must be paired
+    /// again. Not the same as a route this phone may not use.
+    NotPaired,
     /// A refusal this build does not know.
     #[serde(other)]
     Unknown,
@@ -83,6 +86,7 @@ impl Refusal {
             Refusal::TooBig => 413,
             Refusal::Gone => 404,
             Refusal::NotAllowed => 403,
+            Refusal::NotPaired => 401,
         }
     }
     /// What to tell him, when the tower gave words for it.

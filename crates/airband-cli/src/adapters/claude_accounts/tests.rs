@@ -298,3 +298,31 @@ fn the_account_file_is_known_to_hold_an_account_by_its_id_never_by_its_email() {
     assert!(!same_account(Some(&json!({"emailAddress": "a@x"})), &chosen), "no id says nothing");
     assert!(!same_account(None, &chosen));
 }
+
+use vault::Vault as _;
+
+/// A keychain that keeps logins and will not let one go.
+struct Clinging(vault::Memory);
+impl vault::Vault for Clinging {
+    fn read(&self, service: &str, account: &str) -> Res<Option<String>> {
+        self.0.read(service, account)
+    }
+    fn write(&self, service: &str, account: &str, data: &str) -> Res<()> {
+        self.0.write(service, account, data)
+    }
+    fn delete(&self, _: &str, _: &str) -> Res<()> {
+        Err("the keychain is locked".into())
+    }
+}
+
+#[test]
+fn a_saved_login_the_keychain_will_not_delete_stays_listed() {
+    let mut b = bench(Service::default());
+    put_saved(&b, "a@x", login("a", "r-a", true));
+    let kept = std::mem::replace(&mut b.here.vault, Box::new(vault::Memory::default()));
+    let memory = vault::Memory::default();
+    memory.write("saved", "a@x", &kept.read("saved", "a@x").unwrap().unwrap()).unwrap();
+    b.here.vault = Box::new(Clinging(memory));
+    assert!(saved::forget(&b.here, "a@x").is_err());
+    assert_eq!(saved::resolve(&b.here, "a@x").unwrap(), "a@x", "still listed, as the keychain still has it");
+}

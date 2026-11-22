@@ -398,6 +398,25 @@ pub(crate) fn hook(name: Option<&str>) -> Result<(), String> {
 }
 
 #[cfg(test)]
+mod row_facts {
+    #[test]
+    fn every_row_fact_the_code_asks_a_built_in_tool_for_is_there() {
+        // the tool ids each adapter is written for, and what each asks of its row: an empty answer would be a
+        // made-up value (an empty home is his home folder itself)
+        let asked: &[(&str, &[&str])] = &[
+            ("claude-code", &["home", "home_env", "inbox_scheme", "artifact_link", "headless_entry", "server_tool", "account_file", "accounts_api", "accounts_token", "beta_header", "keychain_service", "login_key", "oauth_beta", "oauth_client", "program"]),
+            ("codex", &["home", "home_env", "program", "control_socket"]),
+            ("opencode", &["home", "home_env", "service", "user", "state"]),
+        ];
+        for (tool, facts) in asked {
+            for fact in *facts {
+                assert!(!super::row_says(tool, fact).is_empty(), "the {tool} row says nothing for {fact}");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod finding {
     use super::*;
     use std::sync::{Arc, Mutex};

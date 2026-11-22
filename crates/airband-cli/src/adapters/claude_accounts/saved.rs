@@ -60,7 +60,8 @@ pub(super) fn keep(here: &Here, email: &str, oauth: &Value, account: &Value) -> 
 /// Delete a saved login and take it off the list.
 pub(super) fn forget(here: &Here, email: &str) -> Res<()> {
     let list = index(here)?;
-    here.vault.delete(&here.vault_service, email);
+    // still listed while the keychain still has it: never a login kept that he can no longer see
+    here.vault.delete(&here.vault_service, email).map_err(|e| format!("Did not forget {email}: {e}"))?;
     write_index(here, &list.into_iter().filter(|x| x != email).collect::<Vec<_>>())
 }
 

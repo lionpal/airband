@@ -150,8 +150,9 @@ impl Config {
 }
 
 /// The places in the settings that use a key.
-const USERS: [&str; 1] = ["summarizer"];
-const BY_NAME: &str = "key:";
+pub(crate) const USERS: [&str; 1] = ["summarizer"];
+/// What a use of a kept key is written as, before the key's name.
+pub(crate) const BY_NAME: &str = "key:";
 
 /// In the settings as they are written: each use of a kept key becomes the key's name.
 fn name_keys(doc: &mut serde_json::Value) {
@@ -259,7 +260,7 @@ pub(crate) fn stamp_of(path: &Path) -> Option<std::time::SystemTime> {
 /// the keys also writes the file, so a file that has not changed means keys that have not.
 fn kept() -> Result<serde_json::Map<String, serde_json::Value>, String> {
     static LAST: std::sync::Mutex<Option<(std::time::SystemTime, serde_json::Map<String, serde_json::Value>)>> = std::sync::Mutex::new(None);
-    let stamp = fs::metadata(dir().join("config.json")).and_then(|m| m.modified()).ok();
+    let stamp = stamp_of(&file());
     let mut last = LAST.lock().unwrap();
     if let (Some(stamp), Some((at, map))) = (stamp, last.as_ref())
         && *at == stamp {
@@ -304,7 +305,9 @@ fn render(cfg: &Config) -> Result<String, String> {
     if let Some(why) = &cfg.keyless {
         return Err(format!("the settings cannot be changed from here: {why}"));
     }
-    let existing = airband_io::files::read_text(&dir().join("config.json")).ok().flatten().unwrap_or_default();
+    let path = file();
+    // a file that is there and cannot be read is never taken as one without keys: that would write over it
+    let existing = airband_io::files::read_text(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?.unwrap_or_default();
     let mut doc = serde_json::to_value(cfg).unwrap();
     name_keys(&mut doc);
     let before = if crate::vault::sealed(&existing) { kept()? } else { Default::default() };
@@ -316,23 +319,48 @@ fn render(cfg: &Config) -> Result<String, String> {
 }
 
 /// Write the settings. The keys never go in the file: they are kept encrypted (`vault`), from the first save.
+/// Held while the settings are read, changed and written, by every airband process: a change made from
+/// another one in between is never written over.
+pub(crate) fn hold() -> Result<crate::lock::Held, String> {
+    crate::lock::take(&dir().join("config.lock"))
+}
+
 pub(crate) fn save(cfg: &Config) -> Result<(), String> {
+    let held = hold()?;
+    save_held(cfg, &held)
+}
+
+/// [`save`], for one that already holds the file.
+pub(crate) fn save_held(cfg: &Config, _: &crate::lock::Held) -> Result<(), String> {
     let text = render(cfg)?;
-    write_private(&dir().join("config.json"), &text).map_err(|e| format!("cannot write ~/.airband/config.json: {e}"))
+    write_private(&file(), &text).map_err(|e| format!("cannot write ~/.airband/config.json: {e}"))
+}
+
+/// What is in the settings file: `None` when there is no file yet. A file that is there and cannot be read or
+/// parsed is an error, never "no file": it holds the token, the pairings and the keys, and is never replaced.
+fn existing(path: &std::path::Path) -> Result<Option<(String, Config)>, String> {
+    let unread = |e: String| format!("{} cannot be read: {e}.\nNothing was changed. Fix it, or move the file aside to start again with a new one (which unpairs every radio).", path.display());
+    match airband_io::files::read_text(path) {
+        Ok(None) => Ok(None),
+        Ok(Some(text)) => parse(&text).map(|cfg| Some((text, cfg))).map_err(unread),
+        Err(e) => Err(unread(e.to_string())),
+    }
 }
 
 /// Read the config, creating it (with a fresh token) on first use.
 pub(crate) fn load() -> Config {
-    let path = dir().join("config.json");
+    let path = file();
     airband_io::files::make_folder(&dir()).expect("cannot create ~/.airband");
-    let existing = airband_io::files::read_text(&path).ok().flatten();
-    let cfg: Config = match existing.as_deref().map(parse) {
-        Some(Ok(cfg)) => cfg,
-        None => parse("{}").unwrap(),
-        // A config that cannot be read is never replaced: it holds the token, the pairings and the keys. A typo,
-        // or a setting written by a newer build, must cost nothing but this message.
-        Some(Err(e)) => {
-            eprintln!("{} cannot be read: {e}.\nNothing was changed. Fix that line, or move the file aside to start again with a new one (which unpairs every radio).", path.display());
+    // read and, when it is new or out of date, written while no other airband process is changing it
+    let _held = hold().unwrap_or_else(|why| {
+        eprintln!("airband: {why}");
+        std::process::exit(2);
+    });
+    let (existing, cfg) = match existing(&path) {
+        Ok(Some((text, cfg))) => (Some(text), cfg),
+        Ok(None) => (None, parse("{}").unwrap()),
+        Err(why) => {
+            eprintln!("{why}");
             std::process::exit(2);
         }
     };
@@ -358,6 +386,20 @@ fn yes() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_settings_file_that_cannot_be_read_is_an_error_never_no_file() {
+        let dir = std::env::temp_dir().join(format!("airband-cfg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        assert!(existing(&path).unwrap().is_none(), "no file is no file");
+        std::fs::write(&path, b"{\"token\": \"\xff\"}").unwrap();
+        assert!(existing(&path).is_err(), "a byte that is not text is an error, not an empty file");
+        assert_eq!(std::fs::read(&path).unwrap(), b"{\"token\": \"\xff\"}", "and the file is left as it was");
+        std::fs::write(&path, "{ not json").unwrap();
+        assert!(existing(&path).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn keys_that_could_not_be_had_once_do_not_block_every_later_read() {

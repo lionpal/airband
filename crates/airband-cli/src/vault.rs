@@ -35,17 +35,16 @@ fn each(doc: &mut Value, f: &mut dyn FnMut(String, &mut Value)) {
             f(name.to_string(), v);
         }
     }
-    {
-        let part = "summarizer";
+    for part in crate::config::USERS {
         // a key written by its name is not a secret: the key it names is kept below
-        if let Some(v) = doc.get_mut(part).and_then(|p| p.get_mut("key")).filter(|v| v.as_str().is_some_and(|k| !k.starts_with("key:"))) {
+        if let Some(v) = doc.get_mut(part).and_then(|p| p.get_mut("key")).filter(|v| v.as_str().is_some_and(|k| !k.starts_with(crate::config::BY_NAME))) {
             f(format!("{part}.key"), v);
         }
     }
     if let Some(keys) = doc.get_mut("keys").and_then(Value::as_object_mut) {
         for (name, k) in keys {
             if let Some(v) = k.get_mut("secret").filter(|v| v.is_string()) {
-                f(format!("key:{name}"), v);
+                f(format!("{}{name}", crate::config::BY_NAME), v);
             }
         }
     }

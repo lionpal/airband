@@ -40,8 +40,8 @@ pub(crate) fn station(cfg: &Config) -> String {
     static HOST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     let said = |program: &str, args: &[&str]| std::process::Command::new(program).args(args).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|name| !name.is_empty());
     HOST.get_or_init(|| {
-        let given = if cfg!(target_os = "macos") { said("scutil", &["--get", "ComputerName"]) } else { None };
-        given.or_else(|| said("hostname", &["-s"])).unwrap_or_default()
+        let given = if cfg!(target_os = "macos") { said(crate::platform::SCUTIL, &["--get", "ComputerName"]) } else { None };
+        given.or_else(|| said(crate::platform::HOSTNAME, &["-s"])).unwrap_or_default()
     })
     .clone()
 }

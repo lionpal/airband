@@ -59,24 +59,26 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
     let (id, entry_id) = (config::random_hex(8), config::random_hex(8));
     let what = ask.what.trim();
     // a question of the agent's is put as the question it is, with its own answers; anything else as "may I"
-    let (line, options, detail) = match &ask.question {
+    let (line, options, detail, more) = match &ask.question {
         Some(q) => {
             log(format!("{}: asks him a question", session.callsign.text()));
             let choices: Vec<String> = q.choices.iter().filter(|c| c.chars().count() <= 28).take(4).cloned().collect();
             let all = if q.choices.is_empty() { q.text.clone() } else { format!("{}\n\n{}", q.text, q.choices.iter().map(|c| format!("- {c}")).collect::<Vec<_>>().join("\n")) };
             // a long question is shown by its opening; all of it is one tap away, as for any message
             let line = airband_core::prose::clip(&q.text, 220);
-            (line, if choices.len() == q.choices.len() { choices } else { Vec::new() }, all)
+            let more = !q.choices.is_empty() || q.text.chars().count() > 220;
+            (line, if choices.len() == q.choices.len() { choices } else { Vec::new() }, all, more)
         }
         None => {
             log(format!("{}: asks permission to {what}", session.callsign.text()));
             let line = Request { what: Some(what.to_string()), at_keyboard: false }.line().unwrap_or_default();
-            let detail = if ask.detail.trim().is_empty() { line.clone() } else { ask.detail.clone() };
-            (line, vec![ALLOW.into(), DENY.into()], detail)
+            let more = !ask.detail.trim().is_empty();
+            let detail = if more { ask.detail.clone() } else { line.clone() };
+            (line, vec![ALLOW.into(), DENY.into()], detail, more)
         }
     };
     // on a call it is read out like any other question
-    inner.record(Entry { short: Some(line), options, permit: Some(id.clone()), leave: ask.question.is_none().then(|| Request { what: Some(what.to_string()), at_keyboard: false }), aloud: Aloud::Waiting, ..Entry::said(entry_id.clone(), &session, Some(Kind::NeedsYou), detail) });
+    inner.record(Entry { short: Some(line), more, options, permit: Some(id.clone()), leave: ask.question.is_none().then(|| Request { what: Some(what.to_string()), at_keyboard: false }), aloud: Aloud::Waiting, ..Entry::said(entry_id.clone(), &session, Some(Kind::NeedsYou), detail) });
     inner.permits.insert(id.clone(), Permit { agent_id, entry: entry_id.clone(), decided: None, asked: Instant::now(), polled: Instant::now(), question: ask.question.is_some() });
     // he had the chat open a moment ago and may have put the phone down since: it is woken if so
     push::consider(app, &mut inner, &entry_id);
@@ -86,7 +88,7 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
 
 /// Where a request stands. Held open for up to `wait` seconds while there is no answer.
 pub(super) async fn state(app: &Arc<App>, id: &str, wait: u64) -> PermissionState {
-    let until = Instant::now() + Duration::from_secs(wait.min(25));
+    let until = Instant::now() + Duration::from_secs(wait.min(airband_core::radio::wire::FeedQuery::WAIT_MOST as u64));
     loop {
         {
             let mut inner = app.change();

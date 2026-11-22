@@ -38,7 +38,10 @@ pub(in crate::tower) async fn on_utterance(app: &Arc<App>, radio: &str, text: &s
     }
     // files that came with his words: where each is on this computer, for whoever the words go to, and the
     // pictures to show beside them in the chat
-    let (files, shown_files) = if said.attachments.is_empty() { (String::new(), Vec::new()) } else { attachments::describe(&said.attachments).await };
+    let (files, shown_files) = match attachments::describe(&said.attachments).await {
+        Ok(described) => described,
+        Err(why) => return say(why),
+    };
     // starting a new agent comes next: it is addressed to the tower, not to anyone on the radio
     let projects: Vec<Place> = app.read().launchable();
     if let Some(reply) = new_agent(app, radio, text, said, &files, &projects).await {

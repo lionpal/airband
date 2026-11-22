@@ -81,19 +81,26 @@ fn login_item(moved: Option<&std::path::Path>) -> String {
     }
 }
 
+/// A stand-in the end-to-end suites put in place of the account service and the keychain items. Only a build made
+/// with the `stand-ins` feature reads these: the airband he installs never does, so nothing set in his shell can
+/// send his logins anywhere else.
+fn stand_in(key: &str) -> Option<String> {
+    if cfg!(feature = "stand-ins") { super::env(key) } else { None }
+}
+
 impl Here {
     fn this_computer() -> Here {
-        let place = |key: &str, default: String| super::env(key).unwrap_or(default);
+        let place = |key: &str, default: String| stand_in(key).unwrap_or(default);
         let moved = super::moved_home(HARNESS);
-        let live_service = super::env("AIRBAND_CLAUDE_LIVE_SERVICE").unwrap_or_else(|| login_item(moved.as_deref()));
+        let live_service = stand_in("AIRBAND_STAND_IN_LIVE_ITEM").unwrap_or_else(|| login_item(moved.as_deref()));
         Here {
             vault: Box::new(vault::Keychain),
-            api: place("AIRBAND_CLAUDE_API", row("accounts_api")),
-            token_url: place("AIRBAND_CLAUDE_TOKEN_URL", row("accounts_token")),
+            api: place("AIRBAND_STAND_IN_ACCOUNTS", row("accounts_api")),
+            token_url: place("AIRBAND_STAND_IN_TOKENS", row("accounts_token")),
             dir: dir(),
             account_file: moved.unwrap_or_else(config::home).join(row("account_file")),
             live_service,
-            vault_service: place("AIRBAND_CLAUDE_VAULT_SERVICE", "airband".into()),
+            vault_service: place("AIRBAND_STAND_IN_VAULT_ITEM", "airband".into()),
             user: config::account().map(|a| a.login).filter(|l| !l.is_empty()).ok_or_else(|| "This computer's account has no login name.".to_string()),
         }
     }
@@ -109,17 +116,9 @@ pub(super) fn dir() -> PathBuf {
 
 /// One thing at a time across every airband process on this computer: a saved login must never be refreshed
 /// twice at once, or switched while it is being refreshed.
-fn locked<T>(here: &Here, work: impl FnOnce() -> T) -> T {
-    airband_io::files::make_folder(&here.dir).ok();
-    let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(here.dir.join("accounts.lock")).ok();
-    #[cfg(unix)]
-    if let Some(f) = &file {
-        use std::os::fd::AsRawFd;
-        unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
-    }
-    let out = work();
-    drop(file);
-    out
+fn locked<T>(here: &Here, work: impl FnOnce() -> T) -> Res<T> {
+    let _held = crate::lock::take(&here.dir.join("accounts.lock"))?;
+    Ok(work())
 }
 
 /// Save the login Claude Code is using now. Returns its email.
@@ -192,7 +191,7 @@ fn account(email: String, identity: airband_core::identity::AccountIdentity, liv
 }
 
 fn list_in(here: &Here) -> (Vec<Account>, Option<String>) {
-    locked(here, || {
+    let listed = locked(here, || {
         let mut notes: Vec<String> = Vec::new();
         let mut emails = saved::index(here).unwrap_or_else(|e| {
             notes.push(e);
@@ -220,7 +219,8 @@ fn list_in(here: &Here) -> (Vec<Account>, Option<String>) {
                     })
                 })
                 .collect();
-            checks.into_iter().filter_map(|h| h.join().ok()).collect()
+            // one whose check failed inside is said, not left off the list as if it were not saved
+            checks.into_iter().filter_map(|h| h.join().map_err(|_| notes.push("One saved account could not be checked: airband ran into trouble with it.".into())).ok()).collect()
         });
         match (&live, accounts.len()) {
             (Live::Unknown, _) => notes.push(format!("Could not tell which account {} is using just now: {} did not say.", tool(), maker())),
@@ -229,7 +229,8 @@ fn list_in(here: &Here) -> (Vec<Account>, Option<String>) {
             _ => {}
         }
         (accounts, (!notes.is_empty()).then(|| notes.join(" ")))
-    })
+    });
+    listed.unwrap_or_else(|why| (Vec::new(), Some(why)))
 }
 
 static SWITCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -267,10 +268,7 @@ fn switch_in(here: &Here, id: &str) -> Res<std::thread::JoinHandle<()>> {
             // the login goes back as it was, so the two never disagree
             let undone = match &before {
                 Some(before) => here.vault.write(&here.live_service, user, before),
-                None => {
-                    here.vault.delete(&here.live_service, user);
-                    Ok(())
-                }
+                None => here.vault.delete(&here.live_service, user),
             };
             return Err(match undone {
                 Ok(()) => format!("Did not switch: {e}"),
@@ -293,7 +291,7 @@ fn switch_in(here: &Here, id: &str) -> Res<std::thread::JoinHandle<()>> {
                 }
             }
         }))
-    })
+    })?
 }
 
 /// Whether the account file holds this account: by the account's own id, never by its email.
@@ -322,7 +320,7 @@ pub(crate) fn switch(id: &str) -> Res<std::thread::JoinHandle<()>> {
 /// `airband accounts save`: keep the login Claude Code is using now.
 pub(crate) fn save() -> Res<String> {
     let here = Here::this_computer();
-    locked(&here, || save_live(&here))
+    locked(&here, || save_live(&here))?
 }
 
 /// `airband accounts add`: sign in to another account in a private folder, so the login in use and every
@@ -345,11 +343,14 @@ pub(crate) fn add() -> Res<String> {
         let oauth = blob.get(login_key()).cloned().ok_or("The sign-in saved no login for an account.")?;
         let acct = live::oauth_account(&tmp.join(row("account_file"))).ok_or("The sign-in saved no account record.")?;
         let email = acct.get("emailAddress").and_then(|e| e.as_str()).map(String::from).ok_or("The account record has no email.")?;
-        locked(&here, || saved::keep(&here, &email, &oauth, &acct))?;
+        locked(&here, || saved::keep(&here, &email, &oauth, &acct))??;
         Ok(email)
     })();
-    if let Ok(user) = here.user() {
-        here.vault.delete(&service, user);
+    // the sign-in's own copy, in an item of its own: one left behind is said, never passed over
+    if let Ok(user) = here.user()
+        && let Err(e) = here.vault.delete(&service, user)
+    {
+        eprintln!("The sign-in's copy of the login could not be taken out of the keychain ({e}). It is the item {service}.");
     }
     std::fs::remove_dir_all(&tmp).ok();
     result
@@ -362,7 +363,7 @@ pub(crate) fn forget(id: &str) -> Res<String> {
         let email = saved::resolve(&here, id)?;
         saved::forget(&here, &email)?;
         Ok(email)
-    })
+    })?
 }
 
 #[cfg(test)]

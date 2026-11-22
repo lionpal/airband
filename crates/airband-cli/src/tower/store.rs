@@ -28,6 +28,9 @@ pub(super) enum Receipt {
     Unknown(String),
 }
 
+/// A value kept under its key in the state table, in place of what was there.
+const KEEP_UNDER: &str = "insert into state (key, value) values (?1, ?2) on conflict (key) do update set value = excluded.value";
+
 impl Store {
     pub(super) fn open(path: &std::path::Path) -> Result<Store, String> {
         let db = Connection::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
@@ -51,7 +54,7 @@ impl Store {
         .map_err(|e| format!("cannot prepare {}: {e}", path.display()))?;
         // columns added since the table was first made: what a request for leave asked and where it stands,
         // and what airband says around the tool's words
-        for (column, kind) in [("request", "text"), ("note", "text"), ("his", "integer")] {
+        for (column, kind) in [("request", "text"), ("note", "text"), ("his", "integer"), ("more", "integer")] {
             if db.prepare(&format!("select {column} from messages limit 0")).is_err() {
                 db.execute_batch(&format!("alter table messages add column {column} {kind};")).map_err(|e| format!("cannot prepare {}: {e}", path.display()))?;
                 // Kept from before whether a line is his had its own column: his lines were the ones written
@@ -79,7 +82,7 @@ impl Store {
             Some(Ok(value)) => Ok(value),
             Some(Err(e)) => {
                 log(format!("database: what was kept as '{key}' could not be read ({e}); kept as '{key}.unreadable', starting without it"));
-                Self::warn("setting state aside", db.execute("insert into state (key, value) values (?1, ?2) on conflict (key) do update set value = excluded.value", params![format!("{key}.unreadable"), text]));
+                Self::warn("setting state aside", db.execute(KEEP_UNDER, params![format!("{key}.unreadable"), text]));
                 Ok(T::default())
             }
         }
@@ -116,7 +119,7 @@ impl Store {
     /// The newest `keep` messages, oldest first. A row this build cannot read, or a column of one that does not
     /// read as what it should be, is said in the log with the message's number, never passed over in silence.
     fn messages(db: &Connection, keep: usize) -> Vec<Entry> {
-        let Some(mut q) = Self::warn("reading messages", db.prepare("select seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his from messages order by seq desc limit ?1")) else { return Vec::new() };
+        let Some(mut q) = Self::warn("reading messages", db.prepare("select seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his, more from messages order by seq desc limit ?1")) else { return Vec::new() };
         let rows = q.query_map(params![keep as i64], |r| {
             let seq = r.get::<_, i64>(0)? as u64;
             let column = |n: usize| r.get::<_, Option<String>>(n);
@@ -136,6 +139,7 @@ impl Store {
                 pictures: read_json(seq, "pictures", column(12)?).unwrap_or_default(),
                 agent: r.get(13)?,
                 his: r.get::<_, Option<bool>>(25)?.unwrap_or(false),
+                more: r.get::<_, Option<bool>>(26)?.unwrap_or(false),
                 to_agents: read_json(seq, "to_agents", column(14)?).unwrap_or_default(),
                 rev: r.get::<_, Option<i64>>(15)?.unwrap_or(0) as u64,
                 read: r.get(16)?,
@@ -170,15 +174,18 @@ impl Store {
         entries
     }
 
-    /// Write what changed in the state: each kept table under its own key, and the messages, in one go.
-    pub(super) fn write(&self, batch: &Batch) {
+    /// Write what changed in the state: each kept table under its own key, and the messages, in one go. All of it
+    /// is written or none of it is, and an error says so: the caller keeps the batch and tries again.
+    pub(super) fn write(&self, batch: &Batch) -> rusqlite::Result<()> {
         let mut db = self.db.lock().unwrap();
-        let Some(tx) = Self::warn("saving state", db.transaction()) else { return };
+        let tx = db.transaction()?;
         for (key, text) in &batch.tables {
-            Self::warn("saving state", tx.execute("insert into state (key, value) values (?1, ?2) on conflict (key) do update set value = excluded.value", params![key, text]));
+            tx.execute(KEEP_UNDER, params![key, text])?;
         }
-        Self::put(&tx, &batch.messages);
-        Self::warn("saving state", tx.commit());
+        for e in &batch.messages {
+            Self::put_one(&tx, e)?;
+        }
+        tx.commit()
     }
 
     /// Where each paired radio can be woken with a notification, by the radio's name. Kept apart from the rest
@@ -188,27 +195,22 @@ impl Store {
     }
     pub(super) fn save_push_targets(&self, targets: &BTreeMap<String, Vec<airband_core::radio::PushTarget>>) {
         let db = self.db.lock().unwrap();
-        Self::warn("saving where phones can be woken", db.execute("insert into state (key, value) values ('push', ?1) on conflict (key) do update set value = excluded.value", params![serde_json::to_string(targets).unwrap()]));
+        Self::warn("saving where phones can be woken", db.execute(KEEP_UNDER, params!["push", serde_json::to_string(targets).unwrap()]));
     }
 
     /// Write new messages, and messages whose short or fuller version has just been made.
     #[cfg(test)]
     pub(super) fn put_messages(&self, entries: &[Entry]) {
-        Self::put(&self.db.lock().unwrap(), entries);
+        self.write(&Batch { tables: Vec::new(), messages: entries.to_vec() }).unwrap();
     }
 
-    fn put(db: &Connection, entries: &[Entry]) {
-        for e in entries {
-            let kind = e.kind.as_ref().and_then(word);
-            Self::warn(
-                "saving a message",
-                db.execute(
-                    "insert into messages (seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
-                     on conflict (seq) do update set grp = excluded.grp, kind = excluded.kind, short = excluded.short, full = excluded.full, detail = excluded.detail, options = excluded.options, recommended = excluded.recommended, rev = excluded.rev, read = excluded.read, waiting = excluded.waiting, seen = excluded.seen, leave = excluded.leave, request = excluded.request, own_session = excluded.own_session, aloud = excluded.aloud",
-                    params![e.seq as i64, e.id, e.at as i64, e.from, e.team.as_ref().map_or("", |t| t.as_str()), serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, e.held.as_ref().and_then(word), e.seen.map(|t| t as i64), e.leave.is_some() as i64, e.own_session as i64, serde_json::to_string(&e.aloud).unwrap(), e.notice as i64, e.leave.as_ref().map(|r| serde_json::to_string(r).unwrap()), e.note.as_ref().and_then(word), e.his],
-                ),
-            );
-        }
+    fn put_one(db: &Connection, e: &Entry) -> rusqlite::Result<usize> {
+        let kind = e.kind.as_ref().and_then(word);
+        db.execute(
+            "insert into messages (seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his, more) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
+             on conflict (seq) do update set grp = excluded.grp, kind = excluded.kind, short = excluded.short, full = excluded.full, detail = excluded.detail, options = excluded.options, recommended = excluded.recommended, rev = excluded.rev, read = excluded.read, waiting = excluded.waiting, seen = excluded.seen, leave = excluded.leave, request = excluded.request, own_session = excluded.own_session, aloud = excluded.aloud, more = excluded.more",
+            params![e.seq as i64, e.id, e.at as i64, e.from, e.team.as_ref().map_or("", |t| t.as_str()), serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, e.held.as_ref().and_then(word), e.seen.map(|t| t as i64), e.leave.is_some() as i64, e.own_session as i64, serde_json::to_string(&e.aloud).unwrap(), e.notice as i64, e.leave.as_ref().map(|r| serde_json::to_string(r).unwrap()), e.note.as_ref().and_then(word), e.his, e.more],
+        )
     }
 
     /// The highest message number and change count ever used, so both carry on after a restart even past what
@@ -397,7 +399,7 @@ mod tests {
     #[test]
     fn a_kept_table_that_cannot_be_read_is_set_aside_alone() {
         let (s, path) = store("one-table");
-        s.write(&Batch { tables: vec![("sessions", "[]".into()), ("teams", "not json".into()), ("tools", r#"["codex"]"#.into())], messages: Vec::new() });
+        s.write(&Batch { tables: vec![("sessions", "[]".into()), ("teams", "not json".into()), ("tools", r#"["codex"]"#.into())], messages: Vec::new() }).unwrap();
         let (saved, _) = s.load(10).unwrap();
         assert!(saved.teams.is_empty(), "the unreadable table starts empty");
         assert_eq!(saved.tools, ["codex"], "the others are read");

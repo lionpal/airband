@@ -116,8 +116,8 @@ use airband_core::ids::{AgentId, LauncherId, TeamId};
 use airband_core::prose::{opening, plain as spoken};
 
 
-/// How long `GET next` is held open.
-const HOLD: Duration = Duration::from_secs(25);
+/// How long `GET next` is held open: as long as the feed is, the one number for both.
+const HOLD: Duration = Duration::from_secs(airband_core::radio::wire::FeedQuery::WAIT_MOST as u64);
 /// How long after a radio last showed it was there it is still taken to be: the one clock for that (see
 /// [`state::Presence`]). Longer than a radio waits for an answer before it asks again (50 seconds), so one
 /// request lost on the way does not make it gone.
@@ -149,6 +149,12 @@ pub(crate) struct App {
     push: push::Wake,
     /// Every pairing being served, by its channel.
     served: relay_link::Served,
+    /// Held when a held agent's holder is started again, so two deliveries to one whose holder has gone never
+    /// start two holders on one session.
+    reviving: tokio::sync::Mutex<()>,
+    /// The addresses besides 127.0.0.1 the tower is listening on now: what a radio is told it can reach
+    /// directly, so it is never told of one that is not served.
+    listening: Mutex<Vec<std::net::Ipv4Addr>>,
 }
 
 impl App {

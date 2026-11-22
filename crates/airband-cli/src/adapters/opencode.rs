@@ -93,7 +93,8 @@ fn leave(request: &Value, cwd: Option<&str>) -> Option<PermissionAsk> {
     let on: Vec<&str> = request["resources"].as_array()?.iter().filter_map(Value::as_str).collect();
     let what = match (action, on.as_slice()) {
         ("shell", [command]) => super::hooks::to_run(NAME, command),
-        (_, []) => format!("use {action}"),
+        // nothing named: its own word for what it wants to do, and nothing made up around it
+        (_, []) => action.to_string(),
         _ => format!("{action}: {}", on.join(", ")),
     };
     // one too long to put in front of him whole is not asked on the phone: it stays on OpenCode's own screen
@@ -299,5 +300,7 @@ mod tests {
         assert_eq!((ask.what.as_str(), ask.agent.id.as_str()), ("run `echo airband-probe`", "ses_1"));
         assert!(ask.detail.starts_with("shell\n") && ask.detail.contains("echo airband-probe"));
         assert_eq!(leave(&json!({ "id": "per_2", "sessionID": "ses_1", "action": "edit", "resources": ["src/a.rs", "src/b.rs"] }), None).unwrap().what, "edit: src/a.rs, src/b.rs");
+        // naming nothing, it is put in its own word, with nothing made up around it
+        assert_eq!(leave(&json!({ "id": "per_3", "sessionID": "ses_1", "action": "webfetch", "resources": [] }), None).unwrap().what, "webfetch");
     }
 }

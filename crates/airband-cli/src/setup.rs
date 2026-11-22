@@ -80,7 +80,8 @@ fn choose(cfg: &mut Config, title: &str, about: &str, none: &str) {
             println!("  Give its number.");
             continue;
         };
-        let before = serde_json::to_value(&*cfg).unwrap();
+        // all of it as it was, the built-in launchers too (they are never written, so a copy in writing has none)
+        let before = cfg.clone();
         let chosen = match offered.get(n - 1) {
             None => Use::default(),
             Some((p, o)) => {
@@ -110,7 +111,7 @@ fn choose(cfg: &mut Config, title: &str, about: &str, none: &str) {
             Err(why) => {
                 println!("  That did not work: {why}");
                 // nothing of a choice that failed is kept, its key included
-                *cfg = serde_json::from_value(before).unwrap();
+                *cfg = before;
             }
         }
     }

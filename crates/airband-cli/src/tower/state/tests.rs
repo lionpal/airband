@@ -452,7 +452,7 @@ fn every_way_out_of_the_reading_queue_is_written_down_with_its_reason() {
     joins(&mut inner, &agent("b", "/x/backoffice", None));
     // routine: the judge found nothing for his ears
     let routine = queued(&mut inner, "a", Kind::Report, "Still going.");
-    inner.fill(&routine, &judge::Judged { kind: Kind::Fyi, say: "Still going.".into(), options: Vec::new(), recommended: None, read: None, background: false, own_session: false });
+    inner.fill(&routine, &judge::Judged { kind: Kind::Fyi, say: "Still going.".into(), cut: false, options: Vec::new(), recommended: None, read: None, background: false, own_session: false });
     assert_eq!(aloud(&inner, &routine), dropped(Dropped::Routine));
     // dismissed, and a request for leave that is over
     let leave = asks_leave(&mut inner, "a", "p1", "run `make`");
@@ -750,4 +750,35 @@ fn no_way_of_naming_a_team_gives_it_a_name_another_team_has() {
     assert_eq!(inner.team_name(&back_id), Some("back"));
     assert!(inner.rename_team(&back_id, "shop").is_err());
     let _ = std::fs::remove_dir_all(&here);
+}
+
+#[test]
+fn whether_there_is_more_to_read_is_the_verdict_kept_on_the_line_never_a_comparison_of_words() {
+    let mut inner = Inner::default();
+    joins(&mut inner, &agent("a", "/x/shop", None));
+    let id = queued(&mut inner, "a", Kind::Report, "Refunds sent. All forty of them, each checked against the order.");
+    let verdict = |say: &str, cut: bool| judge::Judged { kind: Kind::Report, say: say.into(), cut, options: Vec::new(), recommended: None, read: None, background: false, own_session: false };
+    // the model cut it down, though its line reads like the start of the message
+    inner.fill(&id, &verdict("Refunds sent.", true));
+    let e = inner.log.iter().find(|e| e.id == id).unwrap().clone();
+    assert!(inner.message(&e).long);
+    // the model said it is fine as written, though its words differ from the message's
+    inner.fill(&id, &verdict("Refunds sent, all forty checked.", false));
+    let e = inner.log.iter().find(|e| e.id == id).unwrap().clone();
+    assert!(!inner.message(&e).long);
+}
+
+#[test]
+fn of_two_free_radios_the_one_he_showed_was_there_last_takes_it_never_the_first_by_name() {
+    let mut inner = Inner::default();
+    for radio in ["zed", "alpha"] {
+        let c = inner.call(radio);
+        c.presence.says(ON_CALL);
+        c.ready = true;
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(inner.free_radio().as_deref(), Some("alpha"));
+    // a request from the other shows it is there now
+    inner.call("zed");
+    assert_eq!(inner.free_radio().as_deref(), Some("zed"));
 }

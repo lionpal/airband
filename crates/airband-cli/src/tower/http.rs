@@ -74,6 +74,15 @@ where
     }
 }
 
+/// Which radio asked: a route kept per radio is refused, as a refusal, to a caller that names none (the
+/// tower's own token without the radio header), never answered with a bare error.
+impl<S: Send + Sync> FromRequestParts<S> for RadioId {
+    type Rejection = Response;
+    async fn from_request_parts(parts: &mut axum::http::request::Parts, _: &S) -> Result<Self, Response> {
+        parts.extensions.get::<RadioId>().cloned().ok_or_else(|| No(Refusal::NotAllowed).into_response())
+    }
+}
+
 /// The body of endpoint `E`, read as its type. One that does not read is refused.
 pub(super) struct Sent<E: Endpoint>(pub(super) E::Body);
 
@@ -108,7 +117,7 @@ async fn auth(State(app): State<Arc<App>>, req: Request, next: Next) -> Response
     let radio = same(given, app.cfg().radio_token.as_bytes()) && req.uri().path().starts_with(airband_core::radio::PATH);
     if !(own || radio) {
         // a token that opens nothing: 401, so the radio knows its pairing is wrong, not that this one route is shut
-        return (StatusCode::UNAUTHORIZED, Json(Refusal::NotAllowed)).into_response();
+        return No(Refusal::NotPaired).into_response();
     }
     // everything a radio's route is asked says which version of the protocol it is in; another, or none, is
     // told so and goes no further
@@ -202,7 +211,7 @@ pub(super) mod tests {
         let cfg: Config = serde_json::from_str(r#"{"token":"own","radio_token":"radio"}"#).unwrap();
         let push = push::Wake::load(&store, &[]).unwrap();
         let saver = saver::Saver::start(store.clone());
-        Arc::new(App { push, settings: Settings::held(cfg), store, saver, inner: Mutex::new(Inner::default()), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default() })
+        Arc::new(App { push, settings: Settings::held(cfg), store, saver, inner: Mutex::new(Inner::default()), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default(), reviving: Default::default(), listening: Default::default() })
     }
 
     fn presence(radio: Option<RadioId>, header: Option<&str>) -> Request {
@@ -291,6 +300,21 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
+    async fn a_token_that_opens_nothing_is_told_as_not_paired_and_a_route_kept_per_radio_needs_one_named() {
+        let app = app("not-paired");
+        let req = Request::builder().method("POST").uri("/v1/radio/ready").header("authorization", "Bearer wrong").header(RADIO_HEADER, "phone").header(SCHEMA_HEADER, airband_core::radio::SCHEMA);
+        let res = router(app.clone()).oneshot(req.body(axum::body::Body::empty()).unwrap()).await.unwrap();
+        let body: Refusal = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(body, Refusal::NotPaired);
+        // the tower's own token naming no radio, on a route kept per radio: a refusal, not a bare error
+        let req = Request::builder().method("POST").uri("/v1/radio/ready").header("authorization", "Bearer own").header(SCHEMA_HEADER, airband_core::radio::SCHEMA);
+        let res = router(app.clone()).oneshot(req.body(axum::body::Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(res.status().as_u16(), 403);
+        let body: Refusal = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(body, Refusal::NotAllowed);
+    }
+
+    #[tokio::test]
     async fn a_radio_that_speaks_another_version_or_none_is_told_which_this_one_is() {
         let app = app("versions");
         for speaks in [Some("airband.radio/3"), None] {
@@ -325,5 +349,15 @@ pub(super) mod tests {
         let ask = |query: &str| Request::builder().method("GET").uri(format!("/v1/radio/feed?{query}")).header("authorization", "Bearer radio").header(SCHEMA_HEADER, airband_core::radio::SCHEMA).extension(RadioId("phone".into())).body(axum::body::Body::empty()).unwrap();
         assert_eq!(router(app.clone()).oneshot(ask("after=0&wait=0")).await.unwrap().status(), 200);
         assert_eq!(router(app.clone()).oneshot(ask("after=seven&wait=0")).await.unwrap().status(), 400);
+    }
+
+    #[tokio::test]
+    async fn a_radio_is_told_only_the_addresses_the_tower_is_listening_on() {
+        let app = app("feed-direct");
+        app.listening.lock().unwrap().push(std::net::Ipv4Addr::new(10, 0, 0, 5));
+        let req = Request::builder().method("GET").uri("/v1/radio/feed?after=0&wait=0").header("authorization", "Bearer radio").header(SCHEMA_HEADER, airband_core::radio::SCHEMA).extension(RadioId("phone".into())).body(axum::body::Body::empty()).unwrap();
+        let res = router(app.clone()).oneshot(req).await.unwrap();
+        let feed: Feed = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(feed.direct, [format!("http://10.0.0.5:{}", app.cfg().port)]);
     }
 }

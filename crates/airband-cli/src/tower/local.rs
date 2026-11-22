@@ -25,8 +25,10 @@ pub(crate) fn listen_after(tower_port: u16) {
     PORT.set(tower_port.saturating_add(10)).ok();
 }
 
-fn port() -> u16 {
-    PORT.get().copied().unwrap_or(config::DEFAULT_PORT + 10)
+/// The port the model's server listens on: set from the tower's own when it starts ([`listen_after`]). Never
+/// one made up here: a server on a port nobody set could be another tower's.
+fn port() -> Result<u16, String> {
+    PORT.get().copied().ok_or_else(|| "airband has not said where its local model listens".to_string())
 }
 
 fn dir() -> PathBuf {
@@ -41,8 +43,8 @@ fn server_row(id: &str) -> Result<&'static airband_core::catalog::Server, String
 fn program(server: &airband_core::catalog::Server) -> PathBuf {
     dir().join(&server.program)
 }
-fn address() -> String {
-    format!("http://127.0.0.1:{}", port())
+fn address() -> Result<String, String> {
+    Ok(format!("http://127.0.0.1:{}", port()?))
 }
 
 /// Fetch the server program, if it is not here yet. Blocks while it downloads (about 17 MB).
@@ -65,7 +67,7 @@ fn fetch(server: &airband_core::catalog::Server) -> Result<PathBuf, String> {
     }
     let packed = dir().join(&archive.file);
     airband_io::files::write_atomic(&packed, &bytes).map_err(|e| e.to_string())?;
-    let unpacked = Command::new("tar").arg("-xzf").arg(&packed).arg("-C").arg(dir()).status().map_err(|e| format!("could not unpack it: {e}"))?;
+    let unpacked = Command::new(crate::platform::TAR).arg("-xzf").arg(&packed).arg("-C").arg(dir()).status().map_err(|e| format!("could not unpack it: {e}"))?;
     airband_io::files::remove(&packed).ok();
     if !unpacked.success() || !program.is_file() {
         return Err("the program that runs the model could not be unpacked".into());
@@ -73,16 +75,16 @@ fn fetch(server: &airband_core::catalog::Server) -> Result<PathBuf, String> {
     Ok(program)
 }
 
-fn healthy() -> bool {
-    let agent = airband_io::http::agent(Duration::from_secs(2));
-    agent.get(format!("{}/health", address())).call().is_ok_and(|r| r.status().as_u16() == 200)
+/// Whether the model's program has ended. One that cannot be asked is taken as still running: it is asked again.
+fn ended(child: &mut Child) -> bool {
+    child.try_wait().is_ok_and(|done| done.is_some())
 }
 
-/// When a process started, as the system says it: what tells it from another that was later given its number.
-fn started(pid: u32) -> Option<String> {
-    let out = Command::new("ps").args(["-p", &pid.to_string(), "-o", "lstart="]).env("LC_ALL", "C").env("TZ", "UTC").output().ok().filter(|o| o.status.success())?;
-    Some(String::from_utf8_lossy(&out.stdout).split_whitespace().collect::<Vec<_>>().join(" ")).filter(|s| !s.is_empty())
+fn healthy() -> bool {
+    let agent = airband_io::http::agent(Duration::from_secs(2));
+    address().is_ok_and(|at| agent.get(format!("{at}/health")).call().is_ok_and(|r| r.status().as_u16() == 200))
 }
+
 
 /// A server left by a tower that was stopped: only the one this tower recorded starting (its process and
 /// the moment that process started, on two lines), and only if a process with that number still started at
@@ -91,8 +93,10 @@ fn end_the_last_one() {
     let note = dir().join("server.pid");
     let noted = airband_io::files::read_text(&note).ok().flatten().unwrap_or_default();
     let mut lines = noted.lines();
-    if let (Some(pid), Some(was)) = (lines.next().and_then(|p| p.trim().parse::<u32>().ok()), lines.next().filter(|p| !p.is_empty()))
-        && started(pid).as_deref() == Some(was)
+    // the moment is kept in seconds; a note from before that kept the system's words for it is read in those
+    let at = |t: &str| t.trim().parse::<u64>().ok().or_else(|| crate::platform::lstart(t));
+    if let (Some(pid), Some(was)) = (lines.next().and_then(|p| p.trim().parse::<u32>().ok()), lines.next().and_then(at))
+        && crate::platform::started(pid) == Some(was)
     {
         terminate(pid);
         std::thread::sleep(Duration::from_millis(600));
@@ -130,9 +134,11 @@ pub(crate) enum Patience {
 /// that, and any other is told it is not ready yet. Blocks.
 pub(crate) fn ensure(model: &str, server: &str, patience: Patience) -> Result<String, String> {
     let server = server_row(server)?;
+    let at = address()?;
+    let port = port()?;
     {
         let mut running = RUNNING.lock().unwrap();
-        let alive = running.as_mut().is_some_and(|(has, child)| has == model && child.try_wait().is_ok_and(|ended| ended.is_none()));
+        let alive = running.as_mut().is_some_and(|(has, child)| has == model && !ended(child));
         if !alive {
             if let Some((_, mut old)) = running.take() {
                 end(&mut old);
@@ -145,12 +151,12 @@ pub(crate) fn ensure(model: &str, server: &str, patience: Patience) -> Result<St
             // went: a model left running by itself would hold gigabytes of memory for nobody. The same shell
             // ends it when it is told to stop.
             const KEEPER: &str = "trap 'kill \"$c\" \"$w\" 2>/dev/null' TERM INT; \"$@\" & c=$!; ( while kill -0 \"$AIRBAND_TOWER_PID\" 2>/dev/null; do sleep 2; done; kill \"$c\" 2>/dev/null ) & w=$!; wait \"$c\"";
-            let child = Command::new("sh")
+            let child = Command::new(crate::platform::SH)
                 .args(["-c", KEEPER, "sh"])
                 .arg(&program)
                 .env("AIRBAND_TOWER_PID", std::process::id().to_string())
                 // what it is started with and in is its row's to say
-                .args(server.args.iter().map(|a| a.replace("{model}", model).replace("{port}", &port().to_string())))
+                .args(server.args.iter().map(|a| a.replace("{model}", model).replace("{port}", &port.to_string())))
                 .envs(server.env.iter().map(|(name, value)| (name.clone(), value.replace("{models}", &dir().join("models").display().to_string()))))
                 .stdin(Stdio::null())
                 .stdout(out.try_clone().map_err(|e| e.to_string())?)
@@ -158,7 +164,7 @@ pub(crate) fn ensure(model: &str, server: &str, patience: Patience) -> Result<St
                 .spawn()
                 .map_err(|e| format!("the program that runs the model did not start: {e}"))?;
             // with the moment it started; one whose start cannot be read is not noted, and so is never ended later
-            if let Some(began) = started(child.id()) {
+            if let Some(began) = crate::platform::started(child.id()) {
                 // a note that cannot be kept means a later start cannot end this one: said, and the model still runs
                 if let Err(e) = airband_io::files::write_atomic(&dir().join("server.pid"), format!("{}\n{began}\n", child.id())) {
                     super::log(format!("the model program's note could not be kept: {e}"));
@@ -170,9 +176,9 @@ pub(crate) fn ensure(model: &str, server: &str, patience: Patience) -> Result<St
     let until = Instant::now() + if patience == Patience::Long { Duration::from_secs(45 * 60) } else { Duration::from_secs(2) };
     loop {
         if healthy() {
-            return Ok(format!("{}/v1", address()));
+            return Ok(format!("{at}/v1"));
         }
-        if RUNNING.lock().unwrap().as_mut().is_some_and(|(_, child)| child.try_wait().is_ok_and(|ended| ended.is_some())) {
+        if RUNNING.lock().unwrap().as_mut().is_some_and(|(_, child)| ended(child)) {
             return Err(format!("the program that runs the model stopped. Its log is {}", dir().join("server.log").display()));
         }
         if Instant::now() >= until {

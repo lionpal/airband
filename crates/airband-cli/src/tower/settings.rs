@@ -80,15 +80,22 @@ impl Settings {
 
     /// Change the settings: the change is made to the settings now, written, and used from then on only once it
     /// is written. When it cannot be written, nothing changes.
+    /// The file is held while it is read, changed and written: what another process wrote is read first and
+    /// changed, never written over.
     pub(crate) fn change<R>(&self, f: impl FnOnce(&mut Config) -> R) -> Result<R, String> {
+        let file = self.now.read().unwrap().file.clone();
+        let held = match file {
+            Some(_) => Some(config::hold()?),
+            None => None,
+        };
+        // read again now it is held: the settings as the file has them this moment
         let mut cfg = (*self.current()).clone();
         if let Some(why) = self.unread() {
             return Err(format!("This computer's settings cannot be read right now: {why}"));
         }
         let made = f(&mut cfg);
-        let file = self.now.read().unwrap().file.clone();
-        if file.is_some() {
-            config::save(&cfg)?;
+        if let Some(held) = &held {
+            config::save_held(&cfg, held)?;
         }
         let mut now = self.now.write().unwrap();
         now.cfg = Arc::new(cfg);

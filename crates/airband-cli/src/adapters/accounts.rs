@@ -166,7 +166,7 @@ pub(crate) fn accounts_command(cfg: &config::Config, args: &[String]) -> Result<
             match by_tower(here.post(<wire::at::UseAccount as wire::Endpoint>::PATH).config().http_status_as_error(false).build().send_json(airband_core::radio::UseAccount { harness: harness.to_string(), id: id.to_string() })) {
                 ByTower::Said(now) => show(&now?),
                 ByTower::NotRunning => {
-                    use_account(harness, id)?.join().ok();
+                    use_account(harness, id)?.join().map_err(|_| "The switch ran into trouble partway; check which account is in use: airband accounts".to_string())?;
                     show(&accounts());
                 }
             }

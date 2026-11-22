@@ -103,6 +103,7 @@ impl LinkError {
             LinkError::Refused(Refusal::TooBig) => "it is more than your computer takes in one message".into(),
             LinkError::Refused(Refusal::Gone) => "your computer no longer has what it names".into(),
             LinkError::Refused(Refusal::NotAllowed) => "your computer does not let this phone do that".into(),
+            LinkError::Refused(Refusal::NotPaired) => "your computer no longer knows this phone; pair it again".into(),
             LinkError::Refused(Refusal::Unknown) => "your computer refused it".into(),
             // trouble of its own, which may pass: not a no
             LinkError::Trouble(status @ 500..=599) => format!("your computer ran into trouble with it ({status})"),

@@ -1,6 +1,5 @@
 //! What a radio sets on this computer: accounts, where to wake the phone, the coding tools he uses.
 use super::*;
-use axum::Extension;
 
 /// The accounts the harnesses here can run under, and how full each is. `fresh=true` asks again now.
 pub(super) async fn accounts_list(State(app): State<Arc<App>>, Ask(q): Ask<at::Accounts>) -> Answer<at::Accounts> {
@@ -13,7 +12,7 @@ pub(super) async fn accounts_use(State(app): State<Arc<App>>, Sent(to): Sent<at:
 }
 
 /// A radio says where it can be woken when it is not listening (its address at a push service), or takes that back.
-pub(super) async fn push_target(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Sent(target): Sent<at::Push>) -> Answer<at::Push> {
+pub(super) async fn push_target(State(app): State<Arc<App>>, RadioId(radio): RadioId, Sent(target): Sent<at::Push>) -> Answer<at::Push> {
     push::register(&app, &radio, target);
     done()
 }

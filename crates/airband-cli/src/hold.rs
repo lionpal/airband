@@ -58,6 +58,20 @@ impl Tell {
         serde_json::to_string(&line).expect("a line to a holder writes as JSON")
     }
 }
+/// A holder's answer to anything but a status ask: whether it took what it was told. The tower counts words as
+/// given only on `Taken`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "answer", rename_all = "kebab-case")]
+pub(crate) enum Answer {
+    Taken,
+    Refused { why: String },
+}
+impl Answer {
+    fn line(&self) -> String {
+        serde_json::to_string(self).expect("a holder's answer writes as JSON")
+    }
+}
+
 /// The line that asks a holder where it has got to. The answer is a [`State`].
 pub(crate) fn status_line() -> String {
     serde_json::to_string(&ToHolder::Status).expect("a line to a holder writes as JSON")
@@ -203,6 +217,11 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     // where it works, and who it is: the tower always says, and nothing is made up when it does not
     let cwd = named.get("cwd").cloned().ok_or("airband hold needs --cwd")?;
     let (id, harness) = (named.get("id").cloned().ok_or("airband hold needs --id")?, named.get("harness").cloned().ok_or("airband hold needs --harness")?);
+    // all it needs is known before the program starts: one started and then given up on would be left running
+    let line = match by {
+        By::Lines => Some(named.get("line").cloned().ok_or("airband hold --by lines needs --line")?),
+        By::Acp => None,
+    };
     let mut command = Command::new(program);
     command.args(rest).current_dir(&cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     // A program whose holder reports for it stays quiet itself, hooks and all: two reports of the same thing
@@ -217,9 +236,10 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             pass_output(&mut child, tx, by == By::Acp);
             keep_errors(&mut child, errors.clone());
             let held = Held { id, harness, cwd, rx, to_program: Arc::new(Mutex::new(child.stdin.take())), state: state.clone(), errors };
-            let done = match by {
-                By::Lines => lines(&held, named.get("line").ok_or("airband hold --by lines needs --line")?, named.get("stop").map(String::as_str)),
-                By::Acp => crate::acp::run(&held, named.get("session").cloned(), named.get("mode").map(String::as_str), crate::acp::Asked { model: named.get("model").cloned(), effort: named.get("effort").cloned() }),
+            // a line to write is what a program driven by lines has, and only that
+            let done = match &line {
+                Some(line) => lines(&held, line, named.get("stop").map(String::as_str)),
+                None => crate::acp::run(&held, named.get("session").cloned(), named.get("mode").map(String::as_str), crate::acp::Asked { model: named.get("model").cloned(), effort: named.get("effort").cloned() }),
             };
             held.close_input();
             end(&mut child);
@@ -254,17 +274,26 @@ fn listen(sock: &str, state: Arc<Mutex<State>>, tx: mpsc::Sender<Msg>) -> Result
             if conn.read_to_string(&mut said).is_err() {
                 continue;
             }
-            for line in said.lines().filter_map(|l| serde_json::from_str::<ToHolder>(l).ok()) {
-                let tell = match line {
-                    ToHolder::Status => {
+            for line in said.lines() {
+                let tell = match serde_json::from_str::<ToHolder>(line) {
+                    Ok(ToHolder::Status) => {
                         writeln!(conn, "{}", serde_json::to_string(&*state.lock().unwrap()).unwrap()).ok();
                         continue;
                     }
-                    ToHolder::Say { text, receipt } => Tell::Say(text, receipt),
-                    ToHolder::Stop => Tell::Stop,
-                    ToHolder::End => Tell::End,
+                    Ok(ToHolder::Say { text, receipt }) => Tell::Say(text, receipt),
+                    Ok(ToHolder::Stop) => Tell::Stop,
+                    Ok(ToHolder::End) => Tell::End,
+                    Err(e) => {
+                        writeln!(conn, "{}", Answer::Refused { why: format!("its holder could not read what it was told: {e}") }.line()).ok();
+                        continue;
+                    }
                 };
-                tx.send(Msg::Tell(tell)).ok();
+                // its program has gone and nothing reads this any more: not taken
+                let answer = match tx.send(Msg::Tell(tell)) {
+                    Ok(()) => Answer::Taken,
+                    Err(_) => Answer::Refused { why: "it has ended".into() },
+                };
+                writeln!(conn, "{}", answer.line()).ok();
             }
         }
     });

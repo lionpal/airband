@@ -245,21 +245,21 @@ mod tests {
         std::fs::create_dir_all(&sessions).unwrap();
         std::fs::create_dir_all(&project).unwrap();
         let record = |pid: u32, id: &str, more: Value| {
-            let mut v = serde_json::json!({ "pid": pid, "sessionId": id, "cwd": "/x/shop", "procStart": format!("start {pid}"), "kind": "interactive", "entrypoint": "cli", "messagingSocketPath": format!("/tmp/cc-socks/{pid}.sock"), "name": "shop-a1", "nameSource": "derived", "status": "idle" });
+            let mut v = serde_json::json!({ "pid": pid, "sessionId": id, "cwd": "/x/shop", "procStart": format!("Sun Nov 22 10:00:{pid:02} 2026"), "kind": "interactive", "entrypoint": "cli", "messagingSocketPath": format!("/tmp/cc-socks/{pid}.sock"), "name": "shop-a1", "nameSource": "derived", "status": "idle" });
             v.as_object_mut().unwrap().extend(more.as_object().unwrap().clone());
             std::fs::write(sessions.join(format!("{pid}.json")), v.to_string()).unwrap();
         };
         record(11, "open-one", serde_json::json!({}));
-        std::fs::write(sessions.join("11.abc.key"), serde_json::json!({ "peerToken": "tok-11", "procStart": "start 11" }).to_string()).unwrap();
+        std::fs::write(sessions.join("11.abc.key"), serde_json::json!({ "peerToken": "tok-11", "procStart": "Sun  Nov 22 10:00:11 2026" }).to_string()).unwrap();
         std::fs::write(project.join("open-one.jsonl"), "{}\n").unwrap();
         // one he named, with a key file left by an earlier process of the same number
         record(12, "open-two", serde_json::json!({ "name": "shop removals", "nameSource": "user" }));
-        std::fs::write(sessions.join("12.def.key"), serde_json::json!({ "peerToken": "stale", "procStart": "start long ago" }).to_string()).unwrap();
+        std::fs::write(sessions.join("12.def.key"), serde_json::json!({ "peerToken": "stale", "procStart": "Sun Nov 22 09:00:12 2026" }).to_string()).unwrap();
         // not his to talk to: a one-off run, one whose process has gone, one with no way in
         record(13, "one-off", serde_json::json!({ "entrypoint": "sdk-cli" }));
         record(14, "gone", serde_json::json!({}));
         record(15, "no-way-in", serde_json::json!({ "messagingSocketPath": "" }));
-        let running = |pid: u32, started: &str| pid != 14 && started == format!("start {pid}");
+        let running = |pid: u32, started: &str| pid != 14 && started == format!("Sun Nov 22 10:00:{pid:02} 2026");
         let mut open = open_in(&claude, &running).unwrap();
         open.sort_by(|a, b| a.agent.id.cmp(&b.agent.id));
         let ids: Vec<&str> = open.iter().map(|o| o.agent.id.as_str()).collect();

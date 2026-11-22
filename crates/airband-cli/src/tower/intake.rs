@@ -24,7 +24,12 @@ pub(super) fn take(app: &Arc<App>, ev: AgentEvent) -> Result<(), String> {
     let spoke = matches!(ev.event, Event::Said { .. } | Event::Notice { .. }).then(|| ev.agent.id.clone());
     // its turn is over, with or without words
     let ended = matches!(ev.event, Event::Said { .. } | Event::Stopped { .. }).then(|| ev.agent.id.clone());
-    on_event(app, ev)?;
+    let id = ev.id.clone();
+    if let Err(why) = on_event(app, ev) {
+        // refused, so not taken: the same report sent again is tried again, not passed over as done
+        app.change().events_taken.forget(&id);
+        return Err(why);
+    }
     // With a phone that can be woken and nobody reading the chat, what it said is read now: whether it
     // deserves a notification is not known until then. With a radio reading, that radio's own request
     // has it read.
@@ -59,6 +64,12 @@ pub(super) struct Taken {
 
 impl Taken {
     const MOST: usize = 2000;
+    /// An event that was refused: it was not taken, and one sent again with its id is taken in.
+    pub(super) fn forget(&mut self, id: &str) {
+        if self.ids.remove(id) {
+            self.order.retain(|o| o != id);
+        }
+    }
     /// Whether this is the first time the event with this id is seen; it is remembered from now on.
     pub(super) fn first_time(&mut self, id: &str) -> bool {
         if id.is_empty() {
@@ -175,6 +186,10 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
                 enqueue(&mut inner, &id, true, why, Some(Kind::NeedsYou), Vec::new(), Some(Note::TurnFailed));
             }
         }
+        Event::Took { receipt } => {
+            inner.took(&receipt, now_ms());
+            return Ok(());
+        }
         Event::Checkin | Event::Signoff | Event::Unknown => {}
     }
     inner.tell();
@@ -239,5 +254,16 @@ mod taken_tests {
             t.first_time(&format!("x{i}"));
         }
         assert!(t.first_time("e1"), "only the latest are remembered");
+    }
+
+    #[tokio::test]
+    async fn a_report_refused_is_not_taken_and_is_taken_when_sent_again() {
+        let app = crate::tower::http::tests::app("refused-report");
+        let agent = airband_core::agent::Agent { id: "a".into(), harness: "test".into(), cwd: Some("/x/shop".into()), name: None, title: None, pid: None, deliver: None, meta: Default::default() };
+        let mut ev: airband_core::agent::AgentEvent = serde_json::from_value(serde_json::json!({ "schema": "airband.agent/0", "id": "e1", "agent": agent, "event": { "type": "checkin" } })).unwrap();
+        assert!(super::take(&app, ev.clone()).is_err());
+        ev.schema = airband_core::agent::SCHEMA.into();
+        super::take(&app, ev).unwrap();
+        assert!(app.read().find("a").is_some(), "the same report, sent again, is taken in");
     }
 }
