@@ -4,7 +4,7 @@
 //! Each way of sending a recording is an interface: a function here and a line of [`UPLOADS`]. A service that
 //! speaks OpenAI's transcription interface (`POST {url}/audio/transcriptions`) is a row of the catalogue and
 //! no code. There is one such interface today.
-use airband_core::providers::{By, Interface, Job, Offer, Trouble, Use};
+use airband_core::providers::{By, Interface, Job, Offer, Provider, Use};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -36,7 +36,7 @@ pub fn wav(rate: u32, pcm: &[i16]) -> Vec<u8> {
 }
 
 /// One way of hearing a finished recording: what is used, its row, the recording and the names to expect.
-type Hear = fn(&Use, &By, &[u8], &[String]) -> Result<String, String>;
+type Hear = fn(&Use, &Provider, &By, &[u8], &[String]) -> Result<String, String>;
 
 /// One way of sending a finished recording to a service.
 struct Upload {
@@ -65,13 +65,13 @@ pub fn by_upload(with: &Use) -> bool {
 /// What was said in a recording, by the service `with` names. `phrases` are names he is likely to say. Empty
 /// when nothing was said. Blocks. Err says why not, in words for him.
 pub fn transcribe(with: &Use, wav: &[u8], phrases: &[String]) -> Result<String, String> {
-    let (_, offer) = with.offer(Job::Ears).ok_or("This version of airband does not know that listening service.")?;
+    let (provider, offer) = with.offer(Job::Ears).ok_or("This version of airband does not know that listening service.")?;
     let by = upload(&offer).ok_or("That service does not listen this way in this version of airband.")?;
-    (by.hear)(with, &offer.by, wav, phrases)
+    (by.hear)(with, &provider, &offer.by, wav, phrases)
 }
 
 /// OpenAI's transcription interface: one multipart form with the file and the model.
-fn transcriptions(with: &Use, by: &By, wav: &[u8], phrases: &[String]) -> Result<String, String> {
+fn transcriptions(with: &Use, provider: &Provider, by: &By, wav: &[u8], phrases: &[String]) -> Result<String, String> {
     let set = |field: &str| with.get(Job::Ears, field);
     let agent = crate::net::agent(Duration::from_secs(60));
     let edge = format!("airband{}", airband_core::encode::random_hex(12));
@@ -92,16 +92,10 @@ fn transcriptions(with: &Use, by: &By, wav: &[u8], phrases: &[String]) -> Result
         req = req.header(header.as_str(), value.as_str());
     }
     // what went wrong is worded once, for every service, by the service's own row and name
-    let service = airband_core::providers::provider(&with.kind);
-    let (name, check) = (service.as_ref().map(|p| p.name.as_str()).unwrap_or_default(), service.as_ref().and_then(|p| p.check.as_ref()));
-    let mut res = req.send(&body[..]).map_err(|_| Trouble::Unreachable.said(name))?;
-    match res.status().as_u16() {
-        200 => {}
-        code => return Err(Trouble::of_status(code, check).said(name)),
-    }
-    let v: Value = res.body_mut().read_json().map_err(|_| Trouble::NoAnswer.said(name))?;
+    let service = airband_core::providers::Answering::of(provider);
+    let v: Value = service.sent(req.send(&body[..]))?.body_mut().read_json().map_err(|_| service.no_answer())?;
     // an answer with no text in it is no answer, not silence
-    v["text"].as_str().map(|t| t.trim().to_string()).ok_or_else(|| Trouble::NoAnswer.said(name))
+    v["text"].as_str().map(|t| t.trim().to_string()).ok_or_else(|| service.no_answer())
 }
 
 /// Does the service take this key and these settings? One real call, with half a second of silence.

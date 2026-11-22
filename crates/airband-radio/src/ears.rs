@@ -57,7 +57,7 @@ impl Pass {
 
 /// What he is told when a service answered and gave nothing to listen with.
 fn no_pass(service: &Provider) -> String {
-    Trouble::NoAnswer.said(&service.name)
+    airband_core::providers::Answering::of(service).no_answer()
 }
 
 /// A pass that a service gives as one field of a JSON answer.
@@ -79,15 +79,10 @@ fn ask_pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &s
     let url = airband_core::providers::fill(by.text("pass"), &|field| set.get(field).cloned().unwrap_or_default())?;
     let auth = by.auth().ok_or("This version of airband was not told how that listening service takes its key.")?;
     let req = crate::net::agent(Duration::from_secs(8)).post(&url).header(auth.header.as_str(), auth.value(key.trim()).as_str());
-    let res = match body {
+    airband_core::providers::Answering::of(service).sent(match body {
         Some(body) => req.send_json(&body),
         None => req.header("Content-Length", "0").send_empty(),
-    }
-    .map_err(|_| Trouble::Unreachable.said(&service.name))?;
-    match res.status().as_u16() {
-        200 => Ok(res),
-        code => Err(Trouble::of_status(code, service.check.as_ref()).said(&service.name)),
-    }
+    })
 }
 
 /// Said when he opens the microphone with nothing chosen to listen with.

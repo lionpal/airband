@@ -23,13 +23,13 @@ impl Synth for Ssml {
     fn rate(&self) -> u32 {
         self.reach.rate
     }
+    fn service(&self) -> &super::Answering {
+        &self.reach.service
+    }
     fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8]), _mark: &mut dyn FnMut(u32, u32)) -> Result<(), String> {
         let escaped = text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;");
         let ssml = format!("<speak version='1.0' xml:lang='{}'><voice name='{}'>{escaped}</voice></speak>", self.language, self.voice);
-        let res = self.reach.post(Duration::from_secs(30)).header("Content-Type", "application/ssml+xml").header("User-Agent", "airband").send(ssml.as_bytes()).map_err(|_| self.reach.unreachable())?;
-        if res.status().as_u16() != 200 {
-            return Err(self.reach.answered(res.status().as_u16()));
-        }
+        let res = self.reach.sent(self.reach.post(Duration::from_secs(30)).header("Content-Type", "application/ssml+xml").header("User-Agent", "airband").send(ssml.as_bytes()))?;
         super::pump(res.into_body().into_reader(), sink)
     }
 }

@@ -245,6 +245,33 @@ pub enum Trouble {
     NotSet,
 }
 
+/// A service as far as telling him what went wrong goes: what it is called, and which of its statuses its row
+/// says mean a wrong key or a refusal.
+#[derive(Clone, Debug, Default)]
+pub struct Answering {
+    pub name: String,
+    pub check: Option<Check>,
+}
+
+impl Answering {
+    pub fn of(provider: &Provider) -> Answering {
+        Answering { name: provider.name.clone(), check: provider.check.clone() }
+    }
+    /// A request to it, sent: what came back when it answered 200, else what went wrong, in words for him.
+    /// The one place a listening or voice service's reach and status are read.
+    pub fn sent(&self, res: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<ureq::http::Response<ureq::Body>, String> {
+        let res = res.map_err(|_| Trouble::Unreachable.said(&self.name))?;
+        match res.status().as_u16() {
+            200 => Ok(res),
+            code => Err(Trouble::of_status(code, self.check.as_ref()).said(&self.name)),
+        }
+    }
+    /// It answered, with nothing that can be used.
+    pub fn no_answer(&self) -> String {
+        Trouble::NoAnswer.said(&self.name)
+    }
+}
+
 impl Trouble {
     /// What a status says went wrong. A service's own row says which of its statuses mean a wrong key and
     /// which a refusal (`check`); for anything the row does not list, and for a service with no such row, the

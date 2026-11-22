@@ -5,12 +5,13 @@
 //! [`Voicing`] that names it, and a line of [`VOICES`]. A provider's row names the interface it speaks
 //! (`by.interface`) and tells it what it needs (`by.with`). A service that speaks OpenAI's speech interface
 //! is a row and no code; one with a route of its own is one file here and its row.
-use airband_core::providers::{By, Interface, Job, Offer, Provider, Trouble, Use};
+use airband_core::providers::{By, Interface, Job, Offer, Provider, Use};
 
 mod generate_content;
 mod ssml;
 mod timed_stream;
 mod speech;
+use airband_core::providers::Answering;
 
 /// A voice service.
 pub trait Synth: Send + Sync {
@@ -20,6 +21,8 @@ pub trait Synth: Send + Sync {
     /// says when each word is spoken tells `mark` so, before the sound of that word: where the word starts in
     /// `text` (in characters) and how many milliseconds into the clip.
     fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8]), mark: &mut dyn FnMut(u32, u32)) -> Result<(), String>;
+    /// The service, for telling him what went wrong.
+    fn service(&self) -> &Answering;
 }
 
 /// A voice made ready to speak, or why it cannot be, in words for him.
@@ -41,28 +44,7 @@ pub(crate) struct Reach {
     auth: Option<(String, String)>,
     headers: Vec<(String, String)>,
     pub rate: u32,
-    service: Service,
-}
-
-/// The service, as far as telling him what went wrong goes: what it is called, and which of its statuses its
-/// row says mean a wrong key or a refusal.
-#[derive(Clone)]
-struct Service {
-    name: String,
-    check: Option<airband_core::providers::Check>,
-}
-impl Service {
-    fn of(provider: &Provider) -> Service {
-        Service { name: provider.name.clone(), check: provider.check.clone() }
-    }
-    /// It answered with anything but the sound.
-    fn answered(&self, status: u16) -> String {
-        Trouble::of_status(status, self.check.as_ref()).said(&self.name)
-    }
-    /// It could not be reached.
-    fn unreachable(&self) -> String {
-        Trouble::Unreachable.said(&self.name)
-    }
+    service: Answering,
 }
 
 /// The rates a voice's sound can be played at.
@@ -90,7 +72,7 @@ impl Reach {
         let auth = key_header(by, &voice.key)?;
         let rate = by.with.get("rate").and_then(serde_json::Value::as_u64).map(|r| r as u32).filter(|r| RATES.contains(r)).ok_or("That voice service's row does not say the rate of its sound.")?;
         let headers = by.with.get("headers").and_then(serde_json::Value::as_object).map(|h| h.iter().filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string()))).collect()).unwrap_or_default();
-        Ok(Reach { url, auth, headers, rate, service: Service::of(provider) })
+        Ok(Reach { url, auth, headers, rate, service: Answering::of(provider) })
     }
 
     /// A request to it, with the key and what else the row says to send.
@@ -98,13 +80,9 @@ impl Reach {
         self.auth.iter().chain(self.headers.iter()).fold(crate::net::agent(timeout).post(&self.url), |r, (k, v)| r.header(k.as_str(), v.as_str()))
     }
 
-    /// What is said when it answers with anything but the sound.
-    fn answered(&self, status: u16) -> String {
-        self.service.answered(status)
-    }
-    /// What is said when it could not be reached.
-    fn unreachable(&self) -> String {
-        self.service.unreachable()
+    /// The request, sent: its answer when it gives the sound, else what went wrong, in words for him.
+    fn sent(&self, res: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<ureq::http::Response<ureq::Body>, String> {
+        self.service.sent(res)
     }
 }
 

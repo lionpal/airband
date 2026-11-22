@@ -23,7 +23,7 @@ pub(crate) fn models(device: &HostDevice) -> impl Iterator<Item = Arc<Model>> + 
 }
 
 /// What this device does itself is speaking and listening; reading is his computer's.
-fn this_device_speaks(offer: &Offer) -> bool {
+pub(crate) fn this_device_speaks(offer: &Offer) -> bool {
     match offer.job {
         Job::Voice => crate::voices::speaks(offer),
         Job::Ears => crate::hears::listens(offer),

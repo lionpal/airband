@@ -26,6 +26,9 @@ impl Synth for Generated {
     fn rate(&self) -> u32 {
         self.reach.rate
     }
+    fn service(&self) -> &super::Answering {
+        &self.reach.service
+    }
     fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8]), _mark: &mut dyn FnMut(u32, u32)) -> Result<(), String> {
         // The words go in bare, and how to say them goes beside them in `speech_metadata`. Put the direction in the
         // text and the model reads it aloud: the first version here opened every message with "Read this aloud
@@ -34,10 +37,7 @@ impl Synth for Generated {
             "contents": [{ "parts": [{ "text": text, "speech_metadata": { "style": self.style } }] }],
             "generationConfig": { "responseModalities": ["AUDIO"], "speechConfig": { "voiceConfig": { "prebuiltVoiceConfig": { "voiceName": self.voice } } } },
         });
-        let res = self.reach.post(Duration::from_secs(30)).send_json(&body).map_err(|_| self.reach.unreachable())?;
-        if res.status().as_u16() != 200 {
-            return Err(self.reach.answered(res.status().as_u16()));
-        }
+        let res = self.reach.sent(self.reach.post(Duration::from_secs(30)).send_json(&body))?;
         // server-sent events: one JSON document per "data:" line, each with a piece of audio in base64
         for line in BufReader::new(res.into_body().into_reader()).lines() {
             let line = line.map_err(|e| e.to_string())?;

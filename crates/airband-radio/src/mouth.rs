@@ -35,6 +35,15 @@ pub(crate) struct Mouth {
     failed: Mutex<Option<String>>,
 }
 
+/// Why what is chosen makes no sound: for everything but a service or a model.
+fn silent(own: Option<Own>) -> String {
+    match own {
+        Some(Own::Cannot(why)) => why,
+        Some(Own::Host) => "This radio shows what is said and makes no sound.".into(),
+        _ => crate::voice::NOTHING_CHOSEN.into(),
+    }
+}
+
 impl Mouth {
     fn using(&self) -> Option<Own> {
         self.using.lock().unwrap_or_else(|e| e.into_inner()).clone()
@@ -126,16 +135,11 @@ impl From<&airband_core::providers::Ask> for ServiceAsk {
 
 /// The services for a job that this build has the code for, from the provider table, in the order to show.
 pub(crate) fn services(job: airband_core::providers::Job) -> Vec<Service> {
-    use airband_core::providers::Job;
     airband_core::providers::in_order(job)
         .into_iter()
         // what this build has the code for. Reading is his computer's job: every one is listed, and the
         // computer says no to one it cannot use.
-        .filter(|(_, o)| match job {
-            Job::Voice => crate::voices::speaks(o),
-            Job::Ears => crate::hears::listens(o),
-            Job::Summary => true,
-        })
+        .filter(|(_, o)| crate::models::this_device_speaks(o))
         .map(|(p, o)| Service {
             kind: p.id.clone(),
             offer: o.id.clone(),
@@ -181,8 +185,7 @@ pub(crate) fn check(with: &airband_core::providers::Use) -> Result<(), String> {
     let synth = crate::voices::synth(with)?;
     let mut bytes = 0usize;
     synth.speak("Ready.", &mut |pcm| bytes += pcm.len(), &mut |_, _| {})?;
-    let name = airband_core::providers::provider(&with.kind).map(|p| p.name.clone()).unwrap_or_default();
-    if bytes == 0 { Err(airband_core::providers::Trouble::NoAnswer.said(&name)) } else { Ok(()) }
+    if bytes == 0 { Err(synth.service().no_answer()) } else { Ok(()) }
 }
 
 /// A clip of sound: 16-bit little-endian mono PCM at `rate` samples a second.
@@ -213,9 +216,7 @@ impl Mouth {
             // a service is read to its end; what comes after he says stop is dropped
             Some(Own::Service(with)) => crate::voices::synth(&with)?.speak(text, &mut |pcm| if !stop() { sink(pcm) }, mark),
             Some(Own::Model { held, voice }) => held.with(|m| m.speak(host, &voice, text, sink, stop))?,
-            Some(Own::Cannot(why)) => Err(why),
-            Some(Own::Host) => Err("This radio shows what is said and makes no sound.".into()),
-            None => Err(crate::voice::NOTHING_CHOSEN.into()),
+            other => Err(silent(other)),
         }
     }
 
@@ -225,9 +226,7 @@ impl Mouth {
         match self.using() {
             Some(Own::Service(with)) => crate::voices::synth(&with).map(|s| s.rate()),
             Some(Own::Model { held, .. }) => held.m.told("rate").parse().map_err(|_| format!("{} does not say what rate it speaks at.", held.m.name)),
-            Some(Own::Cannot(why)) => Err(why),
-            Some(Own::Host) => Err("This radio shows what is said and makes no sound.".into()),
-            None => Err(crate::voice::NOTHING_CHOSEN.into()),
+            other => Err(silent(other)),
         }
     }
 

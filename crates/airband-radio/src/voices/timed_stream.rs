@@ -24,11 +24,11 @@ impl Synth for Timed {
     fn rate(&self) -> u32 {
         self.reach.rate
     }
+    fn service(&self) -> &super::Answering {
+        &self.reach.service
+    }
     fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8]), mark: &mut dyn FnMut(u32, u32)) -> Result<(), String> {
-        let res = self.reach.post(Duration::from_secs(60)).send_json(json!({ "text": text, "model_id": self.model })).map_err(|_| self.reach.unreachable())?;
-        if res.status().as_u16() != 200 {
-            return Err(self.reach.answered(res.status().as_u16()));
-        }
+        let res = self.reach.sent(self.reach.post(Duration::from_secs(60)).send_json(json!({ "text": text, "model_id": self.model })))?;
         // where in the text the service has got to, and whether the character before was a gap between words
         let (mut at, mut gap) = (0u32, true);
         for line in BufReader::new(res.into_body().into_reader()).lines() {
