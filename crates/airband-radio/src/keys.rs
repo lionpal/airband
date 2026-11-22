@@ -2,7 +2,7 @@
 //! the provider's row names (`airband_core::providers::Check`): one that costs nothing and that a wrong key
 //! fails. What came of it is read from the status alone, by the row's lists, and said to him in the words
 //! here. Nothing the service writes back is read, and a key that did not pass is not kept anywhere.
-use airband_core::providers::{Check, KeyCheck, Provider};
+use airband_core::providers::{Check, KeyCheck, Method, Provider};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -24,9 +24,9 @@ pub(crate) fn check(check: &Check, key: &str, settings: &BTreeMap<String, String
     let agent = crate::net::agent(Duration::from_secs(20));
     let with = |name: &str, value: &str| (name.to_string(), value.to_string());
     let headers: Vec<(String, String)> = std::iter::once(with(&check.auth.header, &check.auth.value(key))).chain(check.headers.iter().map(|(k, v)| with(k, v))).collect();
-    let answered = match check.method.as_str() {
-        "POST" => headers.iter().fold(agent.post(&url), |r, (k, v)| r.header(k.as_str(), v.as_str())).send_empty(),
-        _ => headers.iter().fold(agent.get(&url), |r, (k, v)| r.header(k.as_str(), v.as_str())).call(),
+    let answered = match check.method {
+        Method::Post => headers.iter().fold(agent.post(&url), |r, (k, v)| r.header(k.as_str(), v.as_str())).send_empty(),
+        Method::Get => headers.iter().fold(agent.get(&url), |r, (k, v)| r.header(k.as_str(), v.as_str())).call(),
     };
     match answered {
         Ok(res) => check.read(res.status().as_u16()),
@@ -95,7 +95,7 @@ mod tests {
         let paid = Check { paid: true, ..row("{url}/models") };
         assert_eq!(check(&paid, "good", &set), KeyCheck::Good { paid: true });
         // POST is sent with nothing in it
-        let post = Check { method: "POST".into(), ..row("{url}/token") };
+        let post = Check { method: Method::Post, ..row("{url}/token") };
         assert_eq!(check(&post, "good", &set), KeyCheck::Good { paid: false });
         assert!(seen.lock().unwrap().last().unwrap().starts_with("POST /token "));
         // nobody there, or a setting the address names that he has not filled in: nothing is known of the key
@@ -108,7 +108,7 @@ mod tests {
         let catalog = airband_core::catalog::current();
         for p in catalog.providers.iter().filter(|p| p.key) {
             let c = p.check.as_ref().unwrap_or_else(|| panic!("{} takes a key and has no check", p.id));
-            assert!(matches!(c.method.as_str(), "GET" | "POST") && !c.good.is_empty() && !c.wrong_key.is_empty(), "{}", p.id);
+            assert!(!c.good.is_empty() && !c.wrong_key.is_empty(), "{}", p.id);
             // every setting its address names is one each of its offers asks for
             for o in &p.offers {
                 // each filled as it usually is, or with a word where the row has no usual (a region)

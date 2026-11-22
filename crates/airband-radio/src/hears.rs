@@ -100,7 +100,8 @@ fn transcriptions(with: &Use, by: &By, wav: &[u8], phrases: &[String]) -> Result
         code => return Err(Trouble::of_status(code, check).said(name)),
     }
     let v: Value = res.body_mut().read_json().map_err(|_| Trouble::NoAnswer.said(name))?;
-    Ok(v["text"].as_str().unwrap_or_default().trim().to_string())
+    // an answer with no text in it is no answer, not silence
+    v["text"].as_str().map(|t| t.trim().to_string()).ok_or_else(|| Trouble::NoAnswer.said(name))
 }
 
 /// Does the service take this key and these settings? One real call, with half a second of silence.

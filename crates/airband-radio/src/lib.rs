@@ -253,9 +253,10 @@ pub enum RadioError {
 }
 
 /// A tower that speaks another version of the radio protocol is told apart from one that cannot be reached:
-/// he is asked to update, not left looking at a chat that half works.
+/// he is asked to update, not left looking at a chat that half works. One that says no version is not taken
+/// to speak this one.
 fn spoken_alike(feed: &Feed) -> Result<(), RadioError> {
-    if feed.schema.is_empty() || feed.schema == airband_core::radio::SCHEMA {
+    if feed.schema == airband_core::radio::SCHEMA {
         return Ok(());
     }
     Err(RadioError::Told { reason: "This computer runs another version of airband. Update it and this app.".into() })

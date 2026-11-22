@@ -187,10 +187,19 @@ pub struct Voice {
 /// `url` may name settings of the offer he is choosing in braces (`{url}/models`, `https://{region}.…`): they
 /// are filled with what he set, or the row's usual. What the answer means is said by its status alone, in the
 /// lists here. Nothing the service writes in its answer is read.
+/// The ways a key check is asked.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum Method {
+    Get,
+    /// Sent with an empty body.
+    Post,
+}
+
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Check {
-    /// `GET` or `POST` (sent with an empty body).
-    pub method: String,
+    /// How it is asked. A row naming a method this build does not know does not read.
+    pub method: Method,
     pub url: String,
     /// How the key is presented for this request.
     pub auth: Auth,

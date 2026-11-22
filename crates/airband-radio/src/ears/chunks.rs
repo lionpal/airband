@@ -57,9 +57,10 @@ fn chunk(bytes: &[u8], commit: bool) -> Message {
 fn read(m: &Message, kept: &mut Vec<String>, ended: &mut bool) -> Option<String> {
     let v: Value = serde_json::from_slice(&m.clone().into_data()).ok()?;
     match v["message_type"].as_str()? {
-        "partial_transcript" => Some(v["text"].as_str().unwrap_or_default().trim().to_string()),
+        // one without its text says nothing about what was heard, and is passed over
+        "partial_transcript" => Some(v["text"].as_str()?.trim().to_string()),
         "committed_transcript" => {
-            let done = v["text"].as_str().unwrap_or_default().trim();
+            let done = v["text"].as_str()?.trim();
             if !done.is_empty() {
                 kept.push(done.to_string());
             }
