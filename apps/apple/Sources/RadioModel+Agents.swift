@@ -49,7 +49,7 @@ extension RadioModel {
 
     /// The agents he could stop right now: at work, run by their computer, and in the room or agent he is looking at.
     var stoppable: [DeskMember] {
-        view.rooms.filter { room == nil || $0.id == room }.flatMap(\.members).filter { $0.held && $0.state == .working && (only == nil || $0.id == only) }
+        view.rooms.filter { room == nil || $0.id == room }.flatMap(\.members).filter { $0.canStop && (only == nil || $0.id == only) }
     }
 
     /// Stop what an agent is doing, now. What he said to it meanwhile it then reads together.

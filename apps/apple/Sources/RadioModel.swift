@@ -172,6 +172,9 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         look(room: room.isEmpty ? nil : room, agent: agent.isEmpty ? nil : agent)
     }
 
+    /// A team on his screen, by its room id.
+    func room(_ id: String?) -> DeskRoom? { id.flatMap { id in view.rooms.first { $0.id == id } } }
+
     /// Every agent on the radio, in the order the teams are shown.
     var agents: [DeskMember] { view.rooms.flatMap(\.members) }
     /// An agent, by its id, with the team it is in: the one way the screens find which team an agent is in.
