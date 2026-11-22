@@ -331,7 +331,8 @@ impl Serve {
         match serde_json::from_slice(&bytes) {
             Ok(body) => (status, body),
             Err(_) if bytes.is_empty() => (status, Value::Null),
-            Err(e) => self.refused(call, via, Refusal::NotNow { reason: format!("airband made an answer that is not JSON ({e}).") }),
+            // its own fault, and asking again gets the same: not something to wait out
+            Err(e) => self.refused(call, via, Refusal::told(format!("airband made an answer that is not JSON ({e})."))),
         }
     }
 }

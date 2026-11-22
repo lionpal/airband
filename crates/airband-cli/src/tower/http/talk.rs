@@ -1,9 +1,8 @@
 //! Talking: what to say next, what he heard and said, and judging what agents said for him.
 use super::*;
-use axum::Extension;
 
 /// The next transmission for this radio, held open up to [`HOLD`]: none (`null`) when nothing came.
-pub(super) async fn next(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Ask(q): Ask<at::Next>) -> Answer<at::Next> {
+pub(super) async fn next(State(app): State<Arc<App>>, RadioId(radio): RadioId, Ask(q): Ask<at::Next>) -> Answer<at::Next> {
     {
         let mut inner = app.change();
         // He has just turned reading aloud on, and the radio says so (`joined`). What was said long before is
@@ -42,7 +41,7 @@ pub(super) async fn next(State(app): State<Arc<App>>, Extension(RadioId(radio)):
 
 /// A radio was handed something to read out and no sound came of it. It goes back in the queue, the reason is
 /// written down, and that radio is handed nothing more for a minute.
-pub(super) async fn unheard(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Sent(u): Sent<at::Unheard>) -> Answer<at::Unheard> {
+pub(super) async fn unheard(State(app): State<Arc<App>>, RadioId(radio): RadioId, Sent(u): Sent<at::Unheard>) -> Answer<at::Unheard> {
     let mut inner = app.change();
     let id = u.id.as_str();
     let who = inner.log.iter().find(|e| e.id == id).map(|e| inner.sender_name(e)).unwrap_or_else(|| "a line it no longer has".to_string());
@@ -60,14 +59,14 @@ pub(super) async fn unheard(State(app): State<Arc<App>>, Extension(RadioId(radio
 
 /// A radio says where it stands, when that changes and while it has nothing else to ask (he has the
 /// microphone open on a call): so the tower does not take it for gone.
-pub(super) async fn presence(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Sent(said): Sent<at::Presence>) -> Answer<at::Presence> {
+pub(super) async fn presence(State(app): State<Arc<App>>, RadioId(radio): RadioId, Sent(said): Sent<at::Presence>) -> Answer<at::Presence> {
     let name = super::push::radio_name(&app.cfg(), &radio);
     app.change().radio_named_says(&radio, name, said);
     app.kick.notify_one();
     done()
 }
 
-pub(super) async fn heard(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Sent(h): Sent<at::Heard>) -> Answer<at::Heard> {
+pub(super) async fn heard(State(app): State<Arc<App>>, RadioId(radio): RadioId, Sent(h): Sent<at::Heard>) -> Answer<at::Heard> {
     let mut inner = app.change();
     // remember when he was last told, so an unanswered question comes round again later and not at once
     let times = inner.offered.get(&h.id).map(|(n, _)| *n).unwrap_or(0);
@@ -87,7 +86,7 @@ pub(super) async fn heard(State(app): State<Arc<App>>, Extension(RadioId(radio))
     done()
 }
 
-pub(super) async fn ready(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>) -> Answer<at::Ready> {
+pub(super) async fn ready(State(app): State<Arc<App>>, RadioId(radio): RadioId) -> Answer<at::Ready> {
     let waiting = {
         let mut inner = app.change();
         let call = inner.call(&radio);
@@ -107,7 +106,7 @@ pub(super) const SLOW: Duration = Duration::from_secs(10);
 /// Something he said. It is answered at once: the tower has it, under its id. Working out who it is for and
 /// handing it over can take a model a while, and no request waits on that: what comes of it is told in the
 /// feed, and to anyone who asks again under the same id.
-pub(super) async fn utterance(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, headers: HeaderMap, Sent(u): Sent<at::Utterance>) -> Answer<at::Utterance> {
+pub(super) async fn utterance(State(app): State<Arc<App>>, RadioId(radio): RadioId, headers: HeaderMap, Sent(u): Sent<at::Utterance>) -> Answer<at::Utterance> {
     use airband_core::radio::Outcome;
     // how it came: through the relay, straight over his own network, kept by the relay while the tower was
     // away, or from this computer

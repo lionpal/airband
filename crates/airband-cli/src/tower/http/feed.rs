@@ -1,6 +1,5 @@
 //! The chat as a radio reads it: the feed, one message whole, its pictures, and the computer's status.
 use super::*;
-use axum::Extension;
 
 /// One request for the whole chat, for as long as it is open.
 pub(super) struct Reading(Arc<App>);
@@ -21,7 +20,7 @@ impl Drop for Reading {
 /// With no `since`, `after=<seq>` gives the lines added after that position, and never a change to an earlier one.
 /// A query with a number that is not one is refused, never read as none. `wait` is held to
 /// [`wire::FeedQuery::WAIT_MOST`].
-pub(super) async fn feed(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Ask(q): Ask<at::Feed>) -> Answer<at::Feed> {
+pub(super) async fn feed(State(app): State<Arc<App>>, RadioId(radio): RadioId, Ask(q): Ask<at::Feed>) -> Answer<at::Feed> {
     let until = Instant::now() + q.wait_for();
     // all of it, or one team's (`team`, its id), or one agent's (`agent`, its id)
     let wire::FeedQuery { team, agent, since, after, limit, roster: roster_seen, .. } = q;
@@ -144,7 +143,10 @@ pub(super) async fn message(State(app): State<Arc<App>>, Path(id): Path<String>,
 /// The next part of a picture's kept copy.
 /// From where in its kept copy (`from`, from the beginning when it is not given).
 pub(super) async fn picture_part(Path(id): Path<String>, Ask(wire::PartQuery { from }): Ask<at::Picture>) -> Answer<at::Picture> {
-    tokio::task::spawn_blocking(move || pictures::part(&id, from)).await.ok().flatten().map(Json).ok_or(No(Refusal::Gone))
+    match tokio::task::spawn_blocking(move || pictures::part(&id, from)).await {
+        Ok(part) => part.map(Json).map_err(No),
+        Err(e) => Err(No(Refusal::NotNow { reason: format!("airband could not read that picture ({e}).") })),
+    }
 }
 
 /// What can read for this tower, and what does now: the tower's own list, for a radio that offers the choice.

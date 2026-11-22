@@ -74,6 +74,15 @@ where
     }
 }
 
+/// Which radio asked: a route kept per radio is refused, as a refusal, to a caller that names none (the
+/// tower's own token without the radio header), never answered with a bare error.
+impl<S: Send + Sync> FromRequestParts<S> for RadioId {
+    type Rejection = Response;
+    async fn from_request_parts(parts: &mut axum::http::request::Parts, _: &S) -> Result<Self, Response> {
+        parts.extensions.get::<RadioId>().cloned().ok_or_else(|| No(Refusal::NotAllowed).into_response())
+    }
+}
+
 /// The body of endpoint `E`, read as its type. One that does not read is refused.
 pub(super) struct Sent<E: Endpoint>(pub(super) E::Body);
 
@@ -108,7 +117,7 @@ async fn auth(State(app): State<Arc<App>>, req: Request, next: Next) -> Response
     let radio = same(given, app.cfg().radio_token.as_bytes()) && req.uri().path().starts_with(airband_core::radio::PATH);
     if !(own || radio) {
         // a token that opens nothing: 401, so the radio knows its pairing is wrong, not that this one route is shut
-        return (StatusCode::UNAUTHORIZED, Json(Refusal::NotAllowed)).into_response();
+        return No(Refusal::NotPaired).into_response();
     }
     // everything a radio's route is asked says which version of the protocol it is in; another, or none, is
     // told so and goes no further
@@ -288,6 +297,21 @@ pub(super) mod tests {
         assert_eq!(res.status(), StatusCode::OK);
         let ready: wire::ReadyAnswer = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
         assert_eq!(ready.waiting, 0);
+    }
+
+    #[tokio::test]
+    async fn a_token_that_opens_nothing_is_told_as_not_paired_and_a_route_kept_per_radio_needs_one_named() {
+        let app = app("not-paired");
+        let req = Request::builder().method("POST").uri("/v1/radio/ready").header("authorization", "Bearer wrong").header(RADIO_HEADER, "phone").header(SCHEMA_HEADER, airband_core::radio::SCHEMA);
+        let res = router(app.clone()).oneshot(req.body(axum::body::Body::empty()).unwrap()).await.unwrap();
+        let body: Refusal = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(body, Refusal::NotPaired);
+        // the tower's own token naming no radio, on a route kept per radio: a refusal, not a bare error
+        let req = Request::builder().method("POST").uri("/v1/radio/ready").header("authorization", "Bearer own").header(SCHEMA_HEADER, airband_core::radio::SCHEMA);
+        let res = router(app.clone()).oneshot(req.body(axum::body::Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(res.status().as_u16(), 403);
+        let body: Refusal = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(body, Refusal::NotAllowed);
     }
 
     #[tokio::test]

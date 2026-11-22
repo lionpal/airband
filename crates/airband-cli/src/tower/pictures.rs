@@ -2,7 +2,7 @@
 //! most on its long side) in `~/.airband/pictures`, named by what the original was, so the same file seen twice
 //! is kept once. A copy goes to the phone only when it asks, in parts.
 use super::*;
-use airband_core::radio::{PICTURE_PART, Picture, PicturePart};
+use airband_core::radio::{PICTURE_PART, Picture, PicturePart, wire::Refusal};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
@@ -107,16 +107,26 @@ pub(super) fn for_message(seen: Vec<Seen>, named: Vec<Picture>) -> Vec<Picture> 
     out
 }
 
-/// One part of a kept copy, from byte `from`.
-pub(super) fn part(id: &str, from: usize) -> Option<PicturePart> {
+/// One part of a kept copy, from byte `from`. A copy that is not there (never kept, or pruned) is gone; one that
+/// is there and cannot be read is trouble on this computer, said as such: the phone may ask again.
+pub(super) fn part(id: &str, from: usize) -> Result<PicturePart, Refusal> {
     use std::io::{Read, Seek, SeekFrom};
-    let mut f = std::fs::File::open(file(id)?).ok()?;
-    let len = f.metadata().ok()?.len() as usize;
-    f.seek(SeekFrom::Start(from as u64)).ok()?;
-    let mut buf = vec![0u8; PICTURE_PART.min(len.saturating_sub(from))];
-    f.read_exact(&mut buf).ok()?;
+    let path = file(id).ok_or(Refusal::Gone)?;
+    let trouble = |e: std::io::Error| Refusal::NotNow { reason: format!("airband could not read that picture ({e}).") };
+    let mut f = match std::fs::File::open(&path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(Refusal::Gone),
+        Err(e) => return Err(trouble(e)),
+    };
+    let len = f.metadata().map_err(trouble)?.len() as usize;
+    if from > len {
+        return Err(Refusal::BadAsk { reason: format!("the picture is {len} bytes long, and the part asked for starts at {from}") });
+    }
+    f.seek(SeekFrom::Start(from as u64)).map_err(trouble)?;
+    let mut buf = vec![0u8; PICTURE_PART.min(len - from)];
+    f.read_exact(&mut buf).map_err(trouble)?;
     let next = from + buf.len();
-    Some(PicturePart { data: airband_core::encode::base64(&buf), next: next as u32, done: next >= len })
+    Ok(PicturePart { data: airband_core::encode::base64(&buf), next: next as u32, done: next >= len })
 }
 
 /// Drop copies nobody will ask for again.
@@ -127,6 +137,12 @@ pub(super) fn prune() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_copy_that_is_not_there_is_gone_and_an_id_not_ours_names_no_file() {
+        assert_eq!(part("not-an-id", 0).unwrap_err(), Refusal::Gone);
+        assert_eq!(part(&"0".repeat(24), 0).unwrap_err(), Refusal::Gone, "never kept, or pruned");
+    }
 
     fn pic(id: &str) -> Picture {
         Picture { id: id.into(), width: 1, height: 1, bytes: 1 }
