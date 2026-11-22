@@ -481,8 +481,8 @@ try:
     print("The model and effort of an agent that lists its own")
     mark = len(noted())
     since = lambda: noted()[mark:]
-    check("he names a model by the agent's own name for it and an effort, and the agent is set to them before it is given its work",
-          say("New agent in shop", act={"kind": "launch", "team": os.path.realpath(project), "tool": "stand-acp", "model": "stand2", "effort": "mid", "task": "say on two"}) == "Launching in shop with Stand 2, Mid." and until(lambda: since()[:4] == ["new", "set model stand-in-2", "set effort mid", "prompt say on two"]), since())
+    check("the phone names a model and an effort by the agent's own ids for them, and the agent is set to them before it is given its work",
+          say("New agent in shop", act={"kind": "launch", "team": os.path.realpath(project), "tool": "stand-acp", "model": "stand-in-2", "effort": "mid", "task": "say on two"}) == "Launching in shop with Stand 2, Mid." and until(lambda: since()[:4] == ["new", "set model stand-in-2", "set effort mid", "prompt say on two"]), since())
     check("it says what it now runs on, and how hard it thinks", until(lambda: one() and (one().get("model"), one().get("effort")) == ("stand-in-2", "mid")), one())
     second = one()
     holder = subprocess.run(["pgrep", "-f", "hold --sock .* --id " + second["id"]], capture_output=True, text=True).stdout.split()
