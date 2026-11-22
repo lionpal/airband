@@ -34,7 +34,7 @@ pub(super) fn send_file(shared: Arc<Shared>, radio: Arc<Radio>, id: String, file
             true
         };
         let outcome = radio.upload(&id, &file_path, &name, step);
-        {
+        let after = {
             let mut state = shared.state.lock().unwrap();
             // only if this is still the sending that counts: it may have been taken off, or started again elsewhere
             if let Some(u) = state.uploads.iter_mut().find(|u| u.shown.id == id && Arc::ptr_eq(&u.dropped, &dropped)) {
@@ -43,9 +43,51 @@ pub(super) fn send_file(shared: Arc<Shared>, radio: Arc<Radio>, id: String, file
                     radio.arm(id.clone());
                 }
             }
-        }
+            settled(&mut state)
+        };
         shared.host.changed();
+        if let Some(after) = after {
+            after.go(&shared);
+        }
     });
+}
+/// Words of his that wait for his files to reach the computer they are going to.
+pub(super) struct AfterFiles {
+    pub(super) text: String,
+    pub(super) label: Option<String>,
+    pub(super) re: Option<String>,
+    pub(super) room: Option<String>,
+    pub(super) agent: Option<String>,
+}
+impl AfterFiles {
+    fn go(self, shared: &Arc<Shared>) {
+        deliver(shared, self.text, self.label, self.re, self.room, self.agent);
+    }
+}
+/// The words waiting for his files, taken, once none of the files is still on its way: each has got there,
+/// failed (the tray says which), or been taken off.
+pub(super) fn settled(state: &mut State) -> Option<AfterFiles> {
+    if state.uploads.iter().any(|u| u.shown.state == UploadState::Sending) { None } else { state.after_files.take() }
+}
+/// His words are for a computer other than the one his files went to: each file is sent there afresh (the tray
+/// shows how each one does), and the words go when the last has got there or failed.
+pub(super) fn move_files(shared: &Arc<Shared>, state: &mut State, from: &str, to: &str, words: AfterFiles) -> bool {
+    let (Some(to_radio), Some(from_radio)) = (state.computer(to).map(|s| s.radio.clone()), state.computer(from).map(|s| s.radio.clone())) else { return false };
+    let mut moved = Vec::new();
+    for u in state.uploads.iter_mut() {
+        u.dropped.store(true, Ordering::SeqCst);
+        u.dropped = Arc::new(AtomicBool::new(false));
+        moved.push((u.shown.id.clone(), u.file_path.clone(), u.name.clone(), u.dropped.clone()));
+        u.station = to.to_string();
+        u.shown.sent = 0;
+        u.shown.state = UploadState::Sending;
+    }
+    state.after_files = Some(words);
+    for (id, file_path, name, dropped) in moved {
+        from_radio.disarm(id.clone());
+        send_file(shared.clone(), to_radio.clone(), id, file_path, name, dropped);
+    }
+    true
 }
 /// Where the files he attached are, among his computers now: everything attached to one message goes to one
 /// computer, the first file's.
@@ -83,11 +125,14 @@ impl Desk {
             let Some(i) = state.uploads.iter().position(|u| u.shown.id == id) else { return };
             let gone = state.uploads.remove(i);
             gone.dropped.store(true, Ordering::SeqCst);
-            state.computer(&gone.station).map(|s| s.radio.clone())
+            (state.computer(&gone.station).map(|s| s.radio.clone()), settled(&mut state))
         };
-        if let Some(radio) = radio {
+        if let (Some(radio), _) = &radio {
             radio.disarm(id);
         }
         self.shared.host.changed();
+        if let (_, Some(after)) = radio {
+            after.go(&self.shared);
+        }
     }
 }

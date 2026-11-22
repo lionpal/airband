@@ -150,7 +150,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     func pushAddress(_ token: String) { desk.setPush(provider: .apns, token: token) }
 
     /// An answer given on a notification. Blocks until the computer has it, or says why it does not.
-    func answerNow(station: String, message: String, text: String, tapped: Tapped?) throws { try desk.answerNow(station: station, messageId: message, text: text, tapped: tapped) }
+    func answerNow(station: String, message: String, text: String, tapped: Tapped?) -> AnswerOutcome { desk.answerNow(station: station, messageId: message, text: text, tapped: tapped) }
 
     /// Look at everyone, at one team, or at one agent. Whatever he was answering is let go: it may no longer be
     /// in view. Every change he makes to who he is looking at goes through here; only a team that has gone is let go

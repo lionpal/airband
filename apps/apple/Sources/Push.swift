@@ -83,12 +83,11 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
         let finished = DispatchSemaphore(value: 0)
         let failure = Failure()
         DispatchQueue.global(qos: .userInitiated).async {
-            do { try RadioModel.shared.answerNow(station: station, message: message, text: text, tapped: tapped) }
-            catch RadioError.Told(let reason) { failure.set(reason) }
-            catch RadioError.Refused { failure.set("That computer refused it.") }
-            // kept on the phone and sent later, with why it did not go now; anything that will never go comes as Told
-            catch RadioError.Kept(let reason) { failure.set(reason) }
-            catch { failure.set("It was not sent. Open airband to send it again.") }
+            // what became of it, with the words he is told, comes from the core
+            switch RadioModel.shared.answerNow(station: station, message: message, text: text, tapped: tapped) {
+            case .sent: break
+            case .keptForLater(let why), .refused(let why), .notPaired(let why): failure.set(why)
+            }
             finished.signal()
         }
         DispatchQueue.global(qos: .userInitiated).async {

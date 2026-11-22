@@ -86,7 +86,35 @@ impl Radio {
     /// `label`, for a quick message, is the button's words: the chat shows those and the agent gets `text`.
     /// Returns the id it waits under, for following it.
     pub fn queue(&self, text: String, re: Option<String>, scope: Option<String>, label: Option<String>) -> String {
-        self.queue_his(Outgoing { re, scope, label, ..Outgoing::of(text) })
+        self.queue_as(Outgoing { re, scope, label, ..Outgoing::of(text) }, Carry::Answer)
+    }
+}
+
+/// What a message in the outbox takes with it from what he has armed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Carry {
+    /// His own next words: the files he attached and the question he was asked go with them.
+    Answer,
+    /// Not his next words: it goes as it is.
+    Nothing,
+}
+
+/// What became of an answer given from a notification, with the words he is told when it did not go now.
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum AnswerOutcome {
+    /// His computer has it.
+    Sent,
+    /// It is kept on the phone and goes when it can.
+    KeptForLater { why: String },
+    /// It will never go as it is; nothing is kept.
+    Refused { why: String },
+    /// The computer it was for is no longer paired.
+    NotPaired { why: String },
+}
+impl AnswerOutcome {
+    /// Whether the answer is given, now or later: only then is the question no longer waiting on him.
+    pub(crate) fn given(&self) -> bool {
+        matches!(self, AnswerOutcome::Sent | AnswerOutcome::KeptForLater { .. })
     }
 }
 
@@ -174,18 +202,16 @@ impl Radio {
         let _ = self.jobs.lock().unwrap().send(Job::Dictate(done));
     }
 
-    /// His own next words, as [`Radio::queue`]: they take with them whatever he attached that has reached the
-    /// tower, and they answer the question his computer last asked him back.
-    pub(crate) fn queue_his(&self, out: Outgoing) -> String {
+    /// Put something in the outbox to go to the tower. What it takes with it is said by `carry`: his own next
+    /// words take whatever he attached that has reached the tower and answer the question his computer last
+    /// asked him back; anything else (a button, a command, words sent on to another agent) goes as it is and
+    /// leaves both for what he says next. Returns the id it waits under.
+    pub(crate) fn queue_as(&self, out: Outgoing, carry: Carry) -> String {
         let mut out = out;
-        out.attachments.extend(self.session.take_armed());
-        out.answers = out.answers.or_else(|| self.session.take_question());
-        self.queue_out(out)
-    }
-    /// Something to send that is not his next words (a button, a command, words sent on to another agent): it
-    /// goes as it is, and leaves his files and his question for what he says next. Returns the id it waits
-    /// under.
-    pub(crate) fn queue_out(&self, out: Outgoing) -> String {
+        if carry == Carry::Answer {
+            out.attachments.extend(self.session.take_armed());
+            out.answers = out.answers.or_else(|| self.session.take_question());
+        }
         let id = out.id.clone();
         let waiting = self.store.change(|s| {
             s.outbox.push(out);
@@ -415,7 +441,7 @@ impl Radio {
     /// Send an answer now and wait for the tower to have it: for an answer given where there are only seconds
     /// to send it in (a notification's button, with the app behind the lock screen). If it cannot be sent in
     /// that time it is left in the outbox under the same id, to go when it can, and the caller is told.
-    pub(crate) fn answer_now(&self, text: String, re: String, act: Option<Act>) -> Result<(), RadioError> {
+    pub(crate) fn answer_now(&self, text: String, re: String, act: Option<Act>) -> AnswerOutcome {
         // one record of it, tried now and kept as it is: a button's answer stays what the button stood for
         let out = Outgoing::new(random_hex(12), text, Some(re), None, None, Vec::new(), Vec::new()).with_act(act.as_ref());
         let u = out.utterance();
@@ -426,11 +452,11 @@ impl Radio {
             }
             match self.link.utterance_once(&u).0 {
                 // left with the relay for a computer that is away: it will get there, and he should know it has not yet
-                Ok(Sent::Left { away: true }) => return Err(RadioError::Told { reason: AWAY.into() }),
+                Ok(Sent::Left { away: true }) => return AnswerOutcome::KeptForLater { why: AWAY.into() },
                 // his computer has it: that is the answer given
-                Ok(_) => return Ok(()),
+                Ok(_) => return AnswerOutcome::Sent,
                 // it cannot be sent however often it is tried: he is told why, and nothing is left to try again
-                Err(e) if e.retry() == Retry::Never => return Err(e.into()),
+                Err(e) if e.retry() == Retry::Never => return AnswerOutcome::Refused { why: RadioError::from(e).said() },
                 Err(e) => failed = e,
             }
         }
@@ -440,7 +466,7 @@ impl Radio {
         });
         self.wake.ring();
         self.host.outbox(waiting, None);
-        Err(RadioError::Kept { reason: format!("{} It is on this phone and goes when it can.", failed.said()) })
+        AnswerOutcome::KeptForLater { why: format!("{} It is on this phone and goes when it can.", failed.said()) }
     }
 
     /// Send a file to the tower in parts, under `id`. `sent` is told how far it has got after each part and

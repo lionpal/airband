@@ -35,7 +35,7 @@ impl Desk {
             })
         };
         if let Some((text, radio)) = sent {
-            radio.queue_out(Outgoing { re: Some(message_id), ..Outgoing::of(text) }.with_act(Some(&tapped.act())));
+            radio.queue_as(Outgoing { re: Some(message_id), ..Outgoing::of(text) }.with_act(Some(&tapped.act())), Carry::Nothing);
         }
         self.shared.host.changed();
     }
@@ -48,17 +48,21 @@ impl Desk {
     }
     /// An answer given from a notification: send it now, as the answer to that message, and wait until the
     /// computer has it. `tapped` is the button, when it was one: `text` is then the button's words for an
-    /// option, and is not used for Allow and Deny. `station` is the computer the notification came from ([`OpenedNotice::station`]).
-    /// Blocks for some seconds at most. If it could not be sent in that time it is kept and sent when it can
-    /// be, and the error says why, in words for him when there are any.
-    pub fn answer_now(&self, station: String, message_id: String, text: String, tapped: Option<Tapped>) -> Result<(), RadioError> {
-        let radio = {
-            let mut state = self.shared.state.lock().unwrap();
-            state.answered.insert(message_id.clone());
-            state.computer(&station).or(state.owner(&message_id)).map(|s| s.radio.clone())
-        };
+    /// option, and is not used for Allow and Deny. `station` is the computer the notification came from
+    /// ([`OpenedNotice::station`]): the answer goes there and nowhere else.
+    /// Blocks for some seconds at most. What became of it says whether it went, is kept to go later, will never
+    /// go, or had no computer to go to, with the words he is told.
+    pub fn answer_now(&self, station: String, message_id: String, text: String, tapped: Option<Tapped>) -> AnswerOutcome {
+        let radio = self.shared.state.lock().unwrap().computer(&station).map(|s| s.radio.clone());
+        let Some(radio) = radio else { return AnswerOutcome::NotPaired { why: UNPAIRED.into() } };
+        let words = match &tapped { Some(t @ (Tapped::Allow | Tapped::Deny)) => t.words(), _ => text };
+        let outcome = radio.answer_now(words, message_id.clone(), tapped.map(|t| t.act()));
+        // the question stops waiting on him only when his answer is given, now or later
+        if outcome.given() {
+            self.shared.state.lock().unwrap().answered.insert(message_id);
+        }
         self.shared.host.changed();
-        radio.ok_or(crate::choices::told(UNPAIRED))?.answer_now(match &tapped { Some(t @ (Tapped::Allow | Tapped::Deny)) => t.words(), _ => text }, message_id, tapped.map(|t| t.act()))
+        outcome
     }
     /// Send what he typed. Who it is for, in this order: tags at its start (`@shop2`, `@shop`, `@all`); the
     /// message `re` if he picked one; the `agent` he is looking at; otherwise the tower works it out from his
@@ -78,7 +82,7 @@ impl Desk {
         let Some(((text, long), radio)) = found else { return };
         let text = if long { self.full(message_id).unwrap_or(text) } else { text };
         // to the agent he picked, whatever tags the words start with: he chose who, so nothing in them is read
-        radio.queue_out(Outgoing { to: vec![agent_id], ..Outgoing::of(text) });
+        radio.queue_as(Outgoing { to: vec![agent_id], ..Outgoing::of(text) }, Carry::Nothing);
         self.shared.host.changed();
     }
     /// Send a quick message: the feed shows `label`, the agent gets `text`. Who it is for is worked out as for
@@ -95,52 +99,9 @@ impl Desk {
         };
         for (radio, team) in radios {
             // what the chat shows for it is what the stopped agents are told
-            radio.queue_out(Outgoing { scope: team, ..Outgoing::of("Keep going.".into()) }.with_act(Some(&Act::Control { control: airband_core::routing::Control::Poke })));
+            radio.queue_as(Outgoing { scope: team, ..Outgoing::of("Keep going.".into()) }.with_act(Some(&Act::Control { control: airband_core::routing::Control::Poke })), Carry::Nothing);
         }
         self.shared.host.changed();
-    }
-    /// He wants to speak: open the microphone when free. What he says goes to the message `re` if he picked
-    /// one; otherwise the tower works out who it is for, among the agents of `room` or all of them.
-    pub fn talk(&self, re: Option<String>, room: Option<String>, agent: Option<String>) {
-        let radio = {
-            let mut state = self.shared.state.lock().unwrap();
-            if state.computers.is_empty() {
-                return;
-            }
-            // the message he answers is answered when his words go (`deliver`), not when the microphone opens: he
-            // may say nothing, or take it back
-            state.discard = false;
-            // any computer that is there can do the listening; where the words go is worked out when he sends them
-            let pick = files_at(&state).or_else(|| pick_station(&state, "", re.as_deref(), room.as_deref(), agent.as_deref()));
-            let online = |id: &String| state.computer(id).is_some_and(|s| s.online);
-            let Some(pick) = pick.clone().filter(online).or_else(|| state.computers.iter().find(|s| s.online).map(Computer::id)).or(pick) else { return };
-            let Some(computer) = state.computer(&pick) else { return };
-            computer.radio.clone()
-        };
-        let shared = self.shared.clone();
-        radio.dictate(Box::new(move |heard| {
-            shared.host.hearing(String::new());
-            if std::mem::take(&mut shared.state.lock().unwrap().discard) {
-                return;
-            }
-            match heard {
-                Listened::Said(text) => deliver(&shared, text, None, re, room, agent),
-                Listened::Nothing => {}
-                // why was said where it was found out (`ears.rs`): nothing chosen, what he chose could not, or
-                // the microphone did not open
-                Listened::Cannot => {}
-            }
-        }));
-    }
-    /// Why the microphone would be opened for nothing as things are, in words for him: nothing is chosen to
-    /// listen with, or what he chose cannot be used. A host asks before it opens the microphone, and says
-    /// this in its place. Nothing when something can listen.
-    pub fn cannot_listen(&self) -> Option<String> {
-        self.shared.senses.ears.cannot()
-    }
-    /// He took back what he was saying. The host closes the microphone next; nothing is sent.
-    pub fn cancel_talk(&self) {
-        self.shared.state.lock().unwrap().discard = true;
     }
     /// Try again a message that was not sent ([`Outgoing::failed`]). It goes after anything else still waiting.
     pub fn send_again(&self, id: String) {
@@ -193,32 +154,10 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
         // if that is another computer the files are sent there first: the words wait for them.
         let pick = match files_at(&state) {
             Some(at) if at != wanted && (tagged || aimed || re.is_some()) => {
-                let (Some(to), Some(from)) = (state.computer(&wanted).map(|s| s.radio.clone()), state.computer(&at).map(|s| s.radio.clone())) else { return };
-                let wanted_id = wanted.clone();
-                let mut moved = Vec::new();
-                for u in state.uploads.iter_mut() {
-                    u.dropped.store(true, Ordering::SeqCst);
-                    u.dropped = Arc::new(AtomicBool::new(false));
-                    moved.push((u.shown.id.clone(), u.file_path.clone(), u.name.clone(), u.dropped.clone()));
-                    u.station = wanted_id.clone();
-                    u.shown.sent = 0;
-                    u.shown.state = UploadState::Sending;
+                let words = AfterFiles { text: text.clone(), label: label.clone(), re: re.clone(), room: room.clone(), agent: agent.clone() };
+                if !move_files(shared, &mut state, &at, &wanted, words) {
+                    return;
                 }
-                for (id, file_path, name, dropped) in moved {
-                    from.disarm(id.clone());
-                    send_file(shared.clone(), to.clone(), id, file_path, name, dropped);
-                }
-                // send the words when the files are there (or have failed, or he gave up on them)
-                let (again, text, label, re, room, agent) = (shared.clone(), text.clone(), label.clone(), re.clone(), room.clone(), agent.clone());
-                thread::spawn(move || {
-                    for _ in 0..1200 {
-                        thread::sleep(Duration::from_millis(250));
-                        if !again.state.lock().unwrap().uploads.iter().any(|u| u.shown.state == UploadState::Sending) {
-                            break;
-                        }
-                    }
-                    deliver(&again, text, label, re, room, agent);
-                });
                 drop(state);
                 shared.host.changed();
                 return;
@@ -240,7 +179,7 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
         let others = if tagged || aimed || re.is_some() || state.computers.len() < 2 { Vec::new() } else { others(&state, &pick, room.as_deref()) };
         (computer.radio.clone(), text, re, scope, others, to)
     };
-    radio.queue_his(Outgoing { re, scope, label, others, to, ..Outgoing::of(text) });
+    radio.queue_as(Outgoing { re, scope, label, others, to, ..Outgoing::of(text) }, Carry::Answer);
     shared.host.changed();
 }
 /// Words of his that reached the computer `from` and no agent, now for `agent`: they go to the computer that
@@ -265,7 +204,7 @@ pub(super) fn place(shared: &Arc<Shared>, from: &str, message: Outgoing, agent: 
             None => shared.host.note("The files you attached were on a computer that is no longer paired. Your words went without them.".into()),
         }
     }
-    radio.queue_out(Outgoing { label: message.label, to: vec![agent], answers: message.answers, attachments, ..Outgoing::of(message.text) });
+    radio.queue_as(Outgoing { label: message.label, to: vec![agent], answers: message.answers, attachments, ..Outgoing::of(message.text) }, Carry::Nothing);
 }
 /// The agents on his screen that computers other than `pick` have, each with the last thing it said: for the
 /// tower his words are going to. In one room, only that room's.

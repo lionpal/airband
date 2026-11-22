@@ -279,6 +279,14 @@ pub enum RadioError {
 }
 
 impl RadioError {
+    /// What it is, in words for him.
+    pub(crate) fn said(&self) -> String {
+        match self {
+            RadioError::BadLink { reason } | RadioError::Told { reason } | RadioError::Kept { reason } => reason.clone(),
+            RadioError::Refused => "That computer refused it.".into(),
+            RadioError::Offline => "Your computer could not be reached.".into(),
+        }
+    }
     /// Something on this phone itself failed (a file it could not read or keep): said as that, never as his
     /// computer refusing.
     pub(crate) fn here(what: &str) -> RadioError {
