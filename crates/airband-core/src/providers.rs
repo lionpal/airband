@@ -122,12 +122,8 @@ pub struct Ask {
     pub usual: String,
     /// This setting is where the service is reached, so where a key of his is sent. A catalogue taken later
     /// cannot change the usual of one of these for a provider this build knows.
-    #[serde(default, skip_serializing_if = "no")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reach: bool,
-}
-
-fn no(b: &bool) -> bool {
-    !*b
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -144,10 +140,10 @@ pub struct Offer {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub about: String,
     /// One of the few shown before the rest where he chooses. The others sit behind "More services".
-    #[serde(default, skip_serializing_if = "no")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub preferred: bool,
     /// It runs on his own computer: nothing leaves it, and it costs him nothing.
-    #[serde(default, skip_serializing_if = "no")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub local: bool,
     /// The coding tool whose sign-in on his computer this uses (`claude-code`, `codex`, `opencode`), when it
     /// uses one and so needs no key. It is offered to someone who uses that tool. Empty otherwise.

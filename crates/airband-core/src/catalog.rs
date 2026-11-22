@@ -108,18 +108,17 @@ impl Tool {
 }
 
 /// Something a row tells the code, as text: what is written under one name in its `with`. Empty when the row
-/// does not say, or says something other than text. The one way a row's word is read.
+/// does not say, or says something other than text. For a word a row names (a program, an address, a field).
 pub(crate) fn row_text(said: Option<&Value>) -> &str {
     said.and_then(Value::as_str).unwrap_or_default()
 }
 
-/// A value a row or a setting gives as the text it is used as: words as they are, a number or a yes/no as
-/// written. Empty for anything else, or nothing. The one rule for a value told to an engine or a service.
+/// The same, for a value that is used as text whatever it is written as: a number or a yes/no as written,
+/// words as [`row_text`] reads them. For a value told to an engine or a service.
 pub(crate) fn scalar_text(said: Option<&Value>) -> String {
     match said {
-        Some(Value::String(s)) => s.clone(),
         Some(v @ (Value::Number(_) | Value::Bool(_))) => v.to_string(),
-        _ => String::new(),
+        _ => row_text(said).to_string(),
     }
 }
 
