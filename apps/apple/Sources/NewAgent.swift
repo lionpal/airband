@@ -27,7 +27,8 @@ struct NewAgentSheet: View {
     }
 
     private var team: String { name.trimmingCharacters(in: .whitespaces).lowercased() }
-    private var ready: Bool { place != nil && !team.isEmpty && !starting }
+    /// Every choice made: a folder and a name, and the computer and the coding agent when there is more than one.
+    private var ready: Bool { place != nil && !team.isEmpty && !starting && (model.view.stations.count <= 1 || !computer.isEmpty) && (model.usedTools.count <= 1 || !tool.isEmpty) }
     /// A folder he walked to, when it is none of the recent ones: shown with them, chosen.
     private var walked: Place? { place.flatMap { p in recent.contains { $0.folder == p.folder } && !p.make ? nil : p } }
 
@@ -103,7 +104,7 @@ struct NewAgentSheet: View {
                 FolderWalk(computer: computer) { chosen in
                     place = chosen
                     // a folder that is there gives the team its name; a new one is named by him
-                    name = chosen.make ? "" : (recent.first { $0.folder == chosen.folder }?.name ?? (chosen.folder as NSString).lastPathComponent.lowercased())
+                    name = chosen.make ? "" : (recent.first { $0.folder == chosen.folder }?.name ?? teamForFolder(folder: chosen.folder))
                     if let known = recent.first(where: { $0.folder == chosen.folder }), !chosen.make { place?.team = known.team }
                     walking = false
                 }
@@ -114,8 +115,9 @@ struct NewAgentSheet: View {
         // on a wide screen, tall enough for the folders and the team's name together
         .presentationSizing(.page)
         .onAppear {
-            computer = model.view.stations.first ?? ""
-            tool = model.tools.first ?? ""
+            // nothing is picked for him: the one there is, when there is only one; otherwise he picks
+            computer = model.view.stations.count == 1 ? model.view.stations[0] : ""
+            tool = model.usedTools.count == 1 ? model.usedTools[0].id : ""
             load()
         }
     }

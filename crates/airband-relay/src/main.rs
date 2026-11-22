@@ -605,7 +605,7 @@ async fn wake_phone(State(relay): State<Arc<Relay>>, Path(channel): Path<String>
     if !plain(&ask.to, "-_:") || ask.to.len() > 256 || !plain(&ask.sealed, "+/=") || ask.sealed.len() > PUSH_MOST * 4 / 3 + 4 {
         return answer(StatusCode::BAD_REQUEST, false, false, "the address or the sealed notification is not the right shape");
     }
-    match relay.push.send(&ask.provider, &ask.to, &ask.sealed, ask.question).await {
+    match relay.push.send(ask.provider, &ask.to, &ask.sealed, ask.question).await {
         None => answer(StatusCode::SERVICE_UNAVAILABLE, false, false, "this relay has no such push service"),
         Some(push::Outcome::Sent) => answer(StatusCode::OK, true, false, ""),
         Some(push::Outcome::Gone(why)) => answer(StatusCode::GONE, false, true, &why),
@@ -892,11 +892,11 @@ mod tests {
         let apns = push::Apns::new(&key, "KEY123", "TEAM456", "dev.example.app", &format!("http://{at}")).unwrap();
         let folder = std::env::temp_dir().join(format!("airband-relay-test-{}", random_hex(6)));
         let relay = Arc::new(Relay::new(push::Push::with_apns(apns), HashMap::from([(keys.channel.clone(), Channel::new(token_hash(&keys.pull_token), token_hash(&keys.radio_token)))]), store::Store::Folder(folder), None));
-        let ask = |token: &str, provider: &str, to: &str| {
+        let ask = |token: &str, provider: airband_core::relay::PushService, to: &str| {
             let (relay, channel) = (relay.clone(), keys.channel.clone());
             let mut headers = HeaderMap::new();
             headers.insert("authorization", format!("Bearer {token}").parse().unwrap());
-            let body = serde_json::to_vec(&PushRequest { provider: provider.into(), to: to.into(), sealed: "c2VhbGVk".into(), question: true }).unwrap();
+            let body = serde_json::to_vec(&PushRequest { provider, to: to.into(), sealed: "c2VhbGVk".into(), question: true }).unwrap();
             async move {
                 let res = wake_phone(State(relay), Path(channel), headers, Bytes::from(body)).await;
                 let status = res.status().as_u16();
@@ -905,18 +905,18 @@ mod tests {
             }
         };
         // not the channel's tower: nothing is sent
-        assert_eq!(ask("someone-else", "apns", "aa11").await.0, 403);
+        assert_eq!(ask("someone-else", airband_core::relay::PushService::Apns, "aa11").await.0, 403);
         assert_eq!(seen.load(Ordering::SeqCst), 0);
-        assert_eq!(ask(&keys.pull_token, "apns", "aa11").await, (200, true, false, String::new()));
-        assert_eq!(ask(&keys.pull_token, "apns", "bb22").await, (410, false, true, "Unregistered".into()));
-        assert_eq!(ask(&keys.pull_token, "apns", "cc33").await, (410, false, true, "BadDeviceToken".into()));
+        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "aa11").await, (200, true, false, String::new()));
+        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "bb22").await, (410, false, true, "Unregistered".into()));
+        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "cc33").await, (410, false, true, "BadDeviceToken".into()));
         assert_eq!(seen.load(Ordering::SeqCst), 3);
         // a service this relay does not have, and an address that is not one
         assert_eq!(ask(&keys.pull_token, "carrier-pigeon", "aa11").await.0, 503);
-        assert_eq!(ask(&keys.pull_token, "apns", "aa11/../x").await.0, 400);
+        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "aa11/../x").await.0, 400);
         // and only so many from one channel
         relay.channels.lock().unwrap().get_mut(&keys.channel).unwrap().pushed = Some((Instant::now(), push::PUSHES));
-        assert_eq!(ask(&keys.pull_token, "apns", "aa11").await.0, 429);
+        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "aa11").await.0, 429);
         assert_eq!(seen.load(Ordering::SeqCst), 3);
     }
 

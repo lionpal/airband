@@ -41,7 +41,7 @@ impl Wake {
 /// A radio says where it can be woken, or (with no token) that it no longer can.
 pub(super) fn register(app: &App, radio: &str, target: PushTarget) {
     let ok = |t: &str, most: usize| !t.is_empty() && t.len() <= most && t.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_:".contains(&b));
-    if !ok(&target.provider, 24) || !(target.token.is_empty() || ok(&target.token, 256)) {
+    if target.provider == airband_core::relay::PushService::Unknown || !(target.token.is_empty() || ok(&target.token, 256)) {
         return;
     }
     let mut targets = app.push.targets.lock().unwrap();
@@ -147,7 +147,7 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
     let sealed = base64::engine::general_purpose::STANDARD.encode(sealed);
     let agent = airband_radio::net::agent(Duration::from_secs(20));
     for target in targets {
-        let ask = PushRequest { provider: target.provider.clone(), to: target.token.clone(), sealed: sealed.clone(), question: note.kind == Some(Kind::NeedsYou) };
+        let ask = PushRequest { provider: target.provider, to: target.token.clone(), sealed: sealed.clone(), question: note.kind == Some(Kind::NeedsYou) };
         let res = agent.post(format!("{}/v1/channels/{}/push", relay.trim_end_matches('/'), keys.channel)).header("authorization", format!("Bearer {}", keys.pull_token)).send_json(&ask);
         let outcome = match res {
             Err(e) => format!("the relay could not be reached ({e})"),

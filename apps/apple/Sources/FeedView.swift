@@ -335,7 +335,8 @@ struct FeedView: View {
             } else if model.online {
                 if model.view.rooms.isEmpty {
                     // paired, and no agent has been heard from: say what makes one appear
-                    let tool = model.usedTools.first?.name ?? "your coding agent"
+                    // his tool by name when he uses one; otherwise none is singled out
+                    let tool = model.usedTools.count == 1 ? model.usedTools[0].name : "your coding agent"
                     Text("You\u{2019}re connected").font(.system(size: 19, weight: .semibold))
                     Text("Start \(tool) in a project on your computer and it shows up here, or start one from here.")
                         .font(.system(size: 16)).foregroundStyle(Palette.quiet).multilineTextAlignment(.center).lineSpacing(3)
@@ -345,7 +346,7 @@ struct FeedView: View {
                     }
                     .buttonStyle(.plain).padding(.top, 14)
                     Text("Sessions that are already open show up by themselves.").font(.system(size: 13)).foregroundStyle(Palette.quiet).multilineTextAlignment(.center).padding(.top, 18)
-                    if let first = model.usedTools.first?.first, !first.isEmpty {
+                    if model.usedTools.count == 1, let first = model.usedTools.first?.first, !first.isEmpty {
                         Text(first).font(.system(size: 13)).foregroundStyle(Palette.quiet).multilineTextAlignment(.center)
                     }
                 } else {

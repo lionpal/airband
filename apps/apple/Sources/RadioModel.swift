@@ -85,7 +85,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         #if DEBUG
         // development only: `xcrun simctl launch <sim> dev.airband.app -airband.devLink <pairing link>` pairs without the
         // system's "Open in airband?" prompt, which a script cannot tap
-        if let dev = UserDefaults.standard.string(forKey: "airband.devLink"), dev.hasPrefix("airband://pair?") {
+        if let dev = UserDefaults.standard.string(forKey: "airband.devLink"), isPairingLink(link: dev.split(separator: " ").first.map(String.init) ?? "") {
             links = dev.split(separator: " ").map(String.init) // several links, separated by spaces
         }
         #endif
@@ -133,7 +133,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// another adds it.
     func pair(with link: String) {
         let link = link.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard link.hasPrefix("airband://pair?") else {
+        guard isPairingLink(link: link) else {
             problem = "That is not a pairing link. Run airband pair on your computer."
             return
         }
@@ -144,7 +144,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     func forgetAll() { connect([]) }
 
     /// Where this phone can be woken, as Apple gave it: every paired computer is told.
-    func pushAddress(_ token: String) { desk.setPush(provider: "apns", token: token) }
+    func pushAddress(_ token: String) { desk.setPush(provider: .apple, token: token) }
 
     /// An answer given on a notification. Blocks until the computer has it, or says why it does not.
     func answerNow(station: String, message: String, text: String, tapped: Tapped?) throws { try desk.answerNow(station: station, messageId: message, text: text, tapped: tapped) }
@@ -210,13 +210,15 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// An address the app was opened with: a pairing link, or what the Talk tile and a banner open it with.
     func open(_ url: URL) {
-        switch url.host {
-        case "talk":
+        switch OpenWith.route(url) {
+        case .talk:
             replyingTo = nil
             Task { @MainActor in if !self.micOpen { await self.talk() } }
-        case "answer":
-            if let agent = OpenWith.agent(in: url) { answer(agent) } else { Task { @MainActor in if !self.micOpen { await self.talk() } } }
-        default:
+        case .answer(let agent?):
+            answer(agent)
+        case .answer(nil):
+            Task { @MainActor in if !self.micOpen { await self.talk() } }
+        case nil:
             pair(with: url.absoluteString)
         }
     }
@@ -552,9 +554,9 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     func computers(for room: String) -> [String] { desk.computersFor(room: room) }
 
     /// Start a new agent in a team. It appears in the list at once, with nothing to do until he speaks to it.
-    /// `tool` is one of the coding tools he uses; nothing is the first of them.
+    /// `tool` is one of the coding tools he uses; nothing is the one he uses when there is only one.
     func newAgent(in room: String, on computer: String?, tool: CodingTool? = nil) {
-        desk.newAgent(room: room, computer: computer, tool: tool ?? usedTools.first)
+        desk.newAgent(room: room, computer: computer, tool: tool ?? (usedTools.count == 1 ? usedTools.first : nil))
     }
 
     /// The coding tools he uses, as the catalogue describes them, the one he uses most first.

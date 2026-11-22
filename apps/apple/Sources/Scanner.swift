@@ -27,7 +27,7 @@ struct CodeScanner: UIViewControllerRepresentable {
         func dataScanner(_ scanner: DataScannerViewController, didAdd added: [RecognizedItem], allItems: [RecognizedItem]) {
             for item in added {
                 // only a pairing code: anything else in view is left alone
-                if case .barcode(let code) = item, let text = code.payloadStringValue, text.hasPrefix("airband:"), !done {
+                if case .barcode(let code) = item, let text = code.payloadStringValue, isPairingLink(link: text), !done {
                     done = true
                     found(text)
                 }

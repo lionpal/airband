@@ -43,8 +43,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     /// The Talk tile on the car's dashboard, or a banner, was tapped: go straight into the conversation with
     /// the microphone open, for the agent the banner was about if there was one.
     func scene(_ scene: UIScene, openURLContexts contexts: Set<UIOpenURLContext>) {
-        guard let url = contexts.first?.url, url.host == "talk" || url.host == "answer", model.view.paired else { return }
-        if url.host == "answer", let agent = OpenWith.agent(in: url) {
+        guard let url = contexts.first?.url, let route = OpenWith.route(url), model.view.paired else { return }
+        if case .answer(let agent?) = route {
             start(then: agent)
         } else {
             model.only = nil
@@ -131,11 +131,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         // the longest that fits.
         let with = model.onlyName
         let screen = CPVoiceControlTemplate(voiceControlStates: [
-            state("idle", with.map { ["Waiting for \($0)", "Waiting"] } ?? ["Waiting for your agents", "Waiting"], "ellipsis", talk: ("Talk", "mic.fill")),
-            state("listening", with.map { ["Listening, for \($0)", "Listening"] } ?? ["Listening"], "mic.fill", talk: ("Send", "arrow.up"), other: ("Cancel", "xmark", { [weak self] in self?.model.cancelTalk() })),
-            state("sending", ["Sending"], "arrow.up.circle.fill", talk: nil),
-            state("speaking", with.map { ["\($0) is speaking", "Speaking"] } ?? ["Speaking"], "speaker.wave.2.fill", picture: with.flatMap { avatar(of: $0, side: 120) }, talk: ("Talk", "mic.fill"), other: ("Quiet", "speaker.slash.fill", { [weak self] in self?.model.voice.hush() })),
-            state("offline", ["Can\u{2019}t reach your computer", "Offline"], "wifi.slash", talk: nil),
+            state(.idle, with.map { ["Waiting for \($0)", "Waiting"] } ?? ["Waiting for your agents", "Waiting"], "ellipsis", talk: ("Talk", "mic.fill")),
+            state(.listening, with.map { ["Listening, for \($0)", "Listening"] } ?? ["Listening"], "mic.fill", talk: ("Send", "arrow.up"), other: ("Cancel", "xmark", { [weak self] in self?.model.cancelTalk() })),
+            state(.sending, ["Sending"], "arrow.up.circle.fill", talk: nil),
+            state(.speaking, with.map { ["\($0) is speaking", "Speaking"] } ?? ["Speaking"], "speaker.wave.2.fill", picture: with.flatMap { avatar(of: $0, side: 120) }, talk: ("Talk", "mic.fill"), other: ("Quiet", "speaker.slash.fill", { [weak self] in self?.model.voice.hush() })),
+            state(.offline, ["Can\u{2019}t reach your computer", "Offline"], "wifi.slash", talk: nil),
         ])
         if #available(iOS 26.4, *) {
             screen.leadingNavigationBarButtons = [CPBarButton(title: "End") { [weak self] _ in
@@ -167,9 +167,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     /// One state of the voice screen: its words, its picture, and its buttons. The talk button is the same
     /// toggle as the big button on the phone: the first press opens the microphone and the second sends.
-    private func state(_ id: String, _ titles: [String], _ symbol: String, picture: UIImage? = nil, talk: (String, String)?, other: (String, String, () -> Void)? = nil) -> CPVoiceControlState {
+    private func state(_ id: CarState, _ titles: [String], _ symbol: String, picture: UIImage? = nil, talk: (String, String)?, other: (String, String, () -> Void)? = nil) -> CPVoiceControlState {
         let picture = picture ?? UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 72, weight: .semibold))
-        let made = CPVoiceControlState(identifier: id, titleVariants: titles, image: picture, repeats: false)
+        let made = CPVoiceControlState(identifier: id.rawValue, titleVariants: titles, image: picture, repeats: false)
         if #available(iOS 26.4, *) {
             var buttons: [CPButton] = []
             if let talk {
@@ -200,23 +200,28 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     /// so what it shows is looked at again a moment later.
     private func show() {
         guard let screen = voiceScreen else { return }
-        let wanted: String
+        let wanted: CarState
         switch model.status {
-        case .offline: wanted = "offline"
-        case .listening: wanted = "listening"
-        case .sending: wanted = "sending"
-        case .speaking: wanted = "speaking"
-        case .idle: wanted = model.micOpen ? "listening" : "idle"
+        case .offline: wanted = .offline
+        case .listening: wanted = .listening
+        case .sending: wanted = .sending
+        case .speaking: wanted = .speaking
+        case .idle: wanted = model.micOpen ? .listening : .idle
         }
         if case .speaking(let callsign?) = model.status, speaker?.title != callsign {
             speaker?.title = callsign
             if let face = avatar(of: callsign, side: 28) { speakerFace?.image = face }
         }
-        guard screen.activeStateIdentifier != wanted else { return }
+        guard screen.activeStateIdentifier != wanted.rawValue else { return }
         screen.activateVoiceControlState(withIdentifier: wanted)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             guard let self, self.voiceScreen === screen, screen.activeStateIdentifier != wanted else { return }
             self.show()
         }
     }
+}
+
+/// The states the car's voice screen has; the screen knows each by its identifier.
+private enum CarState: String {
+    case idle, listening, sending, speaking, offline
 }

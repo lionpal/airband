@@ -188,12 +188,24 @@ pub struct Answer {
     pub body: serde_json::Value,
 }
 
+/// A push service a phone can be woken through.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PushService {
+    /// Apple's.
+    #[serde(rename = "apns")]
+    Apns,
+    /// One a newer build knows and this one does not: kept, and never sent to.
+    #[default]
+    #[serde(other, rename = "unknown")]
+    Unknown,
+}
+
 /// `POST /v1/channels/<channel>/push`, from the channel's tower: have a push service wake the phone. The relay
 /// passes `sealed` on as it is and can read none of it; the phone opens it with the pairing's key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PushRequest {
-    /// Which push service the address belongs to ("apns").
-    pub provider: String,
+    /// Which push service the address belongs to.
+    pub provider: PushService,
     /// The phone's address at that service, as the phone gave it to the tower.
     pub to: String,
     /// A notification sealed for [`Direction::Push`], base64.

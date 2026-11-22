@@ -11,6 +11,7 @@
 //!   APNS_TOPIC     the app's bundle id
 //!   APNS_HOST      where to send (default https://api.push.apple.com; a development build needs the sandbox)
 use base64::Engine;
+use airband_core::relay::PushService;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use ring::rand::SystemRandom;
 use ring::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair};
@@ -61,10 +62,10 @@ impl Push {
         if self.apns.is_some() { "can wake iPhones (Apple's push service)" } else { "has no push service: phones are not woken" }
     }
     /// Hand a sealed notification to the service an address belongs to. Nothing when this relay has no such service.
-    pub async fn send(&self, provider: &str, to: &str, sealed: &str, question: bool) -> Option<Outcome> {
+    pub async fn send(&self, provider: PushService, to: &str, sealed: &str, question: bool) -> Option<Outcome> {
         match provider {
-            "apns" => Some(self.apns.as_ref()?.send(to, sealed, question).await),
-            _ => None,
+            PushService::Apns => Some(self.apns.as_ref()?.send(to, sealed, question).await),
+            PushService::Unknown => None,
         }
     }
 }

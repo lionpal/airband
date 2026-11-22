@@ -167,7 +167,7 @@ struct Mine: View {
     var latest = false
     /// A long one shows its first lines; a tap opens it whole, and another closes it.
     @State private var whole = false
-    private var long: Bool { m.long || m.text.count > 140 || m.text.filter { $0 == "\n" }.count > 4 }
+    private var long: Bool { m.long }
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 3) {

@@ -62,8 +62,8 @@ struct AgentsMenu: View {
     /// computer knows runs in a terminal of his (it only gets messages from outside until it is taken over).
     /// One in its own tool's app is not called a terminal. The computer is a small picture at the end of the
     /// row, not more words.
-    private func under(_ agent: DeskMember) -> String {
-        [agent.effort, agent.terminal ? "terminal" : ""].filter { !$0.isEmpty }.joined(separator: " \u{b7} ")
+    private func under(_ agent: DeskMember) -> [String] {
+        [agent.effort, agent.terminal ? "terminal" : ""].filter { !$0.isEmpty }
     }
 
     /// An agent dropped on a team, or on one of its agents, joins that team.
@@ -169,7 +169,7 @@ struct AgentsMenu: View {
         }
     }
 
-    private func row(dot: AgentState?, title: String, detail: String?, strong: Bool, on: Bool, inset: CGFloat, reserve: CGFloat = 0, colour: UInt8? = nil, badge: String? = nil, lead: String = "", engine: String = "", doing: String? = nil, pick: @escaping () -> Void) -> some View {
+    private func row(dot: AgentState?, title: String, detail: String?, strong: Bool, on: Bool, inset: CGFloat, reserve: CGFloat = 0, colour: UInt8? = nil, badge: String? = nil, lead: String = "", engine: [String] = [], doing: String? = nil, pick: @escaping () -> Void) -> some View {
         Button {
             pick()
             model.replyingTo = nil
@@ -189,7 +189,7 @@ struct AgentsMenu: View {
                         HStack(spacing: 0) {
                             if !lead.isEmpty { Text(lead + " \u{b7} ").foregroundStyle(Palette.quiet) }
                             ZStack(alignment: .leading) {
-                                Text(engine).foregroundStyle(Palette.quiet).opacity(doing == nil ? 1 : 0)
+                                Text(engine.joined(separator: " \u{b7} ")).foregroundStyle(Palette.quiet).opacity(doing == nil ? 1 : 0)
                                 Text(doing ?? "").foregroundStyle(Palette.signal.opacity(0.9)).opacity(doing == nil ? 0 : 1)
                             }
                         }
@@ -209,7 +209,7 @@ struct AgentsMenu: View {
             .contentShape(RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(title + (engine.isEmpty ? "" : ", " + engine.replacingOccurrences(of: " \u{b7} ", with: ", ")) + (dot.map { ", " + RadioModel.spoken(state: $0) } ?? ""))
+        .accessibilityLabel(title + engine.map { ", " + $0 }.joined() + (dot.map { ", " + RadioModel.spoken(state: $0) } ?? ""))
         .accessibilityAddTraits(on ? .isSelected : [])
     }
 }

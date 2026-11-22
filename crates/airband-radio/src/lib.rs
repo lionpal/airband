@@ -252,7 +252,7 @@ impl ChatAgent {
 }
 
 fn chat(m: airband_core::radio::Message) -> ChatMessage {
-    ChatMessage { seq: m.seq, id: m.id, at: m.at, his: m.his, from: m.from, badge: m.badge, to_agents: m.to_agents, group: m.group, to: m.to, needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), unjudged: if m.kind == Some(Kind::Unjudged) { "Shown as the agent wrote it. No summary was made.".into() } else { String::new() }, text: m.text, long: m.long, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links.into_iter().map(chat_link).collect(), agent: m.agent, station: String::new(), open: m.open, colour: 0, read: m.read, own_session: m.own_session, not_read: m.not_read.map(not_read).unwrap_or_default().to_string() }
+    ChatMessage { seq: m.seq, id: m.id, at: m.at, his: m.his, from: m.from, badge: m.badge, to_agents: m.to_agents, group: m.group, to: m.to, needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), unjudged: if m.kind == Some(Kind::Unjudged) { "Shown as the agent wrote it. No summary was made.".into() } else { String::new() }, long: m.long || m.text.chars().count() > 140 || m.text.matches('\n').count() > 4, text: m.text, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links.into_iter().map(chat_link).collect(), agent: m.agent, station: String::new(), open: m.open, colour: 0, read: m.read, own_session: m.own_session, not_read: m.not_read.map(not_read).unwrap_or_default().to_string() }
 }
 
 fn chat_feed(feed: Feed) -> ChatFeed {
@@ -340,7 +340,8 @@ pub struct ChatMessage {
     /// No model read it, so it is shown as the agent wrote it: the words that say so, or empty.
     pub unjudged: String,
     pub text: String,
-    /// There is more than `text` says; `more(id)` has it.
+    /// It is shown folded to its first lines, with a tap to open it: there is more than `text` says (`more(id)`
+    /// has it), or `text` itself runs past a few lines. The one rule for this.
     pub long: bool,
     /// His own words, waiting for the agent to stop what it is doing. He can still take them back.
     pub queued: bool,
@@ -1004,8 +1005,8 @@ impl Radio {
 
     /// Tell the tower where this radio can be woken with a notification (its address at a push service), or
     /// with an empty token that it no longer can.
-    pub(crate) fn push_target(&self, provider: &str, token: &str) -> Result<(), RadioError> {
-        self.ask("/push", serde_json::to_value(airband_core::radio::PushTarget { provider: provider.into(), token: token.into() }).unwrap())
+    pub(crate) fn push_target(&self, provider: desk::PushService, token: &str) -> Result<(), RadioError> {
+        self.ask("/push", serde_json::to_value(airband_core::radio::PushTarget { provider: provider.wire(), token: token.into() }).unwrap())
     }
 
     /// Send an answer now and wait for the tower to have it: for an answer given where there are only seconds

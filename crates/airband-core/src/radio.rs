@@ -573,8 +573,8 @@ pub struct UsesTools {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PushTarget {
-    /// The push service ("apns" for Apple's).
-    pub provider: String,
+    /// The push service.
+    pub provider: crate::relay::PushService,
     pub token: String,
 }
 

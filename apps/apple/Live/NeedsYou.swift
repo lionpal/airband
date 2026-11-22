@@ -26,6 +26,20 @@ enum OpenWith {
         parts.queryItems = [URLQueryItem(name: "agent", value: agent)]
         return parts.url ?? talk
     }
+    /// What an address the app was opened with asks for: to talk, or to answer an agent (named, or whoever
+    /// is waiting). Nothing for any other address.
+    enum Route {
+        case talk
+        case answer(String?)
+    }
+    static func route(_ url: URL) -> Route? {
+        guard url.scheme == talk.scheme else { return nil }
+        switch url.host {
+        case talk.host: return .talk
+        case "answer": return .answer(agent(in: url))
+        default: return nil
+        }
+    }
     /// The agent an address of that kind names.
     static func agent(in url: URL) -> String? {
         URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "agent" }?.value

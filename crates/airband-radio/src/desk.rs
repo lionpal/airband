@@ -22,6 +22,7 @@ pub use records::*;
 use follow::*;
 use send::*;
 use station_host::*;
+pub use tell::PushService;
 use tell::*;
 use uploads::*;
 use view::*;
@@ -116,7 +117,7 @@ pub(crate) struct State {
     uploads: Vec<Upload>,
     /// Where this device can be woken with a notification (a push service's name and the device's address
     /// there), and the links of the computers that have been told.
-    push: Option<(String, String)>,
+    push: Option<(PushService, String)>,
     push_told: HashSet<String>,
     /// The coding tools each computer was last told he uses, by its link.
     tools_told: HashMap<String, Vec<String>>,

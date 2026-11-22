@@ -1,12 +1,26 @@
 //! What every computer is told about this device: where it can be woken, and which coding tools he uses.
 use super::*;
 
+/// A push service this device can be woken through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum PushService {
+    /// Apple's.
+    Apple,
+}
+impl PushService {
+    pub(crate) fn wire(self) -> airband_core::relay::PushService {
+        match self {
+            PushService::Apple => airband_core::relay::PushService::Apns,
+        }
+    }
+}
+
 #[uniffi::export]
 impl Desk {
-    /// Where this device can be woken with a notification: the push service's name ("apns") and the device's
-    /// address there, as the system gave it. Every paired computer is told, now and whenever one is paired
-    /// later. Call it each time the system gives the address; the same one again does nothing.
-    pub fn set_push(&self, provider: String, token: String) {
+    /// Where this device can be woken with a notification: the push service and the device's address there, as
+    /// the system gave it. Every paired computer is told, now and whenever one is paired later. Call it each
+    /// time the system gives the address; the same one again does nothing.
+    pub fn set_push(&self, provider: PushService, token: String) {
         {
             let mut state = self.shared.state.lock().unwrap();
             let push = Some((provider, token));
@@ -38,7 +52,7 @@ pub(super) fn tell_push(shared: &Arc<Shared>, radio: &Arc<Radio>, index: usize, 
         let Some(push) = state.push.clone().filter(|_| !state.push_told.contains(&station.link)) else { return };
         (station.link.clone(), push)
     };
-    if radio.push_target(&push.0, &push.1).is_ok() {
+    if radio.push_target(push.0, &push.1).is_ok() {
         let mut state = shared.state.lock().unwrap();
         // unless the address changed while this one was on its way
         if state.push.as_ref() == Some(&push) {
