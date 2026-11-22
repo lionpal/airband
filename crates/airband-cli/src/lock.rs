@@ -4,25 +4,11 @@
 use std::path::Path;
 
 /// Held while the work runs; let go when dropped.
-pub(crate) struct Held {
-    _file: std::fs::File,
-}
+pub(crate) type Held = airband_io::files::Lock;
 
 /// Wait for the lock at `path` and hold it.
 pub(crate) fn take(path: &Path) -> Result<Held, String> {
-    if let Some(dir) = path.parent() {
-        airband_io::files::make_folder(dir).map_err(|e| format!("cannot make {}: {e}", dir.display()))?;
-    }
-    let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(path).map_err(|e| format!("cannot open the lock {}: {e}", path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::fd::AsRawFd;
-        // SAFETY: the descriptor is the open file's own, and it stays open while the lock is held
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
-            return Err(format!("cannot take the lock {}: {}", path.display(), std::io::Error::last_os_error()));
-        }
-    }
-    Ok(Held { _file: file })
+    airband_io::files::lock(path).map_err(|e| format!("cannot take the lock {}: {e}", path.display()))
 }
 
 #[cfg(test)]

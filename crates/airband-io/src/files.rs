@@ -174,6 +174,29 @@ pub fn private_folder(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// A lock on a file, held across every process on this computer until it is dropped.
+pub struct Lock {
+    _file: std::fs::File,
+}
+
+/// Wait for the lock at `path` and hold it, making the file and its folder when they are not there. A lock that
+/// cannot be taken is an error.
+pub fn lock(path: &Path) -> std::io::Result<Lock> {
+    if let Some(dir) = path.parent() {
+        make_folder(dir)?;
+    }
+    let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        // SAFETY: the descriptor is the open file's own, and it stays open while the lock is held
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(Lock { _file: file })
+}
+
 /// A folder of its own in the system's temporary folder, for a test.
 #[cfg(test)]
 pub(crate) fn folder() -> PathBuf {
