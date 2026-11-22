@@ -17,17 +17,17 @@ fn plist_path() -> PathBuf {
 }
 
 /// The lasting path to this binary when Homebrew installed it, given where the binary really is. Homebrew keeps
-/// each version in its own folder (`<prefix>/Cellar/airband/0.1.1/bin/airband`) and points
-/// `<prefix>/opt/airband` at the current one, so that path still works after `brew upgrade`.
+/// each version in a folder of its own and points `<prefix>/opt/airband` at the current one, so that path still
+/// works after `brew upgrade`. Homebrew is asked where that is (`brew --prefix airband`, which prints the path
+/// alone); the caller keeps it only when it leads to this very binary.
 fn homebrew_exe(real: &Path) -> Option<PathBuf> {
-    let parts: Vec<_> = real.components().collect();
-    let cellar = parts.iter().position(|c| c.as_os_str() == "Cellar")?;
-    // Cellar / formula / version / bin / airband
-    if parts.len() != cellar + 5 || parts[cellar + 3].as_os_str() != "bin" {
-        return None;
-    }
-    let prefix: PathBuf = parts[..cellar].iter().collect();
-    Some(prefix.join("opt").join(parts[cellar + 1]).join("bin").join(parts[cellar + 4]))
+    let out = std::process::Command::new("brew").args(["--prefix", "airband"]).stderr(std::process::Stdio::null()).output().ok().filter(|o| o.status.success())?;
+    let opt = PathBuf::from(String::from_utf8(out.stdout).ok()?.trim_end_matches('\n'));
+    Some(in_opt(&opt, real))
+}
+/// This binary's place under Homebrew's lasting folder for the formula.
+fn in_opt(opt: &Path, real: &Path) -> PathBuf {
+    opt.join("bin").join(real.file_name().unwrap_or_default())
 }
 
 pub fn install() -> Result<(), String> {
@@ -364,14 +364,6 @@ mod tests {
 
     #[test]
     fn a_homebrew_binary_is_used_from_the_path_that_outlives_an_upgrade() {
-        assert_eq!(homebrew_exe(Path::new("/opt/homebrew/Cellar/airband/0.1.1/bin/airband")), Some(PathBuf::from("/opt/homebrew/opt/airband/bin/airband")));
-        assert_eq!(homebrew_exe(Path::new("/usr/local/Cellar/airband/0.1.1/bin/airband")), Some(PathBuf::from("/usr/local/opt/airband/bin/airband")));
-        assert_eq!(homebrew_exe(Path::new("/home/linuxbrew/.linuxbrew/Cellar/airband/0.2.0/bin/airband")), Some(PathBuf::from("/home/linuxbrew/.linuxbrew/opt/airband/bin/airband")));
-    }
-    #[test]
-    fn a_binary_anywhere_else_is_not_homebrews() {
-        assert_eq!(homebrew_exe(Path::new("/Users/c/airband/target/release/airband")), None);
-        assert_eq!(homebrew_exe(Path::new("/Users/c/.airband/bin/airband")), None);
-        assert_eq!(homebrew_exe(Path::new("/Users/c/Cellar/airband")), None);
+        assert_eq!(in_opt(Path::new("/opt/homebrew/opt/airband"), Path::new("/opt/homebrew/Cellar/airband/0.1.1/bin/airband")), PathBuf::from("/opt/homebrew/opt/airband/bin/airband"));
     }
 }
