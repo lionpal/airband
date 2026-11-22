@@ -50,7 +50,8 @@ pub(in crate::tower) fn take_event(app: &Arc<App>, ev: AgentEvent) -> Result<(),
     if let Some(id) = spoke.filter(|_| app.push.any()) {
         let unread: Vec<Entry> = {
             let inner = app.read();
-            inner.log.iter().rev().take(8).filter(|e| inner.readers == 0 && e.short.is_none() && e.agent.as_deref() == Some(id.as_str())).take(1).cloned().collect()
+            // the last thing this agent said, which is what was just recorded, if nobody has read it yet
+            inner.log.iter().rev().find(|e| e.agent.as_deref() == Some(id.as_str())).filter(|e| inner.readers == 0 && e.short.is_none()).cloned().into_iter().collect()
         };
         judge_later(app, unread);
     }

@@ -114,7 +114,7 @@ impl Desk {
         // the same quick messages from every computer, each once
         let mut quick: Vec<QuickMessage> = Vec::new();
         for q in state.stations.iter().flat_map(|s| s.quick.iter()) {
-            if !quick.iter().any(|have| have.label == q.label) {
+            if !quick.iter().any(|have| have.label == q.label && have.text == q.text) {
                 quick.push(q.clone());
             }
         }

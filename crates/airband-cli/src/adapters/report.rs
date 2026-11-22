@@ -37,7 +37,14 @@ pub fn run(args: &[String]) -> Result<(), String> {
             "--pane" => pane = Some(value("--pane")?),
             // the tower started this agent and holds its input
             "--held" => agent.deliver = Some(Deliver::Held),
-            "--deliver-command" => agent.deliver = Some(Deliver::Command { argv: value("--deliver-command")?.split_whitespace().map(String::from).collect() }),
+            // the program and its words as a JSON list, so a word may hold spaces or quotes
+            "--deliver-command" => {
+                let argv: Vec<String> = serde_json::from_str(&value("--deliver-command")?).map_err(|_| "--deliver-command takes the program and its words as a JSON list: [\"notify\", \"--to\", \"me\"]".to_string())?;
+                if argv.is_empty() {
+                    return Err("--deliver-command needs a program to run".into());
+                }
+                agent.deliver = Some(Deliver::Command { argv });
+            }
             _ => rest.push(a.clone()),
         }
     }

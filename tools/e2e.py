@@ -85,7 +85,7 @@ def report(agent, project, title, *words):
     """An agent's harness reports something, through the generic adapter."""
     out = os.path.join(got, agent)
     return subprocess.run([BIN, "report", "--id", agent, "--harness", "claude-code", "--cwd", os.path.join(projects, project), "--title", title,
-                           "--deliver-command", f"sh -c cat>>{out}", *words], env=env, capture_output=True, text=True)
+                           "--deliver-command", json.dumps(["sh", "-c", f"cat>>{out}"]), *words], env=env, capture_output=True, text=True)
 def received(agent):
     path = os.path.join(got, agent)
     return open(path).read() if os.path.exists(path) else ""

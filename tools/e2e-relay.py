@@ -106,7 +106,7 @@ try:
     keys = derive(urllib.parse.parse_qs(urllib.parse.urlparse(link).query)["secret"][0])
     stranger = derive(os.urandom(32).hex())  # another pairing altogether, whose channel was never opened here
     time.sleep(11)  # the tower picks a new pairing up within ten seconds
-    subprocess.run([BIN, "report", "--id", "a1", "--harness", "script", "--cwd", project, "--deliver-command", f"sh -c cat>>{got}", "checkin"], env=tower_env)
+    subprocess.run([BIN, "report", "--id", "a1", "--harness", "script", "--cwd", project, "--deliver-command", json.dumps(["sh", "-c", f"cat>>{got}"]), "checkin"], env=tower_env)
 
     print("With the computer there")
     check("what he says goes through the relay to the agent", "Delivered." in send("the first thing") and "the first thing" in received(), received()[-200:])
