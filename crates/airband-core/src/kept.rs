@@ -73,6 +73,17 @@ pub fn load<T: DeserializeOwned>(path: &Path) -> Option<T> {
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
 }
 
+/// A kept value where "not there yet" and "there but unreadable" must not be taken for each other: a file that
+/// is not there is `Ok(None)`; one that cannot be read or is not the value is an error saying why, so nothing
+/// writes over it as if it had been empty.
+pub fn read<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, String> {
+    match std::fs::read(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("{} cannot be read: {e}", path.display())),
+        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|e| format!("{} is not what was kept there: {e}", path.display())),
+    }
+}
+
 /// Keep a value as JSON, whole or not at all. One that cannot be written as JSON is not written, and the
 /// old file stays.
 pub fn save<T: Serialize + ?Sized>(path: &Path, value: &T) -> std::io::Result<()> {

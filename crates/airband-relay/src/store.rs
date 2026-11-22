@@ -61,9 +61,10 @@ pub struct Dyn {
     waitlist: String,
 }
 
-/// channels.json: each channel's [`Saved`].
-fn read_channels(dir: &std::path::Path) -> HashMap<String, Saved> {
-    airband_core::kept::load(&dir.join("channels.json")).unwrap_or_default()
+/// channels.json: each channel's [`Saved`]. A file that is there but cannot be read is an error, never "no
+/// channels": taken for empty, the next change would write that back and lose every pairing.
+fn read_channels(dir: &std::path::Path) -> Result<HashMap<String, Saved>, String> {
+    airband_core::kept::read(&dir.join("channels.json")).map(Option::unwrap_or_default)
 }
 fn write_channels(dir: &std::path::Path, all: &HashMap<String, Saved>) -> Result<(), String> {
     let file = dir.join("channels.json");
@@ -132,7 +133,7 @@ impl Store {
     /// Every channel and what is remembered about it. For Postgres, also makes the database and table if they are missing.
     pub async fn load(&self) -> Result<HashMap<String, Saved>, String> {
         match self {
-            Store::Folder(dir) => Ok(read_channels(dir)),
+            Store::Folder(dir) => read_channels(dir),
             Store::Dynamo(d) => {
                 let (mut all, mut from) = (HashMap::new(), None::<Value>);
                 loop {
@@ -195,7 +196,7 @@ impl Store {
     pub async fn remove(&self, channel: &str) -> Result<(), String> {
         match self {
             Store::Folder(dir) => {
-                let mut all = read_channels(dir);
+                let mut all = read_channels(dir)?;
                 all.remove(channel);
                 write_channels(dir, &all)
             }
@@ -212,7 +213,7 @@ impl Store {
     pub async fn add(&self, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<(), String> {
         match self {
             Store::Folder(dir) => {
-                let mut all = read_channels(dir);
+                let mut all = read_channels(dir)?;
                 all.entry(channel.into()).or_insert(Saved { pull_hash: pull_hash.into(), radio_hash: radio_hash.into() });
                 write_channels(dir, &all)
             }
@@ -490,6 +491,24 @@ impl Pg {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn an_unreadable_channels_file_is_refused_and_never_written_over() {
+        let dir = std::env::temp_dir().join(format!("airband-relay-store-{}", airband_core::relay::random_hex(6)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::Folder(dir.clone());
+        // not there yet: no channels, and one can be added
+        assert_eq!(store.load().await.map(|c| c.len()), Ok(0));
+        store.add("c1", "p", "r").await.unwrap();
+        assert_eq!(store.load().await.map(|c| c.len()), Ok(1));
+        // there but broken: loading says so, and neither adding nor removing writes over it
+        std::fs::write(dir.join("channels.json"), b"{not json").unwrap();
+        assert!(store.load().await.is_err());
+        assert!(store.add("c2", "p", "r").await.is_err());
+        assert!(store.remove("c1").await.is_err());
+        assert_eq!(std::fs::read(dir.join("channels.json")).unwrap(), b"{not json");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// Against real tables, which is the only place DynamoDB's own rules can be seen to hold:
     ///   AIRBAND_TEST_DYNAMO=<prefix> AWS_REGION=<region> cargo test -p airband-relay -- --ignored dynamo
