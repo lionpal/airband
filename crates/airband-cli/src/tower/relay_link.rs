@@ -251,7 +251,7 @@ impl Serve {
                 // Nobody is waiting on this answer. Something he said that came too late is told to his
                 // radio, in its feed, under the id it was said with: he was told it would get here.
                 if let Some(id) = &said {
-                    self.app.change().settle(&self.name, id, airband_core::radio::Outcome::Rejected { why: airband_core::radio::Rejected::TooOld });
+                    self.app.change().settle(&self.keys.channel, id, airband_core::radio::Outcome::Rejected { why: airband_core::radio::Rejected::TooOld });
                 }
                 self.refused(&call, "the relay, kept while the tower was away", Refusal::BadAsk { reason: "only something he said, sent in the last week, is taken late".into() })
             }
@@ -313,7 +313,7 @@ impl Serve {
             return self.refused(call, via, Refusal::NotAllowed);
         }
         let body = if call.body.is_null() { Body::empty() } else { Body::from(serde_json::to_vec(&call.body).unwrap()) };
-        let mut req = Request::builder().method(call.method.as_str()).uri(&call.path).header("authorization", format!("Bearer {}", self.token)).header(VIA_HEADER, via).header(airband_core::radio::SCHEMA_HEADER, &call.schema).extension(super::http::RadioId(self.name.clone())).header("content-type", "application/json");
+        let mut req = Request::builder().method(call.method.as_str()).uri(&call.path).header("authorization", format!("Bearer {}", self.token)).header(VIA_HEADER, via).header(airband_core::radio::SCHEMA_HEADER, &call.schema).extension(super::http::RadioId(self.keys.channel.clone())).header("content-type", "application/json");
         if now {
             req = req.header(PRESENCE_HEADER, serde_json::to_string(&call.presence).unwrap());
         }

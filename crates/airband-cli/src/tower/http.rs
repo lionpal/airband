@@ -199,7 +199,7 @@ pub(super) mod tests {
         let _ = std::fs::remove_file(&path);
         let store = Arc::new(Store::open(&path).unwrap());
         let cfg: Config = serde_json::from_str(r#"{"token":"own","radio_token":"radio"}"#).unwrap();
-        let push = push::Wake::load(&store).unwrap();
+        let push = push::Wake::load(&store, &[]).unwrap();
         let saver = saver::Saver::start(store.clone());
         Arc::new(App { push, settings: Settings::held(cfg), store, saver, inner: Mutex::new(Inner::default()), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default() })
     }
