@@ -144,6 +144,15 @@ mod tests {
         assert_eq!(team_names("/a/Work/shop/"), ["shop", "work shop", "a work shop"]);
         assert_eq!(team_names("/"), Vec::<String>::new());
         assert_eq!(team_on("Charles's Laptop", "shop"), "charless laptop shop");
+        // N22: a folder's names and a computer's in front keep to the length he may name a team, so the tower
+        // never gives a team a name it would refuse him
+        let long = team_names("/work/an extremely long client project name/the actual repository");
+        assert!(!long.is_empty() && long.iter().all(|n| chosen_team_name(n).as_deref() == Ok(n.as_str())), "{long:?}");
+        assert_eq!(long[0], "the actual repository");
+        assert_eq!(team_names("/x/abcdefghijklmnopqrstuvwxyz0123"), ["abcdefghijklmnopqrstuvwx"]);
+        let on = team_on("Charles's MacBook Pro", "the actual repository");
+        assert!(chosen_team_name(&on).as_deref() == Ok(on.as_str()), "{on}");
+        assert_eq!(team_on("Charles's MacBook Pro", "shop"), "charless macbook shop");
         let c = |project: &str, number: &str, named: bool| Callsign { project: project.into(), number: number.into(), named };
         assert_eq!((c("shop", "three", false).shown(), c("warehouse", "removals", true).shown(), c("shop", "13", false).shown()), ("shop 3".to_string(), "warehouse removals".to_string(), "shop 13".to_string()));
     }
