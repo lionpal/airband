@@ -10,7 +10,7 @@ extension RadioModel {
     /// The keys he has given this phone, by provider. Kept in the Keychain, on this phone only. Only the core
     /// asks for one, to use it: no screen is ever handed a key.
     private var keys: [String: String] {
-        (try? JSONDecoder().decode([String: String].self, from: Data((Keychain.read("airband.keys") ?? "{}").utf8))) ?? [:]
+        Stored.keychain.load("airband.keys", or: [:])
     }
 
     func secret(name: String) -> String? {
@@ -23,7 +23,7 @@ extension RadioModel {
         defer { keysLock.unlock() }
         var all = keys
         all[name] = value
-        Keychain.write("airband.keys", String(data: (try? JSONEncoder().encode(all)) ?? Data("{}".utf8), encoding: .utf8) ?? "{}")
+        Stored.keychain.keep("airband.keys", all)
     }
 
     func device() -> HostDevice {

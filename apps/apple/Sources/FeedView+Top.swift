@@ -55,7 +55,7 @@ extension FeedView {
     /// The team he is in: the one he picked, or the team of the agent he is looking at.
     var team: DeskRoom? {
         if let room = model.room { return model.view.rooms.first { $0.id == room } }
-        if let only = model.only { return model.view.rooms.first { $0.members.contains { $0.id == only } } }
+        if let only = model.only { return model.member(only)?.team }
         return nil
     }
     /// How many unread things are outside the team he is in: shown on the way back to all of them.

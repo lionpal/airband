@@ -36,7 +36,7 @@ struct SetupView: View {
                         }
                         .environmentObject(model)
                     } label: {
-                        row("Coding agents", codingTools().filter { model.tools.contains($0.id) }.map(\.name).joined(separator: ", "))
+                        row("Coding agents", model.usedTools.map(\.name).joined(separator: ", "))
                     }
                 }
                 Section {
@@ -44,7 +44,7 @@ struct SetupView: View {
                 } footer: {
                     Text("Off, you see the short version of what each agent wrote and can open any one. On, you see all of it. What is read aloud is the short version either way.")
                 }
-                if !model.view.stations.filter({ !$0.isEmpty }).isEmpty {
+                if !model.computers.isEmpty {
                     Section {
                         if model.computers.count > 1 {
                             Picker("Main computer", selection: Binding(get: { model.view.mainComputer ?? "" }, set: { model.setMainComputer($0) })) {

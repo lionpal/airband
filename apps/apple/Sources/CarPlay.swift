@@ -49,7 +49,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         } else {
             model.only = nil
             start(then: nil)
-            Task { @MainActor in if self.model.calling { self.model.open(url) } }
+            // already routed: the Talk tile, or a banner about no one in particular
+            Task { @MainActor in
+                guard self.model.calling else { return }
+                if case .talk = route { self.model.replyingTo = nil }
+                self.model.openMic()
+            }
         }
     }
 
@@ -105,7 +110,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     /// first and the microphone then opens for the answer.
     private func start(then answer: String?) {
         Task { @MainActor in
-            if let answer, let team = self.model.view.rooms.first(where: { $0.members.contains { $0.id == answer } }) {
+            if let answer, let team = self.model.member(answer)?.team {
                 self.model.room = team.id
                 self.model.only = answer
             }

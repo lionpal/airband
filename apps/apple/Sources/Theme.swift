@@ -22,7 +22,7 @@ enum Palette {
     /// A colour for each team, in the order the tower hands them out: blue, orange, violet, magenta, and last the
     /// two nearest the colours that already mean working and waiting. Checked as a set for telling apart,
     /// including by people who do not see red and green apart; a badge's letters say who it is in any case.
-    static func team(_ place: UInt8?) -> Color { let c = TeamColours.rgb(place); return Color(red: c.0, green: c.1, blue: c.2) }
+    static func team(_ place: UInt8?) -> Color { Color(uiColor: TeamColours.ui(place)) }
 }
 /// The back of something that sits over the chat: the chat shows through it, blurred and darkened enough that
 /// what is on top still reads. `strength` is how much of the dark is laid over the blur; words need more than a button.

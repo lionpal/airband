@@ -82,7 +82,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         // development only: `-airband.devTools '("codex")'` opens as someone who uses those coding tools, for a screenshot
         if let tools = UserDefaults.standard.stringArray(forKey: "airband.devTools") { desk.setTools(tools: tools) }
         #endif
-        var links = (try? JSONDecoder().decode([String].self, from: Data((Keychain.read("airband.links") ?? "[]").utf8))) ?? []
+        var links = Keychain.links()
         #if DEBUG
         // development only: `xcrun simctl launch <sim> dev.airband.app -airband.devLink <pairing link>` pairs without the
         // system's "Open in airband?" prompt, which a script cannot tap
@@ -165,12 +165,16 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// Every agent on the radio, in the order the teams are shown.
     var agents: [DeskMember] { view.rooms.flatMap(\.members) }
-    /// An agent's badge and its team's colour, by the agent's id.
-    func badge(of agent: String) -> (String, UInt8?)? {
+    /// An agent, by its id, with the team it is in: the one way the screens find which team an agent is in.
+    func member(_ id: String) -> (agent: DeskMember, team: DeskRoom)? {
         for room in view.rooms {
-            if let member = room.members.first(where: { $0.id == agent }) { return (member.badge, room.colour) }
+            if let member = room.members.first(where: { $0.id == id }) { return (member, room) }
         }
         return nil
+    }
+    /// An agent's badge and its team's colour, by the agent's id.
+    func badge(of agent: String) -> (String, UInt8?)? {
+        member(agent).map { ($0.agent.badge, $0.team.colour) }
     }
     /// His computers that gave themselves a name.
     var computers: [String] { view.stations.filter { !$0.isEmpty } }
@@ -193,7 +197,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     private func connect(_ wanted: [String]) {
         links = desk.setLinks(links: wanted)
         if links.count < wanted.count { problem = "One pairing link is not valid and was skipped." }
-        Keychain.write("airband.links", String(data: (try? JSONEncoder().encode(links)) ?? Data("[]".utf8), encoding: .utf8) ?? "[]")
+        Keychain.keepLinks(links)
         refresh()
         // paired: this is when notifications are worth asking for, and when a new computer needs the phone's address
         if !links.isEmpty { DispatchQueue.main.async { Push.shared.setUp() } }
@@ -220,16 +224,21 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         syncBanners()
     }
 
+    /// Open the microphone for him to talk, unless it is open already; with a question, about that question.
+    func openMic(about question: ChatMessage? = nil) {
+        Task { @MainActor in if !self.micOpen { await self.talk(about: question) } }
+    }
+
     /// An address the app was opened with: a pairing link, or what the Talk tile and a banner open it with.
     func open(_ url: URL) {
         switch OpenWith.route(url) {
         case .talk:
             replyingTo = nil
-            Task { @MainActor in if !self.micOpen { await self.talk() } }
+            openMic()
         case .answer(let agent?):
             answer(agent)
         case .answer(nil):
-            Task { @MainActor in if !self.micOpen { await self.talk() } }
+            openMic()
         case nil:
             pair(with: url.absoluteString)
         }
@@ -239,14 +248,15 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// it offers, and then the microphone opens. What he says is the answer to that question, in whatever
     /// words he uses.
     func answer(_ id: String) {
-        guard let team = view.rooms.first(where: { $0.members.contains { $0.id == id } }), let agent = team.members.first(where: { $0.id == id }) else { return }
+        guard let found = member(id) else { return }
+        let (agent, team) = found
         // look at that agent, so the question is in view and his words go to it
         replyingTo = nil
         room = team.id
         only = id
         let question = view.feed.last { $0.id == agent.questionId }
         guard !agent.questionId.isEmpty else {
-            Task { @MainActor in if !self.micOpen { await self.talk() } }
+            openMic()
             return
         }
         stopReading()
@@ -257,7 +267,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
                 // he stopped the reading, or went elsewhere: the microphone stays shut
                 guard self.reading == agent.questionId else { return }
                 self.reading = nil
-                Task { @MainActor in if !self.micOpen { await self.talk(about: question) } }
+                self.openMic(about: question)
             }
         }
     }
@@ -295,7 +305,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     }
 
     /// The picture he chose for each of his computers, by its name: a system symbol's name.
-    @Published var computerIcons: [String: String] = (try? JSONDecoder().decode([String: String].self, from: Data((UserDefaults.standard.string(forKey: "airband.computers.icons") ?? "{}").utf8))) ?? [:]
+    @Published var computerIcons: [String: String] = Stored.settings.load("airband.computers.icons", or: [:])
     /// The pictures a computer can have.
     static let computerSymbols = ["laptopcomputer", "macmini", "desktopcomputer", "macstudio", "macpro.gen3", "server.rack", "pc"]
 
@@ -308,7 +318,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     }
     func setIcon(_ symbol: String, of computer: String) {
         computerIcons[computer] = symbol
-        UserDefaults.standard.set(String(data: (try? JSONEncoder().encode(computerIcons)) ?? Data("{}".utf8), encoding: .utf8), forKey: "airband.computers.icons")
+        Stored.settings.keep("airband.computers.icons", computerIcons)
     }
 
     /// The folders inside one of his on a computer. Calls back with them, or with what is wrong.

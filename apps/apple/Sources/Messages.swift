@@ -12,7 +12,7 @@ private struct Speaker: View {
         Button { model.look(agent: m.agent) } label: {
             HStack(spacing: 7) {
                 if !m.badge.isEmpty { Badge(text: m.badge, colour: m.colour, size: 20) }
-                Text(m.station.isEmpty ? m.from : "\(m.from) · \(m.station)").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.quiet)
+                Text(m.fromAndStation).font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.quiet)
                 // it was to be read to him while he was listening, and was not: a small mark. Why is one
                 // long press away, in the line's menu.
                 // no model read it: it is as the agent wrote it, and a small mark says so
@@ -281,4 +281,9 @@ struct Unsent: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(o.failed == nil ? "Sending: \(o.label ?? o.text)" : "Not sent: \(o.label ?? o.text)")
     }
+}
+
+extension ChatMessage {
+    /// Who it is from, and on which computer when he has several.
+    var fromAndStation: String { station.isEmpty ? from : "\(from) · \(station)" }
 }

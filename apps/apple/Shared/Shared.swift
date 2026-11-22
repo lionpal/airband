@@ -33,17 +33,29 @@ enum Keychain {
         return String(data: data, encoding: .utf8)
     }
     /// Every computer's pairing link.
-    static func links() -> [String] {
-        (try? JSONDecoder().decode([String].self, from: Data((read("airband.links") ?? "[]").utf8))) ?? []
-    }
+    static func links() -> [String] { Stored.keychain.load("airband.links", or: []) }
+    static func keepLinks(_ links: [String]) { Stored.keychain.keep("airband.links", links) }
     /// Each team's colour as the phone chose it, kept where the notification extension can read it. Not a secret:
     /// it is here because this is the one store the app and its extension share.
-    static func teamColours() -> [String: UInt8] {
-        (try? JSONDecoder().decode([String: UInt8].self, from: Data((read("airband.teamColours") ?? "{}").utf8))) ?? [:]
+    static func teamColours() -> [String: UInt8] { Stored.keychain.load("airband.teamColours", or: [:]) }
+    static func keepTeamColours(_ colours: [String: UInt8]) { Stored.keychain.keep("airband.teamColours", colours) }
+}
+
+/// Something kept as JSON text: in the Keychain, or in the app's own settings. The one way either is read and
+/// written.
+enum Stored {
+    case keychain, settings
+
+    func load<T: Decodable>(_ key: String, or empty: T) -> T {
+        let text = self == .keychain ? Keychain.read(key) : UserDefaults.standard.string(forKey: key)
+        return text.flatMap { try? JSONDecoder().decode(T.self, from: Data($0.utf8)) } ?? empty
     }
-    static func keepTeamColours(_ colours: [String: UInt8]) {
-        guard let data = try? JSONEncoder().encode(colours), let text = String(data: data, encoding: .utf8) else { return }
-        write("airband.teamColours", text)
+    func keep<T: Encodable>(_ key: String, _ value: T) {
+        guard let data = try? JSONEncoder().encode(value), let text = String(data: data, encoding: .utf8) else { return }
+        switch self {
+        case .keychain: Keychain.write(key, text)
+        case .settings: UserDefaults.standard.set(text, forKey: key)
+        }
     }
 }
 
