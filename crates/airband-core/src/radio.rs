@@ -310,8 +310,9 @@ impl MessageAsk {
     }
 }
 
-/// `GET feed`: which part of the chat, from where, and how long to wait for something new. Written into the
-/// address as a query ([`FeedAsk::query`]) and read back from it by the tower, the one form both sides use.
+/// `GET feed`: which part of the chat, from where, and how long to wait for something new. The radio writes it
+/// into the address with [`FeedAsk::query`]; the tower reads it back as this type (a query extractor) and waits
+/// [`FeedAsk::wait_for`]. Both ends use this one type.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FeedAsk {
     /// Only this team's, by its id.
@@ -358,6 +359,11 @@ impl FeedAsk {
         add("wait", Some(self.wait.min(Self::WAIT_MOST).to_string()));
         q.finish()
     }
+    /// How long the tower holds the request open for something new: what was asked, no more than
+    /// [`FeedAsk::WAIT_MOST`].
+    pub fn wait_for(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.wait.min(Self::WAIT_MOST).into())
+    }
 }
 
 #[cfg(test)]
@@ -368,7 +374,9 @@ mod tests {
     fn a_feed_ask_reads_back_as_it_was_written() {
         let ask = FeedAsk { team: Some("t 1&x".into()), since: Some(4), after: 9, roster: Some(2), wait: 99, ..Default::default() };
         let back: FeedAsk = serde_json::from_value(serde_json::Value::Object(url::form_urlencoded::parse(ask.query().as_bytes()).map(|(k, v)| (k.to_string(), v.parse::<u64>().map_or(serde_json::Value::String(v.to_string()), Into::into))).collect())).unwrap();
-        assert_eq!(back, FeedAsk { wait: FeedAsk::WAIT_MOST, ..ask });
+        assert_eq!(back, FeedAsk { wait: FeedAsk::WAIT_MOST, ..ask.clone() });
+        // read back as it came, unclipped, the wait is still held to the most
+        assert_eq!(ask.wait_for(), std::time::Duration::from_secs(FeedAsk::WAIT_MOST.into()));
     }
 
     #[test]

@@ -19,7 +19,26 @@ enum Leave {
     Private,
 }
 
+/// The file a path names, through any symbolic links: a kept file that is a link (into a folder of his
+/// dotfiles, say) is written where the link points, so the link stays a link.
+fn through_links(path: &Path) -> std::io::Result<std::path::PathBuf> {
+    let mut at = path.to_path_buf();
+    // as many links in a row as the system itself follows before it gives up
+    for _ in 0..40 {
+        match std::fs::symlink_metadata(&at) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let to = std::fs::read_link(&at)?;
+                // a link's target is read from the folder the link is in; one written whole stays as it is
+                at = at.parent().map_or_else(|| to.clone(), |dir| dir.join(&to));
+            }
+            _ => return Ok(at),
+        }
+    }
+    Err(std::io::Error::other(format!("{} is a link to a link, too many times over", path.display())))
+}
+
 fn write(path: &Path, bytes: &[u8], leave: Leave) -> std::io::Result<()> {
+    let path = &through_links(path)?;
     let name = path.file_name().map(|n| n.to_string_lossy().to_string()).ok_or_else(|| std::io::Error::other("not a file's name"))?;
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir)?;
@@ -68,20 +87,63 @@ pub fn write_private(path: &Path, bytes: impl AsRef<[u8]>) -> std::io::Result<()
     write(path, bytes.as_ref(), Leave::Private)
 }
 
+/// Why a kept file was not read, and whether its path is free. A keeper that goes on with nothing in its
+/// place writes to the path again only when `set_aside` is true: otherwise the file is still there, and
+/// writing would lose it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unreadable {
+    /// Why, and where it went, in a few words for a log.
+    pub why: String,
+    /// It was moved aside, so the path is free to write.
+    pub set_aside: bool,
+}
+
+impl std::fmt::Display for Unreadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.why)
+    }
+}
+
 /// What a kept file holds, as JSON, for a keeper that goes on with nothing when the file cannot be read. A file
 /// that is not there is `Ok(None)`. One that is there and cannot be read, or is not the value, is first moved
 /// aside (beside it, under `<name>.unreadable-<random>`), so whatever is written to the path next writes over
-/// nothing; the error says why and where it went. Nothing kept is ever lost by being taken for empty.
-pub fn load<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, String> {
-    let why = match read(path) {
+/// nothing. When it cannot be moved, the error says so (`set_aside` is false) and the keeper must not write to
+/// the path. A read that fails for a moment (the system is out of open files, or was interrupted) is tried
+/// again before anything is set aside. Nothing kept is ever lost by being taken for empty.
+pub fn load<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, Unreadable> {
+    let why = match read_trying(path, || std::fs::read(path)) {
         Ok(found) => return Ok(found),
         Err(why) => why,
     };
     let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let aside = path.with_file_name(format!("{name}.unreadable-{}", crate::encode::random_hex(4)));
     match std::fs::rename(path, &aside) {
-        Ok(()) => Err(format!("{why}; it was kept as {}", aside.display())),
-        Err(e) => Err(format!("{why}; it could not be moved aside ({e}), so nothing will be written over it")),
+        Ok(()) => Err(Unreadable { why: format!("{why}; it was kept as {}", aside.display()), set_aside: true }),
+        Err(e) => Err(Unreadable { why: format!("{why}; it could not be moved aside ({e}), and is left where it is"), set_aside: false }),
+    }
+}
+
+/// Is this a failure that passes: the read was interrupted, or the system had no file to give for a moment?
+fn brief(e: &std::io::Error) -> bool {
+    use std::io::ErrorKind::{Interrupted, TimedOut, WouldBlock};
+    #[cfg(unix)]
+    if matches!(e.raw_os_error(), Some(libc::EMFILE | libc::ENFILE | libc::EAGAIN)) {
+        return true;
+    }
+    matches!(e.kind(), Interrupted | WouldBlock | TimedOut)
+}
+
+/// [`read`], with the file's bytes from `bytes`: a brief failure is tried twice more, a moment apart.
+fn read_trying<T: DeserializeOwned>(path: &Path, mut bytes: impl FnMut() -> std::io::Result<Vec<u8>>) -> Result<Option<T>, String> {
+    let mut tries = 0;
+    loop {
+        match bytes() {
+            Err(e) if brief(&e) && tries < 2 => {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(20 * tries));
+            }
+            got => return parsed(path, got),
+        }
     }
 }
 
@@ -89,7 +151,11 @@ pub fn load<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, String> {
 /// is not there is `Ok(None)`; one that cannot be read or is not the value is an error saying why, so nothing
 /// writes over it as if it had been empty.
 pub fn read<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, String> {
-    match std::fs::read(path) {
+    parsed(path, std::fs::read(path))
+}
+
+fn parsed<T: DeserializeOwned>(path: &Path, got: std::io::Result<Vec<u8>>) -> Result<Option<T>, String> {
+    match got {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(format!("{} cannot be read: {e}", path.display())),
         Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|e| format!("{} is not what was kept there: {e}", path.display())),
@@ -137,6 +203,48 @@ mod tests {
     }
 
 
+    #[cfg(unix)]
+    #[test]
+    fn a_kept_file_that_is_a_link_is_written_where_it_points_and_stays_a_link() {
+        // N21: a settings file linked into a dotfiles folder stays linked
+        let dir = folder();
+        let real = dir.join("dotfiles").join("settings.json");
+        save(&real, &vec![1]).unwrap();
+        let link = dir.join("settings.json");
+        std::os::unix::fs::symlink("dotfiles/settings.json", &link).unwrap();
+        write_keeping(&link, b"[2]").unwrap();
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read(&real).unwrap(), b"[2]");
+        // a link to a file not made yet makes it there
+        let ahead = dir.join("ahead.json");
+        std::os::unix::fs::symlink(dir.join("dotfiles").join("new.json"), &ahead).unwrap();
+        save(&ahead, &vec![3]).unwrap();
+        assert!(std::fs::symlink_metadata(&ahead).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read(dir.join("dotfiles").join("new.json")).unwrap(), b"[3]");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_read_that_fails_for_a_moment_is_tried_again_and_one_that_cannot_be_set_aside_says_so() {
+        // A-5: out of open files once, then read: the value, nothing set aside
+        let mut first = true;
+        let got: Result<Option<Vec<u32>>, String> = read_trying(Path::new("x.json"), || {
+            if std::mem::take(&mut first) { Err(std::io::Error::from_raw_os_error(libc::EMFILE)) } else { Ok(b"[7]".to_vec()) }
+        });
+        assert_eq!(got, Ok(Some(vec![7])));
+        // a file in a folder that cannot be changed cannot be moved aside: the keeper is told not to write
+        use std::os::unix::fs::PermissionsExt;
+        let dir = folder();
+        let file = dir.join("half.json");
+        std::fs::write(&file, "[1,").unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let said = load::<Vec<u32>>(&file).unwrap_err();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(!said.set_aside && file.exists(), "{said}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn a_file_is_replaced_whole_and_nothing_is_left_beside_it() {
         let dir = folder();
@@ -158,7 +266,7 @@ mod tests {
         let half = dir.join("half.json");
         std::fs::write(&half, "[1, 2").unwrap();
         let said = load::<Vec<u32>>(&half).unwrap_err();
-        assert!(said.contains("kept as"), "{said}");
+        assert!(said.set_aside && said.why.contains("kept as"), "{said}");
         // the path is free, and what was there is beside it, as it was
         assert!(!half.exists());
         let aside: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).collect();

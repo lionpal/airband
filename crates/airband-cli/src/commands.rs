@@ -172,7 +172,7 @@ pub(crate) fn unpair(mut cfg: Config, name: Option<&str>) -> Result<(), String> 
     // tell the relay the channel is finished with, so it does not keep it on record for ever. If the relay
     // cannot be reached the radio is cut off all the same: the tower no longer answers on that channel.
     if let (Some(relay), Ok(keys)) = (&cfg.relay, airband_core::relay::Keys::derive(&gone.secret)) {
-        let _ = airband_core::net::agent(std::time::Duration::from_secs(8)).delete(format!("{relay}/v1/channels/{}", keys.channel)).header("authorization", format!("Bearer {}", keys.pull_token)).call();
+        let _ = airband_core::net::agent(std::time::Duration::from_secs(8)).delete(keys.at(relay, "")).header("authorization", keys.as_tower()).call();
     }
     println!("\"{name}\" is cut off. airband stops answering it within ten seconds.");
     Ok(())

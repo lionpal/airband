@@ -93,7 +93,7 @@ pub(super) fn weigh(text: &str, now: u64, have: &Catalog) -> Result<(Option<Cata
 
 /// The same, held to what `built` has in place of this build's own catalogue.
 pub(super) fn weigh_against(text: &str, now: u64, have: &Catalog, built: &Catalog) -> Result<(Option<Catalog>, Taken), String> {
-    let expires = serde_json::from_str::<Value>(text).map_err(|e| format!("the catalogue does not read: {e}"))?["expires"].as_u64().unwrap_or(0);
+    let expires = serde_json::from_str::<Value>(text).map_err(|e| format!("the catalogue does not read: {e}"))?["expires"].as_u64().ok_or("this copy of the catalogue does not say until when it may be taken")?;
     // a signed copy says until when it may be taken, so one that was replaced long ago cannot be served again
     if expires <= now {
         return Err("this copy of the catalogue has run out".into());
@@ -141,13 +141,20 @@ pub(super) fn weigh_against(text: &str, now: u64, have: &Catalog, built: &Catalo
     if newer.providers.is_empty() {
         return Err("the catalogue has no providers in it".into());
     }
-    // A provider this build has compiled in is never lost by taking a copy: when the copy does not list it
+    // A provider or tool this build has compiled in is never lost by taking a copy: when the copy does not list it
     // (or lists it in a shape this build cannot read) and does not say it is retired, the compiled-in row
     // stays. What he has chosen keeps working.
     for known in &built.providers {
         if !newer.providers.iter().any(|p| p.id == known.id) && !newer.retired.contains(&known.id) {
             newer.left_out.push(format!("{}: not in this copy in a shape this build reads; kept as compiled in", known.id));
             newer.providers.push(known.clone());
+        }
+    }
+    // the same for a coding tool this build knows: his agents of it are still heard
+    for known in &built.tools {
+        if !newer.tools.iter().any(|t| t.id == known.id) && !newer.retired.contains(&known.id) {
+            newer.left_out.push(format!("{}: not in this copy in a shape this build reads; kept as compiled in", known.id));
+            newer.tools.push(known.clone());
         }
     }
     check(&newer)?;

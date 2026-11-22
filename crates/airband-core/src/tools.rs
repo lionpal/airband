@@ -54,6 +54,14 @@ impl Launcher {
         }
         self.argv.iter().flat_map(|a| if a == "{options}" { options.clone() } else { vec![fill(a)] }).collect()
     }
+
+    /// What this launcher's own row says its agents can be started on.
+    pub fn offers(&self) -> Offers {
+        Offers {
+            models: self.models.iter().map(|(name, id)| Choice { id: id.clone(), name: name.clone() }).collect(),
+            efforts: self.efforts.iter().map(|e| Choice { id: e.clone(), name: e.clone() }).collect(),
+        }
+    }
 }
 
 /// One thing a new agent can be set to: a model, or an effort.
@@ -74,17 +82,6 @@ pub struct Offers {
     pub models: Vec<Choice>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub efforts: Vec<Choice>,
-}
-
-
-impl Launcher {
-    /// What this launcher's own row says its agents can be started on.
-    pub fn offers(&self) -> Offers {
-        Offers {
-            models: self.models.iter().map(|(name, id)| Choice { id: id.clone(), name: name.clone() }).collect(),
-            efforts: self.efforts.iter().map(|e| Choice { id: e.clone(), name: e.clone() }).collect(),
-        }
-    }
 }
 
 /// How a held agent is driven: the two things a holder knows how to do. A row says which, by name (`by`).

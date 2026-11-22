@@ -41,7 +41,7 @@ impl Signups {
 
 /// The headers that let the homepage, and only it, call this from a browser.
 pub(super) fn from_site(headers: &HeaderMap) -> [(&'static str, String); 4] {
-    let origin = headers.get("origin").and_then(|v| v.to_str().ok()).filter(|o| SITES.contains(o)).unwrap_or(SITES[0]);
+    let origin = header(headers, "origin").filter(|o| SITES.contains(o)).unwrap_or(SITES[0]);
     [("access-control-allow-origin", origin.to_string()), ("access-control-allow-methods", "POST, OPTIONS".into()), ("access-control-allow-headers", "content-type".into()), ("vary", "origin".into())]
 }
 
@@ -72,11 +72,11 @@ pub(super) async fn waitlist_preflight(headers: HeaderMap) -> Response {
 pub(super) async fn waitlist(State(relay): State<Arc<Relay>>, headers: HeaderMap, body: Bytes) -> Response {
     let cors = from_site(&headers);
     let answer = |code: StatusCode, why: &str| (code, cors.clone(), axum::Json(serde_json::json!({ "ok": code == StatusCode::OK, "message": why }))).into_response();
-    let origin = headers.get("origin").and_then(|v| v.to_str().ok()).unwrap_or("");
+    let origin = header(&headers, "origin").unwrap_or("");
     if !SITES.contains(&origin) {
         return answer(StatusCode::FORBIDDEN, "Sign up on airband.dev.");
     }
-    if !headers.get("content-type").and_then(|v| v.to_str().ok()).is_some_and(|t| t.starts_with("application/json")) {
+    if !header(&headers, "content-type").is_some_and(|t| t.starts_with("application/json")) {
         return answer(StatusCode::UNSUPPORTED_MEDIA_TYPE, "Send JSON.");
     }
     if body.len() > 1024 {

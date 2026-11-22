@@ -1,5 +1,7 @@
-//! Every rule the tower and the radio share. No network here, and the only files touched are the ones
-//! [`kept`] is asked to write, so all of it is tested directly.
+//! Every rule the tower and the radio share. The network is reached in one place, fetching the published
+//! catalogue (`catalog::refresh`), through the one client in [`net`]; `providers::Answering::sent` reads what a
+//! service answered a request the caller sent. Files are touched only through [`kept`] and the kept copy of the
+//! catalogue (`catalog::load_kept`). Everything else is tested directly.
 //!
 //! Two versioned protocols meet at the tower (docs/protocols.md):
 //! - [`agent`], `airband.agent/1`: how any coding agent, on any harness or model, reports in and is spoken to.

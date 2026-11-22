@@ -5,8 +5,13 @@ pub(super) fn same(a: &str, b: &str) -> bool {
     airband_core::token::same(a.as_bytes(), b.as_bytes())
 }
 
+/// A header's value as text, when the request has it and it is text. The one way a header is read here.
+pub(super) fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name).and_then(|v| v.to_str().ok())
+}
+
 pub(super) fn bearer(headers: &HeaderMap) -> &str {
-    airband_core::token::bearer(headers.get("authorization").and_then(|v| v.to_str().ok()))
+    airband_core::token::bearer(header(headers, "authorization"))
 }
 
 pub(super) fn valid_channel(c: &str) -> bool {
@@ -19,7 +24,7 @@ pub(super) fn say(code: StatusCode, why: &str) -> Response {
 
 /// A token's hash as a tower sends it: 64 hex characters.
 pub(super) fn radio_hash_given(headers: &HeaderMap) -> Option<&str> {
-    headers.get(RADIO_HASH_HEADER).and_then(|v| v.to_str().ok()).filter(|h| airband_core::encode::is_hex(h, 64..=64))
+    header(headers, RADIO_HASH_HEADER).filter(|h| airband_core::encode::is_hex(h, 64..=64))
 }
 
 /// What a radio's request gets when it may not use the channel. The same whether the token is missing or wrong

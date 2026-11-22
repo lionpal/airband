@@ -74,8 +74,8 @@ pub struct Catalog {
     pub frames: Vec<Frames>,
     /// Words of the trade that a recogniser otherwise hears as everyday ones ("sync" as "sink").
     pub phrases: Vec<String>,
-    /// Providers that are no more, by id. One this build has compiled in and a later copy neither lists nor
-    /// names here is kept as compiled in.
+    /// Providers and coding tools that are no more, by id. One this build has compiled in and a later copy
+    /// neither lists nor names here is kept as compiled in.
     pub retired: Vec<String>,
     /// What was in the document and could not be read by this build, in a few words each.
     pub left_out: Vec<String>,
@@ -108,18 +108,17 @@ impl Tool {
 }
 
 /// Something a row tells the code, as text: what is written under one name in its `with`. Empty when the row
-/// does not say, or says something other than text. The one way a row's word is read.
+/// does not say, or says something other than text. For a word a row names (a program, an address, a field).
 pub(crate) fn row_text(said: Option<&Value>) -> &str {
     said.and_then(Value::as_str).unwrap_or_default()
 }
 
-/// A value a row or a setting gives as the text it is used as: words as they are, a number or a yes/no as
-/// written. Empty for anything else, or nothing. The one rule for a value told to an engine or a service.
+/// The same, for a value that is used as text whatever it is written as: a number or a yes/no as written,
+/// words as [`row_text`] reads them. For a value told to an engine or a service.
 pub(crate) fn scalar_text(said: Option<&Value>) -> String {
     match said {
-        Some(Value::String(s)) => s.clone(),
         Some(v @ (Value::Number(_) | Value::Bool(_))) => v.to_string(),
-        _ => String::new(),
+        _ => row_text(said).to_string(),
     }
 }
 
@@ -316,6 +315,40 @@ mod tests {
         // three offers and one provider and one model did not read, and each is named
         assert_eq!(c.left_out.len(), 5, "{:?}", c.left_out);
         assert!(c.left_out[0].starts_with("x: an offer") && c.left_out[3].starts_with("y:") && c.left_out[4].starts_with("m:"));
+    }
+
+    #[test]
+    fn a_tool_row_this_build_cannot_read_is_left_out_said_and_the_compiled_in_tool_stays() {
+        // N20: one tool row in a shape this build cannot read leaves the rest of the copy to be taken
+        let (taken, said) = offered(&|d| {
+            let tools = d["tools"].as_array_mut().unwrap();
+            tools.iter_mut().find(|t| t["id"] == "codex").unwrap()["name"] = serde_json::json!({ "a": "new shape" });
+            tools.push(serde_json::json!({ "id": "newtool", "launchers": "a new shape" }));
+        })
+        .unwrap();
+        let taken = taken.unwrap();
+        assert_eq!(taken.tools.iter().find(|t| t.id == "codex"), built().tools.iter().find(|t| t.id == "codex"));
+        assert!(!taken.tools.iter().any(|t| t.id == "newtool"));
+        assert!(said.left_out.iter().any(|l| l.starts_with("codex:")) && said.left_out.iter().any(|l| l.starts_with("newtool:")), "{:?}", said.left_out);
+    }
+
+    #[test]
+    fn a_kept_copy_that_cannot_be_read_is_said_and_a_copy_without_an_end_is_refused_as_such() {
+        let dir = std::env::temp_dir().join(format!("airband-kept-catalog-{}", crate::encode::random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        // nothing kept: nothing said
+        assert!(load_kept(&dir, &|_| true).is_empty());
+        // a copy kept without its signature: said, never passed over unseen
+        std::fs::write(dir.join(kept::KEPT), b"{}").unwrap();
+        assert_eq!(load_kept(&dir, &|_| true).len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+        // a copy that does not say when it ends is told as that, never as one that has run out
+        let said = offered(&|d| {
+            d.as_object_mut().unwrap().remove("expires");
+        })
+        .err()
+        .unwrap();
+        assert!(said.contains("does not say until when"), "{said}");
     }
 
     #[test]

@@ -74,8 +74,8 @@ pub struct UseAccount {
 }
 
 /// `POST team`: put an agent in another team, one that exists or a new one. The agent keeps a name he gave it
-/// and takes the next free number otherwise; the answer is `{callsign, team}`, what it is called now and the team
-/// it is in, and that team's `id`; or `{error}`.
+/// and takes the next free number otherwise; the answer is [`Moved`] (what it is called now, and the id of the team
+/// it is in), or `{error}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MoveAgent {
     /// The agent's id, as the roster gives it.
