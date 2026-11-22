@@ -52,7 +52,7 @@ pub(super) async fn unheard(State(app): State<Arc<App>>, Extension(RadioId(radio
     let mut inner = app.change();
     let id = u.id.as_str();
     let who = inner.log.iter().find(|e| e.id == id).map(|e| inner.sender_name(e)).unwrap_or_else(|| "a line it no longer has".to_string());
-    let why = u.why.as_deref().map(|w| format!(": {w}")).unwrap_or_else(|| ", and did not say why".to_string());
+    let why = u.why.as_deref().map(|w| format!(" ({w})")).unwrap_or_else(|| " (it did not say why)".to_string());
     log(format!("{radio} could not read {who} aloud{why}; it stays queued (line {id}), and nothing more goes to that radio for a minute"));
     if inner.log.iter().any(|e| e.id == id && matches!(&e.aloud, Aloud::Handed { radio: r, .. } if *r == radio)) {
         inner.set_aloud(id, Aloud::Waiting);

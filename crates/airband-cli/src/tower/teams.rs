@@ -96,21 +96,14 @@ impl Inner {
         self.teams.insert(id.clone(), Team { name, folder: None, named });
         Ok(id)
     }
-    /// The team of the name an agent was started under: the team on this computer that has exactly that name,
-    /// or `None` when a new one can be made with it. `Err` when it can be neither.
-    pub(super) fn started_under(&self, name: &str) -> Result<Option<String>, String> {
+    /// The team he means by a name he gave (the name an agent was started under, a team he moved one to from a
+    /// radio): the team on this computer that has exactly that name, or a new one with no folder, his. `Err`
+    /// says why it can be neither.
+    pub(super) fn team_he_named(&mut self, name: &str) -> Result<String, String> {
         let name = airband_core::routing::chosen_team_name(name)?;
         match self.team_called(&name) {
-            Some(id) => Ok(Some(id)),
-            None => self.chosen_team(&name, None).map(|_| None),
-        }
-    }
-    /// The team an agent started under this name goes in: the one that has the name, or a new one he named.
-    pub(super) fn team_started_under(&mut self, name: &str) -> Option<String> {
-        match self.started_under(name) {
-            Ok(Some(id)) => Some(id),
-            Ok(None) => self.new_team(name, true).ok(),
-            Err(_) => None,
+            Some(id) => Ok(id),
+            None => self.new_team(&name, true),
         }
     }
     /// A radio said which names his other computers use. A team here whose name a team there has takes another

@@ -73,7 +73,7 @@ impl Inner {
         }
         match (&agent.name, &agent.cwd) {
             (Some(name), _) => {
-                let team = self.team_started_under(name)?;
+                let team = self.team_he_named(name).ok()?;
                 self.put(&agent.id, &team, Mover::Tower);
                 Some(team)
             }
@@ -133,7 +133,7 @@ impl Inner {
         // under; its own first report has it, and it goes to the team of that name
         if let Some(name) = agent.name.clone().filter(|_| self.find(&agent.id).is_some_and(|s| s.agent.name.is_none() && s.moved != Some(Mover::Him))) {
             self.session(&agent.id).unwrap().agent.name = Some(name.clone());
-            if let Some(team) = self.team_started_under(&name) {
+            if let Ok(team) = self.team_he_named(&name) {
                 self.move_to(&agent.id, &team, Mover::Tower);
             }
         }

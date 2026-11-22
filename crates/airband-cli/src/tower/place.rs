@@ -15,7 +15,7 @@ pub(super) fn by_him(app: &App, agent: &str, to: &airband_core::radio::TeamPick)
     let team = match to {
         airband_core::radio::TeamPick::Team { id } if inner.teams.contains_key(id) => id.clone(),
         airband_core::radio::TeamPick::Team { .. } => return Err("That team is not on this computer any more.".into()),
-        airband_core::radio::TeamPick::New { name } => inner.new_team(name, true)?,
+        airband_core::radio::TeamPick::New { name } => inner.team_he_named(name)?,
     };
     inner.move_to(agent, &team, Mover::Him);
     inner.tell();
