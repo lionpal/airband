@@ -28,7 +28,9 @@ use std::path::Path;
 mod desk;
 mod list;
 mod saved;
-pub(crate) use desk::{computer_reached, switch_all};
+pub(crate) use desk::computer_reached;
+#[cfg(test)]
+pub(crate) use desk::switch_all;
 use list::*;
 use saved::{Pick, Saved, Waiting};
 

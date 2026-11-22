@@ -9,7 +9,6 @@
 //! what to show, what to fetch, where it goes and what its engine is told about it. Where he chooses
 //! (`choices.rs`) lists them beside the services; a host names none itself.
 use super::*;
-use airband_core::providers::Job;
 use crate::engines::HostDevice;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
@@ -171,6 +170,7 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model) -> Result<(), RadioError
 #[cfg(test)]
 mod tests {
     use super::*;
+    use airband_core::providers::Job;
 
     #[test]
     fn every_model_says_what_to_fetch_and_who_made_it() {
