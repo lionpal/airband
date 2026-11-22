@@ -250,11 +250,13 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
             }
             let judged = judge::ask_json::<Out>(&app.cfg, "routing", prompt, None).await.ok();
             let Some(mut judged) = judged else {
-                // No model answered. Nothing is read into his words. With one agent, and no way to start
-                // another, there is only one thing they can be for. Otherwise he is asked.
+                // No model answered. Nothing is read into his words. With one agent there is only one thing they
+                // can be for, unless words could also have started a new one: that takes a model to read them, so
+                // it is so only where one is set up to read and did not answer. Then he is asked.
+                let could_be_new = can_start && !judge::reader(&app.cfg).is_none();
                 return match all.as_slice() {
                     [] => Routed::Ask(Vec::new()),
-                    [only] if !can_start => Routed::Sure(vec![only.clone()]),
+                    [only] if !could_be_new => Routed::Sure(vec![only.clone()]),
                     several => Routed::Ask(several.iter().take(3).map(|s| s.callsign.text()).collect()),
                 };
             };

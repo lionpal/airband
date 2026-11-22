@@ -142,6 +142,36 @@ fn a_computer_is_never_picked_for_him() {
 }
 
 #[test]
+fn a_button_is_sent_as_what_it_stands_for_and_never_as_words_to_be_read() {
+    let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
+    let mut state = two();
+    state.stations[0].messages[0].options = vec!["Rewrite".into(), "Leave".into()];
+    state.stations[0].agents[0].state = AgentState::Stalled;
+    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend }), data_dir: String::new() };
+    let sent = |desk: &Desk| desk.shared.state.lock().unwrap().stations[0].radio.unsent().into_iter().map(|o| (o.text, o.re, o.act, o.to)).collect::<Vec<_>>();
+    let act = |a: Act| serde_json::to_string(&a).unwrap();
+    // a yes to a request, an answer he tapped, and one the message does not have (nothing goes)
+    desk.tap("q1".into(), Tapped::Allow);
+    desk.tap("q1".into(), Tapped::Option { index: 1 });
+    desk.tap("q1".into(), Tapped::Option { index: 7 });
+    // a poke, and a new agent
+    desk.poke(None);
+    desk.new_agent("shop".into(), None, None);
+    // words to the agent he is looking at go to it by its id, with no tag written into them
+    desk.send("ship it".into(), None, Some("shop".into()), Some("shop two".into()));
+    assert_eq!(
+        sent(&desk),
+        vec![
+            ("Allow".to_string(), Some("q1".to_string()), act(Act::Verdict { allow: true }), vec![]),
+            ("Leave".to_string(), Some("q1".to_string()), act(Act::Option { index: 1 }), vec![]),
+            ("Keep going.".to_string(), None, act(Act::Control { control: airband_core::routing::Control::Poke }), vec![]),
+            ("New agent in shop".to_string(), None, act(Act::Launch(airband_core::radio::Launch { project: "shop".into(), ..Default::default() })), vec![]),
+            ("ship it".to_string(), None, String::new(), vec!["shop two".to_string()]),
+        ]
+    );
+}
+
+#[test]
 fn the_connection_record_he_can_copy_holds_nothing_said_and_nothing_secret() {
     let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
     let dir = std::env::temp_dir().join(format!("airband-record-{}", std::process::id()));
