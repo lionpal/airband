@@ -34,7 +34,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{Notify, oneshot};
-use airband_core::relay::{HELD, HELD_FOR_MS, HELD_MOST, MAX_MESSAGE, PUSH_MOST, PushAnswer, PushRequest, random_hex, token_hash};
+use airband_core::relay::{HELD_FOR_MS, HELD_MOST, MAX_MESSAGE, PUSH_MOST, PushAnswer, PushRequest, random_hex, token_hash};
 
 /// How long a tower's pull is held open.
 const HOLD: Duration = Duration::from_secs(25);
@@ -247,7 +247,7 @@ async fn pull(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, head
                     if let Some(ch) = relay.channels.lock().unwrap().get_mut(&channel) {
                         ch.holding = Some((id.clone(), Instant::now()));
                     }
-                    return ([("x-airband-request", format!("{HELD}{id}")), (airband_core::relay::KEPT_HEADER, "1".to_string())], sealed).into_response();
+                    return ([("x-airband-request", id.to_string()), (airband_core::relay::KEPT_HEADER, "1".to_string())], sealed).into_response();
                 }
                 Ok(None) => {
                     if let Some(ch) = relay.channels.lock().unwrap().get_mut(&channel) {
@@ -287,7 +287,9 @@ async fn close(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, hea
 
 async fn reply(State(relay): State<Arc<Relay>>, Path((channel, id)): Path<(String, String)>, headers: HeaderMap, sealed: Bytes) -> Response {
     // the tower took a message that was kept for it: there is no radio waiting on the answer, only the next one to send
-    if let Some(kept) = id.strip_prefix(HELD) {
+    // said so by the tower in a header of its own, never read from how the id is written
+    if headers.contains_key(airband_core::relay::KEPT_HEADER) {
+        let kept = id.as_str();
         {
             let mut channels = relay.channels.lock().unwrap();
             let ch = match relay.as_tower(&mut channels, &channel, &headers) {

@@ -28,11 +28,8 @@ pub const FRESH_MS: u64 = 120_000;
 /// The largest sealed message a relay passes.
 pub const MAX_MESSAGE: usize = 256 * 1024;
 
-/// A request the relay kept while the tower was away is handed over under an id that starts with this, so the
-/// tower knows it is old on purpose.
-pub const HELD: &str = "held-";
-/// On what the relay hands a tower: this is one the relay had been keeping while the tower was away. A tower
-/// goes by this and never by how the request's id reads (the id's form is the relay's own business).
+/// On what the relay hands a tower, and on the tower's reply to it: this is one the relay had been keeping while
+/// the tower was away. Each side goes by this and never by how the request's id reads.
 pub const KEPT_HEADER: &str = "x-airband-kept";
 /// How long the relay keeps one, and so how old one may be when the tower takes it.
 pub const HELD_FOR_MS: u64 = 7 * 24 * 3600 * 1000;

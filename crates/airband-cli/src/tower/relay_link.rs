@@ -225,7 +225,7 @@ impl Serve {
             // one the relay was keeping has to be taken off its hands all the same, or it would be handed over
             // for ever and hold up everything kept behind it
             if kept {
-                self.send_back(&request_id, None).await;
+                self.send_back(&request_id, kept, None).await;
             }
             return;
         };
@@ -256,12 +256,13 @@ impl Serve {
             self.dispatch(&call, "the relay", true).await
         };
         let sealed = self.keys.seal_answer(&Answer { id: call.id, status, body });
-        self.send_back(&request_id, Some(sealed)).await;
+        self.send_back(&request_id, kept, Some(sealed)).await;
     }
 
     /// Give the relay the answer to a request (or, with none, take a kept message off its hands). An answer
-    /// that does not get there is written down: the radio that asked is still waiting for it.
-    async fn send_back(&self, request_id: &str, sealed: Option<Vec<u8>>) {
+    /// that does not get there is written down: the radio that asked is still waiting for it. `kept`: the
+    /// request was one the relay kept while the tower was away, said back to it as such.
+    async fn send_back(&self, request_id: &str, kept: bool, sealed: Option<Vec<u8>>) {
         let Some(relay) = &self.relay else { return };
         let url = format!("{}/v1/channels/{}/reply/{request_id}", relay, self.keys.channel);
         let auth = format!("Bearer {}", self.keys.pull_token);
@@ -269,6 +270,7 @@ impl Serve {
         let agent = self.replies.clone();
         let sent = tokio::task::spawn_blocking(move || {
             let req = agent.post(url).header("authorization", auth);
+            let req = if kept { req.header(airband_core::relay::KEPT_HEADER, "1") } else { req };
             match sealed {
                 Some(sealed) => req.header("content-type", "application/octet-stream").send(&sealed[..]),
                 None => req.send_empty(),
