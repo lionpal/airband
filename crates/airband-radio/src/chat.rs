@@ -30,7 +30,7 @@ impl ChatAgent {
 }
 
 pub(crate) fn chat(m: airband_core::radio::Message) -> ChatMessage {
-    ChatMessage { seq: m.seq, id: m.id, at: m.at, his: m.his, from: m.from, badge: m.badge, to_agents: m.to_agents, group: m.group, team: m.team, room: String::new(), to: m.to, needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), unjudged: if m.kind == Some(Kind::Unjudged) { "Shown as the agent wrote it. No summary was made.".into() } else { String::new() }, long: m.long, text: m.text, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links.into_iter().map(chat_link).collect(), agent: m.agent, station: String::new(), open: m.open, colour: None, read: m.read, own_session: m.own_session, not_read: m.not_read.map(not_read).unwrap_or_default().to_string() }
+    ChatMessage { seq: m.seq, id: m.id, at: m.at, his: m.his, from: m.from, badge: m.badge, to_agents: m.to_agents, group: m.group, team: m.team, room: String::new(), to: m.to, needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), unjudged: if m.kind == Some(Kind::Unjudged) { "Shown as the agent wrote it. No summary was made.".into() } else { String::new() }, long: m.long, text: m.text, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links.into_iter().map(chat_link).collect(), agent: m.agent, station: String::new(), computer: String::new(), open: m.open, colour: None, read: m.read, own_session: m.own_session, not_read: m.not_read.map(not_read).unwrap_or_default().to_string() }
 }
 
 pub(crate) fn chat_feed(feed: Feed) -> ChatFeed {
@@ -105,6 +105,8 @@ pub struct ChatMessage {
     /// Which computer it came from, by its [`crate::DeskComputer::id`], when he is paired with several and a
     /// [`Desk`] merged them. Empty otherwise.
     pub station: String,
+    /// That computer's name, to show beside who said it, when he is paired with several. Empty otherwise.
+    pub computer: String,
     /// It needs him and nothing has answered it yet. An inbox shows these.
     pub open: bool,
     /// Two characters for who said it ("S3", "CP"), and its team's place in the host's list of team colours.

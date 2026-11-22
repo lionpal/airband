@@ -67,15 +67,18 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
                 done()
             }
             return
-        case NoticeButtons.allow: (text, tapped) = (leaveWord(allow: true), .allow)
-        case NoticeButtons.deny: (text, tapped) = (leaveWord(allow: false), .deny)
         case NoticeButtons.typed: text = (response as? UNTextInputNotificationResponse)?.userText
-        case let id where id.hasPrefix(NoticeButtons.option):
-            let options = info["options"] as? [String] ?? []
-            let index = Int(id.dropFirst(NoticeButtons.option.count)).flatMap { options.indices.contains($0) ? $0 : nil }
-            text = index.map { options[$0] }
-            tapped = index.map { .option(index: UInt32($0)) }
-        default: text = nil
+        case let id:
+            // what the button stood for, read by the core from the id it made the button with
+            switch noticeTap(action: id) {
+            case .allow: (text, tapped) = (leaveWord(allow: true), .allow)
+            case .deny: (text, tapped) = (leaveWord(allow: false), .deny)
+            case .option(let index):
+                let options = info["options"] as? [String] ?? []
+                text = options.indices.contains(Int(index)) ? options[Int(index)] : nil
+                tapped = text == nil ? nil : .option(index: index)
+            case nil: text = nil
+            }
         }
         guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty, let station = info["station"] as? String, let message = info["message"] as? String else { return done() }
         // the system allows some seconds for this with the app behind the lock screen

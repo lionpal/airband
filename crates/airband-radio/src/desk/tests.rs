@@ -26,8 +26,13 @@ impl RadioHost for Quiet {
     }
 }
 
+/// What the desk shows once he looks at a team, an agent, or everyone.
+pub(super) fn looked(desk: &Desk, room: Option<String>, agent: Option<String>) -> DeskView {
+    desk.look(room, agent);
+    desk.view()
+}
 fn msg(id: &str, seq: u64, from: &str, group: &str, needs: bool) -> ChatMessage {
-    ChatMessage { seq, id: id.into(), at: seq, his: from == "you", from: from.into(), group: group.into(), team: group.into(), room: String::new(), to: Vec::new(), to_agents: Vec::new(), needs_you: needs, fyi: false, unjudged: String::new(), stalled: false, text: id.into(), long: false, queued: false, seen: 0, options: Vec::new(), recommended: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: Some(from.into()), station: String::new(), open: needs, badge: String::new(), colour: None, read: None, own_session: false, not_read: String::new() }
+    ChatMessage { seq, id: id.into(), at: seq, his: from == "you", from: from.into(), group: group.into(), team: group.into(), room: String::new(), to: Vec::new(), to_agents: Vec::new(), needs_you: needs, fyi: false, unjudged: String::new(), stalled: false, text: id.into(), long: false, queued: false, seen: 0, options: Vec::new(), recommended: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: Some(from.into()), station: String::new(), computer: String::new(), open: needs, badge: String::new(), colour: None, read: None, own_session: false, not_read: String::new() }
 }
 fn station(name: &str, port: u16, agents: &[(&str, &str)], messages: Vec<ChatMessage>) -> Computer {
     let link = format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A{port}&token=t");
@@ -260,7 +265,7 @@ fn what_he_is_not_looking_at_stays_unread_and_is_counted() {
     let counts = |v: &DeskView| (v.unread, v.rooms.iter().map(|r| (r.name.clone(), r.unread)).collect::<Vec<_>>());
     // looking at one team: what it said is read, and the other two teams' one thing each is not
     let (shop, ff) = { let s = desk.shared.state.lock().unwrap(); (room(&s, "shop"), room(&s, "ff")) };
-    let v = desk.view(Some(shop.clone()), None);
+    let v = looked(&desk, Some(shop.clone()), None);
     assert_eq!(counts(&v), (2, vec![("backoffice".into(), 1), ("ff".into(), 1), ("shop".into(), 0)]));
     assert_eq!(v.rooms[0].members[0].unread, 1);
     // something new from the team in front of him is read as it comes; from another, it is one more
@@ -270,16 +275,16 @@ fn what_he_is_not_looking_at_stays_unread_and_is_counted() {
         state.computers[1].messages.push(msg("r3", 6, "ff one", "ff", false));
         state.computers.iter_mut().for_each(Computer::settle_rooms);
     }
-    assert_eq!(counts(&desk.view(Some(shop), None)).0, 3);
+    assert_eq!(counts(&looked(&desk, Some(shop), None)).0, 3);
     // with the chat not on screen nothing is read: one agent of a team opened behind a sheet clears nothing
     host.0.store(false, std::sync::atomic::Ordering::SeqCst);
-    assert_eq!(desk.view(Some(ff.clone()), Some("ff one".into())).unread, 3);
+    assert_eq!(looked(&desk, Some(ff.clone()), Some("ff one".into())).unread, 3);
     host.0.store(true, std::sync::atomic::Ordering::SeqCst);
-    assert_eq!(counts(&desk.view(Some(ff.clone()), Some("ff one".into()))), (1, vec![("backoffice".into(), 1), ("ff".into(), 0), ("shop".into(), 0)]));
+    assert_eq!(counts(&looked(&desk, Some(ff.clone()), Some("ff one".into()))), (1, vec![("backoffice".into(), 1), ("ff".into(), 0), ("shop".into(), 0)]));
     // what was read is kept on the device: a desk opened again on the same folder starts from there
     assert_eq!(ReadMarks::load(&dir.display().to_string()).upto.get("ff one"), Some(&6));
     // everything at once
-    assert_eq!(desk.view(None, None).unread, 0);
+    assert_eq!(looked(&desk, None, None).unread, 0);
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -479,7 +484,7 @@ fn a_summary_choice_some_computers_took_is_remembered_as_taken_there() {
     assert_eq!(per[&ids[0]], serde_json::json!({ "state": "done" }), "{per}");
     assert_eq!(per[&ids[1]], serde_json::json!({ "state": "refused", "reason": crate::choices::NO_KEY }), "{per}");
     // and he sees laptop's no, by its name, with why
-    let view = desk.view(None, None);
+    let view = looked(&desk, None, None);
     let lines: Vec<(String, DeskDelivery)> = view.intents.iter().filter(|i| i.kind == IntentKind::Reads).flat_map(|i| i.computers.iter().map(|c| (c.name.clone(), c.state.clone()))).collect();
     assert_eq!(lines, [("laptop".to_string(), DeskDelivery::Refused { reason: crate::choices::NO_KEY.into() }), ("away".to_string(), DeskDelivery::Waiting)]);
     let _ = std::fs::remove_dir_all(&dir);
@@ -610,13 +615,13 @@ fn an_unnamed_computer_can_be_chosen_as_main_by_its_id() {
     // neither computer has said its name
     state.computers.iter_mut().for_each(|s| s.name.clear());
     let desk = desk_of(state);
-    let shown = desk.view(None, None).stations;
+    let shown = looked(&desk, None, None).stations;
     // never by its place in the list: by where its pairing link reaches it
     assert_eq!(shown.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["127.0.0.1", "127.0.0.1"]);
     desk.set_main_computer(shown[1].id.clone());
     let main = desk.shared.state.lock().unwrap().main().map(Computer::id);
     assert_eq!(main, Some(shown[1].id.clone()));
-    assert_eq!(desk.view(None, None).main_computer, Some(shown[1].id.clone()));
+    assert_eq!(looked(&desk, None, None).main_computer, Some(shown[1].id.clone()));
 }
 
 #[test]
@@ -644,7 +649,7 @@ fn what_he_sent_that_has_not_gone_is_still_shown_after_the_app_opens_again() {
     first.stop();
     let again = Desk::open(dir.display().to_string(), host);
     again.set_links(vec![link]);
-    let shown: Vec<String> = again.view(None, None).sending.into_iter().map(|o| o.shown).collect();
+    let shown: Vec<String> = looked(&again, None, None).sending.into_iter().map(|o| o.shown).collect();
     again.stop();
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(shown, ["hello"]);
@@ -854,7 +859,7 @@ fn a_message_names_its_computer_by_the_id_every_other_place_uses() {
     state.computers.iter_mut().for_each(|s| s.name.clear());
     let ids: Vec<String> = state.computers.iter().map(|s| s.id()).collect();
     let desk = desk_of(state);
-    let view = desk.view(None, None);
+    let view = looked(&desk, None, None);
     let q2 = view.feed.iter().find(|m| m.id == "q2").unwrap();
     assert_eq!(q2.station, ids[1]);
     assert!(view.stations.iter().any(|c| c.id == q2.station));

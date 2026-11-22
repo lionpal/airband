@@ -81,7 +81,7 @@ enum NoticeButtons {
     static let reply = "airband.reply"
     static let permit = "airband.permit"
     static let failed = "airband.failed"
-    static let typed = "reply", allow = "allow", deny = "deny", option = "option."
+    static let typed = "reply"
 
     private static var type: UNTextInputNotificationAction {
         UNTextInputNotificationAction(identifier: typed, title: "Reply", options: [], textInputButtonTitle: "Send", textInputPlaceholder: "Message")
@@ -91,20 +91,16 @@ enum NoticeButtons {
             UNNotificationCategory(identifier: reply, actions: [type], intentIdentifiers: [], options: []),
             // Allow lets something run on his computer: the phone must be unlocked for it (a glance, with Face ID).
             UNNotificationCategory(identifier: permit, actions: [
-                UNNotificationAction(identifier: allow, title: "Allow", options: [.authenticationRequired]),
-                UNNotificationAction(identifier: deny, title: "Deny", options: [.destructive]), type,
+                UNNotificationAction(identifier: noticeAllowId(), title: "Allow", options: [.authenticationRequired]),
+                UNNotificationAction(identifier: noticeDenyId(), title: "Deny", options: [.destructive]), type,
             ], intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: failed, actions: [], intentIdentifiers: [], options: []),
         ]
     }
     /// The name for a set of answers: the same answers always get the same name.
-    static func name(for options: [String]) -> String {
-        var h: UInt64 = 1469598103934665603
-        for b in options.joined(separator: "\u{1}").utf8 { h = (h ^ UInt64(b)) &* 1099511628211 }
-        return "airband.o." + String(h, radix: 16)
-    }
+    static func name(for options: [String]) -> String { noticeAnswersName(options: options) }
     static func category(for options: [String]) -> UNNotificationCategory {
-        let buttons = options.prefix(3).enumerated().map { UNNotificationAction(identifier: option + String($0.offset), title: $0.element, options: []) }
+        let buttons = options.prefix(3).enumerated().map { UNNotificationAction(identifier: noticeOptionId(index: UInt32($0.offset)), title: $0.element, options: []) }
         return UNNotificationCategory(identifier: name(for: options), actions: buttons + [type], intentIdentifiers: [], options: [])
     }
     /// Add these sets to the ones registered, keeping the others. Calls back once the system has them.
@@ -113,9 +109,9 @@ enum NoticeButtons {
         center.getNotificationCategories { have in
             let names = Set(more.map(\.identifier))
             var kept = have.filter { !names.contains($0.identifier) }
-            if kept.count == have.count - names.count && names.allSatisfy({ $0.hasPrefix("airband.o.") }) { return done() } // a question asked before
+            if kept.count == have.count - names.count && names.allSatisfy({ noticeIsAnswers(name: $0) }) { return done() } // a question asked before
             // old questions' answers are not kept for ever
-            let asked = kept.filter { $0.identifier.hasPrefix("airband.o.") }
+            let asked = kept.filter { noticeIsAnswers(name: $0.identifier) }
             if asked.count > 48 { kept.subtract(asked.prefix(asked.count - 48)) }
             center.setNotificationCategories(kept.union(more))
             // the system takes a moment to have them; a notification shown before that has no buttons

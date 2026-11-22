@@ -15,11 +15,11 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     static let shared = RadioModel()
 
     /// What the screen shows, as the desk last gave it, for the room or agent he is looking at.
-    @Published var view = DeskView(paired: false, online: false, connecting: false, near: false, away: [], feed: [], rooms: [], unread: 0, canPoke: false, quick: [], sending: [], stations: [], colours: [:], mainComputer: nil, chooseMain: false, uploads: [], asking: nil, intents: [])
-    /// A project: show just its agents, and keep what he says among them.
-    @Published var room: String? { didSet { refresh() } }
+    @Published var view = DeskView(paired: false, online: false, connecting: false, near: false, away: [], feed: [], rooms: [], unread: 0, canPoke: false, quick: [], sending: [], stations: [], colours: [:], mainComputer: nil, chooseMain: false, uploads: [], asking: nil, intents: [], focus: DeskFocus(room: nil, agent: nil), newAgent: NewAgentDefaults(computer: nil, tool: nil), tools: [], cannotReach: "")
+    /// A project: show just its agents, and keep what he says among them. The desk keeps it ([`look`]).
+    var room: String? { view.focus.room }
     /// An agent, by id: show just that agent.
-    @Published var only: String? { didSet { refresh() } }
+    var only: String? { view.focus.agent }
     /// What the agent he is looking at is called now.
     var onlyName: String? { only.flatMap { member($0)?.agent.callsign } }
     @Published var full: [String: String] = [:] // message id → exactly what the agent wrote
@@ -153,19 +153,16 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     func answerNow(station: String, message: String, text: String, tapped: Tapped?) -> AnswerOutcome { desk.answerNow(station: station, messageId: message, text: text, tapped: tapped) }
 
     /// Look at everyone, at one team, or at one agent. Whatever he was answering is let go: it may no longer be
-    /// in view. Every change he makes to who he is looking at goes through here; only a team that has gone is let go
-    /// of without him (`refresh`).
+    /// in view. The desk keeps what he is looking at, and lets go of a team that has gone.
     func look(room: String? = nil, agent: String? = nil) {
         replyingTo = nil
-        self.room = room
-        only = agent
+        desk.look(room: room, agent: agent)
+        refresh()
     }
-    /// A team he has just made, waiting for its first agent to show: it is not in the list yet.
-    private var madeRoom: String?
-    /// Open a team he has just made. It is shown, empty, until its first agent comes.
+    /// A team he has just made: the desk already shows it, empty, until its first agent comes.
     func open(made room: String) {
-        madeRoom = room
-        look(room: room)
+        replyingTo = nil
+        refresh()
     }
 
     /// He tapped a notification: show that agent.
@@ -194,19 +191,11 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// What a computer is called to him, by its id.
     func computerName(_ id: String) -> String { view.stations.first { $0.id == id }?.name ?? "" }
     /// Who a message is from, and on which computer when he has several.
-    func fromAndComputer(_ m: ChatMessage) -> String { [m.from, computerName(m.station)].filter { !$0.isEmpty }.joined(separator: " · ") }
+    func fromAndComputer(_ m: ChatMessage) -> String { [m.from, m.computer].filter { !$0.isEmpty }.joined(separator: " · ") }
     /// What he is told when a computer cannot be reached: which, when more than one could be meant.
-    var cannotReach: String { view.away.isEmpty ? "Can\u{2019}t reach your computer" : "Can\u{2019}t reach " + view.away.joined(separator: ", ") }
+    var cannotReach: String { view.cannotReach }
     /// A state as it is read out for someone who cannot see its dot.
-    static func spoken(state: AgentState) -> String {
-        switch state {
-        case .asking: "waiting on you"
-        case .stalled: "stopped"
-        case .working: "working"
-        case .idle: "idle"
-        case .unknown: "state not known"
-        }
-    }
+    static func spoken(state: AgentState) -> String { spokenState(state: state) }
 
     /// A message's words whole, once they have been fetched; as it came until then.
     func whole(_ m: ChatMessage) -> String { full[m.id] ?? m.text }
@@ -222,7 +211,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     func refresh() {
         // only when something he can see has changed: the chat is not laid out again for nothing
-        let now = desk.view(room: room, agent: only)
+        let now = desk.view()
         if now != view {
             // a team given its colour just now: the notification extension shows it the same
             if now.colours != view.colours { Keychain.keepTeamColours(now.colours) }
@@ -234,10 +223,6 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
             gone.forEach { if let source = $0.source { try? FileManager.default.removeItem(at: source) } }
             tray.removeAll { item in gone.contains { $0.id == item.id } }
         }
-        // a room that has gone (its last agent left) is not somewhere he can stay
-        // (one he has just made is there once its first agent is: it stays open until then)
-        if let made = madeRoom, view.rooms.contains(where: { $0.id == made }) { madeRoom = nil }
-        if let room, view.online, room != madeRoom, !view.rooms.contains(where: { $0.id == room }) { self.room = nil }
         if full.count > (showWhole ? 400 : 60) { full.removeAll() } // opened long ago: fetched again if he looks again
         refreshChoices()
         syncBanners()
@@ -299,7 +284,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         set {
             objectWillChange.send()
             desk.setTools(tools: newValue)
-            refreshChoices()
+            refresh()
         }
     }
 

@@ -69,13 +69,11 @@ extension RadioModel {
     }
 
     /// The coding tools he uses, as the catalogue describes them, the one he uses most first.
-    var usedTools: [CodingTool] { tools.compactMap(tool(of:)) }
+    var usedTools: [CodingTool] { view.tools }
     /// The coding tool he uses, when he uses just one: then it is never asked which.
-    var onlyTool: CodingTool? { usedTools.count == 1 ? usedTools[0] : nil }
-    /// A coding tool, by its id, as the catalogue describes it.
-    func tool(of id: String) -> CodingTool? { codingTools().first { $0.id == id } }
+    var onlyTool: CodingTool? { view.newAgent.tool }
     /// His computer, by its id, when he has just one: then it is never asked which.
-    var onlyComputer: String? { view.stations.count == 1 ? view.stations[0].id : nil }
+    var onlyComputer: String? { view.newAgent.computer }
 
     /// Let a question go without answering it.
     func dismiss(_ m: ChatMessage) {

@@ -56,6 +56,22 @@ pub struct DeskMember {
     pub question_id: String,
     /// The coding tool it is: `claude-code`, `codex`, `opencode`. A host shows that tool's mark.
     pub harness: String,
+    /// What that tool is called, from the catalogue; empty for a tool it does not list.
+    pub tool_name: String,
+}
+/// What he is looking at: one team, one agent in it, or (both empty) everyone. The desk keeps it valid: a team
+/// that has gone is let go of once the computers can say so.
+#[derive(Debug, Clone, PartialEq, Eq, Default, uniffi::Record)]
+pub struct DeskFocus {
+    pub room: Option<String>,
+    pub agent: Option<String>,
+}
+/// What a new agent starts on without his choosing: the computer and the coding tool, each when there is only
+/// one to choose. Nothing where he must choose.
+#[derive(Debug, Clone, PartialEq, Default, uniffi::Record)]
+pub struct NewAgentDefaults {
+    pub computer: Option<String>,
+    pub tool: Option<CodingTool>,
 }
 /// Everything a chat screen shows, for the team or the agent he is looking at (or all of them).
 #[derive(Debug, Clone, uniffi::Record)]
@@ -104,6 +120,14 @@ pub struct DeskView {
     pub asking: Option<DeskAsk>,
     /// What his computers are to be told and not all have yet, each with the computers still without it.
     pub intents: Vec<DeskIntent>,
+    /// What he is looking at now.
+    pub focus: DeskFocus,
+    /// What a new agent starts on when he is not asked.
+    pub new_agent: NewAgentDefaults,
+    /// The coding tools he uses, as the catalogue describes them, the one he uses most first.
+    pub tools: Vec<CodingTool>,
+    /// What to say when a computer cannot be reached: which ones, when he has several.
+    pub cannot_reach: String,
 }
 /// Which thing his computers are to be told.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]

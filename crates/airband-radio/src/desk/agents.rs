@@ -26,7 +26,14 @@ impl Desk {
     /// his screen ([`DeskRoom::id`]).
     pub fn new_team(&self, computer: String, name: String, folder: String, make: bool, tool: Option<String>) -> Result<String, RadioError> {
         let (radio, station) = self.station_of(&computer)?;
-        Ok(room_id(&station, &radio.new_project(name, folder, make, tool.filter(|t| !t.is_empty()))?))
+        let room = room_id(&station, &radio.new_project(name, folder, make, tool.filter(|t| !t.is_empty()))?);
+        // he is shown the team at once, and it stays open, empty, until its first agent shows up
+        {
+            let mut state = self.shared.state.lock().unwrap();
+            state.focus = Focus { room: Some(room.clone()), agent: None, made: Some(room.clone()) };
+        }
+        self.shared.host.changed();
+        Ok(room)
     }
     /// Start a new agent in a team: `room` is the room on his screen, as [`DeskRoom::id`] gives it. It is
     /// started with nothing to do yet and shows up at once, waiting for his first word. Nothing happens for a
