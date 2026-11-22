@@ -113,18 +113,12 @@ impl Callsign {
         let named = Callsign { project: project.clone(), number: self.number.clone(), named: true };
         Some(if self.named && !live.contains(&named) { named } else { Callsign::next_in(&project, live) })
     }
-    /// The next free callsign for a session in this folder: the folder's name plus the lowest unused number.
-    /// What has no name a team could be called by (the top of a disk) is turned away where agents report in
-    /// (`Inner::placeable` in the tower), so it never comes here.
-    pub fn next_for(cwd: &str, live: &[Callsign]) -> Callsign {
-        Callsign::next_in(&folder_name(cwd).unwrap_or_default(), live)
-    }
     /// The next free callsign in this team: its name plus the lowest unused number.
     pub fn next_in(team: &str, live: &[Callsign]) -> Callsign {
         let project = team.to_string();
         let mut n = 1;
         loop {
-            let number = WORDS.get(n).map(|w| w.to_string()).unwrap_or_else(|| n.to_string());
+            let number = number_name(n);
             if !live.iter().any(|c| c.project == project && c.number == number) {
                 return Callsign { project, number, named: false };
             }
@@ -179,7 +173,7 @@ fn number_word(w: &str) -> String {
     }
 }
 fn digits(number: &str) -> String {
-    WORDS.iter().position(|w| *w == number).map(|n| n.to_string()).unwrap_or_else(|| number.to_string())
+    figure(number).map(|n| n.to_string()).unwrap_or_else(|| number.to_string())
 }
 /// The tag for every agent: `@all`.
 const EVERYONE: &str = "all";
@@ -237,7 +231,7 @@ fn figure(number: &str) -> Option<u32> {
 mod tests {
     #[test]
     fn a_team_is_named_by_the_last_part_of_a_folder_and_a_callsign_is_shown_with_a_figure() {
-        assert_eq!(folder_name("/work/Shop Front/").as_deref(), Callsign::next_for("/work/Shop Front/", &[]).project.as_str().into());
+        assert_eq!(folder_name("/work/Shop Front/").as_deref(), Some("shop front"));
         assert_eq!(team_name("garden").as_deref(), Some("garden"));
         // a name he typed is never read as a path
         assert_eq!(team_name("shop/front").as_deref(), Some("shop front"));
@@ -309,8 +303,8 @@ mod tests {
     }
     #[test]
     fn next_callsign() {
-        assert_eq!(Callsign::next_for("/x/shop", &live()).text(), "shop three");
-        assert_eq!(Callsign::next_for("/work/My-App/", &live()).text(), "my app one");
+        assert_eq!(Callsign::next_in("shop", &live()).text(), "shop three");
+        assert_eq!(Callsign::next_in("my app", &live()).text(), "my app one");
         assert_eq!(live()[0].spoken(), "Shop one");
     }
 

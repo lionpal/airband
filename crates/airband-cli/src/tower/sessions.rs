@@ -180,14 +180,7 @@ impl Inner {
         let free = |inner: &Inner, c: &Callsign| !inner.sessions.iter().any(|s| s.callsign == *c);
         if self.find(&agent.id).is_none() {
             let callsign = wanted.clone().filter(|c| free(self, c)).unwrap_or_else(|| {
-                // the next free number, among the names in use here and on his other computers
-                let mut taken = self.callsigns();
-                let mut c = Callsign::next_in(&team_name, &taken);
-                while self.elsewhere.contains(&c) {
-                    taken.push(c.clone());
-                    c = Callsign::next_in(&team_name, &taken);
-                }
-                c
+                self.next_free(&team_name, None, &[])
             });
             log(format!("{} checked in ({}, {})", callsign.text(), agent.harness, agent.cwd.as_deref().unwrap_or("no folder")));
             self.sessions.push(Session { agent: agent.clone(), callsign, team: team.clone(), waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false, hooked: false, turn: None });
@@ -229,16 +222,21 @@ impl Inner {
         if holder.agent.title.as_deref().and_then(|t| Callsign::titled(team, holder.agent.cwd.as_deref().unwrap_or_default(), t)).as_ref() == Some(want) {
             return;
         }
-        let mut taken = self.callsigns();
-        taken.push(want.clone());
-        self.rename(&holder.agent.id, Callsign::next_in(team, &taken));
+        let to = self.next_free(team, Some(&holder.agent.id), std::slice::from_ref(want));
+        self.rename(&holder.agent.id, to);
+    }
+    /// The next free numbered callsign in a team: free among the names in use here (but `except`'s) and on his
+    /// other computers, and none of `also`. The one rule for handing out a number.
+    pub(super) fn next_free(&self, team: &str, except: Option<&str>, also: &[Callsign]) -> Callsign {
+        let taken: Vec<Callsign> = self.sessions.iter().filter(|s| Some(s.agent.id.as_str()) != except).map(|s| s.callsign.clone()).chain(self.elsewhere.iter().cloned()).chain(also.iter().cloned()).collect();
+        Callsign::next_in(team, &taken)
     }
     /// Put a session in another of his teams, by the team's id. Returns what it was called and what it is
     /// called now, or nothing when it is already there or there is no such team.
     pub(super) fn move_to(&mut self, id: &str, team: &str, by: Mover) -> Option<(Callsign, Callsign)> {
         let was = self.find(id)?.callsign.clone();
         let name = self.teams.get(team)?.name.clone();
-        let others: Vec<Callsign> = self.sessions.iter().filter(|s| s.agent.id != id).map(|s| s.callsign.clone()).collect();
+        let others: Vec<Callsign> = self.sessions.iter().filter(|s| s.agent.id != id).map(|s| s.callsign.clone()).chain(self.elsewhere.iter().cloned()).collect();
         let to = was.moved_to(&name, &others)?;
         if self.find(id)?.team == team {
             // already there: if it was he who said so, it now stays
@@ -308,15 +306,7 @@ impl Inner {
         let clashing: Vec<String> = self.sessions.iter().filter(|s| s.callsign.numbered() && there.contains(&s.callsign)).map(|s| s.agent.id.clone()).collect();
         for id in &clashing {
             let Some(project) = self.find(id).map(|s| s.callsign.project.clone()) else { continue };
-            // a name nobody has, here or there
-            let mut n = 1;
-            let free = loop {
-                let candidate = Callsign { project: project.clone(), number: airband_core::routing::number_name(n), named: false };
-                if !there.contains(&candidate) && !self.sessions.iter().any(|s| s.callsign == candidate) {
-                    break candidate;
-                }
-                n += 1;
-            };
+            let free = self.next_free(&project, None, &[]);
             self.rename(id, free);
         }
         renamed || !clashing.is_empty()

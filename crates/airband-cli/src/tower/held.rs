@@ -155,15 +155,7 @@ async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Started, Stri
                 given_id |= a.contains("{id}");
                 a.replace("{cwd}", &kept.cwd).replace("{id}", &kept.id)
             };
-            // the model and effort go where the launcher's command says its options go, as its row writes them
-            let mut options: Vec<String> = Vec::new();
-            if let Some(m) = &kept.model {
-                options.extend(launcher.with_model.iter().map(|a| a.replace("{model}", m)));
-            }
-            if let Some(e) = &kept.effort {
-                options.extend(launcher.with_effort.iter().map(|a| a.replace("{effort}", e)));
-            }
-            let argv: Vec<String> = launcher.argv.iter().flat_map(|a| if a == "{options}" { options.clone() } else { vec![fill(a)] }).collect();
+            let argv = launcher.command(kept.model.as_deref(), kept.effort.as_deref(), &mut fill);
             let session: Vec<String> = if fresh { new } else { resume }.iter().map(&mut fill).collect();
             argv.into_iter().chain(session).collect()
         }

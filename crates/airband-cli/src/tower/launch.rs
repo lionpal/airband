@@ -90,13 +90,6 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
     };
     // as its tool takes them
     let (model_id, effort_id) = (model.as_ref().map(|c| c.id.clone()), effort.as_ref().map(|c| c.id.clone()));
-    let mut options: Vec<String> = Vec::new();
-    if let Some(m) = &model_id {
-        options.extend(launcher.with_model.iter().map(|a| a.replace("{model}", m)));
-    }
-    if let Some(e) = &effort_id {
-        options.extend(launcher.with_effort.iter().map(|a| a.replace("{effort}", e)));
-    }
     let (model, effort) = (model.map(|c| c.name), effort.map(|c| c.name));
     let with = match (&model, &effort) {
         (Some(m), Some(e)) => format!(" with {m}, {e}"),
@@ -123,7 +116,7 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
     let stamp = now_ms() / 1000 % 100_000;
     let session = format!("airband-{}-{stamp}", project.replace(' ', "-"));
     let fill = |a: &String| a.replace("{cwd}", &cwd).replace("{task}", task).replace("{project}", project).replace("{session}", &session);
-    let argv: Vec<String> = launcher.argv.iter().flat_map(|a| if a == "{options}" { options.clone() } else { vec![fill(a)] }).collect();
+    let argv = launcher.command(model_id.as_deref(), effort_id.as_deref(), fill);
     let Some((program, args)) = argv.split_first() else { return say("The launcher command is empty.".into()) };
     // AIRBAND_INTERNAL must not leak in: the new agent has to report to the tower
     let run = tokio::process::Command::new(program).args(args).current_dir(&cwd).env_remove("AIRBAND_INTERNAL").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).kill_on_drop(false).output();

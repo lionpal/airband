@@ -41,6 +41,21 @@ pub struct Launcher {
     pub held: Option<Held>,
 }
 
+impl Launcher {
+    /// The command to run: `fill` gives each word of `argv` its values, and the arguments for the model and
+    /// effort, as the row writes them, go where `{options}` stands.
+    pub fn command(&self, model: Option<&str>, effort: Option<&str>, mut fill: impl FnMut(&String) -> String) -> Vec<String> {
+        let mut options: Vec<String> = Vec::new();
+        if let Some(m) = model {
+            options.extend(self.with_model.iter().map(|a| a.replace("{model}", m)));
+        }
+        if let Some(e) = effort {
+            options.extend(self.with_effort.iter().map(|a| a.replace("{effort}", e)));
+        }
+        self.argv.iter().flat_map(|a| if a == "{options}" { options.clone() } else { vec![fill(a)] }).collect()
+    }
+}
+
 /// One thing a new agent can be set to: a model, or an effort.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Choice {
