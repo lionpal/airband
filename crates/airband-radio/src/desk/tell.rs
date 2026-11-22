@@ -19,12 +19,9 @@ impl Desk {
         }
         let shared = self.shared.clone();
         thread::spawn(move || {
-            let (generation, radios): (u64, Vec<Arc<Radio>>) = {
-                let state = shared.state.lock().unwrap();
-                (state.generation, state.radios())
-            };
-            for (index, radio) in radios.iter().enumerate() {
-                tell_push(&shared, radio, index, generation);
+            let connections: Vec<(String, u64, Arc<Radio>)> = shared.state.lock().unwrap().computers.iter().map(|s| (s.id(), s.epoch, s.radio.clone())).collect();
+            for (station, epoch, radio) in &connections {
+                tell_push(&shared, radio, station, *epoch);
             }
         });
     }
@@ -32,10 +29,10 @@ impl Desk {
 
 /// Tell one computer where this device can be woken, if it has not been told. A computer that cannot be reached
 /// or does not take it is told the next time round.
-pub(super) fn tell_push(shared: &Arc<Shared>, radio: &Arc<Radio>, index: usize, generation: u64) {
+pub(super) fn tell_push(shared: &Arc<Shared>, radio: &Arc<Radio>, station: &str, epoch: u64) {
     let (link, push) = {
         let state = shared.state.lock().unwrap();
-        let Some(station) = state.stations.get(index).filter(|_| state.generation == generation) else { return };
+        let Some(station) = state.computer(station).filter(|s| s.epoch == epoch) else { return };
         let Some(push) = state.push.clone().filter(|_| !state.push_told.contains(&station.link)) else { return };
         (station.link.clone(), push)
     };
@@ -49,11 +46,11 @@ pub(super) fn tell_push(shared: &Arc<Shared>, radio: &Arc<Radio>, index: usize, 
 }
 /// Tell one computer which coding tools he uses, if it has not been told or he has since changed them: a new
 /// agent he asks for without naming a tool is started with the one he uses most.
-pub(super) fn tell_tools(shared: &Arc<Shared>, radio: &Arc<Radio>, index: usize, generation: u64) {
+pub(super) fn tell_tools(shared: &Arc<Shared>, radio: &Arc<Radio>, station: &str, epoch: u64) {
     let tools = shared.chooser.tools();
     let link = {
         let state = shared.state.lock().unwrap();
-        let Some(station) = state.stations.get(index).filter(|_| state.generation == generation) else { return };
+        let Some(station) = state.computer(station).filter(|s| s.epoch == epoch) else { return };
         if state.tools_told.get(&station.link) == Some(&tools) {
             return;
         }

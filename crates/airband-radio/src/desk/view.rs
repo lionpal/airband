@@ -97,7 +97,7 @@ impl Desk {
         // what an agent is waiting on him for: its newest question still open
         let asked = |a: &ChatAgent| all.iter().rev().find(|m| m.needs_you && m.agent.as_deref() == Some(a.id.as_str()) && state.is_open(&m.id));
         for a in &agents {
-            let member = DeskMember { id: a.id.clone(), callsign: a.callsign.clone(), state: a.state, subagents: a.subagents, doing: a.doing.clone(), held: a.held, terminal: a.terminal, ends: a.ends, unread: unread_from.get(a.id.as_str()).copied().unwrap_or(0), question: asked(a).map(|m| m.text.clone()).unwrap_or_default(), question_id: asked(a).map(|m| m.id.clone()).unwrap_or_default(), harness: a.harness.clone(), badge: a.badge.clone(), model: a.model.clone().unwrap_or_default(), effort: a.effort.clone().unwrap_or_default(), number: a.number.clone(), station: if state.stations.len() > 1 { state.stations.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(Station::id).unwrap_or_default() } else { String::new() } };
+            let member = DeskMember { id: a.id.clone(), callsign: a.callsign.clone(), state: a.state, subagents: a.subagents, doing: a.doing.clone(), held: a.held, terminal: a.terminal, ends: a.ends, unread: unread_from.get(a.id.as_str()).copied().unwrap_or(0), question: asked(a).map(|m| m.text.clone()).unwrap_or_default(), question_id: asked(a).map(|m| m.id.clone()).unwrap_or_default(), harness: a.harness.clone(), badge: a.badge.clone(), model: a.model.clone().unwrap_or_default(), effort: a.effort.clone().unwrap_or_default(), number: a.number.clone(), station: if state.computers.len() > 1 { state.computers.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(Computer::id).unwrap_or_default() } else { String::new() } };
             // what the team is doing is said in the name of whoever is doing it, without the team's own name
             let doing = a.doing.as_ref().map(|d| match Some(a.number.as_str()).filter(|rest| !rest.is_empty()) {
                 Some(who) => format!("{who}: {d}"),
@@ -120,18 +120,18 @@ impl Desk {
         rooms.iter_mut().for_each(|r| r.members.sort_by(|a, b| a.callsign.cmp(&b.callsign)));
         // the same quick messages from every computer, each once
         let mut quick: Vec<QuickMessage> = Vec::new();
-        for q in state.stations.iter().flat_map(|s| s.quick.iter()) {
+        for q in state.computers.iter().flat_map(|s| s.quick.iter()) {
             if !quick.iter().any(|have| have.label == q.label && have.text == q.text) {
                 quick.push(q.clone());
             }
         }
         let view = DeskView {
             colours: state.colours.all(),
-            paired: !state.stations.is_empty(),
-            online: state.stations.iter().any(|s| s.online),
-            connecting: !state.stations.iter().any(|s| s.online) && state.stations.iter().any(|s| !s.tried),
-            near: state.stations.iter().any(|s| s.online) && state.stations.iter().filter(|s| s.online).all(|s| s.radio.near()),
-            away: if state.stations.len() > 1 { state.stations.iter().enumerate().filter(|(_, s)| s.tried && !s.online).map(|(i, _)| state.computer_name(i)).collect() } else { Vec::new() },
+            paired: !state.computers.is_empty(),
+            online: state.computers.iter().any(|s| s.online),
+            connecting: !state.computers.iter().any(|s| s.online) && state.computers.iter().any(|s| !s.tried),
+            near: state.computers.iter().any(|s| s.online) && state.computers.iter().filter(|s| s.online).all(|s| s.radio.near()),
+            away: if state.computers.len() > 1 { state.computers.iter().filter(|s| s.tried && !s.online).map(|s| state.computer_name(&s.id())).collect() } else { Vec::new() },
             can_poke: agents.iter().any(|a| a.state == AgentState::Stalled && room.as_ref().is_none_or(|r| a.room == *r)),
             feed,
             rooms,
@@ -139,19 +139,19 @@ impl Desk {
             quick,
             // on their way: not yet sent, then sent and not yet back in the chat (for a quarter of a minute at most)
             sending: state
-                .stations
+                .computers
                 .iter()
-                .flat_map(|s| s.sending.iter().filter(|o| !s.messages.iter().any(|m| m.id == o.id)).cloned().chain(s.landing.iter().filter(|(o, at)| at.elapsed() < Duration::from_secs(15) && !s.messages.iter().any(|m| m.id == o.id)).map(|(o, _)| o.clone())))
+                .flat_map(|s| s.radio.unsent().into_iter().filter(|o| !s.messages.iter().any(|m| m.id == o.id)).chain(s.landing.iter().filter(|(o, at)| at.elapsed() < Duration::from_secs(15) && !s.messages.iter().any(|m| m.id == o.id)).map(|(o, _)| o.clone())))
                 .map(|o| DeskOutgoing::from(&o))
                 .collect(),
-            stations: state.stations.iter().enumerate().map(|(i, s)| DeskComputer { id: s.id(), name: state.computer_name(i) }).collect(),
-            main_computer: state.main().map(|i| state.stations[i].id()),
-            choose_main: state.stations.len() > 1 && state.main().is_none(),
+            stations: state.computers.iter().map(|s| DeskComputer { id: s.id(), name: state.computer_name(&s.id()) }).collect(),
+            main_computer: state.main().map(Computer::id),
+            choose_main: state.computers.len() > 1 && state.main().is_none(),
             uploads: state.uploads.iter().map(|u| u.shown.clone()).collect(),
             asking: state.asking.as_ref().map(|asking| {
                 // the tower's guesses first, in its order; then everyone else, whoever spoke last first
                 let mut rest: Vec<&ChatAgent> = agents.iter().copied().filter(|a| !asking.guesses.contains(&a.id)).collect();
-                let spoke = |a: &ChatAgent| state.stations.iter().flat_map(|s| s.messages.iter()).filter(|m| m.agent.as_deref() == Some(a.id.as_str())).map(|m| m.at).max().unwrap_or(0);
+                let spoke = |a: &ChatAgent| state.computers.iter().flat_map(|s| s.messages.iter()).filter(|m| m.agent.as_deref() == Some(a.id.as_str())).map(|m| m.at).max().unwrap_or(0);
                 rest.sort_by_key(|a| std::cmp::Reverse(spoke(a)));
                 let guessed = asking.guesses.iter().filter_map(|id| agents.iter().copied().find(|a| a.id == *id));
                 DeskAsk {
@@ -170,9 +170,9 @@ impl Desk {
     /// a question.
     pub fn thread(&self, message_id: String) -> Vec<ChatMessage> {
         let state = self.shared.state.lock().unwrap();
-        let Some((index, m)) = state.message(&message_id) else { return Vec::new() };
+        let Some((computer, m)) = state.message(&message_id) else { return Vec::new() };
         let Some(agent) = m.agent.as_ref() else { return Vec::new() };
-        let before: Vec<ChatMessage> = state.stations[index].messages.iter().filter(|b| b.seq < m.seq && (b.agent.as_ref() == Some(agent) || (b.his && b.to_agents.contains(agent)))).cloned().collect();
+        let before: Vec<ChatMessage> = computer.messages.iter().filter(|b| b.seq < m.seq && (b.agent.as_ref() == Some(agent) || (b.his && b.to_agents.contains(agent)))).cloned().collect();
         before[before.len().saturating_sub(5)..].to_vec()
     }
 }

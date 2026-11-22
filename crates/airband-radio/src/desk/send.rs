@@ -7,7 +7,7 @@ impl Desk {
     pub fn choose(&self, agent: String) {
         let asking = {
             let mut state = self.shared.state.lock().unwrap();
-            if state.station_with_agent(&agent).is_some() { state.asking.take() } else { None }
+            if state.with_agent(&agent).is_some() { state.asking.take() } else { None }
         };
         if let Some(asking) = asking {
             place(&self.shared, &asking.at, asking.message, agent);
@@ -55,7 +55,7 @@ impl Desk {
         let radio = {
             let mut state = self.shared.state.lock().unwrap();
             state.answered.insert(message_id.clone());
-            state.station_at(&station).or(state.owner(&message_id)).map(|i| state.stations[i].radio.clone())
+            state.computer(&station).or(state.owner(&message_id)).map(|s| s.radio.clone())
         };
         self.shared.host.changed();
         radio.ok_or(crate::choices::told(UNPAIRED))?.answer_now(match &tapped { Some(t @ (Tapped::Allow | Tapped::Deny)) => t.words(), _ => text }, message_id, tapped.map(|t| t.act()))
@@ -91,7 +91,7 @@ impl Desk {
         // each computer with a stopped agent, and in one room, that room's team there by its id
         let radios: Vec<(Arc<Radio>, Option<String>)> = {
             let state = self.shared.state.lock().unwrap();
-            state.stations.iter().filter_map(|s| s.agents.iter().find(|a| a.state == AgentState::Stalled && room.as_ref().is_none_or(|r| a.room == *r)).map(|a| (s.radio.clone(), room.as_ref().map(|_| a.team.clone())))).collect()
+            state.computers.iter().filter_map(|s| s.agents.iter().find(|a| a.state == AgentState::Stalled && room.as_ref().is_none_or(|r| a.room == *r)).map(|a| (s.radio.clone(), room.as_ref().map(|_| a.team.clone())))).collect()
         };
         for (radio, team) in radios {
             // what the chat shows for it is what the stopped agents are told
@@ -104,7 +104,7 @@ impl Desk {
     pub fn talk(&self, re: Option<String>, room: Option<String>, agent: Option<String>) {
         let radio = {
             let mut state = self.shared.state.lock().unwrap();
-            if state.stations.is_empty() {
+            if state.computers.is_empty() {
                 return;
             }
             // the message he answers is answered when his words go (`deliver`), not when the microphone opens: he
@@ -112,8 +112,10 @@ impl Desk {
             state.discard = false;
             // any computer that is there can do the listening; where the words go is worked out when he sends them
             let pick = files_at(&state).or_else(|| pick_station(&state, "", re.as_deref(), room.as_deref(), agent.as_deref()));
-            let Some(pick) = pick.filter(|i| state.stations[*i].online).or_else(|| state.stations.iter().position(|s| s.online)).or(pick) else { return };
-            state.stations[pick].radio.clone()
+            let online = |id: &String| state.computer(id).is_some_and(|s| s.online);
+            let Some(pick) = pick.clone().filter(online).or_else(|| state.computers.iter().find(|s| s.online).map(Computer::id)).or(pick) else { return };
+            let Some(computer) = state.computer(&pick) else { return };
+            computer.radio.clone()
         };
         let shared = self.shared.clone();
         radio.dictate(Box::new(move |heard| {
@@ -170,7 +172,7 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
     let (radio, text, re, scope, others, to) = {
         let mut state = shared.state.lock().unwrap();
         // nothing typed is still something to send when files are attached: the files themselves
-        if state.stations.is_empty() || (text.is_empty() && state.uploads.is_empty()) {
+        if state.computers.is_empty() || (text.is_empty() && state.uploads.is_empty()) {
             return;
         }
         // something new said: whatever was waiting to be placed is let go
@@ -191,8 +193,8 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
         // if that is another computer the files are sent there first: the words wait for them.
         let pick = match files_at(&state) {
             Some(at) if at != wanted && (tagged || aimed || re.is_some()) => {
-                let to = state.stations[wanted].radio.clone();
-                let (from, wanted_id) = (state.stations[at].radio.clone(), state.stations[wanted].id());
+                let (Some(to), Some(from)) = (state.computer(&wanted).map(|s| s.radio.clone()), state.computer(&at).map(|s| s.radio.clone())) else { return };
+                let wanted_id = wanted.clone();
                 let mut moved = Vec::new();
                 for u in state.uploads.iter_mut() {
                     u.dropped.store(true, Ordering::SeqCst);
@@ -225,18 +227,18 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
             None => wanted,
         };
         // the ones that have arrived leave with this message
-        let pick_id = state.stations[pick].id();
-        state.uploads.retain(|u| !(u.station == pick_id && u.shown.state == UploadState::Ready));
+        state.uploads.retain(|u| !(u.station == pick && u.shown.state == UploadState::Ready));
+        let Some(computer) = state.computer(&pick) else { return };
         // the agent he is looking at, by id: the tower reads nothing to find who it is for
         let to: Vec<String> = match (&agent, aimed) {
-            (Some(id), true) => state.stations[pick].agents.iter().find(|a| a.id == *id).map(|a| a.id.clone()).into_iter().collect(),
+            (Some(id), true) => computer.agents.iter().find(|a| a.id == *id).map(|a| a.id.clone()).into_iter().collect(),
             _ => Vec::new(),
         };
         // the room's team on that computer, by its id
-        let scope = room.as_ref().filter(|_| re.is_none() && agent.is_none() && !tagged).and_then(|r| state.stations[pick].agents.iter().find(|a| a.room == *r)).map(|a| a.team.clone());
+        let scope = room.as_ref().filter(|_| re.is_none() && agent.is_none() && !tagged).and_then(|r| computer.agents.iter().find(|a| a.room == *r)).map(|a| a.team.clone());
         // when the tower has to work out who it is for, it is told who else is on his screen
-        let others = if tagged || aimed || re.is_some() || state.stations.len() < 2 { Vec::new() } else { others(&state, pick, room.as_deref()) };
-        (state.stations[pick].radio.clone(), text, re, scope, others, to)
+        let others = if tagged || aimed || re.is_some() || state.computers.len() < 2 { Vec::new() } else { others(&state, &pick, room.as_deref()) };
+        (computer.radio.clone(), text, re, scope, others, to)
     };
     radio.queue_his(Outgoing { re, scope, label, others, to, ..Outgoing::of(text) });
     shared.host.changed();
@@ -247,8 +249,8 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
 pub(super) fn place(shared: &Arc<Shared>, from: &str, message: Outgoing, agent: String) {
     let found = {
         let state = shared.state.lock().unwrap();
-        let from = state.station_at(from);
-        state.station_with_agent(&agent).map(|to| (state.stations[to].radio.clone(), from.map(|i| (i == to, state.stations[i].radio.clone(), state.computer_name(i)))))
+        let from = state.computer(from);
+        state.with_agent(&agent).map(|to| (to.radio.clone(), from.map(|f| (f.id() == to.id(), f.radio.clone(), state.computer_name(&f.id())))))
     };
     let Some((radio, origin)) = found else { return };
     // the files go with the words when they are on that computer; the words still answer what they answered
@@ -267,18 +269,17 @@ pub(super) fn place(shared: &Arc<Shared>, from: &str, message: Outgoing, agent: 
 }
 /// The agents on his screen that computers other than `pick` have, each with the last thing it said: for the
 /// tower his words are going to. In one room, only that room's.
-fn others(state: &State, pick: usize, room: Option<&str>) -> Vec<airband_core::radio::Other> {
+fn others(state: &State, pick: &str, room: Option<&str>) -> Vec<airband_core::radio::Other> {
     let now = now_ms();
     let mut seen = HashSet::new();
-    state.stations[pick].agents.iter().for_each(|a| {
+    state.computer(pick).iter().flat_map(|s| s.agents.iter()).for_each(|a| {
         seen.insert(a.id.clone());
     });
     state
-        .stations
+        .computers
         .iter()
-        .enumerate()
-        .filter(|(i, _)| *i != pick)
-        .flat_map(|(_, s)| s.agents.iter().map(move |a| (s, a)))
+        .filter(|s| s.id() != pick)
+        .flat_map(|s| s.agents.iter().map(move |a| (s, a)))
         .filter(|(_, a)| room.is_none_or(|r| a.room == r) && seen.insert(a.id.clone()))
         .map(|(s, a)| {
             let last = s.messages.iter().rev().find(|m| m.agent.as_deref() == Some(a.id.as_str()) && !m.fyi);
@@ -288,35 +289,35 @@ fn others(state: &State, pick: usize, room: Option<&str>) -> Vec<airband_core::r
 }
 /// The first computer that has someone his words tag, read the way the tower reads tags. Nothing when they tag
 /// nobody.
-fn tags_someone(state: &State, text: &str) -> Option<usize> {
-    state.stations.iter().position(|s| {
+fn tags_someone(state: &State, text: &str) -> Option<String> {
+    state.computers.iter().find(|s| {
         let live: Vec<Callsign> = s.agents.iter().map(|a| a.parts()).collect();
         !parse_utterance(text, &live).to.is_empty()
-    })
+    }).map(Computer::id)
 }
-/// Which computer a message of his goes to.
-pub(super) fn pick_station(state: &State, text: &str, re: Option<&str>, room: Option<&str>, agent: Option<&str>) -> Option<usize> {
+/// Which computer a message of his goes to, by its id.
+pub(super) fn pick_station(state: &State, text: &str, re: Option<&str>, room: Option<&str>, agent: Option<&str>) -> Option<String> {
     // the computer that has the message he is answering
-    if let Some(i) = re.and_then(|id| state.owner(id)) {
-        return Some(i);
+    if let Some(s) = re.and_then(|id| state.owner(id)) {
+        return Some(s.id());
     }
     // the computer that has whoever he tagged: read the tags the way the tower will
     if let Some(i) = tags_someone(state, text) {
         return Some(i);
     }
-    if let Some(i) = agent.and_then(|id| state.station_with_agent(id)) {
-        return Some(i);
+    if let Some(s) = agent.and_then(|id| state.with_agent(id)) {
+        return Some(s.id());
     }
     // the room he is looking at, when only one computer has agents in it
     if let Some(r) = room {
-        let mut with = state.stations.iter().enumerate().filter(|(_, s)| s.agents.iter().any(|a| a.room == r)).map(|(i, _)| i);
+        let mut with = state.computers.iter().filter(|s| s.agents.iter().any(|a| a.room == r)).map(Computer::id);
         if let (Some(only), None) = (with.next(), with.next()) {
             return Some(only);
         }
     }
     // Nothing says: his main computer, which works out who it is for and passes it on. With several computers
     // and none chosen there is no answer, and he is asked to choose (`DeskView::choose_main`).
-    state.main()
+    state.main().map(Computer::id)
 }
 
 impl Desk {

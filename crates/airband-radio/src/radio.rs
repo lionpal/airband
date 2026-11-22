@@ -73,7 +73,7 @@ impl Radio {
         senses.mouth.set(Some(mouth::Own::Host));
         senses.ears.set(Some(ears::Own::Host));
         let kept = Kept::open(&data_dir, host.clone());
-        Self::start_with(link, &data_dir, host, Arc::new(senses), kept)
+        Self::start_with(link, &data_dir, host, Arc::new(senses), kept, None)
     }
 
     /// Chat, for a bad connection: take what he typed and keep trying until the tower has it. Returns at
@@ -93,13 +93,18 @@ impl Radio {
 impl Radio {
     /// As [`Radio::start`], listening and speaking with what he chose on this device, and with what is kept for
     /// him on this computer's behalf ([`Kept`]).
-    pub(crate) fn start_with(link: String, data_dir: &str, host: Arc<dyn RadioHost>, senses: Arc<Senses>, kept: Kept) -> Result<Arc<Self>, RadioError> {
+    /// `transport`, when given, carries every request in place of the network ([`crate::link::Transport`]).
+    pub(crate) fn start_with(link: String, data_dir: &str, host: Arc<dyn RadioHost>, senses: Arc<Senses>, kept: Kept, transport: Option<Arc<dyn crate::link::Transport>>) -> Result<Arc<Self>, RadioError> {
         let Kept { session, store } = kept;
         let me = store.saved.lock().unwrap().radio.clone();
         let me = if me.is_empty() { store.change(|s| { s.radio = format!("radio-{}", random_hex(4)); s.radio.clone() }) } else { me };
         // the record of what failed is kept beside the saved chat, on this device
         let trail = (!data_dir.is_empty()).then(|| std::path::Path::new(&data_dir).join("trail.json"));
         let link = Pairing::parse(&link).and_then(|p| Link::new(p, &me, trail)).map_err(|reason| RadioError::BadLink { reason })?;
+        let link = match transport {
+            Some(transport) => link.through(transport),
+            None => link,
+        };
         let (tx, rx) = channel();
         let stop = Arc::new(AtomicBool::new(false));
         let link = Arc::new(link);

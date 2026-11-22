@@ -89,8 +89,8 @@ impl Desk {
                 }
             let (radios, everyone) = {
                 let state = self.shared.state.lock().unwrap();
-                let online = state.stations.iter().enumerate().filter(|(_, s)| s.online).map(|(i, s)| (state.computer_name(i), s.id(), s.radio.clone())).collect::<Vec<_>>();
-                (online, state.stations.len())
+                let online = state.computers.iter().filter(|s| s.online).map(|s| (state.computer_name(&s.id()), s.id(), s.radio.clone())).collect::<Vec<_>>();
+                (online, state.computers.len())
             };
             // no computer to ask: it waits for one
             if radios.is_empty() {
@@ -105,7 +105,7 @@ impl Desk {
                 return done(Err(answers.told().expect("asked at least one, and none took it")));
             }
             // what is offered and in use is the main computer's: the one he chose, or the only one
-            let main = { let state = self.shared.state.lock().unwrap(); state.main().map(|i| state.stations[i].radio.clone()) };
+            let main = { let state = self.shared.state.lock().unwrap(); state.main().map(|s| s.radio.clone()) };
             let offered = main.and_then(|radio| radio.reads_offered());
             let (taken, refused) = (answers.taken.iter().map(|(_, id)| id.clone()).collect::<Vec<_>>(), answers.refused.iter().map(|(_, id, _)| id.clone()).collect::<Vec<_>>());
             let kept = chooser.change(|s| {
@@ -270,8 +270,8 @@ pub(crate) fn computer_reached(shared: &Shared, radio: &Radio) {
     let chooser = &shared.chooser;
     let (me, everyone) = {
         let state = shared.state.lock().unwrap();
-        let me = state.stations.iter().find(|s| std::ptr::eq(&*s.radio, radio)).map(|s| s.id());
-        (me, state.stations.iter().map(|s| s.id()).collect::<Vec<_>>())
+        let me = state.computers.iter().find(|s| std::ptr::eq(&*s.radio, radio)).map(|s| s.id());
+        (me, state.computers.iter().map(|s| s.id()).collect::<Vec<_>>())
     };
     if let (Some(waiting), Some(me)) = (chooser.saved().reads, me)
         && !waiting.answered(&me) {
@@ -298,7 +298,7 @@ pub(crate) fn computer_reached(shared: &Shared, radio: &Radio) {
     }
     // what can write summaries, and what does now, as the main computer says: another computer's word on it
     // does not stand in for the main one's
-    let is_main = { let state = shared.state.lock().unwrap(); state.main().is_some_and(|i| std::ptr::eq(&*state.stations[i].radio, radio)) };
+    let is_main = { let state = shared.state.lock().unwrap(); state.main().is_some_and(|s| std::ptr::eq(&*s.radio, radio)) };
     if is_main
         && let Some(offered) = radio.reads_offered()
         && let Err(e) = chooser.change(|s| s.offered = Some(offered))

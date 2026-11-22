@@ -19,6 +19,15 @@ pub(crate) enum Route {
     Relay { relay: String, keys: Keys },
     /// Sealed like the relay's, with no relay: only ever straight to the tower's own addresses.
     Near { keys: Keys },
+    /// Through something that stands in for the network ([`Transport`]): a scripted tower in tests.
+    Through(Arc<dyn Transport>),
+}
+
+/// What carries one request of the radio protocol to a tower and its answer back, in place of the network: the
+/// method, the whole path, and the body as JSON; the tower's status and what it answered. A stand-in tower
+/// implements it, so what the desk does with typed answers is tested without a computer.
+pub(crate) trait Transport: Send + Sync {
+    fn exchange(&self, method: Method, path: &str, body: Option<Value>) -> Result<(u16, Value), LinkError>;
 }
 
 /// Which way a request was tried.
@@ -118,6 +127,12 @@ impl Link {
         Ok(Link { route, agent, near: crate::net::agent_quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct { addrs: at, ..Direct::default() }), trail: Mutex::new(trail), trail_keeper, presence: Mutex::default(), kept_at_relay: Default::default(), lost: Mutex::default(), awaited: Mutex::default(), told: std::sync::Condvar::new() })
     }
 
+    /// Reach the tower through `transport` and nothing else.
+    pub(crate) fn through(mut self, transport: Arc<dyn Transport>) -> Self {
+        self.route = Route::Through(transport);
+        self
+    }
+
     /// The tower said where it can be reached without the relay. Anything new is tried at the next request.
     pub(crate) fn set_direct(&self, addrs: Vec<String>) {
         let mut d = self.direct.lock().unwrap();
@@ -128,7 +143,7 @@ impl Link {
 
     /// Is the tower being reached straight, on its own network, and not through the relay?
     pub(crate) fn is_direct(&self) -> bool {
-        matches!(self.route, Route::Direct { .. } | Route::Near { .. }) || self.direct.lock().unwrap().good.is_some()
+        matches!(self.route, Route::Direct { .. } | Route::Near { .. } | Route::Through(_)) || self.direct.lock().unwrap().good.is_some()
     }
 
     /// The tower has given addresses that have not been tried yet (or not lately): the next request finds out
@@ -325,6 +340,12 @@ impl Link {
                 got
             }
             Route::Near { keys } => self.straight(keys, method, path, &body, ordered, steps).unwrap_or(Err(LinkError::Unreachable(Way::Near))),
+            Route::Through(transport) => {
+                let began = std::time::Instant::now();
+                let got = transport.exchange(method, path, body);
+                self.note(steps, ordered, began, &what, Way::Paired, got.as_ref().map(|(status, _)| *status).map_err(Clone::clone));
+                got
+            }
             Route::Relay { relay, keys } => {
                 // Straight to the tower whenever it is on this network: no trip to the relay and back, and it
                 // works when the relay does not. Only while the relay still keeps earlier words of his does

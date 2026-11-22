@@ -11,7 +11,7 @@ fn opened(dir: &std::path::Path) -> Arc<Desk> {
     Desk::open(dir.display().to_string(), Arc::new(Watching(std::sync::atomic::AtomicBool::new(true))))
 }
 fn radio_at(desk: &Desk, i: usize) -> Arc<Radio> {
-    desk.shared.state.lock().unwrap().stations[i].radio.clone()
+    desk.shared.state.lock().unwrap().computers[i].radio.clone()
 }
 fn asking(id: &str) -> Reply {
     Reply { question: Some(id.into()), ..Reply::default() }
@@ -67,7 +67,7 @@ fn n25_what_did_not_go_is_still_shown_after_a_relaunch_and_can_be_let_go() {
     // the app is opened again
     let desk = opened(&dir);
     desk.set_links(vec![nobody(1)]);
-    let shown: Vec<String> = desk.shared.state.lock().unwrap().stations[0].sending.iter().map(|o| o.id.clone()).collect();
+    let shown: Vec<String> = desk.view(None, None).sending.into_iter().map(|o| o.id).collect();
     let kept: Vec<String> = radio_at(&desk, 0).unsent().into_iter().map(|o| o.id).collect();
     let let_go = desk.discard_unsent(given_up.clone());
     desk.stop();
@@ -92,7 +92,7 @@ fn n26_an_attached_file_follows_its_computer_and_not_its_place_in_the_list() {
     // the second computer is unpaired; the first stays
     desk.set_links(vec![nobody(1)]);
     let sent = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| desk.send("look at this".into(), None, None, None)));
-    let first_took: Vec<Vec<String>> = desk.shared.state.lock().map(|s| s.stations[0].radio.unsent().into_iter().map(|o| o.attachments).collect()).unwrap_or_default();
+    let first_took: Vec<Vec<String>> = desk.shared.state.lock().map(|s| s.computers[0].radio.unsent().into_iter().map(|o| o.attachments).collect()).unwrap_or_default();
     let _ = std::fs::remove_dir_all(&dir);
     assert!(sent.is_ok(), "sending after the computer with the file was unpaired crashed");
     assert!(first_took.iter().all(|a| a.is_empty()), "the file went to the computer that took the other's place: {first_took:?}");
@@ -101,8 +101,8 @@ fn n26_an_attached_file_follows_its_computer_and_not_its_place_in_the_list() {
 /// One computer, with an agent that has stopped and a question that is open, and its radio stopped so what
 /// is queued stays to be looked at.
 fn stalled() -> Desk {
-    let mut state = State { stations: vec![station("mini", 9, &[("shop two", "shop")], vec![msg("q1", 1, "shop two", "shop", true)])], ..State::default() };
-    state.stations[0].agents[0].state = AgentState::Stalled;
+    let mut state = State { computers: vec![station("mini", 9, &[("shop two", "shop")], vec![msg("q1", 1, "shop two", "shop", true)])], ..State::default() };
+    state.computers[0].agents[0].state = AgentState::Stalled;
     desk_of(state)
 }
 
