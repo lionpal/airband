@@ -128,7 +128,8 @@ fn out_shape() -> Value {
     })
 }
 
-pub(in crate::tower) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&str>, scope: Option<&str>, others: &[airband_core::radio::Other]) -> Routed {
+/// `projects` are the places a new agent can be started in, listed once for what he said.
+pub(in crate::tower) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&str>, scope: Option<&str>, others: &[airband_core::radio::Other], projects: &[Place]) -> Routed {
     // the room he was looking at, when he was in one: only its agents can be meant
     let room = scope.map(str::to_string);
     let scene = match scene(app, radio, re, room.as_deref()) {
@@ -138,14 +139,14 @@ pub(in crate::tower) async fn route(app: &Arc<App>, radio: &str, rest: &str, re:
     // what a new agent could be started in and on, if anything
     // any tool this computer can start will do for knowing that one can be: which one is settled when it starts
     let any_launcher = !app.cfg().launchers.is_empty();
-    let projects: Vec<Place> = app.read().launchable();
+    // a new agent can be started here only with a launcher and a place to start it in
+    let can_start = any_launcher && !projects.is_empty();
     // with agents of another computer on his screen there is always more than one it could be for
-    let can_start = (any_launcher && !projects.is_empty()) || !others.is_empty();
-    let launcher = any_launcher && !projects.is_empty();
+    let more_than_these = can_start || !others.is_empty();
     match scene.all.as_slice() {
-        [] if !can_start => return Routed::Ask(Vec::new()),
+        [] if !more_than_these => return Routed::Ask(Vec::new()),
         // only one agent it could be, and nothing else it could mean
-        [only] if !can_start => return Routed::Sure(vec![only.clone()]),
+        [only] if !more_than_these => return Routed::Sure(vec![only.clone()]),
         _ => {}
     }
     // More than one agent could be meant. His words decide, read against what each has been saying: "ship the
@@ -154,19 +155,19 @@ pub(in crate::tower) async fn route(app: &Arc<App>, radio: &str, rest: &str, re:
     let (listed, lines) = listing(&scene, others, now);
     let menus = menus(app);
     // the other thing his words can be: a request for a new agent, on a model and at an effort he may name
-    let starting = if launcher { starting(app, &menus, &projects, room.as_deref()) } else { String::new() };
+    let starting = if can_start { starting(app, &menus, projects, room.as_deref()) } else { String::new() };
     let prompt = prompt(app, &lines, &last_said(&scene.focus, now), rest, &starting, can_start);
     let Ok(judged) = judge::ask_json::<Out>(&app.settings, "routing", prompt, Some(out_shape())).await else {
         return no_answer(app, &scene.all, can_start);
     };
-    answered(judged, &scene, &listed, &menus, &projects, can_start)
+    answered(judged, &scene, &listed, &menus, projects, can_start)
 }
 
 /// The room as it stands, or (as `Err`) the agent he is answering when he tapped one of its messages: that is
 /// certain, and it goes to the agent that said it, whatever that agent is called now. When that agent has gone,
 /// his words are read against the room like any others.
 fn scene(app: &App, radio: &str, re: Option<&str>, room: Option<&str>) -> Result<Scene, Box<Session>> {
-    let within = |s: &Session| room.is_none_or(|g| s.team.as_str() == g);
+    let within = |s: &Session| s.in_room(room);
     let inner = app.read();
     if let Some(target) = re.and_then(|id| inner.log.iter().find(|e| e.id == id)).and_then(|e| inner.sender(e)) {
         return Err(Box::new(target.clone()));
@@ -396,7 +397,7 @@ fn answered(mut judged: Out, scene: &Scene, listed: &[Listed], menus: &Menus, pr
 /// nothing when they are not an answer to that: then they are a message of their own. `Err` when no model
 /// could say.
 pub(super) async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope: Option<&str>) -> Result<Option<Vec<Session>>, String> {
-    let all: Vec<Session> = app.read().sessions.iter().filter(|s| scope.is_none_or(|g| s.team.as_str() == g)).cloned().collect();
+    let all: Vec<Session> = app.read().sessions.iter().filter(|s| s.in_room(scope)).cloned().collect();
     let letters = |s: &Session| s.callsign.badge();
     let prompt = format!(
         "{name} said this to his coding agents: \"{first}\"\nIt was not clear who it was for, and he was asked. The agents:\n{list}\n\n\

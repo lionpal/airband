@@ -142,7 +142,8 @@ impl Inner {
         let Some(was) = self.teams.get(team).map(|t| t.name.clone()) else {
             return Err("That team is not on this computer any more.".into());
         };
-        let to = self.chosen_team(to, Some(team))?;
+        // whether another team has the name is asked once, as it is given
+        let to = TeamName::new(to)?;
         if !self.set_team_name(team, &to) {
             return Err(format!("There is already a team called {to}, here or on another of your computers."));
         }
@@ -225,9 +226,20 @@ impl Inner {
                         }
                 }
                 Some(_) => {}
-                None => {
-                    self.new_folder_team(&folder, name, is_named);
-                }
+                // a name another team has now is never given twice: the folder's team is named as any new
+                // folder's team is, and said
+                None => match self.chosen_team(name.as_str(), Some(&id)) {
+                    Ok(name) => {
+                        self.new_folder_team(&folder, name, is_named);
+                    }
+                    Err(_) => match self.name_for_folder(&folder) {
+                        Some(free) => {
+                            log(format!("a kept team called {name} is now {free}: another team has its name"));
+                            self.new_folder_team(&folder, free, false);
+                        }
+                        None => log(format!("a kept team called {name} is not read: another team has its name, and its folder gives no other")),
+                    },
+                },
             }
         }
         // an agent kept with no team id goes in the team of its name; with none, its folder's; with neither it is
@@ -246,11 +258,11 @@ impl Inner {
                 }
             }
         }
-        let placed: Vec<(AgentId, TeamId, Mover)> = self.placed.iter().filter(|(_, (team, _))| !self.teams.contains_key(team)).map(|(a, (t, by))| (a.clone(), t.clone(), *by)).collect();
-        for (agent, name, by) in placed {
-            match self.team_called(name.as_str()) {
+        let placed: Vec<(AgentId, Placed)> = self.placed.iter().filter(|(_, p)| !self.teams.contains_key(&p.team)).map(|(a, p)| (a.clone(), p.clone())).collect();
+        for (agent, was) in placed {
+            match self.team_called(was.team.as_str()) {
                 Some(team) => {
-                    self.placed.insert(agent, (team, by));
+                    self.placed.insert(agent, Placed { team, ..was });
                 }
                 None => {
                     self.placed.remove(&agent);
@@ -285,7 +297,7 @@ impl Inner {
             .filter(|(id, t)| {
                 t.live_folder().is_none()
                     && !self.sessions.iter().any(|s| &s.team == *id)
-                    && !self.placed.values().any(|(team, _)| team == *id)
+                    && !self.placed.values().any(|p| p.team == **id)
                     && !self.log.iter().any(|e| e.team.as_ref() == Some(*id))
             })
             .map(|(id, _)| id.clone())

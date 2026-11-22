@@ -17,7 +17,7 @@ pub(super) async fn stop_agent(State(app): State<Arc<App>>, Sent(to): Sent<at::S
 pub(super) async fn end_agent(State(app): State<Arc<App>>, Sent(to): Sent<at::End>) -> Answer<at::End> {
     let reached = app.read().find(&to.agent).map(|s| s.agent.deliver.clone());
     match reached {
-        None => Err(no("That agent is no longer running.")),
+        None => Err(no(NOT_RUNNING)),
         Some(Some(Deliver::Held)) if held::end(&app, &to.agent).await => done(),
         Some(Some(Deliver::Held)) => Err(no("It had already ended.")),
         // a session of a tool's own is put away by that tool; the tower then sees it is no longer open
@@ -57,11 +57,6 @@ pub(super) async fn dismiss(State(app): State<Arc<App>>, Sent(to): Sent<at::Dism
 pub(super) async fn unsend(State(app): State<Arc<App>>, Sent(to): Sent<at::Unsend>) -> Answer<at::Unsend> {
     held::unsend(&app, &to.message).map_err(no)?;
     done()
-}
-
-/// End an agent the tower runs itself (`airband end <id>`).
-pub(super) async fn held_end(State(app): State<Arc<App>>, Path(id): Path<String>) -> Answer<at::HeldEnd> {
-    if held::end(&app, &id).await { done() } else { Err(No(Refusal::Gone)) }
 }
 
 pub(super) async fn permission_ask(State(app): State<Arc<App>>, Sent(ask): Sent<at::Permission>) -> Answer<at::Permission> {

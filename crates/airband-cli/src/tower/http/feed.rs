@@ -111,7 +111,7 @@ pub(super) async fn feed(State(app): State<Arc<App>>, RadioId(radio): RadioId, A
                 m
             })
             .collect();
-        return Ok(Json(Feed { schema: airband_core::radio::SCHEMA.into(), rev: upto, messages, roster: inner.roster_entries(), roster_rev: inner.roster_rev(), reads: { let r = app.settings.reader(); r.offer(crate::providers::Job::Summary).map(|(_, o)| o.label.clone()).unwrap_or_default() }, direct: app.listening.lock().unwrap().iter().map(|a| format!("http://{a}:{}", app.cfg().port)).collect(), seq: inner.seq, open: open.into_iter().collect(), quick: airband_core::radio::quick_defaults().into_iter().chain(app.cfg().quick.iter().cloned()).collect(), station: config::station(&app.cfg()), reads_failed: app.settings.failed(), answers: inner.settled_for(&radio, since) }));
+        return Ok(Json(Feed { schema: airband_core::radio::SCHEMA.into(), rev: upto, messages, roster: inner.roster_entries(), roster_rev: inner.roster_rev(), reads: { let r = app.settings.reader(); r.offer(crate::providers::Job::Summary).map(|(_, o)| o.label.clone()).unwrap_or_default() }, direct: app.listening.lock().unwrap().iter().map(|a| config::direct_url(*a, app.cfg().port)).collect(), seq: inner.seq, open: open.into_iter().collect(), quick: airband_core::radio::quick_defaults().into_iter().chain(app.cfg().quick.iter().cloned()).collect(), station: config::station(&app.cfg()), reads_failed: app.settings.failed(), answers: inner.settled_for(&radio, since) }));
     }
 }
 

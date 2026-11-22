@@ -162,6 +162,17 @@ impl Entry {
         Entry { id, from: HIM.into(), his: true, team, to: to.iter().map(|s| s.callsign.text()).collect(), to_agents: to.iter().map(|s| s.agent.id.clone()).collect(), short: Some(text.clone()), full: text, ..Entry::default() }
     }
 }
+/// The chat's id for something he typed at an agent's own keyboard: made from the agent and the harness's id
+/// for it, whole, so two the harness tells apart are never one line here. Nothing without the harness's id.
+fn typed_line_id(agent: &str, harness_id: &str) -> Option<String> {
+    use sha2::Digest;
+    if harness_id.is_empty() {
+        return None;
+    }
+    let sum = sha2::Sha256::new().chain_update(agent.as_bytes()).chain_update([0]).chain_update(harness_id.as_bytes()).finalize();
+    Some(format!("typed-{}", sum.iter().take(16).map(|b| format!("{b:02x}")).collect::<String>()))
+}
+
 /// How many log lines the tower keeps in memory. The database keeps them all.
 pub(super) const LOG_KEEP: usize = 1000;
 impl Inner {
@@ -191,9 +202,10 @@ impl Inner {
             self.took(&t.id, t.at);
         }
         for (t, pictures) in told.into_iter().zip(pictures.into_iter().chain(std::iter::repeat_with(Vec::new))).filter(|(t, _)| t.his && t.at >= oldest) {
-            // the harness's own id for it, so the same words are never added twice
-            let id: String = t.id.chars().filter(|c| c.is_ascii_alphanumeric()).take(40).collect();
-            if id.is_empty() || self.log.iter().any(|e| e.id == id) {
+            // the harness's own id for it, so the same words are never added twice; one without an id is not
+            // known to be new, and is left out
+            let Some(id) = typed_line_id(agent_id, &t.id) else { continue };
+            if self.log.iter().any(|e| e.id == id) {
                 continue;
             }
             // his words as he typed them. Something very long (a pasted log) is shown by its opening and kept whole
@@ -368,5 +380,21 @@ impl Inner {
     /// The last thing an agent said that was worth his attention.
     pub(super) fn last_said(&self, agent_id: &str) -> Option<&Entry> {
         self.log.iter().rev().find(|e| e.worth_from(agent_id))
+    }
+}
+
+#[cfg(test)]
+mod typed_tests {
+    use super::typed_line_id;
+
+    #[test]
+    fn two_things_the_harness_tells_apart_are_never_one_line() {
+        // the same once letters and digits are kept, and the same in their first forty
+        let long = "a".repeat(40);
+        assert_ne!(typed_line_id("a1", "msg-1_2"), typed_line_id("a1", "msg-12"));
+        assert_ne!(typed_line_id("a1", &format!("{long}x")), typed_line_id("a1", &format!("{long}y")));
+        assert_ne!(typed_line_id("a1", "m1"), typed_line_id("a2", "m1"), "two agents' records are their own");
+        assert_eq!(typed_line_id("a1", "m1"), typed_line_id("a1", "m1"), "the same one read again is the same line");
+        assert_eq!(typed_line_id("a1", ""), None);
     }
 }

@@ -54,7 +54,7 @@ fn every_endpoints_query_reads_back_and_every_one_is_listed() {
     let n = every!(
         Next, Heard, Unheard, Presence, Ready, Utterance, Feed, Picture, ReadsOffered, Reads, Message, Attachment, Accounts,
         UseAccount, Team, RenameTeam, Folders, Recent, Project, TakeOver, Stop, Unsend, Dismiss, Taken, End, Push, Tools,
-        Events, HeldEnd, Permission, PermissionAnswer, PermissionWithdraw,
+        Events, Permission, PermissionAnswer, PermissionWithdraw,
     );
     assert_eq!(n, at::ALL.len(), "an endpoint is missing from this test");
 }

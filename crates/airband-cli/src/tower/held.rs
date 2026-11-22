@@ -60,10 +60,7 @@ pub(super) fn launcher_for(app: &App, tool: Option<&str>) -> Option<(String, con
 /// lists. One that speaks the Agent Client Protocol says for itself each time a session of its opens, and what
 /// it last said is what is offered: nothing, until the first of its agents has been started here.
 pub(super) fn offers(inner: &Inner, name: &str, launcher: &config::Launcher) -> airband_core::tools::Offers {
-    match launcher.held {
-        Some(config::Held::Acp { .. }) => inner.menus.get(name).cloned().unwrap_or_default(),
-        _ => launcher.offers(),
-    }
+    if launcher.says_its_settings() { inner.menus.get(name).cloned().unwrap_or_default() } else { launcher.offers() }
 }
 
 /// An agent that is there: what its tool calls its session, and what it said a session can be set to.
@@ -75,7 +72,7 @@ struct Started {
 
 /// Remember what a launcher's agent said it can be set to, when it is the agent that says.
 fn learn(app: &App, inner: &mut Inner, launcher: &str, offers: airband_core::tools::Offers) {
-    if matches!(app.cfg().launchers.get(launcher).and_then(|l| l.held.as_ref()), Some(config::Held::Acp { .. })) {
+    if app.cfg().launchers.get(launcher).is_some_and(config::Launcher::says_its_settings) {
         inner.menus.insert(launcher.to_string(), offers);
     }
 }
@@ -192,7 +189,7 @@ fn holder_run(cfg: &config::Config, me: std::path::PathBuf, sock: &std::path::Pa
     }
     // AIRBAND_INTERNAL must not leak in: the agent has to report to the tower. AIRBAND_HELD tells its adapter
     // that this tower holds it, so it says so when it reports in.
-    holder.unset = vec!["AIRBAND_INTERNAL".into(), "AIRBAND_HELD_ID".into()];
+    holder.unset = vec![INTERNAL_ENV.into(), "AIRBAND_HELD_ID".into()];
     holder.set.push(("AIRBAND_HELD".into(), "1".into()));
     // a program that does not know the id reports under whatever its tool calls the session: its adapter is
     // told the id to report under
@@ -317,7 +314,7 @@ pub(super) async fn flush(app: &Arc<App>, id: &str) {
 pub(super) async fn stop(app: &Arc<App>, id: &str) -> Result<(), String> {
     let (session, kept) = {
         let inner = app.read();
-        let s = inner.find(id).cloned().ok_or("That agent is no longer running.")?;
+        let s = inner.find(id).cloned().ok_or(NOT_RUNNING)?;
         if s.agent.deliver != Some(Deliver::Held) {
             return Err("Only an agent airband runs can be stopped from here. Take it over first.".into());
         }
@@ -419,12 +416,13 @@ pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, model: Opti
 /// The tower has started: carry on every agent it was holding, so each is there to be spoken to. One whose
 /// session cannot be carried on is let go.
 pub(super) async fn carry_on(app: &Arc<App>) {
-    let kept: Vec<Kept> = app.read().held.clone();
+    // only the ones still on the radio: one that signed off is finished, and nothing of it is kept
+    let kept: Vec<Kept> = {
+        let mut inner = app.change();
+        inner.drop_held_off_the_radio();
+        inner.held.clone()
+    };
     for k in to_carry_on(kept, &edges::folders::Disk) {
-        // only the ones still on the radio: one that signed off is finished
-        if app.read().find(&k.id).is_none() {
-            continue;
-        }
         // one at a time with a delivery that may be starting it too
         let _one = app.reviving.lock().await;
         // its holder outlived the last tower, or a delivery started it: it is running, and there is nothing to do
@@ -433,7 +431,7 @@ pub(super) async fn carry_on(app: &Arc<App>) {
             continue;
         }
         if let Err(e) = revive(app, &k).await {
-            log(format!("could not carry on held agent {}: {e}", &k.id[..8.min(k.id.len())]));
+            log(format!("could not carry on held agent {}: {e}", short_id(&k.id)));
         }
     }
 }
@@ -445,11 +443,19 @@ fn to_carry_on(kept: Vec<Kept>, folders: &dyn edges::folders::Folders) -> Vec<Ke
         .filter(|k| {
             let there = folders.exists(&k.cwd);
             if !there {
-                log(format!("did not carry on held agent {}: its folder is gone", &k.id[..8.min(k.id.len())]));
+                log(format!("did not carry on held agent {}: its folder is gone", short_id(&k.id)));
             }
             there
         })
         .collect()
+}
+
+impl Inner {
+    /// Let go of what is kept of held agents that are no longer on the radio.
+    pub(super) fn drop_held_off_the_radio(&mut self) {
+        let on: HashSet<String> = self.sessions.iter().map(|s| s.agent.id.clone()).collect();
+        self.held.retain(|k| on.contains(&k.id));
+    }
 }
 
 /// Whether a team could hold an agent working in this folder: the one there, or one the folder could name.
@@ -484,7 +490,7 @@ pub(super) fn forget(inner: &mut Inner, id: &str) {
 pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
     let (session, launcher) = {
         let inner = app.read();
-        let s = inner.find(id).cloned().ok_or("That agent is no longer running.")?;
+        let s = inner.find(id).cloned().ok_or(NOT_RUNNING)?;
         // carried on by a launcher that runs this agent's own harness: never one tool's session under another
         let launcher = app.cfg().launcher_for(Some(&s.agent.harness)).filter(|(_, l)| l.held.is_some()).map(|(name, _)| name.clone());
         (s, launcher)
@@ -550,6 +556,16 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn what_is_kept_of_a_held_agent_off_the_radio_is_let_go() {
+        let mut inner = Inner::default();
+        let kept = |id: &str| Kept { id: id.into(), cwd: "/w".into(), launcher: "l".into(), model: None, effort: None, session: None };
+        inner.held = vec![kept("on"), kept("off")];
+        let on = Agent { id: "on".into(), harness: "test".into(), cwd: Some("/w/shop".into()), name: None, title: None, pid: None, deliver: None, meta: Default::default() };
+        inner.check_in(&on).expect("taken in");
+        inner.drop_held_off_the_radio();
+        assert_eq!(inner.held.iter().map(|k| k.id.as_str()).collect::<Vec<_>>(), ["on"]);
+    }
     use super::*;
 
     #[test]
@@ -583,7 +599,7 @@ mod tests {
         assert_eq!(&words[..9], ["hold", "--sock", "/s/a.sock", "--cwd", "/work/shop", "--id", "a", "--harness", "tool"]);
         assert_eq!(words[words.len() - 5..], ["--", "tool", "--in", "/work/shop", "--new"]);
         assert!(run.set.contains(&("AIRBAND_HELD_ID".into(), "a".into())), "the program was not given the id");
-        assert!(run.unset.contains(&"AIRBAND_INTERNAL".into()));
+        assert!(run.unset.contains(&INTERNAL_ENV.into()));
         let procs = edges::procs::FakeProcs::ending_after(None);
         edges::procs::Procs::start_apart(&procs, run.clone()).unwrap();
         assert_eq!(procs.started.lock().unwrap().as_slice(), [run]);

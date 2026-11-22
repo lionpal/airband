@@ -131,8 +131,18 @@ pub(crate) fn setup(mut cfg: Config, start: bool) -> Result<(), String> {
         cfg.name = name;
     }
     println!("One choice, then your phone. What listens to you and what speaks are chosen in the app. A key you give stays on this computer, {}.\nIt goes to the service it is for and nowhere else: never to airband's servers.", crate::vault::place());
+    let before = cfg.clone();
     choose(&mut cfg, "Summaries", "What reads your agents' messages and tells you the short of them.", "None: you get every message in full");
-    config::save(&cfg)?;
+    // what he answered goes into the settings as they are now: questions take a while, and what another
+    // airband process changed meanwhile (a pairing) is kept
+    config::change(|now| {
+        now.name = cfg.name.clone();
+        now.summarizer = cfg.summarizer.clone();
+        for (name, key) in cfg.keys.iter().filter(|(name, key)| before.keys.get(*name) != Some(*key)) {
+            now.keys.insert(name.clone(), key.clone());
+        }
+        Ok(())
+    })?;
     if !start {
         println!("\nSaved.");
         return Ok(());
@@ -160,7 +170,7 @@ fn used_for(cfg: &Config, secret: &str) -> Vec<&'static str> {
 
 /// `airband keys [add <name> <provider> | remove <name>]`. A key is never shown.
 pub(crate) fn keys(args: &[String]) -> Result<(), String> {
-    let mut cfg = config::load();
+    let cfg = config::load();
     if let Some(why) = cfg.keyless.clone() {
         return Err(format!("The keys cannot be read from here: {why}"));
     }
@@ -184,8 +194,10 @@ pub(crate) fn keys(args: &[String]) -> Result<(), String> {
                 return Err("No key given.".into());
             }
             // a provider has one key: this one takes the place of any before it
-            cfg.keep_key(&p.id, pasted);
-            config::save(&cfg)?;
+            config::change(|now| {
+                now.keep_key(&p.id, pasted);
+                Ok(())
+            })?;
             println!("Kept as \"{}\". Choose what uses it with:  airband setup", p.id);
         }
         Some("remove") => {
@@ -195,8 +207,11 @@ pub(crate) fn keys(args: &[String]) -> Result<(), String> {
             if !uses.is_empty() {
                 return Err(format!("\"{name}\" is used for {}. Choose something else for that first:  airband setup", uses.join(", ")));
             }
-            cfg.keys.remove(name);
-            config::save(&cfg)?;
+            let name = name.clone();
+            config::change(|now| {
+                now.keys.remove(&name);
+                Ok(())
+            })?;
             println!("Removed.");
         }
         // before installing a copy signed with another certificate, which the keychain would take for a stranger

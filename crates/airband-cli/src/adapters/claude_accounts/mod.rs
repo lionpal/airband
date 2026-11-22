@@ -251,19 +251,37 @@ fn switch_in(here: &Here, id: &str) -> Res<std::thread::JoinHandle<()>> {
         let token = saved_token(here, &target, true)?;
         let acct = service::profile(here, &token).map(|(_, a)| a).ok_or_else(|| format!("Did not switch: {} would not say whose login that is just now. Try again in a moment.", maker()))?;
         let incoming = saved::entry(here, &target)?.get(login_key()).cloned().ok_or(ADD_AGAIN)?;
-        let blob = live::blob(here).map_err(|e| format!("Did not switch: {e}"))?;
-        // keep the outgoing account's newest login: its refresh token has changed since it was saved
-        if let (Some(email), Some(blob)) = (&outgoing, &blob) {
-            keep_outgoing(here, email, blob).map_err(|e| format!("Did not switch: the current login could not be saved first. {e}"))?;
-        }
         // the account file must take the new record, or the login is not swapped at all
         let record = live::with_oauth_account(&here.account_file, &acct).map_err(|e| format!("Did not switch: {e}"))?;
+        // Keep the outgoing account's newest login (its refresh token has changed since it was saved), then read
+        // the live item once more: the running tool may have refreshed it meanwhile, and the copy kept must be
+        // the one it uses. What it holds when it is written over is what was kept.
+        let mut blob = live::blob(here).map_err(|e| format!("Did not switch: {e}"))?;
+        loop {
+            if let (Some(email), Some(blob)) = (&outgoing, &blob) {
+                keep_outgoing(here, email, blob).map_err(|e| format!("Did not switch: the current login could not be saved first. {e}"))?;
+            }
+            let again = live::blob(here).map_err(|e| format!("Did not switch: {e}"))?;
+            if again == blob {
+                break;
+            }
+            blob = again;
+        }
         // swap the claude.ai login inside the live item, keeping the MCP logins beside it
         let before = blob.clone().map(|b| Value::Object(b).to_string());
         let mut blob = blob.unwrap_or_default();
         blob.insert(login_key(), incoming);
         let user = here.user()?;
-        here.vault.write(&here.live_service, user, &Value::Object(blob).to_string()).map_err(|e| format!("Did not switch: {e}"))?;
+        let swapped = Value::Object(blob).to_string();
+        if let Err(e) = here.vault.write(&here.live_service, user, &swapped) {
+            // what the item holds now says what became of it: as before, nothing changed; anything else was
+            // written by something besides this switch, and he is told so, with nothing written over it
+            return Err(match here.vault.read(&here.live_service, user) {
+                Ok(now) if now == before => format!("Did not switch: {e}"),
+                Ok(now) if now.as_deref() == Some(swapped.as_str()) => format!("The switch went half way: the login was swapped and could not be checked ({e}). Switch again, or sign in to {} again.", tool()),
+                _ => format!("Did not switch, and {}'s login changed while switching ({e}). Sign in to {} again if it is signed out.", tool(), tool()),
+            });
+        }
         if let Err(e) = live::write_account_file(&here.account_file, record) {
             // the login goes back as it was, so the two never disagree
             let undone = match &before {

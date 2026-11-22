@@ -157,12 +157,12 @@ mod file {
 
     const BOUND: &[u8] = b"airband.vault/1";
 
-    /// Where the two files are. A test names a folder of its own.
+    /// Where the two files are. A test names a folder of its own, and one that names none is stopped: a
+    /// test never reads or writes his real keys.
     fn folder() -> PathBuf {
         #[cfg(test)]
-        if let Some(dir) = tests_folder::get() {
-            return dir;
-        }
+        return tests_folder::get().expect("a test keeps its keys in a folder of its own (vault::tests_folder::set)");
+        #[cfg(not(test))]
         crate::config::dir()
     }
     fn sealed_at() -> PathBuf {
@@ -265,9 +265,15 @@ mod file {
     }
 }
 
-/// Can this program use the keychain without anyone being asked? A signed build on a Mac.
+#[cfg(test)]
+pub(crate) use file::tests_folder;
+
+/// Can this program use the keychain without anyone being asked? A signed build on a Mac. Never a test's.
 #[cfg(target_os = "macos")]
 fn keychain() -> bool {
+    if cfg!(test) {
+        return false;
+    }
     static SIGNED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *SIGNED.get_or_init(mac::signed)
 }

@@ -183,7 +183,7 @@ pub(super) fn asked_leave(app: &App, re: Option<&str>) -> Leave {
 /// His answer to a request, said in reply to it. `verdict` is what his words came to for a request for leave:
 /// yes, no, or (None) his own words that are not a yes, which refuse it and go back as the reason.
 pub(super) fn answer(app: &App, text: &str, re: Option<&str>, verdict: Option<bool>) -> Option<Reply> {
-    let say = |s: &str| Some(Reply { say: s.into(), listen: false, ..Reply::default() });
+    let say = |s: &str| Some(reply(s, false));
     let mut inner = app.change();
     let waiting = |p: &Permit| p.decided.is_none();
     let on_question = re.and_then(|r| inner.permits.iter().find(|(_, p)| p.entry == r && waiting(p)).map(|(id, _)| id.clone()));

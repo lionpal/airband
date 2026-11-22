@@ -36,12 +36,14 @@ pub(crate) struct Saved {
     #[serde(default)]
     pub(in crate::tower) tools: Vec<String>,
     #[serde(default)]
-    pub(in crate::tower) placed: BTreeMap<AgentId, (TeamId, Mover)>,
+    pub(in crate::tower) placed: BTreeMap<AgentId, sessions::Placed>,
+    #[serde(default)]
+    pub(in crate::tower) links: links::Book,
 }
 
 /// The tables kept from one run to the next, each under its own key in the database's state table, so one that
 /// cannot be read is set aside alone and a change to one writes only that one.
-pub(in crate::tower) const KEPT: [&str; 6] = ["sessions", "teams", "held", "menus", "tools", "placed"];
+pub(in crate::tower) const KEPT: [&str; 7] = ["sessions", "teams", "held", "menus", "tools", "placed", "links"];
 
 /// What is to be written after a change to the state: the kept tables whose contents changed, and the messages
 /// that are new or changed. Made while the state is held, written by the saver after it is let go.
@@ -49,10 +51,12 @@ pub(in crate::tower) const KEPT: [&str; 6] = ["sessions", "teams", "held", "menu
 pub(in crate::tower) struct Batch {
     pub(in crate::tower) tables: Vec<(&'static str, String)>,
     pub(in crate::tower) messages: Vec<Entry>,
+    /// Answers to what he said, by the id it came with: written after the messages, in the same go.
+    pub(in crate::tower) receipts: Vec<(String, Reply)>,
 }
 impl Batch {
     pub(in crate::tower) fn is_empty(&self) -> bool {
-        self.tables.is_empty() && self.messages.is_empty()
+        self.tables.is_empty() && self.messages.is_empty() && self.receipts.is_empty()
     }
     /// This batch with a later one on top: a table or message in both is taken from the later one.
     pub(in crate::tower) fn then(mut self, later: Batch) -> Batch {
@@ -64,6 +68,7 @@ impl Batch {
             self.messages.retain(|m| m.seq != e.seq);
             self.messages.push(e);
         }
+        self.receipts.extend(later.receipts);
         self
     }
 }
@@ -80,6 +85,7 @@ impl Inner {
             ("menus", serde_json::to_string(&self.menus)),
             ("tools", serde_json::to_string(&self.tools)),
             ("placed", serde_json::to_string(&self.placed)),
+            ("links", serde_json::to_string(&self.links)),
         ];
         let mut changed = Vec::new();
         for (key, text) in tables {
@@ -95,7 +101,7 @@ impl Inner {
         }
         let touched: HashSet<String> = self.unsaved.borrow_mut().drain().collect();
         let messages = self.log.iter().filter(|e| touched.contains(&e.id)).cloned().collect();
-        Batch { tables: changed, messages }
+        Batch { tables: changed, messages, receipts: std::mem::take(&mut self.answered) }
     }
 }
 

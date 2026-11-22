@@ -46,7 +46,7 @@ pub(super) struct Inner {
     /// Where each agent that was moved to another team was put (the team's id), by the agent's id. A session
     /// that goes away and comes back (the computer restarted, he resumed it) is put back there, not in its
     /// folder's team again.
-    pub(super) placed: BTreeMap<AgentId, (TeamId, Mover)>,
+    pub(super) placed: BTreeMap<AgentId, Placed>,
     /// Each radio that has been heard from, by the id it gives.
     pub(super) calls: HashMap<String, Call>,
     /// When each open message was last put in front of him on a call, and how many times: for reminders.
@@ -66,6 +66,9 @@ pub(super) struct Inner {
     pub(super) readers: u32,
     /// Ids of things he said that this tower is working out an answer to right now.
     pub(super) answering: HashSet<String>,
+    /// What he said that has just been answered, by its id, with the answer: written by the saver with the
+    /// chat lines that came of it, in one go, so an answer is never on record while its line is not.
+    pub(super) answered: Vec<(String, Reply)>,
     /// What has come of the last things he said, for telling the radio that said each in its feed: the change
     /// count it was settled at, the radio, and the outcome under the utterance's id.
     pub(super) settled: VecDeque<(u64, String, airband_core::radio::Settled)>,

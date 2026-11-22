@@ -118,7 +118,7 @@ fn open(cfg: Config) -> Result<Arc<App>, String> {
     let (seq, rev) = store.last_counts()?;
     let mut inner = Inner { sessions: saved.sessions, teams: saved.teams, here: config::station(&cfg), held: saved.held, menus: saved.menus, tools: saved.tools, placed: saved.placed, seq, rev, log: entries, ..Inner::default() };
     inner.teams_at_start(saved.projects, saved.named_teams, &cfg.projects);
-    inner.links = links::Book::load();
+    inner.links = links::Book::settled(saved.links);
     inner.reap();
     inner.close_requests_from_before();
     // credentials said before the chat masked them: masked now, and sent to every radio again as they are
@@ -245,8 +245,7 @@ async fn serve(app: Arc<App>, router: Router, port: u16) -> Result<(), String> {
     let lan = app.cfg().lan;
     let mut bound = HashSet::new();
     loop {
-        let wanted = config::overlay_addrs().into_iter().map(|a| (a, false)).chain(config::lan_addrs().into_iter().filter(|_| lan).map(|a| (a, true)));
-        for (addr, sealed_only) in wanted {
+        for (addr, sealed_only) in config::direct_addrs(lan) {
             if bound.contains(&addr) {
                 continue;
             }
