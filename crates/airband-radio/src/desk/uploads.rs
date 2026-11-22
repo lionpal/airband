@@ -3,8 +3,8 @@ use super::*;
 
 pub(super) struct Upload {
     pub(super) shown: DeskUpload,
-    /// Which computer it is going to: what he sends next goes there too.
-    pub(super) station: usize,
+    /// Which computer it is going to, by its id: what he sends next goes there too.
+    pub(super) station: String,
     /// He took it off, or it is being sent somewhere else instead: stop sending.
     pub(super) dropped: Arc<AtomicBool>,
     /// The file on the device and what to call it, kept so it can be sent to another computer if his words turn
@@ -47,6 +47,11 @@ pub(super) fn send_file(shared: Arc<Shared>, radio: Arc<Radio>, id: String, file
         shared.host.changed();
     });
 }
+/// Where the files he attached are, among his computers now: everything attached to one message goes to one
+/// computer, the first file's.
+pub(super) fn files_at(state: &State) -> Option<usize> {
+    state.uploads.first().and_then(|u| state.station_at(&u.station))
+}
 #[uniffi::export]
 impl Desk {
     /// Attach a file from the device (a photo, a video): it starts on its way to the computer at once, and goes
@@ -62,9 +67,10 @@ impl Desk {
                 return id;
             }
             // everything attached to one message goes to one computer: the first file's
-            let Some(station) = state.uploads.first().map(|u| u.station).or_else(|| pick_station(&state, "", re.as_deref(), room.as_deref(), agent.as_deref())) else { return id };
+            let Some(at) = files_at(&state).or_else(|| pick_station(&state, "", re.as_deref(), room.as_deref(), agent.as_deref())) else { return id };
+            let station = state.stations[at].id();
             state.uploads.push(Upload { shown: DeskUpload { id: id.clone(), name: name.clone(), sent: 0, total, state: UploadState::Sending }, station, dropped: dropped.clone(), file_path: file_path.clone(), name: name.clone() });
-            state.stations[station].radio.clone()
+            state.stations[at].radio.clone()
         };
         self.shared.host.changed();
         send_file(self.shared.clone(), radio, id.clone(), file_path, name, dropped);
@@ -77,7 +83,7 @@ impl Desk {
             let Some(i) = state.uploads.iter().position(|u| u.shown.id == id) else { return };
             let gone = state.uploads.remove(i);
             gone.dropped.store(true, Ordering::SeqCst);
-            state.stations.get(gone.station).map(|s| s.radio.clone())
+            state.station_at(&gone.station).map(|i| state.stations[i].radio.clone())
         };
         if let Some(radio) = radio {
             radio.disarm(id);

@@ -126,8 +126,8 @@ impl Station {
 struct Asking {
     message: Outgoing,
     guesses: Vec<String>,
-    /// The computer the words reached, which has the files they took with them.
-    at: usize,
+    /// The computer the words reached, which has the files they took with them, by its id.
+    at: String,
 }
 #[derive(Default)]
 pub(crate) struct State {
@@ -158,6 +158,10 @@ impl State {
         self.stations.iter().map(|s| s.radio.clone()).collect()
     }
     /// The computer that has this agent, by the agent's id: its place among them.
+    /// Where a computer is among them now, by its id ([`Station::id`]).
+    pub(super) fn station_at(&self, id: &str) -> Option<usize> {
+        self.stations.iter().position(|s| s.id() == id)
+    }
     fn station_with_agent(&self, id: &str) -> Option<usize> {
         self.stations.iter().position(|s| s.agents.iter().any(|a| a.id == id))
     }
@@ -187,7 +191,7 @@ impl State {
         match self.stations.len() {
             0 => None,
             1 => Some(0),
-            _ => self.read.main.as_ref().and_then(|id| self.stations.iter().position(|s| s.id() == *id)),
+            _ => self.read.main.as_deref().and_then(|id| self.station_at(id)),
         }
     }
     /// A room on his screen ([`DeskRoom::id`]): the radio of the computer that has it, the team's id there,
@@ -296,12 +300,14 @@ impl Desk {
                 continue;
             }
             let dir = if self.data_dir.is_empty() { String::new() } else { std::path::Path::new(&self.data_dir).join(folder(&link)).display().to_string() };
-            let host = Arc::new(StationHost { shared: self.shared.clone(), index: made.len(), generation });
-            let Ok(radio) = Radio::start_with(link.clone(), dir, host, self.shared.senses.clone()) else { continue };
-            radio.set_call_mode(calling);
+            let host: Arc<dyn RadioHost> = Arc::new(StationHost { shared: self.shared.clone(), index: made.len(), generation });
             // a computer that was already there keeps what was last seen of it, so the screen does not empty while
-            // it is asked again
+            // it is asked again, and what he was about to send there
             let was = old.iter().find(|s| s.link == link);
+            let kept = was.map(|s| s.radio.kept()).unwrap_or_else(|| Kept::open(&dir, host.clone()));
+            let Ok(radio) = Radio::start_with(link.clone(), &dir, host, self.shared.senses.clone(), kept) else { continue };
+            radio.set_call_mode(calling);
+            let sending = radio.unsent();
             let mut station = Station {
                 messages: radio.history(),
                 radio,
@@ -315,7 +321,9 @@ impl Desk {
                 reads_failed: String::new(),
                 agents: was.map(|s| s.agents.clone()).unwrap_or_default(),
                 open: was.map(|s| s.open.clone()).unwrap_or_default(),
-                sending: Vec::new(),
+                // what is still waiting to go, or was given up on, is shown from the start: nothing else says so
+                // until it is next tried
+                sending,
                 landing: Vec::new(),
                 quick: was.map(|s| s.quick.clone()).unwrap_or_default(),
                 link,
@@ -326,7 +334,22 @@ impl Desk {
         }
         let taken: Vec<String> = made.iter().map(|s| s.link.clone()).collect();
         let radios: Vec<Arc<Radio>> = made.iter().map(|s| s.radio.clone()).collect();
-        self.shared.state.lock().unwrap().stations = made;
+        {
+            let mut state = self.shared.state.lock().unwrap();
+            let paired: HashSet<String> = made.iter().map(|s| s.id()).collect();
+            // files on a computer he no longer has, and words that reached it, go nowhere else
+            state.uploads.retain(|u| {
+                let keep = paired.contains(&u.station);
+                if !keep {
+                    u.dropped.store(true, Ordering::SeqCst);
+                }
+                keep
+            });
+            if state.asking.as_ref().is_some_and(|a| !paired.contains(&a.at)) {
+                state.asking = None;
+            }
+            state.stations = made;
+        }
         for (index, radio) in radios.into_iter().enumerate() {
             let shared = self.shared.clone();
             thread::spawn(move || follow(shared, radio, index, generation));

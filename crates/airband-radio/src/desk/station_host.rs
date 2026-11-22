@@ -61,10 +61,14 @@ impl RadioHost for StationHost {
             let there = elsewhere.as_ref().filter(|c| state.station_with_agent(c).is_some_and(|i| i != self.index)).cloned();
             match (there, elsewhere) {
                 (Some(agent), Some(_)) => {
+                    let here = state.stations.get(self.index).map(|s| s.id()).unwrap_or_default();
                     drop(state);
-                    place(&self.shared, self.index, message, agent);
+                    place(&self.shared, &here, message, agent);
                 }
-                (_, gone) => state.asking = Some(Asking { message, guesses: gone.into_iter().chain(ask).collect(), at: self.index }),
+                (_, gone) => {
+                    let Some(at) = state.stations.get(self.index).map(|s| s.id()) else { return };
+                    state.asking = Some(Asking { message, guesses: gone.into_iter().chain(ask).collect(), at });
+                }
             }
         }
         self.shared.host.changed();
@@ -89,9 +93,9 @@ impl RadioHost for StationHost {
         // what he said has gone, and took with it the files that were waiting: they leave the tray
         if matches!(status, RadioStatus::Idle) {
             let mut state = self.shared.state.lock().unwrap();
-            if let Some(waiting) = state.stations.get(self.index).map(|s| s.radio.armed()) {
+            if let Some((here, waiting)) = state.stations.get(self.index).map(|s| (s.id(), s.radio.armed())) {
                 let before = state.uploads.len();
-                state.uploads.retain(|u| !(u.station == self.index && u.shown.state == UploadState::Ready && !waiting.contains(&u.shown.id)));
+                state.uploads.retain(|u| !(u.station == here && u.shown.state == UploadState::Ready && !waiting.contains(&u.shown.id)));
                 if state.uploads.len() != before {
                     drop(state);
                     self.shared.host.changed();

@@ -378,7 +378,7 @@ fn unplaced_words_he_places_keep_the_files_they_took() {
     let mut state = two();
     let mut message = Outgoing::new("u1".into(), "look at this".into(), None, None, None, vec!["f1".into()], String::new());
     message.label = None;
-    state.asking = Some(Asking { message, guesses: Vec::new(), at: 0 });
+    state.asking = Some(Asking { message, guesses: Vec::new(), at: state.stations[0].id() });
     let agent = state.stations[0].agents[0].id.clone();
     let desk = desk_of(state);
     desk.choose(agent);
@@ -560,4 +560,93 @@ fn an_unnamed_computer_can_be_chosen_as_main_by_its_id() {
     desk.set_main_computer(shown[1].id.clone());
     assert_eq!(desk.shared.state.lock().unwrap().main(), Some(1));
     assert_eq!(desk.view(None, None).main_computer, Some(shown[1].id.clone()));
+}
+
+#[test]
+fn what_he_attached_and_the_question_he_was_asked_outlive_a_reconnect() {
+    let desk = desk_of(State::default());
+    desk.set_links(vec!["airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t".into()]);
+    let radio = desk.shared.state.lock().unwrap().stations[0].radio.clone();
+    radio.arm("f1".into());
+    radio.session.asked(&Reply { question: Some("q1".into()), ..Reply::default() });
+    desk.reconnect();
+    let radio = desk.shared.state.lock().unwrap().stations[0].radio.clone();
+    assert_eq!(radio.armed(), ["f1"]);
+    assert_eq!(radio.session.take_question().as_deref(), Some("q1"));
+    desk.stop();
+}
+
+#[test]
+fn what_he_sent_that_has_not_gone_is_still_shown_after_the_app_opens_again() {
+    let dir = temp_dir("unsent");
+    let link = "airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t".to_string();
+    let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
+    let first = Desk::open(dir.display().to_string(), host.clone());
+    first.set_links(vec![link.clone()]);
+    first.send("hello".into(), None, None, None);
+    first.stop();
+    let again = Desk::open(dir.display().to_string(), host);
+    again.set_links(vec![link]);
+    let shown: Vec<String> = again.shared.state.lock().unwrap().stations[0].sending.iter().map(|o| o.text.clone()).collect();
+    again.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(shown, ["hello"]);
+}
+
+#[test]
+fn files_on_a_computer_he_unpaired_are_not_sent_with_words_to_the_one_now_in_its_place() {
+    let state = two();
+    let mini = state.stations[0].id();
+    let macbook_link = state.stations[1].link.clone();
+    let desk = desk_of(state);
+    desk.shared.state.lock().unwrap().uploads.push(Upload { shown: DeskUpload { id: "f1".into(), name: "a.png".into(), sent: 1, total: 1, state: UploadState::Ready }, station: mini, dropped: Arc::default(), file_path: String::new(), name: "a.png".into() });
+    // he unpairs the first computer: the second is now the only one
+    desk.set_links(vec![macbook_link]);
+    desk.send("hi".into(), None, None, None);
+    let state = desk.shared.state.lock().unwrap();
+    let sent: Vec<(String, Vec<String>)> = state.stations[0].radio.unsent().into_iter().map(|o| (o.text, o.attachments)).collect();
+    assert_eq!(sent, [("hi".to_string(), Vec::<String>::new())]);
+    assert!(state.uploads.is_empty());
+}
+
+#[test]
+fn a_button_a_poke_or_words_sent_on_leave_his_files_and_his_question_for_his_own_next_words() {
+    let state = two();
+    let agent = state.stations[0].agents[0].id.clone();
+    let radio = state.stations[0].radio.clone();
+    let desk = desk_of(state);
+    radio.arm("f1".into());
+    radio.session.asked(&Reply { question: Some("q9".into()), ..Reply::default() });
+    desk.tap("q1".into(), Tapped::Allow);
+    desk.resend("d1".into(), agent.clone());
+    desk.shared.state.lock().unwrap().stations[0].agents[0].state = AgentState::Stalled;
+    desk.poke(None);
+    assert!(radio.unsent().iter().all(|o| o.attachments.is_empty() && o.answers.is_none()), "{:?}", radio.unsent().iter().map(|o| (&o.text, &o.attachments, &o.answers)).collect::<Vec<_>>());
+    // his own next words take them
+    desk.send("here it is".into(), None, None, Some(agent));
+    let last = radio.unsent().pop().unwrap();
+    assert_eq!((last.attachments, last.answers), (vec!["f1".to_string()], Some("q9".to_string())));
+}
+
+#[test]
+fn unplaced_words_he_places_still_answer_what_they_answered() {
+    let mut state = two();
+    let message = Outgoing { answers: Some("q7".into()), ..Outgoing::new("u1".into(), "yes do it".into(), None, None, None, Vec::new(), String::new()) };
+    state.asking = Some(Asking { message, guesses: Vec::new(), at: state.stations[0].id() });
+    let agent = state.stations[0].agents[0].id.clone();
+    let radio = state.stations[0].radio.clone();
+    let desk = desk_of(state);
+    radio.session.asked(&Reply { question: Some("q8".into()), ..Reply::default() });
+    desk.choose(agent);
+    assert_eq!(radio.unsent().pop().unwrap().answers.as_deref(), Some("q7"));
+    // the newer question is still his to answer
+    assert_eq!(radio.session.take_question().as_deref(), Some("q8"));
+}
+
+#[test]
+fn a_question_he_opens_the_microphone_for_still_waits_until_his_words_go() {
+    let desk = desk_of(two());
+    desk.talk(Some("q1".into()), None, None);
+    desk.cancel_talk();
+    assert!(!desk.shared.state.lock().unwrap().answered.contains("q1"));
 }

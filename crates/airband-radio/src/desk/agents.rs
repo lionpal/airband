@@ -39,7 +39,7 @@ impl Desk {
             None => format!("New agent in {name}"),
         };
         let launch = airband_core::radio::Launch { team, tool: tool.map(|t| t.id), ..Default::default() };
-        radio.queue_as(shown, None, None, None, String::new(), Vec::new(), Some(Act::Launch(launch)));
+        radio.queue_out(Outgoing::of(shown).with_act(Some(&Act::Launch(launch))));
     }
     /// Every paired computer's accounts, in the order the computers were paired. A computer that cannot be
     /// reached, or whose airband is too old, comes back with a note and no accounts. Blocks: call it off the

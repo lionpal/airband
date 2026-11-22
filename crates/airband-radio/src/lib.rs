@@ -249,6 +249,10 @@ impl Outgoing {
     pub(crate) fn new(id: String, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, attachments: Vec<String>, others: String) -> Outgoing {
         Outgoing { id, text, re, at: now_ms(), scope, label, attachments, others, to: Vec::new(), act: String::new(), answers: None, tries: 0, last_tried: 0, trail: Vec::new(), failed: None, stage: Stage::Trying }
     }
+    /// Words to send, under a new id, with nothing else yet: the rest is set by whoever sends them.
+    pub(crate) fn of(text: String) -> Outgoing {
+        Outgoing::new(random_hex(12), text, None, None, None, Vec::new(), String::new())
+    }
     /// What a button of his stood for goes with it, kept as the tower will read it.
     pub(crate) fn with_act(self, act: Option<&Act>) -> Outgoing {
         Outgoing { act: act.and_then(|a| serde_json::to_string(a).ok()).unwrap_or_default(), ..self }

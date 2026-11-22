@@ -28,6 +28,21 @@ impl Wake {
     }
 }
 
+/// What is kept for him on one computer's behalf and outlasts the radio talking to it: what he sends next takes
+/// (the files he attached, the question it answers), and what is saved on the device (his unsent messages, the
+/// recent chat). A desk starts a new radio for a computer on every reconnect and hands it the same, so nothing he
+/// was about to send is lost, and only one copy of the saved file is ever written.
+#[derive(Clone)]
+pub(crate) struct Kept {
+    pub(crate) session: Arc<Session>,
+    pub(crate) store: Arc<Store>,
+}
+impl Kept {
+    pub(crate) fn open(data_dir: &str, host: Arc<dyn RadioHost>) -> Kept {
+        Kept { session: Arc::default(), store: Arc::new(Store::open(data_dir, Some(host))) }
+    }
+}
+
 #[derive(uniffi::Object)]
 pub struct Radio {
     pub(crate) jobs: Mutex<Sender<Job>>,
@@ -59,7 +74,8 @@ impl Radio {
         let senses = Senses::default();
         senses.mouth.set(Some(mouth::Own::Host));
         senses.ears.set(Some(ears::Own::Host));
-        Self::start_with(link, data_dir, host, Arc::new(senses))
+        let kept = Kept::open(&data_dir, host.clone());
+        Self::start_with(link, &data_dir, host, Arc::new(senses), kept)
     }
 
     /// Chat, for a bad connection: take what he typed and keep trying until the tower has it. Returns at
@@ -72,14 +88,15 @@ impl Radio {
     /// `label`, for a quick message, is the button's words: the chat shows those and the agent gets `text`.
     /// Returns the id it waits under, for following it.
     pub fn queue(&self, text: String, re: Option<String>, scope: Option<String>, label: Option<String>) -> String {
-        self.queue_as(text, re, scope, label, String::new(), Vec::new(), None)
+        self.queue_his(Outgoing { re, scope, label, ..Outgoing::of(text) })
     }
 }
 
 impl Radio {
-    /// As [`Radio::start`], listening and speaking with what he chose on this device.
-    pub(crate) fn start_with(link: String, data_dir: String, host: Arc<dyn RadioHost>, senses: Arc<Senses>) -> Result<Arc<Self>, RadioError> {
-        let store = Arc::new(Store::open(&data_dir, Some(host.clone())));
+    /// As [`Radio::start`], listening and speaking with what he chose on this device, and with what is kept for
+    /// him on this computer's behalf ([`Kept`]).
+    pub(crate) fn start_with(link: String, data_dir: &str, host: Arc<dyn RadioHost>, senses: Arc<Senses>, kept: Kept) -> Result<Arc<Self>, RadioError> {
+        let Kept { session, store } = kept;
         let me = store.saved.lock().unwrap().radio.clone();
         let me = if me.is_empty() { store.change(|s| { s.radio = format!("radio-{}", random_hex(4)); s.radio.clone() }) } else { me };
         // the record of what failed is kept beside the saved chat, on this device
@@ -91,7 +108,6 @@ impl Radio {
         let busy = Arc::new(AtomicBool::new(false));
         let calling = Arc::new(AtomicBool::new(false));
         let wake = Arc::new(Wake::default());
-        let session = Arc::new(Session::default());
         {
             let (link, session, host, stop, busy, calling, senses) = (link.clone(), session.clone(), host.clone(), stop.clone(), busy.clone(), calling.clone(), senses.clone());
             thread::spawn(move || work(call::Working { jobs: rx, link, session, host, stop, busy, calling, senses }));
@@ -106,6 +122,11 @@ impl Radio {
             thread::spawn(move || deliver_outbox(link, session, store, host, stop, wake));
         }
         Ok(Arc::new(Radio { jobs: Mutex::new(tx), stop, calling, link, session, store, host, wake, senses, roster: std::sync::atomic::AtomicU64::new(0), reading: std::sync::atomic::AtomicU64::new(0) }))
+    }
+
+    /// What this radio keeps for him that outlasts it: the next radio started for this computer takes it over.
+    pub(crate) fn kept(&self) -> Kept {
+        Kept { session: self.session.clone(), store: self.store.clone() }
     }
 
     /// Ask this computer something and read its answer. A reason it gives in words (`error`) is told to him
@@ -177,16 +198,21 @@ impl Radio {
         let _ = self.jobs.lock().unwrap().send(Job::Dictate(done));
     }
 
-    /// As [`Radio::queue`], for the agents he picked (by id) and for what a button of his stood for. `text`
-    /// is then what the chat shows for it.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn queue_as(&self, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, others: String, to: Vec<String>, act: Option<Act>) -> String {
-        let id = random_hex(12);
+    /// His own next words, as [`Radio::queue`]: they take with them whatever he attached that has reached the
+    /// tower, and they answer the question his computer last asked him back.
+    pub(crate) fn queue_his(&self, out: Outgoing) -> String {
+        let mut out = out;
+        out.attachments.extend(self.session.take_armed());
+        out.answers = out.answers.or_else(|| self.session.take_question());
+        self.queue_out(out)
+    }
+    /// Something to send that is not his next words (a button, a command, words sent on to another agent): it
+    /// goes as it is, and leaves his files and his question for what he says next. Returns the id it waits
+    /// under.
+    pub(crate) fn queue_out(&self, out: Outgoing) -> String {
+        let id = out.id.clone();
         let waiting = self.store.change(|s| {
-            // whatever he attached and has reached the tower goes with this, and the next thing he says after
-            // his computer asked him something back is his answer to it
-            let answers = self.session.take_question();
-            s.outbox.push(Outgoing { to, answers, ..Outgoing::new(id.clone(), text, re, scope, label, self.session.take_armed(), others).with_act(act.as_ref()) });
+            s.outbox.push(out);
             s.outbox.clone()
         });
         self.wake.ring();
