@@ -2,6 +2,14 @@
 use super::*;
 use crate::dynamo::b;
 
+/// A time in milliseconds that only goes up, so two messages kept in the same millisecond still have an order.
+fn next_ms() -> u64 {
+    static LAST: std::sync::Mutex<u64> = std::sync::Mutex::new(0);
+    let now = airband_core::clock::now_ms();
+    let mut last = LAST.lock().unwrap();
+    *last = now.max(*last + 1);
+    *last
+}
 
 pub(crate) struct Dyn {
     pub(super) db: Dynamo,
@@ -12,6 +20,25 @@ pub(crate) struct Dyn {
 
 
 impl Dyn {
+    pub(super) async fn load(&self) -> Result<HashMap<String, Saved>, String> {
+        let items = self.db.all("Scan", json!({ "TableName": self.channels, "ConsistentRead": true })).await?;
+        Ok(items
+            .iter()
+            .filter_map(|item| match (dynamo::text(item, "channel"), dynamo::text(item, "pull_hash"), dynamo::text(item, "radio_hash")) {
+                (Some(channel), Some(pull_hash), Some(radio_hash)) => Some((channel, Saved { pull_hash, radio_hash })),
+                _ => None,
+            })
+            .collect())
+    }
+    pub(super) async fn join_waitlist(&self, email: &str) -> Result<(), String> {
+        self.put_new(&self.waitlist, "email", json!({ "email": s(email), "joined_at": n(airband_core::clock::now_secs()) })).await
+    }
+    pub(super) async fn remove(&self, channel: &str) -> Result<(), String> {
+        self.db.call("DeleteItem", json!({ "TableName": self.channels, "Key": { "channel": s(channel) } })).await.map(|_| ()).map_err(|e| e.to_string())
+    }
+    pub(super) async fn add(&self, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<(), String> {
+        self.put_new(&self.channels, "channel", json!({ "channel": s(channel), "pull_hash": s(pull_hash), "radio_hash": s(radio_hash), "created_at": n(airband_core::clock::now_secs()) })).await
+    }
     /// Write an item unless one with its key is already there, which is left as it is.
     pub(super) async fn put_new(&self, table: &str, key: &str, item: Value) -> Result<(), String> {
         match self.db.call("PutItem", json!({ "TableName": table, "Item": item, "ConditionExpression": "attribute_not_exists(#k)", "ExpressionAttributeNames": { "#k": key } })).await {
@@ -60,7 +87,7 @@ impl Dyn {
     pub(super) async fn hold(&self, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<bool, String> {
         for attempt in 0..2 {
             let (now, place) = (airband_core::clock::now_secs(), format!("m#{:013}#{id}", next_ms()));
-            let expires = n(now + airband_core::relay::HELD_FOR_MS / 1000);
+            let expires = n(now + HELD_FOR_SECS);
             let ask = json!({ "TransactItems": [
                 // kept once: only if nothing is there under this id, or what is there has outlived its time
                 { "Put": { "TableName": self.held, "Item": { "channel": s(channel), "k": s(&format!("i#{id}")), "at": s(&place), "sealed": b(sealed), "expires": expires },

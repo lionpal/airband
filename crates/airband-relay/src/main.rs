@@ -116,7 +116,13 @@ fn routes(relay: Arc<Relay>) -> Router {
 
 #[tokio::main]
 async fn main() {
-    let port: u16 = var("PORT").and_then(|p| p.parse().ok()).unwrap_or(7474);
+    let port: u16 = match var("PORT") {
+        None => 7474,
+        Some(p) => p.parse().unwrap_or_else(|_| {
+            eprintln!("airband-relay: PORT \"{p}\" is not a port number");
+            std::process::exit(1)
+        }),
+    };
     let app = routes(relay_from_env().await);
     let host = var("HOST").unwrap_or_else(|| "0.0.0.0".into());
     let listener = tokio::net::TcpListener::bind((host.as_str(), port)).await.expect("cannot listen");
