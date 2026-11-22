@@ -96,6 +96,12 @@ fn unsent(e: &ureq::Error, way: Way) -> LinkError {
 
 pub(crate) use airband_core::clock::now_ms;
 
+/// The way an answer came: the last way its request was tried, as its steps were written down. Every way that
+/// brings an answer writes its step before handing the answer back, so an answer always has one.
+fn went(steps: &[Step]) -> Way {
+    steps.last().map_or(Way::Relay, |s| s.way)
+}
+
 impl Link {
     /// `radio` is this radio's own name for itself, the same every launch: the tower keeps each radio's place
     /// in a call by it. Through a relay the tower knows a radio by its pairing and this is not sent.
@@ -371,8 +377,9 @@ impl Link {
         if joined {
             query.push("joined=1".into());
         }
-        match self.request("GET", &format!("/next?{}", query.join("&")), None)? {
-            (200, v) => serde_json::from_value(v).map(Some).map_err(|_| LinkError::Unreadable(Way::Relay)),
+        let mut steps = Vec::new();
+        match self.request_as("GET", &format!("/next?{}", query.join("&")), None, false, &mut steps)? {
+            (200, v) => serde_json::from_value(v).map(Some).map_err(|_| LinkError::Unreadable(went(&steps))),
             (204, _) => Ok(None),
             (status, v) => Err(Self::no(status, &v)),
         }
@@ -402,7 +409,7 @@ impl Link {
 
     fn say_ordered(&self, u: &Utterance, steps: &mut Vec<Step>) -> Result<airband_core::radio::Outcome, LinkError> {
         match self.request_as("POST", "/utterance", Some(serde_json::to_value(u).unwrap()), true, steps)? {
-            (200, v) => serde_json::from_value(v).map_err(|_| LinkError::Unreadable(Way::Relay)),
+            (200, v) => serde_json::from_value(v).map_err(|_| LinkError::Unreadable(went(steps))),
             (status, v) => Err(Self::no(status, &v)),
         }
     }
@@ -413,8 +420,8 @@ impl Link {
         match self.say_ordered(u, steps) {
             Ok(Outcome::Taken) => Ok(Sent::Taken),
             Ok(Outcome::Answered { reply }) => Ok(Sent::Answered(reply)),
-            // the tower refuses on its own account only what the relay kept too long, which this was not
-            Ok(Outcome::Rejected { .. }) => Err(LinkError::Unreadable(Way::Relay)),
+            // the tower would not act on it, and said why
+            Ok(Outcome::Rejected { why }) => Err(LinkError::Rejected(why)),
             Err(away @ (LinkError::Away | LinkError::Behind)) => {
                 self.hold(u, steps)?;
                 Ok(Sent::Left { away: away == LinkError::Away })

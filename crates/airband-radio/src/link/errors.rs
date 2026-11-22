@@ -24,6 +24,8 @@ pub(crate) enum LinkError {
     Unreadable(Way),
     /// His computer answered, and the answer was no: the status and its own explanation, when it gave one.
     Tower { status: u16, error: String },
+    /// His computer took something he said and would not act on it, for the reason it gave.
+    Rejected(airband_core::radio::Rejected),
 }
 
 /// What to do after a failure.
@@ -51,12 +53,12 @@ impl LinkError {
             LinkError::Relay(_) | LinkError::HoldRefused(_) | LinkError::Unreadable(_) => Retry::Later,
             // the computer is in trouble of its own, which may pass; anything else it refuses, it refuses for good
             LinkError::Tower { status: 500..=599, .. } => Retry::Later,
-            LinkError::Tower { .. } => Retry::Never,
+            LinkError::Tower { .. } | LinkError::Rejected(_) => Retry::Never,
         }
     }
     /// His computer answered and said no.
     pub(crate) fn refused(&self) -> bool {
-        matches!(self, LinkError::Tower { .. })
+        matches!(self, LinkError::Tower { .. } | LinkError::Rejected(_))
     }
     /// What happened, in words for him. No capital and no full stop: it is joined to others.
     pub(crate) fn told(&self) -> String {
@@ -79,6 +81,8 @@ impl LinkError {
             LinkError::Unreadable(_) => "an answer came through the relay that could not be read".into(),
             LinkError::Tower { error, .. } if !error.is_empty() => format!("your computer refused it: {error}"),
             LinkError::Tower { status, .. } => format!("your computer refused it ({status})"),
+            LinkError::Rejected(airband_core::radio::Rejected::TooOld) => "your computer got it more than a week after you said it, and did nothing with it".into(),
+            LinkError::Rejected(airband_core::radio::Rejected::Unknown) => "your computer would not take it".into(),
         }
     }
 }

@@ -20,6 +20,8 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, store: Arc<Store>, host: Arc<dyn R
     // when each message the tower has, or the relay keeps, is next asked after
     let mut ask_at: std::collections::HashMap<String, std::time::Instant> = Default::default();
     while !stop.load(Ordering::SeqCst) {
+        // the turn first: something queued after the look below still ends the sleep
+        let turn = wake.turn();
         let outbox = store.saved.lock().unwrap().outbox.clone();
         ask_at.retain(|id, _| outbox.iter().any(|o| o.id == *id));
         let now = std::time::Instant::now();
@@ -30,7 +32,7 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, store: Arc<Store>, host: Arc<dyn R
         let Some(next) = in_turn.filter(due).or_else(|| outbox.iter().filter(|o| o.failed.is_none() && o.stage == Stage::Left).find(due)).cloned() else {
             // nothing to do now: sleep until something is queued or settled, or the next is due
             let soonest = ask_at.values().map(|at| at.saturating_duration_since(now)).min().unwrap_or(Duration::from_secs(30));
-            wake.wait(soonest.clamp(Duration::from_millis(200), Duration::from_secs(30)));
+            wake.wait_since(turn, soonest.clamp(Duration::from_millis(200), Duration::from_secs(30)));
             continue;
         };
         // it did not go and is not tried any more: it stays in the list with the reason, for him to send
@@ -117,10 +119,10 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, store: Arc<Store>, host: Arc<dyn R
                         gave_up(sentence(&e.told()));
                     }
                     (Retry::Soon, Stage::Trying) => {
-                        wake.wait(Duration::from_secs(wait));
+                        wake.wait_since(turn, Duration::from_secs(wait));
                         wait = (wait * 2).min(20);
                     }
-                    (Retry::Later, Stage::Trying) => wake.wait(Duration::from_secs(60)),
+                    (Retry::Later, Stage::Trying) => wake.wait_since(turn, Duration::from_secs(60)),
                 }
             }
         }
@@ -163,16 +165,7 @@ pub(crate) fn settle(store: &Store, host: &dyn RadioHost, id: &str, outcome: air
         }
         // what was done as he asked shows as his own line in the chat; anything else he has to see
         Outcome::Answered { reply } => host.outbox(gone(), (!reply.say.is_empty() && !reply.done).then_some(reply.say)),
-        Outcome::Rejected { why } => fail(store, host, id, rejected(why).into()),
-    }
-}
-
-/// Why his computer would not take something, in words for him.
-fn rejected(why: airband_core::radio::Rejected) -> &'static str {
-    use airband_core::radio::Rejected;
-    match why {
-        Rejected::TooOld => "Your computer got it more than a week after you said it, and did nothing with it.",
-        Rejected::Unknown => "Your computer would not take it.",
+        Outcome::Rejected { why } => fail(store, host, id, sentence(&LinkError::Rejected(why).told())),
     }
 }
 
