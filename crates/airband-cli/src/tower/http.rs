@@ -39,7 +39,10 @@ async fn auth(State(app): State<Arc<App>>, req: Request, next: Next) -> Response
         return (StatusCode::UNAUTHORIZED, Json(json!({ "error": "bad token" }))).into_response();
     }
     let mut req = req;
-    if req.uri().path().starts_with("/v1/radio/") && req.extensions().get::<RadioId>().is_none() {
+    // A radio must say which one it is. The computer's own command line (the tower's token) is no radio: it
+    // may ask what any radio may ask that is not kept per radio (accounts, the feed), and says no name.
+    let named = req.headers().get(RADIO_HEADER).is_some();
+    if req.uri().path().starts_with("/v1/radio/") && req.extensions().get::<RadioId>().is_none() && (radio || named) {
         match req.headers().get(RADIO_HEADER).and_then(|v| v.to_str().ok()).filter(|v| !v.is_empty()).map(String::from) {
             Some(name) => {
                 req.extensions_mut().insert(RadioId(name));
