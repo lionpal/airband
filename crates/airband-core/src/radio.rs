@@ -260,3 +260,47 @@ mod tests {
         assert_eq!(t.kind, Kind::Unknown);
     }
 }
+
+/// Which form of a message a radio asks for (`GET message/{id}`).
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Form {
+    /// The whole message as it is read aloud, for the radio to read in its own voice.
+    Spoken,
+    /// The whole message as written.
+    Full,
+    /// What it holds that he should be able to read whole.
+    Detail,
+}
+
+/// Which part of a spoken message.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Part {
+    /// The question as he would be asked it on a call.
+    Asked,
+}
+
+/// What a radio asks of one message: its query string.
+#[derive(Debug, Default, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub struct MessageAsk {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form: Option<Form>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part: Option<Part>,
+}
+
+impl MessageAsk {
+    /// The query string, as the tower reads it back.
+    pub fn query(&self) -> String {
+        let mut q = url::form_urlencoded::Serializer::new(String::new());
+        if let Some(f) = &self.form {
+            q.append_pair("form", &crate::encode::word(f).unwrap_or_default());
+        }
+        if let Some(p) = &self.part {
+            q.append_pair("part", &crate::encode::word(p).unwrap_or_default());
+        }
+        q.finish()
+    }
+}
+

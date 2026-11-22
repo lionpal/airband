@@ -185,6 +185,7 @@ pub struct Answer {
 
 /// A push service a phone can be woken through.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum PushService {
     /// Apple's.
     #[serde(rename = "apns")]

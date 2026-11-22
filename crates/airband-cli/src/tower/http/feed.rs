@@ -117,40 +117,14 @@ pub(super) async fn feed(State(app): State<Arc<App>>, Extension(RadioId(radio)):
     }
 }
 
-/// Which form of a message a radio asks for.
-#[derive(Deserialize, Clone, Copy, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub(super) enum Form {
-    /// The whole message as it is read aloud, for the radio to read in its own voice.
-    Spoken,
-    /// The whole message as written.
-    Full,
-    /// What it holds that he should be able to read whole.
-    Detail,
-}
-
-/// Which part of a spoken message.
-#[derive(Deserialize, Clone, Copy, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub(super) enum Part {
-    /// The question as he would be asked it on a call.
-    Asked,
-}
-
-#[derive(Deserialize)]
-pub(super) struct MessageAsk {
-    form: Option<Form>,
-    part: Option<Part>,
-}
-
-pub(super) async fn message(State(app): State<Arc<App>>, Path(id): Path<String>, Query(q): Query<MessageAsk>) -> Response {
+pub(super) async fn message(State(app): State<Arc<App>>, Path(id): Path<String>, Query(q): Query<airband_core::radio::MessageAsk>) -> Response {
     // a very long one is read as far as a few minutes go
-    if q.form == Some(Form::Spoken) {
+    if q.form == Some(airband_core::radio::Form::Spoken) {
         // `part=asked` is the question as he would be asked it on a call: who is asking, its short form, and
         // the answers it offers, for a radio that reads it to him before he answers
         let inner = app.read();
         let text: Option<String> = inner.log.iter().find(|e| e.id == id).map(|e| match q.part {
-            Some(Part::Asked) => {
+            Some(airband_core::radio::Part::Asked) => {
                 let short = e.short.clone().unwrap_or_else(|| spoken(&e.full).chars().take(600).collect());
                 let choices = match e.options.as_slice() {
                     [] => String::new(),
@@ -167,7 +141,7 @@ pub(super) async fn message(State(app): State<Arc<App>>, Path(id): Path<String>,
             None => StatusCode::NOT_FOUND.into_response(),
         };
     }
-    if q.form == Some(Form::Full) {
+    if q.form == Some(airband_core::radio::Form::Full) {
         return match app.read().log.iter().find(|e| e.id == id) {
             Some(e) => Json(More { text: e.full.clone() }).into_response(),
             None => StatusCode::NOT_FOUND.into_response(),

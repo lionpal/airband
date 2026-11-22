@@ -323,10 +323,7 @@ impl Held {
         word(&self).unwrap_or_default()
     }
 }
-/// An enum's word as its serde name writes it: how a kind or a state is kept in a column, and logged.
-pub(super) fn word<T: Serialize>(v: &T) -> Option<String> {
-    serde_json::to_value(v).ok().and_then(|v| v.as_str().map(String::from))
-}
+pub(super) use airband_core::encode::word;
 fn held(r: &rusqlite::Row) -> rusqlite::Result<Option<Held>> {
     Ok(r.get::<_, Option<String>>(17)?.and_then(|t| serde_json::from_value(Value::String(t)).ok()))
 }

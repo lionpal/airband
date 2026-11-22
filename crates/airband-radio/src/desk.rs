@@ -28,7 +28,7 @@ use colours::Colours;
 use follow::*;
 use send::*;
 use station_host::*;
-pub use tell::PushService;
+pub use airband_core::relay::PushService;
 use tell::*;
 use uploads::*;
 use view::*;

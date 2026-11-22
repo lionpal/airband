@@ -132,14 +132,14 @@ impl Radio {
     /// Read a whole message aloud in the voice he chose on this device. Blocks until it has been heard or
     /// [`Radio::hush`] is called. False when it was not read: he is told why.
     pub(crate) fn read_aloud(&self, id: &str) -> bool {
-        self.read(id, "")
+        self.read(id, None)
     }
     /// Read a question to him as he would be asked it on a call: who is asking, its short form, and the
     /// answers it offers. Blocks the same way.
     pub(crate) fn read_question(&self, id: &str) -> bool {
-        self.read(id, "&part=asked")
+        self.read(id, Some(airband_core::radio::Part::Asked))
     }
-    fn read(&self, id: &str, part: &str) -> bool {
+    fn read(&self, id: &str, part: Option<airband_core::radio::Part>) -> bool {
         let mine = self.reading.fetch_add(1, Ordering::SeqCst) + 1;
         // With no voice chosen nothing can read it: he is told where to choose one, before anything is asked
         // of his computer.
@@ -149,7 +149,7 @@ impl Radio {
         }
         // His computer is asked for the words as they are read, and they are said here. When the voice he chose
         // cannot speak he is told why (`say_until` does), and nothing else reads it in its place.
-        let Ok((200, v)) = self.link.request("GET", &format!("/message/{id}?form=spoken{part}"), None) else { return false };
+        let Ok((200, v)) = self.link.request("GET", &format!("/message/{id}?{}", airband_core::radio::MessageAsk { form: Some(airband_core::radio::Form::Spoken), part }.query()), None) else { return false };
         let Some(text) = v["text"].as_str() else { return false };
         matches!(voice::say_until(&*self.host, &self.senses.mouth, text, &|| self.reading.load(Ordering::SeqCst) != mine), voice::Said::Aloud)
     }
@@ -337,7 +337,7 @@ impl Radio {
         struct Whole {
             text: String,
         }
-        Ok(self.asked::<Whole>("GET", &format!("/message/{id}?form={}", if full { "full" } else { "detail" }), None)?.text)
+        Ok(self.asked::<Whole>("GET", &format!("/message/{id}?{}", airband_core::radio::MessageAsk { form: Some(if full { airband_core::radio::Form::Full } else { airband_core::radio::Form::Detail }), part: None }.query()), None)?.text)
     }
 
     /// The accounts the agents on this computer can run under, and how much of each is used. `fresh` asks the
@@ -497,7 +497,7 @@ impl Radio {
     /// Tell the tower where this radio can be woken with a notification (its address at a push service), or
     /// with an empty token that it no longer can.
     pub(crate) fn push_target(&self, provider: desk::PushService, token: &str) -> Result<(), RadioError> {
-        self.ask("/push", serde_json::to_value(airband_core::radio::PushTarget { provider: provider.wire(), token: token.into() }).unwrap())
+        self.ask("/push", serde_json::to_value(airband_core::radio::PushTarget { provider: provider, token: token.into() }).unwrap())
     }
 
     /// Send an answer now and wait for the tower to have it: for an answer given where there are only seconds

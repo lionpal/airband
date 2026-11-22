@@ -145,7 +145,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     func forgetAll() { connect([]) }
 
     /// Where this phone can be woken, as Apple gave it: every paired computer is told.
-    func pushAddress(_ token: String) { desk.setPush(provider: .apple, token: token) }
+    func pushAddress(_ token: String) { desk.setPush(provider: .apns, token: token) }
 
     /// An answer given on a notification. Blocks until the computer has it, or says why it does not.
     func answerNow(station: String, message: String, text: String, tapped: Tapped?) throws { try desk.answerNow(station: station, messageId: message, text: text, tapped: tapped) }

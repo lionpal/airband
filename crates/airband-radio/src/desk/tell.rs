@@ -1,19 +1,6 @@
 //! What every computer is told about this device: where it can be woken, and which coding tools he uses.
 use super::*;
-
-/// A push service this device can be woken through.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum PushService {
-    /// Apple's.
-    Apple,
-}
-impl PushService {
-    pub(crate) fn wire(self) -> airband_core::relay::PushService {
-        match self {
-            PushService::Apple => airband_core::relay::PushService::Apns,
-        }
-    }
-}
+use airband_core::relay::PushService;
 
 #[uniffi::export]
 impl Desk {

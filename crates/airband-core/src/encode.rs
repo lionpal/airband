@@ -55,6 +55,12 @@ pub fn unbase64_url(text: &str) -> Option<Vec<u8>> {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(text.trim()).ok()
 }
 
+/// A unit enum's word as its serde name writes it: how a kind or a state is kept in a column, logged, or put in a
+/// query string.
+pub fn word<T: serde::Serialize>(v: &T) -> Option<String> {
+    serde_json::to_value(v).ok().and_then(|v| v.as_str().map(String::from))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
