@@ -171,6 +171,21 @@ fn a_button_is_sent_as_what_it_stands_for_and_never_as_words_to_be_read() {
 }
 
 #[test]
+fn a_message_sent_again_goes_to_the_agent_picked_by_its_id() {
+    let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
+    let mut state = two();
+    // an agent's id is not its callsign
+    for a in &mut state.stations[0].agents {
+        a.id = format!("id-{}", a.id);
+    }
+    let picked = state.stations[0].agents[1].id.clone();
+    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend }), data_dir: String::new() };
+    desk.resend("q1".into(), picked.clone());
+    let sent: Vec<Vec<String>> = desk.shared.state.lock().unwrap().stations[0].radio.unsent().into_iter().map(|o| o.to).collect();
+    assert_eq!(sent, vec![vec![picked]]);
+}
+
+#[test]
 fn the_connection_record_he_can_copy_holds_nothing_said_and_nothing_secret() {
     let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
     let dir = std::env::temp_dir().join(format!("airband-record-{}", std::process::id()));

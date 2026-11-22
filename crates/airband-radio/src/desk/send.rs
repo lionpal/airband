@@ -83,15 +83,15 @@ impl Desk {
     /// computer that has the message if the chat holds only their opening. Blocks while it fetches: call it
     /// off the main thread.
     pub fn resend(&self, message_id: String, agent_id: String) {
-        let (text, callsign) = {
+        let (text, known) = {
             let state = self.shared.state.lock().unwrap();
             let found = state.stations.iter().find_map(|s| s.messages.iter().find(|m| m.id == message_id).map(|m| (m.text.clone(), m.long)));
-            let callsign = state.stations.iter().flat_map(|s| s.agents.iter()).find(|a| a.id == agent_id).map(|a| a.callsign.clone());
-            (found, callsign)
+            let known = state.stations.iter().flat_map(|s| s.agents.iter()).any(|a| a.id == agent_id);
+            (found, known)
         };
-        let (Some((text, long)), Some(callsign)) = (text, callsign) else { return };
+        let (Some((text, long)), true) = (text, known) else { return };
         let text = if long { self.full(message_id).unwrap_or(text) } else { text };
-        self.deliver(text, None, None, None, Some(callsign));
+        self.deliver(text, None, None, None, Some(agent_id));
     }
     /// Send a quick message: the feed shows `label`, the agent gets `text`. Who it is for is worked out as for
     /// anything he types.
