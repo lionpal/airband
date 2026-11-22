@@ -69,7 +69,44 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
     if item.notice {
         return Judged { kind: Kind::NeedsYou, say: spoken(&item.full), options: Vec::new(), recommended: None, read: None, background: false, own_session: false };
     }
-    let prompt = format!(
+    let parsed = ask_json::<Answer>(cfg, "reading a message", reading(cfg, item), Some(answer_shape())).await;
+    match parsed {
+        // a kind the model made up is no verdict: he gets the message as written, below
+        Ok(o) if !o.say.trim().is_empty() && o.kind != Kind::Unknown => judged(item, o),
+        other => {
+            // No model answered. Nothing is guessed from the words: he gets the message as the agent wrote it,
+            // marked as read by no model unless its harness said what it is.
+            if let Err(e) = other {
+                log(format!("no summary, giving him the message as written: {e}"));
+            }
+            Judged { kind: item.kind.unwrap_or(Kind::Unjudged), say: spoken(&item.full), options: Vec::new(), recommended: None, read: None, background: false, own_session: false }
+        }
+    }
+}
+
+/// What the model reading a message for him answers.
+#[derive(Deserialize)]
+struct Answer {
+    kind: Kind,
+    say: String,
+    #[serde(default)]
+    options: Vec<String>,
+    #[serde(default)]
+    recommended: Option<u32>,
+    #[serde(default)]
+    read: Option<String>,
+    #[serde(default)]
+    background: bool,
+    #[serde(default)]
+    own_session: bool,
+    #[serde(default)]
+    as_written: bool,
+}
+
+/// The question put to the model that reads what an agent wrote when it stopped: how much it deserves his
+/// attention, what to tell him, the choices he could answer with, and what to offer him to read whole.
+fn reading(cfg: &Config, item: &Item) -> String {
+    format!(
         "{name} runs several coding agents at once and is away from his desk. You are his dispatcher: you decide \
          what reaches him and in how few words. Below is what one agent wrote when it stopped.\n\n\
          First, how much it deserves his attention:\n\
@@ -157,27 +194,13 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
         asked = item.asked.as_deref().map(|a| format!("The last thing he told this agent was:\n<asked>\n{}\n</asked>\nIf the message below says that is done, or cannot be done, that is at least a report.\n\n", tail(a, 2000))).unwrap_or_default(),
         name = cfg.name,
         msg = tail(&item.full, 12000)
-    );
-    #[derive(Deserialize)]
-    struct Out {
-        kind: Kind,
-        say: String,
-        #[serde(default)]
-        options: Vec<String>,
-        #[serde(default)]
-        recommended: Option<u32>,
-        #[serde(default)]
-        read: Option<String>,
-        #[serde(default)]
-        background: bool,
-        #[serde(default)]
-        own_session: bool,
-        #[serde(default)]
-        as_written: bool,
-    }
-    // The shape of the answer, for a service that can be held to one. The words come before the verdict: a
-    // small model that has just written what the message says judges it better than one that judges first.
-    let shape = json!({
+    )
+}
+
+/// The shape of the answer, for a service that can be held to one. The words come before the verdict: a
+/// small model that has just written what the message says judges it better than one that judges first.
+fn answer_shape() -> Value {
+    json!({
         "type": "object",
         "properties": {
             "say": { "type": "string" },
@@ -191,35 +214,25 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
         },
         "required": ["say", "kind", "options", "recommended", "read", "background", "own_session", "as_written"],
         "additionalProperties": false
-    });
-    let parsed = ask_json::<Out>(cfg, "reading a message", prompt, Some(shape)).await;
-    match parsed {
-        // a kind the model made up is no verdict: he gets the message as written, below
-        Ok(o) if !o.say.trim().is_empty() && o.kind != Kind::Unknown => {
-            let judged = o.kind;
-            // His agent's own words beat a rewording of them, when the model that read the message says they
-            // are already short and plain enough to show as they are. That is its verdict, never a guess made
-            // here from the look of the text. Anything longer is cut down, because a card he has to read
-            // through is the thing this exists to spare him.
-            let say = if o.as_written { spoken(&item.full) } else { spoken(&o.say) };
-            // a harness that knows its agent is blocked outranks the judge
-            let kind = item.kind.unwrap_or(judged);
-            let own_session = o.own_session && kind == Kind::NeedsYou;
-            let options = if kind == Kind::NeedsYou && !own_session { o.options.iter().map(|c| c.trim().to_string()).filter(|c| !c.is_empty() && c.chars().count() <= 24).take(3).collect() } else { Vec::new() };
-            let recommended = o.recommended.filter(|i| (*i as usize) < options.len());
-            // only for a message with more in it than its line: a name of a few words, and nothing for chatter
-            let read = o.read.map(|r| r.trim().to_string()).filter(|r| !r.is_empty() && r.chars().count() <= 32 && kind != Kind::Fyi && spoken(&item.full) != say);
-            Judged { kind, say, options, recommended, read, background: o.background && kind != Kind::NeedsYou, own_session }
-        }
-        other => {
-            // No model answered. Nothing is guessed from the words: he gets the message as the agent wrote it,
-            // marked as read by no model unless its harness said what it is.
-            if let Err(e) = other {
-                log(format!("no summary, giving him the message as written: {e}"));
-            }
-            Judged { kind: item.kind.unwrap_or(Kind::Unjudged), say: spoken(&item.full), options: Vec::new(), recommended: None, read: None, background: false, own_session: false }
-        }
-    }
+    })
+}
+
+/// The model's answer, as what he is shown.
+fn judged(item: &Item, o: Answer) -> Judged {
+    let judged = o.kind;
+    // His agent's own words beat a rewording of them, when the model that read the message says they
+    // are already short and plain enough to show as they are. That is its verdict, never a guess made
+    // here from the look of the text. Anything longer is cut down, because a card he has to read
+    // through is the thing this exists to spare him.
+    let say = if o.as_written { spoken(&item.full) } else { spoken(&o.say) };
+    // a harness that knows its agent is blocked outranks the judge
+    let kind = item.kind.unwrap_or(judged);
+    let own_session = o.own_session && kind == Kind::NeedsYou;
+    let options = if kind == Kind::NeedsYou && !own_session { o.options.iter().map(|c| c.trim().to_string()).filter(|c| !c.is_empty() && c.chars().count() <= 24).take(3).collect() } else { Vec::new() };
+    let recommended = o.recommended.filter(|i| (*i as usize) < options.len());
+    // only for a message with more in it than its line: a name of a few words, and nothing for chatter
+    let read = o.read.map(|r| r.trim().to_string()).filter(|r| !r.is_empty() && r.chars().count() <= 32 && kind != Kind::Fyi && spoken(&item.full) != say);
+    Judged { kind, say, options, recommended, read, background: o.background && kind != Kind::NeedsYou, own_session }
 }
 
 /// An agent has been at work for a while without a word. From the labels of its steps: is there something he

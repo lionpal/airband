@@ -7,25 +7,9 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
     if ev.schema != agent::SCHEMA {
         return Err(format!("this version of airband takes {}, not \"{}\"", agent::SCHEMA, ev.schema));
     }
-    // copies of pictures are made before anything is locked: shrinking one takes a moment
-    let kept: Vec<airband_core::radio::Picture> = match &ev.event {
-        // Only a picture the agent sent him is copied. One it only looked at is not shown to him, so the tower
-        // has no business opening it: an agent going through photos on a card or a network drive would have the
-        // system ask him, over and over, whether airband may read that drive.
-        Event::Picture { path, shown: true } => pictures::keep(std::path::Path::new(path)).into_iter().collect(),
-        Event::Said { text, .. } => pictures::in_markdown(text, ev.agent.cwd.as_deref()).iter().take(pictures::PER_MESSAGE).filter_map(|p| pictures::keep(p)).collect(),
-        _ => Vec::new(),
-    };
-    // what he typed to it at its own keyboard, read before anything is locked. It goes in ahead of this event,
-    // so his words come before the answer to them
-    let typed = {
-        let known = app.read().find(&ev.agent.id).map(|s| (s.agent.clone(), s.told_upto));
-        known.filter(|_| matches!(ev.event, Event::Working | Event::Said { .. })).map(|(agent, upto)| crate::adapters::told(&agent, upto)).map(|(told, upto)| {
-            // pictures he pasted in with them, kept before anything is locked
-            let with: Vec<Vec<airband_core::radio::Picture>> = told.iter().map(|t| if t.his { t.images.iter().filter_map(|bytes| pictures::keep_bytes(bytes)).collect() } else { Vec::new() }).collect();
-            (told, with, upto)
-        })
-    };
+    // copies of pictures are made, and what he typed at its keyboard is read, before anything is locked
+    let kept = pictures_of(&ev);
+    let typed = typed_at_keyboard(app, &ev);
     let mut inner = app.change();
     let id = ev.agent.id.clone();
     if let Some((told, with, upto)) = typed {
@@ -116,6 +100,30 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
     }
     inner.tell();
     Ok(())
+}
+
+/// Copies of the pictures an event brings: one the agent sent him, or ones its words show. Shrinking one takes a
+/// moment, so this is done before anything is locked.
+fn pictures_of(ev: &AgentEvent) -> Vec<airband_core::radio::Picture> {
+    match &ev.event {
+        // Only a picture the agent sent him is copied. One it only looked at is not shown to him, so the tower
+        // has no business opening it: an agent going through photos on a card or a network drive would have the
+        // system ask him, over and over, whether airband may read that drive.
+        Event::Picture { path, shown: true } => pictures::keep(std::path::Path::new(path)).into_iter().collect(),
+        Event::Said { text, .. } => pictures::in_markdown(text, ev.agent.cwd.as_deref()).iter().take(pictures::PER_MESSAGE).filter_map(|p| pictures::keep(p)).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// What he typed to it at its own keyboard since last read, with the pictures he pasted in, read before anything
+/// is locked. It goes in ahead of this event, so his words come before the answer to them.
+fn typed_at_keyboard(app: &App, ev: &AgentEvent) -> Option<(Vec<crate::adapters::Told>, Vec<Vec<airband_core::radio::Picture>>, u64)> {
+    let known = app.read().find(&ev.agent.id).map(|s| (s.agent.clone(), s.told_upto));
+    known.filter(|_| matches!(ev.event, Event::Working | Event::Said { .. })).map(|(agent, upto)| crate::adapters::told(&agent, upto)).map(|(told, upto)| {
+        // pictures he pasted in with them, kept before anything is locked
+        let with: Vec<Vec<airband_core::radio::Picture>> = told.iter().map(|t| if t.his { t.images.iter().filter_map(|bytes| pictures::keep_bytes(bytes)).collect() } else { Vec::new() }).collect();
+        (told, with, upto)
+    })
 }
 
 /// An agent said something: it goes in the log, and in the queue of things he has not heard.
