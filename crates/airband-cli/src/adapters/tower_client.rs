@@ -1,7 +1,7 @@
 //! How the command line and the adapters reach the tower on this machine ([`TowerHere`]): posting an event (kept
 //! in a folder while the tower is away, and handed over when it is back), and asking him for leave on a tool's
 //! behalf and waiting for his answer.
-#![allow(clippy::disallowed_methods, reason = "the spool of reports kept while the tower is away, and each report's own request")]
+#![expect(clippy::disallowed_methods, reason = "each report's own request to the tower")]
 use super::*;
 
 /// The tower on this computer, asked with its own token. Every status comes back as an answer, for the caller
@@ -166,7 +166,7 @@ enum Sent {
 /// Keep an event the tower did not take in `dir`, under a name that sorts by when it was made. A full folder
 /// (500 waiting) or one that cannot be written keeps nothing.
 fn spool(dir: &std::path::Path, event: &AgentEvent) -> Posted {
-    let Ok(()) = std::fs::create_dir_all(dir) else { return Posted::Lost };
+    let Ok(()) = airband_io::files::make_folder(dir) else { return Posted::Lost };
     let Ok(waiting) = std::fs::read_dir(dir).map(|d| d.count()) else { return Posted::Lost };
     if waiting >= 500 {
         return Posted::Lost;
@@ -205,11 +205,11 @@ fn drain(dir: &std::path::Path, take: impl Fn(AgentEvent) -> Result<(), String>)
     kept.sort();
     for path in kept {
         let old = std::fs::metadata(&path).and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|age| age > Duration::from_secs(600)));
-        if let Some(event) = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<AgentEvent>(&b).ok()).filter(|_| !old)
+        if let Some(event) = airband_io::files::read_bytes(&path).ok().flatten().and_then(|b| serde_json::from_slice::<AgentEvent>(&b).ok()).filter(|_| !old)
             && let Err(why) = take(event) {
                 eprintln!("airband: a kept report was refused: {why}");
             }
-        std::fs::remove_file(&path).ok();
+        airband_io::files::remove(&path).ok();
     }
 }
 

@@ -2,7 +2,7 @@
 //! in which each event has a list of commands, each run with the event as JSON on its standard input, and for
 //! a permission request the decision read as JSON from its standard output. An adapter for such a tool says
 //! where the file is and which events it wants ([`File`]); putting them there and taking them out is here.
-#![allow(clippy::disallowed_macros, reason = "writes hook entries in each tool's own settings shape")]
+#![expect(clippy::disallowed_macros, reason = "writes hook entries in each tool's own settings shape")]
 use airband_core::agent::{Agent, AgentEvent, Event, PermissionAsk, SCHEMA};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};

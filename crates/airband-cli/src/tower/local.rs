@@ -9,7 +9,7 @@
 //!
 //! One server, for one model, for as long as that model is what reads. It holds the model in memory the whole
 //! time: about as much as the model's download.
-#![allow(clippy::disallowed_methods, reason = "fetches the local model program over the network")]
+#![expect(clippy::disallowed_methods, reason = "fetches the local model program over the network")]
 use super::*;
 use std::path::PathBuf;
 use std::process::{Child, Command};

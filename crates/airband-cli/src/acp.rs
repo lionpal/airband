@@ -16,7 +16,7 @@
 //! (`hold::State::Ready`), and the model and effort he asked for are set from them before the agent is said
 //! to be there.
 #![cfg(unix)]
-#![allow(clippy::disallowed_macros, reason = "speaks another tool's JSON-RPC protocol")]
+#![expect(clippy::disallowed_macros, reason = "speaks another tool's JSON-RPC protocol")]
 use crate::adapters;
 use crate::hold::{Held, Msg, Tell};
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event};

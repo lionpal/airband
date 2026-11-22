@@ -1,7 +1,7 @@
 //! Reaching the tower: straight to it, or sealed through a relay. Everything above this module makes
 //! requests of the radio protocol, each one an [`Endpoint`] of core's, and does not know which way they
 //! travel. A new transport is a new [`Route`].
-#![allow(clippy::disallowed_methods, reason = "the phone's own connection to its computers")]
+#![expect(clippy::disallowed_methods, reason = "the phone's own connection to its computers")]
 use super::*;
 
 mod errors;

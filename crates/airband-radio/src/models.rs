@@ -8,7 +8,7 @@
 //! Each model is a row of the catalogue (`catalog/models/`, see `airband_core::catalog`): what job it does,
 //! what to show, what to fetch, where it goes and what its engine is told about it. Where he chooses
 //! (`choices.rs`) lists them beside the services; a host names none itself.
-#![allow(clippy::disallowed_methods, reason = "downloads and keeps on-device models")]
+#![expect(clippy::disallowed_methods, reason = "downloads and keeps on-device models")]
 use super::*;
 use crate::engines::HostDevice;
 use std::path::{Path, PathBuf};

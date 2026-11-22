@@ -3,7 +3,7 @@
 //! its variant is defined to take: `Socket` the one line of JSON its doc gives, `Command` the words on standard
 //! input, and so on. A tool that takes his words in a way of its own that is none of these goes through its
 //! adapter (`Deliver::Harness`).
-#![allow(clippy::disallowed_macros, reason = "writes the agent tool's own input lines")]
+#![expect(clippy::disallowed_macros, reason = "writes the agent tool's own input lines")]
 use super::super::*;
 use super::Boxed;
 

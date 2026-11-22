@@ -1,6 +1,5 @@
 //! A coding tool's accounts: listing them for every tool that has them, switching, and `airband accounts`; and
 //! who an account is, read the way its tool's row says.
-#![allow(clippy::disallowed_methods, reason = "asks the tower over the network from outside it, as a tool's own hook does")]
 use airband_core::radio::wire;
 use super::*;
 use airband_core::identity::{AccountIdentity, IdSource, Place, Under};
@@ -76,7 +75,7 @@ fn found_at(src: &IdSource, at: &Looking) -> Vec<AccountIdentity> {
     };
     let one = |doc: Option<Value>| doc.and_then(|d| src.identity(&d, None)).into_iter().collect();
     match &src.place {
-        Place::File { file, under } => one(std::fs::read(folder(under).join(file)).ok().and_then(|b| serde_json::from_slice(&b).ok())),
+        Place::File { file, under } => one(airband_io::files::read_bytes(&folder(under).join(file)).ok().flatten().and_then(|b| serde_json::from_slice(&b).ok())),
         Place::Env { name } => one((at.env)(name).map(Value::String)),
         Place::Keychain { service } => one((at.keychain)(service).map(|v| serde_json::from_str(&v).unwrap_or(Value::String(v)))),
         Place::Sqlite { file, under, table, column, provider_column } => table_rows(&folder(under).join(file), table, column, provider_column)

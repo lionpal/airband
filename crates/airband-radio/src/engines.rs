@@ -6,7 +6,7 @@
 //!
 //! A new model for an engine that is here is a row of the catalogue. A new engine in this build is one module
 //! and one row of `HERE`; a new engine in a host is that host saying its name and answering `run_model` for it.
-#![allow(clippy::disallowed_macros, reason = "the host engine's input")]
+#![expect(clippy::disallowed_macros, reason = "the host engine's input")]
 use super::*;
 use crate::models::Model;
 use std::path::{Path, PathBuf};

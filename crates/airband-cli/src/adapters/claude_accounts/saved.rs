@@ -1,7 +1,7 @@
 //! Saved logins: one keychain item each (service `airband`, account: the email), with the list of emails, and
 //! nothing secret, in `accounts.json`. A list that cannot be read is never taken for an empty one: writing it
 //! back would orphan every login it names.
-#![allow(clippy::disallowed_macros, reason = "writes records in the tool's own shape")]
+#![expect(clippy::disallowed_macros, reason = "writes records in the tool's own shape")]
 use super::{Here, Res, ADD_AGAIN};
 use crate::config;
 use serde_json::{json, Value};

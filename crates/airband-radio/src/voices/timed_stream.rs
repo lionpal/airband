@@ -2,7 +2,7 @@
 //! sound and when each character of it is said, counted from the start of the clip. The row says where it is
 //! reached (`url`, which names his voice in braces), how the key is presented (`auth`) and the rate of what
 //! comes back (`rate`).
-#![allow(clippy::disallowed_macros, reason = "a voice service's own request body")]
+#![expect(clippy::disallowed_macros, reason = "a voice service's own request body")]
 use super::{Made, Reach, Synth, Voicing};
 use airband_core::encode::unbase64;
 use airband_core::providers::{By, Interface, Job, Provider, Use};

@@ -1,7 +1,7 @@
 //! Asking the model that reads for the tower: by its service, a command, or a server on this computer. Which
 //! one is chosen, and what came of the last time, is `chosen`'s.
-#![allow(clippy::disallowed_methods, reason = "each reader's own request to its service")]
-#![allow(clippy::disallowed_macros, reason = "each reader service's own request bodies")]
+#![expect(clippy::disallowed_methods, reason = "each reader's own request to its service")]
+#![expect(clippy::disallowed_macros, reason = "each reader service's own request bodies")]
 use super::*;
 
 /// What a model is asked to see that it answers at all.
@@ -172,7 +172,7 @@ pub(super) async fn command(model: &Summarizer, by: &By, prompt: String, shape: 
         match &shape {
             Some(shape) => {
                 let file = folder.join(format!("shape-{}.json", config::random_hex(6)));
-                std::fs::write(&file, shape.to_string()).map_err(|e| program_failed(e.to_string()))?;
+                airband_io::files::write_atomic(&file, shape.to_string()).map_err(|e| program_failed(e.to_string()))?;
                 argv[at] = argv[at].replace("{shape}", &file.display().to_string());
                 shape_file = Some(file);
             }
@@ -209,7 +209,7 @@ pub(super) async fn command(model: &Summarizer, by: &By, prompt: String, shape: 
     });
     let out = tokio::time::timeout(Duration::from_secs(90), child.wait_with_output()).await;
     if let Some(file) = shape_file {
-        std::fs::remove_file(file).ok();
+        airband_io::files::remove(&file).ok();
     }
     let out = out.map_err(|_| Failed(Trouble::TooSlow, format!("{program} took over 90 seconds")))?.map_err(|e| program_failed(e.to_string()))?;
     let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
