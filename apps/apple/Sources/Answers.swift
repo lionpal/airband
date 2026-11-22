@@ -119,14 +119,14 @@ struct Answers: View {
     /// does not run it: an answer from here would reach it as a passed-on message, and it would ask again.
     private var apart: DeskMember? {
         guard m.ownSession else { return nil }
-        return model.agents.first { $0.callsign == m.from && !$0.held }
+        return model.agents.first { $0.id == m.agent && !$0.held }
     }
     @State private var taking: DeskMember?
 
     /// In place of the answers: why one from here will not do, and the way to make it do.
     private func takeOver(_ agent: DeskMember) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("It wants this answer at its own keyboard. It was started in a terminal on your computer, so anything you send from your phone reaches it as a note left for it.")
+            Text(agent.terminal ? "It wants this answer at its own keyboard. It was started in a terminal on your computer, so anything you send from your phone reaches it as a note left for it." : "It wants this answer at its own keyboard. It was started outside airband on your computer, so anything you send from your phone reaches it as a note left for it.")
                 .font(.system(size: 14)).foregroundStyle(Palette.soft).fixedSize(horizontal: false, vertical: true)
             Button { taking = agent } label: {
                 Text("Take over, then answer").font(.system(size: 17, weight: .semibold)).foregroundStyle(Palette.ground)

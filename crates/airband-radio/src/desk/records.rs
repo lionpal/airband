@@ -37,9 +37,11 @@ pub struct DeskMember {
     pub number: String,
     /// The computer it is on, when he is paired with more than one; empty otherwise.
     pub station: String,
-    /// The tower runs it itself, so his words reach it as his own. One that is not was started in a terminal
+    /// The tower runs it itself, so his words reach it as his own. One that is not was started outside it
     /// and is only left messages from outside; the tower can take it over.
     pub held: bool,
+    /// It is known to run in a terminal of his.
+    pub terminal: bool,
     /// He can end it from here: the computer runs it, or its tool can put a session away.
     pub ends: bool,
     /// How many things it has said that he has not had in front of him.

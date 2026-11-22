@@ -58,11 +58,12 @@ struct AgentsMenu: View {
         return twins && !agent.station.isEmpty ? "\(agent.callsign) (\(agent.station))" : agent.callsign
     }
 
-    /// The small line under an agent's name, after its model: how hard it thinks, and "terminal" for one he
-    /// started in a terminal (it only gets messages from outside until it is taken over). The computer is a
-    /// small picture at the end of the row, not more words.
+    /// The small line under an agent's name, after its model: how hard it thinks, and "terminal" for one the
+    /// computer knows runs in a terminal of his (it only gets messages from outside until it is taken over).
+    /// One in its own tool's app is not called a terminal. The computer is a small picture at the end of the
+    /// row, not more words.
     private func under(_ agent: DeskMember) -> String {
-        [agent.effort, agent.held ? "" : "terminal"].filter { !$0.isEmpty }.joined(separator: " \u{b7} ")
+        [agent.effort, agent.terminal ? "terminal" : ""].filter { !$0.isEmpty }.joined(separator: " \u{b7} ")
     }
 
     /// An agent dropped on a team, or on one of its agents, joins that team.

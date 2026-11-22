@@ -261,7 +261,7 @@ fn chat_feed(feed: Feed) -> ChatFeed {
         messages: feed.messages.into_iter().map(chat).collect(),
         agents: feed.roster.into_iter().map(|r| {
             let callsign = airband_core::routing::Callsign { project: r.group.clone(), number: r.number.clone(), named: r.named };
-            ChatAgent { id: r.id, callsign: callsign.shown(), badge: callsign.badge(), group: r.group, number: callsign.shown_rest(), number_kept: r.number, named: r.named, harness: r.harness, waiting: r.waiting, reachable: r.reachable, state: r.state.into(), subagents: r.subagents, doing: r.doing, held: r.held, ends: r.ends, model: r.model, effort: r.effort }
+            ChatAgent { id: r.id, callsign: callsign.shown(), badge: callsign.badge(), group: r.group, number: callsign.shown_rest(), number_kept: r.number, named: r.named, harness: r.harness, waiting: r.waiting, reachable: r.reachable, state: r.state.into(), subagents: r.subagents, doing: r.doing, held: r.held, terminal: r.terminal, ends: r.ends, model: r.model, effort: r.effort }
         }).collect(),
         quick: feed.quick.into_iter().map(|q| QuickMessage { label: q.label, text: q.text }).collect(),
         projects: feed.projects,
@@ -435,6 +435,8 @@ pub struct ChatAgent {
     pub doing: Option<String>,
     /// The tower runs it itself, so his words reach it as his own.
     pub held: bool,
+    /// It is known to run in a terminal of his. Not known for an agent in its own tool's app.
+    pub terminal: bool,
     /// He can end it from here.
     pub ends: bool,
     /// The model it runs on ("Opus 4.7") and how hard it is set to think ("high"), when its harness can say.
