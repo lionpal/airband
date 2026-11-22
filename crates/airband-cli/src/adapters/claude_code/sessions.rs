@@ -19,12 +19,17 @@ pub(super) fn running(pid: u32, started: &str) -> bool {
     }
 }
 
+/// What Claude Code's row says, under `what`.
+fn said(what: &str) -> String {
+    crate::adapters::row_says(super::HARNESS, what)
+}
+
 /// The record Claude Code keeps of one running session, by its process: `sessions/<process>.json` in its folder.
 pub(super) fn record(claude: &std::path::Path, pid: &str) -> Option<Value> {
     if !pid.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    airband_io::files::read_bytes(&claude.join("sessions").join(format!("{pid}.json"))).ok().flatten().and_then(|b| serde_json::from_slice(&b).ok())
+    airband_io::files::read_bytes(&claude.join(said("sessions")).join(format!("{pid}.json"))).ok().flatten().and_then(|b| serde_json::from_slice(&b).ok())
 }
 
 /// The sessions he has open in a terminal, from the record Claude Code keeps of each while it runs
@@ -32,14 +37,14 @@ pub(super) fn record(claude: &std::path::Path, pid: &str) -> Option<Value> {
 /// the token for that socket beside it. A one-off run (`claude -p`) and a session another program drives
 /// have a record too, with another `entrypoint`: those are not his to talk to and are left out.
 pub(super) fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> bool) -> Option<Vec<super::super::Open>> {
-    let dir = claude.join("sessions");
+    let dir = claude.join(said("sessions"));
     let read = |path: &std::path::Path| airband_io::files::read_bytes(path).ok().flatten().and_then(|b| serde_json::from_slice::<Value>(&b).ok());
     let files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir).ok()?.flatten().map(|f| f.path()).collect();
     let mut open = Vec::new();
     for path in files.iter().filter(|p| p.extension().is_some_and(|e| e == "json")) {
         let Some(v) = read(path) else { continue };
         let field = |k: &str| text(&v, k);
-        if v["kind"] != "interactive" || v["entrypoint"] != "cli" {
+        if v["kind"].as_str() != Some(said("session_kind").as_str()) || v["entrypoint"].as_str() != Some(said("session_entry").as_str()) {
             continue;
         }
         let (Some(pid), Some(id), Some(socket), Some(started)) = (v["pid"].as_u64().map(|p| p as u32), field("sessionId"), field("messagingSocketPath"), field("procStart")) else { continue };
@@ -74,7 +79,7 @@ pub(super) fn transcript_of(claude: &std::path::Path, session: &str) -> Option<S
     if !super::file_safe(session) {
         return None;
     }
-    std::fs::read_dir(claude.join("projects")).ok()?.flatten().map(|d| d.path().join(format!("{session}.jsonl"))).find(|p| p.is_file()).map(|p| p.display().to_string())
+    std::fs::read_dir(claude.join(said("projects"))).ok()?.flatten().map(|d| d.path().join(format!("{session}.jsonl"))).find(|p| p.is_file()).map(|p| p.display().to_string())
 }
 
 /// The folders Claude Code has had sessions in: it keeps a folder of transcripts for each, and a transcript
@@ -82,7 +87,7 @@ pub(super) fn transcript_of(claude: &std::path::Path, session: &str) -> Option<S
 /// first lines are read.
 pub(super) fn worked_in(claude: &std::path::Path) -> Vec<super::super::Worked> {
     use std::io::BufRead;
-    let Ok(projects) = std::fs::read_dir(claude.join("projects")) else { return Vec::new() };
+    let Ok(projects) = std::fs::read_dir(claude.join(said("projects"))) else { return Vec::new() };
     let found = projects.flatten().filter_map(|project| {
         let newest = std::fs::read_dir(project.path()).ok()?.flatten().map(|f| f.path()).filter(|p| p.extension().is_some_and(|e| e == "jsonl")).map(|p| (super::super::written(&p), p)).max_by_key(|(at, _)| *at)?;
         let lines = std::io::BufReader::new(std::fs::File::open(&newest.1).ok()?).lines();

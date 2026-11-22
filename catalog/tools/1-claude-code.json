@@ -236,6 +236,11 @@
           "provider": "anthropic"
         }
       }
-    ]
+    ],
+    "hooks_file": "settings.json",
+    "sessions": "sessions",
+    "projects": "projects",
+    "session_kind": "interactive",
+    "session_entry": "cli"
   }
 }

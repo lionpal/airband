@@ -13,7 +13,7 @@
 #![expect(clippy::disallowed_methods, reason = "asks the relay to wake his phone")]
 use super::*;
 use airband_core::radio::{Notice, PushTarget, deserves_notice};
-use airband_core::relay::{Direction, Keys, PUSH_MOST, PushAnswer, PushRequest};
+use airband_core::relay::{Direction, Keys, NotPushed, PUSH_MOST, PushAnswer, PushRequest, Route};
 
 /// How long after a message is ready the tower waits before deciding: long enough for a radio that is showing
 /// the chat to have asked for what follows.
@@ -162,15 +162,15 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
     let agent = airband_io::http::agent(Duration::from_secs(20));
     for target in targets {
         let ask = PushRequest { provider: target.provider, to: target.token.clone(), sealed: sealed.clone(), question: note.kind == Some(Kind::NeedsYou) };
-        let res = agent.post(keys.at(&relay, "/push")).header("authorization", keys.as_tower()).send_json(&ask);
+        let res = agent.post(keys.to(&relay, Route::Push)).header("authorization", keys.as_tower()).send_json(&ask);
         let outcome = match res {
             Err(e) => format!("the relay could not be reached ({e})"),
             Ok(mut res) => {
                 let status = res.status().as_u16();
-                let answer: PushAnswer = res.body_mut().read_json().unwrap_or_default();
-                match status {
-                    200 => "sent".into(),
-                    410 => {
+                // what the relay says, typed; a relay with no such route answers no `PushAnswer` at all
+                match res.body_mut().read_json::<PushAnswer>() {
+                    Ok(answer) if answer.sent => "sent".into(),
+                    Ok(answer) if answer.gone || answer.why == Some(NotPushed::Gone) => {
                         let mut all = app.push.targets.lock().unwrap();
                         if let Some(mine) = all.get_mut(radio) {
                             mine.retain(|t| t != target);
@@ -179,12 +179,10 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
                             }
                         }
                         app.store.save_push_targets(&all);
-                        format!("that address is no longer good ({}); forgotten", answer.reason)
+                        format!("{}; forgotten", NotPushed::Gone)
                     }
-                    404 | 405 => "the relay does not send notifications (it is older than this tower, or has no such channel)".into(),
-                    429 => "the relay says too many were sent lately".into(),
-                    503 => "the relay has no push service for that phone".into(),
-                    _ => format!("not sent ({status}: {})", if answer.reason.is_empty() { "no reason given" } else { &answer.reason }),
+                    Ok(PushAnswer { why: Some(why), .. }) => format!("not sent: {why}"),
+                    _ => format!("the relay does not send notifications for this channel ({status})"),
                 }
             }
         };

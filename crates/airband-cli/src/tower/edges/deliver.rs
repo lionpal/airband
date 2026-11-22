@@ -1,9 +1,8 @@
 //! The ways his words get to an agent, by whichever way that agent said it can be reached (`Deliver` in
 //! airband-core). A new way to reach an agent is a new variant there and a new arm here. Each arm writes what
-//! its variant is defined to take: `Socket` the one line of JSON its doc gives, `Command` the words on standard
+//! its variant is defined to take: `Socket` its typed lines (`SocketLine`), `Command` the words on standard
 //! input, and so on. A tool that takes his words in a way of its own that is none of these goes through its
 //! adapter (`Deliver::Harness`).
-#![expect(clippy::disallowed_macros, reason = "writes the agent tool's own input lines")]
 use super::super::*;
 use super::Boxed;
 
@@ -41,14 +40,9 @@ async fn other_way(app: &Arc<App>, how: &Deliver, agent: &str, words: &str, line
     match how {
         Deliver::Held => Err("an agent the tower holds is told through its holder".into()),
         Deliver::Socket { path, token } => {
-            let mut text = String::new();
-            if let Some(t) = token {
-                text.push_str(&format!("{}\n", json!({ "type": "auth", "token": t })));
-            }
-            // the session writes this id on its own record of the turn (`uuid`), which is how it is known read
+            // the session writes this id on its own record of the turn, which is how it is known read
             let receipt = receipt();
-            text.push_str(&format!("{}\n", json!({ "type": "user", "uuid": receipt, "message": { "role": "user", "content": words } })));
-            inbox_write(path, text.as_bytes()).await?;
+            inbox_write(path, airband_core::agent::SocketLine::lines(token.as_deref(), &receipt, words).as_bytes()).await?;
             app.change().receipts.insert(receipt, lines.to_vec());
             Ok(())
         }

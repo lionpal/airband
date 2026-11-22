@@ -1,8 +1,9 @@
 //! How the command line and the adapters reach the tower on this machine ([`TowerHere`]): posting an event (kept
 //! in a folder while the tower is away, and handed over when it is back), and asking him for leave on a tool's
 //! behalf and waiting for his answer.
-#![expect(clippy::disallowed_methods, reason = "each report's own request to the tower")]
 use super::*;
+use airband_core::radio::wire::{self, Nothing, WaitQuery, at};
+use airband_io::http::Said;
 
 /// The tower on this computer, asked with its own token. Every status comes back as an answer, for the caller
 /// to read; only a tower that cannot be reached is an error. The one way the command line and the hooks reach it.
@@ -17,15 +18,14 @@ impl TowerHere {
         TowerHere { agent: airband_io::http::agent(timeout), base: format!("http://127.0.0.1:{}", cfg.port), auth: format!("Bearer {}", cfg.token) }
     }
     // Each says which version of the radio protocol it speaks: the radio's routes are refused without it, and
-    // the agent's routes do not read it.
+    // the agent's routes do not read it. `get` is for the tower's own status page, which is no typed route.
+    #[expect(clippy::disallowed_methods, reason = "the tower's status page, its own shape for `airband status`")]
     pub(crate) fn get(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
         self.agent.get(format!("{}{path}", self.base)).header("authorization", &self.auth).header(airband_core::radio::SCHEMA_HEADER, airband_core::radio::SCHEMA)
     }
-    pub(crate) fn post(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithBody> {
-        self.agent.post(format!("{}{path}", self.base)).header("authorization", &self.auth).header(airband_core::radio::SCHEMA_HEADER, airband_core::radio::SCHEMA)
-    }
-    pub(crate) fn delete(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
-        self.agent.delete(format!("{}{path}", self.base)).header("authorization", &self.auth).header(airband_core::radio::SCHEMA_HEADER, airband_core::radio::SCHEMA)
+    /// One of the tower's typed routes: the path, method and answer all come from the endpoint.
+    pub(crate) fn call<E: wire::Endpoint>(&self, id: Option<&str>, query: &E::Query, body: Option<&E::Body>) -> Result<Said<E::Answer>, airband_io::http::Error> {
+        airband_io::http::call::<E>(&self.agent, &self.base, &[("authorization", &self.auth), (airband_core::radio::SCHEMA_HEADER, airband_core::radio::SCHEMA)], id, query, body)
     }
 }
 
@@ -105,19 +105,19 @@ pub(crate) fn ask_him(request: &PermissionAsk) -> Option<(bool, String)> {
 /// taken back.
 pub(crate) fn ask_him_while(request: &PermissionAsk, still: Option<&dyn Fn() -> bool>) -> Answer {
     let Some(cfg) = config::read() else { return Answer::Nobody };
-    const BASE: &str = "/v1/agent/permission";
     let here = TowerHere::here(&cfg, Duration::from_secs(40));
-    let asked: Option<PermissionState> = taken(here.post(BASE).send_json(request)).and_then(|mut res| res.body_mut().read_json().ok());
-    let Some(asked) = asked.filter(|a| a.state == airband_core::agent::Leave::Pending) else { return Answer::Nobody };
+    let Ok(Said::Took(asked)) = here.call::<at::Permission>(None, &Nothing {}, Some(request)) else { return Answer::Nobody };
+    if asked.state != airband_core::agent::Leave::Pending {
+        return Answer::Nobody;
+    }
     let until = std::time::Instant::now() + Duration::from_secs(asked.wait_seconds.max(5));
     while std::time::Instant::now() < until {
         if still.is_some_and(|still| !still()) {
             break;
         }
         let left = until.saturating_duration_since(std::time::Instant::now()).as_secs().clamp(1, if still.is_some() { 3 } else { 20 });
-        let now: Option<PermissionState> = taken(here.get(&format!("{BASE}/{}?wait={left}", asked.id)).call()).and_then(|mut res| res.body_mut().read_json().ok());
         // the tower went away mid-wait: stop waiting and let the harness ask
-        let Some(now) = now else { return Answer::Unanswered };
+        let Ok(Said::Took(now)) = here.call::<at::PermissionAnswer>(Some(&asked.id), &WaitQuery { wait: left }, None) else { return Answer::Unanswered };
         use airband_core::agent::Leave;
         match now.state {
             Leave::Allow => return Answer::Said(true, String::new()),
@@ -128,7 +128,7 @@ pub(crate) fn ask_him_while(request: &PermissionAsk, still: Option<&dyn Fn() -> 
     }
     // he did not answer, or it was answered elsewhere: take the question back, so the feed does not offer an
     // answer that no longer does anything
-    here.delete(&format!("{BASE}/{}", asked.id)).call().ok();
+    here.call::<at::PermissionWithdraw>(Some(&asked.id), &Nothing {}, None).ok();
     Answer::Unanswered
 }
 
@@ -167,7 +167,7 @@ enum Sent {
 /// (500 waiting) or one that cannot be written keeps nothing.
 fn spool(dir: &std::path::Path, event: &AgentEvent) -> Posted {
     let Ok(()) = airband_io::files::make_folder(dir) else { return Posted::Lost };
-    let Ok(waiting) = std::fs::read_dir(dir).map(|d| d.count()) else { return Posted::Lost };
+    let Ok(waiting) = airband_io::files::entries(dir).map(|d| d.len()) else { return Posted::Lost };
     if waiting >= 500 {
         return Posted::Lost;
     }
@@ -181,10 +181,10 @@ fn spool(dir: &std::path::Path, event: &AgentEvent) -> Posted {
 
 fn send(event: &AgentEvent) -> Sent {
     let Some(cfg) = config::read() else { return Sent::NoAnswer };
-    match TowerHere::here(&cfg, Duration::from_millis(1500)).post("/v1/agent/events").config().http_status_as_error(false).build().send_json(event) {
-        Ok(res) if res.status().as_u16() == 200 => Sent::Taken,
-        // it read the event and said no: in the answer it says why
-        Ok(mut res) if res.status().is_client_error() => Sent::Refused(res.body_mut().read_json::<airband_core::radio::wire::Refusal>().ok().and_then(|r| r.reason().map(String::from)).unwrap_or_else(|| format!("it answered {}", res.status()))),
+    match TowerHere::here(&cfg, Duration::from_millis(1500)).call::<at::Events>(None, &Nothing {}, Some(event)) {
+        Ok(Said::Took(_)) => Sent::Taken,
+        // it read the event and said no, saying why; one it cannot take now is kept for later
+        Ok(Said::No(no)) if (400..500).contains(&no.status()) => Sent::Refused(no.reason().map_or_else(|| format!("it answered {}", no.status()), String::from)),
         // not there, not answering in time, or failing itself: kept for when it is back. One that took it and
         // answered too late hands it over twice, and the tower takes each event once, by its id.
         _ => Sent::NoAnswer,
@@ -200,11 +200,10 @@ pub(crate) fn drain_spool(take: impl Fn(AgentEvent) -> Result<(), String>) {
     drain(&config::dir().join("spool"), take)
 }
 fn drain(dir: &std::path::Path, take: impl Fn(AgentEvent) -> Result<(), String>) {
-    let Ok(listed) = std::fs::read_dir(dir) else { return };
-    let mut kept: Vec<std::path::PathBuf> = listed.flatten().map(|f| f.path()).collect();
+    let Ok(mut kept) = airband_io::files::entries(dir) else { return };
     kept.sort();
     for path in kept {
-        let old = std::fs::metadata(&path).and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|age| age > Duration::from_secs(600)));
+        let old = airband_io::files::age(&path).is_some_and(|age| age > Duration::from_secs(600));
         if let Some(event) = airband_io::files::read_bytes(&path).ok().flatten().and_then(|b| serde_json::from_slice::<AgentEvent>(&b).ok()).filter(|_| !old)
             && let Err(why) = take(event) {
                 eprintln!("airband: a kept report was refused: {why}");
@@ -248,8 +247,8 @@ mod tests {
         let took = std::sync::Mutex::new(Vec::new());
         drain(&dir, |ev| if ev.agent.id == "refused" { Err("no team".into()) } else { took.lock().unwrap().push(ev.agent.id); Ok(()) });
         assert_eq!(*took.lock().unwrap(), ["taken"]);
-        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(airband_io::files::entries(&dir).unwrap().len(), 0);
+        airband_io::files::remove_folder(&dir).ok();
     }
 
     #[test]
@@ -257,7 +256,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("airband-spool-{}", config::random_hex(4)));
         let event = AgentEvent::new(airband_core::agent::Agent { id: "a".into(), harness: "test".into(), cwd: None, name: None, title: None, pid: None, deliver: None, meta: Default::default() }, airband_core::agent::Event::Checkin);
         assert_eq!(spool(&dir, &event), Posted::Kept);
-        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(airband_io::files::entries(&dir).unwrap().len(), 1);
+        airband_io::files::remove_folder(&dir).ok();
     }
 }

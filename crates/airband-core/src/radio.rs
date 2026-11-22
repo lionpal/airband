@@ -3,7 +3,7 @@
 //! The radio asks; the tower answers. All under `/v1/radio/`; every route, with the types it takes and gives,
 //! is one [`wire::Endpoint`] in [`wire::at`]. Sent straight to the tower with
 //! `Authorization: Bearer <token>`, or sealed and passed through a relay (`airband.relay/1`):
-//! - `GET next`: held open up to 25 seconds. 200 with a [`Transmission`], or 204 when nothing is waiting.
+//! - `GET next`: held open up to 25 seconds. 200 with a [`Transmission`], or 200 with `null` when nothing is waiting.
 //!   A transmission is words: the radio speaks them with the voice he chose on it. The tower makes no sound
 //!   and hears none; what listens and what speaks are the radio's alone.
 //! - `POST heard` [`Heard`]: that transmission was spoken to the end. `POST unheard` [`Unheard`]: it made no
@@ -17,7 +17,7 @@
 //! Those are call mode: one transmission at a time, spoken. Chat mode reads the same messages as a feed:
 //! - `GET feed?…` [`wire::FeedQuery`] → [`Feed`]: what was said, each cut to a line or two; all of it, one team's or
 //!   one agent's.
-//! - `GET message/<id>?form=detail|full` → [`More`]: the fuller spoken version, or exactly what the agent wrote.
+//! - `GET message/<id>?form=detail|full` → [`wire::MessageText`]: the fuller spoken version, or exactly what the agent wrote.
 //! - `POST utterance` is also how chat sends: leading `@tags` say who it is for (`@shop2`, `@shop`, `@all`).
 //! - Starting a new agent is `POST project` ([`NewProject`]), in a folder from `GET recent` or `POST folders`.
 use serde::{Deserialize, Serialize};

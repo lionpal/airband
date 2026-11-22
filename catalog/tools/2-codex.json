@@ -85,6 +85,17 @@
           "provider": "openai"
         }
       }
-    ]
+    ],
+    "deliver": [
+      "{program}",
+      "queue",
+      "--thread",
+      "{session}",
+      "--resume",
+      "--message",
+      "{words}"
+    ],
+    "hooks_file": "hooks.json",
+    "sessions": "sessions"
   }
 }

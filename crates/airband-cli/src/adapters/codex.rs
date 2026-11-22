@@ -19,7 +19,6 @@
 //! One thing he has to do himself, once: Codex runs a hook only after he has looked at it and trusted it
 //! (`/hooks` inside Codex), and again whenever it changes. `airband install` writes the hooks and says so.
 #![expect(clippy::disallowed_macros, reason = "speaks the tool's own app-server protocol")]
-#![expect(clippy::disallowed_methods, reason = "lists, opens or removes files, or closes a channel, directly: to move to airband_io (audit 6)")]
 use super::env;
 use super::hooks::{On, on, text};
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk};
@@ -72,7 +71,10 @@ pub(crate) fn permission(hook: &Value) -> Option<PermissionAsk> {
 
 /// His words into that session as a turn of his own, by Codex's own queue.
 fn deliver(session: &str, words: &str) -> Result<(), String> {
-    let done = std::process::Command::new(super::row_says(NAME, "program")).args(["queue", "--thread", session, "--resume", "--message", words]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped()).output().map_err(|e| format!("{} could not be started: {e}", super::called(NAME).0))?;
+    let program = super::row_says(NAME, "program");
+    let argv = super::tool_row(NAME).map(|t| t.command("deliver", &[("program", &program), ("session", session), ("words", words)])).unwrap_or_default();
+    let (program, args) = argv.split_first().ok_or("its row gives no way to hand it words")?;
+    let done = std::process::Command::new(program).args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped()).output().map_err(|e| format!("{} could not be started: {e}", super::called(NAME).0))?;
     if done.status.success() { Ok(()) } else { Err(format!("{} did not take it: {}", super::called(NAME).0, airband_core::prose::clip(String::from_utf8_lossy(&done.stderr).trim(), 200))) }
 }
 
@@ -348,14 +350,12 @@ fn watch(_tower: super::Tower) {}
 /// The folders Codex has had sessions in: each session's file starts with a line that says where it was.
 /// The newest few hundred files are asked.
 fn worked_in(codex: &std::path::Path) -> Vec<super::Worked> {
-    use std::io::BufRead;
     // sessions/<year>/<month>/<day>/<one file per session>
-    let inside = |dirs: Vec<PathBuf>| -> Vec<PathBuf> { dirs.iter().filter_map(|d| std::fs::read_dir(d).ok()).flat_map(|d| d.flatten().map(|e| e.path())).collect() };
-    let mut files: Vec<PathBuf> = inside(inside(inside(inside(vec![codex.join("sessions")])))).into_iter().filter(|p| p.extension().is_some_and(|e| e == "jsonl")).collect();
+    let inside = |dirs: Vec<PathBuf>| -> Vec<PathBuf> { dirs.iter().filter_map(|d| airband_io::files::entries(d).ok()).flatten().collect() };
+    let mut files: Vec<PathBuf> = inside(inside(inside(inside(vec![codex.join(super::row_says(NAME, "sessions"))])))).into_iter().filter(|p| p.extension().is_some_and(|e| e == "jsonl")).collect();
     files.sort();
     let found = files.iter().rev().take(300).filter_map(|file| {
-        let mut first = String::new();
-        std::io::BufReader::new(std::fs::File::open(file).ok()?).read_line(&mut first).ok()?;
+        let first = airband_io::files::first_lines(file, 1).ok()?.into_iter().next()?;
         let line: Value = serde_json::from_str(&first).ok()?;
         let folder = line["payload"]["cwd"].as_str().filter(|c| !c.is_empty() && line["type"] == "session_meta")?.to_string();
         Some(super::Worked { folder, at: super::written(file) })
@@ -386,7 +386,7 @@ impl super::Harness for Codex {
     }
     /// Only when Codex is on this computer.
     fn hooks(&self) -> Option<super::hooks::File> {
-        home().is_dir().then(|| super::hooks::File { name: NAME, path: home().join("hooks.json"), events: HOOKS })
+        home().is_dir().then(|| super::hooks::File { name: NAME, path: home().join(super::row_says(NAME, "hooks_file")), events: HOOKS })
     }
     /// Codex runs a hook only once he has trusted it, and asks again whenever the file changes.
     fn installed(&self, file: &super::hooks::File, changed: bool) -> String {

@@ -12,7 +12,7 @@
 //! (`expires`), and when it stays inside what a later copy may do ([`allowed`], [`check`]).
 //!
 //! What a row cannot do is add a way of calling a service. Those are code, in a table for each job where the
-//! job is done, and a row names one ([`By`]). Every row that reads is kept here; the program that lists or
+//! job is done, and a row names one ([`crate::providers::By`]). Every row that reads is kept here; the program that lists or
 //! calls leaves out a row naming an interface it has no code for, so an old build reads a new catalogue and
 //! shows what it can use.
 use crate::providers::{Job, Offer, Provider};
@@ -105,6 +105,13 @@ impl Tool {
     /// Something its row tells the code that speaks to it, as text. Empty when the row does not say.
     pub fn told(&self, what: &str) -> &str {
         row_text(self.with.get(what))
+    }
+    /// A command its row gives, each word as written, with a word that is wholly `{name}` given the value
+    /// named so. A value is always one whole word: what he said can never become an option. Empty when the
+    /// row does not say.
+    pub fn command(&self, what: &str, values: &[(&str, &str)]) -> Vec<String> {
+        let words = self.with.get(what).and_then(Value::as_array).cloned().unwrap_or_default();
+        words.iter().filter_map(Value::as_str).map(|w| values.iter().find(|(name, _)| w.strip_prefix('{').and_then(|r| r.strip_suffix('}')) == Some(*name)).map_or_else(|| w.to_string(), |(_, v)| v.to_string())).collect()
     }
 }
 

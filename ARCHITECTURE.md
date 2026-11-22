@@ -10,9 +10,10 @@ Every rule lives in the Rust core. Everything else is an edge. An edge turns som
 three versioned protocols, or one of them into something a person can see or hear. Edges decide nothing: not order,
 not importance, not who a message is for, not when to retry.
 
-Nothing is decided by matching his words. A model reads what he says; when no model answers, nothing is guessed.
-The only things read by rule are what a radio's own buttons send (a word behind a slash, Allow, Deny), tags and
-callsigns that name an agent, and the shape of a credential.
+Nothing is decided by matching his words. A model reads what he says. When no model answers, nothing is read
+into them: with one agent and no way to start another they can only be for that one, and otherwise he is asked.
+The only things read by rule are a radio's own buttons (sent as typed acts, never as words), tags that name an
+agent, and the shape of a credential.
 
 ```
  agents ──▶ adapters ──airband.agent/1──▶ ┌────────────┐ ◀──airband.radio/4──▶ radio core ──▶ hosts ──▶ you
@@ -25,10 +26,11 @@ callsigns that name an agent, and the shape of a credential.
 
 The compiler keeps some of them, so they cannot drift:
 - `clippy.toml` refuses raw file calls (`std::fs::write`, `read`, `read_to_string`, `rename`, `remove_file`,
-  `create_dir_all`), the HTTP client's `get` and `post`, and hand-built JSON (`serde_json::json!`). Files and the
+  `create_dir_all`, `read_dir`, `remove_dir_all`, `File::open`, `OpenOptions`), the HTTP client's `get`, `post`,
+  `put` and `delete`, and hand-built JSON (`serde_json::json!`). Files and the
   network go through `airband-io`; our own bodies are typed. A module that is an edge by nature (another tool's
   files or protocol, a service's request body, a download, the relay's folder store) says so at its top with
-  `#![allow(..., reason = "...")]`, and that list is the whole of the exceptions. Tests may do either.
+  `#![expect(..., reason = "...")]`, and that list is the whole of the exceptions. Tests may do either.
 - `clippy::let_underscore_must_use` is on in every crate: a result is used or let go with `.ok()` in plain sight,
   never dropped with `let _ =`.
 - CI fails if `airband-core` depends on an HTTP client or touches files.
@@ -37,9 +39,9 @@ The compiler keeps some of them, so they cannot drift:
 
 | Part | Where | Owns | Must not |
 |---|---|---|---|
-| Protocols and rules | `crates/airband-core` | The three protocols' types; callsigns; who a tag or spoken name means; the words a radio's buttons send; what can be said aloud; masking credentials (`redact`); pairing links; the relay's sealing | Do any I/O. It has no HTTP client and reads no file. Everything here is tested directly. |
+| Protocols and rules | `crates/airband-core` | The three protocols' types; callsigns; who a tag means; the acts a radio's buttons send; what can be said aloud; masking credentials (`redact`); pairing links; the relay's sealing | Do any I/O. It has no HTTP client and reads no file. Everything here is tested directly. |
 | Edges | `crates/airband-io` | Files written whole (`files`); a file of ours kept and what happens when it is damaged, decided once (`kept`: set aside, or left as it is with every save refused); another tool's file, never set aside or written over when unreadable (`foreign`); the HTTP client and reading a service's status (`http`); the catalogue fetched and kept (`catalog`) | Hold a rule of the product |
-| The tower | `crates/airband-cli/src/tower/` | What is remembered and the rules about it (`state`), events in (`intake`), importance and wording (`judge`), recipients and controls (`route`), permission (`permit`), reaching agents (`deliver`), starting new ones (`launch`), running them itself (`held`), which team one belongs in (`place`), call mode's queue (`pump`), copies of pictures (`pictures`), files he attaches (`attachments`), the voice (`speech`), the listening pass (`ears`), accounts (`accounts`), the database (`store`), routes (`http`), the relay connection and sealed requests (`relay_link`), waking his phone (`push`) | Have a rule that depends on which harness an agent runs in or which client is asking |
+| The tower | `crates/airband-cli/src/tower/` | What is remembered and the rules about it (`state`), events in (`intake`), importance and wording (`judge`), recipients and controls (`route`), permission (`permit`), reaching agents (`deliver`), starting new ones (`launch`), running them itself (`held`), which team one belongs in (`place`), call mode's queue (`pump`), copies of pictures (`pictures`), files he attaches (`attachments`), accounts (`accounts`), the database (`store`), routes (`http`), the relay connection and sealed requests (`relay_link`), waking his phone (`push`) | Have a rule that depends on which harness an agent runs in or which client is asking |
 | Adapters | `crates/airband-cli/src/adapters/` | Turning one harness's notifications into `airband.agent/1` events, and setting that harness up to send them (`airband install` asks each adapter) | Hold a harness up, or decide anything |
 | The radio | `crates/airband-radio` | The whole client side. `desk`: every paired computer as one, what is waiting and done, where his messages go, who has the floor on a call. Under it, per computer: reaching the tower (`link`), the call loop (`call`), sending over bad connections (`outbox`), what is kept on the device (`store`), sound in and out (`voice`, `ears`) | Draw, make sound or capture it |
 | Hosts | `apps/apple`, `crates/airband-cli/src/terminal.rs` | Drawing the view the desk gives, playing and capturing audio, keeping pairing links and a speech key of his own safe | Decide order, routing, retries, or what counts as waiting or done |
@@ -59,17 +61,17 @@ The compiler keeps some of them, so they cannot drift:
 | Another way to reach an agent (an HTTP callback, a queue) | A variant of `Deliver` in `airband-core/src/agent.rs`; its arm in `tower/deliver.rs`. A tool that takes his words in a way of its own needs neither: `Deliver::Harness` and the adapter's `deliver`. | Two files |
 | Something else an agent can report (a file, a cost) | A variant of `Event`. Old towers skip what they do not know. | `agent.rs`, `tower/intake.rs` |
 | Permission prompts from another agent tool | No code: `airband report … permission "<what>"` and act on its exit code. Or two functions in its adapter: its prompt to a `PermissionAsk`, and yes or no to whatever the tool reads back. | `adapters/` only |
-| Accounts for another agent tool (several logins, switched while sessions run) | Five functions in its adapter (`AccountBook`: list with allowances, switch, save, add, forget). `adapters/claude_accounts.rs` is the model. | `adapters/` only |
+| Accounts for another agent tool (several logins, switched while sessions run) | Five functions in its adapter (`AccountBook`: list with allowances, switch, save, add, forget). `adapters/claude_accounts/` is the model. | `adapters/` only |
 | What an agent is doing right now, and its model and effort | No code: `airband report … doing "<text>"` and `… model "<name>" [effort]`. Or one function in its adapter (`glance`). | `adapters/` only |
 | Progress notes, what he types at an agent's own keyboard, and which team it belongs in, for another agent tool | One adapter function each: `steps` (the labels of its steps since a moment), `told` (his prompts, with any pictures he pasted), `touched` (the files and commands of its latest steps, from which a model says which project the work is part of, in `tower/place.rs`). | `adapters/` only |
-| Another model, or no model | `airband setup`, or `summarizer` in the config. When it does not answer he is told on his phone why (`judge::Trouble`, `Feed.reads_failed`) and gets each message as written; no second model is asked. A new kind is a variant of `Summarizer`, an arm in `tower/judge.rs` and a row in `PROVIDERS` (`setup.rs`). | Config, or three files |
+| Another model, or no model | `airband setup`, or `summarizer` in the config. When it does not answer he is told on his phone why (`judge::Trouble`, `Feed.reads_failed`) and gets each message as written; no second model is asked. A new service is a row in `catalog/providers/`; a new way of asking one is an interface in `airband-core/src/providers/` and its arm in `tower/judge/models.rs`. | Config, a row, or two files |
 | A better judgement of what is worth showing | `tower/judge.rs`. Try it with `airband triage < message.txt` on real messages first. | One file |
-| A better guess at who a reply is for | `tower/route.rs` for the model's reading; `airband-core/src/routing.rs` for tags and spoken names | One of two files |
-| Something else a button can tell the tower (`/mute`, `/today`) | A `Control` and its word in `COMMANDS` in `routing.rs`, and its arm in `tower/route.rs`. A radio's button sends the word behind a slash. | Two files |
-| Another client (Android, Windows, a watch, a car) | A host: implement `DeskHost` (ten calls: four for raw audio, `changed`, `status`, `note`, `hearing`, `words`, `watching`) over the bindings `crates/uniffi-bindgen` generates, draw `Desk.view()`, and keep the links. The Swift one is `apps/apple/Sources/RadioModel.swift`. `terminal.rs` is a single-computer host on `RadioHost`. | A new folder under `apps/` |
+| A better guess at who a reply is for | `tower/route.rs` for the model's reading; `airband-core/src/routing/` for tags | One of two files |
+| Something else a button can tell the tower (mute, today) | A `Control` in `airband-core/src/routing/tags.rs` and its arm in `tower/route.rs`. A radio's button sends it as `Act::Control`, never as words. | Two files |
+| Another client (Android, Windows, a watch, a car) | A host: implement `DeskHost` (fourteen calls: four for raw audio, `changed`, `status`, `note`, `hearing`, `words`, `watching`, `device`, `run_model`, `secret`, `keep_secret`) over the bindings `crates/uniffi-bindgen` generates, draw `Desk.view()`, and keep the links. The Swift one is `apps/apple/Sources/RadioModel.swift`. `terminal.rs` is a single-computer host on `RadioHost`. | A new folder under `apps/` |
 | Another transport to the tower (a local socket) | A variant of `Route` in `airband-radio/src/link.rs` | One file |
 | Another push service (Android's, a desktop's) | A struct beside `Apns` in `airband-relay/src/push.rs` and an arm in `Push::send`. The client opens the notification with `open_notice` and reports its address with `Desk.set_push`. | One file, and the client |
-| Something else a client can ask | A route in `tower/http.rs`, its types in `airband-core/src/radio.rs`, a method on `Radio` | Three files |
+| Something else a client can ask | An `Endpoint` in `airband-core/src/radio/wire.rs` (its path, method, query, body and answer), its handler in `tower/http/`, a method on `Radio` | Three files |
 | Another place to keep relay data | A variant of `Store` in `airband-relay/src/store.rs` | One file |
 
 If a change does not fit a row, it is probably a new protocol field. Add the field as optional, default it, and
@@ -166,7 +168,7 @@ and `catalog/models/<kind>.json` (beside them: one per coding tool, one per prog
 model, and the words a recogniser should expect). Building `airband-core` puts them together into one
 document that is compiled into the tower and the app (`crates/airband-core/src/catalog.rs`), so both know all
 of it with no network. A newer copy is fetched from `airband.dev/catalog/` when he opens a chooser, and by
-the tower twice a day (one piece of code for both, `airband-radio/src/models.rs`). So a new voice, model id or
+the tower twice a day (one piece of code for both, `airband_io::catalog`). So a new voice, model id or
 price needs `scripts/publish-catalog.sh` and no new build.
 
 A copy is taken only when all of these hold (`catalog::accept`):
@@ -213,8 +215,8 @@ the row too (`by.with.auth`: the header and what stands before the key). What ca
 tower's to say: `GET reads` lists its own offers and which one reads now, by provider and offer.
 
 The catalogue in use is one shared value (`catalog::current()`, an `Arc`), replaced when a newer signed
-copy is taken; the tower and the app load and fetch it with the same code (`airband_radio::catalog_load`,
-`catalog_refresh`). A later copy can add an offer to a provider a build knows only when it is reached
+copy is taken; the tower and the app load and fetch it with the same code (`airband_io::catalog::load_kept`,
+`refresh`). A later copy can add an offer to a provider a build knows only when it is reached
 exactly as one of that provider's compiled-in offers is; any other is left out and logged.
 
 The interfaces, and what adding one touches:
@@ -282,7 +284,7 @@ offer. All of it is worked out in the core, so every host shows the same thing.
 - Masking. Keys and tokens in what is said are replaced by their prefix and dots before the chat keeps, sends
   or summarises it (`redact.rs`). What an agent is given is not touched.
 - Open questions. A question stays open until he answers, he dismisses it (`POST dismiss`), the agent speaks
-  past it three times, or six hours pass (`tower/state.rs` `open_ids`).
+  past it three times, or six hours pass (`tower/entries.rs` `open_ids`).
 - Notes on the way. For an agent at work for four minutes without a word, the labels of its steps go to the
   model, which writes one line if he would look for something in them (`progress_loop`, `judge::progress`). No
   notification, not read aloud.
@@ -354,8 +356,8 @@ in the same folder. Rooms and callsigns make themselves from where agents run an
 - The tower has no `if harness == …` anywhere, and starts no tool's watcher by name: it starts every adapter's (`adapters::watch_all`). Keep it that way.
 - Messages from agents are untrusted input to the model that judges them. That model is given no tools.
 - CI runs on every push to main that changes code: build and tests on Linux, Windows and macOS, the radio core
-  for Android, the iPhone app, and two end-to-end suites that need no model (`tools/e2e-relay.py`,
-  `tools/e2e-held.py`).
+  for Android, the iPhone app, and three end-to-end suites that need no model (`tools/e2e-relay.py`,
+  `tools/e2e-held.py`, `tools/e2e-links.py`).
 - `tools/e2e.py` goes through everything a radio can do with real model calls, so it runs on your computer:
   `scripts/check.sh --full`. Run it before a release.
 - Say what was run and what was only compiled. `docs/state.md` is the record; keep it true.

@@ -7,7 +7,9 @@
 //! to whoever spoke last. The tower delivers it the way that agent said it can be reached.
 //!
 //! Radios reach it through a relay (relay_link.rs), sealed end to end, or directly: it listens on 127.0.0.1
-//! and this machine's address on a private network laid over the internet, if it has one (`config::overlay_addrs`), and every direct request needs the token.
+//! and this machine's address on a private network laid over the internet, if it has one
+//! (`config::overlay_addrs`), where every request needs the token; and with `airband lan` on its local network
+//! addresses, which take only sealed requests (`relay_link::sealed_router`), so the pairing key is what opens them.
 //!
 //! Where things are:
 //! - this file: the pieces every module shares; `serve` starts the tower up and runs its background loops
@@ -27,7 +29,7 @@
 //!   to "Who is that for?")
 //! - `deliver`: getting his words to an agent
 //! - `edges`: what the tower reaches outside itself through (the model, processes, folders, the ways to an
-//!   agent), each a trait with a stand-in for tests
+//!   agent), each a trait
 //! - `launch` and `held`: starting a new agent, and the ones the tower runs itself
 //! - `pump`: call mode's one-at-a-time queue
 //! - `http`: the routes
@@ -116,8 +118,8 @@ use airband_core::ids::{AgentId, LauncherId, TeamId};
 use airband_core::prose::{opening, plain as spoken};
 
 
-/// How long `GET next` is held open: as long as the feed is, the one number for both.
-const HOLD: Duration = Duration::from_secs(airband_core::radio::wire::FeedQuery::WAIT_MOST as u64);
+/// How long `GET next` is held open: the one hold every long wait shares.
+use airband_core::HOLD;
 /// How long after a radio last showed it was there it is still taken to be: the one clock for that (see
 /// [`state::Presence`]). Longer than a radio waits for an answer before it asks again (50 seconds), so one
 /// request lost on the way does not make it gone.

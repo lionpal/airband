@@ -2,7 +2,7 @@
 //! HTTP client to reach it with, and files are `airband-io`'s (kept files, the catalogue fetched and kept, the
 //! client). `providers::Answering::status` reads what a service answered. Everything here is tested directly.
 //!
-//! Two versioned protocols meet at the tower (docs/protocols.md):
+//! Three versioned protocols meet at the tower (docs/protocols.md):
 //! - [`agent`], `airband.agent/1`: how any coding agent, on any harness or model, reports in and is spoken to.
 //! - [`radio`], `airband.radio/4`: how a phone, car or desktop app hears transmissions and sends replies.
 //! - [`relay`], `airband.relay/1`: how a radio reaches a tower that is behind a home router, through a relay

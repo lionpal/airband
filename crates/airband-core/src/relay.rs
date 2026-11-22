@@ -265,7 +265,7 @@ impl PushRequest {
     }
 }
 
-/// The relay's routes for one channel: each written once, as the relay serves it ([`Route::PATTERN`]s) and as a
+/// The relay's routes for one channel: each written once, as the relay serves it ([`Route::PATTERNS`]) and as a
 /// tower or a radio reaches it ([`Route::on`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route<'a> {

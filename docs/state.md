@@ -5,8 +5,9 @@ Kept true as things change. A claim on this page was run, not only compiled.
 ## Every push
 
 CI builds and tests on Linux, Windows and macOS, builds the radio core for Android, compiles the iPhone app,
-and runs two end-to-end suites that need no model: `tools/e2e-relay.py` (the relay and what it keeps for a
-tower that is away) and `tools/e2e-held.py` (agents the tower runs, with a stand-in for the agent). The suite
+and runs three end-to-end suites that need no model: `tools/e2e-relay.py` (the relay and what it keeps for a
+tower that is away), `tools/e2e-held.py` (agents the tower runs, with a stand-in for the agent) and
+`tools/e2e-links.py` (what agents make that lives at a web address). The suite
 that needs a model, `tools/e2e.py`, runs on the computer: `scripts/check.sh --full`.
 
 ## The tower

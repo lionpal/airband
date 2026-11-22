@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::runtime::Handle;
 use tower::ServiceExt;
-use airband_core::relay::{Answer, Call, FRESH_MS, Keys, fresh};
+use airband_core::relay::{Answer, Call, FRESH_MS, Keys, Route, fresh};
 
 
 /// Why a request too far from this computer's clock is refused, said from the limit itself.
@@ -72,8 +72,8 @@ pub(crate) fn start(app: Arc<App>, router: Router, handle: Handle) {
                 }
                 if !keep {
                     stop.store(true, Ordering::SeqCst);
-                    if let Ok(keys) = Keys::derive(&key.1.secret) {
-                        app.served.0.lock().unwrap().remove(&keys.channel);
+                    if let Some(channel) = super::push::channel_of(&key.1) {
+                        app.served.0.lock().unwrap().remove(&channel);
                     }
                     log(format!("\"{}\" is no longer served", key.1.name));
                 }
@@ -91,7 +91,7 @@ pub(crate) fn start(app: Arc<App>, router: Router, handle: Handle) {
                     }
                 };
                 let stop = Arc::new(AtomicBool::new(false));
-                let serve = Serve { app: app.clone(), relay: key.0.clone(), name: key.1.name.clone(), keys, admission: cfg.relay_admission.clone(), token: app.cfg().radio_token.clone(), router: router.clone(), handle: handle.clone(), stop: stop.clone(), seen: Arc::new(Mutex::new(HashMap::new())), replies: airband_io::http::agent(Duration::from_secs(15)) };
+                let serve = Serve { app: app.clone(), relay: key.0.clone(), name: key.1.name.clone(), keys, router: router.clone(), handle: handle.clone(), stop: stop.clone(), seen: Arc::new(Mutex::new(HashMap::new())), replies: airband_io::http::agent(Duration::from_secs(15)) };
                 app.served.0.lock().unwrap().insert(serve.keys.channel.clone(), serve.clone());
                 running.insert(key, (stop, std::thread::spawn(move || serve.run())));
             }
@@ -107,9 +107,6 @@ struct Serve {
     relay: Option<String>,
     name: String,
     keys: Keys,
-    admission: Option<String>,
-    /// The radio token, for handing requests to the tower's local routes: a paired radio gets `/v1/radio/` only.
-    token: String,
     router: Router,
     handle: Handle,
     stop: Arc<AtomicBool>,
@@ -122,7 +119,7 @@ struct Serve {
 impl Serve {
     /// Whether the settings now still hold this pairing, read again from the file when it has changed.
     fn still_paired(&self) -> bool {
-        self.app.cfg().pairings.iter().any(|p| Keys::derive(&p.secret).is_ok_and(|k| k.channel == self.keys.channel))
+        self.app.cfg().pairings.iter().any(|p| super::push::channel_of(p).as_ref() == Some(&self.keys.channel))
     }
 
     fn run(self) {
@@ -136,7 +133,7 @@ impl Serve {
         };
         let agent = airband_io::http::agent(Duration::from_secs(40));
         let auth = self.keys.as_tower();
-        let base = self.keys.at(&relay, "");
+        let (channel, pull) = (self.keys.to(&relay, Route::Channel), self.keys.to(&relay, Route::Pull));
         let (mut open, mut wait, mut told) = (false, 1, false);
         let nap = |wait: &mut u64| {
             std::thread::sleep(Duration::from_secs(*wait));
@@ -151,14 +148,20 @@ impl Serve {
                     return;
                 }
                 // who its radio is goes with the opening, so the relay knows from the first moment whose channel it is
-                let mut req = agent.put(&base).header("authorization", &auth).header(RADIO_HASH_HEADER, airband_core::relay::token_hash(&self.keys.radio_token));
-                if let Some(a) = &self.admission {
+                let mut req = agent.put(&channel).header("authorization", &auth).header(RADIO_HASH_HEADER, airband_core::relay::token_hash(&self.keys.radio_token));
+                // the admission key as the settings hold it now: a new one is used without a restart
+                if let Some(a) = &self.app.cfg().relay_admission {
                     req = req.header(ADMISSION_HEADER, a);
                 }
                 match req.send_empty().map(|r| r.status().as_u16()) {
                     Ok(201 | 204) => {
                         log(format!("serving \"{}\" through {}", self.name, relay));
                         (open, wait, told) = (true, 1, false);
+                    }
+                    // the relay keeps this channel closed for good: it was unpaired, and only a new pairing opens one
+                    Ok(410) => {
+                        log(format!("{} keeps the channel for \"{}\" closed; pair again to use it", relay, self.name));
+                        return;
                     }
                     other => {
                         if !told {
@@ -175,7 +178,7 @@ impl Serve {
                 }
                 continue;
             }
-            match agent.get(format!("{base}/pull")).header("authorization", &auth).call() {
+            match agent.get(&pull).header("authorization", &auth).call() {
                 Ok(mut res) => match res.status().as_u16() {
                     200 => {
                         wait = 1;
@@ -186,10 +189,16 @@ impl Serve {
                         };
                         // the relay says outright when it had been keeping this one; nothing is read from the id
                         let kept = res.headers().contains_key(airband_core::relay::KEPT_HEADER);
-                        if let Ok(sealed) = res.body_mut().read_to_vec() {
-                            let me = self.clone();
+                        let me = self.clone();
+                        match res.body_mut().read_to_vec() {
                             // not awaited: `next` is held for 25 s, and other requests must get through meanwhile
-                            self.handle.spawn(async move { me.answer(id, kept, sealed).await });
+                            Ok(sealed) => drop(self.handle.spawn(async move { me.answer(id, kept, sealed).await })),
+                            // one that cannot be read is answered with nothing, once: its radio stops waiting, and
+                            // one the relay was keeping is taken off its hands instead of handed over for ever
+                            Err(e) => {
+                                log(format!("a request for \"{}\" could not be read ({e}); it is let go", self.name));
+                                drop(self.handle.spawn(async move { me.send_back(&id, kept, None).await }));
+                            }
                         }
                     }
                     204 => wait = 1,
@@ -285,7 +294,7 @@ impl Serve {
     /// request was one the relay kept while the tower was away, said back to it as such.
     async fn send_back(&self, request_id: &str, kept: bool, sealed: Option<Vec<u8>>) {
         let Some(relay) = &self.relay else { return };
-        let url = self.keys.at(relay, &format!("/reply/{request_id}"));
+        let url = self.keys.to(relay, Route::Reply(request_id));
         let auth = self.keys.as_tower();
         // one agent for every answer on this channel: its connection to the relay is kept, not made again each time
         let agent = self.replies.clone();
@@ -325,7 +334,7 @@ impl Serve {
             return self.refused(call, via, Refusal::NotAllowed);
         }
         let body = if call.body.is_null() { Body::empty() } else { Body::from(serde_json::to_vec(&call.body).unwrap()) };
-        let mut req = Request::builder().method(call.method.as_str()).uri(&call.path).header("authorization", format!("Bearer {}", self.token)).header(VIA_HEADER, via).header(airband_core::radio::SCHEMA_HEADER, &call.schema).extension(super::http::RadioId(self.keys.channel.clone())).header("content-type", "application/json");
+        let mut req = Request::builder().method(call.method.as_str()).uri(&call.path).header("authorization", format!("Bearer {}", self.app.cfg().radio_token)).header(VIA_HEADER, via).header(airband_core::radio::SCHEMA_HEADER, &call.schema).extension(super::http::RadioId(self.keys.channel.clone())).header("content-type", "application/json");
         if now {
             req = req.header(PRESENCE_HEADER, serde_json::to_string(&call.presence).unwrap());
         }
@@ -359,7 +368,7 @@ mod tests {
         app.settings.change(|c| c.pairings.push(phone.clone())).unwrap();
         let keys = Keys::derive(&phone.secret).unwrap();
         // a relay nothing listens on: were it asked, the link would wait on it, not end
-        let serve = Serve { app: app.clone(), relay: Some("http://127.0.0.1:9".into()), name: phone.name.clone(), keys, admission: None, token: "radio".into(), router: crate::tower::http::router(app.clone()), handle: tokio::runtime::Handle::current(), stop: Arc::new(AtomicBool::new(false)), seen: Default::default(), replies: airband_io::http::agent(Duration::from_secs(1)) };
+        let serve = Serve { app: app.clone(), relay: Some("http://127.0.0.1:9".into()), name: phone.name.clone(), keys, router: crate::tower::http::router(app.clone()), handle: tokio::runtime::Handle::current(), stop: Arc::new(AtomicBool::new(false)), seen: Default::default(), replies: airband_io::http::agent(Duration::from_secs(1)) };
         assert!(serve.still_paired());
         app.settings.change(|c| c.pairings.clear()).unwrap();
         assert!(!serve.still_paired());
