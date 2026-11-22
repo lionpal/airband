@@ -71,10 +71,14 @@ def held_items(channel, kind):
 def kept():
     """The ids of what the relay is keeping for the channel, in the order they came."""
     if DYNAMO: return [i["id"]["S"] for i in held_items(keys["channel"], "m#")]
-    return [f.split("-", 1)[1] for f in sorted(f for _, _, fs in os.walk(os.path.join(data, "held")) for f in fs if not f.startswith("."))]
+    return [i["id"] for i in sorted(held_list(), key=lambda i: i["seq"])]
+def held_list():
+    """What the relay's folder says it keeps for the channel: its written list."""
+    path = os.path.join(data, "held", keys["channel"], "list.json")
+    return json.load(open(path))["items"] if os.path.exists(path) else []
 def kept_bytes():
     if DYNAMO: return b"".join(base64.b64decode(i["sealed"]["B"]) for i in held_items(keys["channel"], "i#"))
-    return b"".join(open(os.path.join(dp, f), "rb").read() for dp, _, fs in os.walk(os.path.join(data, "held")) for f in fs)
+    return b"".join(open(os.path.join(data, "held", keys["channel"], str(i["seq"])), "rb").read() for i in held_list())
 def post(path, token=None, ident=None, channel=None, body=b"not something the tower's key opens", timeout=10):
     """A request to the relay as a radio makes it, by hand: with a token or without."""
     headers = {"content-type": "application/octet-stream"}
