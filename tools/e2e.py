@@ -135,7 +135,7 @@ def accounts_check():
         def do_GET(self):
             email = who.get(self.headers.get("authorization", "").removeprefix("Bearer "))
             if not email: return self.answer(401, {})
-            self.answer(200, {"account": {"email_address": email}} if self.path.endswith("/profile") else used[email])
+            self.answer(200, {"account": {"uuid": "id-" + email[0], "email": email}, "organization": {"uuid": "org-" + email[0]}} if self.path.endswith("/profile") else used[email])
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["content-length"])))
             refreshed.append(body.get("refresh_token"))
@@ -173,7 +173,7 @@ def accounts_check():
         check("switching puts the other account's newest login in use", code == 200 and live["claudeAiOauth"]["accessToken"] == "t-a-2" and live["claudeAiOauth"]["refreshToken"] == "r-a-2", after)
         check("and leaves the other logins kept beside it alone", live.get("mcpOAuth") == {"some-server": "kept"})
         told = json.load(open(os.path.join(home, ".claude.json")))
-        check("Claude Code is told which account it now is, and the rest of its file is kept", told["oauthAccount"]["emailAddress"] == "a@example.com" and told["somethingElse"] == "kept", told)
+        check("Claude Code is told which account it now is, in the record its profile gives, and the rest of its file is kept", told["oauthAccount"]["emailAddress"] == "a@example.com" and told["oauthAccount"].get("organizationUuid") == "org-a" and told["somethingElse"] == "kept", told)
         check("the answer shows the new state", {a["label"]: a["live"] for a in (after or {}).get("accounts", [])} == {"a@example.com": True, "b@example.com": False}, after)
         check("the account switched away from can be switched back to, by its number in the list", "▶ b@example.com" in cli("use", "2") and live_now()["claudeAiOauth"]["accessToken"] == "t-b-1")
         code, refused = http("POST", "/v1/radio/accounts/use", {"harness": "claude-code", "id": "nobody@"})
