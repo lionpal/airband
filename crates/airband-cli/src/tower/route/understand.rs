@@ -103,7 +103,8 @@ pub(in crate::tower) async fn route(app: &Arc<App>, radio: &str, rest: &str, re:
     };
     // what a new agent could be started in and on, if anything
     // any tool this computer can start will do for knowing that one can be: which one is settled when it starts
-    let launcher = app.cfg.launchers.values().next();
+    let cfg = app.cfg();
+    let launcher = cfg.launchers.values().next();
     let projects: Vec<Place> = app.read().launchable();
     // with agents of another computer on his screen there is always more than one it could be for
     let can_start = (launcher.is_some() && !projects.is_empty()) || !others.is_empty();
@@ -125,7 +126,7 @@ pub(in crate::tower) async fn route(app: &Arc<App>, radio: &str, rest: &str, re:
         Some(_) => starting(app, &menus, &projects, room.as_deref()),
     };
     let prompt = prompt(app, &lines, &last_said(&scene.focus, now), rest, &starting, can_start);
-    let Ok(judged) = judge::ask_json::<Out>(&app.cfg, "routing", prompt, Some(out_shape())).await else {
+    let Ok(judged) = judge::ask_json::<Out>(&app.settings, "routing", prompt, Some(out_shape())).await else {
         return no_answer(app, &scene.all, can_start);
     };
     answered(judged, &scene, &listed, &menus, &projects, can_start)
@@ -209,13 +210,13 @@ fn last_said(focus: &Option<(Session, Option<Spoke>)>, now: u64) -> String {
 /// Every tool, model and effort a new agent could be started with.
 fn menus(app: &App) -> Menus {
     let inner = app.read();
-    let menus: Vec<airband_core::tools::Offers> = app.cfg.launchers.iter().map(|(name, l)| held::offers(&inner, name, l)).collect();
+    let menus: Vec<airband_core::tools::Offers> = app.cfg().launchers.iter().map(|(name, l)| held::offers(&inner, name, l)).collect();
     let across = |of: fn(&airband_core::tools::Offers) -> &Vec<airband_core::tools::Choice>| {
         let mut all: Vec<String> = Vec::new();
         menus.iter().flat_map(of).for_each(|c| if !all.contains(&c.name) { all.push(c.name.clone()) });
         all
     };
-    Menus { tools: app.cfg.tools(), models: across(|m| &m.models), efforts: across(|m| &m.efforts) }
+    Menus { tools: app.cfg().tools(), models: across(|m| &m.models), efforts: across(|m| &m.efforts) }
 }
 
 /// A numbered list on one line, for the model to answer with a number from.
@@ -304,7 +305,7 @@ fn prompt(app: &App, lines: &[String], last: &str, rest: &str, starting: &str, c
          the deploy\") addresses whoever its words are for, not all of them.{starting}\n\
          Reply with one line of JSON and nothing else: {{\"to\":[the number each agent it is for is listed under, at the start of its line],\"all\":true or false,\"sure\":true or false{shape}}}\n\
          \"sure\": false if a careful assistant would check with him before passing this on.",
-        name = app.cfg.name,
+        name = app.cfg().name,
         lines = if lines.is_empty() { "(none are running)".to_string() } else { lines.join("\n") },
         starting = starting,
         shape = if can_start { ",\"new\":null or {\"tool\":…,\"tool_said\":…,\"project\":…,\"project_said\":…,\"model\":…,\"model_said\":…,\"effort\":…,\"effort_said\":…,\"task\":\"…\"}" } else { "" }
@@ -315,7 +316,7 @@ fn prompt(app: &App, lines: &[String], last: &str, rest: &str, starting: &str, c
 /// unless words could also have started a new one: that takes a model to read them, so it is so only where one is
 /// set up to read and did not answer. Then he is asked.
 fn no_answer(app: &App, all: &[Session], can_start: bool) -> Routed {
-    let could_be_new = can_start && !judge::reader(&app.cfg).is_none();
+    let could_be_new = can_start && !app.settings.reader().is_none();
     match all {
         [] => Routed::Ask(Vec::new()),
         [only] if !could_be_new => Routed::Sure(vec![only.clone()]),
@@ -382,7 +383,7 @@ pub(super) async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope:
          is about what one of the agents is working on.\n\
          Reply with one line of JSON and nothing else: {{\"to\":[the number each agent he means is listed under],\"all\":true or false}}\n\
          \"all\" is true when he means all of them. \"to\" is empty if he names nobody listed, or has gone on to say something else.",
-        name = app.cfg.name,
+        name = app.cfg().name,
         list = all.iter().enumerate().map(|(i, s)| format!("{}. {} (letters {})", i + 1, s.callsign.text(), letters(s))).collect::<Vec<_>>().join("\n"),
     );
     #[derive(Deserialize)]
@@ -398,7 +399,7 @@ pub(super) async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope:
         "required": ["to", "all"],
         "additionalProperties": false
     });
-    let judged: Out = judge::ask_json(&app.cfg, "who he meant", prompt, Some(shape)).await?;
+    let judged: Out = judge::ask_json(&app.settings, "who he meant", prompt, Some(shape)).await?;
     let meant: Vec<Session> = if judged.all { all } else { judged.to.iter().filter_map(|n| judge::listed(Some(*n), &all).cloned()).collect() };
     Ok((!meant.is_empty()).then_some(meant))
 }

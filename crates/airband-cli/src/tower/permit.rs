@@ -33,7 +33,7 @@ impl Permit {
 /// A harness asks. The question goes into the feed, and the id comes back for fetching the answer.
 pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
     let nobody = PermissionState { state: agent::Leave::Nobody, ..PermissionState::default() };
-    if ask.schema != agent::SCHEMA || app.cfg.permission_wait == 0 {
+    if ask.schema != agent::SCHEMA || app.cfg().permission_wait == 0 {
         return nobody;
     }
     let mut inner = app.change();
@@ -81,7 +81,7 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
     // he had the chat open a moment ago and may have put the phone down since: it is woken if so
     push::consider(app, &mut inner, &entry_id);
     inner.tell();
-    PermissionState { id, state: agent::Leave::Pending, message: String::new(), wait_seconds: app.cfg.permission_wait }
+    PermissionState { id, state: agent::Leave::Pending, message: String::new(), wait_seconds: app.cfg().permission_wait }
 }
 
 /// Where a request stands. Held open for up to `wait` seconds while there is no answer.
@@ -99,7 +99,7 @@ pub(super) async fn state(app: &Arc<App>, id: &str, wait: u64) -> PermissionStat
             }
         }
         if Instant::now() >= until {
-            return PermissionState { id: id.into(), state: agent::Leave::Pending, message: String::new(), wait_seconds: app.cfg.permission_wait };
+            return PermissionState { id: id.into(), state: agent::Leave::Pending, message: String::new(), wait_seconds: app.cfg().permission_wait };
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }

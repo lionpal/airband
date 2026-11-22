@@ -37,5 +37,5 @@ pub(in crate::tower) fn judge_later(app: &Arc<App>, entries: Vec<Entry>) {
 
 pub(in crate::tower) async fn judge_entry(app: &Arc<App>, e: Entry) -> Judged {
     let item = Item { say: None, ..app.read().item(&e) };
-    prepare(&app.cfg, &item).await
+    prepare(&app.settings, &item).await
 }

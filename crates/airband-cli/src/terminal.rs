@@ -126,7 +126,7 @@ impl RadioHost for Silent {
 }
 
 fn link_from(cfg: &Config, args: &[String]) -> String {
-    if let Some(why) = crate::config::keyless().filter(|_| !args.iter().any(|a| a == "--link")) {
+    if let Some(why) = cfg.keyless.clone().filter(|_| !args.iter().any(|a| a == "--link")) {
         eprintln!("airband: this needs airband's keys, which are in the keychain and could not be read here: {why}");
         std::process::exit(2);
     }

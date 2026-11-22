@@ -67,6 +67,8 @@ mod access;
 mod loops;
 mod probe;
 mod serve;
+mod settings;
+use settings::Settings;
 mod status;
 pub(crate) use probe::{progress, triage, try_model};
 pub(crate) use serve::run;
@@ -128,7 +130,8 @@ const STILL_ITS_OWN_WORK_MS: u64 = 20 * 60 * 1000;
 type Line = tokio::sync::mpsc::UnboundedSender<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>;
 
 pub(crate) struct App {
-    pub(crate) cfg: Config,
+    /// The settings while it runs: the only way to them ([`settings::Settings`]).
+    pub(crate) settings: settings::Settings,
     store: Arc<Store>,
     /// Writes what changes in the state, off the lock.
     saver: saver::Saver,
@@ -140,6 +143,15 @@ pub(crate) struct App {
     accounts: accounts::Kept,
     /// Where each paired phone can be woken with a notification.
     push: push::Wake,
+    /// Every pairing being served, by its channel.
+    served: relay_link::Served,
+}
+
+impl App {
+    /// The settings now.
+    pub(crate) fn cfg(&self) -> Arc<Config> {
+        self.settings.current()
+    }
 }
 
 /// The time of day as the log stamps it.

@@ -30,7 +30,7 @@ pub(super) fn due(reports: u32) -> bool {
 
 /// Look at what an agent has been doing and move it if its work is plainly part of another project.
 pub(super) async fn look(app: Arc<App>, agent_id: String) {
-    if judge::reader(&app.cfg).is_none() {
+    if app.settings.reader().is_none() {
         return;
     }
     let (session, said, teams) = {
@@ -64,7 +64,7 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
          team when he has one, and otherwise with a short lowercase name for the project, as its folder is called.\n\
          Reply with one line of JSON and nothing else: {{\"team\":<the number that team is listed under, or null>,\"new_team\":<a name for a project that is none of his teams, or null>,\"sure\":true or false}}\n\
          \"sure\": true only when its steps leave no doubt.",
-        name = app.cfg.name,
+        name = app.cfg().name,
         callsign = session.callsign.text(),
         folder = session.agent.cwd.as_deref().unwrap_or("a folder the tower does not know"),
         said = if said.is_empty() { "- nothing yet".to_string() } else { said.iter().map(|s| format!("- {s}")).collect::<Vec<_>>().join("\n") },
@@ -86,7 +86,7 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
         "required": ["team", "new_team", "sure"],
         "additionalProperties": false
     });
-    let Ok(out) = judge::ask_json::<Out>(&app.cfg, "placing", prompt, Some(shape)).await else { return };
+    let Ok(out) = judge::ask_json::<Out>(&app.settings, "placing", prompt, Some(shape)).await else { return };
     if !out.sure {
         return;
     }

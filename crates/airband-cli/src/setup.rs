@@ -122,7 +122,7 @@ pub(crate) fn setup(mut cfg: Config, start: bool) -> Result<(), String> {
     if !std::io::stdin().is_terminal() {
         return Err("airband setup asks questions: run it in a terminal.".into());
     }
-    if let Some(why) = config::keyless() {
+    if let Some(why) = cfg.keyless.clone() {
         return Err(format!("Setup needs the keys, which cannot be read from here: {why}"));
     }
     // what his agents are told his name is: the one this computer's account has for him until he gives another
@@ -161,7 +161,7 @@ fn used_for(cfg: &Config, secret: &str) -> Vec<&'static str> {
 /// `airband keys [add <name> <provider> | remove <name>]`. A key is never shown.
 pub(crate) fn keys(args: &[String]) -> Result<(), String> {
     let mut cfg = config::load();
-    if let Some(why) = config::keyless() {
+    if let Some(why) = cfg.keyless.clone() {
         return Err(format!("The keys cannot be read from here: {why}"));
     }
     match args.first().map(String::as_str) {

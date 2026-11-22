@@ -46,7 +46,7 @@ pub(super) fn holds(inner: &Inner, session: &str) -> bool {
 /// set as usual in this computer's settings, and when he set none, the launcher of the coding tool he uses
 /// most, as his phone said. Nothing when neither says: he is asked, and nothing is started on a guess.
 pub(super) fn launcher_for(app: &App, tool: Option<&str>) -> Option<(String, config::Launcher)> {
-    let found = |tool: Option<&str>| app.cfg.launcher_for(tool).map(|(name, l)| (name.clone(), l.clone()));
+    let found = |tool: Option<&str>| app.cfg().launcher_for(tool).map(|(name, l)| (name.clone(), l.clone()));
     match tool {
         Some(tool) => found(Some(tool)),
         None => found(None).or_else(|| {
@@ -75,7 +75,7 @@ struct Started {
 
 /// Remember what a launcher's agent said it can be set to, when it is the agent that says.
 fn learn(app: &App, inner: &mut Inner, launcher: &str, offers: airband_core::tools::Offers) {
-    if matches!(app.cfg.launchers.get(launcher).and_then(|l| l.held.as_ref()), Some(config::Held::Acp { .. })) {
+    if matches!(app.cfg().launchers.get(launcher).and_then(|l| l.held.as_ref()), Some(config::Held::Acp { .. })) {
         inner.menus.insert(launcher.to_string(), offers);
     }
 }
@@ -132,7 +132,8 @@ const STARTS_WITHIN: Duration = Duration::from_secs(150);
 /// holder says so), with what its tool calls its session; or with why it is not.
 #[cfg(unix)]
 async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Started, String> {
-    let launcher = app.cfg.launchers.get(&kept.launcher).ok_or_else(|| format!("no launcher called {} is configured", kept.launcher))?;
+    let cfg = app.cfg();
+    let launcher = cfg.launchers.get(&kept.launcher).ok_or_else(|| format!("no launcher called {} is configured", kept.launcher))?;
     let held = launcher.held.as_ref().ok_or_else(|| format!("the launcher {} does not hold its agents", kept.launcher))?;
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
     let sock = socket(&kept.id);
@@ -314,7 +315,7 @@ pub(super) async fn stop(app: &Arc<App>, id: &str) -> Result<(), String> {
         }
         let kept = inner.kept_held(id).ok_or("airband is no longer running this agent.")?;
         // a program that reads lines can be stopped only if its launcher says what line stops it
-        if matches!(app.cfg.launchers.get(&kept.launcher).and_then(|l| l.held.as_ref()), None | Some(config::Held::Lines { stop: None, .. })) {
+        if matches!(app.cfg().launchers.get(&kept.launcher).and_then(|l| l.held.as_ref()), None | Some(config::Held::Lines { stop: None, .. })) {
             return Err("Its launcher has no way to stop it.".into());
         }
         (s, kept)
@@ -375,7 +376,7 @@ impl Inner {
 /// is left waiting for his first word, on the radio at once so he can see it and speak to it.
 /// `model` and `effort` are what he asked for it to be set to, as its tool takes them.
 pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, model: Option<String>, effort: Option<String>, task: &str) -> Result<String, String> {
-    let harness = app.cfg.launchers.get(launcher).map(|l| l.harness.clone()).ok_or_else(|| format!("no launcher called {launcher} is configured"))?;
+    let harness = app.cfg().launchers.get(launcher).map(|l| l.harness.clone()).ok_or_else(|| format!("no launcher called {launcher} is configured"))?;
     // nothing is started that no team could hold: it would run with nobody able to speak to it
     {
         let inner = app.read();
@@ -457,7 +458,7 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
         let inner = app.read();
         let s = inner.find(id).cloned().ok_or("That agent is no longer running.")?;
         // carried on by a launcher that runs this agent's own harness: never one tool's session under another
-        let launcher = app.cfg.launcher_for(Some(&s.agent.harness)).filter(|(_, l)| l.held.is_some()).map(|(name, _)| name.clone());
+        let launcher = app.cfg().launcher_for(Some(&s.agent.harness)).filter(|(_, l)| l.held.is_some()).map(|(name, _)| name.clone());
         (s, launcher)
     };
     if session.agent.deliver == Some(Deliver::Held) {

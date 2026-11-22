@@ -101,7 +101,7 @@ pub(super) fn consider(app: &Arc<App>, inner: &mut Inner, id: &str) {
     let (app, id) = (app.clone(), id.to_string());
     tokio::spawn(async move {
         tokio::time::sleep(GRACE).await;
-        let station = config::station(&app.cfg);
+        let station = config::station(&app.cfg());
         let (note, to): (Notice, Vec<(String, Vec<PushTarget>)>) = {
             let inner = app.read();
             let Some(e) = inner.log.iter().find(|e| e.id == id).filter(|e| deserves(e, now_ms())) else { return };
@@ -121,7 +121,7 @@ pub(super) fn consider(app: &Arc<App>, inner: &mut Inner, id: &str) {
 
 /// Seal one notification for one radio and ask the relay to pass it to each of that radio's addresses.
 fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
-    let cfg = config::read().unwrap_or_else(|| app.cfg.clone());
+    let cfg = app.cfg();
     // only a radio paired through a relay can be woken: the relay is what holds the push service's key
     let (Some(relay), Some(pairing)) = (cfg.relay.clone(), cfg.pairings.iter().find(|p| p.name == radio)) else { return };
     let Ok(keys) = Keys::derive(&pairing.secret) else { return };

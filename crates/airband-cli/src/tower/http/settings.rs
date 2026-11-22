@@ -22,7 +22,7 @@ pub(super) async fn push_target(State(app): State<Arc<App>>, Extension(RadioId(r
 /// are kept.
 /// The phone sends the same list to each of his computers, so a tool one of them does not have is no mistake.
 pub(super) async fn uses_tools(State(app): State<Arc<App>>, Sent(said): Sent<at::Tools>) -> Answer<at::Tools> {
-    let known = app.cfg.tools();
+    let known = app.cfg().tools();
     let tools: Vec<String> = said.tools.into_iter().filter(|t| known.contains(t)).collect();
     let mut inner = app.change();
     if inner.tools != tools {

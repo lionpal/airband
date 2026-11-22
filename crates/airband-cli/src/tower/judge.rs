@@ -34,9 +34,9 @@ pub(super) fn json_of<T: serde::de::DeserializeOwned>(out: &str) -> Option<T> {
 
 /// Ask the model and read its answer as JSON of one shape. `what` names the question for the trace: with
 /// `AIRBAND_TRACE` set, what was asked and what came back are logged. Err says why there is no answer.
-pub(super) async fn ask_json<T: serde::de::DeserializeOwned>(cfg: &Config, what: &str, prompt: String, shape: Option<Value>) -> Result<T, String> {
+pub(super) async fn ask_json<T: serde::de::DeserializeOwned>(settings: &Settings, what: &str, prompt: String, shape: Option<Value>) -> Result<T, String> {
     let traced = std::env::var_os("AIRBAND_TRACE").is_some().then(|| prompt.clone());
-    let answer = ask_shaped(cfg, prompt, shape).await;
+    let answer = ask_shaped(settings, prompt, shape).await;
     if let Some(prompt) = traced {
         log(format!("{what} asked:\n{prompt}\nand was told: {answer:?}"));
     }
@@ -74,11 +74,11 @@ impl Judged {
 
 /// The tower's main job: decide how much of his attention a message deserves, what to tell him of it, and, when
 /// it is a question he can answer by picking, what the picks are.
-pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
+pub(super) async fn prepare(settings: &Settings, item: &Item) -> Judged {
     if item.notice {
         return Judged::as_written(item, Kind::NeedsYou);
     }
-    let parsed = ask_json::<Answer>(cfg, "reading a message", reading(cfg, item), Some(answer_shape())).await;
+    let parsed = ask_json::<Answer>(settings, "reading a message", reading(&settings.current(), item), Some(answer_shape())).await;
     match parsed {
         // a kind the model made up is no verdict: he gets the message as written, below
         Ok(o) if !o.say.trim().is_empty() && o.kind != Kind::Unknown => judged(item, o),
@@ -247,7 +247,7 @@ fn judged(item: &Item, o: Answer) -> Judged {
 /// An agent has been at work for a while without a word. From the labels of its steps: is there something he
 /// would want to know now, before it reports? One sentence if so. The labels say what it set out to do, not
 /// how it went, and the sentence must not claim more.
-pub(super) async fn progress(cfg: &Config, steps: &[String]) -> Option<String> {
+pub(super) async fn progress(settings: &Settings, steps: &[String]) -> Option<String> {
     let prompt = format!(
         "Below are the steps a coding agent has taken, in order, since it last said anything to {name}, who is away from its screen. \
          Each line is the agent's own label for a step: what it set out to do, not whether it worked.\n\n\
@@ -261,7 +261,7 @@ pub(super) async fn progress(cfg: &Config, steps: &[String]) -> Option<String> {
          in the first person as the agent, saying what it is doing or \
          has set going, with any number or name from the labels that finds it (a build number, a commit id, where a deploy goes). \
          Do not say that anything succeeded, finished or failed: the labels do not tell. No file paths, no markdown.\n\n<steps>\n{steps}\n</steps>",
-        name = cfg.name,
+        name = settings.current().name,
         steps = steps.join("\n")
     );
     #[derive(Deserialize)]
@@ -276,7 +276,7 @@ pub(super) async fn progress(cfg: &Config, steps: &[String]) -> Option<String> {
         "required": ["tell", "say"],
         "additionalProperties": false
     });
-    let out: Out = ask_json(cfg, "what to tell him of its progress", prompt, Some(shape)).await.ok()?;
+    let out: Out = ask_json(settings, "what to tell him of its progress", prompt, Some(shape)).await.ok()?;
     let said = out.say.trim();
     (out.tell && !said.is_empty() && said.chars().count() < 400).then(|| said.to_string())
 }
@@ -287,7 +287,7 @@ pub(super) async fn progress(cfg: &Config, steps: &[String]) -> Option<String> {
 ///
 /// The model sees his words only. The request is text the asking agent wrote, and nothing an agent writes is
 /// put beside the one question whose answer lets a command run.
-pub(super) async fn consent(cfg: &Config, said: &str) -> Option<bool> {
+pub(super) async fn consent(settings: &Settings, said: &str) -> Option<bool> {
     let prompt = format!(
         "A coding agent asked {name} for permission to do one thing on his computer. He was shown exactly what, \
          and answered in his own words.\n\nHis answer:\n<answer>\n{said}\n</answer>\n\n\
@@ -299,7 +299,7 @@ pub(super) async fn consent(cfg: &Config, said: &str) -> Option<bool> {
          - unclear: only when his words give the agent nothing to go on: he hands the choice back (\"whatever you \
          think\"), asks a question, or is talking about something else.\n\
          When in doubt between allow and anything else, it is not allow.",
-        name = cfg.name,
+        name = settings.current().name,
         said = airband_core::prose::tail(said, 1000)
     );
     #[derive(Deserialize)]
@@ -320,23 +320,23 @@ pub(super) async fn consent(cfg: &Config, said: &str) -> Option<bool> {
         "additionalProperties": false
     });
     // anything that is not exactly this shape with one of these three values settles nothing
-    match ask_json::<Out>(cfg, "whether his words allow it", prompt, Some(shape)).await.ok()?.verdict {
+    match ask_json::<Out>(settings, "whether his words allow it", prompt, Some(shape)).await.ok()?.verdict {
         Verdict::Allow => Some(true),
         Verdict::Refuse => Some(false),
         Verdict::Unclear => None,
     }
 }
 
-pub(super) async fn detail(cfg: &Config, item: &Item) -> String {
+pub(super) async fn detail(settings: &Settings, item: &Item) -> String {
     let prompt = format!(
         "Below is a message a coding agent wrote to {name}, who is driving. He heard this short version: \"{say}\" and asked for more.\n\
          Give the fuller spoken version: four to six sentences of plain spoken English covering what was done, what was found, and any open decision. \
          No file paths, code, lists or markdown. Do not repeat the short version word for word. Output only the words to be spoken.\n\n<message>\n{msg}\n</message>",
-        name = cfg.name,
+        name = settings.current().name,
         say = item.say.as_deref().unwrap_or(""),
         msg = airband_core::prose::tail(&item.full, 12000)
     );
-    match ask_model(cfg, prompt).await {
+    match ask_model(settings, prompt).await {
         Ok(t) => spoken(&t),
         Err(e) => {
             log(format!("no detail, reading the message instead: {e}"));
@@ -352,7 +352,7 @@ pub(super) async fn detail_of(app: &Arc<App>, id: &str) -> Option<String> {
         return Some(d);
     }
     let item = Item { id: entry.id.clone(), notice: false, full: entry.full.clone(), kind: entry.kind, say: entry.short.clone(), asked: None };
-    let d = detail(&app.cfg, &item).await;
+    let d = detail(&app.settings, &item).await;
     let mut inner = app.change();
     if let Some(e) = inner.log.iter_mut().find(|e| e.id == id) {
         e.detail = Some(d.clone());
