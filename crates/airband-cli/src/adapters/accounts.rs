@@ -108,20 +108,16 @@ enum ByTower {
     Said(Result<Accounts, String>),
 }
 
-fn by_tower(sent: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> ByTower {
-    let mut res = match sent {
-        Ok(res) => res,
+fn by_tower(sent: Result<airband_io::http::Said<Accounts>, ureq::Error>) -> ByTower {
+    use airband_io::http::Said;
+    ByTower::Said(match sent {
         Err(ureq::Error::Io(e)) if e.kind() == std::io::ErrorKind::ConnectionRefused => return ByTower::NotRunning,
         Err(ureq::Error::ConnectionFailed) => return ByTower::NotRunning,
-        Err(ureq::Error::Timeout(_)) => return ByTower::Said(Err("airband on this computer did not answer in time. It may still be doing it: look again with: airband accounts".into())),
-        Err(e) => return ByTower::Said(Err(format!("airband on this computer could not be asked: {e}"))),
-    };
-    let status = res.status().as_u16();
-    let Ok(text) = res.body_mut().read_to_string() else { return ByTower::Said(Err("airband's answer could not be read.".into())) };
-    // a 200 carries the accounts and nothing else; anything else carries why not
-    ByTower::Said(match status {
-        200 => serde_json::from_str::<Accounts>(&text).map_err(|_| "airband's answer could not be read.".to_string()),
-        n => Err(serde_json::from_str::<airband_core::radio::wire::Refusal>(&text).ok().and_then(|r| r.reason().map(String::from)).unwrap_or_else(|| format!("airband refused ({n})."))),
+        Err(ureq::Error::Timeout(_)) => Err("airband on this computer did not answer in time. It may still be doing it: look again with: airband accounts".into()),
+        Err(e) => Err(format!("airband on this computer could not be asked: {e}")),
+        Ok(Said::Took(now)) => Ok(now),
+        Ok(Said::No(no)) => Err(no.reason().map_or_else(|| format!("airband refused ({}).", no.status()), String::from)),
+        Ok(Said::Trouble(n)) => Err(format!("airband's answer could not be read ({n}).")),
     })
 }
 
@@ -157,13 +153,13 @@ pub(crate) fn accounts_command(cfg: &config::Config, args: &[String]) -> Result<
         }
     };
     match args.first().map(String::as_str) {
-        None => match by_tower(here.get(&wire::address::<wire::at::Accounts>(None, &wire::AccountsQuery { fresh: true })).config().http_status_as_error(false).build().call()) {
+        None => match by_tower(here.call::<wire::at::Accounts>(None, &wire::AccountsQuery { fresh: true }, None)) {
             ByTower::Said(now) => show(&now?),
             ByTower::NotRunning => show(&accounts()),
         },
         Some("use") => {
             let id = args.get(1).ok_or("Which account? airband accounts use <its email or number>")?;
-            match by_tower(here.post(<wire::at::UseAccount as wire::Endpoint>::PATH).config().http_status_as_error(false).build().send_json(airband_core::radio::UseAccount { harness: harness.to_string(), id: id.to_string() })) {
+            match by_tower(here.call::<wire::at::UseAccount>(None, &wire::Nothing {}, Some(&airband_core::radio::UseAccount { harness: harness.to_string(), id: id.to_string() }))) {
                 ByTower::Said(now) => show(&now?),
                 ByTower::NotRunning => {
                     use_account(harness, id)?.join().map_err(|_| "The switch ran into trouble partway; check which account is in use: airband accounts".to_string())?;
@@ -194,7 +190,7 @@ mod tests {
     fn a_tower_that_took_the_request_and_did_not_answer_in_time_is_not_taken_for_no_tower() {
         let (_held, port) = silent_tower();
         let agent = airband_io::http::agent(Duration::from_millis(500));
-        match by_tower(agent.post(format!("http://127.0.0.1:{port}/v1/radio/accounts/use")).send_json(serde_json::json!({}))) {
+        match by_tower(airband_io::http::call::<wire::at::UseAccount>(&agent, &format!("http://127.0.0.1:{port}"), &[], None, &wire::Nothing {}, Some(&airband_core::radio::UseAccount { harness: "t".into(), id: "1".into() }))) {
             ByTower::Said(Err(why)) => assert!(why.contains("did not answer in time"), "{why}"),
             other => panic!("a slow tower must not make the switch run here as well: {other:?}"),
         }
@@ -273,6 +269,6 @@ mod tests {
             l.local_addr().unwrap().port()
         };
         let agent = airband_io::http::agent(Duration::from_secs(5));
-        assert!(matches!(by_tower(agent.get(format!("http://127.0.0.1:{port}/v1/radio/accounts")).call()), ByTower::NotRunning));
+        assert!(matches!(by_tower(airband_io::http::call::<wire::at::Accounts>(&agent, &format!("http://127.0.0.1:{port}"), &[], None, &Default::default(), None)), ByTower::NotRunning));
     }
 }

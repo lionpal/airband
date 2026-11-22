@@ -23,3 +23,38 @@ pub fn sent(service: &Answering, res: Result<Response, Error>) -> Result<Respons
     let res = res.map_err(|_| service.unreachable())?;
     service.status(res.status().as_u16()).map(|_| res)
 }
+
+/// What one of airband's own typed routes said back ([`airband_core::radio::wire::Endpoint`]).
+#[derive(Debug)]
+pub enum Said<A> {
+    /// 200, with the route's own answer.
+    Took(A),
+    /// Refused, saying why.
+    No(airband_core::radio::wire::Refusal),
+    /// Any other status, or an answer that did not read as the route's: the status it came with.
+    Trouble(u16),
+}
+
+/// Call one of airband's own typed routes at `base` (`http://host:port`), with `headers` on the request: the
+/// address, method, query, body and answer all come from the endpoint, so no caller writes a path. An error is
+/// only a place that could not be reached.
+pub fn call<E: airband_core::radio::wire::Endpoint>(agent: &Agent, base: &str, headers: &[(&str, &str)], id: Option<&str>, query: &E::Query, body: Option<&E::Body>) -> Result<Said<E::Answer>, Error> {
+    use airband_core::radio::wire::{Method, Refusal, address};
+    let url = format!("{}{}", base.trim_end_matches('/'), address::<E>(id, query));
+    let mut res = match E::METHOD {
+        Method::Get => headers.iter().fold(agent.get(&url), |r, (k, v)| r.header(*k, *v)).call(),
+        Method::Delete => headers.iter().fold(agent.delete(&url), |r, (k, v)| r.header(*k, *v)).call(),
+        Method::Post => {
+            let req = headers.iter().fold(agent.post(&url), |r, (k, v)| r.header(*k, *v));
+            match body {
+                Some(body) => req.send_json(body),
+                None => req.send_empty(),
+            }
+        }
+    }?;
+    let status = res.status().as_u16();
+    Ok(match status {
+        200 => res.body_mut().read_json::<E::Answer>().map_or(Said::Trouble(status), Said::Took),
+        _ => res.body_mut().read_json::<Refusal>().map_or(Said::Trouble(status), Said::No),
+    })
+}

@@ -22,7 +22,7 @@ pub(crate) use accounts::*;
 pub(crate) use tower_client::*;
 
 use crate::config;
-use airband_core::agent::{Agent, AgentEvent, PermissionAsk, PermissionState};
+use airband_core::agent::{Agent, AgentEvent, PermissionAsk};
 use airband_core::radio::{Account, Accounts};
 use serde_json::Value;
 use std::io::Read;

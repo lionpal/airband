@@ -98,6 +98,11 @@ pub fn prune_older(dir: &Path, age: std::time::Duration) {
     }
 }
 
+/// How long ago a file was last written; nothing when that cannot be read.
+pub fn age(path: &Path) -> Option<std::time::Duration> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok())
+}
+
 /// What is in a folder, each by its path. A folder that is not there holds nothing; any other failure to read
 /// it is an error, never "nothing there".
 pub fn entries(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
