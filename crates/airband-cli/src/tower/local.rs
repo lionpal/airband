@@ -78,11 +78,6 @@ fn healthy() -> bool {
     agent.get(format!("{}/health", address())).call().is_ok_and(|r| r.status().as_u16() == 200)
 }
 
-/// When a process started, as the system says it: what tells it from another that was later given its number.
-fn started(pid: u32) -> Option<String> {
-    let out = Command::new(crate::platform::PS).args(["-p", &pid.to_string(), "-o", "lstart="]).env("LC_ALL", "C").env("TZ", "UTC").output().ok().filter(|o| o.status.success())?;
-    Some(String::from_utf8_lossy(&out.stdout).split_whitespace().collect::<Vec<_>>().join(" ")).filter(|s| !s.is_empty())
-}
 
 /// A server left by a tower that was stopped: only the one this tower recorded starting (its process and
 /// the moment that process started, on two lines), and only if a process with that number still started at
@@ -91,8 +86,10 @@ fn end_the_last_one() {
     let note = dir().join("server.pid");
     let noted = airband_io::files::read_text(&note).ok().flatten().unwrap_or_default();
     let mut lines = noted.lines();
-    if let (Some(pid), Some(was)) = (lines.next().and_then(|p| p.trim().parse::<u32>().ok()), lines.next().filter(|p| !p.is_empty()))
-        && started(pid).as_deref() == Some(was)
+    // the moment is kept in seconds; a note from before that kept the system's words for it is read in those
+    let at = |t: &str| t.trim().parse::<u64>().ok().or_else(|| crate::platform::lstart(t));
+    if let (Some(pid), Some(was)) = (lines.next().and_then(|p| p.trim().parse::<u32>().ok()), lines.next().and_then(at))
+        && crate::platform::started(pid) == Some(was)
     {
         terminate(pid);
         std::thread::sleep(Duration::from_millis(600));
@@ -158,7 +155,7 @@ pub(crate) fn ensure(model: &str, server: &str, patience: Patience) -> Result<St
                 .spawn()
                 .map_err(|e| format!("the program that runs the model did not start: {e}"))?;
             // with the moment it started; one whose start cannot be read is not noted, and so is never ended later
-            if let Some(began) = started(child.id()) {
+            if let Some(began) = crate::platform::started(child.id()) {
                 // a note that cannot be kept means a later start cannot end this one: said, and the model still runs
                 if let Err(e) = airband_io::files::write_atomic(&dir().join("server.pid"), format!("{}\n{began}\n", child.id())) {
                     super::log(format!("the model program's note could not be kept: {e}"));

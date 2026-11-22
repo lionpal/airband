@@ -4,13 +4,12 @@ use super::*;
 
 /// Is the process a session's record names still that session? Its number alone could have been given to
 /// another program since; the moment it started could not.
+/// The record's start time is the system's own form (`ps -o lstart=` in English at UTC), read as a moment: one
+/// that does not read is no match.
 pub(super) fn running(pid: u32, started: &str) -> bool {
     #[cfg(unix)]
     {
-        // as Claude Code writes it: in English, by the clock at Greenwich
-        let Ok(out) = std::process::Command::new(crate::platform::PS).args(["-p", &pid.to_string(), "-o", "lstart="]).env("LC_ALL", "C").env("TZ", "UTC").output() else { return false };
-        let words = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ");
-        out.status.success() && !started.trim().is_empty() && words(&String::from_utf8_lossy(&out.stdout)) == words(started)
+        crate::platform::lstart(started).is_some_and(|at| crate::platform::started(pid) == Some(at))
     }
     #[cfg(not(unix))]
     {
@@ -47,7 +46,7 @@ pub(super) fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> b
             continue;
         }
         // the token its socket asks for: in a file of that process's, written when the same process started
-        let key = files.iter().filter(|p| p.extension().is_some_and(|e| e == "key") && p.file_name().is_some_and(|n| n.to_string_lossy().split('.').next() == Some(pid.to_string().as_str()))).find_map(|p| read(p).filter(|k| k["procStart"].as_str().map(str::trim) == Some(started.as_str())));
+        let key = files.iter().filter(|p| p.extension().is_some_and(|e| e == "key") && p.file_name().is_some_and(|n| n.to_string_lossy().split('.').next() == Some(pid.to_string().as_str()))).find_map(|p| read(p).filter(|k| k["procStart"].as_str().and_then(crate::platform::lstart).is_some_and(|at| crate::platform::lstart(&started) == Some(at))));
         let token = key.and_then(|k| k["peerToken"].as_str().filter(|t| !t.is_empty()).map(String::from));
         let transcript = transcript_of(claude, &id);
         open.push(super::super::Open {
