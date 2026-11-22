@@ -76,12 +76,45 @@ fn no_such(noun: &str, what: &str, said: &str, has: Option<&Setting>) -> String 
 /// Open a session (a new one, or `session` carried on), set it to what he asked for, say the agent is ready,
 /// and drive it until it ends. An error is the agent never having started.
 pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>, asked: Asked) -> Result<(), String> {
-    let send = |message: Value| held.write(&message.to_string());
-    // an answer to one of this driver's own requests, waited for; what he says meanwhile is kept
-    let mut early: VecDeque<Tell> = VecDeque::new();
-    let mut answer_to = |wanted: u64| -> Result<Value, String> {
+    let mut opening = Opening { held, early: VecDeque::new() };
+    let (session, made) = opening.open(session, mode)?;
+    let me = Agent { id: held.id.clone(), harness: held.harness.clone(), cwd: Some(held.cwd.clone()), name: None, title: None, pid: None, deliver: Some(Deliver::Held), meta: Default::default() };
+    // What it can be set to, as it opens. Then what he asked for.
+    let offered = offers(&made["configOptions"]);
+    let settings = opening.set_asked(&session, made["configOptions"].clone(), &asked)?;
+    held.ready(Some(session.clone()), offered);
+    post(&me, Event::Checkin);
+    // what it runs on, where the agent says: its own id for the model in use, and for how hard it thinks
+    let now = |category| setting(&settings, category).and_then(|s| s.now);
+    if let Some(model) = now(MODEL) {
+        post(&me, Event::Model { name: model, effort: now(EFFORT) });
+    }
+    drive(held, &session, &me, opening.early);
+    post(&me, Event::Signoff);
+    Ok(())
+}
+
+/// Tell the tower what the agent did.
+fn post(me: &Agent, event: Event) {
+    adapters::post(&AgentEvent { schema: SCHEMA.into(), agent: me.clone(), event, via: None });
+}
+
+fn send(held: &Held, message: Value) {
+    held.write(&message.to_string());
+}
+
+/// The agent while it opens: the answers to this driver's own requests are waited for, and what he says
+/// meanwhile is kept for when it is ready.
+struct Opening<'a> {
+    held: &'a Held,
+    early: VecDeque<Tell>,
+}
+
+impl Opening<'_> {
+    /// The answer to one of this driver's own requests.
+    fn answer_to(&mut self, wanted: u64) -> Result<Value, String> {
         loop {
-            match held.rx.recv_timeout(OPENING) {
+            match self.held.rx.recv_timeout(OPENING) {
                 Ok(Msg::Out(line)) => {
                     let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
                     if v["id"].as_u64() == Some(wanted) && v.get("method").is_none() {
@@ -92,69 +125,69 @@ pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>, aske
                     }
                     // what it replays of an old session while loading it is not news
                 }
-                Ok(Msg::Tell(tell)) => early.push_back(tell),
-                Ok(Msg::Gone) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Err(held.why("it ended before it had started")),
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return Err(held.why("it did not answer in two minutes")),
+                Ok(Msg::Tell(tell)) => self.early.push_back(tell),
+                Ok(Msg::Gone) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Err(self.held.why("it ended before it had started")),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return Err(self.held.why("it did not answer in two minutes")),
             }
         }
-    };
-
-    send(json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": 1, "clientCapabilities": { "fs": { "readTextFile": false, "writeTextFile": false }, "terminal": false }, "clientInfo": { "name": "airband", "version": env!("CARGO_PKG_VERSION") } } }));
-    let about = answer_to(1)?;
-    let (session, made) = match session {
-        // carried on, or not at all: a new session under an old agent's name would be a different agent
-        Some(session) => {
-            if about["agentCapabilities"]["loadSession"] != true {
-                return Err("this agent cannot carry a session on".into());
-            }
-            send(json!({ "jsonrpc": "2.0", "id": 2, "method": "session/load", "params": { "sessionId": session, "cwd": held.cwd, "mcpServers": [] } }));
-            let loaded = answer_to(2).map_err(|e| format!("its session could not be carried on: {e}"))?;
-            (session, loaded)
-        }
-        None => {
-            send(json!({ "jsonrpc": "2.0", "id": 3, "method": "session/new", "params": { "cwd": held.cwd, "mcpServers": [] } }));
-            let made = answer_to(3)?;
-            (made["sessionId"].as_str().ok_or("the agent opened no session")?.to_string(), made)
-        }
-    };
-    // the mode its launcher asks for, when the agent does not open in it: refused, it is not an agent he asked for
-    if let Some(mode) = mode.filter(|m| made["modes"]["currentModeId"] != **m) {
-        send(json!({ "jsonrpc": "2.0", "id": 4, "method": "session/set_mode", "params": { "sessionId": session, "modeId": mode } }));
-        answer_to(4).map_err(|e| format!("it would not be put in its \"{mode}\" mode: {e}"))?;
     }
-    let me = Agent { id: held.id.clone(), harness: held.harness.clone(), cwd: Some(held.cwd.clone()), name: None, title: None, pid: None, deliver: Some(Deliver::Held), meta: Default::default() };
-    let tell = |event: Event| {
-        adapters::post(&AgentEvent { schema: SCHEMA.into(), agent: me.clone(), event, via: None });
-    };
-    // What it can be set to, as it opens. Then what he asked for, the model first: which efforts there are
-    // can depend on it, and the agent lists its settings again after each change. One it does not have is
-    // not left out and the agent started without it.
-    let offered = offers(&made["configOptions"]);
-    let mut settings = made["configOptions"].clone();
-    for (category, noun, what, said, request) in [(MODEL, "model", "a model", &asked.model, 5), (EFFORT, "effort", "an effort", &asked.effort, 6)] {
-        let Some(said) = said else { continue };
-        let has = setting(&settings, category);
-        let (Some(s), Some(choice)) = (has.as_ref(), has.as_ref().and_then(|s| named(&s.choices, said))) else {
-            return Err(no_such(noun, what, said, has.as_ref()));
+
+    /// The session opened, or carried on, and in the mode its launcher asks for: its id, and what the agent
+    /// answered on opening it.
+    fn open(&mut self, session: Option<String>, mode: Option<&str>) -> Result<(String, Value), String> {
+        let held = self.held;
+        send(held, json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": 1, "clientCapabilities": { "fs": { "readTextFile": false, "writeTextFile": false }, "terminal": false }, "clientInfo": { "name": "airband", "version": env!("CARGO_PKG_VERSION") } } }));
+        let about = self.answer_to(1)?;
+        let (session, made) = match session {
+            // carried on, or not at all: a new session under an old agent's name would be a different agent
+            Some(session) => {
+                if about["agentCapabilities"]["loadSession"] != true {
+                    return Err("this agent cannot carry a session on".into());
+                }
+                send(held, json!({ "jsonrpc": "2.0", "id": 2, "method": "session/load", "params": { "sessionId": session, "cwd": held.cwd, "mcpServers": [] } }));
+                let loaded = self.answer_to(2).map_err(|e| format!("its session could not be carried on: {e}"))?;
+                (session, loaded)
+            }
+            None => {
+                send(held, json!({ "jsonrpc": "2.0", "id": 3, "method": "session/new", "params": { "cwd": held.cwd, "mcpServers": [] } }));
+                let made = self.answer_to(3)?;
+                (made["sessionId"].as_str().ok_or("the agent opened no session")?.to_string(), made)
+            }
         };
-        if s.now.as_deref() != Some(choice.id.as_str()) {
-            send(json!({ "jsonrpc": "2.0", "id": request, "method": "session/set_config_option", "params": { "sessionId": session, "configId": s.id, "value": choice.id } }));
-            let set = answer_to(request).map_err(|e| format!("it would not be set to {}: {e}", choice.id))?;
-            if !set["configOptions"].is_array() {
-                return Err(format!("it did not say whether it was set to {}", choice.id));
-            }
-            settings = set["configOptions"].clone();
+        // the mode its launcher asks for, when the agent does not open in it: refused, it is not an agent he asked for
+        if let Some(mode) = mode.filter(|m| made["modes"]["currentModeId"] != **m) {
+            send(held, json!({ "jsonrpc": "2.0", "id": 4, "method": "session/set_mode", "params": { "sessionId": session, "modeId": mode } }));
+            self.answer_to(4).map_err(|e| format!("it would not be put in its \"{mode}\" mode: {e}"))?;
         }
-    }
-    held.ready(Some(session.clone()), offered);
-    tell(Event::Checkin);
-    // what it runs on, where the agent says: its own id for the model in use, and for how hard it thinks
-    let now = |category| setting(&settings, category).and_then(|s| s.now);
-    if let Some(model) = now(MODEL) {
-        tell(Event::Model { name: model, effort: now(EFFORT) });
+        Ok((session, made))
     }
 
-    // one prompt at a time: what he says while it works waits here, in the order he said it
+    /// What he asked for, the model first: which efforts there are can depend on it, and the agent lists its
+    /// settings again after each change. One it does not have is not left out and the agent started without
+    /// it. Gives its settings as they now are.
+    fn set_asked(&mut self, session: &str, mut settings: Value, asked: &Asked) -> Result<Value, String> {
+        for (category, noun, what, said, request) in [(MODEL, "model", "a model", &asked.model, 5), (EFFORT, "effort", "an effort", &asked.effort, 6)] {
+            let Some(said) = said else { continue };
+            let has = setting(&settings, category);
+            let (Some(s), Some(choice)) = (has.as_ref(), has.as_ref().and_then(|s| named(&s.choices, said))) else {
+                return Err(no_such(noun, what, said, has.as_ref()));
+            };
+            if s.now.as_deref() != Some(choice.id.as_str()) {
+                send(self.held, json!({ "jsonrpc": "2.0", "id": request, "method": "session/set_config_option", "params": { "sessionId": session, "configId": s.id, "value": choice.id } }));
+                let set = self.answer_to(request).map_err(|e| format!("it would not be set to {}: {e}", choice.id))?;
+                if !set["configOptions"].is_array() {
+                    return Err(format!("it did not say whether it was set to {}", choice.id));
+                }
+                settings = set["configOptions"].clone();
+            }
+        }
+        Ok(settings)
+    }
+}
+
+/// Drive the open session until it ends: one prompt at a time, what he says while it works waiting here in the
+/// order he said it.
+fn drive(held: &Held, session: &str, me: &Agent, early: VecDeque<Tell>) {
     let (mut waiting, mut running, mut said, mut next_id) = (VecDeque::<String>::new(), None::<u64>, String::new(), 10u64);
     let mut early: VecDeque<Msg> = early.into_iter().map(Msg::Tell).collect();
     loop {
@@ -169,7 +202,7 @@ pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>, aske
             Msg::Tell(Tell::Say(text, _)) => waiting.push_back(text),
             Msg::Tell(Tell::Stop) => {
                 if running.is_some() {
-                    send(json!({ "jsonrpc": "2.0", "method": "session/cancel", "params": { "sessionId": session } }));
+                    send(held, json!({ "jsonrpc": "2.0", "method": "session/cancel", "params": { "sessionId": session } }));
                 }
             }
             Msg::Tell(Tell::End) => {
@@ -179,47 +212,17 @@ pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>, aske
             Msg::Out(line) => {
                 let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
                 match (v["method"].as_str(), v["id"].clone()) {
-                    (Some("session/update"), _) => {
-                        let update = &v["params"]["update"];
-                        match update["sessionUpdate"].as_str() {
-                            Some("agent_message_chunk") => said.push_str(update["content"]["text"].as_str().unwrap_or_default()),
-                            // what it is doing right now, in the agent's own few words for the step
-                            Some("tool_call") => {
-                                // what it writes after a step is a new paragraph of what it says
-                                if !said.trim_end().is_empty() && !said.ends_with("\n\n") {
-                                    said = format!("{}\n\n", said.trim_end());
-                                }
-                                if let Some(title) = update["title"].as_str().filter(|t| !t.trim().is_empty()) {
-                                    tell(Event::Activity { text: title.chars().take(80).collect() });
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
+                    (Some("session/update"), _) => on_update(&v["params"]["update"], &mut said, me),
                     // it asks leave to do something: he is asked, and his answer picks one of the choices it gave
-                    (Some("session/request_permission"), request) if !request.is_null() => {
-                        let (params, me, to_program) = (v["params"].clone(), me.clone(), held.to_program.clone());
-                        std::thread::spawn(move || {
-                            let outcome = leave(&params, me).and_then(|ask| adapters::ask_him(&ask)).and_then(|(allow, _)| option(&params, allow));
-                            let answer = json!({ "jsonrpc": "2.0", "id": request, "result": { "outcome": match outcome {
-                                Some(option) => json!({ "outcome": "selected", "optionId": option }),
-                                // No answer chooses nothing: waiting never becomes a yes.
-                                None => json!({ "outcome": "cancelled" }),
-                            } } });
-                            if let Some(to) = to_program.lock().unwrap().as_mut() {
-                                use std::io::Write;
-                                let _ = writeln!(to, "{answer}").and_then(|()| to.flush());
-                            }
-                        });
-                    }
+                    (Some("session/request_permission"), request) if !request.is_null() => ask_leave(held, v["params"].clone(), request, me.clone()),
                     // anything else it asks of its client is something this one said it does not do
-                    (Some(_), request) if !request.is_null() => send(json!({ "jsonrpc": "2.0", "id": request, "error": { "code": -32601, "message": "not supported by this client" } })),
+                    (Some(_), request) if !request.is_null() => send(held, json!({ "jsonrpc": "2.0", "id": request, "error": { "code": -32601, "message": "not supported by this client" } })),
                     // the prompt has ended. What it wrote in that turn is what it said; with nothing written
                     // it stopped, and when the turn failed the agent's own words say why.
                     (None, done) if done.as_u64().is_some() && done.as_u64() == running => {
                         running = None;
                         let text = std::mem::take(&mut said);
-                        tell(match (text.trim(), v.get("error")) {
+                        post(me, match (text.trim(), v.get("error")) {
                             ("", Some(e)) => Event::Stopped { why: Some(e["message"].as_str().unwrap_or("the agent gave no reason").to_string()) },
                             ("", None) => Event::Stopped { why: None },
                             (text, _) => Event::Said { text: text.to_string(), kind: None, turn: None },
@@ -235,12 +238,45 @@ pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>, aske
                 next_id += 1;
                 running = Some(next_id);
                 said.clear();
-                send(json!({ "jsonrpc": "2.0", "id": next_id, "method": "session/prompt", "params": { "sessionId": session, "prompt": [{ "type": "text", "text": text }] } }));
-                tell(Event::Working);
+                send(held, json!({ "jsonrpc": "2.0", "id": next_id, "method": "session/prompt", "params": { "sessionId": session, "prompt": [{ "type": "text", "text": text }] } }));
+                post(me, Event::Working);
             }
     }
-    tell(Event::Signoff);
-    Ok(())
+}
+
+/// Part of a turn as it goes: words of what it says, or a step it is taking.
+fn on_update(update: &Value, said: &mut String, me: &Agent) {
+    match update["sessionUpdate"].as_str() {
+        Some("agent_message_chunk") => said.push_str(update["content"]["text"].as_str().unwrap_or_default()),
+        // what it is doing right now, in the agent's own few words for the step
+        Some("tool_call") => {
+            // what it writes after a step is a new paragraph of what it says
+            if !said.trim_end().is_empty() && !said.ends_with("\n\n") {
+                *said = format!("{}\n\n", said.trim_end());
+            }
+            if let Some(title) = update["title"].as_str().filter(|t| !t.trim().is_empty()) {
+                post(me, Event::Activity { text: title.chars().take(80).collect() });
+            }
+        }
+        _ => {}
+    }
+}
+
+/// He is asked for leave, off this thread, and his answer goes back as one of the choices the agent gave.
+fn ask_leave(held: &Held, params: Value, request: Value, me: Agent) {
+    let to_program = held.to_program.clone();
+    std::thread::spawn(move || {
+        let outcome = leave(&params, me).and_then(|ask| adapters::ask_him(&ask)).and_then(|(allow, _)| option(&params, allow));
+        let answer = json!({ "jsonrpc": "2.0", "id": request, "result": { "outcome": match outcome {
+            Some(option) => json!({ "outcome": "selected", "optionId": option }),
+            // No answer chooses nothing: waiting never becomes a yes.
+            None => json!({ "outcome": "cancelled" }),
+        } } });
+        if let Some(to) = to_program.lock().unwrap().as_mut() {
+            use std::io::Write;
+            let _ = writeln!(to, "{answer}").and_then(|()| to.flush());
+        }
+    });
 }
 
 /// A request for leave of the agent's, as he is asked it. For a command (the protocol's `execute` kind, with

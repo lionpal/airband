@@ -99,32 +99,12 @@ fn drain(wire: &Wire, socket: &mut Socket, kept: &mut Vec<String>, ended: &mut b
 pub(crate) fn live(wire: &'static Wire, pass: Arc<dyn Fn() -> Option<Pass> + Send + Sync>, host: &dyn RadioHost, rate: u32, header: Vec<u8>, manual: bool) -> Result<Option<String>, ()> {
     // what goes first on every connection: a recording's header, for a service that wants one
     let header: Vec<Vec<u8>> = if wire.header { vec![header] } else { Vec::new() };
-    let lead = header.len();
+    let request = random_hex(16);
     // The pass is asked for and the connection opened on a thread of their own, while the microphone is already
     // being read here: he does not wait for either before he can talk.
-    let open = |request: &str| -> Receiver<Result<Socket, ()>> {
-        let (tx, rx) = channel();
-        let (pass, request) = (pass.clone(), request.to_string());
-        thread::spawn(move || {
-            // with no pass to be had there is nothing to connect with
-            let _ = tx.send(pass().ok_or(()).and_then(|grant| (wire.connect)(&grant, &request)));
-        });
-        rx
-    };
-    let mut request = random_hex(16);
-    let mut opening = open(&request);
-    let mut socket: Option<Socket> = None;
+    let opening = connect(wire, &pass, &request);
+    let mut stream = Stream { wire, pass, host, waiting: VecDeque::from(header.clone()), header, request, opening, socket: None, kept: Vec::new(), ended: false, shown: String::new() };
     let mut end = Endpointer::new(rate);
-    // audio from just before he was judged to be speaking, and whatever is said before the connection is up
-    let mut waiting: VecDeque<Vec<u8>> = VecDeque::from(header.clone());
-    let (mut kept, mut ended, mut shown) = (Vec::<String>::new(), false, String::new());
-    let tell = |kept: &[String], now: &str, shown: &mut String| {
-        let all = [kept.join(" "), now.to_string()].join(" ").trim().to_string();
-        if all != *shown {
-            *shown = all.clone();
-            host.hearing(all);
-        }
-    };
     // a microphone he left open is closed for him after this long: what he said is kept, and nothing is sent
     let began = Instant::now();
     const LEFT_OPEN: Duration = Duration::from_secs(240);
@@ -143,45 +123,17 @@ pub(crate) fn live(wire: &'static Wire, pass: Arc<dyn Fn() -> Option<Pass> + Sen
             }
         }
         let sending = manual || end.speaking;
-        waiting.push_back(bytes);
-        // with no connection for a long while, the oldest sound goes: two minutes are kept
-        while waiting.len() > 1200 {
-            waiting.remove(lead);
+        stream.keep(bytes, sending);
+        stream.connected()?;
+        if sending {
+            stream.send(manual)?;
         }
-        if !sending {
-            // not speaking yet: keep only the header and the last half second
-            while waiting.len() > 5 + lead {
-                waiting.remove(lead);
-            }
-        }
-        if socket.is_none() {
-            match opening.try_recv() {
-                Ok(Ok(s)) => socket = Some(s),
-                // nothing heard yet: the caller can listen another way. Something heard: keep it, and try again
-                Ok(Err(())) if kept.is_empty() => return Err(()),
-                Ok(Err(())) => opening = open(&request),
-                Err(_) => {}
-            }
-        }
-        if let (Some(s), true) = (socket.as_mut(), sending) {
-            let sent = waiting.drain(..).try_for_each(|chunk| s.send((wire.audio)(&request, &chunk)).map_err(|_| ()));
-            let heard = sent.and_then(|()| drain(wire, s, &mut kept, &mut ended));
-            match heard {
-                Ok(Some(now)) => tell(&kept, &now, &mut shown),
-                Ok(None) => {}
-                Err(()) if manual && !kept.is_empty() => ended = true,
-                Err(()) => return Err(()),
-            }
-        }
-        if manual && ended {
+        if manual && stream.ended {
             // the service closed its turn and he has not closed the microphone: carry on, in a new connection
             // if this service needs one
-            ended = false;
+            stream.ended = false;
             if wire.reopens {
-                socket = None;
-                request = random_hex(16);
-                opening = open(&request);
-                waiting = VecDeque::from(header.clone());
+                stream.reconnect();
             }
         }
         match verdict {
@@ -197,33 +149,131 @@ pub(crate) fn live(wire: &'static Wire, pass: Arc<dyn Fn() -> Option<Pass> + Sen
         return Ok(None);
     }
     host.status(RadioStatus::Sending);
-    // he has stopped: whatever was not sent yet goes now, then the end of the audio, then the last words come back
-    let last = || -> Result<(), ()> {
-        let mut s = match socket {
+    stream.finish()
+}
+
+/// The pass asked for and the connection opened, on a thread of their own.
+fn connect(wire: &'static Wire, pass: &Arc<dyn Fn() -> Option<Pass> + Send + Sync>, request: &str) -> Receiver<Result<Socket, ()>> {
+    let (tx, rx) = channel();
+    let (pass, request) = (pass.clone(), request.to_string());
+    thread::spawn(move || {
+        // with no pass to be had there is nothing to connect with
+        let _ = tx.send(pass().ok_or(()).and_then(|grant| (wire.connect)(&grant, &request)));
+    });
+    rx
+}
+
+/// One listening over the streaming connection: the connection or its opening, what waits to be sent, and what
+/// has been heard so far.
+struct Stream<'a> {
+    wire: &'static Wire,
+    pass: Arc<dyn Fn() -> Option<Pass> + Send + Sync>,
+    host: &'a dyn RadioHost,
+    /// What goes first on every connection.
+    header: Vec<Vec<u8>>,
+    request: String,
+    opening: Receiver<Result<Socket, ()>>,
+    socket: Option<Socket>,
+    /// Audio from just before he was judged to be speaking, and whatever is said before the connection is up.
+    waiting: VecDeque<Vec<u8>>,
+    kept: Vec<String>,
+    /// The service ended its turn.
+    ended: bool,
+    shown: String,
+}
+
+impl Stream<'_> {
+    /// A new connection, under a new request, its header first.
+    fn reconnect(&mut self) {
+        self.socket = None;
+        self.request = random_hex(16);
+        self.opening = connect(self.wire, &self.pass, &self.request);
+        self.waiting = VecDeque::from(self.header.clone());
+    }
+
+    /// Sound read from the microphone, kept until it can be sent.
+    fn keep(&mut self, bytes: Vec<u8>, sending: bool) {
+        let lead = self.header.len();
+        self.waiting.push_back(bytes);
+        // with no connection for a long while, the oldest sound goes: two minutes are kept
+        while self.waiting.len() > 1200 {
+            self.waiting.remove(lead);
+        }
+        if !sending {
+            // not speaking yet: keep only the header and the last half second
+            while self.waiting.len() > 5 + lead {
+                self.waiting.remove(lead);
+            }
+        }
+    }
+
+    /// The connection, once it is up. Err when it failed with nothing heard yet: the caller can listen another
+    /// way. With something heard it is kept, and the connection tried again.
+    fn connected(&mut self) -> Result<(), ()> {
+        if self.socket.is_none() {
+            match self.opening.try_recv() {
+                Ok(Ok(s)) => self.socket = Some(s),
+                Ok(Err(())) if self.kept.is_empty() => return Err(()),
+                Ok(Err(())) => self.opening = connect(self.wire, &self.pass, &self.request),
+                Err(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// What waits goes, and what has been heard comes back.
+    fn send(&mut self, manual: bool) -> Result<(), ()> {
+        let Some(s) = self.socket.as_mut() else { return Ok(()) };
+        let (wire, request) = (self.wire, &self.request);
+        let sent = self.waiting.drain(..).try_for_each(|chunk| s.send((wire.audio)(request, &chunk)).map_err(|_| ()));
+        match sent.and_then(|()| drain(wire, s, &mut self.kept, &mut self.ended)) {
+            Ok(Some(now)) => self.tell(&now),
+            Ok(None) => {}
+            Err(()) if manual && !self.kept.is_empty() => self.ended = true,
+            Err(()) => return Err(()),
+        }
+        Ok(())
+    }
+
+    /// Tell the host what he has said so far, when it has changed.
+    fn tell(&mut self, now: &str) {
+        let all = [self.kept.join(" "), now.to_string()].join(" ").trim().to_string();
+        if all != self.shown {
+            self.shown = all.clone();
+            self.host.hearing(all);
+        }
+    }
+
+    /// He has stopped: whatever was not sent yet goes now, then the end of the audio, then the last words come
+    /// back. With something already heard, a failure at the very end loses only the last words, not all of them.
+    fn finish(mut self) -> Result<Option<String>, ()> {
+        if self.last().is_err() && self.kept.is_empty() {
+            return Err(());
+        }
+        let said = self.kept.join(" ");
+        Ok((!said.is_empty()).then_some(said))
+    }
+
+    fn last(&mut self) -> Result<(), ()> {
+        let mut s = match self.socket.take() {
             Some(s) => s,
-            None => opening.recv_timeout(Duration::from_secs(12)).map_err(|_| ())??,
+            None => self.opening.recv_timeout(Duration::from_secs(12)).map_err(|_| ())??,
         };
-        for chunk in waiting.drain(..) {
-            s.send((wire.audio)(&request, &chunk)).map_err(|_| ())?;
+        for chunk in self.waiting.drain(..) {
+            s.send((self.wire.audio)(&self.request, &chunk)).map_err(|_| ())?;
         }
         // a turn it ended while he was still talking is not the end that is waited for now
-        ended = false;
-        s.send((wire.end)(&request)).map_err(|_| ())?;
+        self.ended = false;
+        s.send((self.wire.end)(&self.request)).map_err(|_| ())?;
         let until = Instant::now() + Duration::from_secs(5);
-        while !ended && Instant::now() < until {
-            if let Some(now) = drain(wire, &mut s, &mut kept, &mut ended)? {
-                tell(&kept, &now, &mut shown);
+        while !self.ended && Instant::now() < until {
+            if let Some(now) = drain(self.wire, &mut s, &mut self.kept, &mut self.ended)? {
+                self.tell(&now);
             }
         }
         let _ = s.close(None);
         Ok(())
-    };
-    // with something already heard, a failure at the very end loses only the last words, not all of them
-    if last().is_err() && kept.is_empty() {
-        return Err(());
     }
-    let said = kept.join(" ");
-    Ok((!said.is_empty()).then_some(said))
 }
 
 /// A recording played in place of the microphone, at the speed it was spoken, for the tests: it hears what a

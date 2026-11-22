@@ -148,19 +148,10 @@ fn told(held: &Held, tell: Tell, line: &str, stop: Option<&str>) {
     }
 }
 
+/// Run a coding tool's program held for the tower (`airband hold --sock … --by … -- program args`), driving it
+/// as `--by` says until it ends.
 pub fn run(args: &[String]) -> Result<(), String> {
-    let mut it = args.iter();
-    let mut named: std::collections::BTreeMap<&str, String> = Default::default();
-    let mut argv: Vec<String> = Vec::new();
-    while let Some(a) = it.next() {
-        match a.as_str() {
-            "--" => argv = it.by_ref().cloned().collect(),
-            flag @ ("--sock" | "--cwd" | "--id" | "--harness" | "--by" | "--line" | "--stop" | "--session" | "--mode" | "--model" | "--effort") => {
-                named.insert(&flag[2..], it.next().cloned().ok_or_else(|| format!("airband hold: {flag} needs a value"))?);
-            }
-            other => return Err(format!("airband hold does not take \"{other}\"")),
-        }
-    }
+    let (named, argv) = flags(args)?;
     let sock = named.get("sock").cloned().ok_or("airband hold needs --sock")?;
     let (program, rest) = argv.split_first().ok_or("airband hold needs a program after --")?;
     // which of the two drivers: the tower always says, and nothing is assumed when it does not
@@ -170,33 +161,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
         libc::signal(libc::SIGHUP, libc::SIG_IGN);
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
     }
-    let _ = std::fs::remove_file(&sock);
-    let listener = UnixListener::bind(&sock).map_err(|e| format!("cannot open {sock}: {e}"))?;
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600));
-    }
     let state = Arc::new(Mutex::new(State::Starting));
     let (tx, rx) = mpsc::channel::<Msg>();
-    {
-        let (state, tx) = (state.clone(), tx.clone());
-        std::thread::spawn(move || {
-            for conn in listener.incoming() {
-                let Ok(mut conn) = conn else { continue };
-                let mut said = String::new();
-                if conn.read_to_string(&mut said).is_err() {
-                    continue;
-                }
-                for line in said.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()) {
-                    if line.get("status").is_some() {
-                        let _ = writeln!(conn, "{}", serde_json::to_string(&*state.lock().unwrap()).unwrap());
-                    } else if let Some(tell) = Tell::read(&line) {
-                        let _ = tx.send(Msg::Tell(tell));
-                    }
-                }
-            }
-        });
-    }
+    listen(&sock, state.clone(), tx.clone())?;
     let cwd = named.get("cwd").cloned().unwrap_or_else(|| std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default());
     let mut command = Command::new(program);
     command.args(rest).current_dir(&cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -209,32 +176,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let outcome = match command.spawn() {
         Err(e) => Err(format!("{program} did not start: {e}")),
         Ok(mut child) => {
-            if let Some(out) = child.stdout.take() {
-                let (tx, wanted) = (tx.clone(), by == "acp");
-                std::thread::spawn(move || {
-                    for line in std::io::BufReader::new(out).split(b'\n').map_while(Result::ok) {
-                        if wanted {
-                            let _ = tx.send(Msg::Out(String::from_utf8_lossy(&line).into_owned()));
-                        }
-                    }
-                    let _ = tx.send(Msg::Gone);
-                });
-            }
-            if let Some(err) = child.stderr.take() {
-                let errors = errors.clone();
-                std::thread::spawn(move || {
-                    for line in std::io::BufReader::new(err).lines().map_while(Result::ok) {
-                        let mut kept = errors.lock().unwrap();
-                        kept.push_str(&line);
-                        kept.push('\n');
-                        // the last of it is what says why
-                        let over = kept.chars().count().saturating_sub(600);
-                        if over > 0 {
-                            *kept = kept.chars().skip(over).collect();
-                        }
-                    }
-                });
-            }
+            pass_output(&mut child, tx, by == "acp");
+            keep_errors(&mut child, errors.clone());
             let held = Held { id: named.get("id").cloned().unwrap_or_default(), harness: named.get("harness").cloned().unwrap_or_default(), cwd, rx, to_program: Arc::new(Mutex::new(child.stdin.take())), state: state.clone(), errors };
             let done = match by {
                 "lines" => lines(&held, named.get("line").ok_or("airband hold --by lines needs --line")?, named.get("stop").map(String::as_str)),
@@ -242,15 +185,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
                 other => Err(format!("this version of airband does not drive a program by \"{other}\"")),
             };
             held.close_input();
-            // asked to finish, it is given a moment to; then it is ended
-            for _ in 0..150 {
-                if child.try_wait().is_ok_and(|ended| ended.is_some()) {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(20));
-            }
-            let _ = child.kill();
-            let _ = child.wait();
+            end(&mut child);
             done
         }
     };
@@ -260,14 +195,107 @@ pub fn run(args: &[String]) -> Result<(), String> {
         std::thread::sleep(Duration::from_secs(15));
     }
     let _ = std::fs::remove_file(&sock);
-    // Whatever the program started and left behind (a package runner's child, a server of the tool's own) goes
-    // with it. The tower starts each holder as the leader of a group of its own; one that is not, is not
-    // the keeper of the group it is in, and ends nothing but its own program.
+    end_group();
+    outcome
+}
+
+/// The flags it was given, by name, and the program and its arguments after `--`.
+fn flags(args: &[String]) -> Result<(std::collections::BTreeMap<&str, String>, Vec<String>), String> {
+    let mut it = args.iter();
+    let mut named: std::collections::BTreeMap<&str, String> = Default::default();
+    let mut argv: Vec<String> = Vec::new();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--" => argv = it.by_ref().cloned().collect(),
+            flag @ ("--sock" | "--cwd" | "--id" | "--harness" | "--by" | "--line" | "--stop" | "--session" | "--mode" | "--model" | "--effort") => {
+                named.insert(&flag[2..], it.next().cloned().ok_or_else(|| format!("airband hold: {flag} needs a value"))?);
+            }
+            other => return Err(format!("airband hold does not take \"{other}\"")),
+        }
+    }
+    Ok((named, argv))
+}
+
+/// The socket the tower talks to it through, open to this user only: asked how it stands, it says; told
+/// something for the agent, it passes it on.
+fn listen(sock: &str, state: Arc<Mutex<State>>, tx: mpsc::Sender<Msg>) -> Result<(), String> {
+    let _ = std::fs::remove_file(sock);
+    let listener = UnixListener::bind(sock).map_err(|e| format!("cannot open {sock}: {e}"))?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(sock, std::fs::Permissions::from_mode(0o600));
+    }
+    std::thread::spawn(move || {
+        for conn in listener.incoming() {
+            let Ok(mut conn) = conn else { continue };
+            let mut said = String::new();
+            if conn.read_to_string(&mut said).is_err() {
+                continue;
+            }
+            for line in said.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()) {
+                if line.get("status").is_some() {
+                    let _ = writeln!(conn, "{}", serde_json::to_string(&*state.lock().unwrap()).unwrap());
+                } else if let Some(tell) = Tell::read(&line) {
+                    let _ = tx.send(Msg::Tell(tell));
+                }
+            }
+        }
+    });
+    Ok(())
+}
+
+/// What the program writes, line by line, for a driver that reads it; and that it has ended.
+fn pass_output(child: &mut std::process::Child, tx: mpsc::Sender<Msg>, wanted: bool) {
+    if let Some(out) = child.stdout.take() {
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(out).split(b'\n').map_while(Result::ok) {
+                if wanted {
+                    let _ = tx.send(Msg::Out(String::from_utf8_lossy(&line).into_owned()));
+                }
+            }
+            let _ = tx.send(Msg::Gone);
+        });
+    }
+}
+
+/// The last of what the program writes as errors, which is what says why it failed.
+fn keep_errors(child: &mut std::process::Child, errors: Arc<Mutex<String>>) {
+    if let Some(err) = child.stderr.take() {
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(err).lines().map_while(Result::ok) {
+                let mut kept = errors.lock().unwrap();
+                kept.push_str(&line);
+                kept.push('\n');
+                // the last of it is what says why
+                let over = kept.chars().count().saturating_sub(600);
+                if over > 0 {
+                    *kept = kept.chars().skip(over).collect();
+                }
+            }
+        });
+    }
+}
+
+/// Asked to finish, it is given a moment to; then it is ended.
+fn end(child: &mut std::process::Child) {
+    for _ in 0..150 {
+        if child.try_wait().is_ok_and(|ended| ended.is_some()) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Whatever the program started and left behind (a package runner's child, a server of the tool's own) goes
+/// with it. The tower starts each holder as the leader of a group of its own; one that is not, is not
+/// the keeper of the group it is in, and ends nothing but its own program.
+fn end_group() {
     unsafe {
         if libc::getpgrp() == libc::getpid() {
             libc::signal(libc::SIGTERM, libc::SIG_IGN);
             libc::kill(0, libc::SIGTERM);
         }
     }
-    outcome
 }
