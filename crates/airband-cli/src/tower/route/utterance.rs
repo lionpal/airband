@@ -124,8 +124,8 @@ async fn leave(app: &Arc<App>, text: &str, said: &airband_core::radio::Utterance
 /// A new agent: the answer to "Which project?" asked about an idea just now, or one asked for from a radio's own
 /// screen, which names its team by id and needs no reading. `None` when this is not about a new agent.
 async fn new_agent(app: &Arc<App>, radio: &str, text: &str, said: &airband_core::radio::Utterance, files: &str, projects: &[Place]) -> Option<Reply> {
-    // Words that answer the question by its id: a model says with which project. The idea is let go either way:
-    // the next thing he said after the question was this, and it named none.
+    // Words that answer the question by its id take the idea, and a model says with which project; when they
+    // name none, the idea is let go. Words that answer nothing leave it held.
     let held_idea = {
         let mut inner = app.passing();
         let call = inner.call(radio);

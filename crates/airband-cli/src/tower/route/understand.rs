@@ -132,7 +132,8 @@ pub(in crate::tower) async fn route(app: &Arc<App>, radio: &str, rest: &str, re:
 }
 
 /// The room as it stands, or (as `Err`) the agent he is answering when he tapped one of its messages: that is
-/// certain, and it goes to the agent that said it, whatever that agent is called now, and to nobody if that agent has gone.
+/// certain, and it goes to the agent that said it, whatever that agent is called now. When that agent has gone,
+/// his words are read against the room like any others.
 fn scene(app: &App, radio: &str, re: Option<&str>, room: Option<&str>) -> Result<Scene, Box<Session>> {
     let within = |s: &Session| room.is_none_or(|g| s.team == g);
     let inner = app.read();
