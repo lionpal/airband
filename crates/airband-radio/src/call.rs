@@ -37,18 +37,20 @@ pub(crate) fn poll(with: Polling) {
     // arrived, gives that one again
     let mut have = String::new();
     while !stop.load(Ordering::SeqCst) {
+        // the turn first: a call started after the look below still ends the sleep
+        let turn = wake.turn();
         if !calling.load(Ordering::SeqCst) {
             // not in call mode: ask for nothing, so the tower keeps transmissions for the chat or for later
             online = false;
             joined = true;
-            wake.wait(Duration::from_secs(30));
+            wake.wait_since(turn, Duration::from_secs(30));
             continue;
         }
         // with no voice chosen there is nothing to read with: nothing is asked for, and it all stays in the chat
         if !voice::can_speak(&senses.mouth) {
             online = false;
             joined = true;
-            wake.wait(Duration::from_secs(5));
+            wake.wait_since(turn, Duration::from_secs(5));
             continue;
         }
         // the first request after he turned reading aloud on says so, and only that one: the tower leaves old

@@ -15,10 +15,15 @@ impl Wake {
         *self.turn.lock().unwrap() += 1;
         self.rung.notify_all();
     }
-    /// Sleep until rung, or for `at_most`.
-    pub(crate) fn wait(&self, at_most: Duration) {
+    /// How many times it has been rung: taken before looking at what there is to do, so a ring that comes
+    /// after the look and before the sleep still wakes it (`wait_since`).
+    pub(crate) fn turn(&self) -> u64 {
+        *self.turn.lock().unwrap()
+    }
+    /// Sleep until rung since `was` (from [`Self::turn`]), or for `at_most`. Returns at once if it was rung
+    /// meanwhile.
+    pub(crate) fn wait_since(&self, was: u64, at_most: Duration) {
         let turn = self.turn.lock().unwrap();
-        let was = *turn;
         let _ = self.rung.wait_timeout_while(turn, at_most, |now| *now == was);
     }
 }
