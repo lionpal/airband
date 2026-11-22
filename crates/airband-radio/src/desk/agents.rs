@@ -92,8 +92,10 @@ impl Desk {
         let pick = match to {
             DeskTeamPick::Room { room } => {
                 let state = self.shared.state.lock().unwrap();
-                let (there, team, _) = state.room(&room).ok_or(crate::choices::told(NO_TEAM))?;
-                if !Arc::ptr_eq(&there, &radio) {
+                let (_, team, _) = state.room(&room).ok_or(crate::choices::told(NO_TEAM))?;
+                // the same computer, by its id
+                let here = state.with_agent(&agent).map(|s| s.id());
+                if here.is_none() || here != state.room_computer(&room) {
                     return Err(RadioError::Told { reason: "An agent can only move to a team on its own computer.".into() });
                 }
                 airband_core::radio::TeamPick::Team { id: team }

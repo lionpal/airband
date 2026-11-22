@@ -37,10 +37,13 @@ impl Wake {
 pub(crate) struct Kept {
     pub(crate) session: Arc<Session>,
     pub(crate) store: Arc<Store>,
+    /// The record of how requests went, beside the saved chat on this device.
+    pub(crate) trail: Arc<crate::link::Trail>,
 }
 impl Kept {
     pub(crate) fn open(data_dir: &str, host: Arc<dyn RadioHost>) -> Kept {
-        Kept { session: Arc::default(), store: Arc::new(Store::open(data_dir, Some(host))) }
+        let trail = crate::link::Trail::open((!data_dir.is_empty()).then(|| std::path::Path::new(data_dir).join("trail.json")));
+        Kept { session: Arc::default(), store: Arc::new(Store::open(data_dir, Some(host))), trail }
     }
 }
 
@@ -73,7 +76,7 @@ impl Radio {
         senses.mouth.set(Some(mouth::Own::Host));
         senses.ears.set(Some(ears::Own::Host));
         let kept = Kept::open(&data_dir, host.clone());
-        Self::start_with(link, &data_dir, host, Arc::new(senses), kept, None)
+        Self::start_with(link, host, Arc::new(senses), kept, None)
     }
 
     /// Chat, for a bad connection: take what he typed and keep trying until the tower has it. Returns at
@@ -122,12 +125,10 @@ impl Radio {
     /// As [`Radio::start`], listening and speaking with what he chose on this device, and with what is kept for
     /// him on this computer's behalf ([`Kept`]).
     /// `transport`, when given, carries every request in place of the network ([`crate::link::Transport`]).
-    pub(crate) fn start_with(link: String, data_dir: &str, host: Arc<dyn RadioHost>, senses: Arc<Senses>, kept: Kept, transport: Option<Arc<dyn crate::link::Transport>>) -> Result<Arc<Self>, RadioError> {
-        let Kept { session, store } = kept;
+    pub(crate) fn start_with(link: String, host: Arc<dyn RadioHost>, senses: Arc<Senses>, kept: Kept, transport: Option<Arc<dyn crate::link::Transport>>) -> Result<Arc<Self>, RadioError> {
+        let Kept { session, store, trail } = kept;
         let me = store.saved.lock().unwrap().radio.clone();
         let me = if me.is_empty() { store.change(|s| { s.radio = format!("radio-{}", random_hex(4)); s.radio.clone() }) } else { me };
-        // the record of what failed is kept beside the saved chat, on this device
-        let trail = (!data_dir.is_empty()).then(|| std::path::Path::new(&data_dir).join("trail.json"));
         let link = Pairing::parse(&link).and_then(|p| Link::new(p, &me, trail)).map_err(|reason| RadioError::BadLink { reason })?;
         let link = match transport {
             Some(transport) => link.through(transport),
@@ -157,7 +158,7 @@ impl Radio {
 
     /// What this radio keeps for him that outlasts it: the next radio started for this computer takes it over.
     pub(crate) fn kept(&self) -> Kept {
-        Kept { session: self.session.clone(), store: self.store.clone() }
+        Kept { session: self.session.clone(), store: self.store.clone(), trail: self.link.trail.clone() }
     }
 
     /// Is this computer being reached straight, on its own network, and not through the relay?
@@ -493,13 +494,14 @@ impl Radio {
             loop {
                 match self.link.attachment_part(part) {
                     Ok(answer) => return Ok(answer),
-                    Err(e) if e.refused() => return Err(e.into()),
+                    // a no, or what will never go however often it is sent (more than the relay carries): at once
+                    Err(e) if e.retry() == Retry::Never => return Err(e.into()),
                     Err(_) if tries < 6 => {
                         tries += 1;
                         thread::sleep(Duration::from_secs(tries.min(4)));
                     }
                     // a file cannot be left with the relay: it needs his computer there to take it
-                    Err(_) => return Err(RadioError::Offline),
+                    Err(e) => return Err(e.into()),
                 }
             }
         };

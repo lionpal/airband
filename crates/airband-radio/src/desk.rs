@@ -264,6 +264,10 @@ impl State {
     fn room(&self, room: &str) -> Option<(Arc<Radio>, String, String)> {
         self.computers.iter().find_map(|s| s.agents.iter().find(|a| a.room == room).map(|a| (s.radio.clone(), a.team.clone(), a.group.clone())))
     }
+    /// Which computer a room on his screen is on, by its id.
+    fn room_computer(&self, room: &str) -> Option<StationId> {
+        self.computers.iter().find(|s| s.agents.iter().any(|a| a.room == room)).map(|s| s.id())
+    }
     /// The computer a message is in.
     fn owner(&self, message: &str) -> Option<&Computer> {
         self.computers.iter().find(|s| s.messages.iter().any(|m| m.id == message))
@@ -465,7 +469,7 @@ impl Desk {
         let host: Arc<dyn RadioHost> = Arc::new(ComputerHost { shared: self.shared.clone(), station: station_id(link) });
         let kept = kept.unwrap_or_else(|| Kept::open(&dir, host.clone()));
         let transport = self.shared.dial.as_ref().map(|dial| dial(link));
-        Radio::start_with(link.to_string(), &dir, host, self.shared.senses.clone(), kept, transport)
+        Radio::start_with(link.to_string(), host, self.shared.senses.clone(), kept, transport)
     }
     /// A new connection for each of these computers, by id. Everything else about each computer stays: what was
     /// last seen of it, and what is kept for him on its behalf.

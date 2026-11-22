@@ -42,7 +42,14 @@ impl Desk {
     /// Words of his own sent as the answer to that message.
     pub fn answer(&self, message_id: String, text: String) {
         let Some(radio) = self.owner_or_say(&message_id) else { return };
-        self.shared.state.lock().unwrap().answered.insert(message_id.clone());
+        {
+            let mut state = self.shared.state.lock().unwrap();
+            state.answered.insert(message_id.clone());
+            // the files that have arrived on that computer leave with his answer: they leave the tray too
+            if let Some(there) = state.owner(&message_id).map(|s| s.id()) {
+                state.uploads.retain(|u| !(u.station == there && u.shown.state == UploadState::Ready));
+            }
+        }
         radio.queue(text, Some(message_id), None, None);
         self.shared.host.changed();
     }
@@ -132,8 +139,9 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
     let text = text.trim().to_string();
     let (radio, text, re, scope, others, to) = {
         let mut state = shared.state.lock().unwrap();
-        // nothing typed is still something to send when files are attached: the files themselves
-        if state.computers.is_empty() || (text.is_empty() && state.uploads.is_empty()) {
+        // nothing typed is still something to send when files have arrived: the files themselves. Files still
+        // on their way are not yet anything to send
+        if state.computers.is_empty() || (text.is_empty() && !state.uploads.iter().any(|u| u.shown.state == UploadState::Ready)) {
             return;
         }
         // something new said: whatever was waiting to be placed is let go
