@@ -29,6 +29,8 @@ mod pass;
 pub(crate) use pass::*;
 
 /// Said when he opens the microphone with nothing chosen to listen with.
+/// What he is told when the listening service he chose is not one this build knows.
+pub(crate) const UNKNOWN_SERVICE: &str = "This version of airband does not know that listening service.";
 pub(crate) const NOTHING_CHOSEN: &str = "Nothing is chosen to listen with on this device. Choose it in Settings, under Listening.";
 
 /// How a dialect gets its pass: from the row, the service's name, his settings and his key.
@@ -152,7 +154,7 @@ impl Chosen {
 /// A pass from a live service for a key. Err says why not, in words for him.
 #[cfg(test)]
 pub(crate) fn pass_for(with: &Use) -> Result<Pass, String> {
-    let (provider, offer) = with.offer(Job::Ears).ok_or("This version of airband does not know that listening service.")?;
+    let (provider, offer) = with.offer(Job::Ears).ok_or(UNKNOWN_SERVICE)?;
     let l = live(&offer).ok_or("That service does not listen live.")?;
     let set = with.settings(Job::Ears);
     Ok(Pass { dialect: l.is.name.into(), token: (l.pass)(&offer.by, &provider, &set, &with.key)?, set, phrases: Vec::new(), by: offer.by.clone() })
@@ -160,7 +162,7 @@ pub(crate) fn pass_for(with: &Use) -> Result<Pass, String> {
 
 /// Does this service listen with this key and these settings? One real call to it.
 pub(crate) fn check(with: &Use) -> Result<(), String> {
-    let (provider, offer) = with.offer(Job::Ears).ok_or("This version of airband does not know that listening service.")?;
+    let (provider, offer) = with.offer(Job::Ears).ok_or(UNKNOWN_SERVICE)?;
     match live(&offer) {
         Some(l) => (l.pass)(&offer.by, &provider, &with.settings(Job::Ears), &with.key).map(|_| ()),
         None => crate::hears::check(with),

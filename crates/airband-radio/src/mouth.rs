@@ -106,7 +106,7 @@ impl Mouth {
     /// A sentence in the device's own voice as it is now set, for a "hear it" button. Blocks while it is made.
     pub(crate) fn sample(&self, host: ByHost) -> Result<VoiceSample, RadioError> {
         const SAMPLE: &str = "Shop two is waiting. The build passed, and it wants to know whether to push.";
-        let told = |reason: String| RadioError::Told { reason };
+        let told = |reason: String| crate::choices::told(reason);
         let rate = self.rate().map_err(told)?;
         let mut pcm = Vec::new();
         self.speak(host, SAMPLE, &mut |part| pcm.extend_from_slice(part), &mut |_, _| {}, &|| false).map_err(told)?;

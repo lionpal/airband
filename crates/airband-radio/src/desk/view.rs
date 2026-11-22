@@ -109,12 +109,11 @@ impl Desk {
             AgentState::Stalled => 3,
             AgentState::Asking => 4,
         };
-        let tools = crate::services::coding_tools();
         let mut rooms: Vec<DeskRoom> = Vec::new();
         // what an agent is waiting on him for: its newest question still open
         let asked = |a: &ChatAgent| all.iter().rev().find(|m| m.needs_you && m.agent.as_deref() == Some(a.id.as_str()) && state.is_open(&m.id));
         for a in &agents {
-            let member = DeskMember { tool_name: tools.iter().find(|t| t.id == a.harness).map(|t| t.name.clone()).unwrap_or_default(), id: a.id.clone(), callsign: a.callsign.clone(), state: a.state, subagents: a.subagents, doing: a.doing.clone(), held: a.held, terminal: a.terminal, ends: a.ends, unread: unread_from.get(a.id.as_str()).copied().unwrap_or(0), question: asked(a).map(|m| m.text.clone()).unwrap_or_default(), question_id: asked(a).map(|m| m.id.clone()).unwrap_or_default(), harness: a.harness.clone(), badge: a.badge.clone(), model: a.model.clone().unwrap_or_default(), effort: a.effort.clone().unwrap_or_default(), number: a.number.clone(), station: if state.computers.len() > 1 { state.computers.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(|s| s.id().to_string()).unwrap_or_default() } else { String::new() } };
+            let member = DeskMember { tool_name: crate::services::tool_name(&a.harness).unwrap_or_default(), id: a.id.clone(), callsign: a.callsign.clone(), state: a.state, subagents: a.subagents, doing: a.doing.clone(), held: a.held, terminal: a.terminal, ends: a.ends, unread: unread_from.get(a.id.as_str()).copied().unwrap_or(0), question: asked(a).map(|m| m.text.clone()).unwrap_or_default(), question_id: asked(a).map(|m| m.id.clone()).unwrap_or_default(), harness: a.harness.clone(), badge: a.badge.clone(), model: a.model.clone().unwrap_or_default(), effort: a.effort.clone().unwrap_or_default(), number: a.number.clone(), station: if state.computers.len() > 1 { state.computers.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(|s| s.id().to_string()).unwrap_or_default() } else { String::new() } };
             // what the team is doing is said in the name of whoever is doing it, without the team's own name
             let doing = a.doing.as_ref().map(|d| match Some(a.number.as_str()).filter(|rest| !rest.is_empty()) {
                 Some(who) => format!("{who}: {d}"),
@@ -142,6 +141,7 @@ impl Desk {
                 quick.push(q.clone());
             }
         }
+        let tools = crate::services::coding_tools();
         let used: Vec<crate::services::CodingTool> = self.shared.chooser.tools().iter().filter_map(|id| tools.iter().find(|t| t.id == *id).cloned()).collect();
         let away: Vec<String> = if state.computers.len() > 1 { state.computers.iter().filter(|s| s.tried && !s.online).map(|s| state.computer_name(&s.id())).collect() } else { Vec::new() };
         let view = DeskView {

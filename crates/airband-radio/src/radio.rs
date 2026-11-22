@@ -376,7 +376,7 @@ impl Radio {
     /// at once afterwards and without a connection. Returns the file's path. Blocks: call it off the main thread.
     pub(crate) fn picture(&self, id: String) -> Result<String, RadioError> {
         // a picture's id is the hex its computer gave it: anything else names no picture there
-        if id.is_empty() || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        if !airband_core::encode::is_hex(&id, 1..=128) {
             return Err(RadioError::gone("picture"));
         }
         let file = self.store.pictures().join(format!("{id}.jpg"));

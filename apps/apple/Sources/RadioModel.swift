@@ -347,7 +347,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     @Published var choices: [ChoiceJob: [Choice]] = [:]
 
     /// What he is told when a computer could not be asked.
-    static let unreached = "Cannot reach that computer."
+    static let unreached = "Your computer could not be reached."
 
     /// What went wrong, in words for him: the reason the computer gave when it gave one, that it cannot be
     /// reached when it cannot, and otherwise `fallback`, which says what did not happen.

@@ -45,7 +45,7 @@ struct NewAgentSheet: View {
                     }
                     if model.usedTools.count > 1 {
                         label("Coding agent")
-                        chips(model.usedTools.map { ($0.id, $0.name, "harness-\($0.id)") }, chosen: tool) { tool = $0 }
+                        chips(model.usedTools.map { ($0.id, $0.name, Marks.tool($0.id)) }, chosen: tool) { tool = $0 }
                     }
                     label("Recent folders")
                     VStack(spacing: 8) {

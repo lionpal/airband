@@ -296,12 +296,12 @@ impl RadioError {
     /// What he asked about is not on any of his computers as this phone last saw them (a message, an agent):
     /// said as that, never as his computer refusing.
     pub(crate) fn gone(what: &str) -> RadioError {
-        RadioError::Told { reason: format!("That {what} is no longer on any of your computers.") }
+        crate::choices::told(format!("That {what} is no longer on any of your computers."))
     }
     /// Something on this phone itself failed (a file it could not read or keep): said as that, never as his
     /// computer refusing.
     pub(crate) fn here(what: &str) -> RadioError {
-        RadioError::Told { reason: format!("This phone could not {what}.") }
+        crate::choices::told(format!("This phone could not {what}."))
     }
 }
 
@@ -315,12 +315,8 @@ pub(crate) fn with_query(base: &str, pairs: &[(&str, &str)]) -> String {
 
 impl std::fmt::Display for RadioError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RadioError::BadLink { reason } => write!(f, "{reason}"),
-            RadioError::Offline => write!(f, "cannot reach your computer"),
-            RadioError::Refused => write!(f, "your computer refused that"),
-            RadioError::Told { reason } | RadioError::Trouble { reason } => write!(f, "{reason}"),
-        }
+        // the one wording, [`RadioError::said`]
+        write!(f, "{}", self.said())
     }
 }
 

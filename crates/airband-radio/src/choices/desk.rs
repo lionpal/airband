@@ -7,7 +7,7 @@ pub(super) fn keep(host: &dyn DeskHost, provider: &str, key: &str) -> Result<(),
     host.keep_secret(provider.to_string(), Some(key.to_string()));
     match host.secret(provider.to_string()) {
         Some(kept) if kept == key => Ok(()),
-        _ => Err(RadioError::Told { reason: "This phone could not keep the key, so nothing was changed. Try again.".into() }),
+        _ => Err(told("This phone could not keep the key, so nothing was changed. Try again.")),
     }
 }
 
@@ -59,12 +59,12 @@ impl Desk {
         // a key is kept under its provider's id, whichever of the provider's offers it was given for
         let (provider, offer) = (choice.provider.clone(), choice.offer.clone());
         // the key he gave now, else the one kept for that provider
-        let the_key = || key.clone().or_else(|| host.secret(provider.clone())).unwrap_or_default();
+        let the_key = || key.clone().or_else(|| kept_key(host, &provider)).unwrap_or_default();
         // A service that takes a key is asked, by this device, whether it takes this one: the request its row
         // names, which costs nothing. A key that does not pass is not kept and goes nowhere else.
         // A summary service whose key his computer keeps: that key is the computer's own, and the phone has none
         // to test or send.
-        let kept_there = job == ChoiceJob::Reads && key.is_none() && host.secret(provider.clone()).is_none_or(|k| k.is_empty()) && choice.has_key;
+        let kept_there = job == ChoiceJob::Reads && key.is_none() && kept_key(host, &provider).is_none() && choice.has_key;
         let row = airband_core::providers::provider(&provider).filter(|p| p.key && choice.place == ChoicePlace::Service && !kept_there);
         if let Some(p) = &row {
             let with = crate::services::service_of(&provider, &offer, &the_key(), set.clone().into_iter().collect());
@@ -88,7 +88,7 @@ impl Desk {
                     return done(Err(why));
                 }
             let wanted = ReadsWanted { id: provider.clone(), offer: offer.clone(), set: set.clone(), his: true };
-            let phone_key = host.secret(provider.clone()).filter(|k| !k.is_empty());
+            let phone_key = kept_key(host, &provider);
             let (online, everyone, main) = {
                 let state = self.shared.state.lock().unwrap();
                 let online = state.computers.iter().filter(|s| s.online).map(|s| (s.id(), s.radio.clone())).collect::<Vec<_>>();
@@ -266,7 +266,7 @@ pub(crate) fn tell_reads(shared: &Shared, station: &StationId, epoch: u64, ask_o
     let owed = chooser.saved().reads.filter(|i| i.owed(station));
     let offered = match owed {
         Some(intent) => {
-            let phone_key = shared.host.secret(intent.wanted.id.clone()).filter(|k| !k.is_empty());
+            let phone_key = kept_key(&*shared.host, &intent.wanted.id);
             let reach = send_reads(&intent.wanted, phone_key.as_deref(), &radio);
             // what changes is the choice that was sent: one he made meanwhile is left as it is
             let kept = chooser.change(|s| {

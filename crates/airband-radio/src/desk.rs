@@ -264,6 +264,13 @@ impl State {
     fn room(&self, room: &str) -> Option<(Arc<Radio>, String, String)> {
         self.computers.iter().find_map(|s| s.agents.iter().find(|a| a.room == room).map(|a| (s.radio.clone(), a.team.clone(), a.group.clone())))
     }
+    /// The files that have arrived on this computer have gone with something he sent: they leave the tray,
+    /// all but those its radio still holds for the next thing (`still`). True when any left.
+    pub(super) fn files_went(&mut self, computer: &StationId, still: &[String]) -> bool {
+        let before = self.uploads.len();
+        self.uploads.retain(|u| !(u.station == *computer && u.shown.state == UploadState::Ready && !still.contains(&u.shown.id)));
+        self.uploads.len() != before
+    }
     /// Which computer a room on his screen is on, by its id.
     fn room_computer(&self, room: &str) -> Option<StationId> {
         self.computers.iter().find(|s| s.agents.iter().any(|a| a.room == room)).map(|s| s.id())
@@ -338,13 +345,15 @@ impl Desk {
         Desk { shared: Arc::new(Shared { state: Mutex::new(State::default()), floor: Floor::default(), host, chooser, senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: data_dir.into() }
     }
 }
+/// A short name that is the same every launch for the same bytes: not a secret and not a check, only a name.
+/// `from` is where it starts; each use keeps its own, so the names already on his phone stay the same.
+pub(crate) fn same_name(from: u64, bytes: &[u8]) -> String {
+    let h = bytes.iter().fold(from, |h, b| (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3));
+    format!("{h:x}")
+}
 /// A folder name that is the same every launch for the same link.
 fn folder(link: &str) -> String {
-    let mut h: u64 = 1469598103934665603;
-    for b in link.bytes() {
-        h = (h ^ b as u64).wrapping_mul(1099511628211);
-    }
-    format!("{h:x}")
+    same_name(1469598103934665603, link.as_bytes())
 }
 #[uniffi::export]
 impl Desk {
@@ -519,7 +528,7 @@ impl Desk {
         let state = self.shared.state.lock().unwrap();
         let found = match (computer.is_empty(), state.computers.as_slice()) {
             (true, [only]) => Some(only),
-            (true, [_, _, ..]) => return Err(RadioError::Told { reason: "Choose which computer first.".into() }),
+            (true, [_, _, ..]) => return Err(crate::choices::told("Choose which computer first.")),
             _ => state.computers.iter().find(|s| s.id() == *computer),
         };
         found.filter(|s| s.online).map(|s| (s.radio.clone(), station_id(&s.link))).ok_or(RadioError::Offline)

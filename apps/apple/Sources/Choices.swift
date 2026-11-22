@@ -413,7 +413,7 @@ struct ToolsPicker: View {
         VStack(spacing: 10) {
             ForEach(codingTools(), id: \.id) { tool in
                 let on = model.tools.contains(tool.id)
-                ChoiceCard(title: tool.name, subtitle: tool.maker, chosen: on, mark: "harness-\(tool.id)") {
+                ChoiceCard(title: tool.name, subtitle: tool.maker, chosen: on, mark: Marks.tool(tool.id)) {
                     if single {
                         model.tools = [tool.id]
                     } else if on {

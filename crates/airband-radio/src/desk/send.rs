@@ -47,7 +47,7 @@ impl Desk {
             state.answered.insert(message_id.clone());
             // the files that have arrived on that computer leave with his answer: they leave the tray too
             if let Some(there) = state.owner(&message_id).map(|s| s.id()) {
-                state.uploads.retain(|u| !(u.station == there && u.shown.state == UploadState::Ready));
+                state.files_went(&there, &[]);
             }
         }
         radio.queue(text, Some(message_id), None, None);
@@ -174,7 +174,7 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
             None => wanted,
         };
         // the ones that have arrived leave with this message
-        state.uploads.retain(|u| !(u.station == pick && u.shown.state == UploadState::Ready));
+        state.files_went(&pick, &[]);
         let Some(computer) = state.computer(&pick) else { return };
         // the agent he is looking at, by id: the tower reads nothing to find who it is for
         let to: Vec<String> = match (&agent, aimed) {

@@ -152,6 +152,11 @@ pub(crate) struct Chooser {
 }
 
 /// What he chose that this build has no code for, said one way: what it cannot do, and where to choose again.
+/// The key kept on this phone for a provider, when there is one.
+pub(crate) fn kept_key(host: &dyn DeskHost, provider: &str) -> Option<String> {
+    host.secret(provider.to_string()).filter(|k| !k.is_empty())
+}
+
 pub(crate) fn told(reason: impl Into<String>) -> RadioError {
     RadioError::Told { reason: reason.into() }
 }
@@ -197,7 +202,7 @@ impl Chooser {
         // his key for a service, or why it cannot be used: one that takes a key and has none here is never
         // tried with an empty one
         let key = |id: &str, sense: Sense| -> Result<String, Cannot> {
-            match (host.secret(id.to_string()).filter(|k| !k.is_empty()), airband_core::providers::provider(id).filter(|p| p.key)) {
+            match (kept_key(host, id), airband_core::providers::provider(id).filter(|p| p.key)) {
                 (Some(key), _) => Ok(key),
                 (None, None) => Ok(String::new()),
                 (None, Some(p)) => Err(Cannot::NoKey { sense, key_name: p.key_name.clone() }),
@@ -253,7 +258,7 @@ impl Chooser {
         let facts = Facts {
             models: crate::models::models(&self.device).collect(),
             here: &|m| (crate::models::fetched(&self.dir, m), crate::models::current(&self.dir, m)),
-            has_key: &|id| host.secret(id.to_string()).is_some_and(|k| !k.is_empty()),
+            has_key: &|id| kept_key(host, id).is_some(),
             failed: match job {
                 ChoiceJob::Ears => senses.ears.failed(),
                 ChoiceJob::Voice => senses.mouth.failed(),

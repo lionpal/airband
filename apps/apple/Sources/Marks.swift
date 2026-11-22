@@ -3,6 +3,12 @@ import SwiftUI
 // The small marks that say who and what at a glance: an agent's badge, its tool and computer, a count of
 // what is unread, the dot for what a team is doing.
 
+/// The names of the marks in the app's pictures.
+enum Marks {
+    /// A coding tool's mark, by the tool's id.
+    static func tool(_ id: String) -> String { "harness-\(id)" }
+}
+
 /// Who an agent is, at a glance: two characters on its team's colour.
 struct Badge: View {
     let text: String
@@ -20,8 +26,8 @@ struct AgentMarks: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if UIImage(named: "harness-\(agent.harness)") != nil {
-                Image("harness-\(agent.harness)").resizable().scaledToFit().frame(width: 15, height: 15)
+            if UIImage(named: Marks.tool(agent.harness)) != nil {
+                Image(Marks.tool(agent.harness)).resizable().scaledToFit().frame(width: 15, height: 15)
             } else {
                 Image(systemName: "terminal").font(.system(size: 13, weight: .medium))
             }

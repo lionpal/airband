@@ -141,7 +141,7 @@ pub(crate) fn local_model_progress() -> u32 {
 /// Fetch a model. Blocks until it is all here: call it off the main thread. Files already here are kept, so
 /// one that was cut short goes on from the last whole file.
 pub(crate) fn fetch_local_model(dir: String, m: &Model) -> Result<(), RadioError> {
-    let told = |reason: &str| RadioError::Told { reason: reason.into() };
+    let told = crate::choices::told;
     let _one = FETCHING.lock().unwrap_or_else(|e| e.into_inner());
     let folder = version_folder(&dir, m);
     GOT.store(0, Ordering::SeqCst);

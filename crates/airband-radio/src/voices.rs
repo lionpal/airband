@@ -98,7 +98,7 @@ pub fn speaks(offer: &Offer) -> bool {
 /// The voice a setting names, through whichever interface its row says. Err says why not, in words for him.
 pub(crate) fn synth(voice: &Use) -> Made {
     if voice.is_none() {
-        return Err("No voice is set.".into());
+        return Err(crate::voice::NOTHING_CHOSEN.into());
     }
     let (provider, offer) = voice.offer(Job::Voice).ok_or("This version of airband has no such voice service.")?;
     let voicing = VOICES.iter().find(|v| v.is.fits(&offer)).ok_or("This version of airband cannot speak through that voice service yet. Update airband.")?;

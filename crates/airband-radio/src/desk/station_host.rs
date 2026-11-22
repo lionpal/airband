@@ -92,10 +92,7 @@ impl RadioHost for ComputerHost {
         if matches!(status, RadioStatus::Idle) {
             let mut state = self.shared.state.lock().unwrap();
             if let Some(waiting) = state.computer(&self.station).map(|s| s.radio.armed()) {
-                let before = state.uploads.len();
-                let here = &self.station;
-                state.uploads.retain(|u| !(&u.station == here && u.shown.state == UploadState::Ready && !waiting.contains(&u.shown.id)));
-                if state.uploads.len() != before {
+                if state.files_went(&self.station, &waiting) {
                     drop(state);
                     self.shared.host.changed();
                 }
