@@ -5,7 +5,7 @@
 //! the [`DeskView`], make and capture sound, and keep the pairing links somewhere safe.
 use super::*;
 use airband_core::routing::{Callsign, parse_utterance};
-use crate::mouth::CodingTool;
+use crate::services::CodingTool;
 use std::collections::{HashMap, HashSet};
 use std::sync::Condvar;
 mod agents;

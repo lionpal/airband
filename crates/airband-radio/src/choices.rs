@@ -18,7 +18,7 @@
 use super::*;
 use crate::engines::HostDevice;
 use crate::models::{Model, VoiceChoice};
-use crate::mouth::{Service, ServiceAsk};
+use crate::services::{Service, ServiceAsk};
 use airband_core::providers::Job;
 use airband_core::radio::{OfferName, ReadsOffered, SetReads};
 use serde::{Deserialize, Serialize};
@@ -192,7 +192,7 @@ impl Chooser {
                 Some(m) => crate::ears::Own::Model(senses.ears.held(&m, crate::models::folder(&self.dir, &m))),
             },
             ChoicePlace::Service => {
-                let with = crate::mouth::service_of(&ears.id, &ears.offer, &key(&ears.id), ears.set.clone().into_iter().collect());
+                let with = crate::services::service_of(&ears.id, &ears.offer, &key(&ears.id), ears.set.clone().into_iter().collect());
                 if with.offer(Job::Ears).is_some_and(|(_, o)| crate::hears::listens(&o)) { crate::ears::Own::Service(with) } else { crate::ears::Own::Cannot("This version of airband cannot listen with the service you chose. Choose another in Settings, under Listening.".into()) }
             }
         }));
@@ -208,7 +208,7 @@ impl Chooser {
                 },
             },
             ChoicePlace::Service => {
-                let with = crate::mouth::service_of(&voice.id, &voice.offer, &key(&voice.id), voice.set.clone().into_iter().collect());
+                let with = crate::services::service_of(&voice.id, &voice.offer, &key(&voice.id), voice.set.clone().into_iter().collect());
                 if crate::voices::synth_for(&with).is_some() { crate::mouth::Own::Service(with) } else { crate::mouth::Own::Cannot("This version of airband cannot speak with the service you chose. Choose another in Settings, under Voice.".into()) }
             }
         }));
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn one_thing_is_chosen_for_a_job_whatever_was_picked() {
-        let service = crate::mouth::services(Job::Ears).into_iter().find(|s| s.key).expect("a listening service that takes a key");
+        let service = crate::services::services(Job::Ears).into_iter().find(|s| s.key).expect("a listening service that takes a key");
         let model = crate::models::models(&phone()).find(|m| m.job == Job::Ears).map(|m| m.kind.clone());
         let mut picks = vec![Pick { place: ChoicePlace::Service, id: service.kind.clone(), offer: service.offer.clone(), set: BTreeMap::new(), voice: String::new() }];
         picks.extend(model.clone().map(|id| Pick { place: ChoicePlace::Phone, id, offer: String::new(), set: BTreeMap::new(), voice: String::new() }));
@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn each_choice_says_how_it_stands() {
-        let service = crate::mouth::services(Job::Voice).into_iter().find(|s| s.key).expect("a voice service that takes a key");
+        let service = crate::services::services(Job::Voice).into_iter().find(|s| s.key).expect("a voice service that takes a key");
         let saved = Saved { voice: Some(Pick { place: ChoicePlace::Service, id: service.kind.clone(), offer: service.offer.clone(), set: BTreeMap::from([("voice".to_string(), "Kore".to_string())]), voice: String::new() }), ..Saved::default() };
         let service_choice = service_id(&service.kind, &service.offer);
         let of = |all: &[Choice], id: &str| all.iter().find(|c| c.id == id).unwrap().clone();
@@ -412,7 +412,7 @@ mod tests {
 
     #[test]
     fn before_any_computer_summaries_follow_the_coding_tool_until_he_picks() {
-        let logins: Vec<Service> = crate::mouth::services(Job::Summary).into_iter().filter(|s| !s.login.is_empty()).collect();
+        let logins: Vec<Service> = crate::services::services(Job::Summary).into_iter().filter(|s| !s.login.is_empty()).collect();
         let (one, two) = (logins[0].clone(), logins.iter().find(|s| s.login != logins[0].login).expect("two tools with a sign-in that reads").clone());
         let mut saved = Saved::default();
         saved.use_tools(vec![one.login.clone()]);
@@ -559,7 +559,7 @@ mod tests {
         }
         // a service whose key is wrong is not taken: the one before it stays, and the key is not kept
         // (his own voice server, at an address where nothing answers: no call leaves this machine)
-        let service = crate::mouth::services(Job::Voice).into_iter().find(|s| s.kind == "local");
+        let service = crate::services::services(Job::Voice).into_iter().find(|s| s.kind == "local");
         if let Some(service) = service {
             let (service, provider) = (service_id(&service.kind, &service.offer), service.kind);
             let before = chosen(&desk.choices(ChoiceJob::Voice)).iter().map(|s| s.to_string()).collect::<Vec<_>>();

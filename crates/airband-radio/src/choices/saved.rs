@@ -83,7 +83,7 @@ impl Saved {
         self.tools = tools;
         if self.offered.is_none() && self.reads.as_ref().is_none_or(|w| !w.his) {
             let most = self.tools.first().cloned().unwrap_or_default();
-            self.reads = crate::mouth::services(Job::Summary).into_iter().find(|s| !most.is_empty() && s.login == most).map(|s| Waiting { id: s.kind, offer: s.offer, set: BTreeMap::new(), his: false });
+            self.reads = crate::services::services(Job::Summary).into_iter().find(|s| !most.is_empty() && s.login == most).map(|s| Waiting { id: s.kind, offer: s.offer, set: BTreeMap::new(), his: false });
         }
     }
 }

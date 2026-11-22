@@ -71,7 +71,7 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
                     })
                     .collect(),
             ),
-            None => (None, crate::mouth::services(Job::Summary).into_iter().map(|s| (s, false)).collect()),
+            None => (None, crate::services::services(Job::Summary).into_iter().map(|s| (s, false)).collect()),
         };
         // what reads now could not, the last time his computer asked it: it stays chosen and says why
         let reads_failed = saved.offered.as_ref().and_then(|o| o.failed);
@@ -130,7 +130,7 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
             note: if chosen { facts.note.clone() } else { String::new() },
         });
     }
-    for s in crate::mouth::services(job.job()) {
+    for s in crate::services::services(job.job()) {
         let chosen = pick.as_ref().is_some_and(|p| p.place == ChoicePlace::Service && p.id == s.kind && p.offer == s.offer);
         let has_key = (facts.has_key)(&s.kind);
         let state = working(&service_id(&s.kind, &s.offer)).or(failed(chosen)).unwrap_or(if s.key && !has_key { ChoiceState::NeedsKey } else { ChoiceState::Ready });

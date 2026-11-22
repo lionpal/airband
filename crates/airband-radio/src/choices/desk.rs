@@ -62,7 +62,7 @@ impl Desk {
         // names, which costs nothing. A key that does not pass is not kept and goes nowhere else.
         let row = airband_core::providers::provider(&provider).filter(|p| p.key && choice.place == ChoicePlace::Service);
         if let Some(p) = &row {
-            let with = crate::mouth::service_of(&provider, &offer, &the_key(), set.clone().into_iter().collect());
+            let with = crate::services::service_of(&provider, &offer, &the_key(), set.clone().into_iter().collect());
             if with.key.is_empty() {
                 return done(Err(told(format!("Enter your {}.", p.key_name))));
             }
@@ -107,7 +107,7 @@ impl Desk {
         }
         let pick = match choice.place {
             ChoicePlace::Service => {
-                let with = crate::mouth::service_of(&provider, &offer, &the_key(), set.clone().into_iter().collect());
+                let with = crate::services::service_of(&provider, &offer, &the_key(), set.clone().into_iter().collect());
                 // one with no key (a server of his own) has nothing to test but itself: one short real call
                 if row.is_none() {
                     let tried = match job {
