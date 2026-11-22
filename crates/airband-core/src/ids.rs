@@ -59,36 +59,6 @@ macro_rules! ids {
                 &self.0
             }
         }
-        impl PartialEq<str> for $name {
-            fn eq(&self, other: &str) -> bool {
-                self.0 == other
-            }
-        }
-        impl PartialEq<&str> for $name {
-            fn eq(&self, other: &&str) -> bool {
-                self.0 == *other
-            }
-        }
-        impl PartialEq<String> for $name {
-            fn eq(&self, other: &String) -> bool {
-                &self.0 == other
-            }
-        }
-        impl PartialEq<$name> for str {
-            fn eq(&self, other: &$name) -> bool {
-                self == other.0
-            }
-        }
-        impl PartialEq<$name> for &str {
-            fn eq(&self, other: &$name) -> bool {
-                *self == other.0
-            }
-        }
-        impl PartialEq<$name> for String {
-            fn eq(&self, other: &$name) -> bool {
-                *self == other.0
-            }
-        }
     )*};
 }
 
@@ -101,14 +71,10 @@ ids! {
     StationId;
     /// One radio paired with a tower: its relay channel, never its display name.
     RadioId;
-    /// One message in the chat.
-    MessageId;
     /// One way of starting an agent (a launcher row).
     LauncherId;
     /// One question the tower put to him and waits on.
     QuestionId;
-    /// One coding tool (a catalogue row).
-    ToolId;
 }
 
 #[cfg(test)]

@@ -12,6 +12,12 @@ fn next_ms() -> u64 {
     *last
 }
 
+/// One place in a channel's line, as (key, id, expires). Every place is written with its time; one without is
+/// not the relay's and is passed over, never read as long past its time and removed.
+fn place(item: &Value) -> Option<(String, String, u64)> {
+    Some((dynamo::text(item, "k")?, dynamo::text(item, "id")?, dynamo::number(item, "expires")?))
+}
+
 pub(crate) struct Dyn {
     pub(super) db: Dynamo,
     pub(super) channels: String,
@@ -47,9 +53,7 @@ impl Dyn {
     /// A channel's line: the place of every message kept for it, oldest first, as (key, id, expires).
     pub(super) async fn line(&self, channel: &str) -> Result<Vec<(String, String, u64)>, String> {
         let items = self.db.all("Query", self.line_ask(channel)).await?;
-        // every place is written with its time; one without is not the relay's and is passed over, never read as
-        // long past its time and removed
-        Ok(items.iter().filter_map(|item| Some((dynamo::text(item, "k")?, dynamo::text(item, "id")?, dynamo::number(item, "expires")?))).collect())
+        Ok(items.iter().filter_map(place).collect())
     }
     /// Take a message out of the table without touching the count: for one that has outlived its time. One that
     /// could not be taken out is said; it is passed over all the same, and DynamoDB drops it in its time.
@@ -68,7 +72,7 @@ impl Dyn {
         let (line, now) = (self.line(channel).await?, airband_core::clock::now_secs());
         let mut live = 0u64;
         for (place, id, expires) in &line {
-            if *expires > now {
+            if in_time(*expires, now) {
                 live += 1;
             } else {
                 self.drop_stale(channel, place, id).await;
@@ -105,7 +109,8 @@ impl ChannelStore for Dyn {
         self.put_new(&self.waitlist, "email", json!({ "email": s(email), "joined_at": n(airband_core::clock::now_secs()) })).await
     }
     async fn remove(&self, channel: &str) -> Result<(), String> {
-        self.db.call("DeleteItem", json!({ "TableName": self.channels, "Key": { "channel": s(channel) } })).await.map_err(|e| e.to_string())?;
+        // the channel's item becomes a closed one, with nothing of its tower's in it: never opened again
+        self.db.call("PutItem", json!({ "TableName": self.channels, "Item": { "channel": s(channel), "closed": n(airband_core::clock::now_secs()) } })).await.map_err(|e| e.to_string())?;
         // what was kept for it goes too: its count, its line and the messages themselves
         let ask = json!({ "TableName": self.held, "ConsistentRead": true, "KeyConditionExpression": "#c = :c", "ProjectionExpression": "#c, #k", "ExpressionAttributeNames": { "#c": "channel", "#k": "k" }, "ExpressionAttributeValues": { ":c": s(channel) } });
         for item in self.db.all("Query", ask).await? {
@@ -114,25 +119,38 @@ impl ChannelStore for Dyn {
         }
         Ok(())
     }
-    async fn add(&self, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<(), String> {
-        self.put_new(&self.channels, "channel", json!({ "channel": s(channel), "pull_hash": s(pull_hash), "radio_hash": s(radio_hash), "created_at": n(airband_core::clock::now_secs()) })).await
+    async fn add(&self, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<Added, String> {
+        self.put_new(&self.channels, "channel", json!({ "channel": s(channel), "pull_hash": s(pull_hash), "radio_hash": s(radio_hash), "created_at": n(airband_core::clock::now_secs()) })).await?;
+        // what is on record now: this tower's, the one that was first, or a closed one
+        let got = self.db.call("GetItem", json!({ "TableName": self.channels, "Key": { "channel": s(channel) }, "ConsistentRead": true })).await.map_err(|e| e.to_string())?;
+        let item = &got["Item"];
+        if dynamo::number(item, "closed").is_some() {
+            return Ok(Added::Closed);
+        }
+        match (dynamo::text(item, "pull_hash"), dynamo::text(item, "radio_hash")) {
+            (Some(pull_hash), Some(radio_hash)) => Ok(Added::Open(Saved { pull_hash, radio_hash })),
+            _ => Err("the channel's record could not be read back".into()),
+        }
     }
-    async fn hold(&self, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<bool, String> {
+    async fn hold(&self, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<Held, String> {
         for attempt in 0..2 {
             let (now, place) = (airband_core::clock::now_secs(), format!("m#{:013}#{id}", next_ms()));
-            let expires = n(now + HELD_FOR_SECS);
+            let expires = n(expires(now));
             let ask = json!({ "TransactItems": [
                 // kept once: only if nothing is there under this id, or what is there has outlived its time
                 { "Put": { "TableName": self.held, "Item": { "channel": s(channel), "k": s(&Self::body(id)), "at": s(&place), "sealed": b(sealed), "expires": expires },
                     "ConditionExpression": "attribute_not_exists(#k) OR #e <= :now", "ExpressionAttributeNames": { "#k": "k", "#e": "expires" }, "ExpressionAttributeValues": { ":now": n(now) } } },
                 { "Put": { "TableName": self.held, "Item": { "channel": s(channel), "k": s(&place), "id": s(id), "expires": expires } } },
-                // and only while the channel has fewer than it may
-                { "Update": { "TableName": self.held, "Key": Self::key(channel, "n"), "UpdateExpression": "ADD #h :one",
-                    "ConditionExpression": "attribute_not_exists(#h) OR #h < :most", "ExpressionAttributeNames": { "#h": "held" }, "ExpressionAttributeValues": { ":one": n(1), ":most": n(most as u64) } } },
+                // and only while the channel has fewer than it may; the count lasts as long as what it counts
+                { "Update": { "TableName": self.held, "Key": Self::key(channel, "n"), "UpdateExpression": "ADD #h :one SET #e = :expires",
+                    "ConditionExpression": "attribute_not_exists(#h) OR #h < :most", "ExpressionAttributeNames": { "#h": "held", "#e": "expires" }, "ExpressionAttributeValues": { ":one": n(1), ":most": n(most as u64), ":expires": expires } } },
+                // and only while its tower has not closed it
+                { "ConditionCheck": { "TableName": self.channels, "Key": { "channel": s(channel) }, "ConditionExpression": "attribute_not_exists(#x)", "ExpressionAttributeNames": { "#x": "closed" } } },
             ] });
             match self.db.call("TransactWriteItems", ask).await {
-                Ok(_) => return Ok(true),
-                Err(e) if e.part_refused(0) => return Ok(true),
+                Ok(_) => return Ok(Held::Kept),
+                Err(e) if e.part_refused(3) => return Ok(Held::Closed),
+                Err(e) if e.part_refused(0) => return Ok(Held::Kept),
                 Err(e) if e.part_refused(2) => {
                     if attempt == 0 {
                         self.recount(channel).await?;
@@ -141,7 +159,7 @@ impl ChannelStore for Dyn {
                 Err(e) => return Err(e.to_string()),
             }
         }
-        Ok(false)
+        Ok(Held::Full)
     }
     async fn held_next(&self, channel: &str) -> Result<Option<(String, Vec<u8>)>, String> {
         let mut ask = self.line_ask(channel);
@@ -150,9 +168,9 @@ impl ChannelStore for Dyn {
         while let Some(items) = pages.next(&self.db).await? {
             let now = airband_core::clock::now_secs();
             for item in &items {
-                let (Some(place), Some(id), Some(expires)) = (dynamo::text(item, "k"), dynamo::text(item, "id"), dynamo::number(item, "expires")) else { continue };
+                let Some((place, id, expires)) = place(item) else { continue };
                 // past its time and not yet removed: as good as gone
-                if expires <= now {
+                if !in_time(expires, now) {
                     continue;
                 }
                 let kept = self.db.call("GetItem", json!({ "TableName": self.held, "Key": Self::key(channel, &Self::body(&id)), "ConsistentRead": true })).await.map_err(|e| e.to_string())?;

@@ -171,14 +171,14 @@ mod tests {
     #[test]
     fn an_account_takes_the_limits_read_elsewhere_only_when_its_tool_says_it_is_the_same_one() {
         let told = [
-            (computer("mini"), on(vec![account("me@example.com", person("p1"), true), account("key", AccountIdentity::of_key("openai", "sk-one"), true)])),
+            (computer("mini"), on(vec![account("me@example.com", person("p1"), true), account("key", AccountIdentity::of_key("openai", "sk-fake-key-one"), true)])),
             (computer("laptop"), on(vec![
                 // the same person: takes mini's limits, and says where they were read
                 account("someone else", person("p1"), false),
                 // the same label, someone else: keeps none
                 account("me@example.com", person("p2"), false),
                 // the same key: takes them
-                account("…-one", AccountIdentity::of_key("openai", "sk-one"), false),
+                account("…-one", AccountIdentity::of_key("openai", "sk-fake-key-one"), false),
                 // nothing says who it is: never taken for anyone
                 account("me@example.com", AccountIdentity::None, false),
             ])),
@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn accounts_are_shown_by_tool_and_a_key_by_its_last_four() {
-        let mut key = account("x", AccountIdentity::of_key("openai", "sk-abcd1234"), false);
+        let mut key = account("x", AccountIdentity::of_key("openai", "sk-fake-abcd1234"), false);
         key.harness = "codex".into();
         let told = [(computer("mini"), on(vec![account("me@example.com", person("p1"), true), key]))];
         let shown = accounts_by_tool(StationAccounts::across(&told));

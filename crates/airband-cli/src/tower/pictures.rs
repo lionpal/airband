@@ -1,6 +1,7 @@
 //! Pictures an agent looked at or made for him. The tower keeps a small copy of each (a JPEG, 1600 pixels at
 //! most on its long side) in `~/.airband/pictures`, named by what the original was, so the same file seen twice
 //! is kept once. A copy goes to the phone only when it asks, in parts.
+#![expect(clippy::disallowed_methods, reason = "lists, opens or removes files, or closes a channel, directly: to move to airband_io (audit 6)")]
 use super::*;
 use airband_core::radio::{PICTURE_PART, Picture, PicturePart};
 use sha2::{Digest, Sha256};

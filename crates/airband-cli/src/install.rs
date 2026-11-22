@@ -35,7 +35,7 @@ pub(crate) fn install() -> Result<(), String> {
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
     let real = fs::canonicalize(&me).unwrap_or_else(|_| me.clone());
     // a package manager's copy is used where it is, so its updates change what the hooks and the tower run
-    let packaged = airband_core::catalog::installer().and_then(|i| packaged_exe(&i, &real).filter(|lasting| fs::canonicalize(lasting).is_ok_and(|to| to == real)).map(|lasting| (i.name, lasting)));
+    let packaged = airband_core::catalog::installers().into_iter().find_map(|i| packaged_exe(&i, &real).filter(|lasting| fs::canonicalize(lasting).is_ok_and(|to| to == real)).map(|lasting| (i.name, lasting)));
     let exe = match packaged {
         Some((name, lasting)) => {
             println!("Using {name}\u{2019}s copy at {}. After {name} updates airband, run `airband install` again to restart airband.", lasting.display());
@@ -127,7 +127,7 @@ mod tests {
 
     #[test]
     fn a_packaged_binary_is_used_from_the_path_that_outlives_an_update() {
-        let installer = airband_core::catalog::installer().expect("an installer row is compiled in");
+        let installer = airband_core::catalog::installers().into_iter().next().expect("this build compiles an installer row in");
         assert!(!installer.lasting.is_empty() && !installer.install.is_empty());
         let lasting = Path::new("/pm/opt/airband");
         assert_eq!(in_lasting(&installer, lasting, Path::new("/pm/Cellar/airband/0.1.1/bin/airband")), lasting.join(&installer.bin).join("airband"));

@@ -1,5 +1,6 @@
 //! Reading a session's transcript: what it is doing, what it touched, what he typed, the name he gave it, the pull
 //! requests it made. Each reader reads only what was written since it last looked, or the end of the file.
+#![expect(clippy::disallowed_methods, reason = "lists, opens or removes files, or closes a channel, directly: to move to airband_io (audit 6)")]
 use super::*;
 
 /// The name last given to `/remote-control` in this session, read from the whole transcript once and then

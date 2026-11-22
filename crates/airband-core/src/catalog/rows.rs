@@ -28,9 +28,9 @@ pub(super) struct Document {
     #[serde(default)]
     installers: Vec<Value>,
     #[serde(default)]
-    phrases: Vec<String>,
+    phrases: Vec<Value>,
     #[serde(default)]
-    retired: Vec<String>,
+    retired: Vec<Value>,
 }
 
 pub(super) fn yes() -> bool {
@@ -154,5 +154,9 @@ pub(super) fn read(text: &str) -> Result<Catalog, String> {
             Tool { id: t.id, name: t.name, maker: t.maker, first: t.first, launchers, with: t.with }
         })
         .collect();
-    Ok(Catalog { rev: doc.rev, hash: doc.hash, providers, tools, models, servers, links, secrets, terminals, frames, installers, phrases: doc.phrases, retired: doc.retired, left_out })
+    // a phrase or a retired id that is not text is left out and said, like any row; `rev` is what the copy is, so
+    // a copy without a readable one is not read at all
+    let phrases = each::<String>(doc.phrases, "phrase", &mut left_out);
+    let retired = each::<String>(doc.retired, "retired", &mut left_out);
+    Ok(Catalog { rev: doc.rev, hash: doc.hash, providers, tools, models, servers, links, secrets, terminals, frames, installers, phrases, retired, left_out })
 }

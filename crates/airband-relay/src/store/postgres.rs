@@ -3,6 +3,13 @@ use super::*;
 use std::sync::Arc;
 use tokio_postgres::{Client, Config, NoTls};
 
+/// A kept message still within its time ([`in_time`]), as a condition on `relay_held`, with the time given as
+/// parameter `$at` in seconds. One place, so every query passes over the same ones.
+fn in_time_sql(at: usize) -> String {
+    format!("held_at > now() - make_interval(secs => ${at})")
+}
+const HELD_FOR: f64 = HELD_FOR_SECS as f64;
+
 pub(crate) struct Pg {
     pub(super) host: String,
     port: u16,
@@ -82,11 +89,12 @@ impl ChannelStore for Pg {
         db.batch_execute(
             "create table if not exists relay_channels (channel text primary key, pull_hash text not null, radio_hash text not null, created_at timestamptz not null default now());
              create table if not exists waitlist (email text primary key, joined_at timestamptz not null default now());
+             create table if not exists relay_closed (channel text primary key, closed_at timestamptz not null default now());
              create table if not exists relay_held (seq bigserial primary key, channel text not null, id text not null, sealed bytea not null, held_at timestamptz not null default now(), unique (channel, id))",
         )
         .await
         .map_err(|e| e.to_string())?;
-        let rows = db.query("select channel, pull_hash, radio_hash from relay_channels", &[]).await.map_err(|e| e.to_string())?;
+        let rows = db.query("select channel, pull_hash, radio_hash from relay_channels where channel not in (select channel from relay_closed)", &[]).await.map_err(|e| e.to_string())?;
         Ok(rows.iter().map(|r| (r.get(0), Saved { pull_hash: r.get(1), radio_hash: r.get(2) })).collect())
     }
     async fn join_waitlist(&self, email: &str) -> Result<(), String> {
@@ -95,37 +103,53 @@ impl ChannelStore for Pg {
     }
     async fn remove(&self, channel: &str) -> Result<(), String> {
         // the channel and what was kept for it, together or not at all
+        // closed on record in the same transaction, under the lock keeping takes, so nothing is kept after it
         let mut db = self.connect(&self.name).await?;
         let tx = db.transaction().await.map_err(|e| e.to_string())?;
+        tx.execute("select pg_advisory_xact_lock(hashtext($1))", &[&channel]).await.map_err(|e| e.to_string())?;
+        tx.execute("insert into relay_closed (channel) values ($1) on conflict (channel) do nothing", &[&channel]).await.map_err(|e| e.to_string())?;
         tx.execute("delete from relay_held where channel = $1", &[&channel]).await.map_err(|e| e.to_string())?;
         tx.execute("delete from relay_channels where channel = $1", &[&channel]).await.map_err(|e| e.to_string())?;
         tx.commit().await.map_err(|e| e.to_string())
     }
-    async fn add(&self, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<(), String> {
+    async fn add(&self, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<Added, String> {
         // one short connection per new channel: channels are opened rarely, and nothing is held open to go stale
-        let db = self.connect(&self.name).await?;
-        db.execute("insert into relay_channels (channel, pull_hash, radio_hash) values ($1, $2, $3) on conflict (channel) do nothing", &[&channel, &pull_hash, &radio_hash]).await.map(|_| ()).map_err(|e| e.to_string())
+        let mut db = self.connect(&self.name).await?;
+        let tx = db.transaction().await.map_err(|e| e.to_string())?;
+        tx.execute("select pg_advisory_xact_lock(hashtext($1))", &[&channel]).await.map_err(|e| e.to_string())?;
+        if tx.query_opt("select 1 from relay_closed where channel = $1", &[&channel]).await.map_err(|e| e.to_string())?.is_some() {
+            return Ok(Added::Closed);
+        }
+        tx.execute("insert into relay_channels (channel, pull_hash, radio_hash) values ($1, $2, $3) on conflict (channel) do nothing", &[&channel, &pull_hash, &radio_hash]).await.map_err(|e| e.to_string())?;
+        let row = tx.query_one("select pull_hash, radio_hash from relay_channels where channel = $1", &[&channel]).await.map_err(|e| e.to_string())?;
+        let on_record = Saved { pull_hash: row.get(0), radio_hash: row.get(1) };
+        tx.commit().await.map(|_| Added::Open(on_record)).map_err(|e| e.to_string())
     }
-    async fn hold(&self, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<bool, String> {
+    async fn hold(&self, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<Held, String> {
         // counted and kept in one transaction, under a lock on the channel held until it ends, so two at
         // once cannot both see room for one more and both be kept
         let mut db = self.connect(&self.name).await?;
         let tx = db.transaction().await.map_err(|e| e.to_string())?;
         tx.execute("select pg_advisory_xact_lock(hashtext($1))", &[&channel]).await.map_err(|e| e.to_string())?;
+        if tx.query_opt("select 1 from relay_closed where channel = $1", &[&channel]).await.map_err(|e| e.to_string())?.is_some() {
+            return Ok(Held::Closed);
+        }
+        // the same id past its time goes, and this one is kept as new, as every store does
+        tx.execute(&format!("delete from relay_held where channel = $1 and id = $2 and not ({})", in_time_sql(3)), &[&channel, &id, &HELD_FOR]).await.map_err(|e| e.to_string())?;
         let already = tx.query_opt("select 1 from relay_held where channel = $1 and id = $2", &[&channel, &id]).await.map_err(|e| e.to_string())?.is_some();
         if already {
-            return Ok(true);
+            return Ok(Held::Kept);
         }
-        let have: i64 = tx.query_one("select count(*) from relay_held where channel = $1 and held_at > now() - make_interval(secs => $2)", &[&channel, &(HELD_FOR_SECS as f64)]).await.map_err(|e| e.to_string())?.get(0);
+        let have: i64 = tx.query_one(&format!("select count(*) from relay_held where channel = $1 and {}", in_time_sql(2)), &[&channel, &HELD_FOR]).await.map_err(|e| e.to_string())?.get(0);
         if have as usize >= most {
-            return Ok(false);
+            return Ok(Held::Full);
         }
         tx.execute("insert into relay_held (channel, id, sealed) values ($1, $2, $3) on conflict (channel, id) do nothing", &[&channel, &id, &sealed]).await.map_err(|e| e.to_string())?;
-        tx.commit().await.map(|_| true).map_err(|e| e.to_string())
+        tx.commit().await.map(|_| Held::Kept).map_err(|e| e.to_string())
     }
     async fn held_next(&self, channel: &str) -> Result<Option<(String, Vec<u8>)>, String> {
         let db = self.connect(&self.name).await?;
-        let row = db.query_opt("select id, sealed from relay_held where channel = $1 and held_at > now() - make_interval(secs => $2) order by seq limit 1", &[&channel, &(HELD_FOR_SECS as f64)]).await.map_err(|e| e.to_string())?;
+        let row = db.query_opt(&format!("select id, sealed from relay_held where channel = $1 and {} order by seq limit 1", in_time_sql(2)), &[&channel, &HELD_FOR]).await.map_err(|e| e.to_string())?;
         Ok(row.map(|r| (r.get(0), r.get(1))))
     }
     async fn held_done(&self, channel: &str, id: &str) -> Result<(), String> {
@@ -134,6 +158,6 @@ impl ChannelStore for Pg {
     }
     async fn held_purge(&self) -> Result<(), String> {
         let db = self.connect(&self.name).await?;
-        db.execute("delete from relay_held where held_at < now() - make_interval(secs => $1)", &[&(HELD_FOR_SECS as f64)]).await.map(|_| ()).map_err(|e| e.to_string())
+        db.execute(&format!("delete from relay_held where not ({})", in_time_sql(1)), &[&HELD_FOR]).await.map(|_| ()).map_err(|e| e.to_string())
     }
 }

@@ -9,7 +9,7 @@ pub fn hex(bytes: &[u8]) -> String {
 
 /// Hex back to bytes. `None` for an odd length or anything that is not hex.
 pub fn unhex(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) || !s.is_ascii() {
+    if !s.len().is_multiple_of(2) || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok()).collect()
@@ -76,6 +76,7 @@ mod tests {
         assert_eq!(unhex("000fff"), Some(vec![0, 15, 255]));
         assert_eq!(unhex("0f0"), None);
         assert_eq!(unhex("zz"), None);
+        assert_eq!(unhex("+f"), None, "a sign is not hex");
         assert_eq!(unbase64(&base64(b"airband")), Some(b"airband".to_vec()));
         let u = uuid_v4();
         assert_eq!(u.len(), 36);

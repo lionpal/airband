@@ -5,6 +5,7 @@
 //! frames row names, when that program is here.
 //!
 //! A radio can write only here, only under names the tower makes safe, and only so much.
+#![expect(clippy::disallowed_methods, reason = "lists, opens or removes files, or closes a channel, directly: to move to airband_io (audit 6)")]
 use super::*;
 use airband_core::radio::AttachmentPart;
 use std::io::{Seek, SeekFrom, Write};
@@ -131,12 +132,19 @@ fn frames(video: &Path) {
     let (video, dir) = (video.to_path_buf(), video.parent().map(Path::to_path_buf).unwrap_or_default());
     std::thread::spawn(move || {
         let out = dir.join("frames");
-        let ran = airband_io::files::make_folder(&out).map_err(|_| ()).and_then(|_| airband_core::catalog::frames().ok_or(())).and_then(|f| {
-            std::process::Command::new(&f.program)
-                .args(f.run(&video.display().to_string(), FRAMES, &out.display().to_string()))
-                .stdin(std::process::Stdio::null())
-                .output()
-                .map_err(|_| ())
+        // each program its rows name is tried in turn; the first that runs and succeeds is the one that did it
+        let ran = airband_io::files::make_folder(&out).map_err(|_| ()).and_then(|_| {
+            airband_core::catalog::frames_programs()
+                .iter()
+                .find_map(|f| {
+                    std::process::Command::new(&f.program)
+                        .args(f.run(&video.display().to_string(), FRAMES, &out.display().to_string()))
+                        .stdin(std::process::Stdio::null())
+                        .output()
+                        .ok()
+                        .filter(|o| o.status.success())
+                })
+                .ok_or(())
         });
         if !matches!(&ran, Ok(o) if o.status.success()) {
             std::fs::remove_dir_all(&out).ok();
@@ -196,9 +204,9 @@ pub(super) async fn describe(ids: &[String]) -> (String, Vec<airband_core::radio
                 ));
                 pictures.extend(pictures::keep(&a.frames[0]));
             }
-            What::Video => lines.push(match airband_core::catalog::frames() {
-                Some(f) => format!("- {} (a video, {size}). You cannot watch it: pull frames out of it to look at, with {} if it is installed.", a.path.display(), f.name),
-                None => format!("- {} (a video, {size}). You cannot watch it: pull frames out of it to look at.", a.path.display()),
+            What::Video => lines.push(match airband_core::catalog::frames_programs().iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(" or ") {
+                with if with.is_empty() => format!("- {} (a video, {size}). You cannot watch it: pull frames out of it to look at.", a.path.display()),
+                with => format!("- {} (a video, {size}). You cannot watch it: pull frames out of it to look at, with {with} if it is installed.", a.path.display()),
             }),
             What::Other => lines.push(format!("- {} ({size})", a.path.display())),
         }

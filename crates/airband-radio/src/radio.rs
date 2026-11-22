@@ -472,7 +472,6 @@ impl Radio {
     /// Send a file to the tower in parts, under `id`. `sent` is told how far it has got after each part and
     /// returns false to give up. Blocks until it is all there, the tower refuses it, or it is given up on.
     pub(crate) fn upload(&self, id: &str, path: &str, name: &str, mut sent: impl FnMut(u64, u64) -> bool) -> Result<(), RadioError> {
-        use std::io::{Read, Seek, SeekFrom};
         // 90 KB of file is 120 KB of text, which fits one sealed message through a relay
         const PART: u64 = 90_000;
         // Every part is a round trip to his computer and back, so they go several at once: a video is hundreds
@@ -481,10 +480,7 @@ impl Radio {
         let unread = |_| RadioError::here("read that file");
         let total = std::fs::metadata(path).map_err(unread)?.len();
         let part_at = |from: u64| -> Result<airband_core::radio::AttachmentPart, RadioError> {
-            let mut file = std::fs::File::open(path).map_err(unread)?;
-            file.seek(SeekFrom::Start(from)).map_err(unread)?;
-            let mut buf = Vec::with_capacity(PART as usize);
-            file.take(PART).read_to_end(&mut buf).map_err(unread)?;
+            let buf = airband_io::files::read_part(std::path::Path::new(path), from, PART).map_err(unread)?;
             Ok(airband_core::radio::AttachmentPart { id: id.into(), name: name.into(), from, data: airband_core::encode::base64(&buf), total })
         };
         // a part lost on a bad connection is sent again, to the same place, a few times before giving up

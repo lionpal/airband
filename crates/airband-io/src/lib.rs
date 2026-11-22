@@ -10,7 +10,7 @@
 // test code may touch files and build JSON by hand to stand in for the outside
 #![cfg_attr(test, allow(clippy::disallowed_macros, clippy::let_underscore_must_use))]
 // this crate is where files and the network are reached, for every other crate
-#![expect(clippy::disallowed_methods)]
+#![expect(clippy::disallowed_methods, reason = "this crate is the one place files and the network are reached")]
 pub mod catalog;
 pub mod files;
 pub mod foreign;

@@ -167,7 +167,7 @@ pub(in crate::tower) async fn route(app: &Arc<App>, radio: &str, rest: &str, re:
 /// certain, and it goes to the agent that said it, whatever that agent is called now. When that agent has gone,
 /// his words are read against the room like any others.
 fn scene(app: &App, radio: &str, re: Option<&str>, room: Option<&str>) -> Result<Scene, Box<Session>> {
-    let within = |s: &Session| room.is_none_or(|g| s.team == g);
+    let within = |s: &Session| room.is_none_or(|g| s.team.as_str() == g);
     let inner = app.read();
     if let Some(target) = re.and_then(|id| inner.log.iter().find(|e| e.id == id)).and_then(|e| inner.sender(e)) {
         return Err(Box::new(target.clone()));
@@ -397,7 +397,7 @@ fn answered(mut judged: Out, scene: &Scene, listed: &[Listed], menus: &Menus, pr
 /// nothing when they are not an answer to that: then they are a message of their own. `Err` when no model
 /// could say.
 pub(super) async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope: Option<&str>) -> Result<Option<Vec<Session>>, String> {
-    let all: Vec<Session> = app.read().sessions.iter().filter(|s| scope.is_none_or(|g| s.team == g)).cloned().collect();
+    let all: Vec<Session> = app.read().sessions.iter().filter(|s| scope.is_none_or(|g| s.team.as_str() == g)).cloned().collect();
     let letters = |s: &Session| s.callsign.badge();
     let prompt = format!(
         "{name} said this to his coding agents: \"{first}\"\nIt was not clear who it was for, and he was asked. The agents:\n{list}\n\n\

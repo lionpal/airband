@@ -1,5 +1,5 @@
-//! The relay's records kept in a folder on its own disk: `channels.json`, `waitlist.txt`, and under `held/`
-//! one folder per channel with its kept messages and their list. For a relay run on a machine with a disk.
+//! The relay's records kept in a folder on its own disk: `channels.json`, `closed.json` (the channels their
+//! towers closed), `waitlist.txt`, and under `held/` one folder per channel with its kept messages and their list. For a relay run on a machine with a disk.
 use super::*;
 use std::path::Path;
 
@@ -18,6 +18,10 @@ fn read_channels(dir: &Path) -> Result<HashMap<String, Saved>, String> {
 fn write_channels(dir: &Path, all: &HashMap<String, Saved>) -> Result<(), String> {
     let file = dir.join("channels.json");
     airband_io::kept::save(&file, all).map_err(|e| format!("cannot save {}: {e}", file.display()))
+}
+/// closed.json: every channel its tower closed. Read the same way: unreadable is an error, never "none closed".
+fn read_closed(dir: &Path) -> Result<std::collections::BTreeSet<String>, String> {
+    airband_io::kept::read(&dir.join("closed.json")).map(Option::unwrap_or_default)
 }
 
 /// What a channel's folder keeps, in the order it came: each by the number it is kept under and the id the
@@ -43,10 +47,17 @@ pub(super) fn held_dir(dir: &Path, channel: &str) -> PathBuf {
 /// as it is.
 pub(super) fn held_list(held: &Path) -> Result<HeldList, String> {
     let (list, _, loaded) = airband_io::kept::Keeper::open::<HeldList>(Some(held.join("list.json")));
+    let channel = held.file_name().map(|c| c.to_string_lossy().to_string()).unwrap_or_default();
     match loaded {
         airband_io::kept::Loaded::LeftInPlace { why } => Err(why),
         airband_io::kept::Loaded::SetAside { why } => {
-            eprintln!("airband-relay: the list of kept messages on a channel could not be read; it starts again: {why}");
+            eprintln!("airband-relay: the list of kept messages on a channel could not be read; it starts again: {}", crate::state::masked(&why, &channel));
+            // the bodies it named can never be handed over now: they go, and the next ones start at 1 again
+            for body in airband_io::files::entries(held).map_err(|e| e.to_string())? {
+                if body.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.parse::<u64>().is_ok()) {
+                    airband_io::files::remove(&body).ok();
+                }
+            }
             Ok(list)
         }
         airband_io::kept::Loaded::Fresh | airband_io::kept::Loaded::Read => Ok(list),
@@ -55,7 +66,7 @@ pub(super) fn held_list(held: &Path) -> Result<HeldList, String> {
 impl HeldItem {
     /// Still within the time a kept message waits for its tower.
     fn fresh(&self, now: u64) -> bool {
-        now.saturating_sub(self.at) <= HELD_FOR_SECS
+        in_time(expires(self.at), now)
     }
 }
 
@@ -84,7 +95,9 @@ pub(super) fn held_keep(held: &Path, list: &HeldList) -> Result<(), String> {
 }
 
 fn load(dir: &Path) -> Result<HashMap<String, Saved>, String> {
-    read_channels(dir)
+    // one closed whose record could not then be forgotten is closed all the same
+    let closed = read_closed(dir)?;
+    Ok(read_channels(dir)?.into_iter().filter(|(c, _)| !closed.contains(c)).collect())
 }
 fn join_waitlist(dir: &Path, email: &str) -> Result<(), String> {
     let _one = LISTS.lock().unwrap();
@@ -98,39 +111,55 @@ fn join_waitlist(dir: &Path, email: &str) -> Result<(), String> {
 }
 fn remove(dir: &Path, channel: &str) -> Result<(), String> {
     let _one = LISTS.lock().unwrap();
-    let mut all = read_channels(dir)?;
-    all.remove(channel);
-    write_channels(dir, &all)?;
-    // what was kept for it goes too: no tower will ever come for it
-    let _held = HELD.lock().unwrap();
-    match std::fs::remove_dir_all(held_dir(dir, channel)) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("the channel is forgotten, but what was kept for it could not be removed: {e}")),
-        _ => Ok(()),
+    // closed on record first: a tower still pulling is refused from here on, even if the rest fails
+    let mut closed = read_closed(dir)?;
+    if closed.insert(channel.to_string()) {
+        let file = dir.join("closed.json");
+        airband_io::kept::save(&file, &closed).map_err(|e| format!("cannot save {}: {e}", file.display()))?;
     }
-}
-fn add(dir: &Path, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<(), String> {
-    let _one = LISTS.lock().unwrap();
     let mut all = read_channels(dir)?;
-    all.entry(channel.into()).or_insert(Saved { pull_hash: pull_hash.into(), radio_hash: radio_hash.into() });
-    write_channels(dir, &all)
+    if all.remove(channel).is_some() {
+        write_channels(dir, &all)?;
+    }
+    // what was kept for it goes too, under the lock every keeping takes, which then finds it closed
+    let _held = HELD.lock().unwrap();
+    airband_io::files::remove_folder(&held_dir(dir, channel)).map_err(|e| format!("the channel is closed, but what was kept for it could not be removed: {e}"))
 }
-fn hold(dir: &Path, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<bool, String> {
+fn add(dir: &Path, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<Added, String> {
+    let _one = LISTS.lock().unwrap();
+    if read_closed(dir)?.contains(channel) {
+        return Ok(Added::Closed);
+    }
+    let mut all = read_channels(dir)?;
+    if let Some(on_record) = all.get(channel) {
+        return Ok(Added::Open(on_record.clone()));
+    }
+    let saved = Saved { pull_hash: pull_hash.into(), radio_hash: radio_hash.into() };
+    all.insert(channel.into(), saved.clone());
+    write_channels(dir, &all).map(|()| Added::Open(saved))
+}
+fn hold(dir: &Path, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<Held, String> {
     let _one = HELD.lock().unwrap();
+    if read_closed(dir)?.contains(channel) {
+        return Ok(Held::Closed);
+    }
     let held = held_dir(dir, channel);
     airband_io::files::make_folder(&held).map_err(|e| e.to_string())?;
     let mut list = held_list(&held)?;
-    if list.items.iter().any(|h| h.id == id) {
-        return Ok(true);
-    }
     let now = airband_core::clock::now_secs();
+    if list.items.iter().any(|h| h.id == id && h.fresh(now)) {
+        return Ok(Held::Kept);
+    }
+    // the same id, kept before and past its time: it goes, and this one is kept as new, as every store does
+    drop_from(&held, &mut list, |h| h.id == id)?;
     if list.items.iter().filter(|h| h.fresh(now)).count() >= most {
-        return Ok(false);
+        return Ok(Held::Full);
     }
     // in the order they came: a number that only goes up
     let seq = list.items.iter().map(|h| h.seq).max().map_or(1, |n| n + 1);
     airband_io::files::write_atomic(&held.join(seq.to_string()), sealed).map_err(|e| e.to_string())?;
-    list.items.push(HeldItem { seq, id: id.to_string(), at: airband_core::clock::now_secs() });
-    held_keep(&held, &list).map(|_| true)
+    list.items.push(HeldItem { seq, id: id.to_string(), at: now });
+    held_keep(&held, &list).map(|_| Held::Kept)
 }
 fn held_next(dir: &Path, channel: &str) -> Result<Option<(String, Vec<u8>)>, String> {
     let _one = HELD.lock().unwrap();
@@ -154,10 +183,9 @@ fn held_next(dir: &Path, channel: &str) -> Result<Option<(String, Vec<u8>)>, Str
     }
     if !lost.is_empty() {
         eprintln!("airband-relay: {} kept message(s) on a channel had no body and were dropped from its list", lost.len());
-        list.items.retain(|h| !lost.contains(&h.seq));
         // the one found is still handed over: a list that cannot be written now is tidied next time
-        if let Err(e) = held_keep(&held, &list) {
-            eprintln!("airband-relay: the list of kept messages on a channel could not be tidied: {e}");
+        if let Err(e) = drop_from(&held, &mut list, |h| lost.contains(&h.seq)) {
+            eprintln!("airband-relay: the list of kept messages on a channel could not be tidied: {}", crate::state::masked(&e, channel));
         }
     }
     Ok(found)
@@ -170,13 +198,17 @@ fn held_done(dir: &Path, channel: &str, id: &str) -> Result<(), String> {
 }
 fn held_purge(dir: &Path) -> Result<(), String> {
     let _one = HELD.lock().unwrap();
-    let Ok(channels) = std::fs::read_dir(dir.join("held")) else { return Ok(()) };
+    // a held folder that is not there has nothing in it; one that cannot be read is said. One channel that
+    // cannot be cleared does not stop the rest from being cleared.
+    let channels = airband_io::files::entries(&dir.join("held")).map_err(|e| format!("cannot read the kept messages' folder: {e}"))?;
     let now = airband_core::clock::now_secs();
-    for held in channels.flatten().map(|c| c.path()) {
-        let Ok(mut list) = held_list(&held) else { continue };
-        drop_from(&held, &mut list, |h| !h.fresh(now))?;
+    let mut failed = 0;
+    for held in channels {
+        if held_list(&held).and_then(|mut list| drop_from(&held, &mut list, |h| !h.fresh(now))).is_err() {
+            failed += 1;
+        }
     }
-    Ok(())
+    if failed == 0 { Ok(()) } else { Err(format!("{failed} channel(s) could not be cleared of old kept messages")) }
 }
 
 /// The folder store: the jobs above, for a relay with a disk.
@@ -198,10 +230,10 @@ impl ChannelStore for Folder {
     async fn remove(&self, channel: &str) -> Result<(), String> {
         remove(&self.dir, channel)
     }
-    async fn add(&self, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<(), String> {
+    async fn add(&self, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<Added, String> {
         add(&self.dir, channel, pull_hash, radio_hash)
     }
-    async fn hold(&self, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<bool, String> {
+    async fn hold(&self, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<Held, String> {
         hold(&self.dir, channel, id, sealed, most)
     }
     async fn held_next(&self, channel: &str) -> Result<Option<(String, Vec<u8>)>, String> {

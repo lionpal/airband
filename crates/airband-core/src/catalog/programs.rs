@@ -62,14 +62,15 @@ impl Installer {
     }
 }
 
-/// The package manager this build tells him to install airband with, when it has one.
-pub fn installer() -> Option<Installer> {
-    current().installers.first().cloned()
+/// Every package manager this build can install airband with, as its rows list them. None is picked here:
+/// a caller takes the one a fact points at (the one whose copy is running), or offers each.
+pub fn installers() -> Vec<Installer> {
+    current().installers.clone()
 }
 
-/// The program this build pulls frames out of a video with, when it has one.
-pub fn frames() -> Option<Frames> {
-    current().frames.first().cloned()
+/// Every program this build can pull frames out of a video with. A caller tries each until one runs.
+pub fn frames_programs() -> Vec<Frames> {
+    current().frames.clone()
 }
 
 /// The terminal a row by this id describes.

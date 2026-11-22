@@ -17,7 +17,8 @@ fn a_key_is_known_by_its_fingerprint_and_shown_by_its_last_four() {
     assert!(a.same(&AccountIdentity::of_key("openai", "sk-abcdef1234")));
     assert!(!a.same(&AccountIdentity::of_key("openai", "sk-zzzzzz1234")));
     assert!(!a.same(&AccountIdentity::of_key("anthropic", "sk-abcdef1234")));
-    assert_eq!(super::last4("ab"), "ab");
+    assert_eq!(super::last4("ab"), "", "a short key shows nothing of itself");
+    assert_eq!(super::last4("sk-abcdef1234"), "1234");
 }
 
 #[test]
@@ -44,7 +45,7 @@ fn claude_codes_account_is_its_account_id_in_its_organisation() {
     let doc = json!({"oauthAccount": {"accountUuid": "acc-1", "organizationUuid": "org-1", "emailAddress": "x"}});
     assert_eq!(s[0].identity(&doc, None), Some(AccountIdentity::Id { id: "acc-1".into(), org: Some("org-1".into()) }));
     assert_eq!(s[0].identity(&json!({}), None), None);
-    assert!(matches!(s[1].identity(&json!("sk-ant-xyz9"), None), Some(AccountIdentity::Key { last4, .. }) if last4 == "xyz9"));
+    assert!(matches!(s[1].identity(&json!("sk-ant-fake-key-xyz9"), None), Some(AccountIdentity::Key { last4, .. }) if last4 == "xyz9"));
 }
 
 #[test]

@@ -53,13 +53,19 @@ pub fn fingerprint(provider: &str, key: &str) -> String {
     h.update(provider.as_bytes());
     h.update(b":");
     h.update(key.as_bytes());
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    crate::encode::hex(&h.finalize())
 }
 
-/// The last four characters of a key, the way provider pages show one.
+/// The shortest key whose last four characters may be shown: on a shorter one they would give away too much of it.
+const SHOWN_FROM: usize = 12;
+
+/// The last four characters of a key, the way provider pages show one; nothing for a key too short to show part of.
 pub fn last4(key: &str) -> String {
     let chars: Vec<char> = key.chars().collect();
-    chars[chars.len().saturating_sub(4)..].iter().collect()
+    if chars.len() < SHOWN_FROM {
+        return String::new();
+    }
+    chars[chars.len() - 4..].iter().collect()
 }
 
 /// Where a folder named in a source is.

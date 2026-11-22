@@ -1,8 +1,8 @@
 //! What the relay holds in memory: each channel it knows, and the relay itself with who may do what on them.
 use super::*;
 
-/// How long a tower's pull is held open.
-pub(super) const HOLD: Duration = Duration::from_secs(25);
+/// How long a tower's pull is held open: the one hold every waiting request has.
+pub(super) const HOLD: Duration = airband_core::HOLD;
 
 /// A tower that has not pulled for this long is offline: radios are told at once instead of waiting.
 pub(super) const AIRBAND_GONE: Duration = Duration::from_secs(45);
@@ -85,10 +85,20 @@ pub(super) struct Relay {
 /// tower pulling).
 pub(super) type Load = (usize, bool, bool);
 
+/// A channel as the log names it: six characters tell one channel's lines from another's and are not enough to
+/// use the channel.
+pub(super) fn short(channel: &str) -> String {
+    channel.chars().filter(char::is_ascii_hexdigit).take(6).collect()
+}
+
+/// A line for the log about a channel, with the channel's whole name (in a path, say) cut to [`short`].
+pub(crate) fn masked(line: &str, channel: &str) -> String {
+    if channel.is_empty() { line.to_string() } else { line.replace(channel, &short(channel)) }
+}
+
 /// The line for a radio's request that failed: see [`Relay::note_failed`].
 pub(super) fn failed_line(route: &str, channel: &str, status: u16, took: Duration, bytes: usize, (in_flight, has_held, pulling): Load) -> String {
-    // six characters tell one channel's lines from another's in the log and are not enough to use the channel
-    let short: String = channel.chars().filter(char::is_ascii_hexdigit).take(6).collect();
+    let short = short(channel);
     format!("airband-relay: {route} on {short} answered {status} after {} ms ({bytes} bytes sent; {in_flight} in flight; kept messages: {}; tower pulling: {})", took.as_millis(), if has_held { "yes" } else { "no" }, if pulling { "yes" } else { "no" })
 }
 

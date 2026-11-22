@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn the_frames_program_is_this_builds_own_row_and_fills_its_words() {
-        let f = frames().expect("a frames row is compiled in");
+        let f = frames_programs().into_iter().next().expect("this build compiles a frames row in");
         let run = f.run("/v/clip.mov", 30, "/v/frames");
         assert!(run.contains(&"/v/clip.mov".to_string()) && run.contains(&"30".to_string()) && run.contains(&"/v/frames/%02d.jpg".to_string()), "{run:?}");
         assert!(!run.iter().any(|w| w.contains('{')), "{run:?}");
@@ -393,6 +393,13 @@ mod tests {
         let named: Vec<&str> = c.left_out.iter().map(|l| l.split(':').next().unwrap_or("")).collect();
         assert_eq!(named, ["s1", "l1", "t1", "f1", "k1", "k2", "k3"], "{:?}", c.left_out);
         assert!(c.secrets.is_empty() && c.servers.is_empty() && c.terminals.is_empty());
+    }
+
+    #[test]
+    fn a_phrase_or_retired_id_that_is_not_text_is_left_out_and_the_rest_kept() {
+        let c = read(r#"{"rev":9,"phrases":["sync",7,"merge"],"retired":["old",{"x":1}]}"#).unwrap();
+        assert_eq!((c.phrases.as_slice(), c.retired.as_slice()), (["sync".to_string(), "merge".to_string()].as_slice(), ["old".to_string()].as_slice()));
+        assert_eq!(c.left_out.len(), 2, "{:?}", c.left_out);
     }
 
     #[test]

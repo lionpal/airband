@@ -6,8 +6,17 @@ pub(super) const KEYS_KEPT: usize = 20_000;
 
 /// Who is asking, as the load balancer saw them. It adds the caller's address to the end of this header, so the
 /// last entry is the one a caller cannot make up; anything before it is whatever they chose to send.
-pub(super) fn caller(headers: &HeaderMap) -> String {
-    header(headers, "x-forwarded-for").and_then(|v| v.rsplit(',').next()).map(|a| a.trim().to_string()).filter(|a| !a.is_empty()).unwrap_or_else(|| "direct".into())
+pub(super) fn caller(headers: &HeaderMap) -> Caller {
+    header(headers, "x-forwarded-for").and_then(|v| v.rsplit(',').next()).map(|a| a.trim().to_string()).filter(|a| !a.is_empty()).map_or(Caller::Unseen, Caller::At)
+}
+
+/// Who is asking, by internet address.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) enum Caller {
+    /// The address the load balancer saw.
+    At(String),
+    /// No load balancer said: every such caller is counted as one.
+    Unseen,
 }
 
 /// One count in one stretch of time: may another be taken, at most `most` in each `window`? Counts it if so.
@@ -22,19 +31,19 @@ pub(super) fn count(slot: &mut Option<(Instant, u32)>, most: u32, window: Durati
 }
 
 /// At most so many requests per key in each stretch of time. A key is a channel or an internet address.
-pub(super) struct Limiter {
+pub(super) struct Limiter<K = String> {
     pub(super) most: u32,
     pub(super) window: Duration,
-    pub(super) by: HashMap<String, Option<(Instant, u32)>>,
+    pub(super) by: HashMap<K, Option<(Instant, u32)>>,
     pub(super) swept: Option<Instant>,
 }
 
-impl Limiter {
-    pub(super) fn new(most: u32, seconds: u64) -> Limiter {
+impl<K: std::hash::Hash + Eq + Clone> Limiter<K> {
+    pub(super) fn new(most: u32, seconds: u64) -> Limiter<K> {
         Limiter { most, window: Duration::from_secs(seconds), by: HashMap::new(), swept: None }
     }
     /// Would this one be taken now? Counts nothing.
-    pub(super) fn room(&mut self, key: &str, now: Instant) -> bool {
+    pub(super) fn room(&mut self, key: &K, now: Instant) -> bool {
         self.sweep(now);
         match self.by.get(key) {
             Some(slot) => count(&mut slot.clone(), self.most, self.window, now),
@@ -43,11 +52,11 @@ impl Limiter {
         }
     }
     /// May this one be taken? Counts it if so.
-    pub(super) fn allow(&mut self, key: &str, now: Instant) -> bool {
+    pub(super) fn allow(&mut self, key: &K, now: Instant) -> bool {
         if !self.room(key, now) {
             return false;
         }
-        count(self.by.entry(key.to_string()).or_default(), self.most, self.window, now)
+        count(self.by.entry(key.clone()).or_default(), self.most, self.window, now)
     }
     /// Forget stretches that are over: now and then, and at once when there is no room left.
     fn sweep(&mut self, now: Instant) {
@@ -86,10 +95,11 @@ pub(super) const OPENED_AN_HOUR: u32 = 300;
 
 pub(super) struct Limits {
     /// For each of [`Asks`]: by channel, then by address.
-    pub(super) radio: [(Limiter, Limiter); 2],
-    pub(super) push_by_address: Limiter,
-    pub(super) opened_by_address: Limiter,
-    pub(super) opened: Limiter,
+    pub(super) radio: [(Limiter, Limiter<Caller>); 2],
+    pub(super) push_by_address: Limiter<Caller>,
+    pub(super) opened_by_address: Limiter<Caller>,
+    /// Everyone's, under one key.
+    pub(super) opened: Limiter<()>,
 }
 
 impl Limits {
@@ -98,9 +108,9 @@ impl Limits {
         Limits { radio: [pair(CALLS_A_MINUTE), pair(KEPT_A_MINUTE)], push_by_address: Limiter::new(PUSHES_AN_ADDRESS, 600), opened_by_address: Limiter::new(OPENED_AN_ADDRESS_A_DAY, 86_400), opened: Limiter::new(OPENED_AN_HOUR, 3600) }
     }
     pub(super) fn channel(&mut self, asks: Asks, channel: &str, now: Instant) -> bool {
-        self.radio[asks as usize].0.allow(channel, now)
+        self.radio[asks as usize].0.allow(&channel.to_string(), now)
     }
-    pub(super) fn address(&mut self, asks: Asks, address: &str, now: Instant) -> bool {
+    pub(super) fn address(&mut self, asks: Asks, address: &Caller, now: Instant) -> bool {
         self.radio[asks as usize].1.allow(address, now)
     }
 }
@@ -111,16 +121,17 @@ mod tests {
 
     #[test]
     fn a_limit_counts_per_key_and_starts_again_when_its_time_is_up() {
+        let k = |s: &str| s.to_string();
         let (mut limit, t0) = (Limiter::new(3, 60), Instant::now());
-        assert!((0..3).all(|_| limit.allow("a", t0)) && !limit.allow("a", t0 + Duration::from_secs(59)));
-        assert!(limit.allow("b", t0));
-        assert!(limit.allow("a", t0 + Duration::from_secs(60)));
+        assert!((0..3).all(|_| limit.allow(&k("a"), t0)) && !limit.allow(&k("a"), t0 + Duration::from_secs(59)));
+        assert!(limit.allow(&k("b"), t0));
+        assert!(limit.allow(&k("a"), t0 + Duration::from_secs(60)));
         // a full table turns new keys away and keeps counting the ones it has
         let mut limit = Limiter::new(2, 60);
         for i in 0..KEYS_KEPT {
             assert!(limit.allow(&i.to_string(), t0));
         }
-        assert!(!limit.allow("one more", t0) && limit.allow("7", t0) && !limit.allow("7", t0));
-        assert!(limit.allow("one more", t0 + Duration::from_secs(61)));
+        assert!(!limit.allow(&k("one more"), t0) && limit.allow(&k("7"), t0) && !limit.allow(&k("7"), t0));
+        assert!(limit.allow(&k("one more"), t0 + Duration::from_secs(61)));
     }
 }

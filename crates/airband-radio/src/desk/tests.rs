@@ -312,7 +312,7 @@ fn a_notification_is_opened_by_the_pairing_that_sealed_it_and_no_other() {
     let answer = airband_core::encode::base64(&keys.seal(Direction::ToRadio, &serde_json::to_vec(&question).unwrap()));
     assert!(open_notice(vec![link(&laptop)], answer, Default::default()).is_none());
     assert!(open_notice(vec![link(&laptop)], "not sealed".into(), Default::default()).is_none());
-    assert_eq!(station_id(&link(&laptop)), keys.channel);
+    assert_eq!(station_id(&link(&laptop)).as_str(), keys.channel);
 }
 
 #[test]

@@ -98,6 +98,34 @@ pub fn prune_older(dir: &Path, age: std::time::Duration) {
     }
 }
 
+/// What is in a folder, each by its path. A folder that is not there holds nothing; any other failure to read
+/// it is an error, never "nothing there".
+pub fn entries(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+    match std::fs::read_dir(dir) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e),
+        Ok(all) => all.map(|e| e.map(|e| e.path())).collect(),
+    }
+}
+
+/// Up to `most` bytes of a file, from byte `from` on: a part of one too large to read whole.
+pub fn read_part(path: &Path, from: u64, most: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path)?;
+    file.seek(SeekFrom::Start(from))?;
+    let mut buf = Vec::with_capacity(usize::try_from(most).unwrap_or(0).min(1 << 20));
+    file.take(most).read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
+/// Remove a folder and all it holds. One that is already gone is removed.
+pub fn remove_folder(dir: &Path) -> std::io::Result<()> {
+    match std::fs::remove_dir_all(dir) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
 /// A file's text, or None when it is not there. Any other failure to read it is an error, never "not there".
 pub fn read_text(path: &Path) -> std::io::Result<Option<String>> {
     not_there_is_none(std::fs::read_to_string(path))

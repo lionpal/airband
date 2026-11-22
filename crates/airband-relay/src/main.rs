@@ -33,7 +33,7 @@
 #![warn(clippy::let_underscore_must_use)]
 // test code may touch files and build JSON by hand to stand in for the outside
 #![cfg_attr(test, allow(clippy::disallowed_methods, clippy::disallowed_macros, clippy::let_underscore_must_use))]
-use airband_core::relay::{ADMISSION_HEADER, ID_HEADER, ORDERED_HEADER, RADIO_HASH_HEADER, REQUEST_HEADER};
+use airband_core::relay::{ADMISSION_HEADER, ID_HEADER, ORDERED_HEADER, RADIO_HASH_HEADER, REQUEST_HEADER, Route};
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -44,7 +44,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{Notify, oneshot};
-use airband_core::relay::{HELD_MOST, MAX_MESSAGE, PushAnswer, PushRequest, token_hash};
+use airband_core::relay::{HELD_MOST, MAX_MESSAGE, NotPushed, PushAnswer, PushRequest, token_hash};
 use airband_core::encode::random_hex;
 
 mod auth;
@@ -108,12 +108,12 @@ async fn relay_from_env() -> Arc<Relay> {
 
 fn routes(relay: Arc<Relay>) -> Router {
     Router::new()
-        .route("/v1/channels/{channel}", put(open).delete(close))
-        .route("/v1/channels/{channel}/pull", get(pull))
-        .route("/v1/channels/{channel}/reply/{id}", post(reply))
-        .route("/v1/channels/{channel}/call", post(call))
-        .route("/v1/channels/{channel}/queue", post(hold))
-        .route("/v1/channels/{channel}/push", post(wake_phone))
+        .route(Route::Channel.pattern(), put(open).delete(close))
+        .route(Route::Pull.pattern(), get(pull))
+        .route(Route::Reply("").pattern(), post(reply))
+        .route(Route::Call.pattern(), post(call))
+        .route(Route::Queue.pattern(), post(hold))
+        .route(Route::Push.pattern(), post(wake_phone))
         .route("/v1/waitlist", post(waitlist).options(waitlist_preflight))
         .route("/healthz", get(|| async { "ok" }))
         .layer(DefaultBodyLimit::max(MAX_MESSAGE))
