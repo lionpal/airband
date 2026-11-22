@@ -325,23 +325,6 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         Stored.settings.keep("airband.computers.icons.byid", computerIcons)
     }
 
-    /// The folders inside one of his on a computer. Calls back with them, or with what is wrong.
-    func folders(on computer: String, under: String, done: @escaping (DeskFolders?, String?) -> Void) {
-        ask(Self.unreached, { try self.desk.folders(computer: computer, under: under) }, then: done)
-    }
-
-    /// The folders the coding tools on a computer have had sessions in, newest first. Calls back with them, or
-    /// with what is wrong.
-    func recentFolders(on computer: String, done: @escaping ([DeskRecent]?, String?) -> Void) {
-        ask(Self.unreached, { try self.desk.recentFolders(computer: computer) }, then: done)
-    }
-
-    /// Start an agent in a folder on a computer: in the team that works there, or a new one of this name.
-    /// Calls back with the team's name as the computer writes it, or with what is wrong.
-    func newTeam(_ name: String, on computer: String, folder: String, make: Bool, tool: String?, done: @escaping (String?, String?) -> Void) {
-        ask(Self.unreached, { try self.desk.newTeam(computer: computer, name: name, folder: folder, make: make, tool: tool) }, then: done)
-    }
-
     /// Goes up when a newer catalogue of services and models has been taken: what the choosers list is read again.
     @Published var catalogRev = 0
     var catalogAsked = Date.distantPast
