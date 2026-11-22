@@ -267,8 +267,10 @@ mod tests {
         assert_eq!(notes.len(), 1);
         assert!(notes[0].starts_with("Not sent: “the first thing”. Half an hour"), "{notes:?}");
         // what he says next is tried all the same
-        radio.queue("the second thing".into(), None, None, None);
+        let second = radio.queue("the second thing".into(), None, None, None);
         assert!(until(&|o| o.len() == 2 && o[0].failed.is_some() && o[1].failed.is_none() && o[1].tries >= 1), "{:?}", outbox());
+        // it is followed by the id it was queued under, not by being the last one waiting
+        assert_eq!(outbox()[1].id, second);
         // sent again, the first goes to the end as if just said
         let first = outbox()[0].id.clone();
         radio.send_again(&first);

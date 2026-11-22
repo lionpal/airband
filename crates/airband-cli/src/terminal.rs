@@ -217,8 +217,7 @@ pub fn send(cfg: &Config, args: &[String]) -> Result<(), String> {
                 }
             });
         }
-        radio.queue(words.join(" "), None, None, None);
-        let id = radio.unsent().last().map(|o| o.id.clone()).unwrap_or_default();
+        let id = radio.queue(words.join(" "), None, None, None);
         // until there is nothing more for this command to wait for: his computer has dealt with it, the relay
         // is keeping it for a computer that is away (he has been told), or it was given up on
         loop {

@@ -67,11 +67,12 @@ impl Radio {
     /// so, after half an hour.
     ///
     /// Who it is for: tags at the start of the text if there are any; else the message `re` if he picked one;
-    /// else the tower works it out from what he wrote, among the agents of the team `scope` names
+    /// else the tower works it out from what he wrote, among the agents of the team `scope` names by its id
     /// (nothing for all of them).
     /// `label`, for a quick message, is the button's words: the chat shows those and the agent gets `text`.
-    pub fn queue(&self, text: String, re: Option<String>, scope: Option<String>, label: Option<String>) {
-        self.queue_with(text, re, scope, label, String::new());
+    /// Returns the id it waits under, for following it.
+    pub fn queue(&self, text: String, re: Option<String>, scope: Option<String>, label: Option<String>) -> String {
+        self.queue_as(text, re, scope, label, String::new(), Vec::new(), None)
     }
 }
 
@@ -163,23 +164,20 @@ impl Radio {
         let _ = self.jobs.lock().unwrap().send(Job::Dictate(done));
     }
 
-    /// As [`Radio::queue`], with the agents on his screen that other computers have (JSON, for the tower).
-    pub(crate) fn queue_with(&self, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, others: String) {
-        self.queue_as(text, re, scope, label, others, Vec::new(), None);
-    }
-
     /// As [`Radio::queue`], for the agents he picked (by id) and for what a button of his stood for. `text`
     /// is then what the chat shows for it.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn queue_as(&self, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, others: String, to: Vec<String>, act: Option<Act>) {
+    pub(crate) fn queue_as(&self, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, others: String, to: Vec<String>, act: Option<Act>) -> String {
         let act = act.map(|a| serde_json::to_string(&a).unwrap_or_default()).unwrap_or_default();
+        let id = random_hex(12);
         let waiting = self.store.change(|s| {
             // whatever he attached and has reached the tower goes with this
-            s.outbox.push(Outgoing { to, act, ..Outgoing::new(random_hex(12), text, re, scope, label, self.link.take_armed(), others) });
+            s.outbox.push(Outgoing { to, act, ..Outgoing::new(id.clone(), text, re, scope, label, self.link.take_armed(), others) });
             s.outbox.clone()
         });
         self.wake.ring();
         self.host.outbox(waiting, None);
+        id
     }
 
     /// Try again something that was given up on: it goes to the end of what is waiting, as if just said.
