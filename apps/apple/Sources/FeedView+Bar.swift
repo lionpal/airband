@@ -18,8 +18,10 @@ extension FeedView {
     /// agent he is looking at, while the microphone is open or a message is picked.
     private var aimed: String? {
         guard model.micOpen || model.replyingTo != nil else { return nil }
-        return model.replyingTo.map { name(of: $0) } ?? model.onlyName
+        return aim
     }
+    /// Who his words go to whenever that is already settled: the message he picked, or the agent he is looking at.
+    private var aim: String? { model.replyingTo.map { name(of: $0) } ?? model.onlyName }
     /// The agent it will go to, by id: the one that wrote the message he picked, or the one he is looking at.
     private var aimedAgent: String? {
         // a message he picked says who, even when that is nobody: the agent he is looking at does not stand in
@@ -28,8 +30,6 @@ extension FeedView {
     }
     /// One quiet line above the buttons: who he is answering, or what the radio is doing.
     private var statusLine: String? {
-        // who it will go to, whenever that is already settled: the message he picked, or the agent he is looking at
-        let aim = model.replyingTo.map { name(of: $0) } ?? model.onlyName
         if model.micOpen { return aim.map { "to \($0) \u{b7} tap to send" } ?? "listening \u{b7} tap to send" }
         if let re = model.replyingTo { return "to \(name(of: re)) \u{b7} tap here to undo" }
         switch model.status {
@@ -136,7 +136,7 @@ extension FeedView {
                 .onTapGesture { if !model.micOpen { model.replyingTo = nil } }
         } else {
             // his own words, as he says them: the end of a long sentence stays in view
-            if let aim = model.replyingTo.map({ name(of: $0) }) ?? model.onlyName {
+            if let aim {
                 HStack(spacing: 5) {
                     Text("to")
                     if let agent = aimedAgent, let badge = model.badge(of: agent) { Badge(text: badge.0, colour: badge.1, size: 16) }

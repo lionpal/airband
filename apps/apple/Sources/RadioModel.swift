@@ -21,7 +21,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// An agent, by id: show just that agent.
     @Published var only: String? { didSet { refresh() } }
     /// What the agent he is looking at is called now.
-    var onlyName: String? { only.flatMap { id in agents.first { $0.id == id }?.callsign } }
+    var onlyName: String? { only.flatMap { member($0)?.agent.callsign } }
     @Published var full: [String: String] = [:] // message id → exactly what the agent wrote
     /// He reads everything each agent wrote, not the short form, unless he closes one.
     @Published var showWhole = UserDefaults.standard.bool(forKey: "airband.show.whole") { didSet { UserDefaults.standard.set(showWhole, forKey: "airband.show.whole") } }
