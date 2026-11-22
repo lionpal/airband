@@ -211,7 +211,7 @@ pub(super) mod tests {
         let cfg: Config = serde_json::from_str(r#"{"token":"own","radio_token":"radio"}"#).unwrap();
         let push = push::Wake::load(&store, &[]).unwrap();
         let saver = saver::Saver::start(store.clone());
-        Arc::new(App { push, settings: Settings::held(cfg), store, saver, inner: Mutex::new(Inner::default()), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default(), reviving: Default::default() })
+        Arc::new(App { push, settings: Settings::held(cfg), store, saver, inner: Mutex::new(Inner::default()), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default(), reviving: Default::default(), listening: Default::default() })
     }
 
     fn presence(radio: Option<RadioId>, header: Option<&str>) -> Request {
@@ -349,5 +349,15 @@ pub(super) mod tests {
         let ask = |query: &str| Request::builder().method("GET").uri(format!("/v1/radio/feed?{query}")).header("authorization", "Bearer radio").header(SCHEMA_HEADER, airband_core::radio::SCHEMA).extension(RadioId("phone".into())).body(axum::body::Body::empty()).unwrap();
         assert_eq!(router(app.clone()).oneshot(ask("after=0&wait=0")).await.unwrap().status(), 200);
         assert_eq!(router(app.clone()).oneshot(ask("after=seven&wait=0")).await.unwrap().status(), 400);
+    }
+
+    #[tokio::test]
+    async fn a_radio_is_told_only_the_addresses_the_tower_is_listening_on() {
+        let app = app("feed-direct");
+        app.listening.lock().unwrap().push(std::net::Ipv4Addr::new(10, 0, 0, 5));
+        let req = Request::builder().method("GET").uri("/v1/radio/feed?after=0&wait=0").header("authorization", "Bearer radio").header(SCHEMA_HEADER, airband_core::radio::SCHEMA).extension(RadioId("phone".into())).body(axum::body::Body::empty()).unwrap();
+        let res = router(app.clone()).oneshot(req).await.unwrap();
+        let feed: Feed = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(feed.direct, [format!("http://10.0.0.5:{}", app.cfg().port)]);
     }
 }

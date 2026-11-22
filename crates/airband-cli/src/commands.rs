@@ -97,7 +97,8 @@ pub(crate) fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
     };
     cfg.summarizer = chosen;
     config::save(&cfg)?;
-    println!("Saved. If airband is running it uses this from its next start: airband install");
+    // the tower reads its settings again whenever the file changes
+    println!("Saved. airband uses it from now on.");
     Ok(())
 }
 
@@ -210,7 +211,7 @@ pub(crate) fn quick(mut cfg: Config, args: &[String]) -> Result<(), String> {
         _ => return Err("airband quick  |  airband quick add \"<label>\" [\"<what to send>\"]  |  airband quick remove \"<label>\"".into()),
     }
     config::save(&cfg)?;
-    println!("Saved. airband reads it when it next starts:  airband install");
+    println!("Saved. Your phone shows it within a moment.");
     Ok(())
 }
 

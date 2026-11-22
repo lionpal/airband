@@ -152,6 +152,9 @@ pub(crate) struct App {
     /// Held when a held agent's holder is started again, so two deliveries to one whose holder has gone never
     /// start two holders on one session.
     reviving: tokio::sync::Mutex<()>,
+    /// The addresses besides 127.0.0.1 the tower is listening on now: what a radio is told it can reach
+    /// directly, so it is never told of one that is not served.
+    listening: Mutex<Vec<std::net::Ipv4Addr>>,
 }
 
 impl App {

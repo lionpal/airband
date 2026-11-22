@@ -125,7 +125,7 @@ fn open(cfg: Config) -> Result<Arc<App>, String> {
     inner.settle_reading();
     let push = push::Wake::load(&store, &cfg.pairings)?;
     let saver = saver::Saver::start(store.clone());
-    let app = Arc::new(App { push, settings: Settings::new(cfg), store, saver, inner: Mutex::new(inner), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default(), reviving: Default::default() });
+    let app = Arc::new(App { push, settings: Settings::new(cfg), store, saver, inner: Mutex::new(inner), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default(), reviving: Default::default(), listening: Default::default() });
     // what was changed while starting (a credential masked in a kept message) is written now, not at the next
     // thing an agent says
     drop(app.change());
@@ -233,6 +233,7 @@ async fn serve(app: Arc<App>, router: Router, port: u16) -> Result<(), String> {
         let router = router.clone();
         tokio::spawn(async move { axum::serve(local, router).await });
     }
+    // read once: `airband lan` says a restart is needed, and the feed tells radios only what is bound here
     let lan = app.cfg().lan;
     let mut bound = HashSet::new();
     loop {
@@ -245,6 +246,7 @@ async fn serve(app: Arc<App>, router: Router, port: u16) -> Result<(), String> {
                 Ok(l) => {
                     log(format!("listening on {addr}:{port}{}", if sealed_only { ", for a paired radio on this network" } else { "" }));
                     bound.insert(addr);
+                    app.listening.lock().unwrap().push(addr);
                     let router = if sealed_only { relay_link::sealed_router(app.clone()) } else { router.clone() };
                     tokio::spawn(async move { axum::serve(l, router).await });
                 }
