@@ -24,6 +24,10 @@ ureq.workspace = true
 uniffi = { workspace = true, optional = true }
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 
+# telling a failure to read that passes from one that stays (kept.rs)
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [build-dependencies]
 serde_json.workspace = true
 sha2 = "0.10"
