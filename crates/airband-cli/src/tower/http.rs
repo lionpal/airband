@@ -104,8 +104,8 @@ use airband_core::token::same;
 /// report as an agent, because an agent can name a command for the tower to run.
 async fn auth(State(app): State<Arc<App>>, req: Request, next: Next) -> Response {
     let given = airband_core::token::bearer(req.headers().get("authorization").and_then(|v| v.to_str().ok())).as_bytes();
-    let own = same(given, app.cfg.token.as_bytes());
-    let radio = same(given, app.cfg.radio_token.as_bytes()) && req.uri().path().starts_with(airband_core::radio::PATH);
+    let own = same(given, app.cfg().token.as_bytes());
+    let radio = same(given, app.cfg().radio_token.as_bytes()) && req.uri().path().starts_with(airband_core::radio::PATH);
     if !(own || radio) {
         // a token that opens nothing: 401, so the radio knows its pairing is wrong, not that this one route is shut
         return (StatusCode::UNAUTHORIZED, Json(Refusal::NotAllowed)).into_response();
@@ -201,7 +201,7 @@ pub(super) mod tests {
         let cfg: Config = serde_json::from_str(r#"{"token":"own","radio_token":"radio"}"#).unwrap();
         let push = push::Wake::load(&store).unwrap();
         let saver = saver::Saver::start(store.clone());
-        Arc::new(App { push, cfg, store, saver, inner: Mutex::new(Inner::default()), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default() })
+        Arc::new(App { push, settings: Settings::held(cfg), store, saver, inner: Mutex::new(Inner::default()), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default() })
     }
 
     fn presence(radio: Option<RadioId>, header: Option<&str>) -> Request {

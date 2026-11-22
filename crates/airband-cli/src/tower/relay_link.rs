@@ -5,8 +5,9 @@
 //! bytes; a request that does not open with a paired radio's key, is not fresh, or was already answered is
 //! dropped here.
 use airband_core::radio::wire::Refusal;
-use crate::config::{self, PairedRadio};
+use crate::config::PairedRadio;
 use super::{App, PRESENCE_HEADER, VIA_HEADER, log, now_ms};
+use axum::extract::State;
 use airband_core::relay::{ADMISSION_HEADER, RADIO_HASH_HEADER, REQUEST_HEADER};
 use axum::Router;
 use axum::body::Body;
@@ -27,22 +28,20 @@ fn wrong_clock() -> String {
 }
 
 /// Every pairing being served, by its channel: a request that comes straight to the tower is answered by the
-/// same code, with the same key, as one pulled from the relay.
-static SERVED: std::sync::OnceLock<Mutex<HashMap<String, Serve>>> = std::sync::OnceLock::new();
-fn served() -> &'static Mutex<HashMap<String, Serve>> {
-    SERVED.get_or_init(Default::default)
-}
+/// same code, with the same key, as one pulled from the relay. One for each tower, on its [`App`].
+#[derive(Default)]
+pub(crate) struct Served(Mutex<HashMap<String, Serve>>);
 
 /// The one route a radio uses to reach the tower without the relay: the sealed request it would have given the
 /// relay, answered with the sealed answer. Whoever sends it needs the pairing key to make a request the tower
 /// will open, and to read what comes back; nothing else is served here.
-pub(crate) fn sealed_router() -> Router {
-    Router::new().route("/v1/sealed/{channel}", axum::routing::post(sealed))
+pub(crate) fn sealed_router(app: Arc<App>) -> Router {
+    Router::new().route("/v1/sealed/{channel}", axum::routing::post(sealed)).with_state(app)
 }
 
-async fn sealed(axum::extract::Path(channel): axum::extract::Path<String>, body: axum::body::Bytes) -> axum::response::Response {
+async fn sealed(State(app): State<Arc<App>>, axum::extract::Path(channel): axum::extract::Path<String>, body: axum::body::Bytes) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let serve = served().lock().unwrap().get(&channel).cloned();
+    let serve = app.served.0.lock().unwrap().get(&channel).cloned();
     let Some(serve) = serve else { return axum::http::StatusCode::NOT_FOUND.into_response() };
     match serve.answer_here(&body).await {
         Some(sealed) => sealed.into_response(),
@@ -58,11 +57,8 @@ pub(crate) fn start(app: Arc<App>, router: Router, handle: Handle) {
         type Running = HashMap<(Option<String>, PairedRadio), (Arc<AtomicBool>, std::thread::JoinHandle<()>)>;
         let mut running: Running = HashMap::new();
         loop {
-            // settings read without their keys hold marks for the pairings' secrets: nothing is changed on those
-            let Some(cfg) = config::read_keyed() else {
-                std::thread::sleep(Duration::from_secs(10));
-                continue;
-            };
+            // the settings now, with their keys: ones read without them never take the place of these
+            let cfg = app.cfg();
             // every pairing is served straight, at the tower's own addresses; through the relay too when there is one
             let wanted: Vec<(Option<String>, PairedRadio)> = cfg.pairings.iter().map(|p| (cfg.relay.clone(), p.clone())).collect();
             running.retain(|key, (stop, serving)| {
@@ -76,7 +72,7 @@ pub(crate) fn start(app: Arc<App>, router: Router, handle: Handle) {
                 if !keep {
                     stop.store(true, Ordering::SeqCst);
                     if let Ok(keys) = Keys::derive(&key.1.secret) {
-                        served().lock().unwrap().remove(&keys.channel);
+                        app.served.0.lock().unwrap().remove(&keys.channel);
                     }
                     log(format!("\"{}\" is no longer served", key.1.name));
                 }
@@ -94,8 +90,8 @@ pub(crate) fn start(app: Arc<App>, router: Router, handle: Handle) {
                     }
                 };
                 let stop = Arc::new(AtomicBool::new(false));
-                let serve = Serve { app: app.clone(), relay: key.0.clone(), name: key.1.name.clone(), keys, admission: cfg.relay_admission.clone(), token: app.cfg.radio_token.clone(), router: router.clone(), handle: handle.clone(), stop: stop.clone(), seen: Arc::new(Mutex::new(HashMap::new())), replies: airband_io::http::agent(Duration::from_secs(15)) };
-                served().lock().unwrap().insert(serve.keys.channel.clone(), serve.clone());
+                let serve = Serve { app: app.clone(), relay: key.0.clone(), name: key.1.name.clone(), keys, admission: cfg.relay_admission.clone(), token: app.cfg().radio_token.clone(), router: router.clone(), handle: handle.clone(), stop: stop.clone(), seen: Arc::new(Mutex::new(HashMap::new())), replies: airband_io::http::agent(Duration::from_secs(15)) };
+                app.served.0.lock().unwrap().insert(serve.keys.channel.clone(), serve.clone());
                 running.insert(key, (stop, std::thread::spawn(move || serve.run())));
             }
             std::thread::sleep(Duration::from_secs(10));

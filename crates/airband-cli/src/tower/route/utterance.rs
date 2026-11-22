@@ -107,7 +107,7 @@ async fn leave(app: &Arc<App>, text: &str, said: &airband_core::radio::Utterance
             _ => None,
         },
         // The model is given his words and nothing of the request, which the asking agent wrote.
-        permit::Leave::Waiting => match judge::consent(&app.cfg, text).await {
+        permit::Leave::Waiting => match judge::consent(&app.settings, text).await {
             Some(true) => Some(true),
             // his own words, which are not a yes: they refuse it and go back to the agent as the reason
             Some(false) => None,
@@ -270,7 +270,7 @@ async fn send(app: &Arc<App>, to: &Addressed, wordless: bool, re: Option<&str>, 
     let files = &to.files;
     let many = if to.targets.len() > 1 { format!(" Sent to {} agents.", to.targets.len()) } else { String::new() };
     let rest = if wordless { WORDLESS } else { to.rest.as_str() };
-    let content = format!("From {name}, on his phone through Airband.{many}\n\n{rest}{files}", name = app.cfg.name);
+    let content = format!("From {name}, on his phone through Airband.{many}\n\n{rest}{files}", name = app.cfg().name);
     let answering = answering(app, re);
     let (mut sent, mut failed, mut queued) = (Vec::new(), Vec::new(), Vec::new());
     for t in &to.targets {

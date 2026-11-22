@@ -29,10 +29,10 @@ pub(super) async fn named_project(app: &Arc<App>, idea: &str, said: &str, projec
          Reply with one line of JSON and nothing else: {{\"project\":<the number it is listed under, or null>}}\n\
          Null if he names none of them, rules one out without choosing another, or has gone on to \
          say something else.",
-        name = app.cfg.name,
+        name = app.cfg().name,
         list = projects.iter().enumerate().map(|(i, p)| format!("{}. {}", i + 1, p.name)).collect::<Vec<_>>().join("\n"),
     );
-    let picked: Picked = judge::ask_json(&app.cfg, "which project he named", prompt, Some(picked_shape())).await?;
+    let picked: Picked = judge::ask_json(&app.settings, "which project he named", prompt, Some(picked_shape())).await?;
     Ok(judge::listed(picked.project, projects).cloned())
 }
 

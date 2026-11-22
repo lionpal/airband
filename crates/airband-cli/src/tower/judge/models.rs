@@ -32,18 +32,18 @@ pub(crate) use airband_core::providers::Trouble;
 
 /// Ask the model that reads for the tower. When it does not answer, that is the answer: he is told why on his
 /// phone and gets what the agent wrote, and no other model is asked.
-pub(in crate::tower) async fn ask_model(cfg: &Config, prompt: String) -> Result<String, String> {
-    ask_shaped(cfg, prompt, None).await
+pub(in crate::tower) async fn ask_model(settings: &Settings, prompt: String) -> Result<String, String> {
+    ask_shaped(settings, prompt, None).await
 }
 
 /// The same, for a call that wants JSON of a known shape. A service that can be held to a schema is, so its
 /// answer always parses; the others are asked in words, as before.
-pub(super) async fn ask_shaped(cfg: &Config, prompt: String, shape: Option<Value>) -> Result<String, String> {
-    let model = reader(cfg);
+pub(super) async fn ask_shaped(settings: &Settings, prompt: String, shape: Option<Value>) -> Result<String, String> {
+    let model = settings.reader();
     let asked = ask(&model, prompt, shape).await;
     // with nothing chosen there is nothing that failed
     if !model.is_none() {
-        *FAILED.lock().unwrap() = asked.as_ref().err().map(|failed| failed.0);
+        settings.asked(asked.as_ref().err().map(|failed| failed.0));
     }
     asked.map_err(|Failed(trouble, more)| if more.is_empty() { format!("{trouble:?}") } else { format!("{trouble:?} ({more})") })
 }

@@ -2,10 +2,14 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Config {
+    /// Why these settings came without their keys, when they did: the keychain could not be read where they
+    /// were read. Never in the file. What needs a key says so and stops, and these settings are never saved.
+    #[serde(skip)]
+    pub(crate) keyless: Option<String>,
     #[serde(default = "default_port")]
     pub(crate) port: u16,
     /// The tower's own token: everything on its port, including reporting as an agent. Stays on this machine.
@@ -182,8 +186,10 @@ pub(crate) const RELAY: &str = "https://relay.airband.dev";
 fn default_relay() -> Option<String> {
     Some(RELAY.into())
 }
+/// The port the tower listens on unless the settings say another.
+pub(crate) const DEFAULT_PORT: u16 = 7373;
 fn default_port() -> u16 {
-    7373
+    DEFAULT_PORT
 }
 /// What his agents are told his name is, until he gives another in `airband setup`: the name this computer's
 /// own account has for him.
@@ -231,13 +237,22 @@ pub(crate) use airband_io::files::write_private;
 
 /// The config as it is on disk now, or None if there is none yet.
 pub(crate) fn read() -> Option<Config> {
-    parse(&fs::read_to_string(dir().join("config.json")).ok()?).ok()
+    read_from(&file())
 }
 
-/// The same, only when its keys could be had this time: settings with marks where the keys are are never
-/// taken for the real ones (a pairing's secret, a provider's key).
-pub(crate) fn read_keyed() -> Option<Config> {
-    read().filter(|_| keyless().is_none())
+/// Where the settings are kept.
+pub(crate) fn file() -> PathBuf {
+    dir().join("config.json")
+}
+
+/// The settings in this file, or None when it cannot be read.
+pub(crate) fn read_from(path: &Path) -> Option<Config> {
+    parse(&fs::read_to_string(path).ok()?).ok()
+}
+
+/// When this file was last changed, or None when there is none.
+pub(crate) fn stamp_of(path: &Path) -> Option<std::time::SystemTime> {
+    fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
 /// What the keychain holds for the tower, read once for each version of the file: every program that changes
@@ -257,18 +272,9 @@ fn kept() -> Result<serde_json::Map<String, serde_json::Value>, String> {
     Ok(map)
 }
 
-/// Why this run has the settings without their keys, when it does: the keychain could not be read here.
-static KEYLESS: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-
-/// Set when the keys could not be had the last time the settings were read: what needs one must say so and
-/// stop, not go on with a mark for a key. A later read that has them clears it.
-pub(crate) fn keyless() -> Option<String> {
-    KEYLESS.lock().unwrap().clone()
-}
-
 /// The settings from the file's text, with any secret that is kept in the keychain put back in its place.
 /// Where the keychain cannot be read (a shell over SSH) the settings still come back, with marks where the
-/// keys are and [`keyless`] saying why: a command that needs no key goes on working.
+/// keys are and [`Config::keyless`] saying why: a command that needs no key goes on working.
 fn parse(text: &str) -> Result<Config, String> {
     let mut doc: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
     let missing = match crate::vault::sealed(text).then(kept) {
@@ -279,8 +285,7 @@ fn parse(text: &str) -> Result<Config, String> {
         Some(Err(e)) => Some(e),
         None => None,
     };
-    *KEYLESS.lock().unwrap() = missing;
-    if keyless().is_none() {
+    if missing.is_none() {
         fill_keys(&mut doc)?;
     }
     // a launcher in the file under a name airband uses is not read at all: that name is airband's own
@@ -289,13 +294,14 @@ fn parse(text: &str) -> Result<Config, String> {
     }
     let mut cfg: Config = serde_json::from_value(doc).map_err(|e| e.to_string())?;
     cfg.launchers = with_built_in(std::mem::take(&mut cfg.launchers));
+    cfg.keyless = missing;
     Ok(cfg)
 }
 
 /// The file's text for these settings. The keys are never in it: they are kept encrypted (`vault`) and the
 /// text has a mark in each of their places, from the first time the file is written.
 fn render(cfg: &Config) -> Result<String, String> {
-    if let Some(why) = keyless() {
+    if let Some(why) = &cfg.keyless {
         return Err(format!("the settings cannot be changed from here: {why}"));
     }
     let existing = fs::read_to_string(dir().join("config.json")).unwrap_or_default();
@@ -333,7 +339,7 @@ pub(crate) fn load() -> Config {
     // without the keys nothing is rewritten: the file is left exactly as it is
     let text = match render(&cfg) {
         Ok(text) => text,
-        Err(_) if keyless().is_some() => return cfg,
+        Err(_) if cfg.keyless.is_some() => return cfg,
         Err(e) => {
             eprintln!("airband: {e}");
             std::process::exit(2);
@@ -355,9 +361,11 @@ mod tests {
 
     #[test]
     fn keys_that_could_not_be_had_once_do_not_block_every_later_read() {
-        *KEYLESS.lock().unwrap() = Some("the keychain was locked".into());
-        parse("{}").unwrap();
-        assert_eq!(keyless(), None);
+        // settings read without their keys are never saved; the next read, which has them, is its own
+        let mut without = parse("{}").unwrap();
+        without.keyless = Some("the keychain was locked".into());
+        assert!(render(&without).is_err());
+        assert_eq!(parse("{}").unwrap().keyless, None);
     }
 
     #[test]

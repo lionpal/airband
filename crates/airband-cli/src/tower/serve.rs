@@ -2,7 +2,7 @@
 use super::*;
 
 pub(crate) fn run(cfg: Config) -> Result<(), String> {
-    if let Some(why) = config::keyless() {
+    if let Some(why) = &cfg.keyless {
         return Err(format!("airband's keys could not be read: {why}"));
     }
     settle_keys();
@@ -125,7 +125,7 @@ fn open(cfg: Config) -> Result<Arc<App>, String> {
     inner.settle_reading();
     let push = push::Wake::load(&store)?;
     let saver = saver::Saver::start(store.clone());
-    let app = Arc::new(App { push, cfg, store, saver, inner: Mutex::new(inner), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default() });
+    let app = Arc::new(App { push, settings: Settings::new(cfg), store, saver, inner: Mutex::new(inner), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default() });
     // what was changed while starting (a credential masked in a kept message) is written now, not at the next
     // thing an agent says
     drop(app.change());
@@ -228,12 +228,12 @@ async fn tidy(app: Arc<App>) {
 async fn serve(app: Arc<App>, router: Router, port: u16) -> Result<(), String> {
     let local = tokio::net::TcpListener::bind(("127.0.0.1", port)).await.map_err(|e| format!("cannot listen on 127.0.0.1:{port}: {e} (is airband already running?)"))?;
     log(format!("listening on 127.0.0.1:{port}"));
-    let router = router.merge(relay_link::sealed_router());
+    let router = router.merge(relay_link::sealed_router(app.clone()));
     {
         let router = router.clone();
         tokio::spawn(async move { axum::serve(local, router).await });
     }
-    let lan = app.cfg.lan;
+    let lan = app.cfg().lan;
     let mut bound = HashSet::new();
     loop {
         let wanted = config::overlay_addrs().into_iter().map(|a| (a, false)).chain(config::lan_addrs().into_iter().filter(|_| lan).map(|a| (a, true)));
@@ -245,7 +245,7 @@ async fn serve(app: Arc<App>, router: Router, port: u16) -> Result<(), String> {
                 Ok(l) => {
                     log(format!("listening on {addr}:{port}{}", if sealed_only { ", for a paired radio on this network" } else { "" }));
                     bound.insert(addr);
-                    let router = if sealed_only { relay_link::sealed_router() } else { router.clone() };
+                    let router = if sealed_only { relay_link::sealed_router(app.clone()) } else { router.clone() };
                     tokio::spawn(async move { axum::serve(l, router).await });
                 }
                 Err(e) => log(format!("cannot listen on {addr}:{port}: {e}")),

@@ -12,15 +12,20 @@
 use super::*;
 use std::path::PathBuf;
 use std::process::{Child, Command};
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::OnceLock;
 
-/// Where the server listens: ten ports up from the tower's own, on the loopback address only.
-static PORT: AtomicU16 = AtomicU16::new(7383);
+/// Where the server listens: ten ports up from the tower's own, on the loopback address only. Set once, as the
+/// tower starts.
+static PORT: OnceLock<u16> = OnceLock::new();
 /// The server this run started, and the model it has.
 static RUNNING: Mutex<Option<(String, Child)>> = Mutex::new(None);
 
 pub(crate) fn listen_after(tower_port: u16) {
-    PORT.store(tower_port.saturating_add(10), Ordering::SeqCst);
+    let _ = PORT.set(tower_port.saturating_add(10));
+}
+
+fn port() -> u16 {
+    PORT.get().copied().unwrap_or(config::DEFAULT_PORT + 10)
 }
 
 fn dir() -> PathBuf {
@@ -36,7 +41,7 @@ fn program(server: &airband_core::catalog::Server) -> PathBuf {
     dir().join(&server.program)
 }
 fn address() -> String {
-    format!("http://127.0.0.1:{}", PORT.load(Ordering::SeqCst))
+    format!("http://127.0.0.1:{}", port())
 }
 
 /// Fetch the server program, if it is not here yet. Blocks while it downloads (about 17 MB).
@@ -135,7 +140,7 @@ pub(crate) fn ensure(model: &str, server: &str, patient: bool) -> Result<String,
                 .arg(&program)
                 .env("AIRBAND_TOWER_PID", std::process::id().to_string())
                 // what it is started with and in is its row's to say
-                .args(server.args.iter().map(|a| a.replace("{model}", model).replace("{port}", &PORT.load(Ordering::SeqCst).to_string())))
+                .args(server.args.iter().map(|a| a.replace("{model}", model).replace("{port}", &port().to_string())))
                 .envs(server.env.iter().map(|(name, value)| (name.clone(), value.replace("{models}", &dir().join("models").display().to_string()))))
                 .stdin(Stdio::null())
                 .stdout(out.try_clone().map_err(|e| e.to_string())?)

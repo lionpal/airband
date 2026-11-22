@@ -6,7 +6,7 @@ pub(crate) fn triage(cfg: Config) -> Result<(), String> {
     std::io::Read::read_to_string(&mut std::io::stdin(), &mut full).map_err(|e| e.to_string())?;
     let rt = runtime()?;
     let item = Item { id: String::new(), notice: false, full: full.trim().to_string(), kind: None, say: None, asked: None };
-    let j = rt.block_on(prepare(&cfg, &item));
+    let j = rt.block_on(prepare(&Settings::held(cfg), &item));
     println!("{}\t{}\t{}", super::store::word(&j.kind).unwrap_or_default(), j.say, j.options.iter().enumerate().map(|(i, o)| if j.recommended == Some(i as u32) { format!("[{o}]") } else { o.clone() }).collect::<Vec<_>>().join(" | "));
     Ok(())
 }
@@ -24,7 +24,7 @@ pub(crate) fn try_model(cfg: &Config) -> Result<String, String> {
         }
     }
     println!("  Asking it something…");
-    let answered = rt.block_on(judge::ask_model(cfg, judge::READY.into())).map(|_| "It answers.".into());
+    let answered = rt.block_on(judge::ask_model(&Settings::held(cfg.clone()), judge::READY.into())).map(|_| "It answers.".into());
     // a model this command started on this computer is stopped again: the tower starts its own
     local::stop();
     answered
@@ -37,7 +37,7 @@ pub(crate) fn progress(cfg: Config) -> Result<(), String> {
     std::io::Read::read_to_string(&mut std::io::stdin(), &mut text).map_err(|e| e.to_string())?;
     let steps: Vec<String> = text.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect();
     let rt = runtime()?;
-    println!("{}", rt.block_on(judge::progress(&cfg, &steps)).unwrap_or_else(|| "none".into()));
+    println!("{}", rt.block_on(judge::progress(&Settings::held(cfg), &steps)).unwrap_or_else(|| "none".into()));
     Ok(())
 }
 

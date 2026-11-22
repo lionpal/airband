@@ -111,7 +111,7 @@ pub(super) async fn feed(State(app): State<Arc<App>>, Extension(RadioId(radio)):
                 m
             })
             .collect();
-        return Ok(Json(Feed { schema: airband_core::radio::SCHEMA.into(), rev: upto, messages, roster: inner.roster_entries(), roster_rev: inner.roster_rev(), reads: { let r = judge::reader(&app.cfg); r.offer(crate::providers::Job::Summary).map(|(_, o)| o.label.clone()).unwrap_or_default() }, direct: config::lan_addrs().into_iter().filter(|_| app.cfg.lan).chain(config::overlay_addrs()).map(|a| format!("http://{a}:{}", app.cfg.port)).collect(), seq: inner.seq, open: open.into_iter().collect(), quick: airband_core::radio::quick_defaults().into_iter().chain(app.cfg.quick.iter().cloned()).collect(), station: config::station(&app.cfg), reads_failed: judge::failed(), answers: inner.settled_for(&radio, since) }));
+        return Ok(Json(Feed { schema: airband_core::radio::SCHEMA.into(), rev: upto, messages, roster: inner.roster_entries(), roster_rev: inner.roster_rev(), reads: { let r = app.settings.reader(); r.offer(crate::providers::Job::Summary).map(|(_, o)| o.label.clone()).unwrap_or_default() }, direct: config::lan_addrs().into_iter().filter(|_| app.cfg().lan).chain(config::overlay_addrs()).map(|a| format!("http://{a}:{}", app.cfg().port)).collect(), seq: inner.seq, open: open.into_iter().collect(), quick: airband_core::radio::quick_defaults().into_iter().chain(app.cfg().quick.iter().cloned()).collect(), station: config::station(&app.cfg()), reads_failed: app.settings.failed(), answers: inner.settled_for(&radio, since) }));
     }
 }
 
@@ -148,12 +148,12 @@ pub(super) async fn picture_part(Path(id): Path<String>, Ask(wire::PartQuery { f
 
 /// What can read for this tower, and what does now: the tower's own list, for a radio that offers the choice.
 pub(super) async fn reads_offered(State(app): State<Arc<App>>) -> Answer<at::ReadsOffered> {
-    Ok(Json(judge::offered(&app.cfg)))
+    Ok(Json(judge::offered(&app.settings)))
 }
 
 /// A radio chooses what reads for this tower. Tried with a real call before it is kept.
-pub(super) async fn reads(Sent(wanted): Sent<at::Reads>) -> Answer<at::Reads> {
-    judge::set_reader(wanted).await.map(|reads| Json(wire::ReadsSet { reads })).map_err(no)
+pub(super) async fn reads(State(app): State<Arc<App>>, Sent(wanted): Sent<at::Reads>) -> Answer<at::Reads> {
+    judge::set_reader(&app.settings, wanted).await.map(|reads| Json(wire::ReadsSet { reads })).map_err(no)
 }
 
 pub(super) async fn status(State(app): State<Arc<App>>) -> Json<Status> {

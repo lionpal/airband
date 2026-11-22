@@ -26,7 +26,7 @@ pub(super) async fn pump(app: &Arc<App>) {
     for item in todo {
         let app = app.clone();
         tasks.spawn(async move {
-            let j = prepare(&app.cfg, &item).await;
+            let j = prepare(&app.settings, &item).await;
             (item.id, j)
         });
     }
