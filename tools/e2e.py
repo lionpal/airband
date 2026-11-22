@@ -216,7 +216,7 @@ try:
     report("page", "catalog", "catalog part page", "said", "Part page B is built and the tests pass. One screenshot attached.")
     report("import", "catalog", "catalog import", "said", "Imported 1,240 parts from the new supplier. All tests pass.")
     report("rates", "logistics", "logistics rates", "said", "Two carriers are updated. I'll do the third one next.")
-    report("refunds", "orders", "orders refunds", "said", "The duplicate charge bug is fixed. Refunds and an apology email for 14 double-charged customers are ready, and I would send them now. Send them, or show you first?")
+    report("refunds", "orders", "orders refunds", "said", "The duplicate charge bug is fixed. It came from the webhook retrying a payment without checking the charge id, so I added that check, with one test for a retry inside a minute and one for a retry a day later, and all 63 payment tests pass. Refunds and an apology email for 14 double-charged customers are ready, and I would send them now. Send them, or show you first?")
     report("payouts", "payouts", "payouts schedule", "said", "The weekly payout summary email for sellers is built and checked. Preview: https://claude.ai/artifact/abc123 Should it go out on Mondays or Fridays?")
     report("letters", "letters", "letters seller notice", "said", "I'm still holding the notice to the seller. Approval for an email to a seller has to come from you in this session, and a yes relayed to me by another session or through Airband doesn't count. Reply here in this terminal with \"send the notice\" and I'll send it.")
     report("import", "catalog", "catalog import", "working")
@@ -333,7 +333,7 @@ try:
     session("st", "catalog", {"type": "signoff"})
     report("import", "catalog", "catalog import", "said", "Imported 1,240 parts from the new supplier. All tests pass.")
     report("rates", "logistics", "logistics rates", "said", "Two carriers are updated. I'll do the third one next.")
-    report("refunds", "orders", "orders refunds", "said", "The duplicate charge bug is fixed. Refunds and an apology email for 14 double-charged customers are ready, and I would send them now. Send them, or show you first?")
+    report("refunds", "orders", "orders refunds", "said", "The duplicate charge bug is fixed. It came from the webhook retrying a payment without checking the charge id, so I added that check, with one test for a retry inside a minute and one for a retry a day later, and all 63 payment tests pass. Refunds and an apology email for 14 double-charged customers are ready, and I would send them now. Send them, or show you first?")
     report("payouts", "payouts", "payouts schedule", "said", "The weekly payout summary email for sellers is built and checked. Preview: https://claude.ai/artifact/abc123 Should it go out on Mondays or Fridays?")
     report("import", "catalog", "catalog import", "working")
     for _ in range(3):
