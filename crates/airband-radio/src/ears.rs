@@ -175,8 +175,9 @@ enum Way {
     Model(Arc<crate::engines::Held>),
     /// In one upload to a service, with the key of his own that is already here.
     OwnUpload { with: Use, phrases: Vec<String> },
-    /// Live, as he speaks, in a dialect this build has, with a pass made for his key.
-    Live { pass: Pass, with: &'static Listener },
+    /// Live, as he speaks, in a dialect this build has. Its pass is asked for once the microphone is open
+    /// ([`Ears::pass`]).
+    Live { with: &'static Listener },
     /// A line he types, taken by the host: a radio in a terminal.
     Host,
     /// Nothing can listen, and why: nothing is chosen, or what he chose cannot. Nothing else is asked.
@@ -185,22 +186,26 @@ enum Way {
 
 #[derive(Clone)]
 pub(crate) struct Ears {
-    /// The last pass a live service gave, and when: one is good for a few minutes.
-    pass: Arc<Mutex<Option<(Pass, Instant)>>>,
+    /// The last pass a live service gave, when, and what he had chosen it for (the service, its settings and
+    /// his key): one is good for a few minutes, and only for that.
+    pass: Arc<Mutex<Option<(Pass, Instant, Use)>>>,
+    /// Why the last pass could not be had, in words for him: what he is told when listening could not start.
+    refused: Arc<Mutex<Option<String>>>,
     /// What he chose on the device.
     chosen: Arc<Senses>,
 }
 
 impl Ears {
     pub(crate) fn new(chosen: Arc<Senses>) -> Ears {
-        Ears { pass: Default::default(), chosen }
+        Ears { pass: Default::default(), refused: Default::default(), chosen }
     }
 
-    fn kept(&self) -> Option<Pass> {
-        self.pass.lock().unwrap().clone().filter(|(p, when)| when.elapsed() < PASS_LIFE && !once(&p.dialect)).map(|(p, _)| p)
+    /// The pass kept for exactly this choice, while it is still good.
+    fn kept(&self, with: &Use) -> Option<Pass> {
+        self.pass.lock().unwrap().clone().filter(|(p, when, made)| made == with && when.elapsed() < PASS_LIFE && !once(&p.dialect)).map(|(p, _, _)| p)
     }
-    fn keep(&self, pass: &Pass) {
-        *self.pass.lock().unwrap() = Some((pass.clone(), Instant::now()));
+    fn keep(&self, pass: &Pass, with: &Use) {
+        *self.pass.lock().unwrap() = Some((pass.clone(), Instant::now(), with.clone()));
     }
     fn forget(&self) {
         *self.pass.lock().unwrap() = None;
@@ -212,28 +217,35 @@ impl Ears {
             Some(Own::Model(held)) => Way::Model(held),
             Some(Own::Cannot(why)) => Way::Nothing(why),
             Some(Own::Host) => Way::Host,
-            Some(Own::Service(with)) => {
-                let phrases = self.chosen.ears.phrases.lock().unwrap().clone();
-                match with.offer(Job::Ears).map(|(p, o)| (p, live(&o), crate::hears::by_upload(&with), o)) {
-                    Some((provider, Some(l), _, offer)) => {
-                        // a pass that is kept is used only for the service and settings it was made for: he
-                        // may have chosen another since
-                        let set = with.settings(Job::Ears);
-                        if let Some(pass) = self.kept().filter(|p| p.dialect == l.is.name && p.set == set) {
-                            return Way::Live { pass: Pass { phrases, ..pass }, with: l };
-                        }
-                        match (l.pass)(&offer.by, &provider, &set, &with.key) {
-                            Ok(token) => {
-                                let pass = Pass { dialect: l.is.name.into(), token, set, phrases, by: offer.by.clone() };
-                                self.keep(&pass);
-                                Way::Live { pass, with: l }
-                            }
-                            Err(why) => Way::Nothing(why),
-                        }
-                    }
-                    Some((_, None, true, _)) => Way::OwnUpload { with, phrases },
-                    _ => Way::Nothing("This version of airband cannot listen with the service you chose.".into()),
-                }
+            Some(Own::Service(with)) => match with.offer(Job::Ears).map(|(_, o)| (live(&o), crate::hears::by_upload(&with))) {
+                Some((Some(l), _)) => Way::Live { with: l },
+                Some((None, true)) => Way::OwnUpload { phrases: self.chosen.ears.phrases.lock().unwrap().clone(), with },
+                _ => Way::Nothing("This version of airband cannot listen with the service you chose.".into()),
+            },
+        }
+    }
+
+    /// A pass for the live service he chose: the one kept for that choice while it is good, or a new one,
+    /// asked for now. None when there is none to be had; why is kept for telling him.
+    fn pass(&self) -> Option<Pass> {
+        let Some(Own::Service(with)) = self.chosen.ears.using() else { return None };
+        let (provider, offer) = with.offer(Job::Ears)?;
+        let l = live(&offer)?;
+        let phrases = self.chosen.ears.phrases.lock().unwrap().clone();
+        if let Some(pass) = self.kept(&with) {
+            return Some(Pass { phrases, ..pass });
+        }
+        let set = with.settings(Job::Ears);
+        match (l.pass)(&offer.by, &provider, &set, &with.key) {
+            Ok(token) => {
+                let pass = Pass { dialect: l.is.name.into(), token, set, phrases, by: offer.by.clone() };
+                self.keep(&pass, &with);
+                *self.refused.lock().unwrap() = None;
+                Some(pass)
+            }
+            Err(why) => {
+                *self.refused.lock().unwrap() = Some(why);
+                None
             }
         }
     }
@@ -241,8 +253,8 @@ impl Ears {
     /// Ask for the pass now, so it is there before he next opens the microphone. Nothing is asked of anyone
     /// when what he chose needs no pass.
     pub(crate) fn warm(&self) {
-        if matches!(self.chosen.ears.using(), Some(Own::Service(_))) {
-            let _ = self.way();
+        if matches!(self.way(), Way::Live { .. }) {
+            let _ = self.pass();
         }
     }
 
@@ -302,10 +314,7 @@ impl Ears {
                 // a fresh pass whenever the connection asks for one: the same way, worked out again
                 let again: Arc<dyn Fn() -> Option<Pass> + Send + Sync> = {
                     let ears = self.clone();
-                    Arc::new(move || match ears.way() {
-                        Way::Live { pass, .. } => Some(pass),
-                        _ => None,
-                    })
+                    Arc::new(move || ears.pass())
                 };
                 // As he speaks, with the words coming back while he talks. When that connection cannot be made
                 // he is told, and nothing listens another way in its place.
@@ -317,9 +326,11 @@ impl Ears {
                         said(text)
                     }
                     Err(_) => {
-                        // the service or the line failed: ask for a fresh pass next time
+                        // the service or the line failed: ask for a fresh pass next time. When it was the pass he is
+                        // told the service's reason
                         self.forget();
-                        fail(host, "The listening service you chose could not be reached. Nothing else listened in its place.".into())
+                        let why = self.refused.lock().unwrap().take();
+                        fail(host, why.unwrap_or_else(|| "The listening service you chose could not be reached. Nothing else listened in its place.".into()))
                     }
                 }
             }
@@ -417,4 +428,33 @@ fn by_model(host: &dyn RadioHost, held: &crate::engines::Held, chosen: &Chosen, 
         *chosen.last.lock().unwrap_or_else(|e| e.into_inner()) = Some((pcm.len() as f32 / RATE as f32, began.elapsed().as_secs_f32()));
     }
     heard.map(|text| Some(text.trim().to_string()).filter(|t| !t.is_empty())).ok_or(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scribe(key: &str) -> Use {
+        crate::services::service_of("elevenlabs", "scribe", key, std::collections::HashMap::new())
+    }
+
+    #[test]
+    fn which_way_he_is_heard_is_worked_out_without_asking_the_service_for_anything() {
+        let senses = Arc::new(Senses::default());
+        senses.ears.set(Some(Own::Service(scribe("k"))));
+        let ears = Ears::new(senses);
+        // nothing is asked of the service here: the pass is asked for once the microphone is open
+        assert!(matches!(ears.way(), Way::Live { .. }));
+        assert!(ears.refused.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn a_kept_pass_is_used_only_for_the_key_it_was_made_for() {
+        let ears = Ears::new(Arc::new(Senses::default()));
+        let (a, b) = (scribe("a"), scribe("b"));
+        let by = a.offer(Job::Ears).unwrap().1.by.clone();
+        ears.keep(&Pass { dialect: "usp".into(), token: "t".into(), set: BTreeMap::new(), phrases: Vec::new(), by }, &a);
+        assert!(ears.kept(&a).is_some());
+        assert!(ears.kept(&b).is_none());
+    }
 }
