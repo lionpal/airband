@@ -7,7 +7,7 @@ pub(super) const HOLD: Duration = Duration::from_secs(25);
 /// A tower that has not pulled for this long is offline: radios are told at once instead of waiting.
 pub(super) const AIRBAND_GONE: Duration = Duration::from_secs(45);
 
-/// How long a radio's call waits for the tower's answer. Longer than the 25 s a tower holds `next` open.
+/// How long a radio's call waits for the tower's answer. Longer than the 25 s a tower's pull is held open ([`HOLD`]).
 pub(super) const ANSWER_WAIT: Duration = Duration::from_secs(40);
 
 /// Requests in flight per channel; more are refused.
@@ -131,13 +131,13 @@ impl Relay {
         eprintln!("{}", failed_line(route, channel, status.as_u16(), began.elapsed(), bytes, (in_flight, has_held, pulling)));
     }
 
-    /// The channel, if this request carries its tower's pull token.
     /// Do this to the channel, if this request carries its tower's pull token: what it came to, or the answer
     /// for a request that may not.
     pub(super) fn with_tower<R>(&self, channel: &str, headers: &HeaderMap, then: impl FnOnce(&mut Channel) -> R) -> Result<R, Box<Response>> {
         self.as_tower(&mut self.channels.lock().unwrap(), channel, headers).map(then)
     }
 
+    /// The channel, if this request carries its tower's pull token.
     pub(super) fn as_tower<'a>(&self, channels: &'a mut HashMap<String, Channel>, channel: &str, headers: &HeaderMap) -> Result<&'a mut Channel, Box<Response>> {
         let ch = channels.get_mut(channel).ok_or_else(|| Box::new(say(StatusCode::NOT_FOUND, "no such channel: open it first")))?;
         if same(&token_hash(bearer(headers)), &ch.pull_hash) { Ok(ch) } else { Err(Box::new(say(StatusCode::FORBIDDEN, "not this channel's tower"))) }

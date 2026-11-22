@@ -14,7 +14,7 @@ pub(super) async fn open(State(relay): State<Arc<Relay>>, Path(channel): Path<St
         return answer;
     }
     if let Some(want) = &relay.admission {
-        let given = headers.get(ADMISSION_HEADER).and_then(|v| v.to_str().ok()).unwrap_or("");
+        let given = header(&headers, ADMISSION_HEADER).unwrap_or("");
         if !same(given, want) {
             return say(StatusCode::UNAUTHORIZED, "this relay needs an admission key to open a channel");
         }
@@ -145,7 +145,7 @@ pub(super) async fn hold(State(relay): State<Arc<Relay>>, Path(channel): Path<St
 }
 
 pub(super) async fn keep(relay: &Arc<Relay>, channel: &str, headers: &HeaderMap, sealed: Bytes) -> Response {
-    let id = headers.get(ID_HEADER).and_then(|v| v.to_str().ok()).unwrap_or("");
+    let id = header(headers, ID_HEADER).unwrap_or("");
     if !airband_core::encode::is_hex(id, 8..=40) || sealed.is_empty() {
         return say(StatusCode::BAD_REQUEST, "a kept message needs an id and a body");
     }

@@ -41,6 +41,26 @@ pub(super) fn held_dir(dir: &Path, channel: &str) -> PathBuf {
 pub(super) fn held_list(held: &Path) -> Result<HeldList, String> {
     airband_core::kept::read(&held.join("list.json")).map(Option::unwrap_or_default)
 }
+impl HeldItem {
+    /// Still within the time a kept message waits for its tower.
+    fn fresh(&self, now: u64) -> bool {
+        now.saturating_sub(self.at) <= HELD_FOR_SECS
+    }
+}
+
+/// Take out of a channel's list every message `out` picks, keep the list, then remove their bodies. Nothing,
+/// and nothing written, when it picks none.
+fn drop_from(held: &Path, list: &mut HeldList, out: impl Fn(&HeldItem) -> bool) -> Result<(), String> {
+    let gone: Vec<u64> = list.items.iter().filter(|h| out(h)).map(|h| h.seq).collect();
+    if gone.is_empty() {
+        return Ok(());
+    }
+    list.items.retain(|h| !gone.contains(&h.seq));
+    held_keep(held, list)?;
+    gone.iter().for_each(|seq| remove_body(held, *seq));
+    Ok(())
+}
+
 /// Remove a kept message's body once the list no longer names it. One that cannot be removed is said: it
 /// counts for nothing, as the list is what is read, but it takes room on the disk.
 fn remove_body(held: &Path, seq: u64) {
@@ -91,7 +111,7 @@ pub(super) fn hold(dir: &Path, channel: &str, id: &str, sealed: &[u8], most: usi
         return Ok(true);
     }
     let now = airband_core::clock::now_secs();
-    if list.items.iter().filter(|h| now.saturating_sub(h.at) <= HELD_FOR_SECS).count() >= most {
+    if list.items.iter().filter(|h| h.fresh(now)).count() >= most {
         return Ok(false);
     }
     // in the order they came: a number that only goes up
@@ -110,7 +130,7 @@ pub(super) fn held_next(dir: &Path, channel: &str) -> Result<Option<(String, Vec
     // (its file was lost) is dropped from the list and said, so the channel does not stop at it for ever
     let mut lost = Vec::new();
     let mut found = None;
-    for item in list.items.iter().filter(|h| now.saturating_sub(h.at) <= HELD_FOR_SECS) {
+    for item in list.items.iter().filter(|h| h.fresh(now)) {
         match std::fs::read(held.join(item.seq.to_string())) {
             Ok(sealed) => {
                 found = Some((item.id.clone(), sealed));
@@ -134,11 +154,7 @@ pub(super) fn held_done(dir: &Path, channel: &str, id: &str) -> Result<(), Strin
     let _one = HELD.lock().unwrap();
     let held = held_dir(dir, channel);
     let mut list = held_list(&held)?;
-    let gone: Vec<u64> = list.items.iter().filter(|h| h.id == id).map(|h| h.seq).collect();
-    list.items.retain(|h| h.id != id);
-    held_keep(&held, &list)?;
-    gone.iter().for_each(|seq| remove_body(&held, *seq));
-    Ok(())
+    drop_from(&held, &mut list, |h| h.id == id)
 }
 pub(super) fn held_purge(dir: &Path) -> Result<(), String> {
     let _one = HELD.lock().unwrap();
@@ -146,13 +162,7 @@ pub(super) fn held_purge(dir: &Path) -> Result<(), String> {
     let now = airband_core::clock::now_secs();
     for held in channels.flatten().map(|c| c.path()) {
         let Ok(mut list) = held_list(&held) else { continue };
-        let old: Vec<u64> = list.items.iter().filter(|h| now.saturating_sub(h.at) > HELD_FOR_SECS).map(|h| h.seq).collect();
-        if old.is_empty() {
-            continue;
-        }
-        list.items.retain(|h| !old.contains(&h.seq));
-        held_keep(&held, &list)?;
-        old.iter().for_each(|seq| remove_body(&held, *seq));
+        drop_from(&held, &mut list, |h| !h.fresh(now))?;
     }
     Ok(())
 }

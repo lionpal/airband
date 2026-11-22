@@ -5,10 +5,12 @@
 //! Put it behind TLS, on a proxy or load balancer that adds the caller's address to `x-forwarded-for`: the
 //! limits per address go by the last entry there, and without one every caller counts as the same address.
 //!
-//!   PORT                     port to listen on (default 7474)
-//!   AIRBAND_RELAY_DATA       folder for channels.json (default ./relay-data), when no database is set
-//!   DB_HOST and friends      keep the channel list in Postgres instead (store.rs)
-//!   AIRBAND_RELAY_DYNAMO     keep it in Amazon DynamoDB instead: the tables' prefix (store.rs), with AWS_REGION
+//!   PORT                     port to listen on (7474 when not set)
+//!   HOST                     address to listen on (0.0.0.0 when not set)
+//!   AIRBAND_RELAY_DATA       folder kept in when no database is set (./relay-data when not set): channels.json,
+//!                            waitlist.txt, and held/ with the messages kept for towers that are away
+//!   DB_HOST and friends      keep all of it in Postgres instead (store.rs)
+//!   AIRBAND_RELAY_DYNAMO     keep all of it in Amazon DynamoDB instead: the tables' prefix (store.rs), with AWS_REGION
 //!   AIRBAND_RELAY_ADMISSION  if set, a tower must present this to open a channel; without it, anyone may,
 //!                            within limits (so many new channels from one address in a day, and in all in an hour)
 //!
@@ -26,6 +28,7 @@
 //!   POST   /v1/channels/{c}/call        radio: a sealed request; the response is the sealed answer (Bearer radio token)
 //!   POST   /v1/channels/{c}/queue       radio: a sealed message to keep for a tower that is away (x-airband-id names it)
 //!   POST   /v1/waitlist                 the homepage's sign-up: {"email": "…"} (airband.dev only, by CORS)
+//!   OPTIONS /v1/waitlist                the browser's question before that sign-up (CORS)
 //!   GET    /healthz
 use airband_core::relay::{ADMISSION_HEADER, ID_HEADER, ORDERED_HEADER, RADIO_HASH_HEADER, REQUEST_HEADER};
 use axum::body::Bytes;
