@@ -34,7 +34,6 @@ struct TalkTile: Widget {
                     .frame(width: 46, height: 46).background(ink, in: Circle())
                 Spacer(minLength: 0)
                 Text("Talk").font(.system(size: 22, weight: .bold)).foregroundStyle(ink)
-                Text("to your agents").font(.system(size: 14)).foregroundStyle(ink.opacity(0.6))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .containerBackground(ground, for: .widget)

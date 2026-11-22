@@ -42,7 +42,7 @@ struct AgentsMenu: View {
                     model.look()
                 }
                 ForEach(model.view.rooms, id: \.id) { room in
-                    row(dot: room.state, title: room.name, detail: room.subagents > 0 ? "+\(room.subagents) subagents" : nil, strong: true, on: model.room == room.id && model.only == nil, inset: 0, colour: room.colour) {
+                    row(dot: room.state, title: room.name, detail: room.subagents > 0 ? (room.subagents == 1 ? "+1 subagent" : "+\(room.subagents) subagents") : nil, strong: true, on: model.room == room.id && model.only == nil, inset: 0, colour: room.colour) {
                         // a second tap on the one he is looking at goes back to everyone
                         let was = model.room == room.id && model.only == nil
                         model.look(room: was ? nil : room.id)
@@ -135,7 +135,7 @@ struct AgentsMenu: View {
             Button("Rename") { if let room = renaming { model.renameTeam(room, to: newName) }; renaming = nil }
             Button("Cancel", role: .cancel) { renaming = nil }
         } message: {
-            Text("Its agents stay in it, and say the new name.")
+            Text("Its agents keep working in it.")
         }
     }
 

@@ -1,7 +1,6 @@
 // What he chooses on this phone: the catalogue of services and models, each job's choices, and hearing a voice
 // before choosing it.
 import AVFoundation
-import PhononCoreML
 import Foundation
 import SwiftUI
 import UIKit

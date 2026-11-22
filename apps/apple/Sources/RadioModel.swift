@@ -188,7 +188,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         refresh()
     }
     /// A team he has just made: the desk already shows it, empty, until its first agent comes.
-    func open(made room: String) {
+    func openMade() {
         replyingTo = nil
         refresh()
     }

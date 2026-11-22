@@ -83,7 +83,7 @@ struct NewAgentSheet: View {
                                 .font(.system(size: 16)).foregroundStyle(Palette.ink).padding(.horizontal, 14)
                                 .frame(minHeight: 48).background(Palette.field, in: RoundedRectangle(cornerRadius: 12))
                         }
-                        Text(place.make ? (team.isEmpty ? "Name the team. The new folder is called the same." : "The agent starts in a new folder called \(name.trimmingCharacters(in: .whitespaces)), inside \(place.shown), with nothing to do yet. Its team is \(team). It waits for your first message.") : "The agent starts in \(place.shown) with nothing to do yet. It waits for your first message.")
+                        Text(place.make ? (team.isEmpty ? "The new folder gets the team\u{2019}s name." : "Starts in a new folder, \(name.trimmingCharacters(in: .whitespaces)), inside \(place.shown).") : "Starts in \(place.shown) and waits for your first message.")
                             .font(.system(size: 13)).foregroundStyle(Palette.quiet).lineSpacing(2)
                     }
                     if let wrong { Text(wrong).font(.system(size: 14)).foregroundStyle(.red) }
@@ -217,8 +217,8 @@ struct NewAgentSheet: View {
         (starting, wrong) = (true, nil)
         model.newTeam(place.make ? name : team, on: computer, folder: place.folder, make: place.make, tool: tool.isEmpty ? nil : tool) { made, problem in
             starting = false
-            if let made {
-                model.open(made: made)
+            if made != nil {
+                model.openMade()
                 dismiss()
             } else {
                 wrong = problem
@@ -262,7 +262,7 @@ struct FolderWalk: View {
                 .background(Palette.card, in: RoundedRectangle(cornerRadius: 14)).clipShape(RoundedRectangle(cornerRadius: 14))
                 Toggle("Make a new folder here", isOn: $makeNew).font(.system(size: 16)).foregroundStyle(Palette.ink).tint(Palette.signal)
                     .padding(.horizontal, 14).frame(minHeight: 52).background(Palette.card, in: RoundedRectangle(cornerRadius: 14))
-                Text("You can go up from your home folder to the rest of the computer, and into other disks.").font(.system(size: 13)).foregroundStyle(Palette.quiet).lineSpacing(2)
+                Text("Go up from your home folder to reach other folders and disks.").font(.system(size: 13)).foregroundStyle(Palette.quiet).lineSpacing(2)
                 if let wrong { Text(wrong).font(.system(size: 14)).foregroundStyle(.red) }
             }
             .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 20)
