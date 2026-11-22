@@ -54,12 +54,6 @@ pub(super) fn email_shaped(e: &str) -> bool {
     e.len() <= 254 && !name.is_empty() && plain(name, "._%+-") && plain(domain, ".-") && domain.contains('.') && !domain.starts_with(['.', '-']) && !domain.ends_with(['.', '-']) && !domain.contains("..")
 }
 
-/// Who is asking, as the load balancer saw them. It adds the caller's address to the end of this header, so the
-/// last entry is the one a caller cannot make up; anything before it is whatever they chose to send.
-pub(super) fn caller(headers: &HeaderMap) -> String {
-    headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()).and_then(|v| v.rsplit(',').next()).map(|a| a.trim().to_string()).filter(|a| !a.is_empty()).unwrap_or_else(|| "direct".into())
-}
-
 pub(super) async fn waitlist_preflight(headers: HeaderMap) -> Response {
     (StatusCode::NO_CONTENT, from_site(&headers)).into_response()
 }

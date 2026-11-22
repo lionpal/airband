@@ -1,6 +1,12 @@
 //! How much one caller may ask of the relay, and how often.
 use super::*;
 
+/// Who is asking, as the load balancer saw them. It adds the caller's address to the end of this header, so the
+/// last entry is the one a caller cannot make up; anything before it is whatever they chose to send.
+pub(super) fn caller(headers: &HeaderMap) -> String {
+    headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()).and_then(|v| v.rsplit(',').next()).map(|a| a.trim().to_string()).filter(|a| !a.is_empty()).unwrap_or_else(|| "direct".into())
+}
+
 /// One count in one stretch of time: may another be taken, at most `most` in each `window`? Counts it if so.
 /// The one rule every limit here is made of.
 pub(super) fn count(slot: &mut Option<(Instant, u32)>, most: u32, window: Duration, now: Instant) -> bool {
