@@ -128,25 +128,19 @@ async fn new_agent(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
     // when they name none, the idea is let go. Words that answer nothing, or that came with a choice of his own
     // (a control, agents he picked), leave it held. So does a model that could not say: he is told, and can
     // answer again.
-    let held_idea = {
-        let mut inner = app.change();
-        let call = inner.call(radio);
-        match (&call.unplaced_idea, &said.answers) {
-            (Some((question, _)), Some(answers)) if question == answers && said.act.is_none() && said.to.is_empty() => call.unplaced_idea.take(),
-            _ => None,
-        }
-    };
-    if let Some((question, idea)) = held_idea {
+    // It is read here and let go only once his answer is settled, so nothing that fails on the way loses it.
+    let held_idea = (said.act.is_none() && said.to.is_empty()).then(|| app.change().call(radio).unplaced_for(said.answers.as_deref())).flatten();
+    if let Some(Unplaced { question, idea }) = held_idea {
         match named_project(app, &idea.task, text, projects).await {
             Ok(Some(place)) => {
+                app.change().call(radio).resolve_unplaced(&question);
                 log(format!("← radio: \"{text}\" → launch in {}", place.name));
                 return Some(launch(app, &place, &idea).await);
             }
-            Ok(None) => {}
+            Ok(None) => app.change().call(radio).resolve_unplaced(&question),
             Err(why) => {
                 log(format!("which project he named could not be read: {why}"));
-                app.change().call(radio).unplaced_idea = Some((question.clone(), idea));
-                return Some(Reply { say: "That could not be read just now, so the idea is still waiting. Say the project again.".into(), listen: true, question: Some(question), ..Reply::default() });
+                return Some(Reply { say: "That could not be read just now, so the idea is still waiting. Say the project again.".into(), listen: true, question: Some(question.to_string()), ..Reply::default() });
             }
         }
     }
@@ -177,35 +171,31 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
             inner.call(radio).focus = Some(one.agent.id.clone());
         }
         let names = inner.sessions.iter().map(|s| s.callsign.text()).collect::<Vec<_>>();
-        // only words that answer "Who is that for?" by its id take what it holds
-        let call = inner.call(radio);
-        let held = match (&call.asked, &said.answers) {
-            (Some((question, _, _)), Some(answers)) if question == answers => call.asked.take(),
-            _ => None,
-        };
+        // only words that answer "Who is that for?" by its id read what it holds; it is let go once settled
+        let held = inner.call(radio).asked_for(said.answers.as_deref());
         (parsed, named, inner.roster(), names, inner.unheard().count(), held)
     };
     let (mut rest, mut files) = (parsed.rest, files);
     // "Who is that for?" was just asked. A tag and nothing else answers it; so do words of his that a model reads
-    // as naming someone. Either way what goes out is what he said the first time.
-    if let (Some((question, words, their_files)), None) = (&held, control) {
-        if rest.is_empty() && !named.is_empty() {
+    // as naming someone. Either way what goes out is what he said the first time. Any answer to it settles it,
+    // except one no model could read: then what he said first is kept, and he is asked again.
+    if let Some(Asked { question, words, files: their_files }) = &held {
+        if control.is_none() && rest.is_empty() && !named.is_empty() {
             (rest, files) = (words.clone(), their_files.clone());
-        } else if named.is_empty() && !rest.is_empty() {
+        } else if control.is_none() && named.is_empty() && !rest.is_empty() {
             match named_agents(app, words, &rest, said.scope.as_deref()).await {
                 Ok(Some(meant)) => {
                     named = meant;
                     (rest, files) = (words.clone(), their_files.clone());
                 }
                 Ok(None) => {}
-                // nothing could say whether these words answer it: what he said first is kept, and he is asked again
                 Err(why) => {
                     log(format!("who he meant could not be read: {why}"));
-                    app.change().call(radio).asked = Some((question.clone(), words.clone(), their_files.clone()));
-                    return Err(Reply { say: "That could not be read just now, so what you said first is still waiting. Say who it is for again.".into(), listen: true, question: Some(question.clone()), ..Reply::default() });
+                    return Err(Reply { say: "That could not be read just now, so what you said first is still waiting. Say who it is for again.".into(), listen: true, question: Some(question.to_string()), ..Reply::default() });
                 }
             }
         }
+        app.change().call(radio).resolve_asked(question);
     }
     // work out who it is for only when there is something to deliver
     let targets: Vec<Session> = if !named.is_empty() {
@@ -230,11 +220,11 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
             Routed::Ask(options) if options.is_empty() => return Err(say("No agents are running.".into())),
             Routed::Ask(options) => {
                 // held with its files, so they go along when he says who it was for
-                let question = config::random_hex(8);
-                app.change().call(radio).asked = Some((question.clone(), rest.clone(), files.clone()));
+                let question = airband_core::ids::QuestionId::new(config::random_hex(8));
+                app.change().call(radio).asked = Some(Asked { question: question.clone(), words: rest.clone(), files: files.clone() });
                 let names: Vec<String> = options.iter().map(|s| s.callsign.text()).collect();
                 log(format!("← radio: \"{text}\" → unsure; asking between {}", names.join(", ")));
-                return Err(Reply { ask: options.iter().map(|s| s.agent.id.clone()).collect(), question: Some(question), ..ask(format!("Who is that for? {}.", either(&names))) });
+                return Err(Reply { ask: options.iter().map(|s| s.agent.id.clone()).collect(), question: Some(question.to_string()), ..ask(format!("Who is that for? {}.", either(&names))) });
             }
         }
     };
@@ -421,18 +411,18 @@ mod tests {
         // no model is set here, so asking one fails
         let app = crate::tower::http::tests::app("idea-kept");
         let idea = Idea { task: "add a cart".into(), ..Idea::default() };
-        app.change().call("radio").unplaced_idea = Some(("q1".into(), idea.clone()));
+        app.change().call("radio").unplaced_idea = Some(Unplaced { question: "q1".into(), idea: idea.clone() });
         let places = [Place { name: "shop".into(), folder: "/w/shop".into() }, Place { name: "garden".into(), folder: "/w/garden".into() }];
         let reply = new_agent(&app, "radio", "the shop", &answering("the shop", "q1"), "", &places).await;
         let reply = reply.expect("he is told");
         assert_eq!(reply.question.as_deref(), Some("q1"), "{}", reply.say);
-        assert_eq!(app.change().call("radio").unplaced_idea.clone(), Some(("q1".to_string(), idea)));
+        assert_eq!(app.change().call("radio").unplaced_idea.clone(), Some(Unplaced { question: "q1".into(), idea }));
     }
 
     #[tokio::test]
     async fn an_idea_waiting_for_its_project_is_not_taken_by_words_that_pick_an_agent() {
         let app = crate::tower::http::tests::app("idea-picked");
-        app.change().call("radio").unplaced_idea = Some(("q1".into(), Idea { task: "add a cart".into(), ..Idea::default() }));
+        app.change().call("radio").unplaced_idea = Some(Unplaced { question: "q1".into(), idea: Idea { task: "add a cart".into(), ..Idea::default() } });
         let said = airband_core::radio::Utterance { to: vec!["a".into()], ..answering("hello", "q1") };
         assert!(new_agent(&app, "radio", "hello", &said, "", &[]).await.is_none());
         assert!(app.change().call("radio").unplaced_idea.is_some());
@@ -441,9 +431,46 @@ mod tests {
     #[tokio::test]
     async fn his_first_words_are_kept_when_no_model_can_read_who_he_says_they_are_for() {
         let app = crate::tower::http::tests::app("asked-kept");
-        app.change().call("radio").asked = Some(("q1".into(), "ship it".into(), "\n[file]".into()));
+        app.change().call("radio").asked = Some(asked("q1"));
         let Err(reply) = addressed(&app, "radio", "the first one", &answering("the first one", "q1"), None, String::new(), &[]).await else { panic!("it is not sent anywhere") };
         assert_eq!(reply.question.as_deref(), Some("q1"), "{}", reply.say);
-        assert_eq!(app.change().call("radio").asked.clone(), Some(("q1".to_string(), "ship it".to_string(), "\n[file]".to_string())));
+        assert_eq!(app.change().call("radio").asked.clone(), Some(asked("q1")));
+    }
+
+    fn asked(question: &str) -> Asked {
+        Asked { question: question.into(), words: "ship it".into(), files: "\n[file]".into() }
+    }
+
+    #[test]
+    fn a_question_is_let_go_only_by_its_own_id_and_a_newer_one_is_never_taken_for_it() {
+        let mut call = super::super::Call { asked: Some(asked("q2")), ..Default::default() };
+        // an answer to an older question reads nothing, and settling that older question lets nothing go
+        assert_eq!(call.asked_for(Some("q1")), None);
+        call.resolve_asked(&"q1".into());
+        assert_eq!(call.asked, Some(asked("q2")));
+        // its own answer reads it without taking it; only settling it lets it go
+        assert_eq!(call.asked_for(Some("q2")), Some(asked("q2")));
+        assert!(call.asked.is_some());
+        call.resolve_asked(&"q2".into());
+        assert_eq!(call.asked, None);
+        let idea = Idea { task: "add a cart".into(), ..Idea::default() };
+        call.unplaced_idea = Some(Unplaced { question: "q3".into(), idea });
+        call.resolve_unplaced(&"q1".into());
+        assert!(call.unplaced_for(Some("q3")).is_some() && call.unplaced_for(None).is_none());
+        call.resolve_unplaced(&"q3".into());
+        assert_eq!(call.unplaced_idea, None);
+    }
+
+    #[tokio::test]
+    async fn an_answer_that_names_no_one_settles_the_question_and_lets_his_first_words_go() {
+        // a tag alone answers it: his first words go to the agent tagged, and nothing is left held
+        let app = crate::tower::http::tests::app("asked-settled");
+        app.change().call("radio").asked = Some(asked("q1"));
+        let _ = addressed(&app, "radio", "", &airband_core::radio::Utterance { to: vec!["gone".into()], ..answering("", "q1") }, None, String::new(), &[]).await;
+        // the agent picked is not running, so he is told; the question is still his to answer
+        assert_eq!(app.change().call("radio").asked.clone(), Some(asked("q1")));
+        // a control that comes with the answer settles it
+        let _ = addressed(&app, "radio", "", &answering("", "q1"), Some(Control::Skip), String::new(), &[]).await;
+        assert_eq!(app.change().call("radio").asked.clone(), None);
     }
 }
