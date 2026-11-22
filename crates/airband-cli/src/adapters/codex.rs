@@ -205,7 +205,7 @@ fn leave_of(agent: Agent, request: &Value) -> Option<PermissionAsk> {
             input.insert(key.into(), said.into());
         }
     }
-    super::hooks::leave(agent, "shell", super::hooks::to_run(NAME, &command), &Value::Object(input), super::hooks::AT_KEYBOARD, None)
+    super::hooks::leave(agent, "shell", super::hooks::to_run(NAME, command), &Value::Object(input), super::hooks::AT_KEYBOARD, None)
 }
 
 /// Put a session's pending request for leave to him and give Codex his answer. The server sends a request to

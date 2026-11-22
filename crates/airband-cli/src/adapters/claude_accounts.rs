@@ -129,10 +129,10 @@ fn key_read(service: &str, account: &str) -> Res<Option<String>> {
     }
     let s = String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string();
     // `security -w` prints anything that is not plain text as hex
-    if !s.is_empty() {
-        if let Some(t) = airband_core::encode::unhex(&s).and_then(|b| String::from_utf8(b).ok()).filter(|t| t.starts_with('{')) {
-            return Ok(Some(t));
-        }
+    if !s.is_empty()
+        && let Some(t) = airband_core::encode::unhex(&s).and_then(|b| String::from_utf8(b).ok()).filter(|t| t.starts_with('{'))
+    {
+        return Ok(Some(t));
     }
     Ok(Some(s))
 }

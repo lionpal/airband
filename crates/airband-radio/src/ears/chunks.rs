@@ -23,7 +23,7 @@ fn pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str) 
 fn connect(grant: &Pass, _request: &str) -> Result<Socket, ()> {
     let (stream, host) = grant.stream()?;
     let model = grant.get("model");
-    let mut query: Vec<(&str, &str)> = vec![("model_id", &model), ("audio_format", "pcm_16000"), ("commit_strategy", "manual"), ("token", &grant.token)];
+    let mut query: Vec<(&str, &str)> = vec![("model_id", model), ("audio_format", "pcm_16000"), ("commit_strategy", "manual"), ("token", &grant.token)];
     // its language codes are two letters ("en"), where a setting may say "en-US"
     let language = grant.get("language");
     if let Some(language) = language.split('-').next().filter(|l| !l.is_empty()) {

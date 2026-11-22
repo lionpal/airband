@@ -489,7 +489,7 @@ impl Radio {
     /// Tell the tower where this radio can be woken with a notification (its address at a push service), or
     /// with an empty token that it no longer can.
     pub(crate) fn push_target(&self, provider: desk::PushService, token: &str) -> Result<(), RadioError> {
-        self.ask("/push", serde_json::to_value(airband_core::radio::PushTarget { provider: provider, token: token.into() }).unwrap())
+        self.ask("/push", serde_json::to_value(airband_core::radio::PushTarget { provider, token: token.into() }).unwrap())
     }
 
     /// Send an answer now and wait for the tower to have it: for an answer given where there are only seconds
