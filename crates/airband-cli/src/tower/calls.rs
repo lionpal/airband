@@ -175,10 +175,9 @@ impl Inner {
         call.seen = Some(Instant::now());
         call
     }
-    /// A radio that is on a call and free to take a transmission.
+    /// A radio that is on a call and free to take a transmission: of several, the one he showed was there
+    /// most lately, never one picked by the order of their names.
     pub(super) fn free_radio(&self) -> Option<String> {
-        let mut free: Vec<&String> = self.calls.iter().filter(|(_, c)| c.can_send()).map(|(id, _)| id).collect();
-        free.sort();
-        free.first().map(|id| id.to_string())
+        self.calls.iter().filter(|(_, c)| c.can_send()).max_by_key(|(_, c)| c.seen).map(|(id, _)| id.to_string())
     }
 }

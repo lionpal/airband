@@ -25,8 +25,10 @@ pub(crate) fn listen_after(tower_port: u16) {
     PORT.set(tower_port.saturating_add(10)).ok();
 }
 
-fn port() -> u16 {
-    PORT.get().copied().unwrap_or(config::DEFAULT_PORT + 10)
+/// The port the model's server listens on: set from the tower's own when it starts ([`listen_after`]). Never
+/// one made up here: a server on a port nobody set could be another tower's.
+fn port() -> Result<u16, String> {
+    PORT.get().copied().ok_or_else(|| "airband has not said where its local model listens".to_string())
 }
 
 fn dir() -> PathBuf {
@@ -41,8 +43,8 @@ fn server_row(id: &str) -> Result<&'static airband_core::catalog::Server, String
 fn program(server: &airband_core::catalog::Server) -> PathBuf {
     dir().join(&server.program)
 }
-fn address() -> String {
-    format!("http://127.0.0.1:{}", port())
+fn address() -> Result<String, String> {
+    Ok(format!("http://127.0.0.1:{}", port()?))
 }
 
 /// Fetch the server program, if it is not here yet. Blocks while it downloads (about 17 MB).
@@ -75,7 +77,7 @@ fn fetch(server: &airband_core::catalog::Server) -> Result<PathBuf, String> {
 
 fn healthy() -> bool {
     let agent = airband_io::http::agent(Duration::from_secs(2));
-    agent.get(format!("{}/health", address())).call().is_ok_and(|r| r.status().as_u16() == 200)
+    address().is_ok_and(|at| agent.get(format!("{at}/health")).call().is_ok_and(|r| r.status().as_u16() == 200))
 }
 
 
@@ -127,6 +129,8 @@ pub(crate) enum Patience {
 /// that, and any other is told it is not ready yet. Blocks.
 pub(crate) fn ensure(model: &str, server: &str, patience: Patience) -> Result<String, String> {
     let server = server_row(server)?;
+    let at = address()?;
+    let port = port()?;
     {
         let mut running = RUNNING.lock().unwrap();
         let alive = running.as_mut().is_some_and(|(has, child)| has == model && child.try_wait().is_ok_and(|ended| ended.is_none()));
@@ -147,7 +151,7 @@ pub(crate) fn ensure(model: &str, server: &str, patience: Patience) -> Result<St
                 .arg(&program)
                 .env("AIRBAND_TOWER_PID", std::process::id().to_string())
                 // what it is started with and in is its row's to say
-                .args(server.args.iter().map(|a| a.replace("{model}", model).replace("{port}", &port().to_string())))
+                .args(server.args.iter().map(|a| a.replace("{model}", model).replace("{port}", &port.to_string())))
                 .envs(server.env.iter().map(|(name, value)| (name.clone(), value.replace("{models}", &dir().join("models").display().to_string()))))
                 .stdin(Stdio::null())
                 .stdout(out.try_clone().map_err(|e| e.to_string())?)
@@ -167,7 +171,7 @@ pub(crate) fn ensure(model: &str, server: &str, patience: Patience) -> Result<St
     let until = Instant::now() + if patience == Patience::Long { Duration::from_secs(45 * 60) } else { Duration::from_secs(2) };
     loop {
         if healthy() {
-            return Ok(format!("{}/v1", address()));
+            return Ok(format!("{at}/v1"));
         }
         if RUNNING.lock().unwrap().as_mut().is_some_and(|(_, child)| child.try_wait().is_ok_and(|ended| ended.is_some())) {
             return Err(format!("the program that runs the model stopped. Its log is {}", dir().join("server.log").display()));

@@ -66,9 +66,8 @@ impl Listing {
     }
     /// What the model's number for one of these comes to.
     fn picked(&self, n: Option<usize>) -> Option<Pick> {
-        let name = judge::listed(n, &self.names)?.clone();
-        let at = self.names.iter().position(|x| *x == name)?;
-        Some(Pick::Listed { name, ids: self.ids[at].clone() })
+        let at = n?.checked_sub(1).filter(|at| *at < self.names.len())?;
+        Some(Pick::Listed { name: self.names[at].clone(), ids: self.ids[at].clone() })
     }
 }
 

@@ -767,3 +767,18 @@ fn whether_there_is_more_to_read_is_the_verdict_kept_on_the_line_never_a_compari
     let e = inner.log.iter().find(|e| e.id == id).unwrap().clone();
     assert!(!inner.message(&e).long);
 }
+
+#[test]
+fn of_two_free_radios_the_one_he_showed_was_there_last_takes_it_never_the_first_by_name() {
+    let mut inner = Inner::default();
+    for radio in ["zed", "alpha"] {
+        let c = inner.call(radio);
+        c.presence.says(ON_CALL);
+        c.ready = true;
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(inner.free_radio().as_deref(), Some("alpha"));
+    // a request from the other shows it is there now
+    inner.call("zed");
+    assert_eq!(inner.free_radio().as_deref(), Some("zed"));
+}

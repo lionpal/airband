@@ -62,7 +62,8 @@ pub(super) async fn pump(app: &Arc<App>) {
 /// free again after a while, and what it had goes back in the queue, so one radio that went quiet cannot
 /// hold the queue or lose anything from it.
 fn transmit(app: &Arc<App>, inner: &mut Inner, radio: &str, t: Transmission) {
-    let call = inner.call(radio);
+    // the tower's own doing: it says nothing about whether the radio is there, so it is not taken as a sign of it
+    let Some(call) = inner.calls.get_mut(radio) else { return };
     call.outbox = Some(t);
     call.handed = None;
     call.ready = false;
@@ -71,7 +72,12 @@ fn transmit(app: &Arc<App>, inner: &mut Inner, radio: &str, t: Transmission) {
     tokio::spawn(async move {
         tokio::time::sleep(READY_TIMEOUT).await;
         let mut inner = app.change();
-        let call = inner.call(&radio);
+        // a radio whose call has been let go meanwhile is not called back: what it had goes back in the queue
+        let Some(call) = inner.calls.get_mut(&radio) else {
+            inner.give_back(&radio);
+            inner.tell();
+            return;
+        };
         if call.epoch == epoch && !call.ready {
             log(format!("{} never said it was ready; carrying on", call.name.as_deref().unwrap_or(&radio)));
             call.ready = true;
@@ -103,7 +109,7 @@ fn remind(app: &Arc<App>, inner: &mut Inner, radio: &str) {
     inner.offered.retain(|id, _| open.contains(id));
     // only what was asked since he joined: turning listening on does not play back the afternoon. What was
     // asked before is in the chat, still marked as waiting on him.
-    let began = inner.call(radio).began;
+    let Some(began) = inner.calls.get(radio).map(|c| c.began) else { return };
     let due = inner.log.iter().find(|e| e.at >= began && open.contains(&e.id) && e.short.is_some() && inner.offered.get(&e.id).is_none_or(|(n, when)| when.elapsed() >= remind_after(*n))).cloned();
     let Some(e) = due else { return };
     let first = !inner.offered.contains_key(&e.id);

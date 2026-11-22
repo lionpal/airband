@@ -76,9 +76,12 @@ pub(super) async fn heard(State(app): State<Arc<App>>, RadioId(radio): RadioId, 
         call.handed = None;
     }
     // a reminder of a question he has heard before is not in the queue; what was is now heard
-    if let Some(agent_id) = inner.log.iter().find(|e| e.id == h.id && e.aloud.unheard()).map(|e| e.agent.clone().unwrap_or_default()) {
+    if let Some(said_by) = inner.log.iter().find(|e| e.id == h.id && e.aloud.unheard()).map(|e| e.agent.clone()) {
         inner.set_aloud(&h.id, Aloud::Heard { radio: radio.clone(), at: now_ms() });
-        if let Some(s) = inner.session(&agent_id) {
+        // a line no agent said (airband's own note) has no agent to put him in touch with
+        if let Some(agent_id) = said_by
+            && let Some(s) = inner.session(&agent_id)
+        {
             s.last_heard = Some(h.id.clone());
             inner.call(&radio).focus = Some(agent_id);
         }
