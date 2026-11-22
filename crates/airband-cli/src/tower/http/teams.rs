@@ -2,23 +2,16 @@
 use super::*;
 
 /// He moved an agent to another team.
-pub(super) async fn team(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::MoveAgent>) -> Json<Value> {
-    Json(match place::by_him(&app, &to.agent, &to.to) {
-        Ok(moved) => json!(moved),
-        Err(why) => refused(why),
-    })
+pub(super) async fn team(State(app): State<Arc<App>>, Sent(to): Sent<at::Team>) -> Answer<at::Team> {
+    place::by_him(&app, &to.agent, &to.to).map(Json).map_err(no)
 }
 
 /// He renamed one of his teams, from a radio.
-pub(super) async fn team_rename(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::RenameTeam>) -> Json<Value> {
+pub(super) async fn team_rename(State(app): State<Arc<App>>, Sent(to): Sent<at::RenameTeam>) -> Answer<at::RenameTeam> {
     let mut inner = app.change();
-    Json(match inner.rename_team(&to.team, &to.to) {
-        Ok(team) => {
-            inner.tell();
-            json!(airband_core::radio::TeamRenamed { team: team.into_string() })
-        }
-        Err(why) => refused(why),
-    })
+    let team = inner.rename_team(&to.team, &to.to).map_err(no)?;
+    inner.tell();
+    Ok(Json(airband_core::radio::TeamRenamed { team: team.into_string() }))
 }
 
 /// A folder on this computer, as it really is on disk (links followed). With none named, his home folder:
@@ -39,7 +32,7 @@ const FOLDER_SLOW: &str = "This folder did not open within five seconds.";
 /// The folders inside one of his, for choosing where a new team works. Some computers ask him, at the computer,
 /// the first time a program opens some of his folders, and the read waits for his answer: so it is done to one
 /// side and given five seconds.
-pub(super) async fn folders(State(app): State<Arc<App>>, Json(ask): Json<airband_core::radio::FoldersAsk>) -> Json<Value> {
+pub(super) async fn folders(State(app): State<Arc<App>>, Sent(ask): Sent<at::Folders>) -> Answer<at::Folders> {
     let read = tokio::task::spawn_blocking(move || {
         folder_at(&ask.under).and_then(|at| {
             let entries = std::fs::read_dir(&at).map_err(|e| match e.kind() {
@@ -53,32 +46,32 @@ pub(super) async fn folders(State(app): State<Arc<App>>, Json(ask): Json<airband
             Ok(airband_core::radio::Folders { path: at.display().to_string(), shown: shown(&at), up: at.parent().map(|p| p.display().to_string()), folders: inside, team: String::new(), has_team: false })
         })
     });
-    Json(match tokio::time::timeout(Duration::from_secs(5), read).await {
+    match tokio::time::timeout(Duration::from_secs(5), read).await {
         Ok(Ok(Ok(mut f))) => {
             // the team that works here, or the name one would have
             let (name, has_team) = app.read().folder_called(&f.path);
             (f.team, f.has_team) = (name.unwrap_or_default(), has_team);
-            serde_json::to_value(f).unwrap()
+            Ok(Json(f))
         }
-        Ok(Ok(Err(why))) => refused(why),
-        Ok(Err(_)) => refused("That folder cannot be opened from here."),
-        Err(_) => refused(FOLDER_SLOW),
-    })
+        Ok(Ok(Err(why))) => Err(no(why)),
+        Ok(Err(_)) => Err(no("That folder cannot be opened from here.")),
+        Err(_) => Err(no(FOLDER_SLOW)),
+    }
 }
 
 /// The folders his coding tools have had sessions in, newest first, then his teams no tool has a record of.
-pub(super) async fn recent(State(app): State<Arc<App>>) -> Json<airband_core::radio::Recent> {
-    Json(airband_core::radio::Recent { folders: app.read().recent() })
+pub(super) async fn recent(State(app): State<Arc<App>>) -> Answer<at::Recent> {
+    Ok(Json(airband_core::radio::Recent { folders: app.read().recent() }))
 }
 
 /// He made a new team from a radio, or asked for another agent in one: a name, and the folder its agents
 /// work in.
-pub(super) async fn project(State(app): State<Arc<App>>, Json(new): Json<airband_core::radio::NewProject>) -> Json<Value> {
+pub(super) async fn project(State(app): State<Arc<App>>, Sent(new): Sent<at::Project>) -> Answer<at::Project> {
     // a team's name is part of what its agents are called, and is said aloud: short, and written as a
     // callsign is
     let mut name = match TeamName::new(&new.name) {
         Ok(name) => name.into_string(),
-        Err(why) => return Json(refused(why)),
+        Err(why) => return Err(no(why)),
     };
     let folder = if new.make {
         // the new folder is called exactly as he wrote the name: one part of a path, not hidden
@@ -89,7 +82,7 @@ pub(super) async fn project(State(app): State<Arc<App>>, Json(new): Json<airband
                 let made = parent.join(last);
                 if let Err(e) = std::fs::create_dir(&made)
                     && !made.is_dir() {
-                        return Json(refused(format!("That folder could not be made: {e}")));
+                        return Err(no(format!("That folder could not be made: {e}")));
                     }
                 Ok(made)
             }
@@ -101,10 +94,12 @@ pub(super) async fn project(State(app): State<Arc<App>>, Json(new): Json<airband
     } else {
         folder_at(&new.folder)
     };
-    let folder = match folder {
-        Ok(f) => f,
-        Err(why) => return Json(refused(why)),
-    };
+    let folder = folder.map_err(no)?;
+    // a tool he named that this computer cannot start is refused before anything is made
+    let launcher = held::launcher_for(&app, new.tool.as_deref());
+    if new.tool.is_some() && launcher.is_none() {
+        return Err(no("This computer cannot start that tool."));
+    }
     let at = folder.display().to_string();
     let id = {
         let mut inner = app.change();
@@ -115,7 +110,7 @@ pub(super) async fn project(State(app): State<Arc<App>>, Json(new): Json<airband
                 team
             }
             None => match inner.chosen_team(&name, None) {
-                Err(why) => return Json(refused(why)),
+                Err(why) => return Err(no(why)),
                 // the name came from his radio, so he chose it, even where it is the one the folder would give,
                 // and it stays his
                 Ok(chosen) => {
@@ -126,13 +121,10 @@ pub(super) async fn project(State(app): State<Arc<App>>, Json(new): Json<airband
         }
     };
     // its first agent, with nothing to do yet, when the tower runs agents itself: the team is then there to see
-    let launcher = held::launcher_for(&app, new.tool.as_deref());
-    // a tool he named that cannot be started here is told him by the launch, not dropped
-    let unknown = new.tool.is_some() && launcher.is_none();
-    if !unknown && !launcher.is_some_and(|(_, l)| l.held.is_some()) {
-        return Json(json!(airband_core::radio::ProjectMade { say: format!("{name} is ready. Say launch {name}, then what it should do."), team: name, id }));
+    if !launcher.is_some_and(|(_, l)| l.held.is_some()) {
+        return Ok(Json(airband_core::radio::ProjectMade { say: format!("{name} is ready. Say launch {name}, then what it should do."), team: name, id }));
     }
     let place = Place { name: name.clone(), folder: at };
     let reply = launch::launch(&app, &place, &Idea { tool: new.tool.clone(), project: Some(place.clone()), model: None, effort: None, task: String::new() }).await;
-    Json(json!(airband_core::radio::ProjectMade { say: reply.say, team: name, id }))
+    Ok(Json(airband_core::radio::ProjectMade { say: reply.say, team: name, id }))
 }

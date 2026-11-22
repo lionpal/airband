@@ -15,14 +15,16 @@ impl TowerHere {
     pub(crate) fn here(cfg: &config::Config, timeout: std::time::Duration) -> TowerHere {
         TowerHere { agent: airband_io::http::agent(timeout), base: format!("http://127.0.0.1:{}", cfg.port), auth: format!("Bearer {}", cfg.token) }
     }
+    // Each says which version of the radio protocol it speaks: the radio's routes are refused without it, and
+    // the agent's routes do not read it.
     pub(crate) fn get(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
-        self.agent.get(format!("{}{path}", self.base)).header("authorization", &self.auth)
+        self.agent.get(format!("{}{path}", self.base)).header("authorization", &self.auth).header(airband_core::radio::SCHEMA_HEADER, airband_core::radio::SCHEMA)
     }
     pub(crate) fn post(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithBody> {
-        self.agent.post(format!("{}{path}", self.base)).header("authorization", &self.auth)
+        self.agent.post(format!("{}{path}", self.base)).header("authorization", &self.auth).header(airband_core::radio::SCHEMA_HEADER, airband_core::radio::SCHEMA)
     }
     pub(crate) fn delete(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
-        self.agent.delete(format!("{}{path}", self.base)).header("authorization", &self.auth)
+        self.agent.delete(format!("{}{path}", self.base)).header("authorization", &self.auth).header(airband_core::radio::SCHEMA_HEADER, airband_core::radio::SCHEMA)
     }
 }
 
@@ -181,7 +183,7 @@ fn send(event: &AgentEvent) -> Sent {
     match TowerHere::here(&cfg, Duration::from_millis(1500)).post("/v1/agent/events").config().http_status_as_error(false).build().send_json(event) {
         Ok(res) if res.status().as_u16() == 200 => Sent::Taken,
         // it read the event and said no: in the answer it says why
-        Ok(mut res) if res.status().is_client_error() => Sent::Refused(res.body_mut().read_json::<Value>().ok().and_then(|v| v["error"].as_str().map(String::from)).unwrap_or_else(|| format!("it answered {}", res.status()))),
+        Ok(mut res) if res.status().is_client_error() => Sent::Refused(res.body_mut().read_json::<airband_core::radio::wire::Refusal>().ok().and_then(|r| r.reason().map(String::from)).unwrap_or_else(|| format!("it answered {}", res.status()))),
         // not there, not answering in time, or failing itself: kept for when it is back. One that took it and
         // answered too late hands over a turn's words twice, and the tower takes each turn once.
         _ => Sent::NoAnswer,

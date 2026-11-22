@@ -12,23 +12,6 @@ impl Drop for Reading {
     }
 }
 
-/// What a radio asks of the feed.
-#[derive(Deserialize)]
-pub(super) struct FeedQuery {
-    team: Option<String>,
-    agent: Option<String>,
-    since: Option<u64>,
-    /// The position after which lines are wanted; from the start when it is not given.
-    #[serde(default)]
-    after: u64,
-    limit: Option<usize>,
-    /// How many seconds to wait for something new, at most 25; none when it is not given.
-    #[serde(default)]
-    wait: u64,
-    /// The roster this radio last saw, if it says: then a change to the roster alone also ends the wait.
-    roster: Option<u64>,
-}
-
 /// Chat mode: the log, each message cut to a line or two.
 ///
 /// `since=<rev>` is how a radio follows it: everything new or changed after that change count, oldest change
@@ -36,10 +19,12 @@ pub(super) struct FeedQuery {
 /// renamed, so a radio always ends up with the current form of every line. `since=0` is a radio starting from
 /// nothing: it gets the newest lines.
 /// With no `since`, `after=<seq>` gives the lines added after that position, and never a change to an earlier one.
-/// A query with a number that is not one is refused, never read as none.
-pub(super) async fn feed(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Query(q): Query<FeedQuery>) -> Json<Feed> {
+/// A query with a number that is not one is refused, never read as none. `wait` is held to
+/// [`wire::FeedQuery::WAIT_MOST`].
+pub(super) async fn feed(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Ask(q): Ask<at::Feed>) -> Answer<at::Feed> {
+    let until = Instant::now() + q.wait_for();
     // all of it, or one team's (`team`, its id), or one agent's (`agent`, its id)
-    let FeedQuery { team, agent, since, after, limit, wait, roster: roster_seen } = q;
+    let wire::FeedQuery { team, agent, since, after, limit, roster: roster_seen, .. } = q;
     // A radio that is showing the chat has everything up to the change count it asks from: nothing up to there
     // needs a notification on that radio. One that says the chat is not in front of him is following it
     // without showing it, and is told nothing by that.
@@ -58,7 +43,6 @@ pub(super) async fn feed(State(app): State<Arc<App>>, Extension(RadioId(radio)):
         Reading(app.clone())
     });
     let limit = limit.unwrap_or(if since.is_some() { 200 } else { 50 }).clamp(1, 200);
-    let until = Instant::now() + Duration::from_secs(wait.min(25));
     loop {
         // the lines to send, and the change count this answer is good up to
         let (hits, upto, roster_same, settled): (Vec<Entry>, u64, bool, bool) = {
@@ -66,7 +50,7 @@ pub(super) async fn feed(State(app): State<Arc<App>>, Extension(RadioId(radio)):
             let inner = app.read();
             let roster_same = roster_seen.is_none_or(|seen| seen == inner.roster_rev());
             let settled = !inner.settled_for(&radio, since).is_empty();
-            let wanted = |e: &&Entry| inner.in_view(e, team.as_deref(), agent.as_deref());
+            let wanted = |e: &&Entry| inner.in_view(e, team.as_ref().map(|t| t.as_str()), agent.as_ref().map(|a| a.as_str()));
             match since {
                 Some(0) | None => {
                     let hits: Vec<&Entry> = inner.log.iter().filter(|e| e.seq > after).filter(wanted).collect();
@@ -127,11 +111,13 @@ pub(super) async fn feed(State(app): State<Arc<App>>, Extension(RadioId(radio)):
                 m
             })
             .collect();
-        return Json(Feed { schema: airband_core::radio::SCHEMA.into(), rev: upto, messages, roster: inner.roster_entries(), roster_rev: inner.roster_rev(), reads: { let r = judge::reader(&app.cfg); r.offer(crate::providers::Job::Summary).map(|(_, o)| o.label.clone()).unwrap_or_default() }, direct: config::lan_addrs().into_iter().filter(|_| app.cfg.lan).chain(config::overlay_addrs()).map(|a| format!("http://{a}:{}", app.cfg.port)).collect(), seq: inner.seq, open: open.into_iter().collect(), quick: airband_core::radio::quick_defaults().into_iter().chain(app.cfg.quick.iter().cloned()).collect(), station: config::station(&app.cfg), reads_failed: judge::failed(), answers: inner.settled_for(&radio, since) });
+        return Ok(Json(Feed { schema: airband_core::radio::SCHEMA.into(), rev: upto, messages, roster: inner.roster_entries(), roster_rev: inner.roster_rev(), reads: { let r = judge::reader(&app.cfg); r.offer(crate::providers::Job::Summary).map(|(_, o)| o.label.clone()).unwrap_or_default() }, direct: config::lan_addrs().into_iter().filter(|_| app.cfg.lan).chain(config::overlay_addrs()).map(|a| format!("http://{a}:{}", app.cfg.port)).collect(), seq: inner.seq, open: open.into_iter().collect(), quick: airband_core::radio::quick_defaults().into_iter().chain(app.cfg.quick.iter().cloned()).collect(), station: config::station(&app.cfg), reads_failed: judge::failed(), answers: inner.settled_for(&radio, since) }));
     }
 }
 
-pub(super) async fn message(State(app): State<Arc<App>>, Path(id): Path<String>, Query(q): Query<airband_core::radio::wire::MessageQuery>) -> Response {
+/// One message: its whole words, as read aloud (`form=spoken`, or `part=asked` for the question as he would be
+/// asked it), as written (`form=full`), or in more detail than its short version.
+pub(super) async fn message(State(app): State<Arc<App>>, Path(id): Path<String>, Ask(q): Ask<at::Message>) -> Answer<at::Message> {
     // a very long one is read as far as a few minutes go
     if q.form == Some(airband_core::radio::Form::Spoken) {
         // `part=asked` is the question as he would be asked it on a call: who is asking, its short form, and
@@ -146,50 +132,28 @@ pub(super) async fn message(State(app): State<Arc<App>>, Path(id): Path<String>,
             // the whole of it, read from its blocks: no mark is said, a table goes row by row, code is passed over
             None => airband_core::prose::clip(&spoken(&e.full), 3000),
         });
-        return match text {
-            Some(text) => Json(json!({ "text": text })).into_response(),
-            None => StatusCode::NOT_FOUND.into_response(),
-        };
+        return text.map(|text| Json(wire::MessageText { text })).ok_or(No(Refusal::Gone));
     }
     if q.form == Some(airband_core::radio::Form::Full) {
-        return match app.read().log.iter().find(|e| e.id == id) {
-            Some(e) => Json(More { text: e.full.clone() }).into_response(),
-            None => StatusCode::NOT_FOUND.into_response(),
-        };
+        return app.read().log.iter().find(|e| e.id == id).map(|e| Json(wire::MessageText { text: e.full.clone() })).ok_or(No(Refusal::Gone));
     }
-    match detail_of(&app, &id).await {
-        Some(text) => Json(More { text }).into_response(),
-        None => StatusCode::NOT_FOUND.into_response(),
-    }
-}
-
-/// Where in a picture's kept copy the next part starts: from the beginning when it is not given. A value
-/// that is not a number is refused, never read as the beginning.
-#[derive(Deserialize)]
-pub(super) struct PartQuery {
-    #[serde(default)]
-    from: usize,
+    detail_of(&app, &id).await.map(|text| Json(wire::MessageText { text })).ok_or(No(Refusal::Gone))
 }
 
 /// The next part of a picture's kept copy.
-pub(super) async fn picture_part(Path(id): Path<String>, Query(PartQuery { from }): Query<PartQuery>) -> Response {
-    match tokio::task::spawn_blocking(move || pictures::part(&id, from)).await.ok().flatten() {
-        Some(part) => Json(part).into_response(),
-        None => StatusCode::NOT_FOUND.into_response(),
-    }
+/// From where in its kept copy (`from`, from the beginning when it is not given).
+pub(super) async fn picture_part(Path(id): Path<String>, Ask(wire::PartQuery { from }): Ask<at::Picture>) -> Answer<at::Picture> {
+    tokio::task::spawn_blocking(move || pictures::part(&id, from)).await.ok().flatten().map(Json).ok_or(No(Refusal::Gone))
 }
 
 /// What can read for this tower, and what does now: the tower's own list, for a radio that offers the choice.
-pub(super) async fn reads_offered(State(app): State<Arc<App>>) -> Json<airband_core::radio::ReadsOffered> {
-    Json(judge::offered(&app.cfg))
+pub(super) async fn reads_offered(State(app): State<Arc<App>>) -> Answer<at::ReadsOffered> {
+    Ok(Json(judge::offered(&app.cfg)))
 }
 
 /// A radio chooses what reads for this tower. Tried with a real call before it is kept.
-pub(super) async fn reads(Json(wanted): Json<airband_core::radio::SetReads>) -> Json<Value> {
-    Json(match judge::set_reader(wanted).await {
-        Ok(name) => json!({ "reads": name }),
-        Err(why) => refused(why),
-    })
+pub(super) async fn reads(Sent(wanted): Sent<at::Reads>) -> Answer<at::Reads> {
+    judge::set_reader(wanted).await.map(|reads| Json(wire::ReadsSet { reads })).map_err(no)
 }
 
 pub(super) async fn status(State(app): State<Arc<App>>) -> Json<Status> {

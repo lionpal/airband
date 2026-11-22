@@ -62,6 +62,8 @@ pub enum Refusal {
     Gone,
     /// Only a radio may ask this, or only the tower's own reporters.
     NotAllowed,
+    /// It could not be done just now, and why: the same request is sent again in a moment.
+    NotNow { reason: String },
     /// A refusal this build does not know.
     #[serde(other)]
     Unknown,
@@ -80,12 +82,13 @@ impl Refusal {
             Refusal::TooBig => 413,
             Refusal::Gone => 404,
             Refusal::NotAllowed => 403,
+            Refusal::NotNow { .. } => 503,
         }
     }
     /// What to tell him, when the tower gave words for it.
     pub fn reason(&self) -> Option<&str> {
         match self {
-            Refusal::Told { reason } | Refusal::BadAsk { reason } => Some(reason),
+            Refusal::Told { reason } | Refusal::BadAsk { reason } | Refusal::NotNow { reason } => Some(reason),
             _ => None,
         }
     }

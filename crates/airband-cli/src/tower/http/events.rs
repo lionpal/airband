@@ -3,13 +3,11 @@ use super::*;
 
 /// An agent's event. It is written down exactly as it arrived before anything is made of it, so an event this
 /// build cannot read is still on record for one that can.
-pub(super) async fn events(State(app): State<Arc<App>>, body: String) -> Response {
-    let Ok(raw) = serde_json::from_str::<Value>(&body) else { return (StatusCode::BAD_REQUEST, Json(refused("not JSON"))).into_response() };
+/// Its body is read as [`at::Events`]'s only after that, so this one route takes its body as it came.
+pub(super) async fn events(State(app): State<Arc<App>>, body: String) -> Answer<at::Events> {
+    let raw = serde_json::from_str::<Value>(&body).map_err(|_| bad("not JSON"))?;
     app.store.event(&raw);
-    let ev: AgentEvent = match serde_json::from_value(raw) {
-        Ok(ev) => ev,
-        Err(e) => return (StatusCode::BAD_REQUEST, Json(refused(format!("not an airband.agent/1 event: {e}")))).into_response(),
-    };
+    let ev: <at::Events as Endpoint>::Body = serde_json::from_value(raw).map_err(|e| bad(format!("not an airband.agent/1 event: {e}")))?;
     let from = ev.agent.id.clone();
     let by_hook = ev.via == Some(airband_core::agent::Via::Hook);
     // an event with a picture is slow to take in (the picture is shrunk); the other requests must not wait behind it
@@ -20,17 +18,17 @@ pub(super) async fn events(State(app): State<Arc<App>>, body: String) -> Respons
                 && let Some(s) = app.change().session(&from) {
                     s.hooked = true;
                 }
-            Json(json!({})).into_response()
+            done()
         }
-        Err(e) => (StatusCode::BAD_REQUEST, Json(refused(e))).into_response(),
+        Err(e) => Err(bad(e)),
     }
 }
 
 /// One part of a file he is attaching. Answers with how much of the file is whole from its start.
-pub(super) async fn attachment(Json(part): Json<airband_core::radio::AttachmentPart>) -> Response {
+pub(super) async fn attachment(Sent(part): Sent<at::Attachment>) -> Answer<at::Attachment> {
     match tokio::task::spawn_blocking(move || attachments::take(part)).await {
-        Ok(Ok(next)) => Json(json!({ "next": next })).into_response(),
-        Ok(Err(why)) => Json(refused(why)).into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Ok(Ok(next)) => Ok(Json(wire::AttachmentNext { next })),
+        Ok(Err(why)) => Err(no(why)),
+        Err(_) => Err(No(Refusal::NotNow { reason: "That part of the file could not be taken just now.".into() })),
     }
 }

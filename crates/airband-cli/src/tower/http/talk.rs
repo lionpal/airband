@@ -2,13 +2,14 @@
 use super::*;
 use axum::Extension;
 
-pub(super) async fn next(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Query(q): Query<HashMap<String, String>>) -> Response {
+/// The next transmission for this radio, held open up to [`HOLD`]: none (`null`) when nothing came.
+pub(super) async fn next(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Ask(q): Ask<at::Next>) -> Answer<at::Next> {
     {
         let mut inner = app.passing();
         // He has just turned reading aloud on, and the radio says so (`joined`). What was said long before is
         // in the chat for him to read: it is not read out now, hours late. A radio that only went quiet for a
         // while and is back says no such thing, and nothing is taken from the queue for it.
-        if q.contains_key("joined") {
+        if q.joined {
             inner.leave_old_news();
             inner.call(&radio).began = now_ms();
         }
@@ -16,31 +17,32 @@ pub(super) async fn next(State(app): State<Arc<App>>, Extension(RadioId(radio)):
         // heard nothing about it, the answer that carried it was lost on the way: it is given again now, not
         // after two minutes of silence.
         let call = inner.call(&radio);
-        if let (Some(have), Some(lost)) = (q.get("have"), call.handed.clone())
+        if let (Some(have), Some(lost)) = (q.have.as_ref(), call.handed.clone())
             && *have != lost.id && call.outbox.is_none() && !call.ready {
                 log(format!("{radio} never got what it was handed ({}); handing it over again", lost.callsign));
                 call.outbox = Some(lost);
             }
     }
     app.kick.notify_one();
-    let until = Instant::now() + HOLD;
-    while Instant::now() < until {
+    // tokio's clock, so the hold can be run with time paused
+    let until = tokio::time::Instant::now() + HOLD;
+    while tokio::time::Instant::now() < until {
         {
             let mut inner = app.passing();
         let call = inner.call(&radio);
             if let Some(t) = call.outbox.take() {
                 call.handed = Some(t.clone());
-                return Json(t).into_response();
+                return Ok(Json(Some(t)));
             }
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
-    StatusCode::NO_CONTENT.into_response()
+    Ok(Json(None))
 }
 
 /// A radio was handed something to read out and no sound came of it. It goes back in the queue, the reason is
 /// written down, and that radio is handed nothing more for a minute.
-pub(super) async fn unheard(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Json(u): Json<airband_core::radio::Unheard>) -> Json<Value> {
+pub(super) async fn unheard(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Sent(u): Sent<at::Unheard>) -> Answer<at::Unheard> {
     let mut inner = app.change();
     let id = u.id.as_str();
     let who = inner.log.iter().find(|e| e.id == id).map(|e| inner.sender_name(e)).unwrap_or_else(|| "a line it no longer has".to_string());
@@ -53,18 +55,18 @@ pub(super) async fn unheard(State(app): State<Arc<App>>, Extension(RadioId(radio
     call.ready = true;
     call.outbox = None;
     call.handed = None;
-    Json(json!({}))
+    done()
 }
 
 /// A radio says where it stands, when that changes and while it has nothing else to ask (he has the
 /// microphone open on a call): so the tower does not take it for gone.
-pub(super) async fn presence(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Json(said): Json<airband_core::radio::Presence>) -> Json<Value> {
+pub(super) async fn presence(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Sent(said): Sent<at::Presence>) -> Answer<at::Presence> {
     app.passing().radio_says(&radio, said);
     app.kick.notify_one();
-    Json(json!({}))
+    done()
 }
 
-pub(super) async fn heard(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Json(h): Json<Heard>) -> Json<Value> {
+pub(super) async fn heard(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, Sent(h): Sent<at::Heard>) -> Answer<at::Heard> {
     let mut inner = app.change();
     // remember when he was last told, so an unanswered question comes round again later and not at once
     let times = inner.offered.get(&h.id).map(|(n, _)| *n).unwrap_or(0);
@@ -81,10 +83,10 @@ pub(super) async fn heard(State(app): State<Arc<App>>, Extension(RadioId(radio))
             inner.call(&radio).focus = Some(agent_id);
         }
     }
-    Json(json!({}))
+    done()
 }
 
-pub(super) async fn ready(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>) -> Json<Value> {
+pub(super) async fn ready(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>) -> Answer<at::Ready> {
     let waiting = {
         let mut inner = app.passing();
         let call = inner.call(&radio);
@@ -95,7 +97,7 @@ pub(super) async fn ready(State(app): State<Arc<App>>, Extension(RadioId(radio))
         inner.unheard().count()
     };
     app.kick.notify_one();
-    Json(json!({ "waiting": waiting }))
+    Ok(Json(wire::ReadyAnswer { waiting }))
 }
 
 /// An utterance that takes longer than this to answer is written down as slow.
@@ -104,13 +106,13 @@ pub(super) const SLOW: Duration = Duration::from_secs(10);
 /// Something he said. It is answered at once: the tower has it, under its id. Working out who it is for and
 /// handing it over can take a model a while, and no request waits on that: what comes of it is told in the
 /// feed, and to anyone who asks again under the same id.
-pub(super) async fn utterance(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, headers: HeaderMap, Json(u): Json<Utterance>) -> Response {
+pub(super) async fn utterance(State(app): State<Arc<App>>, Extension(RadioId(radio)): Extension<RadioId>, headers: HeaderMap, Sent(u): Sent<at::Utterance>) -> Answer<at::Utterance> {
     use airband_core::radio::Outcome;
     // how it came: through the relay, straight over his own network, kept by the relay while the tower was
     // away, or from this computer
     let via = headers.get(VIA_HEADER).and_then(|v| v.to_str().ok()).unwrap_or("this computer").to_string();
     if u.id.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(refused("what he said has to come with an id"))).into_response();
+        return Err(bad("what he said has to come with an id"));
     }
     {
         // the id is taken before anything is done, under the one lock, so the same utterance arriving twice
@@ -118,12 +120,12 @@ pub(super) async fn utterance(State(app): State<Arc<App>>, Extension(RadioId(rad
         let mut inner = app.passing();
         if inner.answering.contains(&u.id) {
             log(format!("utterance {} from {radio} by {via}: asked after, still being answered", u.id));
-            return Json(Outcome::Taken).into_response();
+            return Ok(Json(Outcome::Taken));
         }
         match app.store.begin_receipt(&u.id) {
             Receipt::Done(reply) => {
                 log(format!("utterance {} from {radio} by {via}: already answered, the same answer given again", u.id));
-                return Json(Outcome::Answered { reply }).into_response();
+                return Ok(Json(Outcome::Answered { reply }));
             }
             Receipt::Begun => {
                 inner.answering.insert(u.id.clone());
@@ -131,7 +133,7 @@ pub(super) async fn utterance(State(app): State<Arc<App>>, Extension(RadioId(rad
             // the radio keeps it and sends it again: answered now, it might be answered twice
             Receipt::Unknown(why) => {
                 log(format!("utterance {} from {radio} by {via}: whether it was answered could not be read ({why})", u.id));
-                return (StatusCode::SERVICE_UNAVAILABLE, Json(refused("This computer could not check its records just now. It is sent again in a moment."))).into_response();
+                return Err(No(Refusal::NotNow { reason: "This computer could not check its records just now. It is sent again in a moment.".into() }));
             }
         }
     }
@@ -169,5 +171,5 @@ pub(super) async fn utterance(State(app): State<Arc<App>>, Extension(RadioId(rad
         inner.answering.remove(&u.id);
         inner.settle(&radio, &u.id, Outcome::Answered { reply });
     }));
-    Json(Outcome::Taken).into_response()
+    Ok(Json(Outcome::Taken))
 }
