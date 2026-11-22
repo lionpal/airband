@@ -228,18 +228,48 @@ fn set_oauth_account(acct: &Value) -> Res<()> {
     // his own file, which holds his login: whole or not at all, and as private as it was
     airband_core::kept::write_keeping(&p, serde_json::to_string_pretty(&d).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
 }
-/// Ask whose token this is. Nothing when the server cannot say (expired, offline).
-fn profile_email(token: &str) -> Option<String> {
+/// Ask whose token this is: its email, and the account record Claude Code keeps for that account
+/// (`oauthAccount`), made from the profile the way Claude Code itself makes it. Nothing when the server cannot
+/// say (expired, offline), or says it in a shape that lacks the account's own fields.
+fn profile(token: &str) -> Option<(String, Value)> {
     let mut res = http().get(format!("{}/api/oauth/profile", api())).header("authorization", format!("Bearer {token}")).header("anthropic-beta", oauth_beta()).call().ok()?;
     if res.status() != 200 {
         return None;
     }
     let v: Value = serde_json::from_str(&res.body_mut().read_to_string().ok()?).ok()?;
-    v.pointer("/account/email_address").or_else(|| v.pointer("/account/email")).and_then(|e| e.as_str()).map(String::from)
+    account_record(&v)
 }
-/// Who the live login belongs to: what the server says about its token, else what `~/.claude.json` says.
+/// The `oauthAccount` record for a profile answer, field for field as Claude Code writes it.
+fn account_record(v: &Value) -> Option<(String, Value)> {
+    let (account, org) = (&v["account"], &v["organization"]);
+    let email = account["email"].as_str()?.to_string();
+    let (uuid, org_uuid) = (account["uuid"].as_str()?, org["uuid"].as_str()?);
+    let or_null = |x: &Value| if x.is_null() { Value::Null } else { x.clone() };
+    let mut record = json!({
+        "accountUuid": uuid,
+        "emailAddress": email,
+        "organizationUuid": org_uuid,
+        "hasExtraUsageEnabled": org["has_extra_usage_enabled"].as_bool().unwrap_or(false),
+        "accountCreatedAt": or_null(&account["created_at"]),
+        "ccOnboardingFlags": if org["cc_onboarding_flags"].is_null() { json!({}) } else { org["cc_onboarding_flags"].clone() },
+        "claudeCodeTrialEndsAt": or_null(&org["claude_code_trial_ends_at"]),
+        "claudeCodeTrialDurationDays": or_null(&org["claude_code_trial_duration_days"]),
+        "seatTier": or_null(&org["seat_tier"]),
+    });
+    // what Claude Code leaves out when the profile has none
+    for (field, from) in [("billingType", &org["billing_type"]), ("subscriptionCreatedAt", &org["subscription_created_at"])] {
+        if !from.is_null() {
+            record[field] = from.clone();
+        }
+    }
+    if let Some(name) = account["display_name"].as_str().filter(|n| !n.is_empty()) {
+        record["displayName"] = json!(name);
+    }
+    Some((email, record))
+}
+/// Who the live login belongs to: what the server says about its token. Nothing when it cannot say.
 fn live_identity() -> Option<String> {
-    live_token().and_then(|t| profile_email(&t)).or_else(|| oauth_account().as_ref().and_then(email_of))
+    live_token().and_then(|t| profile(&t)).map(|(email, _)| email)
 }
 
 /// Save the login Claude Code is using now. Returns its email.
@@ -247,11 +277,8 @@ fn save_live() -> Res<String> {
     let blob = live_blob()?;
     let oauth = blob.get("claudeAiOauth").cloned().ok_or_else(|| format!("{} is signed in with an API key or a setup token, which cannot be switched.", tool()))?;
     let token = oauth.get("accessToken").and_then(|t| t.as_str()).unwrap_or("");
-    let email = profile_email(token).or_else(|| oauth_account().as_ref().and_then(email_of)).ok_or_else(|| format!("Could not tell which account {} is signed in to.", tool()))?;
-    let mut acct = oauth_account().unwrap_or(json!({}));
-    if email_of(&acct).as_deref() != Some(email.as_str()) {
-        acct = saved(&email)?.and_then(|v| v.get("oauthAccount").cloned()).unwrap_or(json!({ "emailAddress": email }));
-    }
+    // whose login it is, from the server and never from the file a switch itself rewrites
+    let (email, acct) = profile(token).ok_or_else(|| format!("Could not tell which account {} is signed in to: {} did not say.", tool(), maker()))?;
     keep(&email, &oauth, &acct)?;
     Ok(email)
 }
@@ -288,7 +315,9 @@ fn saved_token(email: &str) -> Res<String> {
     if let Some(e) = body.get("refresh_token_expires_in").and_then(|x| x.as_i64()) {
         n["refreshTokenExpiresAt"] = json!(now_ms() + e * 1000);
     }
-    keep(email, &n, entry.get("oauthAccount").unwrap_or(&json!({ "emailAddress": email })))?;
+    // the account record it was saved with, or the real one fetched now with its own token
+    let acct = entry.get("oauthAccount").filter(|a| a["accountUuid"].is_string()).cloned().or_else(|| profile(new_token).map(|(_, a)| a)).ok_or(ADD_AGAIN)?;
+    keep(email, &n, &acct)?;
     Ok(new_token.to_string())
 }
 
@@ -388,6 +417,10 @@ static SWITCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::ne
 pub fn switch(id: &str) -> Res<std::thread::JoinHandle<()>> {
     locked(|| {
         let target = resolve(id)?;
+        // the account record Claude Code is given is the real one, asked for with that account's own token;
+        // without it there is no switch, rather than a record made up from the email
+        let token = saved_token(&target)?;
+        let acct = profile(&token).map(|(_, a)| a).ok_or_else(|| format!("Did not switch: {} would not say whose login that is just now. Try again in a moment.", maker()))?;
         let entry = saved(&target)?.ok_or(ADD_AGAIN)?;
         let incoming = entry.get("claudeAiOauth").cloned().ok_or(ADD_AGAIN)?;
         // keep the outgoing account's newest login: its refresh token has changed since it was saved
@@ -402,7 +435,6 @@ pub fn switch(id: &str) -> Res<std::thread::JoinHandle<()>> {
         let mut blob = live_blob().unwrap_or_default();
         blob.insert("claudeAiOauth".into(), incoming);
         key_write(&live_service(), &user()?, &Value::Object(blob).to_string())?;
-        let acct = entry.get("oauthAccount").cloned().unwrap_or(json!({ "emailAddress": target }));
         set_oauth_account(&acct)?;
         // a later switch ends this one's hold, or the two would fight over the name
         let mine = SWITCHES.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
@@ -466,6 +498,21 @@ pub fn forget(id: &str) -> Res<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_account_record_is_made_from_the_profile_as_claude_code_makes_it() {
+        let profile = serde_json::json!({
+            "account": { "uuid": "a-1", "email": "him@example.com", "display_name": "Him", "created_at": "2025-01-01T00:00:00Z" },
+            "organization": { "uuid": "o-1", "billing_type": "stripe_subscription", "has_extra_usage_enabled": true, "seat_tier": null }
+        });
+        let (email, r) = super::account_record(&profile).unwrap();
+        assert_eq!(email, "him@example.com");
+        assert_eq!((r["accountUuid"].as_str(), r["organizationUuid"].as_str(), r["emailAddress"].as_str(), r["displayName"].as_str()), (Some("a-1"), Some("o-1"), Some("him@example.com"), Some("Him")));
+        assert_eq!((r["billingType"].as_str(), r["hasExtraUsageEnabled"].as_bool(), r["ccOnboardingFlags"].clone()), (Some("stripe_subscription"), Some(true), serde_json::json!({})));
+        assert!(r.get("subscriptionCreatedAt").is_none());
+        // without the account's own ids there is no record to write
+        assert!(super::account_record(&serde_json::json!({ "account": { "email": "him@example.com" } })).is_none());
+    }
+
     use super::*;
 
     #[test]
