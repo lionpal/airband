@@ -134,6 +134,16 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
+    async fn a_query_value_that_is_not_a_number_is_refused_not_read_as_none() {
+        let app = app("query-numbers");
+        let get = |uri: &str, token: &str| Request::builder().method("GET").uri(uri).header("authorization", format!("Bearer {token}")).extension(RadioId("kitchen".into())).body(axum::body::Body::empty()).unwrap();
+        let res = router(app.clone()).oneshot(get("/v1/radio/picture/abcd?from=middle", "radio")).await.unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        let res = router(app.clone()).oneshot(get("/v1/agent/permission/p1?wait=soon", "own")).await.unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
     async fn a_radio_is_known_by_its_pairing_name_exactly_and_never_by_a_made_up_one() {
         let app = app("radio-id");
         // from a pairing whose name is not plain letters: kept under that name, as push and settled answers find it

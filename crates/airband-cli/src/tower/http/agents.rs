@@ -74,8 +74,16 @@ pub(super) async fn permission_ask(State(app): State<Arc<App>>, Json(ask): Json<
     Json(permit::ask(&app, ask))
 }
 
-pub(super) async fn permission_state(State(app): State<Arc<App>>, Path(id): Path<String>, Query(q): Query<HashMap<String, String>>) -> Json<airband_core::agent::PermissionState> {
-    Json(permit::state(&app, &id, q.get("wait").and_then(|v| v.parse().ok()).unwrap_or(0)).await)
+/// How many seconds to wait for his answer: none when it is not given. A value that is not a number is
+/// refused, never read as none.
+#[derive(Deserialize)]
+pub(super) struct WaitQuery {
+    #[serde(default)]
+    wait: u64,
+}
+
+pub(super) async fn permission_state(State(app): State<Arc<App>>, Path(id): Path<String>, Query(WaitQuery { wait }): Query<WaitQuery>) -> Json<airband_core::agent::PermissionState> {
+    Json(permit::state(&app, &id, wait).await)
 }
 
 pub(super) async fn permission_withdraw(State(app): State<Arc<App>>, Path(id): Path<String>) -> Json<Value> {

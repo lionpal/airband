@@ -167,9 +167,16 @@ pub(super) async fn message(State(app): State<Arc<App>>, Path(id): Path<String>,
     }
 }
 
+/// Where in a picture's kept copy the next part starts: from the beginning when it is not given. A value
+/// that is not a number is refused, never read as the beginning.
+#[derive(Deserialize)]
+pub(super) struct PartQuery {
+    #[serde(default)]
+    from: usize,
+}
+
 /// The next part of a picture's kept copy.
-pub(super) async fn picture_part(Path(id): Path<String>, Query(q): Query<HashMap<String, String>>) -> Response {
-    let from = q.get("from").and_then(|v| v.parse().ok()).unwrap_or(0);
+pub(super) async fn picture_part(Path(id): Path<String>, Query(PartQuery { from }): Query<PartQuery>) -> Response {
     match tokio::task::spawn_blocking(move || pictures::part(&id, from)).await.ok().flatten() {
         Some(part) => Json(part).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
