@@ -435,10 +435,10 @@ fn a_summary_choice_made_offline_waits_for_every_computer() {
     let dir = temp_dir("reads");
     std::fs::write(dir.join("choices.json"), r#"{"reads":{"rev":1,"wanted":{"id":"anthropic","offer":"haiku","his":true}}}"#).unwrap();
     let state = State { computers: vec![station("mini", tower_answering(r#"{"reads":"Haiku","offers":[{"provider":"anthropic","offer":"haiku","label":"Haiku","key":true,"has_key":true}]}"#), &[], vec![]), station("laptop", 9, &[], vec![])], ..State::default() };
-    let mini = state.computers[0].radio.clone();
+    let (mini, epoch) = (state.computers[0].id(), state.computers[0].epoch);
     let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
     let shared = Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open(dir.to_str().unwrap(), HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None };
-    crate::choices::computer_reached(&shared, &mini);
+    crate::choices::tell_reads(&shared, &mini, epoch, true);
     // the first computer has it, and it still waits for the other
     let ids: Vec<String> = shared.state.lock().unwrap().computers.iter().map(|s| s.id().to_string()).collect();
     let per = kept_reads(&dir)["per"].clone();
@@ -495,9 +495,9 @@ fn a_computer_that_refuses_a_waiting_summary_choice_does_not_cancel_it_for_the_o
     let dir = temp_dir("refused-one");
     let laptop = station("laptop", tower_saying(409, r#"{"refusal":"told","reason":"Enter your API key."}"#), &[], vec![]);
     let mini = station("mini", 9, &[], vec![]);
-    let (laptop_radio, mini_id) = (laptop.radio.clone(), mini.id());
+    let (laptop_id, laptop_epoch, mini_id) = (laptop.id(), laptop.epoch, mini.id());
     let desk = desk_choosing(&dir, vec![laptop, mini], serde_json::json!({ "rev": 1, "wanted": { "id": "anthropic", "offer": "haiku", "his": true } }));
-    crate::choices::computer_reached(&desk.shared, &laptop_radio);
+    crate::choices::tell_reads(&desk.shared, &laptop_id, laptop_epoch, true);
     // still waiting for mini
     let reads = kept_reads(&dir);
     assert_eq!(reads["wanted"]["id"], "anthropic", "{reads}");

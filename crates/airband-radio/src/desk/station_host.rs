@@ -37,8 +37,6 @@ pub(super) struct ComputerHost {
     pub(super) shared: Arc<Shared>,
     /// The computer, by its id.
     pub(super) station: StationId,
-    /// The connection this host belongs to: once the computer has another, this one's callbacks do nothing.
-    pub(super) epoch: u64,
 }
 impl RadioHost for ComputerHost {
     // a phone's own voice and recognition are never used

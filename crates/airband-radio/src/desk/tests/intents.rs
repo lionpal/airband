@@ -82,7 +82,7 @@ fn a_summary_choice_no_computer_takes_changes_nothing_and_says_why() {
 }
 
 #[test]
-fn a_computer_not_reached_is_sent_the_choice_when_it_is_and_then_it_is_let_go() {
+fn a_computer_not_reached_is_sent_the_choice_when_it_is_and_then_it_is_kept_for_later() {
     let dir = temp("later");
     let (studio, laptop) = (tower("studio", true), tower("laptop", true));
     studio.answers::<at::Reads>(&ReadsSet { reads: "Haiku".into() });
@@ -99,14 +99,17 @@ fn a_computer_not_reached_is_sent_the_choice_when_it_is_and_then_it_is_let_go() 
     assert_eq!(laptop.asked_on::<at::Reads>(), 0);
     // it is reached: it is sent the choice, and with every computer having it nothing is left waiting
     laptop.away.store(false, std::sync::atomic::Ordering::SeqCst);
-    let radio = desk.shared.state.lock().unwrap().computer(&laptop_id).map(|c| c.radio.clone()).unwrap();
-    crate::choices::computer_reached(&desk.shared, &radio);
+    let epoch = desk.shared.state.lock().unwrap().computer(&laptop_id).map(|c| c.epoch).unwrap();
+    crate::choices::tell_reads(&desk.shared, &laptop_id, epoch, true);
     let kept = desk.shared.chooser.reads_intent();
+    let after = reads_lines(&desk);
     desk.stop();
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(waiting, [("laptop".to_string(), DeskDelivery::Waiting)]);
     assert_eq!(laptop.asked_on::<at::Reads>(), 1);
-    assert!(kept.is_none(), "{kept:?}");
+    // every computer has it: nothing is left waiting, and it is kept for a computer paired later (P-B4)
+    assert!(after.is_empty(), "{after:?}");
+    assert!(kept.is_some_and(|k| k.per.values().all(|d| *d == super::super::intents::Delivery::Done)));
 }
 
 #[test]
@@ -114,13 +117,15 @@ fn a_computer_is_sent_the_key_only_when_it_has_none_of_its_own() {
     let wanted = crate::choices::ReadsWanted { id: "anthropic".into(), offer: "haiku".into(), set: BTreeMap::new(), his: true };
     let offers = |has_key: bool| ReadsOffered { offers: vec![ReadsOffer { provider: "anthropic".into(), offer: "haiku".into(), key: true, has_key, ..ReadsOffer::default() }], ..ReadsOffered::default() };
     // it keeps its own: none is sent from a phone that has none
-    assert_eq!(wanted.body_for(None, Some(&offers(true))).map(|b| b.key), Ok(String::new()));
+    assert_eq!(wanted.body_for(None, &offers(true)).map(|b| b.key), Ok(String::new()));
+    // it keeps its own and the phone has one too: the computer's own is used, the phone's goes nowhere (C-B1)
+    assert_eq!(wanted.body_for(Some("sk-1"), &offers(true)).map(|b| b.key), Ok(String::new()));
     // it has none and the phone has one: the phone's is sent
-    assert_eq!(wanted.body_for(Some("sk-1"), Some(&offers(false))).map(|b| b.key), Ok("sk-1".to_string()));
+    assert_eq!(wanted.body_for(Some("sk-1"), &offers(false)).map(|b| b.key), Ok("sk-1".to_string()));
     // neither has one: it is not sent, and why is said
-    assert_eq!(wanted.body_for(None, Some(&offers(false))).map(|b| b.key), Err(crate::choices::NO_KEY.to_string()));
-    // one that could not say what it has: the provider's own row says a key is needed
-    assert_eq!(wanted.body_for(None, None).map(|b| b.key), Err(crate::choices::NO_KEY.to_string()));
+    assert_eq!(wanted.body_for(None, &offers(false)).map(|b| b.key), Err(crate::choices::NO_KEY.to_string()));
+    // one that does not offer it at all: the provider's own row says a key is needed
+    assert_eq!(wanted.body_for(None, &ReadsOffered::default()).map(|b| b.key), Err(crate::choices::NO_KEY.to_string()));
 }
 
 #[test]

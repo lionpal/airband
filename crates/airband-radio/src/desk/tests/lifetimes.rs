@@ -57,7 +57,7 @@ fn asking_a_computer_afresh_replaces_only_its_connection() {
     let after = radio_of(&desk, &link(1));
     // the old connection's host still speaks for the outbox both connections share: a message it found no one
     // for is put to him, never dropped (audit 6, P-B1)
-    let old = ComputerHost { shared: desk.shared.clone(), station, epoch: old_epoch };
+    let old = ComputerHost { shared: desk.shared.clone(), station };
     old.unplaced(Outgoing::of("late".into()), None, vec![]);
     let asking = desk.shared.state.lock().unwrap().asking.as_ref().map(|a| a.message.text.clone());
     desk.stop();

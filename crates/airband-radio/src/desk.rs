@@ -40,7 +40,7 @@ use station_host::*;
 pub use airband_core::relay::PushService;
 use tell::*;
 pub(crate) use fanout::{fan_out, Reach};
-pub(crate) use intents::Intent;
+pub(crate) use intents::{Intent, Standing};
 #[cfg(test)]
 use intents::Delivery;
 use uploads::*;
@@ -218,7 +218,7 @@ impl State {
         self.computers.iter_mut().find(|s| s.id() == *id)
     }
     /// A computer by its id, while `epoch` is still its connection: for the threads of one connection.
-    fn live(&mut self, id: &StationId, epoch: u64) -> Option<&mut Computer> {
+    pub(crate) fn live(&mut self, id: &StationId, epoch: u64) -> Option<&mut Computer> {
         self.computers.iter_mut().find(|s| s.epoch == epoch && s.id() == *id)
     }
     /// The computer that has this agent, by the agent's id.
@@ -375,7 +375,7 @@ impl Desk {
         // each new computer is connected outside the lock: what it last showed is read from this device
         let mut made: Vec<Computer> = Vec::new();
         for (link, epoch) in new {
-            let Ok(radio) = self.connect(&link, epoch, None) else { continue };
+            let Ok(radio) = self.connect(&link, None) else { continue };
             radio.set_call_mode(calling);
             // what it last said it is called, kept on the phone: known before it answers again
             let name = radio.store.saved.lock().unwrap().computer.clone();
@@ -458,11 +458,11 @@ impl Desk {
 }
 
 impl Desk {
-    /// A new connection to the computer this link pairs, numbered `epoch`, handed what the last one kept for
-    /// him (`kept`), or opening it from this device when there was none.
-    fn connect(&self, link: &str, epoch: u64, kept: Option<Kept>) -> Result<Arc<Radio>, RadioError> {
+    /// A new connection to the computer this link pairs, handed what the last one kept for him (`kept`), or
+    /// opening it from this device when there was none.
+    fn connect(&self, link: &str, kept: Option<Kept>) -> Result<Arc<Radio>, RadioError> {
         let dir = if self.data_dir.is_empty() { String::new() } else { std::path::Path::new(&self.data_dir).join(folder(link)).display().to_string() };
-        let host: Arc<dyn RadioHost> = Arc::new(ComputerHost { shared: self.shared.clone(), station: station_id(link), epoch });
+        let host: Arc<dyn RadioHost> = Arc::new(ComputerHost { shared: self.shared.clone(), station: station_id(link) });
         let kept = kept.unwrap_or_else(|| Kept::open(&dir, host.clone()));
         let transport = self.shared.dial.as_ref().map(|dial| dial(link));
         Radio::start_with(link.to_string(), &dir, host, self.shared.senses.clone(), kept, transport)
@@ -481,7 +481,7 @@ impl Desk {
         };
         self.shared.floor.clear();
         for (id, link, epoch, kept) in plan {
-            let Ok(radio) = self.connect(&link, epoch, Some(kept)) else { continue };
+            let Ok(radio) = self.connect(&link, Some(kept)) else { continue };
             radio.set_call_mode(calling);
             let old = {
                 let mut state = self.shared.state.lock().unwrap();

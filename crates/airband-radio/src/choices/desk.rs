@@ -89,19 +89,17 @@ impl Desk {
                 }
             let wanted = ReadsWanted { id: provider.clone(), offer: offer.clone(), set: set.clone(), his: true };
             let phone_key = host.secret(provider.clone()).filter(|k| !k.is_empty());
-            let (online, everyone) = {
+            let (online, everyone, main) = {
                 let state = self.shared.state.lock().unwrap();
-                (state.computers.iter().filter(|s| s.online).map(|s| (s.id(), s.radio.clone())).collect::<Vec<_>>(), state.computers.iter().map(|s| s.id()).collect::<Vec<_>>())
+                let online = state.computers.iter().filter(|s| s.online).map(|s| (s.id(), s.radio.clone())).collect::<Vec<_>>();
+                (online, state.computers.iter().map(|s| s.id()).collect::<Vec<_>>(), state.main().map(|s| s.id()))
             };
             if !online.is_empty() {
                 chooser.work(job, &id, "Asking your computer to switch", false);
                 host.changed();
             }
             // every computer it can reach is asked at once, each with what it needs: a key only where it has none
-            let per = fan_out(online, |radio| match wanted.body_for(phone_key.as_deref(), radio.reads_offered().as_ref()) {
-                Ok(body) => Reach::of(radio.set_reads(&body)),
-                Err(why) => Reach::Skipped(why),
-            });
+            let per = fan_out(online, |radio| send_reads(&wanted, phone_key.as_deref(), radio));
             // every computer it reached said no: nothing changed anywhere, and he is told why
             if !per.is_empty() && per.values().all(|r| r.why_not().is_some()) {
                 let state = self.shared.state.lock().unwrap();
@@ -109,15 +107,14 @@ impl Desk {
                 return done(Err(told(why.join(" "))));
             }
             // what is offered and in use is the main computer's: the one he chose, or the only one
-            let main = { let state = self.shared.state.lock().unwrap(); state.main().map(|s| s.radio.clone()) };
-            let offered = main.and_then(|radio| radio.reads_offered());
+            let offered = main.and_then(|m| match per.get(&m) { Some(Reach::Done(o)) => Some(o.clone()), _ => None });
             // each computer's answer is kept: one that said no is shown with why and not asked again, one not
-            // reached is sent it when it is, and the ones that took it keep it
+            // reached is sent it when it is, and the ones that took it keep it. It is kept after every computer
+            // has it too, for a computer paired later.
             return done(chooser.change(|s| {
                 let mut intent = Intent::after(s.reads.as_ref(), wanted.clone());
-                per.iter().for_each(|(c, r)| intent.record(c, r));
-                // with no computer paired yet it waits for the first
-                s.reads = (everyone.is_empty() || !intent.done_by_all(&everyone)).then_some(intent);
+                everyone.iter().for_each(|c| intent.record(c, per.get(c).unwrap_or(&Reach::Unreachable)));
+                s.reads = Some(intent);
                 if offered.is_some() {
                     s.offered = offered;
                 }
@@ -235,42 +232,67 @@ impl Desk {
 
 }
 
-/// A computer can be reached. What waits to write his summaries is sent to it, and it is asked what it can
-/// read with and what it reads with now. Blocks: called on a thread of its own.
-pub(crate) fn computer_reached(shared: &Shared, radio: &Radio) {
-    let chooser = &shared.chooser;
-    let (me, everyone) = {
-        let state = shared.state.lock().unwrap();
-        let me = state.computers.iter().find(|s| std::ptr::eq(&*s.radio, radio)).map(|s| s.id());
-        (me, state.computers.iter().map(|s| s.id()).collect::<Vec<_>>())
+/// What one computer does with what is to write his summaries: it is asked once what it can read with, then
+/// sent the choice, with a key only where it has none of its own. When it takes it, its own account comes
+/// back, with what it reads now as it took it. A computer that could not say what it reads with is asked again
+/// later: nothing is decided about it from what it did not say.
+fn send_reads(wanted: &ReadsWanted, phone_key: Option<&str>, radio: &Radio) -> Reach<ReadsOffered> {
+    let mut offered = match radio.reads_offered() {
+        Ok(offered) => offered,
+        Err(e) => return Reach::of(Err(e)),
     };
-    if let (Some(intent), Some(me)) = (chooser.saved().reads, me)
-        && intent.owed(&me) {
-        let phone_key = shared.host.secret(intent.wanted.id.clone()).filter(|k| !k.is_empty());
-        let reach = match intent.wanted.body_for(phone_key.as_deref(), radio.reads_offered().as_ref()) {
-            Ok(body) => Reach::of(radio.set_reads(&body)),
-            Err(why) => Reach::Skipped(why),
-        };
-        // what changes is the choice that was sent: one he made meanwhile is left as it is
-        let kept = chooser.change(|s| {
-            let Some(now) = s.reads.as_mut().filter(|i| i.rev == intent.rev) else { return };
-            now.record(&me, &reach);
-            if now.done_by_all(&everyone) {
-                s.reads = None;
-            }
-        });
-        if let Err(RadioError::Told { reason }) = kept {
-            shared.host.note(reason);
-        }
+    match wanted.body_for(phone_key, &offered) {
+        Ok(body) => Reach::of(radio.set_reads(&body)).map(|()| {
+            // it tried it with a real call before it said yes: that is what it reads with now, and it works
+            offered.now = Some(airband_core::radio::OfferName { provider: wanted.id.clone(), offer: wanted.offer.clone() });
+            offered.failed = None;
+            offered
+        }),
+        Err(why) => Reach::Skipped(why),
     }
+}
+
+/// A computer can be reached, on its connection `epoch`: what waits to write his summaries is sent to it if it
+/// is owed it, and the main computer's word on what it can read with is kept. Blocks: called on a thread of its
+/// own, when it is reached and on each round while it is owed the choice.
+pub(crate) fn tell_reads(shared: &Shared, station: &StationId, epoch: u64, ask_offered: bool) {
+    let chooser = &shared.chooser;
+    let (radio, is_main) = {
+        let mut state = shared.state.lock().unwrap();
+        let is_main = state.main().is_some_and(|s| s.id() == *station);
+        let Some(computer) = state.live(station, epoch) else { return };
+        (computer.radio.clone(), is_main)
+    };
+    let owed = chooser.saved().reads.filter(|i| i.owed(station));
+    let offered = match owed {
+        Some(intent) => {
+            let phone_key = shared.host.secret(intent.wanted.id.clone()).filter(|k| !k.is_empty());
+            let reach = send_reads(&intent.wanted, phone_key.as_deref(), &radio);
+            // what changes is the choice that was sent: one he made meanwhile is left as it is
+            let kept = chooser.change(|s| {
+                if let Some(now) = s.reads.as_mut().filter(|i| i.rev == intent.rev) {
+                    now.record(station, &reach);
+                }
+            });
+            if let Err(e) = kept {
+                shared.host.note(e.said());
+            }
+            match reach {
+                Reach::Done(offered) => Some(offered),
+                _ if ask_offered && is_main => radio.reads_offered().ok(),
+                _ => None,
+            }
+        }
+        None if ask_offered && is_main => radio.reads_offered().ok(),
+        None => None,
+    };
     // what can write summaries, and what does now, as the main computer says: another computer's word on it
     // does not stand in for the main one's
-    let is_main = { let state = shared.state.lock().unwrap(); state.main().is_some_and(|s| std::ptr::eq(&*s.radio, radio)) };
     if is_main
-        && let Some(offered) = radio.reads_offered()
+        && let Some(offered) = offered
         && let Err(e) = chooser.change(|s| s.offered = Some(offered))
     {
-        shared.host.note(e.to_string());
+        shared.host.note(e.said());
     }
     shared.host.changed();
 }

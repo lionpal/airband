@@ -6,6 +6,8 @@ use super::*;
 /// one stops.
 pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, station: StationId, epoch: u64) {
     let mut first = true;
+    // what writes his summaries is being sent on a thread of its own: one at a time
+    let reads_busy = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut told_taken: Option<Vec<airband_core::routing::Callsign>> = None;
     loop {
         // a computer that has not been told where this device can be woken is told as soon as it is reached
@@ -103,11 +105,16 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, station: StationId,
         if !seen.is_empty() {
             radio.seen(seen);
         }
-        // What waits to write his summaries goes to it, and it is asked what it can read with: on a thread of
-        // its own, because the computer tries a choice with a real call before it answers.
-        if reached {
-            let (shared, radio) = (shared.clone(), radio.clone());
-            thread::spawn(move || crate::choices::computer_reached(&shared, &radio));
+        // What waits to write his summaries goes to it when it is reached, and on each round while it is owed,
+        // as push and tools are; when it is reached it is also asked what it can read with. On a thread of its
+        // own, because the computer tries a choice with a real call before it answers.
+        let owed = got.is_ok() && shared.chooser.reads_intent().is_some_and(|i| i.owed(&station));
+        if (reached || owed) && !reads_busy.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            let (shared, station, busy) = (shared.clone(), station.clone(), reads_busy.clone());
+            thread::spawn(move || {
+                crate::choices::tell_reads(&shared, &station, epoch, reached);
+                busy.store(false, std::sync::atomic::Ordering::SeqCst);
+            });
         }
         // Two computers number their agents without knowing of each other. The later one in his list is told
         // the names the earlier ones use, whenever those change, and keeps off them.

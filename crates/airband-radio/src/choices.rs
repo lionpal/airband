@@ -28,7 +28,7 @@ use std::collections::{BTreeMap, HashMap};
 mod desk;
 mod list;
 mod saved;
-pub(crate) use desk::computer_reached;
+pub(crate) use desk::tell_reads;
 use list::*;
 use saved::{Pick, Saved};
 pub(crate) use saved::ReadsWanted;
@@ -169,7 +169,7 @@ impl Chooser {
         self.saved().tools
     }
 
-    /// What writes his summaries, as it is being sent to his computers: none once every computer has it.
+    /// What writes his summaries, with how each of his computers stands with it.
     pub(crate) fn reads_intent(&self) -> Option<crate::desk::Intent<ReadsWanted>> {
         self.saved().reads
     }

@@ -40,15 +40,16 @@ pub(crate) struct ReadsWanted {
 }
 
 impl ReadsWanted {
-    /// What one computer is sent: with the key on this phone when there is one; with none when that computer
-    /// keeps its own, or the provider takes none. Err, in words for him, when it needs a key neither has.
-    /// `there` is what that computer says it can read with, when it could say.
-    pub(crate) fn body_for(&self, phone_key: Option<&str>, there: Option<&ReadsOffered>) -> Result<airband_core::radio::SetReads, String> {
-        let offer = there.and_then(|o| o.offers.iter().find(|r| r.provider == self.id && r.offer == self.offer));
+    /// What one computer is sent: with no key when it keeps its own or the provider takes none; else with the
+    /// key on this phone. Err, in words for him, when it needs a key neither has. `there` is what that
+    /// computer says it can read with.
+    pub(crate) fn body_for(&self, phone_key: Option<&str>, there: &ReadsOffered) -> Result<airband_core::radio::SetReads, String> {
+        let offer = there.offers.iter().find(|r| r.provider == self.id && r.offer == self.offer);
         let needs_key = offer.map_or_else(|| airband_core::providers::provider(&self.id).is_some_and(|p| p.key), |r| r.key);
+        // a computer's own key is its own: the phone's goes only where there is none
         let key = match phone_key.filter(|k| !k.is_empty()) {
+            _ if !needs_key || offer.is_some_and(|r| r.has_key) => String::new(),
             Some(key) => key.to_string(),
-            None if !needs_key || offer.is_some_and(|r| r.has_key) => String::new(),
             None => return Err(NO_KEY.into()),
         };
         Ok(airband_core::radio::SetReads { kind: self.id.clone(), offer: self.offer.clone(), key, set: self.set.clone() })
