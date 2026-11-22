@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn a_feed_from_a_newer_tower_still_reads() {
-        let feed: Feed = serde_json::from_str(r#"{"messages":[{"seq":1,"id":"a","at":0,"from":"shop one","group":"shop","kind":"celebration","text":"x","mood":"good"}],"roster":[{"callsign":"shop one","group":"shop","harness":"h","waiting":false,"reachable":true,"colour":"red"}],"seq":1,"weather":"fine"}"#).unwrap();
+        let feed: Feed = serde_json::from_str(r#"{"messages":[{"seq":1,"id":"a","at":0,"from":"shop one","group":"shop","kind":"celebration","text":"x","mood":"good"}],"roster":[{"callsign":{"project":"shop","number":"one"},"harness":"h","waiting":false,"reachable":true,"colour":"red"}],"seq":1,"weather":"fine"}"#).unwrap();
         assert_eq!(feed.messages[0].kind, Some(Kind::Unknown));
         let t: Transmission = serde_json::from_str(r#"{"id":"a","callsign":"shop one","kind":"celebration","say":"x"}"#).unwrap();
         assert_eq!(t.kind, Kind::Unknown);
