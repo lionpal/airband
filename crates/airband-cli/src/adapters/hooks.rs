@@ -131,7 +131,9 @@ impl File {
     fn read(&self) -> Result<Value, String> {
         match std::fs::read_to_string(&self.path) {
             Ok(t) => serde_json::from_str(&t).map_err(|e| format!("{} is not valid JSON; fix it first ({e})", self.path.display())),
-            Err(_) => Ok(json!({})),
+            // only a file that is not there is an empty one: one that cannot be read is never written over
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
+            Err(e) => Err(format!("{} cannot be read ({e}), so nothing was changed", self.path.display())),
         }
     }
     /// Whole or not at all, so the tool never reads half of one, and with the permissions the file had: it is

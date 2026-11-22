@@ -58,7 +58,11 @@ pub(crate) fn start(app: Arc<App>, router: Router, handle: Handle) {
         type Running = HashMap<(Option<String>, PairedRadio), (Arc<AtomicBool>, std::thread::JoinHandle<()>)>;
         let mut running: Running = HashMap::new();
         loop {
-            let cfg = config::read().unwrap_or_else(|| app.cfg.clone());
+            // settings read without their keys hold marks for the pairings' secrets: nothing is changed on those
+            let Some(cfg) = config::read_keyed() else {
+                std::thread::sleep(Duration::from_secs(10));
+                continue;
+            };
             // every pairing is served straight, at the tower's own addresses; through the relay too when there is one
             let wanted: Vec<(Option<String>, PairedRadio)> = cfg.pairings.iter().map(|p| (cfg.relay.clone(), p.clone())).collect();
             running.retain(|key, (stop, serving)| {

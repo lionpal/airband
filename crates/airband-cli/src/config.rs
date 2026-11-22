@@ -234,6 +234,12 @@ pub(crate) fn read() -> Option<Config> {
     parse(&fs::read_to_string(dir().join("config.json")).ok()?).ok()
 }
 
+/// The same, only when its keys could be had this time: settings with marks where the keys are are never
+/// taken for the real ones (a pairing's secret, a provider's key).
+pub(crate) fn read_keyed() -> Option<Config> {
+    read().filter(|_| keyless().is_none())
+}
+
 /// What the keychain holds for the tower, read once for each version of the file: every program that changes
 /// the keys also writes the file, so a file that has not changed means keys that have not.
 fn kept() -> Result<serde_json::Map<String, serde_json::Value>, String> {
@@ -254,7 +260,8 @@ fn kept() -> Result<serde_json::Map<String, serde_json::Value>, String> {
 /// Why this run has the settings without their keys, when it does: the keychain could not be read here.
 static KEYLESS: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
-/// Set when the keys could not be had: what needs one must say so and stop, not go on with a mark for a key.
+/// Set when the keys could not be had the last time the settings were read: what needs one must say so and
+/// stop, not go on with a mark for a key. A later read that has them clears it.
 pub(crate) fn keyless() -> Option<String> {
     KEYLESS.lock().unwrap().clone()
 }
@@ -264,12 +271,15 @@ pub(crate) fn keyless() -> Option<String> {
 /// keys are and [`keyless`] saying why: a command that needs no key goes on working.
 fn parse(text: &str) -> Result<Config, String> {
     let mut doc: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
-    if crate::vault::sealed(text) {
-        match kept() {
-            Ok(kept) => crate::vault::open(&mut doc, &kept)?,
-            Err(e) => *KEYLESS.lock().unwrap() = Some(e),
+    let missing = match crate::vault::sealed(text).then(kept) {
+        Some(Ok(kept)) => {
+            crate::vault::open(&mut doc, &kept)?;
+            None
         }
-    }
+        Some(Err(e)) => Some(e),
+        None => None,
+    };
+    *KEYLESS.lock().unwrap() = missing;
     if keyless().is_none() {
         fill_keys(&mut doc)?;
     }
@@ -342,6 +352,13 @@ fn yes() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keys_that_could_not_be_had_once_do_not_block_every_later_read() {
+        *KEYLESS.lock().unwrap() = Some("the keychain was locked".into());
+        parse("{}").unwrap();
+        assert_eq!(keyless(), None);
+    }
 
     #[test]
     fn nothing_is_chosen_until_he_chooses_it() {
