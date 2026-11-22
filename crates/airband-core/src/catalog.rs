@@ -144,6 +144,13 @@ pub struct PhoneModel {
 }
 
 impl PhoneModel {
+    /// The voice he named, or the one the row names as its usual one when he has named none.
+    pub fn voice<'a>(&'a self, named: &'a str) -> &'a str {
+        if named.is_empty() { &self.usual_voice } else { named }
+    }
+}
+
+impl PhoneModel {
     /// One of the things its engine is told, as text. Empty when the row does not say.
     pub fn told(&self, name: &str) -> String {
         match self.with.get(name) {
@@ -231,7 +238,7 @@ mod tests {
         }
         for p in &built().providers {
             for o in p.offers.iter().filter(|o| !o.voices.is_empty()) {
-                let usual = o.asks.iter().find(|a| a.field == "voice").map(|a| a.usual.clone()).unwrap_or_default();
+                let usual = o.usual("voice").unwrap_or_default();
                 assert!(o.voices.iter().any(|v| v.id == usual), "{} {} names no usual voice of its own", p.id, o.id);
             }
         }

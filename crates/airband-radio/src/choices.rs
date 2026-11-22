@@ -201,7 +201,7 @@ impl Chooser {
                 None => crate::mouth::Own::Cannot("This version of airband cannot run the voice you chose. Choose another in Settings, under Voice.".into()),
                 Some(m) if !crate::models::fetched(&self.dir, &m) => crate::mouth::Own::Cannot(format!("{} is not on this phone yet. Download it in Settings, under Voice.", m.name)),
                 // none picked yet: the voice the row names as its usual one
-                Some(m) => match m.voices.iter().map(|v| &v.0).find(|name| *name == if voice.voice.is_empty() { &m.usual_voice } else { &voice.voice }) {
+                Some(m) => match m.voices.iter().map(|v| &v.0).find(|name| name.as_str() == m.voice(&voice.voice)) {
                     Some(name) => crate::mouth::Own::Model { held: senses.mouth.held(&m, crate::models::folder(&self.dir, &m)), voice: name.clone() },
                     // a voice the model no longer has is not swapped for another of its voices
                     None => crate::mouth::Own::Cannot(format!("{} no longer has the voice {}. Choose another in Settings, under Voice.", m.name, voice.voice)),

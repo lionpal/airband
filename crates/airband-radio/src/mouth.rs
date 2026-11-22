@@ -107,6 +107,8 @@ pub(crate) struct Service {
     pub keys_at: String,
     /// What else it can be told. Anything left out is the usual.
     pub asks: Vec<ServiceAsk>,
+    /// For a voice service: the voice used until he picks one, as its row gives it.
+    pub usual_voice: String,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -114,6 +116,12 @@ pub struct ServiceAsk {
     pub field: String,
     pub question: String,
     pub usual: String,
+}
+
+impl From<&airband_core::providers::Ask> for ServiceAsk {
+    fn from(a: &airband_core::providers::Ask) -> Self {
+        ServiceAsk { field: a.field.clone(), question: a.question.clone(), usual: a.usual.clone() }
+    }
 }
 
 /// The services for a job that this build has the code for, from the provider table, in the order to show.
@@ -141,7 +149,8 @@ pub(crate) fn services(job: airband_core::providers::Job) -> Vec<Service> {
             key: p.key,
             key_name: p.key_name.clone(),
             keys_at: p.keys_at.clone(),
-            asks: o.asks.iter().map(|a| ServiceAsk { field: a.field.clone(), question: a.question.clone(), usual: a.usual.clone() }).collect(),
+            asks: o.asks.iter().map(ServiceAsk::from).collect(),
+            usual_voice: o.usual("voice").unwrap_or_default(),
         })
         .collect()
 }

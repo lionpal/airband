@@ -397,6 +397,10 @@ pub struct Provider {
 }
 
 impl Offer {
+    /// The usual answer its row gives for one of its settings.
+    pub fn usual(&self, field: &str) -> Option<String> {
+        self.asks.iter().find(|a| a.field == field).map(|a| a.usual.clone())
+    }
     /// It runs on his own computer: nothing leaves it, and it costs him nothing.
     pub fn local(&self) -> bool {
         self.local
@@ -470,7 +474,7 @@ impl Use {
         match self.set.get(field) {
             Some(Value::String(s)) => s.clone(),
             Some(other) => other.to_string(),
-            None => self.offer(job).and_then(|(_, o)| o.asks.iter().find(|a| a.field == field).map(|a| a.usual.clone())).unwrap_or_default(),
+            None => self.offer(job).and_then(|(_, o)| o.usual(field)).unwrap_or_default(),
         }
     }
     /// One line for him: the provider and what it is set to. Never the key.

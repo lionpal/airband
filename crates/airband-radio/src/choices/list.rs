@@ -67,7 +67,7 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
                     .iter()
                     .map(|r| {
                         let asks = r.asks.iter().map(|a| ServiceAsk { field: a.field.clone(), question: a.question.clone(), usual: a.usual.clone() }).collect();
-                        (Service { kind: r.provider.clone(), offer: r.offer.clone(), name: r.label.clone(), more: !r.preferred, free: r.free, login: r.login.clone(), price: r.price.clone(), voices: Vec::new(), about: r.about.clone(), key: r.key, key_name: r.key_name.clone(), keys_at: r.keys_at.clone(), asks }, r.has_key)
+                        (Service { kind: r.provider.clone(), offer: r.offer.clone(), name: r.label.clone(), more: !r.preferred, free: r.free, login: r.login.clone(), price: r.price.clone(), voices: Vec::new(), about: r.about.clone(), key: r.key, key_name: r.key_name.clone(), keys_at: r.keys_at.clone(), asks, usual_voice: String::new() }, r.has_key)
                     })
                     .collect(),
             ),
@@ -125,7 +125,7 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
             asks: Vec::new(),
             voices: m.voices.iter().map(|(name, about)| VoiceChoice { name: name.clone(), label: name.clone(), about: about.clone(), preview: format!("{}/previews/{name}.m4a", m.base) }).collect(),
             // with none named, the voice the row names as its usual one
-            voice: pick.as_ref().filter(|p| chosen && !p.voice.is_empty()).map(|p| p.voice.clone()).unwrap_or_else(|| m.usual_voice.clone()),
+            voice: m.voice(pick.as_ref().filter(|_| chosen).map(|p| p.voice.as_str()).unwrap_or_default()).to_string(),
             credit: m.credit.clone(),
             note: if chosen { facts.note.clone() } else { String::new() },
         });
@@ -134,10 +134,9 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
         let chosen = pick.as_ref().is_some_and(|p| p.place == ChoicePlace::Service && p.id == s.kind && p.offer == s.offer);
         let has_key = (facts.has_key)(&s.kind);
         let state = working(&service_id(&s.kind, &s.offer)).or(failed(chosen)).unwrap_or(if s.key && !has_key { ChoiceState::NeedsKey } else { ChoiceState::Ready });
-        let voice = pick.as_ref().filter(|_| chosen).and_then(|p| p.set.get("voice").cloned()).unwrap_or_default();
         // with none named, the usual answer the row gives for its voice
-        let usual = s.asks.iter().find(|a| a.field == "voice").map(|a| a.usual.clone()).unwrap_or_default();
-        out.push(of_service(s, chosen, has_key, if voice.is_empty() { usual } else { voice }, state));
+        let voice = pick.as_ref().filter(|_| chosen).and_then(|p| p.set.get("voice").cloned()).filter(|v| !v.is_empty()).unwrap_or_else(|| s.usual_voice.clone());
+        out.push(of_service(s, chosen, has_key, voice, state));
     }
     out
 }
