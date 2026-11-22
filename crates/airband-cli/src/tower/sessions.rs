@@ -235,6 +235,15 @@ impl Inner {
             self.touch(&entry);
         }
     }
+    /// An agent carried on in a new process keeps the name it had, when nobody has taken it meanwhile. Renamed
+    /// the way every rename is: written in the log, and every line of it sent to the radios again.
+    pub(super) fn keep_name(&mut self, id: &str, name: Callsign) -> bool {
+        if self.sessions.iter().any(|s| s.agent.id != id && s.callsign == name) {
+            return false;
+        }
+        self.rename(id, name);
+        true
+    }
     pub(super) fn callsigns(&self) -> Vec<Callsign> {
         self.sessions.iter().map(|s| s.callsign.clone()).collect()
     }

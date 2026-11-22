@@ -488,10 +488,12 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
     agent.deliver = Some(Deliver::Held);
     agent.pid = None;
     inner.check_in(&agent);
+    if !inner.keep_name(id, session.callsign.clone()) {
+        log(format!("{} was taken while it moved, so it keeps the name it came back with", session.callsign.text()));
+    }
     if let Some(s) = inner.session(id) {
         s.agent.deliver = Some(Deliver::Held);
         s.agent.pid = None;
-        s.callsign = session.callsign.clone();
         s.waiting = true;
     }
     inner.tell();

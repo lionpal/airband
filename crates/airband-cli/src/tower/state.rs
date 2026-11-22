@@ -284,6 +284,24 @@ mod tests {
     }
 
     #[test]
+    fn an_agent_taken_over_keeps_its_name_and_the_radios_are_told() {
+        let mut inner = Inner::default();
+        let first = inner.check_in(&agent("a", "/x/shop", None));
+        let s = inner.find("a").cloned().unwrap();
+        inner.record(Entry::said("m1".into(), &s, None, "done".into()));
+        // back from a new process under another number, as checking in again can give it
+        inner.session("a").unwrap().callsign.number = "two".into();
+        let rev = inner.rev;
+        assert!(inner.keep_name("a", first.clone()));
+        assert_eq!(inner.find("a").unwrap().callsign, first);
+        assert!(inner.rev > rev && inner.log.iter().find(|e| e.id == "m1").unwrap().rev > rev);
+        // a name someone else has taken meanwhile is not taken from them
+        inner.check_in(&agent("b", "/x/shop", None));
+        let b = inner.find("b").unwrap().callsign.clone();
+        assert!(!inner.keep_name("a", b));
+    }
+
+    #[test]
     fn renaming_a_team_changes_only_what_it_is_called() {
         let mut inner = Inner::default();
         inner.check_in(&agent("a", "/x/shop", Some("refunds")));
