@@ -115,17 +115,9 @@ pub(super) fn dir() -> PathBuf {
 
 /// One thing at a time across every airband process on this computer: a saved login must never be refreshed
 /// twice at once, or switched while it is being refreshed.
-fn locked<T>(here: &Here, work: impl FnOnce() -> T) -> T {
-    airband_io::files::make_folder(&here.dir).ok();
-    let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(here.dir.join("accounts.lock")).ok();
-    #[cfg(unix)]
-    if let Some(f) = &file {
-        use std::os::fd::AsRawFd;
-        unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
-    }
-    let out = work();
-    drop(file);
-    out
+fn locked<T>(here: &Here, work: impl FnOnce() -> T) -> Res<T> {
+    let _held = crate::lock::take(&here.dir.join("accounts.lock"))?;
+    Ok(work())
 }
 
 /// Save the login Claude Code is using now. Returns its email.
@@ -198,7 +190,7 @@ fn account(email: String, identity: airband_core::identity::AccountIdentity, liv
 }
 
 fn list_in(here: &Here) -> (Vec<Account>, Option<String>) {
-    locked(here, || {
+    let listed = locked(here, || {
         let mut notes: Vec<String> = Vec::new();
         let mut emails = saved::index(here).unwrap_or_else(|e| {
             notes.push(e);
@@ -235,7 +227,8 @@ fn list_in(here: &Here) -> (Vec<Account>, Option<String>) {
             _ => {}
         }
         (accounts, (!notes.is_empty()).then(|| notes.join(" ")))
-    })
+    });
+    listed.unwrap_or_else(|why| (Vec::new(), Some(why)))
 }
 
 static SWITCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -299,7 +292,7 @@ fn switch_in(here: &Here, id: &str) -> Res<std::thread::JoinHandle<()>> {
                 }
             }
         }))
-    })
+    })?
 }
 
 /// Whether the account file holds this account: by the account's own id, never by its email.
@@ -328,7 +321,7 @@ pub(crate) fn switch(id: &str) -> Res<std::thread::JoinHandle<()>> {
 /// `airband accounts save`: keep the login Claude Code is using now.
 pub(crate) fn save() -> Res<String> {
     let here = Here::this_computer();
-    locked(&here, || save_live(&here))
+    locked(&here, || save_live(&here))?
 }
 
 /// `airband accounts add`: sign in to another account in a private folder, so the login in use and every
@@ -351,7 +344,7 @@ pub(crate) fn add() -> Res<String> {
         let oauth = blob.get(login_key()).cloned().ok_or("The sign-in saved no login for an account.")?;
         let acct = live::oauth_account(&tmp.join(row("account_file"))).ok_or("The sign-in saved no account record.")?;
         let email = acct.get("emailAddress").and_then(|e| e.as_str()).map(String::from).ok_or("The account record has no email.")?;
-        locked(&here, || saved::keep(&here, &email, &oauth, &acct))?;
+        locked(&here, || saved::keep(&here, &email, &oauth, &acct))??;
         Ok(email)
     })();
     if let Ok(user) = here.user() {
@@ -368,7 +361,7 @@ pub(crate) fn forget(id: &str) -> Res<String> {
         let email = saved::resolve(&here, id)?;
         saved::forget(&here, &email)?;
         Ok(email)
-    })
+    })?
 }
 
 #[cfg(test)]

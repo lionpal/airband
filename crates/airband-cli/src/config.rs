@@ -318,7 +318,19 @@ fn render(cfg: &Config) -> Result<String, String> {
 }
 
 /// Write the settings. The keys never go in the file: they are kept encrypted (`vault`), from the first save.
+/// Held while the settings are read, changed and written, by every airband process: a change made from
+/// another one in between is never written over.
+pub(crate) fn hold() -> Result<crate::lock::Held, String> {
+    crate::lock::take(&dir().join("config.lock"))
+}
+
 pub(crate) fn save(cfg: &Config) -> Result<(), String> {
+    let held = hold()?;
+    save_held(cfg, &held)
+}
+
+/// [`save`], for one that already holds the file.
+pub(crate) fn save_held(cfg: &Config, _: &crate::lock::Held) -> Result<(), String> {
     let text = render(cfg)?;
     write_private(&dir().join("config.json"), &text).map_err(|e| format!("cannot write ~/.airband/config.json: {e}"))
 }
@@ -338,6 +350,11 @@ fn existing(path: &std::path::Path) -> Result<Option<(String, Config)>, String> 
 pub(crate) fn load() -> Config {
     let path = dir().join("config.json");
     airband_io::files::make_folder(&dir()).expect("cannot create ~/.airband");
+    // read and, when it is new or out of date, written while no other airband process is changing it
+    let _held = hold().unwrap_or_else(|why| {
+        eprintln!("airband: {why}");
+        std::process::exit(2);
+    });
     let (existing, cfg) = match existing(&path) {
         Ok(Some((text, cfg))) => (Some(text), cfg),
         Ok(None) => (None, parse("{}").unwrap()),
