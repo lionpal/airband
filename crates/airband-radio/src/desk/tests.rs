@@ -484,11 +484,12 @@ fn a_summary_choice_some_computers_took_is_remembered_as_taken_there() {
     // mini has it, laptop said no and is not asked again, and it still waits for the one away
     let per = kept_reads(&dir)["per"].clone();
     assert_eq!(per[ids[0].as_str()], serde_json::json!({ "state": "done" }), "{per}");
-    assert_eq!(per[ids[1].as_str()], serde_json::json!({ "state": "refused", "reason": crate::choices::NO_KEY }), "{per}");
+    // laptop's own no, in its words
+    assert_eq!(per[ids[1].as_str()], serde_json::json!({ "state": "refused", "reason": "Enter your API key." }), "{per}");
     // and he sees laptop's no, by its name, with why
     let view = looked(&desk, None, None);
     let lines: Vec<(String, DeskDelivery)> = view.intents.iter().filter(|i| i.kind == IntentKind::Reads).flat_map(|i| i.computers.iter().map(|c| (c.name.clone(), c.state.clone()))).collect();
-    assert_eq!(lines, [("laptop".to_string(), DeskDelivery::Refused { reason: crate::choices::NO_KEY.into() }), ("away".to_string(), DeskDelivery::Waiting)]);
+    assert_eq!(lines, [("laptop".to_string(), DeskDelivery::Refused { reason: "Enter your API key.".into() }), ("away".to_string(), DeskDelivery::Waiting)]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -589,7 +590,7 @@ fn a_message_that_cannot_be_fetched_to_read_aloud_says_why() {
     // a voice is chosen, so it is the fetching that fails
     radio.senses.mouth.set(Some(crate::mouth::Own::Service(crate::services::service_of("gemini", "flash-lite-tts", "k", HashMap::new()))));
     assert!(!radio.read_question("m1"));
-    assert_eq!(host.0.lock().unwrap().as_slice(), ["That could not be read aloud: cannot reach your computer."]);
+    assert_eq!(host.0.lock().unwrap().as_slice(), ["That could not be read aloud. Your computer could not be reached."]);
 }
 
 // Unix only: it makes the folder unwritable by its permission bits
@@ -738,25 +739,37 @@ fn radio_at(port: u16) -> Arc<Radio> {
 
 #[test]
 fn a_refusal_without_words_and_one_for_another_version_are_each_told_as_what_they_are() {
-    // a no with no reason is a refusal, never something that goes when it can
+    // a no with no reason is a no, said by its kind, never something that goes when it can (audit 6, P-B9)
     let gone = radio_at(tower_saying(404, r#"{"refusal":"gone"}"#));
-    assert!(matches!(gone.recent(), Err(RadioError::Refused)));
+    assert!(matches!(gone.recent(), Err(RadioError::Told { reason }) if reason == "Your computer no longer has what it names."));
     // a computer that speaks another version: he is asked to update
     let other = radio_at(tower_saying(426, r#"{"refusal":"other_version","speaks":"airband.radio/9"}"#));
     assert!(matches!(other.recent(), Err(RadioError::Told { reason }) if reason.contains("another version of airband")));
     // a 4xx that carries no refusal is a no, not an answer and not trouble that passes
     let bare = radio_at(tower_saying(400, "{}"));
-    assert!(matches!(bare.recent(), Err(RadioError::Refused)));
+    assert!(matches!(bare.recent(), Err(RadioError::Told { reason }) if reason == "Your computer refused it (400)."));
+}
+
+#[test]
+fn trouble_that_may_pass_is_never_a_no() {
+    // his computer's own trouble, and its "not now", are trouble with words: asked again, never kept as refused
+    // (audit 6, P-B2)
+    let trouble = radio_at(tower_saying(503, "{}")).recent();
+    assert!(matches!(&trouble, Err(RadioError::Trouble { reason }) if reason.contains("(503)")), "{trouble:?}");
+    let not_now = radio_at(tower_saying(503, r#"{"refusal":"not_now","reason":"Busy starting up."}"#)).recent();
+    assert!(matches!(&not_now, Err(RadioError::Trouble { reason }) if reason == "Busy starting up."), "{not_now:?}");
+    assert_eq!(super::Reach::of(not_now.map(|_| ())), super::Reach::Unreachable);
+    assert_eq!(super::Reach::<()>::of(Err(RadioError::Offline)), super::Reach::Unreachable);
 }
 
 #[test]
 fn trouble_of_his_computers_own_is_not_told_as_a_refusal() {
     let radio = radio_at(tower_saying(500, "{}"));
     let e = radio.recent().unwrap_err();
-    assert!(matches!(&e, RadioError::Told { reason } if reason.contains("ran into trouble") && !reason.contains("refused")), "{e:?}");
-    // a refusal is read by its tag, never by its status: "not now" is told with its reason
+    assert!(matches!(&e, RadioError::Trouble { reason } if reason.contains("ran into trouble") && !reason.contains("refused")), "{e:?}");
+    // a refusal is read by its tag, never by its status: "not now" is told with its reason, as trouble
     let busy = radio_at(tower_saying(503, r#"{"refusal":"not_now","reason":"It is still starting."}"#));
-    assert!(matches!(busy.recent(), Err(RadioError::Told { reason }) if reason == "It is still starting."));
+    assert!(matches!(busy.recent(), Err(RadioError::Trouble { reason }) if reason == "It is still starting."));
 }
 
 #[test]
@@ -893,3 +906,61 @@ mod kept_files;
 mod lifetimes;
 mod scenarios;
 mod sending;
+
+fn upload_on(computer: &StationId, id: &str, state: UploadState) -> Upload {
+    Upload { shown: DeskUpload { id: id.into(), name: "a.png".into(), sent: 1, total: 1, state }, station: computer.clone(), dropped: Arc::default(), file_path: String::new(), name: "a.png".into() }
+}
+
+#[test]
+fn an_answer_takes_the_files_that_arrived_and_they_leave_the_tray() {
+    let state = two();
+    let mini = state.computers[0].id();
+    let desk = desk_of(state);
+    desk.shared.state.lock().unwrap().uploads.extend([upload_on(&mini, "f1", UploadState::Ready), upload_on(&mini, "f2", UploadState::Sending)]);
+    desk.answer("q1".into(), "yes".into());
+    // (audit 6, P-B8): the one that arrived went with the answer; the one on its way stays
+    let left: Vec<String> = desk.shared.state.lock().unwrap().uploads.iter().map(|u| u.shown.id.clone()).collect();
+    assert_eq!(left, ["f2"]);
+}
+
+#[test]
+fn nothing_typed_with_files_still_on_their_way_sends_nothing() {
+    let state = two();
+    let mini = state.computers[0].id();
+    let desk = desk_of(state);
+    desk.shared.state.lock().unwrap().uploads.push(upload_on(&mini, "f1", UploadState::Sending));
+    desk.send(String::new(), None, None, None);
+    // (audit 6, P-B7)
+    let sent: usize = desk.shared.state.lock().unwrap().computers.iter().map(|s| s.radio.unsent().len()).sum();
+    assert_eq!(sent, 0, "an empty message went ahead of its files");
+}
+
+#[test]
+fn what_the_phone_cannot_find_is_said_as_gone_and_never_as_his_computer_refusing() {
+    let desk = desk_of(two());
+    // (audit 6, N32)
+    let asked = desk.full("not-a-message".into());
+    assert!(matches!(&asked, Err(RadioError::Told { reason }) if reason == "That message is no longer on any of your computers."), "{asked:?}");
+}
+
+#[test]
+fn the_view_marks_nothing_read_and_shown_marks_what_it_shows() {
+    let desk = desk_of(two());
+    // (audit 6: Desk::view is a pure getter)
+    let before = desk.view().unread;
+    let again = desk.view().unread;
+    desk.shown();
+    let after = desk.view().unread;
+    assert!(before > 0 && again == before, "looking at the view changed what is read: {before} then {again}");
+    assert_eq!(after, 0);
+}
+
+#[test]
+fn an_agent_moves_only_to_a_team_on_its_own_computer() {
+    let state = two();
+    let (agent, elsewhere) = (state.computers[0].agents[0].id.clone(), state.computers[1].agents[0].room.clone());
+    let desk = desk_of(state);
+    // the two computers are told apart by id (audit 6, P-B6)
+    let moved = desk.move_agent(agent, DeskTeamPick::Room { room: elsewhere });
+    assert!(matches!(&moved, Err(RadioError::Told { reason }) if reason == "An agent can only move to a team on its own computer."), "{moved:?}");
+}

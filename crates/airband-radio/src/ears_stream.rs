@@ -335,6 +335,27 @@ impl RadioHost for Tape {
 mod tests {
     use super::*;
 
+    /// A wire that never connects: what is kept is all there is.
+    const NOWHERE: Wire = Wire { connect: |_, _| Err(()), audio: |_, _| Message::text(""), end: |_| Message::text(""), read: |_, _, _| None, header: false, reopens: false };
+
+    #[test]
+    fn what_was_heard_is_kept_when_the_connection_goes() {
+        let tape = Tape::of(&[], false);
+        let pass: Arc<dyn Fn() -> Option<Pass> + Send + Sync> = Arc::new(|| None);
+        let mut stream = Stream { wire: &NOWHERE, pass, host: &tape, waiting: VecDeque::new(), header: Vec::new(), request: String::new(), opening: channel().1, socket: None, kept: vec!["ship it".into()], ended: false, shown: String::new(), partial: None };
+        // the stretch it had not finished, as it last said it, is kept with the rest (audit 6, C-B4)
+        stream.tell("and test");
+        assert!(stream.salvage());
+        assert_eq!(stream.kept, ["ship it", "and test"]);
+        // a stretch it finished after it last said one is not kept twice
+        stream.tell("again");
+        stream.kept.push("again".into());
+        stream.salvage();
+        assert_eq!(stream.kept, ["ship it", "and test", "again"]);
+        // with the connection gone at the end, what was heard is what he said
+        assert_eq!(stream.finish(), Ok(Some("ship it and test again".to_string())));
+    }
+
     /// Against a real service, with a recording in place of the microphone. LISTEN_WITH is a provider's id in
     /// the catalogue, LISTEN_KEY its key, and LISTEN_SET any of its settings as `field=value,field=value`:
     ///   LISTEN_WITH=… LISTEN_KEY=… LISTEN_SET=region=… SPEECH_WAV=said.wav cargo test -p airband-radio -- --ignored --nocapture streams

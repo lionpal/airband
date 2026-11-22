@@ -91,11 +91,11 @@ impl RadioHost for ComputerHost {
         // what he said has gone, and took with it the files that were waiting: they leave the tray
         if matches!(status, RadioStatus::Idle) {
             let mut state = self.shared.state.lock().unwrap();
-            if let Some(waiting) = state.computer(&self.station).map(|s| s.radio.armed()) {
-                if state.files_went(&self.station, &waiting) {
-                    drop(state);
-                    self.shared.host.changed();
-                }
+            if let Some(waiting) = state.computer(&self.station).map(|s| s.radio.armed())
+                && state.files_went(&self.station, &waiting)
+            {
+                drop(state);
+                self.shared.host.changed();
             }
         }
         if self.shared.floor.release(&self.station, ends) {

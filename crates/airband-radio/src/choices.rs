@@ -452,7 +452,8 @@ mod tests {
 
     #[test]
     fn before_any_computer_summaries_follow_the_coding_tool_until_he_picks() {
-        let logins: Vec<Service> = crate::services::services(Job::Summary).into_iter().filter(|s| !s.login.is_empty()).collect();
+        // the offer each sign-in's row marks as the one to use (audit 6, C-A4)
+        let logins: Vec<Service> = crate::services::services(Job::Summary).into_iter().filter(|s| !s.login.is_empty() && !s.more).collect();
         let (one, two) = (logins[0].clone(), logins.iter().find(|s| s.login != logins[0].login).expect("two tools with a sign-in that reads").clone());
         let mut saved = Saved::default();
         saved.use_tools(vec![one.login.clone()]);
@@ -514,6 +515,21 @@ mod tests {
         assert_eq!(host.notes.lock().unwrap().last().map(String::as_str), Some(crate::voice::NOTHING_CHOSEN));
         assert!(matches!(crate::voice::say_until(&tape, &desk.shared.senses.mouth, "Shop two is waiting.", &|| false), crate::voice::Said::Nothing(why) if why == crate::voice::NOTHING_CHOSEN));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_service_that_takes_a_key_is_never_tried_without_one() {
+        let dir = std::env::temp_dir().join(format!("airband-choices-nokey-{}", random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("choices.json"), r#"{"ears":{"place":"service","id":"elevenlabs","offer":"scribe"}}"#).unwrap();
+        let host = Arc::new(Host::default());
+        let desk = Desk::alone(&dir.display().to_string(), host.clone());
+        desk.shared.chooser.apply(&*host, &desk.shared.senses);
+        let why = desk.shared.senses.ears.cannot();
+        let _ = std::fs::remove_dir_all(dir);
+        // he is told to enter the key, by its name (audit 6, C-A6)
+        let key_name = airband_core::providers::provider("elevenlabs").map(|p| p.key_name.clone()).unwrap();
+        assert_eq!(why, Some(format!("Enter your {key_name} in Settings, under Listening.")));
     }
 
     #[test]

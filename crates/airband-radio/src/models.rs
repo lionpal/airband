@@ -253,6 +253,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    #[test]
+    fn of_two_earlier_versions_the_one_made_whole_last_runs_whatever_their_names() {
+        let dir = std::env::temp_dir().join(format!("airband-models-order-{}", random_hex(4)));
+        let at = dir.display().to_string();
+        // "10" sorts before "9" as text; 10 was made whole after 9 (audit 6, C-A5)
+        for v in ["9", "10"] {
+            put(&dir.join(format!("models/tiny/{v}")));
+            std::fs::write(dir.join(format!("models/tiny/{v}/.whole")), "").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        // the catalogue names a version not here yet
+        assert_eq!(usable(&at, &small("11")), Some(dir.join("models/tiny/10")));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     /// The real download, from where the app gets it, every file checked against its hash. Run by hand:
     /// `AIRBAND_MODEL_DIR=<folder> AIRBAND_MODEL=phonon-2.5-en cargo test --release -p airband-radio fetches -- --ignored --nocapture`
     #[test]

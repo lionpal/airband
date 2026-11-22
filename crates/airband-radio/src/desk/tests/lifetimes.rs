@@ -62,6 +62,8 @@ fn asking_a_computer_afresh_replaces_only_its_connection() {
     let asking = desk.shared.state.lock().unwrap().asking.as_ref().map(|a| a.message.text.clone());
     desk.stop();
     assert!(!Arc::ptr_eq(&before, &after), "it was not asked afresh");
+    // one record of how requests went, for both connections: one writer of its file (audit 6, P-B10)
+    assert!(Arc::ptr_eq(&before.link.trail, &after.link.trail), "each connection kept a trail file of its own");
     assert_ne!(epoch, old_epoch);
     assert!(online && name == "studio", "what was seen of it was dropped with the old connection");
     assert_eq!(asking.as_deref(), Some("late"), "a message the tower could not place vanished after a reconnect");

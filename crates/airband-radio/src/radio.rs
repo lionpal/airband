@@ -185,7 +185,7 @@ impl Radio {
             Err(e) => {
                 self.host.told(match RadioError::from(e) {
                     RadioError::Told { reason } => reason,
-                    e => format!("That could not be read aloud: {e}."),
+                    e => format!("That could not be read aloud. {}", e.said()),
                 });
                 return false;
             }

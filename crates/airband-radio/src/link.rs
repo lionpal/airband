@@ -524,7 +524,8 @@ mod tests {
         assert!(all.iter().all(|c| !c.told().is_empty() && !c.told().ends_with('.')));
         // the tower's own explanation reaches him
         assert!(never[2].told().contains("more than two minutes apart"));
-        assert!(Trouble(400).refused() && Refused(Refusal::Gone).refused() && !Trouble(503).refused() && !Away.refused());
+        // a no is never tried again; his computer's trouble and a lost connection are
+        assert!([Trouble(400), Refused(Refusal::Gone)].iter().all(|e| e.retry() == Retry::Never) && [Trouble(503), Away].iter().all(|e| e.retry() != Retry::Never));
     }
 
     fn said(id: &str, text: &str) -> Utterance {
