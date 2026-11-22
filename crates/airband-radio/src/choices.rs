@@ -368,7 +368,7 @@ mod tests {
         assert_eq!(chosen(&all), vec!["b/x"]);
         assert!(all[2].has_key && all[2].state == ChoiceState::Ready && all[1].state == ChoiceState::NeedsKey);
         // what he picked while it could not be reached is the one shown, as waiting
-        let waiting = Saved { reads: Some(Waiting { id: "a".into(), offer: "x".into(), set: BTreeMap::new(), his: true, taken: Vec::new() }), ..saved };
+        let waiting = Saved { reads: Some(Waiting { id: "a".into(), offer: "x".into(), set: BTreeMap::new(), his: true, taken: Vec::new(), refused: Vec::new() }), ..saved };
         let all = list(ChoiceJob::Reads, &waiting, &facts(HERE, &|_| true));
         assert_eq!(chosen(&all), vec!["a/x"]);
         assert_eq!(all[1].state, ChoiceState::Waiting);
@@ -434,7 +434,7 @@ mod tests {
         saved.use_tools(vec![two.login.clone(), one.login.clone()]);
         assert_eq!(saved.reads.as_ref().map(|w| w.id.as_str()), Some(two.kind.as_str()));
         // he picks for himself: a change of tool leaves that alone
-        saved.reads = Some(Waiting { id: "anthropic".into(), offer: "haiku".into(), set: BTreeMap::new(), his: true, taken: Vec::new() });
+        saved.reads = Some(Waiting { id: "anthropic".into(), offer: "haiku".into(), set: BTreeMap::new(), his: true, taken: Vec::new(), refused: Vec::new() });
         saved.use_tools(vec![one.login.clone()]);
         assert_eq!(saved.reads.as_ref().map(|w| w.id.as_str()), Some("anthropic"));
         // and once a computer has said what it reads with, nothing is made to wait by a change of tool

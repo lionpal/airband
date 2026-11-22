@@ -436,16 +436,60 @@ fn a_summary_choice_made_offline_waits_for_every_computer() {
 }
 
 #[test]
-fn when_a_second_computer_refuses_a_summary_choice_he_hears_the_first_switched() {
-    let mini = station("mini", tower_answering("{}"), &[], vec![]);
+fn when_one_computer_refuses_a_summary_choice_the_ones_after_it_are_still_asked() {
     let laptop = station("laptop", tower_answering(r#"{"error":"That service is not offered here."}"#), &[], vec![]);
-    let radios = [("mini".to_string(), mini.id(), mini.radio.clone()), ("laptop".to_string(), laptop.id(), laptop.radio.clone())];
+    let mini = station("mini", tower_answering("{}"), &[], vec![]);
+    let radios = [("laptop".to_string(), laptop.id(), laptop.radio.clone()), ("mini".to_string(), mini.id(), mini.radio.clone())];
     let wanted = SetReads { kind: "anthropic".into(), offer: "haiku".into(), key: String::new(), set: Default::default() };
-    let e = crate::choices::switch_all(&radios, &wanted).unwrap_err();
+    let answers = crate::choices::switch_all(&radios, &wanted);
+    assert_eq!(answers.taken, [("mini".to_string(), mini.id())]);
+    let e = answers.told().unwrap();
     assert!(matches!(&e, RadioError::Told { reason } if reason == "mini switched. laptop did not: That service is not offered here."), "{e:?}");
-    assert_eq!(crate::choices::switch_all(&radios[..1], &wanted).unwrap(), [mini.id()]);
+    assert!(crate::choices::switch_all(&radios[1..], &wanted).told().is_none());
 }
 
+/// A desk with these computers, keeping its choices in `dir`, where his summary service is offered with its
+/// key kept on the main computer.
+fn desk_choosing(dir: &std::path::Path, stations: Vec<Station>, reads: serde_json::Value) -> Desk {
+    let offered = serde_json::json!({ "reads": reads, "offered": { "offers": [{ "provider": "anthropic", "offer": "haiku", "label": "Haiku", "key": true, "has_key": true, "key_name": "API key", "preferred": true }] } });
+    std::fs::write(dir.join("choices.json"), offered.to_string()).unwrap();
+    let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
+    Desk { shared: Arc::new(Shared { state: Mutex::new(State { stations, ..State::default() }), floor: Floor::default(), host, chooser: crate::choices::Chooser::open(dir.to_str().unwrap(), HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend }), data_dir: String::new() }
+}
+
+#[test]
+fn a_summary_choice_some_computers_took_is_remembered_as_taken_there() {
+    let dir = temp_dir("partly");
+    let mini = station("mini", tower_answering("{}"), &[], vec![]);
+    let laptop = station("laptop", tower_answering(r#"{"error":"Enter your API key."}"#), &[], vec![]);
+    let away = station("away", 9, &[], vec![]);
+    let ids = [mini.id(), laptop.id()];
+    let desk = desk_choosing(&dir, vec![mini, laptop, away], serde_json::Value::Null);
+    desk.shared.state.lock().unwrap().stations[2].online = false;
+    desk.shared.state.lock().unwrap().read.main = Some(ids[0].clone());
+    let id = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "anthropic").map(|c| c.id).unwrap();
+    let e = desk.choose_for(ChoiceJob::Reads, id, None, HashMap::new(), false).unwrap_err();
+    assert!(matches!(&e, RadioError::Told { reason } if reason == "mini switched. laptop did not: Enter your API key."), "{e:?}");
+    // mini has it, laptop said no and is not asked again, and it still waits for the one away
+    let reads = kept_reads(&dir);
+    assert_eq!((reads["taken"].clone(), reads["refused"].clone()), (serde_json::json!([ids[0]]), serde_json::json!([ids[1]])));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_computer_that_refuses_a_waiting_summary_choice_does_not_cancel_it_for_the_others() {
+    let dir = temp_dir("refused-one");
+    let laptop = station("laptop", tower_answering(r#"{"error":"Enter your API key."}"#), &[], vec![]);
+    let mini = station("mini", 9, &[], vec![]);
+    let (laptop_radio, mini_id) = (laptop.radio.clone(), mini.id());
+    let desk = desk_choosing(&dir, vec![laptop, mini], serde_json::json!({ "id": "anthropic", "offer": "haiku", "his": true }));
+    crate::choices::computer_reached(&desk.shared, &laptop_radio);
+    // still waiting for mini
+    let reads = kept_reads(&dir);
+    assert_eq!(reads["id"], "anthropic", "{reads}");
+    assert!(!reads["refused"].as_array().unwrap().iter().any(|c| *c == serde_json::json!(mini_id)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
 #[test]
 fn a_summary_service_whose_key_his_computer_keeps_is_chosen_with_no_key_on_the_phone() {
     let dir = temp_dir("kept-there");

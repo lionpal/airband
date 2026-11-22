@@ -36,12 +36,19 @@ pub(super) struct Waiting {
     /// The computers that have taken it, by `Station::id`. It waits for the rest.
     #[serde(default)]
     pub(super) taken: Vec<String>,
+    /// The computers that said no to it, by `Station::id`: they are not asked again, and he was told why.
+    #[serde(default)]
+    pub(super) refused: Vec<String>,
 }
 
 impl Waiting {
     /// The same choice, whichever computers have taken it.
     pub(super) fn same(&self, other: &Waiting) -> bool {
         (&self.id, &self.offer, &self.set) == (&other.id, &other.offer, &other.set)
+    }
+    /// That computer has given its answer to it, yes or no: it is not asked again.
+    pub(super) fn answered(&self, computer: &str) -> bool {
+        self.taken.iter().chain(&self.refused).any(|c| c == computer)
     }
 }
 
@@ -93,7 +100,7 @@ impl Saved {
         self.tools = tools;
         if self.offered.is_none() && self.reads.as_ref().is_none_or(|w| !w.his) {
             let most = self.tools.first().cloned().unwrap_or_default();
-            self.reads = crate::services::services(Job::Summary).into_iter().find(|s| !most.is_empty() && s.login == most).map(|s| Waiting { id: s.kind, offer: s.offer, set: BTreeMap::new(), his: false, taken: Vec::new() });
+            self.reads = crate::services::services(Job::Summary).into_iter().find(|s| !most.is_empty() && s.login == most).map(|s| Waiting { id: s.kind, offer: s.offer, set: BTreeMap::new(), his: false, taken: Vec::new(), refused: Vec::new() });
         }
     }
 }
