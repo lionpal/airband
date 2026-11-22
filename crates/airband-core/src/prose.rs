@@ -335,6 +335,12 @@ pub fn clip(text: &str, most: usize) -> String {
     format!("{}\u{2026}", text.chars().take(most.saturating_sub(1)).collect::<String>().trim_end())
 }
 
+/// The last `max_chars` characters of a text: what a model is shown of something too long to show whole.
+pub fn tail(text: &str, max_chars: usize) -> String {
+    let n = text.chars().count();
+    text.chars().skip(n.saturating_sub(max_chars)).collect()
+}
+
 /// The first two sentences of what an agent wrote, as words to say, for when no summary of it was made.
 pub fn opening(text: &str) -> String {
     let s = plain(text);

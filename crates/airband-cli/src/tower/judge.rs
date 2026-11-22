@@ -9,7 +9,7 @@ mod models;
 use brief::*;
 pub(in crate::tower) use later::{JUDGE_NOW, judge_entry, judge_later};
 pub(crate) use models::*;
-pub(super) use brief::offered;
+pub(super) use models::offered;
 pub(super) use models::{ask_model, failed, reader, set_reader};
 
 /// A model that did not answer: why, and anything more for this computer's own log. The second part is never
@@ -193,9 +193,9 @@ fn reading(cfg: &Config, item: &Item) -> String {
          \"background\": true when it has stopped only to wait for work of its own that is still running and will \
          bring it back by itself (a build, a test run, a background agent or task it started): it is still at work.\n\n\
          {asked}<message>\n{msg}\n</message>",
-        asked = item.asked.as_deref().map(|a| format!("The last thing he told this agent was:\n<asked>\n{}\n</asked>\nIf the message below says that is done, or cannot be done, that is at least a report.\n\n", tail(a, 2000))).unwrap_or_default(),
+        asked = item.asked.as_deref().map(|a| format!("The last thing he told this agent was:\n<asked>\n{}\n</asked>\nIf the message below says that is done, or cannot be done, that is at least a report.\n\n", airband_core::prose::tail(a, 2000))).unwrap_or_default(),
         name = cfg.name,
-        msg = tail(&item.full, 12000)
+        msg = airband_core::prose::tail(&item.full, 12000)
     )
 }
 
@@ -293,7 +293,7 @@ pub(super) async fn consent(cfg: &Config, said: &str) -> Option<bool> {
          think\"), asks a question, or is talking about something else.\n\
          When in doubt between allow and anything else, it is not allow.",
         name = cfg.name,
-        said = tail(said, 1000)
+        said = airband_core::prose::tail(said, 1000)
     );
     #[derive(Deserialize)]
     #[serde(rename_all = "snake_case")]
@@ -327,7 +327,7 @@ pub(super) async fn detail(cfg: &Config, item: &Item) -> String {
          No file paths, code, lists or markdown. Do not repeat the short version word for word. Output only the words to be spoken.\n\n<message>\n{msg}\n</message>",
         name = cfg.name,
         say = item.say.as_deref().unwrap_or(""),
-        msg = tail(&item.full, 12000)
+        msg = airband_core::prose::tail(&item.full, 12000)
     );
     match ask_model(cfg, prompt).await {
         Ok(t) => spoken(&t),

@@ -13,6 +13,7 @@
 //! - this file: the pieces every module shares; `serve` starts the tower up and runs its background loops
 //! - `state`: what the tower remembers, all of it in one place (`Inner`), and what is asked of the whole
 //! - `sessions`: the agents on the radio, what each is called and which team it is in
+//! - `teams`: his teams and recent folders as places to start agents in
 //! - `entries`: the chat log's lines
 //! - `aloud`: where each thing said stands on its way to being heard on a call
 //! - `calls`: each radio's place in a call
@@ -55,6 +56,7 @@ mod route;
 mod sessions;
 mod state;
 mod store;
+mod teams;
 mod access;
 mod loops;
 mod probe;

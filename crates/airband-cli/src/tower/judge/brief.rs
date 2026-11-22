@@ -1,4 +1,4 @@
-//! The folder a command-line reader is run in, with its brief, and what readers are offered.
+//! The folder a command-line reader is run in, with its brief.
 use super::*;
 
 /// What a coding tool is told when it is used only to rewrite a message: one line, and no tools. Kept in a
@@ -23,36 +23,4 @@ pub(super) fn brief_folder(by: &By) -> Result<std::path::PathBuf, String> {
         }
     }
     Ok(folder)
-}
-
-/// What can read on this tower, for a radio that offers the choice: the tower's own list for its own job, so
-/// a phone with another copy of the catalogue offers nothing this tower would refuse.
-pub(in crate::tower) fn offered(cfg: &Config) -> airband_core::radio::ReadsOffered {
-    use airband_core::radio::{ReadsAsk, ReadsOffer, ReadsOffered};
-    let now = reader(cfg);
-    let kept: std::collections::HashSet<String> = cfg.keys.values().map(|k| k.provider.clone()).collect();
-    let offers = crate::providers::in_order(Job::Summary)
-        .into_iter()
-        .map(|(p, o)| ReadsOffer {
-            provider: p.id.clone(),
-            offer: o.id.clone(),
-            label: o.label.clone(),
-            about: o.about.clone(),
-            price: o.price.clone(),
-            preferred: o.preferred,
-            free: o.local,
-            login: o.login.clone(),
-            key: p.key,
-            has_key: p.key && kept.contains(&p.id),
-            key_name: p.key_name.clone(),
-            keys_at: p.keys_at.clone(),
-            asks: o.asks.iter().map(|a| ReadsAsk { field: a.field.clone(), question: a.question.clone(), usual: a.usual.clone() }).collect(),
-        })
-        .collect();
-    ReadsOffered { now: (!now.is_none()).then(|| airband_core::radio::OfferName { provider: now.kind.clone(), offer: now.offer.clone() }), failed: failed(), offers }
-}
-
-pub(super) fn tail(text: &str, max_chars: usize) -> String {
-    let n = text.chars().count();
-    text.chars().skip(n.saturating_sub(max_chars)).collect()
 }
