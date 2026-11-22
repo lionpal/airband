@@ -15,11 +15,6 @@ pub(crate) enum Said {
     Nothing(String),
 }
 
-/// Is there anything to speak with?
-pub(crate) fn can_speak(mouth: &crate::mouth::Mouth) -> bool {
-    mouth.ready()
-}
-
 /// Say `text` with the voice he chose on this device.
 pub(crate) fn say(host: &dyn RadioHost, mouth: &crate::mouth::Mouth, text: &str) {
     say_until(host, mouth, text, &|| false);

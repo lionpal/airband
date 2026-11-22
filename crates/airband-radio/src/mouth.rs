@@ -11,6 +11,9 @@
 use super::*;
 use crate::engines::{ByHost, Held};
 
+/// Said when the voice he chose ran and nothing came of it.
+const NO_SOUND: &str = "The voice you chose made no sound.";
+
 /// The voice of the device's own that he chose, when he chose one. One thing at a time: which one is decided
 /// where he chooses (`choices.rs`) and only carried out here.
 #[derive(Clone)]
@@ -108,7 +111,7 @@ impl Mouth {
         let mut pcm = Vec::new();
         self.speak(host, SAMPLE, &mut |part| pcm.extend_from_slice(part), &mut |_, _| {}, &|| false).map_err(told)?;
         if pcm.is_empty() {
-            return Err(told("The voice made no sound.".into()));
+            return Err(told(NO_SOUND.into()));
         }
         Ok(VoiceSample { rate, pcm })
     }
@@ -190,7 +193,7 @@ impl Mouth {
         }
         fail(match made {
             Err(why) => format!("The voice you chose did not speak: {why}"),
-            Ok(_) => "The voice you chose made no sound.".into(),
+            Ok(_) => NO_SOUND.into(),
         })
     }
 }

@@ -19,9 +19,9 @@ pub(super) struct Pick {
     pub(super) voice: String,
 }
 
-/// What is to write his summaries, chosen while no computer could be reached. It is sent to the first one
-/// that can.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// What is to write his summaries, chosen while no computer could be reached. It is sent to each computer as
+/// it can be reached.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(super) struct Waiting {
     /// The provider's id, and which of its offers.
     pub(super) id: String,
@@ -33,6 +33,16 @@ pub(super) struct Waiting {
     /// that does.
     #[serde(default)]
     pub(super) his: bool,
+    /// The computers that have taken it, by `Station::id`. It waits for the rest.
+    #[serde(default)]
+    pub(super) taken: Vec<String>,
+}
+
+impl Waiting {
+    /// The same choice, whichever computers have taken it.
+    pub(super) fn same(&self, other: &Waiting) -> bool {
+        (&self.id, &self.offer, &self.set) == (&other.id, &other.offer, &other.set)
+    }
 }
 
 /// A kept pick as this build reads it. One it cannot read (a place this build does not have) is nothing
@@ -83,7 +93,7 @@ impl Saved {
         self.tools = tools;
         if self.offered.is_none() && self.reads.as_ref().is_none_or(|w| !w.his) {
             let most = self.tools.first().cloned().unwrap_or_default();
-            self.reads = crate::services::services(Job::Summary).into_iter().find(|s| !most.is_empty() && s.login == most).map(|s| Waiting { id: s.kind, offer: s.offer, set: BTreeMap::new(), his: false });
+            self.reads = crate::services::services(Job::Summary).into_iter().find(|s| !most.is_empty() && s.login == most).map(|s| Waiting { id: s.kind, offer: s.offer, set: BTreeMap::new(), his: false, taken: Vec::new() });
         }
     }
 }

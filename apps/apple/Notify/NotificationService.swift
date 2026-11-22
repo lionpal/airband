@@ -17,7 +17,7 @@ final class NotificationService: UNNotificationServiceExtension {
         content.title = note.title
         content.subtitle = note.subtitle
         content.body = note.body
-        content.threadIdentifier = note.station + "/" + note.agent
+        content.threadIdentifier = Self.who(note)
         // added to what came, not in place of it: the system needs its own part of a notification left alone
         content.userInfo.merge(["station": note.station, "message": note.message, "room": note.room, "agent": note.agent, "options": note.options]) { _, mine in mine }
         content.categoryIdentifier = note.permission ? NoticeButtons.permit : note.options.isEmpty ? NoticeButtons.reply : NoticeButtons.name(for: note.options)
@@ -36,11 +36,15 @@ final class NotificationService: UNNotificationServiceExtension {
         deliver = nil
     }
 
+    /// Who a notice is from, the same for every notice of that agent on that computer: its thread, and the
+    /// sender the system groups it under.
+    private static func who(_ note: OpenedNotice) -> String { note.station + "/" + note.agent }
+
     /// As a message from a person: the agent's name as the sender and its badge where a contact's picture goes.
     /// Needs Apple's Communication Notifications capability; without it this gives nothing and the name stands alone.
     private static func fromAgent(_ content: UNMutableNotificationContent, _ note: OpenedNotice, _ picture: Data?) -> UNNotificationContent? {
         guard Bundle.main.object(forInfoDictionaryKey: "AirbandCommunication") as? String == "YES", let picture else { return nil }
-        let who = note.station + "/" + note.agent
+        let who = Self.who(note)
         let name = note.subtitle.isEmpty ? note.title : note.title + " · " + note.subtitle
         let sender = INPerson(personHandle: INPersonHandle(value: who, type: .unknown), nameComponents: nil, displayName: name, image: INImage(imageData: picture), contactIdentifier: nil, customIdentifier: who)
         let intent = INSendMessageIntent(recipients: nil, outgoingMessageType: .outgoingMessageText, content: note.body, speakableGroupName: nil, conversationIdentifier: who, serviceName: nil, sender: sender, attachments: nil)

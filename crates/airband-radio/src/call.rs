@@ -16,14 +16,14 @@ pub(crate) enum Job {
 
 /// Everything the polling thread is given to work with.
 pub(crate) struct Polling {
-    pub jobs: Sender<Job>,
-    pub link: Arc<Link>,
-    pub host: Arc<dyn RadioHost>,
-    pub stop: Arc<AtomicBool>,
-    pub busy: Arc<AtomicBool>,
-    pub calling: Arc<AtomicBool>,
-    pub wake: Arc<Wake>,
-    pub senses: Arc<Senses>,
+    pub(crate) jobs: Sender<Job>,
+    pub(crate) link: Arc<Link>,
+    pub(crate) host: Arc<dyn RadioHost>,
+    pub(crate) stop: Arc<AtomicBool>,
+    pub(crate) busy: Arc<AtomicBool>,
+    pub(crate) calling: Arc<AtomicBool>,
+    pub(crate) wake: Arc<Wake>,
+    pub(crate) senses: Arc<Senses>,
 }
 
 /// Asks the tower for the next transmission, over and over. The tower only hands one out when the radio has
@@ -47,7 +47,7 @@ pub(crate) fn poll(with: Polling) {
             continue;
         }
         // with no voice chosen there is nothing to read with: nothing is asked for, and it all stays in the chat
-        if !voice::can_speak(&senses.mouth) {
+        if !senses.mouth.ready() {
             online = false;
             joined = true;
             wake.wait_since(turn, Duration::from_secs(5));
@@ -82,7 +82,20 @@ pub(crate) fn poll(with: Polling) {
     }
 }
 
-pub(crate) fn work(jobs: Receiver<Job>, link: Arc<Link>, host: Arc<dyn RadioHost>, stop: Arc<AtomicBool>, busy: Arc<AtomicBool>, calling: Arc<AtomicBool>, senses: Arc<Senses>) {
+/// Everything the thread that does the jobs is given to work with.
+pub(crate) struct Working {
+    pub(crate) jobs: Receiver<Job>,
+    pub(crate) link: Arc<Link>,
+    pub(crate) session: Arc<Session>,
+    pub(crate) host: Arc<dyn RadioHost>,
+    pub(crate) stop: Arc<AtomicBool>,
+    pub(crate) busy: Arc<AtomicBool>,
+    pub(crate) calling: Arc<AtomicBool>,
+    pub(crate) senses: Arc<Senses>,
+}
+
+pub(crate) fn work(with: Working) {
+    let Working { jobs, link, session, host, stop, busy, calling, senses } = with;
     let ears = ears::Ears::new(senses.clone());
     {
         // the pass for the listening service is fetched before he first needs it, and again now and then, so
@@ -126,7 +139,7 @@ pub(crate) fn work(jobs: Receiver<Job>, link: Arc<Link>, host: Arc<dyn RadioHost
             }
             Job::Talk(re, scope) => {
                 let _here = still_here(&link, &calling);
-                converse(&link, &*host, &ears, &senses.mouth, re, scope)
+                converse(&link, &session, &*host, &ears, &senses.mouth, re, scope)
             }
             Job::Dictate(done) => {
                 let _here = still_here(&link, &calling);
@@ -167,12 +180,12 @@ fn still_here(link: &Arc<Link>, calling: &Arc<AtomicBool>) -> impl Drop {
 }
 
 /// Open the microphone; send what he says; speak the tower's answer; listen again if the tower asks.
-pub(crate) fn converse(link: &Arc<Link>, host: &dyn RadioHost, ears: &ears::Ears, mouth: &mouth::Mouth, mut re: Option<String>, scope: Option<String>) {
+pub(crate) fn converse(link: &Arc<Link>, session: &Session, host: &dyn RadioHost, ears: &ears::Ears, mouth: &mouth::Mouth, mut re: Option<String>, scope: Option<String>) {
     for _ in 0..MAX_ROUNDS {
         host.status(RadioStatus::Listening);
         let Listened::Said(text) = ears.hear(host, false) else { return };
         host.status(RadioStatus::Sending);
-        let reply = match link.utterance(&text, re.take(), scope.clone(), None) {
+        let reply = match session.say(link, &text, re.take(), scope.clone(), None) {
             Ok(Some(reply)) => reply,
             // his computer has it and has not said what came of it yet: that is in the chat when it does
             Ok(None) => return,

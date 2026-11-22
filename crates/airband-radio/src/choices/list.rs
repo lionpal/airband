@@ -85,7 +85,8 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
                 let is = chosen.as_ref().is_some_and(|c| c.provider == s.kind && c.offer == s.offer);
                 let has_key = there || (facts.has_key)(&s.kind);
                 let state = working(&service_id(&s.kind, &s.offer)).unwrap_or(match () {
-                    _ if is && saved.reads.is_some() => ChoiceState::Waiting,
+                    // no computer has it yet
+                    _ if is && saved.reads.as_ref().is_some_and(|w| w.taken.is_empty()) => ChoiceState::Waiting,
                     _ if is && reads_failed.is_some() => ChoiceState::Failed { why: reads_failed.map(|t| t.said(&s.name)).unwrap_or_default() },
                     _ if s.key && !has_key => ChoiceState::NeedsKey,
                     _ => ChoiceState::Ready,

@@ -10,8 +10,8 @@ struct AccountsView: View {
             VStack(alignment: .leading, spacing: 22) {
                 ForEach(model.accounts, id: \.station) { station in
                     VStack(alignment: .leading, spacing: 10) {
-                        if model.accounts.count > 1, !station.station.isEmpty {
-                            Text(station.station).font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.quiet).padding(.horizontal, 6)
+                        if model.accounts.count > 1 {
+                            Text(station.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.quiet).padding(.horizontal, 6)
                         }
                         ForEach(station.accounts, id: \.id) { a in
                             Button { model.useAccount(station.station, a) } label: { row(station.station, a) }
@@ -52,7 +52,7 @@ struct AccountsView: View {
             HStack(spacing: 8) {
                 Text(a.label).font(.system(size: 17, weight: .semibold)).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 8)
-                if model.switching == station + "|" + a.id {
+                if model.switching == RadioModel.Switching(station: station, account: a.id) {
                     ProgressView()
                 } else if a.live {
                     Text("in use").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.signal)

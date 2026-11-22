@@ -175,6 +175,12 @@ pub struct NewProject {
     pub tool: Option<String>,
 }
 
+/// What `POST team/rename` answers: the name the team now has, as the tower writes it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamRenamed {
+    pub team: String,
+}
+
 /// What `POST project` answers: what to tell him, and the team the agent is in.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectMade {

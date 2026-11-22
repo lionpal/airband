@@ -68,8 +68,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
         let everyone = CPListItem(text: "Talk to everyone", detailText: nil, image: UIImage(systemName: "mic.fill"))
         everyone.handler = { [weak self] _, done in
-            self?.model.only = nil
-            self?.model.room = nil
+            // through look(), like every change of who he is looking at: a message picked on the phone is let go
+            self?.model.look()
             self?.start(then: nil)
             done()
         }
@@ -89,7 +89,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let working = agents.filter { $0.state == .working }.map { agent -> CPListItem in
             let item = CPListItem(text: agent.callsign, detailText: "Working", image: avatar(of: agent.id, side: 44))
             item.handler = { [weak self] _, done in
-                self?.model.only = agent.id
+                self?.model.look(room: self?.model.room, agent: agent.id)
                 self?.start(then: nil)
                 done()
             }

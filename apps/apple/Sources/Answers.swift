@@ -119,7 +119,7 @@ struct Answers: View {
     /// does not run it: an answer from here would reach it as a passed-on message, and it would ask again.
     private var apart: DeskMember? {
         guard m.ownSession else { return nil }
-        return model.agents.first { $0.id == m.agent && !$0.held }
+        return m.agent.flatMap { model.member($0)?.agent }.flatMap { $0.held ? nil : $0 }
     }
     @State private var taking: DeskMember?
 

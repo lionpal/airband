@@ -13,28 +13,37 @@ pub(crate) struct Colours {
     /// Where they are kept. None for a desk that keeps nothing (a test).
     path: Option<PathBuf>,
     by_team: BTreeMap<String, u8>,
+    /// The rooms seen since the app opened: a new one is given the colour the fewest of these have. Rooms kept
+    /// from before that are not seen again (a team gone, a computer paired again) count for nothing.
+    seen: std::collections::BTreeSet<String>,
 }
 
 impl Colours {
     pub(crate) fn open(dir: &str) -> Colours {
         let path = (!dir.is_empty()).then(|| std::path::Path::new(dir).join("colours.json"));
-        let by_team = path.as_deref().and_then(crate::store::kept).unwrap_or_default();
-        Colours { path, by_team }
+        let by_team = path.as_deref().map(crate::kept::load_or_set_aside).unwrap_or_default();
+        Colours { path, by_team, seen: Default::default() }
     }
-    /// Teams seen in a computer's chat: one seen for the first time is given the colour the fewest teams have,
-    /// the lowest of those when several tie.
+    /// Teams seen in a computer's chat: one seen for the first time is given the colour the fewest teams on
+    /// his screen have, the lowest of those when several tie.
     pub(crate) fn see(&mut self, teams: impl IntoIterator<Item = String>) {
         let mut changed = false;
         for team in teams {
-            if team.is_empty() || self.by_team.contains_key(&team) {
+            if team.is_empty() {
                 continue;
             }
-            let next = (0..COLOURS).min_by_key(|c| self.by_team.values().filter(|have| *have == c).count()).unwrap_or(0);
+            self.seen.insert(team.clone());
+            if self.by_team.contains_key(&team) {
+                continue;
+            }
+            let on_screen = |c: &u8| self.seen.iter().filter(|t| self.by_team.get(*t) == Some(c)).count();
+            let next = (0..COLOURS).min_by_key(on_screen).unwrap_or(0);
             self.by_team.insert(team, next);
             changed = true;
         }
         if changed && let Some(path) = &self.path {
-            let _ = airband_core::kept::save(path, &self.by_team);
+            // a colour that could not be kept is chosen again the next time the app opens
+            let _ = crate::kept::save(path, &self.by_team);
         }
     }
     /// A room's colour: its place in the host's list of team colours. Nothing for one not seen yet.

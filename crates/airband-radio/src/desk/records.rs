@@ -38,7 +38,7 @@ pub struct DeskMember {
     pub effort: String,
     /// What tells it from the others of its team, for a place that already shows the team: "two", "removals".
     pub number: String,
-    /// The computer it is on, when he is paired with more than one; empty otherwise.
+    /// The computer it is on, by its [`DeskComputer::id`], when he is paired with more than one; empty otherwise.
     pub station: String,
     /// The tower runs it itself, so his words reach it as his own. One that is not was started outside it
     /// and is only left messages from outside; the tower can take it over.
@@ -87,13 +87,13 @@ pub struct DeskView {
     pub quick: Vec<QuickMessage>,
     /// His messages still on their way.
     pub sending: Vec<Outgoing>,
-    /// What each paired computer is called.
-    pub stations: Vec<String>,
+    /// Each paired computer, in the order they were paired.
+    pub stations: Vec<DeskComputer>,
     /// Each team's place in the host's list of team colours, the same on every computer. A host keeps a copy
     /// where its notification extension can read it, and hands it to [`open_notice`].
     pub colours: std::collections::HashMap<String, u8>,
-    /// His main computer, by name: the only one, or the one he chose. Nothing while he has several and has
-    /// not chosen.
+    /// His main computer, by its [`DeskComputer::id`]: the only one, or the one he chose. Nothing while he has
+    /// several and has not chosen.
     pub main_computer: Option<String>,
     /// He has several computers and has not said which is the main one: ask him before anything is sent.
     pub choose_main: bool,
@@ -119,8 +119,7 @@ pub struct DeskChoice {
     pub badge: String,
     pub colour: Option<u8>,
 }
-/// One file he attached. `state` is `sending` (with `sent` of `total` bytes there so far), `ready` (it goes with
-/// the next thing he says or sends) or `failed`.
+/// One file he attached: how far it has got ([`UploadState`]), with `sent` of `total` bytes there so far.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct DeskUpload {
     pub id: String,
@@ -191,4 +190,13 @@ pub struct DeskRecent {
 pub enum DeskTeamPick {
     Room { room: String },
     New { name: String },
+}
+
+/// One paired computer: what every call that names a computer takes (`id`), and what it is called to him.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct DeskComputer {
+    /// The same every time, from its pairing; nothing secret.
+    pub id: String,
+    /// Its own name once it has said one, or "Your computer", or its place in the list.
+    pub name: String,
 }

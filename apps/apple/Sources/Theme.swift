@@ -14,7 +14,7 @@ enum Palette {
     static let card = Color(red: 0.078, green: 0.090, blue: 0.086)
     static let raised = Color(red: 0.149, green: 0.161, blue: 0.165)
     static let field = Color(red: 0.102, green: 0.106, blue: 0.110)
-    static let quiet = Color(red: 0.557, green: 0.557, blue: 0.576)
+    static let quiet = Color(red: TeamColours.none.0, green: TeamColours.none.1, blue: TeamColours.none.2)
     static let soft = Color(red: 0.788, green: 0.788, blue: 0.773)
     static let dim = Color(red: 0.333, green: 0.341, blue: 0.353)
     /// Light blue: something to read in full.

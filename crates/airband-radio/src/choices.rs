@@ -29,6 +29,8 @@ mod desk;
 mod list;
 mod saved;
 pub(crate) use desk::computer_reached;
+#[cfg(test)]
+pub(crate) use desk::switch_all;
 use list::*;
 use saved::{Pick, Saved, Waiting};
 
@@ -145,6 +147,12 @@ pub(crate) struct Chooser {
     working: Mutex<Option<Work>>,
 }
 
+/// What he chose that this build has no code for, said one way: what it cannot do, and where to choose again.
+fn cannot(what: &str, job: ChoiceJob) -> String {
+    let section = if job == ChoiceJob::Voice { "Voice" } else { "Listening" };
+    format!("This version of airband cannot {what}. Choose another in Settings, under {section}.")
+}
+
 fn told(reason: impl Into<String>) -> RadioError {
     RadioError::Told { reason: reason.into() }
 }
@@ -152,7 +160,7 @@ fn told(reason: impl Into<String>) -> RadioError {
 impl Chooser {
     /// What was kept in `dir`, or a new install's choices. With no folder (a test), nothing is kept.
     pub(crate) fn open(dir: &str, device: HostDevice) -> Chooser {
-        let kept: Option<Saved> = if dir.is_empty() { None } else { crate::store::kept(&Path::new(dir).join("choices.json")) };
+        let kept: Option<Saved> = if dir.is_empty() { None } else { crate::kept::load_or_set_aside(&Path::new(dir).join("choices.json")) };
         let saved = Mutex::new(kept.unwrap_or_else(|| Saved::fresh(&device)));
         Chooser { dir: dir.into(), device, saved, working: Mutex::new(None) }
     }
@@ -166,13 +174,14 @@ impl Chooser {
         self.saved.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    /// Change what is kept, and keep it.
-    fn change(&self, with: impl FnOnce(&mut Saved)) {
+    /// Change what is kept, and keep it. Err when it could not be kept: it holds until the app closes.
+    fn change(&self, with: impl FnOnce(&mut Saved)) -> Result<(), RadioError> {
         let mut saved = self.saved.lock().unwrap_or_else(|e| e.into_inner());
         with(&mut saved);
-        if !self.dir.is_empty() {
-            let _ = airband_core::kept::save(&Path::new(&self.dir).join("choices.json"), &*saved);
+        if self.dir.is_empty() {
+            return Ok(());
         }
+        crate::kept::save(&Path::new(&self.dir).join("choices.json"), &*saved).map_err(|why| told(format!("{why} It holds until the app closes.")))
     }
 
     /// A model this device can run, by its kind.
@@ -187,18 +196,18 @@ impl Chooser {
         let key = |id: &str| host.secret(id.to_string()).unwrap_or_default();
         senses.ears.set(saved.pick(ChoiceJob::Ears).map(|ears| match ears.place {
             ChoicePlace::Phone => match self.model(&ears.id).filter(|m| m.job == Job::Ears) {
-                None => crate::ears::Own::Cannot("This version of airband cannot run the listening model you chose. Choose another in Settings, under Listening.".into()),
+                None => crate::ears::Own::Cannot(cannot("run the listening model you chose", ChoiceJob::Ears)),
                 Some(m) if !crate::models::fetched(&self.dir, &m) => crate::ears::Own::Cannot(format!("{} is not on this phone yet. Download it in Settings, under Listening.", m.name)),
                 Some(m) => crate::ears::Own::Model(senses.ears.held(&m, crate::models::folder(&self.dir, &m))),
             },
             ChoicePlace::Service => {
                 let with = crate::services::service_of(&ears.id, &ears.offer, &key(&ears.id), ears.set.clone().into_iter().collect());
-                if with.offer(Job::Ears).is_some_and(|(_, o)| crate::hears::listens(&o)) { crate::ears::Own::Service(with) } else { crate::ears::Own::Cannot("This version of airband cannot listen with the service you chose. Choose another in Settings, under Listening.".into()) }
+                if with.offer(Job::Ears).is_some_and(|(_, o)| crate::hears::listens(&o)) { crate::ears::Own::Service(with) } else { crate::ears::Own::Cannot(cannot("listen with the service you chose", ChoiceJob::Ears)) }
             }
         }));
         senses.mouth.set(saved.pick(ChoiceJob::Voice).map(|voice| match voice.place {
             ChoicePlace::Phone => match self.model(&voice.id).filter(|m| m.job == Job::Voice) {
-                None => crate::mouth::Own::Cannot("This version of airband cannot run the voice you chose. Choose another in Settings, under Voice.".into()),
+                None => crate::mouth::Own::Cannot(cannot("run the voice you chose", ChoiceJob::Voice)),
                 Some(m) if !crate::models::fetched(&self.dir, &m) => crate::mouth::Own::Cannot(format!("{} is not on this phone yet. Download it in Settings, under Voice.", m.name)),
                 // none picked yet: the voice the row names as its usual one
                 Some(m) => match m.voices.iter().map(|v| &v.0).find(|name| name.as_str() == m.voice(&voice.voice)) {
@@ -209,7 +218,7 @@ impl Chooser {
             },
             ChoicePlace::Service => {
                 let with = crate::services::service_of(&voice.id, &voice.offer, &key(&voice.id), voice.set.clone().into_iter().collect());
-                if crate::voices::synth_for(&with).is_some() { crate::mouth::Own::Service(with) } else { crate::mouth::Own::Cannot("This version of airband cannot speak with the service you chose. Choose another in Settings, under Voice.".into()) }
+                if crate::voices::synth(&with).is_ok() { crate::mouth::Own::Service(with) } else { crate::mouth::Own::Cannot(cannot("speak with the service you chose", ChoiceJob::Voice)) }
             }
         }));
     }
@@ -261,7 +270,8 @@ impl Chooser {
             let held = crate::engines::Held::of(m, crate::models::folder(&self.dir, m));
             let by: crate::engines::ByHost = &|engine, folder, job, input| host.run_model(engine.into(), folder.into(), job, input);
             let ran = held.with(|loaded| match m.job {
-                Job::Voice => loaded.speak(by, m.voices.first().map(|v| v.0.as_str()).unwrap_or_default(), "Ready.", &mut |_| {}, &|| false),
+                // in the voice he picked, or the one its row names as usual: never just the first it lists
+                Job::Voice => loaded.speak(by, m.voice(&self.saved().pick(ChoiceJob::Voice).filter(|p| p.id == m.kind).map(|p| p.voice).unwrap_or_default()), "Ready.", &mut |_| {}, &|| false),
                 _ => loaded.hear(by, vec![0u8; 32000]).map(|_| ()),
             });
             ran.and_then(|ran| ran).map_err(|why| told(format!("{} did not load on this phone: {why}.", m.name)))?;
@@ -358,7 +368,7 @@ mod tests {
         assert_eq!(chosen(&all), vec!["b/x"]);
         assert!(all[2].has_key && all[2].state == ChoiceState::Ready && all[1].state == ChoiceState::NeedsKey);
         // what he picked while it could not be reached is the one shown, as waiting
-        let waiting = Saved { reads: Some(Waiting { id: "a".into(), offer: "x".into(), set: BTreeMap::new(), his: true }), ..saved };
+        let waiting = Saved { reads: Some(Waiting { id: "a".into(), offer: "x".into(), set: BTreeMap::new(), his: true, taken: Vec::new() }), ..saved };
         let all = list(ChoiceJob::Reads, &waiting, &facts(HERE, &|_| true));
         assert_eq!(chosen(&all), vec!["a/x"]);
         assert_eq!(all[1].state, ChoiceState::Waiting);
@@ -424,13 +434,27 @@ mod tests {
         saved.use_tools(vec![two.login.clone(), one.login.clone()]);
         assert_eq!(saved.reads.as_ref().map(|w| w.id.as_str()), Some(two.kind.as_str()));
         // he picks for himself: a change of tool leaves that alone
-        saved.reads = Some(Waiting { id: "anthropic".into(), offer: "haiku".into(), set: BTreeMap::new(), his: true });
+        saved.reads = Some(Waiting { id: "anthropic".into(), offer: "haiku".into(), set: BTreeMap::new(), his: true, taken: Vec::new() });
         saved.use_tools(vec![one.login.clone()]);
         assert_eq!(saved.reads.as_ref().map(|w| w.id.as_str()), Some("anthropic"));
         // and once a computer has said what it reads with, nothing is made to wait by a change of tool
         let mut said = Saved { offered: Some(ReadsOffered::default()), ..Saved::default() };
         said.use_tools(vec![one.login]);
         assert!(said.reads.is_none());
+    }
+
+    #[test]
+    fn a_choice_the_phone_could_not_keep_says_so() {
+        let dir = std::env::temp_dir().join(format!("airband-choices-{}", random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let chooser = Chooser::open(&dir.display().to_string(), HostDevice::default());
+        // the folder choices are kept in can no longer be written
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let went = chooser.change(|s| s.tools = vec!["codex".into()]);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(matches!(went, Err(RadioError::Told { .. })), "{went:?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -479,7 +503,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("airband-choices-{}", random_hex(4)));
         let at = dir.display().to_string();
         let chooser = Chooser::open(&at, phone());
-        chooser.change(|s| s.voice = Some(Pick { place: ChoicePlace::Service, id: "gemini".into(), offer: "flash-lite-tts".into(), set: BTreeMap::from([("voice".to_string(), "Leda".to_string())]), voice: String::new() }));
+        chooser.change(|s| s.voice = Some(Pick { place: ChoicePlace::Service, id: "gemini".into(), offer: "flash-lite-tts".into(), set: BTreeMap::from([("voice".to_string(), "Leda".to_string())]), voice: String::new() })).unwrap();
         let again = Chooser::open(&at, phone());
         assert_eq!(again.saved(), chooser.saved());
         // and no key is in it

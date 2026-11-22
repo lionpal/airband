@@ -15,7 +15,7 @@ const ASK_AFTER_LEFT: Duration = Duration::from_secs(60);
 /// (`Taken`); the outcome comes by the feed ([`settle`]) or to this asking again. The next message waits for
 /// that, so his words reach his agents in the order he said them. One the relay is keeping for a computer
 /// that is away (`Left`) holds up nothing: what he says next is left behind it.
-pub(crate) fn deliver_outbox(link: Arc<Link>, store: Arc<Store>, host: Arc<dyn RadioHost>, stop: Arc<AtomicBool>, wake: Arc<Wake>) {
+pub(crate) fn deliver_outbox(link: Arc<Link>, session: Arc<Session>, store: Arc<Store>, host: Arc<dyn RadioHost>, stop: Arc<AtomicBool>, wake: Arc<Wake>) {
     let mut wait = 1;
     // when each message the tower has, or the relay keeps, is next asked after
     let mut ask_at: std::collections::HashMap<String, std::time::Instant> = Default::default();
@@ -60,14 +60,12 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, store: Arc<Store>, host: Arc<dyn R
         }
         // what a button stood for, and who else is on his screen, as they were kept: one this version cannot
         // read is not sent as plain words instead, and he is told
-        let act = if next.act.is_empty() { Ok(None) } else { serde_json::from_str(&next.act).map(Some) };
-        let others = if next.others.is_empty() { Ok(Vec::new()) } else { serde_json::from_str(&next.others) };
-        let (Ok(act), Ok(others)) = (act, others) else {
+        let Some(utterance) = next.utterance() else {
             gave_up("This was kept by an older version of the app and cannot be sent as it was. Tap or say it again.".into());
             continue;
         };
         link.keeps_at_relay(outbox.iter().any(|o| o.stage == Stage::Left && o.failed.is_none() && o.id != next.id));
-        let (got, steps) = link.utterance_once(&airband_core::radio::Utterance { text: next.text.clone(), id: next.id.clone(), re: next.re.clone(), scope: next.scope.clone(), label: next.label.clone(), attachments: next.attachments.clone(), others, to: next.to.clone(), act, answers: next.answers.clone() });
+        let (got, steps) = link.utterance_once(&utterance);
         // It went straight to his computer while the relay still keeps earlier words of his for it: these
         // arrive first. Worth a line, for whoever wonders about the order.
         let kept = outbox.iter().filter(|o| o.stage == Stage::Left && o.failed.is_none() && o.id != next.id).count();
@@ -77,7 +75,7 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, store: Arc<Store>, host: Arc<dyn R
         match got {
             Ok(Sent::Answered(reply)) => {
                 wait = 1;
-                link.asked_back(&reply);
+                session.asked(&reply);
                 settle(&store, &*host, &next.id, airband_core::radio::Outcome::Answered { reply });
             }
             Ok(Sent::Taken) => {
@@ -116,7 +114,7 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, store: Arc<Store>, host: Arc<dyn R
                     // it cannot be sent however often it is tried
                     (Retry::Never, Stage::Trying) => {
                         wait = 1;
-                        gave_up(sentence(&e.told()));
+                        gave_up(e.said());
                     }
                     (Retry::Soon, Stage::Trying) => {
                         wake.wait_since(turn, Duration::from_secs(wait));
@@ -165,7 +163,7 @@ pub(crate) fn settle(store: &Store, host: &dyn RadioHost, id: &str, outcome: air
         }
         // what was done as he asked shows as his own line in the chat; anything else he has to see
         Outcome::Answered { reply } => host.outbox(gone(), (!reply.say.is_empty() && !reply.done).then_some(reply.say)),
-        Outcome::Rejected { why } => fail(store, host, id, sentence(&LinkError::Rejected(why).told())),
+        Outcome::Rejected { why } => fail(store, host, id, LinkError::Rejected(why).said()),
     }
 }
 
@@ -174,16 +172,10 @@ fn opening(text: &str) -> String {
     airband_core::prose::clip(text, 80)
 }
 
-/// A cause as a sentence of its own.
-fn sentence(told: &str) -> String {
-    let mut c = told.chars();
-    c.next().map(|f| format!("{}{}.", f.to_uppercase(), c.as_str())).unwrap_or_default()
-}
-
 /// How one try went, a sentence for each way it was tried that failed, without saying the same thing twice.
 pub(crate) fn told(steps: &[Step]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    for told in steps.iter().filter_map(|s| s.outcome.as_ref().err()).map(|e| sentence(&e.told())) {
+    for told in steps.iter().filter_map(|s| s.outcome.as_ref().err()).map(LinkError::said) {
         if !out.contains(&told) {
             out.push(told);
         }
@@ -312,7 +304,7 @@ mod tests {
     fn a_message_stays_until_the_tower_says_what_came_of_it() {
         use airband_core::radio::{Outcome, Rejected};
         let host = Watching::default();
-        let store = Store::open("");
+        let store = Store::open("", None);
         let put = |id: &str, stage: Stage| {
             store.change(|s| s.outbox.push(Outgoing { stage, ..Outgoing::new(id.into(), format!("words of {id}"), None, None, None, Vec::new(), String::new()) }));
         };

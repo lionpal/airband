@@ -49,14 +49,14 @@ struct SetupView: View {
                         if model.computers.count > 1 {
                             Picker("Main computer", selection: Binding(get: { model.view.mainComputer ?? "" }, set: { model.setMainComputer($0) })) {
                                 if model.view.mainComputer == nil { Text("Not chosen").tag("") }
-                                ForEach(model.computers, id: \.self) { name in Text(name).tag(name) }
+                                ForEach(model.computers, id: \.id) { c in Text(c.name).tag(c.id) }
                             }
                         }
-                        ForEach(model.computers, id: \.self) { name in
-                            Picker(selection: Binding(get: { model.icon(of: name) }, set: { model.setIcon($0, of: name) })) {
+                        ForEach(model.computers, id: \.id) { c in
+                            Picker(selection: Binding(get: { model.icon(of: c.id) }, set: { model.setIcon($0, of: c.id) })) {
                                 ForEach(RadioModel.computerSymbols, id: \.self) { symbol in Image(systemName: symbol).tag(symbol) }
                             } label: {
-                                Label(name, systemImage: model.icon(of: name))
+                                Label(c.name, systemImage: model.icon(of: c.id))
                             }
                         }
                     } header: {
@@ -83,7 +83,7 @@ struct SetupView: View {
                     }
                     .font(.footnote).foregroundStyle(.secondary)
                     if model.paired {
-                        Text(model.computers.isEmpty ? "Paired" : "Paired: " + model.computers.joined(separator: ", ")).foregroundStyle(.secondary)
+                        Text(model.computers.isEmpty ? "Paired" : "Paired: " + model.computers.map(\.name).joined(separator: ", ")).foregroundStyle(.secondary)
                         Button("Forget all", role: .destructive) { model.forgetAll() }
                     }
                     if let problem = model.problem { Text(problem).foregroundStyle(.red) }

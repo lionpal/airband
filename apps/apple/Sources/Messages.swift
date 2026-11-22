@@ -13,8 +13,6 @@ private struct Speaker: View {
             HStack(spacing: 7) {
                 if !m.badge.isEmpty { Badge(text: m.badge, colour: m.colour, size: 20) }
                 Text(m.fromAndStation).font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.quiet)
-                // it was to be read to him while he was listening, and was not: a small mark. Why is one
-                // long press away, in the line's menu.
                 // no model read it: it is as the agent wrote it, and a small mark says so
                 if !m.unjudged.isEmpty {
                     Image(systemName: "text.badge.xmark").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.dim)

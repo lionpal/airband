@@ -24,16 +24,19 @@ pub struct AccountEntry {
 /// One computer's accounts. `note` is something to show under the list.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct StationAccounts {
+    /// The computer, by its [`crate::DeskComputer::id`], and what it is called to him.
     pub station: String,
+    pub name: String,
     pub accounts: Vec<AccountEntry>,
     pub note: Option<String>,
     pub checked_at: u64,
 }
 
 impl StationAccounts {
-    pub(crate) fn from(station: &str, a: airband_core::radio::Accounts) -> Self {
+    pub(crate) fn from(computer: &crate::DeskComputer, a: airband_core::radio::Accounts) -> Self {
         StationAccounts {
-            station: station.into(),
+            station: computer.id.clone(),
+            name: computer.name.clone(),
             accounts: a
                 .accounts
                 .into_iter()

@@ -26,6 +26,7 @@ mod view;
 
 pub use notice::*;
 use ids::*;
+
 pub use rules::*;
 pub use records::*;
 use colours::Colours;
@@ -106,6 +107,10 @@ pub(crate) struct Station {
     messages: Vec<ChatMessage>,
 }
 impl Station {
+    /// What this computer is known by on this device ([`station_id`]).
+    pub(crate) fn id(&self) -> String {
+        station_id(&self.link)
+    }
     /// Each of its agents and messages is put in its room on his screen: this computer and its team, as one id.
     pub(crate) fn settle_rooms(&mut self) {
         let sid = station_id(&self.link);
@@ -121,6 +126,8 @@ impl Station {
 struct Asking {
     message: Outgoing,
     guesses: Vec<String>,
+    /// The computer the words reached, which has the files they took with them.
+    at: usize,
 }
 #[derive(Default)]
 pub(crate) struct State {
@@ -167,9 +174,9 @@ impl State {
             None => format!("Computer {}", index + 1),
         }
     }
-    /// Every computer's radio with what the computer is called.
-    fn named_radios(&self) -> Vec<(String, Arc<Radio>)> {
-        (0..self.stations.len()).map(|i| (self.computer_name(i), self.stations[i].radio.clone())).collect()
+    /// Every computer's radio with its id and what it is called.
+    fn named_radios(&self) -> Vec<(DeskComputer, Arc<Radio>)> {
+        (0..self.stations.len()).map(|i| (DeskComputer { id: self.stations[i].id(), name: self.computer_name(i) }, self.stations[i].radio.clone())).collect()
     }
     /// The colour a team is shown in.
     fn colour(&self, group: &str) -> Option<u8> {
@@ -180,7 +187,7 @@ impl State {
         match self.stations.len() {
             0 => None,
             1 => Some(0),
-            _ => self.read.main.as_ref().and_then(|name| self.stations.iter().position(|s| s.name == *name)),
+            _ => self.read.main.as_ref().and_then(|id| self.stations.iter().position(|s| s.id() == *id)),
         }
     }
     /// A room on his screen ([`DeskRoom::id`]): the radio of the computer that has it, the team's id there,
@@ -295,7 +302,7 @@ impl Desk {
             // a computer that was already there keeps what was last seen of it, so the screen does not empty while
             // it is asked again
             let was = old.iter().find(|s| s.link == link);
-            made.push(Station {
+            let mut station = Station {
                 messages: radio.history(),
                 radio,
                 name: was.map(|s| s.name.clone()).unwrap_or_default(),
@@ -312,7 +319,10 @@ impl Desk {
                 landing: Vec::new(),
                 quick: was.map(|s| s.quick.clone()).unwrap_or_default(),
                 link,
-            });
+            };
+            // the lines kept on the phone are in their rooms before any computer answers
+            station.settle_rooms();
+            made.push(station);
         }
         let taken: Vec<String> = made.iter().map(|s| s.link.clone()).collect();
         let radios: Vec<Arc<Radio>> = made.iter().map(|s| s.radio.clone()).collect();
@@ -365,8 +375,7 @@ impl Desk {
         let found = match (computer.is_empty(), state.stations.as_slice()) {
             (true, [only]) => Some(only),
             (true, [_, _, ..]) => return Err(RadioError::Told { reason: "Choose which computer first.".into() }),
-            // by what it is called to him, which is its own name once it has said one
-            _ => (0..state.stations.len()).find(|&i| state.computer_name(i) == computer).map(|i| &state.stations[i]),
+            _ => state.stations.iter().find(|s| s.id() == computer),
         };
         found.filter(|s| s.online).map(|s| (s.radio.clone(), station_id(&s.link))).ok_or(RadioError::Offline)
     }

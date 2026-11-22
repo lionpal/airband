@@ -20,12 +20,6 @@ struct AgentsMenu: View {
     @State private var ending: DeskMember?
     @State private var newTeam = ""
 
-    /// An agent's name; with its computer when another computer has an agent of the same name.
-    private func titled(_ agent: DeskMember, in room: DeskRoom) -> String {
-        let twins = room.members.filter { $0.callsign == agent.callsign }.count > 1
-        return twins && !agent.station.isEmpty ? "\(agent.callsign) (\(agent.station))" : agent.callsign
-    }
-
     /// The small line under an agent's name, after its model: how hard it thinks, and "terminal" for one the
     /// computer knows runs in a terminal of his (it only gets messages from outside until it is taken over).
     /// One in its own tool's app is not called a terminal. The computer is a small picture at the end of the
@@ -36,7 +30,7 @@ struct AgentsMenu: View {
 
     /// An agent dropped on a team, or on one of its agents, joins that team.
     private func drop(_ ids: [String], on room: String) -> Bool {
-        guard let agent = model.agents.first(where: { $0.id == ids.first }) else { return false }
+        guard let agent = ids.first.flatMap({ model.member($0)?.agent }) else { return false }
         model.moveAgent(agent, to: .room(room: room))
         return true
     }
@@ -60,7 +54,7 @@ struct AgentsMenu: View {
                     .dropDestination(for: String.self) { ids, _ in drop(ids, on: room.id) } isTargeted: { over = $0 ? room.id : (over == room.id ? nil : over) }
                     .padding(.top, 4)
                     ForEach(room.members, id: \.id) { agent in
-                        row(dot: agent.state, title: titled(agent, in: room), detail: nil, strong: false, on: model.only == agent.id, inset: 22, reserve: 50, colour: room.colour, badge: agent.badge, lead: agent.model, engine: under(agent), doing: agent.doing) {
+                        row(dot: agent.state, title: agent.callsign, detail: nil, strong: false, on: model.only == agent.id, inset: 22, reserve: 50, colour: room.colour, badge: agent.badge, lead: agent.model, engine: under(agent), doing: agent.doing) {
                             let was = model.only == agent.id
                             model.look(agent: was ? nil : agent.id)
                         }

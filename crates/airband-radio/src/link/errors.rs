@@ -60,6 +60,10 @@ impl LinkError {
     pub(crate) fn refused(&self) -> bool {
         matches!(self, LinkError::Tower { .. } | LinkError::Rejected(_))
     }
+    /// What happened, as a sentence of its own.
+    pub(crate) fn said(&self) -> String {
+        format!("{}.", airband_core::prose::capital(&self.told()))
+    }
     /// What happened, in words for him. No capital and no full stop: it is joined to others.
     pub(crate) fn told(&self) -> String {
         match self {
@@ -84,5 +88,17 @@ impl LinkError {
             LinkError::Rejected(airband_core::radio::Rejected::TooOld) => "your computer got it more than a week after you said it, and did nothing with it".into(),
             LinkError::Rejected(airband_core::radio::Rejected::Unknown) => "your computer would not take it".into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn what_will_never_go_is_told_as_such_and_not_as_waiting_for_a_connection() {
+        let e: RadioError = LinkError::Relay(413).into();
+        assert!(matches!(&e, RadioError::Told { reason } if reason == "It is more than the relay carries in one message."), "{e:?}");
+        assert!(matches!(RadioError::from(LinkError::Away), RadioError::Offline));
     }
 }

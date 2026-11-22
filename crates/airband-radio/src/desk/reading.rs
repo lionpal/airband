@@ -51,7 +51,7 @@ impl Desk {
             .into_iter()
             .map(|(computer, radio)| {
                 let (relay, near) = radio.reach();
-                DeskReach { computer, relay: relay.unwrap_or_default(), near: near.unwrap_or_default() }
+                DeskReach { computer: computer.name, relay: relay.unwrap_or_default(), near: near.unwrap_or_default() }
             })
             .collect()
     }
@@ -65,7 +65,7 @@ impl Desk {
         for (computer, radio) in radios {
             let trail = radio.link_trail();
             out.push(String::new());
-            out.push(computer);
+            out.push(computer.name);
             if trail.is_empty() {
                 out.push("nothing has failed".into());
             }

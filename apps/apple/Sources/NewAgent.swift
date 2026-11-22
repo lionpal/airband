@@ -41,7 +41,7 @@ struct NewAgentSheet: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if model.view.stations.count > 1 {
                         label("Computer")
-                        chips(model.view.stations.map { ($0, $0, nil) }, chosen: computer) { computer = $0; (place, name) = (nil, ""); load() }
+                        chips(model.view.stations.map { ($0.id, $0.name, nil) }, chosen: computer) { computer = $0; (place, name) = (nil, ""); load() }
                     }
                     if model.usedTools.count > 1 {
                         label("Coding agent")
@@ -118,13 +118,13 @@ struct NewAgentSheet: View {
         .presentationSizing(.page)
         .onAppear {
             // nothing is picked for him: the one there is, when there is only one; otherwise he picks
-            computer = model.view.stations.count == 1 ? model.view.stations[0] : ""
+            computer = model.view.stations.count == 1 ? model.view.stations[0].id : ""
             tool = model.usedTools.count == 1 ? model.usedTools[0].id : ""
             load()
         }
         // the computers can become known after the sheet opens: the only one is taken, as above
         .onChange(of: model.view.stations) { _, stations in
-            if computer.isEmpty, stations.count == 1 { computer = stations[0]; load() }
+            if computer.isEmpty, stations.count == 1 { computer = stations[0].id; load() }
         }
     }
 

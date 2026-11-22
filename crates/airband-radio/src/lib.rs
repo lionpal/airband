@@ -36,11 +36,13 @@ mod ears_stream;
 mod engines;
 mod hears;
 mod keys;
+mod kept;
 mod link;
 mod models;
 mod mouth;
 mod outbox;
 mod services;
+mod session;
 mod store;
 mod voice;
 mod voices;
@@ -55,6 +57,7 @@ pub use services::{CodingTool, ServiceAsk, coding_tools};
 pub use engines::HostDevice;
 use link::*;
 use outbox::*;
+use session::Session;
 use store::*;
 mod accounts;
 mod chat;
@@ -246,6 +249,18 @@ impl Outgoing {
     pub(crate) fn new(id: String, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, attachments: Vec<String>, others: String) -> Outgoing {
         Outgoing { id, text, re, at: now_ms(), scope, label, attachments, others, to: Vec::new(), act: String::new(), answers: None, tries: 0, last_tried: 0, trail: Vec::new(), failed: None, stage: Stage::Trying }
     }
+    /// What a button of his stood for goes with it, kept as the tower will read it.
+    pub(crate) fn with_act(self, act: Option<&Act>) -> Outgoing {
+        Outgoing { act: act.and_then(|a| serde_json::to_string(a).ok()).unwrap_or_default(), ..self }
+    }
+    /// What the tower is sent for it: the one place an utterance is made from something he said. None when
+    /// what was kept with it (a button's act, who else is on his screen) no longer reads: it is then never
+    /// sent as plain words in its place.
+    pub(crate) fn utterance(&self) -> Option<Utterance> {
+        let act = if self.act.is_empty() { None } else { Some(serde_json::from_str(&self.act).ok()?) };
+        let others = if self.others.is_empty() { Vec::new() } else { serde_json::from_str(&self.others).ok()? };
+        Some(Utterance { text: self.text.clone(), id: self.id.clone(), re: self.re.clone(), scope: self.scope.clone(), label: self.label.clone(), attachments: self.attachments.clone(), others, to: self.to.clone(), act, answers: self.answers.clone() })
+    }
 }
 
 #[derive(Debug, uniffi::Error)]
@@ -257,6 +272,14 @@ pub enum RadioError {
     Refused,
     /// The tower answered, said no, and said why in words for him.
     Told { reason: String },
+}
+
+/// An address with its query, each value encoded: the one way an address with a query is put together, for
+/// a service and for the tower alike.
+pub(crate) fn with_query(base: &str, pairs: &[(&str, &str)]) -> String {
+    let mut q = url::form_urlencoded::Serializer::new(String::new());
+    q.extend_pairs(pairs);
+    format!("{base}?{}", q.finish())
 }
 
 /// A tower that speaks another version of the radio protocol is told apart from one that cannot be reached:
@@ -286,17 +309,20 @@ impl From<LinkError> for RadioError {
             // his computer's own reason, when it gave one, is what he should read
             LinkError::Tower { error, .. } if !error.is_empty() => RadioError::Told { reason: error },
             LinkError::Tower { .. } => RadioError::Refused,
+            // it will not go however often it is tried: he is told why, never that it goes when it can
+            e if e.retry() == Retry::Never => RadioError::Told { reason: e.said() },
             _ => RadioError::Offline,
         }
     }
 }
 
-/// Does the phone's core have the code for what this listening or voice offer names? For whoever checks a
-/// catalogue before it is published.
+/// Does the phone's core have the code for what this offer names? Speaking and listening are this device's
+/// own; reading is his computer's, so nothing here stands in the way of a summary offer. The one rule, for
+/// the catalogue this device keeps and for whoever checks a catalogue before it is published.
 pub fn can_use(offer: &airband_core::providers::Offer) -> bool {
     match offer.job {
         airband_core::providers::Job::Voice => voices::speaks(offer),
         airband_core::providers::Job::Ears => hears::listens(offer),
-        airband_core::providers::Job::Summary => false,
+        airband_core::providers::Job::Summary => true,
     }
 }

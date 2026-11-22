@@ -15,7 +15,7 @@ pub(super) async fn team_rename(State(app): State<Arc<App>>, Json(to): Json<airb
     Json(match inner.rename_team(&to.team, &to.to) {
         Ok(team) => {
             inner.tell();
-            json!({ "team": team })
+            json!(airband_core::radio::TeamRenamed { team })
         }
         Err(why) => refused(why),
     })

@@ -5,19 +5,12 @@ use super::*;
 impl Desk {
     /// He said who his unplaced words are for: they go to that agent, on whichever computer has it.
     pub fn choose(&self, agent: String) {
-        let sent = {
+        let asking = {
             let mut state = self.shared.state.lock().unwrap();
-            let to = state.radio_with_agent(&agent);
-            match (to, state.asking.take()) {
-                (Some(radio), Some(asking)) => Some((radio, asking.message.text, asking.message.label)),
-                (_, asking) => {
-                    state.asking = asking;
-                    None
-                }
-            }
+            if state.station_with_agent(&agent).is_some() { state.asking.take() } else { None }
         };
-        if let Some((radio, text, label)) = sent {
-            radio.queue_as(text, None, None, label, String::new(), vec![agent], None);
+        if let Some(asking) = asking {
+            place(&self.shared, asking.at, asking.message, agent);
         }
         self.shared.host.changed();
     }
@@ -95,7 +88,12 @@ impl Desk {
         };
         let (Some((text, long)), true) = (text, known) else { return };
         let text = if long { self.full(message_id).unwrap_or(text) } else { text };
-        self.deliver(text, None, None, None, Some(agent_id));
+        // to the agent he picked, whatever tags the words start with: he chose who, so nothing in them is read
+        let radio = self.shared.state.lock().unwrap().radio_with_agent(&agent_id);
+        if let Some(radio) = radio {
+            radio.queue_as(text, None, None, None, String::new(), vec![agent_id], None);
+        }
+        self.shared.host.changed();
     }
     /// Send a quick message: the feed shows `label`, the agent gets `text`. Who it is for is worked out as for
     /// anything he types.
@@ -258,6 +256,26 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
     };
     radio.queue_as(text, re, scope, label, others, to, None);
     shared.host.changed();
+}
+/// Words of his that reached the computer `from` and no agent, now for `agent`: they go to the computer that
+/// has it, addressed to it. The files they took go too when that is the computer they are on; otherwise they
+/// stay there, for the next thing he sends to it, and he is told.
+pub(super) fn place(shared: &Arc<Shared>, from: usize, message: Outgoing, agent: String) {
+    let found = {
+        let state = shared.state.lock().unwrap();
+        state.station_with_agent(&agent).map(|to| (to, state.stations[to].radio.clone(), state.stations.get(from).map(|s| s.radio.clone()), state.computer_name(from)))
+    };
+    let Some((to, radio, origin, origin_name)) = found else { return };
+    if !message.attachments.is_empty() {
+        match origin {
+            Some(origin) if to != from => {
+                message.attachments.iter().for_each(|f| origin.arm(f.clone()));
+                shared.host.note(format!("The files you attached are on {origin_name}. They go with the next thing you send there."));
+            }
+            _ => message.attachments.iter().for_each(|f| radio.arm(f.clone())),
+        }
+    }
+    radio.queue_as(message.text, None, None, message.label, String::new(), vec![agent], None);
 }
 /// The agents on his screen that computers other than `pick` have, each with the last thing it said: for the
 /// tower his words are going to. In one room, only that room's.
