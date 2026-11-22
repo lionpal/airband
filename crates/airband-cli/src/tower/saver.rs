@@ -4,6 +4,9 @@
 use super::*;
 use std::sync::mpsc;
 
+/// How long what could not be written waits before it is tried again when nothing else comes.
+const RETRY: std::time::Duration = std::time::Duration::from_secs(5);
+
 enum Job {
     Write(Batch),
     /// Everything handed over before this is written; then the sender is told.
@@ -21,11 +24,56 @@ impl Saver {
         std::thread::Builder::new()
             .name("airband-saver".into())
             .spawn(move || {
-                for job in taken {
+                // what could not be written yet: kept, with anything handed over since on top, and tried again
+                // with the next change, on a flush, and every few seconds while it waits
+                let mut unwritten: Option<Batch> = None;
+                let mut told = false;
+                let mut attempt = |batch: Batch, unwritten: &mut Option<Batch>| match store.write(&batch) {
+                    Ok(()) => {
+                        if told {
+                            log("database: what could not be written before is written now");
+                        }
+                        told = false;
+                    }
+                    Err(e) => {
+                        if !told {
+                            log(format!("database: a change to the state could not be written ({e}); it is kept and tried again"));
+                        }
+                        told = true;
+                        *unwritten = Some(batch);
+                    }
+                };
+                loop {
+                    let job = if unwritten.is_some() {
+                        match taken.recv_timeout(RETRY) {
+                            Ok(job) => Some(job),
+                            Err(mpsc::RecvTimeoutError::Timeout) => None,
+                            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                        }
+                    } else {
+                        match taken.recv() {
+                            Ok(job) => Some(job),
+                            Err(_) => return,
+                        }
+                    };
                     match job {
-                        Job::Write(batch) => store.write(&batch),
-                        Job::Flush(done) => {
+                        Some(Job::Write(batch)) => {
+                            let batch = match unwritten.take() {
+                                Some(before) => before.then(batch),
+                                None => batch,
+                            };
+                            attempt(batch, &mut unwritten);
+                        }
+                        Some(Job::Flush(done)) => {
+                            if let Some(batch) = unwritten.take() {
+                                attempt(batch, &mut unwritten);
+                            }
                             done.send(()).ok();
+                        }
+                        None => {
+                            if let Some(batch) = unwritten.take() {
+                                attempt(batch, &mut unwritten);
+                            }
                         }
                     }
                 }
@@ -75,6 +123,21 @@ mod tests {
         // what an agent is doing this minute is not kept, so it writes nothing
         inner.session("a").unwrap().doing = Some("reading".into());
         assert!(inner.changes().tables.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_change_the_database_refused_is_kept_and_written_once_it_can_be() {
+        let app = crate::tower::http::tests::app("saver-refused");
+        drop(app.change());
+        app.flush();
+        app.store.hold().execute_batch("PRAGMA query_only = ON").unwrap();
+        app.change().check_in(&agent("a")).unwrap();
+        app.flush();
+        app.store.hold().execute_batch("PRAGMA query_only = OFF").unwrap();
+        assert_eq!(app.store.load(10).unwrap().0.sessions.len(), 0, "nothing could be written while it refused");
+        // nothing else changes: the one change that failed is still written
+        app.flush();
+        assert_eq!(app.store.load(10).unwrap().0.sessions.len(), 1, "the change it refused is written once it can be");
     }
 
     #[tokio::test]

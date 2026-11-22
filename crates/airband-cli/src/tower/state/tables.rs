@@ -54,6 +54,18 @@ impl Batch {
     pub(in crate::tower) fn is_empty(&self) -> bool {
         self.tables.is_empty() && self.messages.is_empty()
     }
+    /// This batch with a later one on top: a table or message in both is taken from the later one.
+    pub(in crate::tower) fn then(mut self, later: Batch) -> Batch {
+        for (key, text) in later.tables {
+            self.tables.retain(|(k, _)| *k != key);
+            self.tables.push((key, text));
+        }
+        for e in later.messages {
+            self.messages.retain(|m| m.seq != e.seq);
+            self.messages.push(e);
+        }
+        self
+    }
 }
 
 impl Inner {
