@@ -22,8 +22,9 @@ pub(super) struct Idea {
 pub(super) enum Pick {
     /// From the phone: the tool's own id for it.
     Id(String),
-    /// From his words: the name of one on the list the routing model was shown, by the number it answered.
-    Listed(String),
+    /// From his words: one on the list the routing model was shown, by the number it answered: its name, and
+    /// each launcher that offers it with that launcher's own id for it.
+    Listed { name: String, ids: Vec<(LauncherId, String)> },
     /// From his words: something on no list, as he said it. Only an agent that lists its own settings can be
     /// asked for it, and that agent is told exactly this.
     Said(String),
@@ -32,12 +33,13 @@ pub(super) enum Pick {
 /// The one of `choices` he asked for: by the tool's own id, or by the name on the list he was offered, compared
 /// whole. Something on no list goes as he said it only to an agent that lists its own settings (`agent_says`).
 /// Anything else is his word back, for telling him it is not there.
-fn chosen(asked: Option<&Pick>, choices: &[airband_core::tools::Choice], agent_says: bool) -> Result<Option<airband_core::tools::Choice>, String> {
+fn chosen(asked: Option<&Pick>, launcher: &LauncherId, choices: &[airband_core::tools::Choice], agent_says: bool) -> Result<Option<airband_core::tools::Choice>, String> {
     let found = |is: &dyn Fn(&airband_core::tools::Choice) -> bool| choices.iter().find(|c| is(c)).cloned();
     match asked {
         None => Ok(None),
         Some(Pick::Id(id)) => found(&|c| c.id == *id).map(Some).ok_or_else(|| id.clone()),
-        Some(Pick::Listed(name)) => found(&|c| c.name == *name).map(Some).ok_or_else(|| name.clone()),
+        // the id this launcher gave it: one another launcher offers under the same name is not this one's
+        Some(Pick::Listed { name, ids }) => ids.iter().find(|(l, _)| l == launcher).and_then(|(_, id)| found(&|c| c.id == *id)).map(Some).ok_or_else(|| name.clone()),
         Some(Pick::Said(said)) if agent_says => Ok(Some(airband_core::tools::Choice { id: said.clone(), name: said.clone() })),
         Some(Pick::Said(said)) => Err(said.clone()),
     }
@@ -75,7 +77,8 @@ pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Reply 
         [] => format!("Agents started this way cannot be given {what}."),
         choices => format!("It can be {}.", either(&choices.iter().map(|c| c.name.as_str()).collect::<Vec<_>>())),
     };
-    let chosen = |asked: Option<&Pick>, choices: &[airband_core::tools::Choice]| chosen(asked, choices, agent_says);
+    let launcher_id = LauncherId::new(named.as_str());
+    let chosen = |asked: Option<&Pick>, choices: &[airband_core::tools::Choice]| chosen(asked, &launcher_id, choices, agent_says);
     let model = match chosen(idea.model.as_ref(), &menu.models) {
         Ok(model) => model,
         Err(m) => return say(format!("I cannot start one on {m}. {}", offers("a model", &menu.models))),
@@ -159,19 +162,24 @@ mod tests {
     use airband_core::tools::Choice;
 
     #[test]
-    fn a_model_is_taken_by_its_id_or_its_listed_name_whole_and_never_by_a_near_word() {
+    fn a_model_is_taken_by_its_id_or_this_launchers_own_id_for_the_listed_one_and_never_by_a_near_word() {
         let models = vec![Choice { id: "gpt-6.2-sol".into(), name: "6.2 Sol".into() }, Choice { id: "gpt-6-luna".into(), name: "6 Luna".into() }];
+        let (here, other) = (LauncherId::new("codex"), LauncherId::new("held-codex"));
         let id = |r: Result<Option<Choice>, String>| r.map(|c| c.map(|c| c.id));
-        assert_eq!(id(chosen(Some(&Pick::Id("gpt-6-luna".into())), &models, false)), Ok(Some("gpt-6-luna".into())));
-        assert_eq!(id(chosen(Some(&Pick::Listed("6.2 Sol".into())), &models, false)), Ok(Some("gpt-6.2-sol".into())));
-        // nothing loosened: another case, a part of it, or a name used as an id is not it
-        assert_eq!(id(chosen(Some(&Pick::Listed("6.2 sol".into())), &models, false)), Err("6.2 sol".into()));
-        assert_eq!(id(chosen(Some(&Pick::Id("6 Luna".into())), &models, false)), Err("6 Luna".into()));
-        assert_eq!(id(chosen(Some(&Pick::Said("luna".into())), &models, false)), Err("luna".into()));
+        let listed = |name: &str, ids: &[(&LauncherId, &str)]| Pick::Listed { name: name.into(), ids: ids.iter().map(|(l, i)| ((*l).clone(), i.to_string())).collect() };
+        assert_eq!(id(chosen(Some(&Pick::Id("gpt-6-luna".into())), &here, &models, false)), Ok(Some("gpt-6-luna".into())));
+        // a listed one is this launcher's by the id this launcher gave it
+        assert_eq!(id(chosen(Some(&listed("6.2 Sol", &[(&other, "sol-2"), (&here, "gpt-6.2-sol")])), &here, &models, false)), Ok(Some("gpt-6.2-sol".into())));
+        // one only another launcher offers under that name is not this launcher's, however its name reads
+        assert_eq!(id(chosen(Some(&listed("6.2 Sol", &[(&other, "gpt-6.2-sol")])), &here, &models, false)), Err("6.2 Sol".into()));
+        // nothing loosened: a name used as an id, or a word on no list, is not it
+        assert_eq!(id(chosen(Some(&Pick::Id("6 Luna".into())), &here, &models, false)), Err("6 Luna".into()));
+        assert_eq!(id(chosen(Some(&Pick::Said("luna".into())), &here, &models, false)), Err("luna".into()));
         // an agent that lists its own settings is asked for exactly what he said
-        assert_eq!(id(chosen(Some(&Pick::Said("luna".into())), &models, true)), Ok(Some("luna".into())));
-        assert_eq!(id(chosen(None, &models, false)), Ok(None));
+        assert_eq!(id(chosen(Some(&Pick::Said("luna".into())), &here, &models, true)), Ok(Some("luna".into())));
+        assert_eq!(id(chosen(None, &here, &models, false)), Ok(None));
     }
+
 
     #[test]
     fn a_task_started_in_a_folder_with_no_team_yet_is_written_under_that_folders_team() {

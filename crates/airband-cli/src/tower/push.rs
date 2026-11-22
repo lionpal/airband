@@ -22,15 +22,30 @@ const STALE_MS: u64 = 15 * 60 * 1000;
 /// How many addresses one pairing keeps: a pairing is one phone, and a phone's address changes now and then.
 const ADDRESSES: usize = 3;
 
-/// Where each paired radio can be woken, by the radio's name.
+/// Where each paired radio can be woken, by the radio's id: its pairing's relay channel.
 #[derive(Default)]
 pub(super) struct Wake {
     targets: Mutex<BTreeMap<String, Vec<PushTarget>>>,
 }
 
 impl Wake {
-    pub(super) fn load(store: &Store) -> Result<Wake, String> {
-        Ok(Wake { targets: Mutex::new(store.push_targets()?) })
+    /// The addresses kept, each under its radio's channel. Ones kept by a tower from before radios went by
+    /// channel are under a pairing's name: each is moved to that pairing's channel, by the name compared whole.
+    pub(super) fn load(store: &Store, pairings: &[config::PairedRadio]) -> Result<Wake, String> {
+        let mut targets = store.push_targets()?;
+        let mut moved = false;
+        for p in pairings {
+            let Some(channel) = channel_of(p) else { continue };
+            if channel != p.name
+                && let Some(kept) = targets.remove(&p.name) {
+                    targets.entry(channel).or_default().extend(kept);
+                    moved = true;
+                }
+        }
+        if moved {
+            store.save_push_targets(&targets);
+        }
+        Ok(Wake { targets: Mutex::new(targets) })
     }
     /// Is there any phone to wake at all?
     pub(super) fn any(&self) -> bool {
@@ -123,7 +138,7 @@ pub(super) fn consider(app: &Arc<App>, inner: &mut Inner, id: &str) {
 fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
     let cfg = app.cfg();
     // only a radio paired through a relay can be woken: the relay is what holds the push service's key
-    let (Some(relay), Some(pairing)) = (cfg.relay.clone(), cfg.pairings.iter().find(|p| p.name == radio)) else { return };
+    let (Some(relay), Some(pairing)) = (cfg.relay.clone(), cfg.pairings.iter().find(|p| channel_of(p).as_deref() == Some(radio))) else { return };
     let Ok(keys) = Keys::derive(&pairing.secret) else { return };
     let what = format!("{} ({})", note.from, if note.permission { "permission" } else if note.kind == Some(Kind::NeedsYou) { "question" } else { "report" });
     let sealed = loop {
@@ -176,6 +191,12 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
     }
 }
 
+/// A pairing's id as its radio is known by: the relay channel its secret gives. Nothing for one whose secret
+/// gives no keys.
+pub(super) fn channel_of(pairing: &config::PairedRadio) -> Option<String> {
+    Keys::derive(&pairing.secret).ok().map(|k| k.channel)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,6 +210,28 @@ mod tests {
         let mut inner = Inner::default();
         let _ = inner.check_in(&Agent { id: "a".into(), harness: "test".into(), cwd: Some("/x/shop".into()), name: None, title: None, pid: None, deliver: None, meta: Default::default() });
         inner
+    }
+
+    #[test]
+    fn a_radio_is_woken_by_its_pairings_channel_and_an_address_kept_under_its_name_moves_there() {
+        let path = std::env::temp_dir().join(format!("airband-push-channel-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let store = Store::open(&path).unwrap();
+        let phone = config::PairedRadio { name: "phone".into(), secret: airband_core::relay::new_secret() };
+        let channel = channel_of(&phone).unwrap();
+        assert_ne!(channel, phone.name);
+        let target = PushTarget { provider: airband_core::relay::PushService::Apns, token: "ab".repeat(32) };
+        // kept by a tower from before radios went by channel: under the pairing's name
+        store.save_push_targets(&BTreeMap::from([("phone".to_string(), vec![target.clone()]), ("unpaired".to_string(), vec![target.clone()])]));
+        let wake = Wake::load(&store, std::slice::from_ref(&phone)).unwrap();
+        let kept = wake.targets.lock().unwrap().clone();
+        assert_eq!(kept.get(&channel), Some(&vec![target.clone()]));
+        assert!(!kept.contains_key("phone"));
+        // a name no pairing has is left as it is: nothing is guessed about it
+        assert!(kept.contains_key("unpaired"));
+        // and the move is written, so the next start finds it under the channel
+        assert!(store.push_targets().unwrap().contains_key(&channel));
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

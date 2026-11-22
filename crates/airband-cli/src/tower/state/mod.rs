@@ -34,7 +34,7 @@ pub(super) struct Inner {
     /// His teams on this computer, by id: a folder's team by the folder as it really is on disk, one with no
     /// folder by an id made when it was. What a team is called is only shown and said; everything kept or sent
     /// about a team goes by its id.
-    pub(super) teams: BTreeMap<String, Team>,
+    pub(super) teams: BTreeMap<TeamId, Team>,
     /// This computer's name, as a phone paired with several shows it. Never kept.
     pub(super) here: String,
     /// The folders his coding tools have had sessions in, as last read from their records
@@ -53,7 +53,7 @@ pub(super) struct Inner {
     /// Where each agent that was moved to another team was put (the team's id), by the agent's id. A session
     /// that goes away and comes back (the computer restarted, he resumed it) is put back there, not in its
     /// folder's team again.
-    pub(super) placed: BTreeMap<String, (String, Mover)>,
+    pub(super) placed: BTreeMap<AgentId, (TeamId, Mover)>,
     /// Each radio that has been heard from, by the id it gives.
     pub(super) calls: HashMap<String, Call>,
     /// When each open message was last put in front of him on a call, and how many times: for reminders.

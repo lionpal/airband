@@ -9,7 +9,7 @@ pub(super) async fn team(State(app): State<Arc<App>>, Sent(to): Sent<at::Team>) 
 /// He renamed one of his teams, from a radio.
 pub(super) async fn team_rename(State(app): State<Arc<App>>, Sent(to): Sent<at::RenameTeam>) -> Answer<at::RenameTeam> {
     let mut inner = app.change();
-    let team = inner.rename_team(&to.team, &to.to).map_err(no)?;
+    let team = inner.rename_team(&TeamId::new(to.team.as_str()), &to.to).map_err(no)?;
     inner.tell();
     Ok(Json(airband_core::radio::TeamRenamed { team: team.into_string() }))
 }
@@ -50,7 +50,7 @@ pub(super) async fn folders(State(app): State<Arc<App>>, Sent(ask): Sent<at::Fol
         Ok(Ok(Ok(mut f))) => {
             // the team that works here, or the name one would have
             let (name, has_team) = app.read().folder_called(&f.path);
-            (f.team, f.has_team) = (name.unwrap_or_default(), has_team);
+            (f.team, f.has_team) = (name.unwrap_or_default(), has_team.is_some());
             Ok(Json(f))
         }
         Ok(Ok(Err(why))) => Err(no(why)),
@@ -80,11 +80,11 @@ pub(super) async fn project(State(app): State<Arc<App>>, Sent(new): Sent<at::Pro
     let (id, name) = project_team(&app, &at, name).map_err(no)?;
     // its first agent, with nothing to do yet, when the tower runs agents itself: the team is then there to see
     if !launcher.is_some_and(|(_, l)| l.held.is_some()) {
-        return Ok(Json(airband_core::radio::ProjectMade { say: format!("{name} is ready. Say launch {name}, then what it should do."), team: name, id }));
+        return Ok(Json(airband_core::radio::ProjectMade { say: format!("{name} is ready. Say launch {name}, then what it should do."), team: name, id: id.into() }));
     }
     let place = Place { name: name.clone(), folder: at };
     let reply = launch::launch(&app, &place, &Idea { tool: new.tool.clone(), project: Some(place.clone()), model: None, effort: None, task: String::new() }).await;
-    Ok(Json(airband_core::radio::ProjectMade { say: reply.say, team: name, id }))
+    Ok(Json(airband_core::radio::ProjectMade { say: reply.say, team: name, id: id.into() }))
 }
 
 /// The folder a new team works in: one he made, called exactly as he wrote the name (one part of a path, not
@@ -106,7 +106,7 @@ fn project_folder(new: &airband_core::radio::NewProject) -> Result<std::path::Pa
 
 /// The team a new one in this folder is: the one that already works there (another agent joins it), or a new
 /// one with his name for it. Its id and what it is called.
-fn project_team(app: &App, at: &str, name: TeamName) -> Result<(String, String), String> {
+fn project_team(app: &App, at: &str, name: TeamName) -> Result<(TeamId, String), String> {
     let mut inner = app.change();
     if let Some(team) = inner.team_at(at) {
         let called = inner.team_name(&team).map_or_else(|| name.to_string(), String::from);

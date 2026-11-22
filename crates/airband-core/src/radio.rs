@@ -32,9 +32,10 @@ pub const SCHEMA: &str = "airband.radio/4";
 
 /// Where every request of a radio's goes on the tower. A radio's token opens these and nothing else.
 pub const PATH: &str = "/v1/radio/";
-/// The header a radio names itself in, so each has its own place in a call. A radio that comes through the
-/// relay is named by its pairing; one that comes straight to the tower must send it, and a request that names
-/// no radio is refused.
+/// The header a radio names itself in, so each has its own place in a call. A radio paired by a secret (through
+/// the relay, or straight to the tower sealed) is known by its pairing's relay channel and never by a name, and
+/// sends nothing here. Only one that comes straight to the tower with the tower's token names itself here, and
+/// a request of that kind that names no radio is refused.
 pub const RADIO_HEADER: &str = "x-airband-radio";
 /// The header the tower's own link puts on a radio's request to say how it came: `the relay`, `his own
 /// network`, or `the relay, kept while the tower was away`. Only for the log.

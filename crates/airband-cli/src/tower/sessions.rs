@@ -8,7 +8,7 @@ pub(super) struct Session {
     pub(super) callsign: Callsign,
     /// The team it is in, by the team's id ([`Inner::teams`]). Its callsign carries what that team is called.
     #[serde(default)]
-    pub(super) team: String,
+    pub(super) team: TeamId,
     /// It finished a turn and is waiting on him.
     pub(super) waiting: bool,
     /// The line of the last thing he heard from it, for "say more" and "repeat".
@@ -69,7 +69,7 @@ impl Inner {
     /// The team an agent goes in, by id: the one it is in; where it was put before it went away; the team of the
     /// name it was started under; or its folder's team. A team found by the name is written down as where it
     /// was put, so the team keeps it when he renames the team.
-    fn team_of(&mut self, agent: &Agent) -> Option<String> {
+    fn team_of(&mut self, agent: &Agent) -> Option<TeamId> {
         if let Some(s) = self.find(&agent.id) {
             return Some(s.team.clone());
         }
@@ -89,8 +89,8 @@ impl Inner {
         self.folder_team(agent.cwd.as_deref()?)
     }
     /// Write down which team an agent was put in, by whom. Only the latest few hundred are remembered.
-    pub(super) fn put(&mut self, id: &str, team: &str, by: Mover) {
-        self.placed.insert(id.to_string(), (team.to_string(), by));
+    pub(super) fn put(&mut self, id: &str, team: &TeamId, by: Mover) {
+        self.placed.insert(AgentId::new(id), (team.clone(), by));
         while self.placed.len() > 400 {
             let Some(first) = self.placed.keys().next().cloned() else { break };
             self.placed.remove(&first);
@@ -189,11 +189,11 @@ impl Inner {
     }
     /// Put a session in another of his teams, by the team's id. Returns what it was called and what it is
     /// called now, or nothing when it is already there or there is no such team.
-    pub(super) fn move_to(&mut self, id: &str, team: &str, by: Mover) -> Option<(Callsign, Callsign)> {
+    pub(super) fn move_to(&mut self, id: &str, team: &TeamId, by: Mover) -> Option<(Callsign, Callsign)> {
         let was = self.find(id)?.callsign.clone();
         let name = self.teams.get(team)?.name.clone();
         let to = was.moved_to(name.as_str(), &self.taken_callsigns(Some(id)))?;
-        if self.find(id)?.team == team {
+        if &self.find(id)?.team == team {
             // already there: if it was he who said so, it now stays
             if by == Mover::Him {
                 self.session(id)?.moved = Some(Mover::Him);
@@ -202,7 +202,7 @@ impl Inner {
         }
         self.rename(id, to.clone());
         let s = self.session(id)?;
-        s.team = team.to_string();
+        s.team = team.clone();
         s.moved = Some(by);
         self.put(id, team, by);
         Some((was, to))

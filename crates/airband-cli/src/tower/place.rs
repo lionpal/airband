@@ -13,13 +13,13 @@ pub(super) fn by_him(app: &App, agent: &str, to: &airband_core::radio::TeamPick)
         return Err("That agent is no longer running.".into());
     }
     let team = match to {
-        airband_core::radio::TeamPick::Team { id } if inner.teams.contains_key(id) => id.clone(),
+        airband_core::radio::TeamPick::Team { id } if inner.teams.contains_key(id) => TeamId::new(id.as_str()),
         airband_core::radio::TeamPick::Team { .. } => return Err("That team is not on this computer any more.".into()),
         airband_core::radio::TeamPick::New { name } => inner.team_he_named(name)?,
     };
     inner.move_to(agent, &team, Mover::Him);
     inner.tell();
-    inner.find(agent).map(|s| airband_core::radio::Moved { callsign: s.callsign.clone(), team: s.team.clone() }).ok_or_else(|| "That agent is no longer running.".into())
+    inner.find(agent).map(|s| airband_core::radio::Moved { callsign: s.callsign.clone(), team: s.team.to_string() }).ok_or_else(|| "That agent is no longer running.".into())
 }
 
 /// Is this report one to look at where the agent belongs on? Its first, so one in the wrong team is not left
@@ -39,7 +39,7 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
         let Some(s) = inner.find(&agent_id).filter(|s| s.moved != Some(Mover::Him)).cloned() else { return };
         let said: Vec<String> = inner.log.iter().rev().filter(|e| e.worth_from(&agent_id)).take(3).map(Entry::line).collect();
         // his teams by id, each with what it is called and its folder when it has one
-        let teams: Vec<(String, Team)> = inner.teams.iter().map(|(id, t)| (id.clone(), t.clone())).collect();
+        let teams: Vec<(TeamId, Team)> = inner.teams.iter().map(|(id, t)| (id.clone(), t.clone())).collect();
         (s, said, teams)
     };
     let agent = session.agent.clone();
@@ -99,7 +99,7 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
     }
     // a new team only by a name no team has, and not as his: the model named it; one of his teams is picked by
     // its number and never by a name
-    let Some(to) = listed.filter(|id| inner.teams.contains_key(id)).or_else(|| out.new_team.as_deref().and_then(|n| inner.new_team(n, false).ok())) else { return };
+    let Some(to) = listed.filter(|id| inner.teams.contains_key(id)).map(TeamId::new).or_else(|| out.new_team.as_deref().and_then(|n| inner.new_team(n, false).ok())) else { return };
     let Some((was, _)) = inner.move_to(&agent_id, &to, Mover::Tower) else { return };
     // said in the chat and not aloud: the name he knew it by has changed
     if let Some(s) = inner.find(&agent_id).cloned() {

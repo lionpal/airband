@@ -29,7 +29,7 @@ pub(super) struct Entry {
     #[serde(default)]
     pub(super) his: bool,
     /// The team it belongs to, by the team's id. Empty for something he said to agents of several teams.
-    pub(super) team: String,
+    pub(super) team: TeamId,
     /// For his messages: what the agents it went to were called.
     pub(super) to: Vec<String>,
     pub(super) kind: Option<Kind>,
@@ -141,8 +141,8 @@ impl Entry {
     }
     /// Something he said, to these agents.
     pub(super) fn his(id: String, to: &[Session], text: String) -> Entry {
-        let teams: HashSet<&String> = to.iter().map(|s| &s.team).collect();
-        let team = if teams.len() == 1 { to[0].team.clone() } else { String::new() };
+        let teams: HashSet<&TeamId> = to.iter().map(|s| &s.team).collect();
+        let team = if teams.len() == 1 { to[0].team.clone() } else { TeamId::default() };
         Entry { id, from: HIM.into(), his: true, team, to: to.iter().map(|s| s.callsign.text()).collect(), to_agents: to.iter().map(|s| s.agent.id.clone()).collect(), short: Some(text.clone()), full: text, ..Entry::default() }
     }
 }
@@ -234,11 +234,11 @@ impl Inner {
     }
     /// The team a line belongs to now, by id: its sender's, or for something he said, the team of the agents it
     /// went to while they are all here and in one team; otherwise the team it was written down under.
-    pub(super) fn line_team(&self, e: &Entry) -> String {
+    pub(super) fn line_team(&self, e: &Entry) -> TeamId {
         if let Some(s) = self.sender(e) {
             return s.team.clone();
         }
-        let teams: HashSet<&String> = e.to_agents.iter().filter_map(|id| self.find(id)).map(|s| &s.team).collect();
+        let teams: HashSet<&TeamId> = e.to_agents.iter().filter_map(|id| self.find(id)).map(|s| &s.team).collect();
         if teams.len() == 1 && e.to_agents.iter().all(|id| self.find(id).is_some()) { teams.into_iter().next().unwrap().clone() } else { e.team.clone() }
     }
     /// What the agents of the team in this folder last said, newest first, in a few words each: for a model
@@ -268,7 +268,7 @@ impl Inner {
             to_agents: e.to_agents.clone(),
             // a line whose team has gone has no team name to show
             group: self.team_name(&self.line_team(e)).unwrap_or_default().to_string(),
-            team: self.line_team(e),
+            team: self.line_team(e).into_string(),
             to,
             kind: e.kind,
             long: spoken(&e.full) != text,
@@ -294,10 +294,10 @@ impl Inner {
     }
     /// Does this line belong in one team's view (`team`), or one agent's (`agent`, its id)? With neither, every
     /// line does. His words belong with the agents they went to.
-    pub(super) fn in_view(&self, e: &Entry, team: Option<&str>, agent: Option<&str>) -> bool {
-        let of = |id: &String| self.find(id).map(|s| s.team.as_str());
+    pub(super) fn in_view(&self, e: &Entry, team: Option<&TeamId>, agent: Option<&str>) -> bool {
+        let of = |id: &String| self.find(id).map(|s| &s.team);
         let by_agent = agent.is_none_or(|a| e.agent.as_deref() == Some(a) || e.to_agents.iter().any(|t| t == a));
-        let by_team = team.is_none_or(|t| self.line_team(e) == t || e.to_agents.iter().any(|id| of(id) == Some(t)));
+        let by_team = team.is_none_or(|t| &self.line_team(e) == t || e.to_agents.iter().any(|id| of(id) == Some(t)));
         by_agent && by_team
     }
     /// The messages that need him and that nothing has answered yet. One at most per agent: its latest, while

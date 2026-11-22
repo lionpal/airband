@@ -151,9 +151,9 @@ pub struct RecentFolder {
     pub shown: String,
     /// The team an agent started there is in: the one that already works there, or else the folder's own name.
     pub name: String,
-    /// There is a team in this folder already.
+    /// The id of the team that already works in this folder, when there is one.
     #[serde(default)]
-    pub team: bool,
+    pub team: Option<crate::ids::TeamId>,
     /// The coding tools that have had sessions there, by id.
     #[serde(default)]
     pub tools: Vec<String>,
