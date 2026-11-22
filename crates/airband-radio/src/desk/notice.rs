@@ -28,22 +28,6 @@ pub struct OpenedNotice {
     /// It asks permission: the buttons are Allow and Deny, and words of his own refuse it.
     pub permission: bool,
 }
-/// What names a computer to this device, from its pairing link: nothing secret, the same every time.
-pub(super) fn station_key(link: &str) -> Option<String> {
-    match Pairing::parse(link).ok()? {
-        Pairing::Relay { secret, .. } | Pairing::Near { secret, .. } => Keys::derive(&secret).ok().map(|k| k.channel),
-        Pairing::Direct { .. } => None,
-    }
-}
-/// What a computer is known by in the rooms of his screen: its relay channel, or for a plain direct pairing,
-/// a hash of its link (the link holds a token, and a room's id is kept on disk).
-pub(super) fn station_id(link: &str) -> String {
-    station_key(link).unwrap_or_else(|| airband_core::relay::token_hash(link))
-}
-/// A room on his screen: one team on one computer, as one id. Only ever compared whole.
-pub(crate) fn room_id(station: &str, team: &str) -> String {
-    if team.is_empty() { String::new() } else { format!("{station}/{team}") }
-}
 /// What a button under a question stood for.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum Tapped {
@@ -70,11 +54,6 @@ impl Tapped {
             Tapped::Option { .. } => String::new(),
         }
     }
-}
-/// The word on the button that allows a request for leave, or on the one that refuses it.
-#[uniffi::export]
-pub fn leave_word(allow: bool) -> String {
-    if allow { airband_core::radio::ALLOW } else { airband_core::radio::DENY }.to_string()
 }
 /// Open a sealed notification with whichever pairing sealed it. `links` are the pairing links the host keeps;
 /// `sealed` is the notification as the push service delivered it. Nothing when none of them opens it. This
@@ -105,17 +84,3 @@ pub fn open_notice(links: Vec<String>, sealed: String, colours: std::collections
         })
     })
 }
-
-/// What a team he names this way would be called: the computer names it by the same rule. Empty when the
-/// words make no name.
-#[uniffi::export]
-pub fn team_name(written: String) -> String {
-    airband_core::routing::team_name(&written).unwrap_or_default()
-}
-
-/// Is this a pairing link a computer gave (`airband pair`)? Read by the one parser that pairs with it.
-#[uniffi::export]
-pub fn is_pairing_link(link: String) -> bool {
-    airband_core::pairing::Pairing::parse(link.trim()).is_ok()
-}
-
