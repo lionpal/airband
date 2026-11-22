@@ -909,6 +909,14 @@ impl Radio {
     }
 
     /// The folders inside one of his on this computer. Blocks.
+    /// Rename one of his teams on this computer. Answers with the name it now has. Blocks.
+    pub(crate) fn rename_team(&self, team: String, to: String) -> Result<String, RadioError> {
+        #[derive(serde::Deserialize)]
+        struct Renamed {
+            team: String,
+        }
+        Ok(self.asked::<Renamed>("POST", "/team/rename", Some(serde_json::to_value(airband_core::radio::RenameTeam { team, to }).unwrap()))?.team)
+    }
     pub(crate) fn folders(&self, under: String) -> Result<airband_core::radio::Folders, RadioError> {
         self.asked("POST", "/folders", Some(serde_json::json!({ "under": under })))
     }

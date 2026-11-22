@@ -75,7 +75,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use airband_core::clock::{now_ms, now_secs};
@@ -356,7 +356,7 @@ impl App {
         let touched: HashSet<String> = inner.unsaved.borrow_mut().drain().collect();
         let entries: Vec<Entry> = inner.log.iter().filter(|e| touched.contains(&e.id)).cloned().collect();
         self.store.put_messages(&entries);
-        self.store.save_state(&Saved { sessions: inner.sessions.clone(), projects: inner.projects.clone(), colours: inner.colours.clone(), held: inner.held.clone(), menus: inner.menus.clone(), tools: inner.tools.clone(), placed: inner.placed.clone() });
+        self.store.save_state(&Saved { sessions: inner.sessions.clone(), projects: inner.projects.clone(), named_teams: inner.named_teams.clone(), colours: inner.colours.clone(), held: inner.held.clone(), menus: inner.menus.clone(), tools: inner.tools.clone(), placed: inner.placed.clone() });
     }
 }
 
@@ -448,7 +448,9 @@ pub fn run(cfg: Config) -> Result<(), String> {
         let store = Store::open(&config::dir().join("airband.db"))?;
         let (saved, entries) = store.load(LOG_KEEP);
         let (seq, rev) = store.last_counts();
-        let mut inner = Inner { sessions: saved.sessions, projects: saved.projects, colours: saved.colours, held: saved.held, menus: saved.menus, tools: saved.tools, placed: saved.placed, seq, rev, log: entries, ..Inner::default() };
+        let configured = cfg.projects.iter().map(|(k, v)| (airband_core::routing::team_name(k).unwrap_or_else(|| k.to_lowercase()), v.clone())).collect();
+        let mut inner = Inner { sessions: saved.sessions, projects: saved.projects, named_teams: saved.named_teams, configured, here: config::station(&cfg), colours: saved.colours, held: saved.held, menus: saved.menus, tools: saved.tools, placed: saved.placed, seq, rev, log: entries, ..Inner::default() };
+        inner.settle_teams();
         inner.links = links::Book::load();
         inner.reap();
         inner.close_requests_from_before();

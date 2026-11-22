@@ -419,6 +419,20 @@ try:
     check("a name another folder already has is refused", "error" in http("POST", "/v1/radio/project", {"name": "garden", "folder": inside["path"]})[1])
     made = http("POST", "/v1/radio/project", {"name": "hay store", "folder": hay})[1]
     check("a team can work in any folder on the computer, and is called as a callsign is written", made and made.get("team") == "hay store" and until(lambda: any(a["group"] == "hay store" for a in feed()["roster"])), (made, feed()["roster"]))
+    # a team is its folder: another folder of the same name is a team of its own, called apart from the first
+    other = os.path.join(home, "other", "garden")
+    os.makedirs(other, exist_ok=True)
+    here_ = http("POST", "/v1/radio/folders", {"under": inside["path"] + "/garden"})[1]
+    there_ = http("POST", "/v1/radio/folders", {"under": other})[1]
+    check("a folder says which team works in it, and what one would be called in a folder that has none", here_ and here_.get("team") == "garden" and here_.get("has_team") and there_ and there_.get("team") == "other garden" and not there_.get("has_team"), (here_, there_))
+    made = http("POST", "/v1/radio/project", {"name": there_["team"], "folder": other})[1]
+    groups = lambda: sorted({a["group"] for a in feed()["roster"]})
+    check("two folders of the same name are two teams, each with its own agents", made and made.get("team") == "other garden" and until(lambda: "other garden" in groups()) and len([a for a in feed()["roster"] if a["group"] == "garden"]) == 2, (made, groups()))
+    renamed = http("POST", "/v1/radio/team/rename", {"team": "other garden", "to": "Back Garden"})[1]
+    check("a team he renames keeps its agents, under the new name", renamed and renamed.get("team") == "back garden" and until(lambda: "back garden" in groups() and "other garden" not in groups()) and len([a for a in feed()["roster"] if a["group"] == "back garden"]) == 1, (renamed, groups()))
+    joined = http("POST", "/v1/radio/project", {"name": "anything", "folder": other})[1]
+    check("and its folder is still its folder: another agent there joins it", joined and joined.get("team") == "back garden" and until(lambda: len([a for a in feed()["roster"] if a["group"] == "back garden"]) == 2), (joined, groups()))
+    check("a name another team has is refused in words", "already" in http("POST", "/v1/radio/team/rename", {"team": "back garden", "to": "garden"})[1].get("error", ""))
 
     print("An agent that speaks the Agent Client Protocol")
     noted = lambda: open(os.path.join(got, "acp")).read().split("\n")[:-1] if os.path.exists(os.path.join(got, "acp")) else []

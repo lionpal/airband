@@ -100,9 +100,3 @@ pub fn is_pairing_link(link: String) -> bool {
     airband_core::pairing::Pairing::parse(link.trim()).is_ok()
 }
 
-/// What a team in this folder is called, as a computer names it: the folder's own name. Empty when nothing in
-/// it could be a team's name.
-#[uniffi::export]
-pub fn team_for_folder(folder: String) -> String {
-    airband_core::routing::team_name(&folder).unwrap_or_default()
-}

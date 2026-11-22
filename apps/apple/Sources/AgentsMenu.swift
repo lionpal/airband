@@ -46,6 +46,9 @@ struct AgentsMenu: View {
     @State private var over: String?
     /// The agent a new team is being named for.
     @State private var founding: DeskMember?
+    /// The team he is renaming, and the name he is typing for it.
+    @State private var renaming: String?
+    @State private var newName = ""
     /// The agent he is about to have its computer take over.
     @State private var taking: DeskMember?
     /// The agent he is about to end.
@@ -85,6 +88,7 @@ struct AgentsMenu: View {
                         let was = model.room == room.name && model.only == nil
                         model.look(room: was ? nil : room.name)
                     }
+                    .contextMenu { Button { newName = room.name; renaming = room.name } label: { Label("Rename team", systemImage: "pencil") } }
                     .overlay { if over == room.name { RoundedRectangle(cornerRadius: 14).strokeBorder(Palette.team(room.colour), lineWidth: 2) } }
                     // a new agent for this team: one tap starts it where the team's others run
                     .overlay(alignment: .trailing) { NewAgentButton(room: room.name).padding(.trailing, 6) }
@@ -166,6 +170,13 @@ struct AgentsMenu: View {
             Button("Cancel", role: .cancel) { founding = nil }
         } message: {
             Text(founding.map { "\($0.callsign) moves to it." } ?? "")
+        }
+        .alert("Rename team", isPresented: $renaming.isSet()) {
+            TextField("Name", text: $newName).textInputAutocapitalization(.never).autocorrectionDisabled()
+            Button("Rename") { if let team = renaming { model.renameTeam(team, to: newName) }; renaming = nil }
+            Button("Cancel", role: .cancel) { renaming = nil }
+        } message: {
+            Text("Its agents stay in it, and say the new name.")
         }
     }
 

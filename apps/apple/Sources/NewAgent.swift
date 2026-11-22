@@ -24,6 +24,8 @@ struct NewAgentSheet: View {
         var make = false
         /// A team works there already: the agent joins it, and its name is not his to change here.
         var team = false
+        /// The team's name, as the computer has it or would give it there. Empty for a new folder: he names it.
+        var name = ""
     }
 
     private var team: String { name.trimmingCharacters(in: .whitespaces).lowercased() }
@@ -104,8 +106,7 @@ struct NewAgentSheet: View {
                 FolderWalk(computer: computer) { chosen in
                     place = chosen
                     // a folder that is there gives the team its name; a new one is named by him
-                    name = chosen.make ? "" : (recent.first { $0.folder == chosen.folder }?.name ?? teamForFolder(folder: chosen.folder))
-                    if let known = recent.first(where: { $0.folder == chosen.folder }), !chosen.make { place?.team = known.team }
+                    name = chosen.name
                     walking = false
                 }
                 .environmentObject(model)
@@ -270,7 +271,7 @@ struct FolderWalk: View {
         .background(Palette.ground.ignoresSafeArea())
         .safeAreaInset(edge: .bottom, spacing: 0) {
             Button {
-                if let here { use(NewAgentSheet.Place(folder: here.path, shown: here.shown, make: makeNew)) }
+                if let here { use(NewAgentSheet.Place(folder: here.path, shown: here.shown, make: makeNew, team: here.hasTeam && !makeNew, name: makeNew ? "" : here.team)) }
             } label: {
                 Text(makeNew ? "New folder in \(here?.shown ?? "")" : "Use \(here?.shown ?? "")").font(.system(size: 18, weight: .semibold)).lineLimit(1).truncationMode(.head)
                     .foregroundStyle(Palette.ground).padding(.horizontal, 16).frame(maxWidth: 520, minHeight: 56).frame(maxWidth: .infinity)

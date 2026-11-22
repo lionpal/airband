@@ -21,6 +21,23 @@ pub fn team_name(text: &str) -> Option<String> {
     Some(norm(&base)).filter(|name| !name.is_empty())
 }
 
+/// The names a team in this folder could take, plainest first: the folder's own name, then its parent's name
+/// in front of it, and so on up the path ("shop", "work shop", "a work shop"). Each comes from the path's own
+/// parts, as the system reads them. The tower takes the first that no other team of his has.
+pub fn team_names(folder: &str) -> Vec<String> {
+    let parts: Vec<String> = std::path::Path::new(folder.trim()).components().filter_map(|c| match c {
+        std::path::Component::Normal(part) => Some(norm(&part.to_string_lossy())),
+        _ => None,
+    }).filter(|part| !part.is_empty()).collect();
+    (1..=parts.len()).map(|n| parts[parts.len() - n..].join(" ")).collect()
+}
+
+/// A team's name with this computer's name in front: for a team whose folder's name a team on another of his
+/// computers already has ("laptop shop").
+pub fn team_on(computer: &str, team: &str) -> String {
+    norm(&format!("{computer} {team}"))
+}
+
 /// Two callsigns are the same when they read the same: no two agents are called alike, however each came by
 /// its name.
 impl PartialEq for Callsign {
@@ -40,14 +57,16 @@ impl Callsign {
         let mut c = t.chars();
         c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
     }
-    /// The callsign a session's own name asks for, in this folder: "shop 2" → shop two, "removals" or
+    /// The callsign a session's own name asks for, in this team: "shop 2" → shop two, "removals" or
     /// "warehouse removals" → warehouse removals. Nothing when the name says nothing beyond the project.
-    pub fn titled(cwd: &str, title: &str) -> Option<Callsign> {
-        let project = Callsign::next_for(cwd, &[]).project;
+    pub fn titled(team: &str, folder: &str, title: &str) -> Option<Callsign> {
+        let project = team.to_string();
         let title = norm(title);
-        // his name for it usually starts with the project's ("shop 2", "back office fixes"): that part is not said twice
+        // his name for it usually starts with the team's or its folder's ("shop 2", "back office fixes"): that part
+        // is not said twice
         let words: Vec<&str> = title.split(' ').filter(|w| !w.is_empty()).collect();
-        let lead = (1..=words.len()).find(|&n| words[..n].concat() == project.replace(' ', "")).unwrap_or(0);
+        let leads: Vec<String> = std::iter::once(project.clone()).chain(team_names(folder)).map(|l| l.replace(' ', "")).collect();
+        let lead = (1..=words.len()).rev().find(|&n| leads.contains(&words[..n].concat())).unwrap_or(0);
         let rest: Vec<String> = words[lead..].iter().take(4).map(|w| number_word(w)).collect();
         (!rest.is_empty()).then(|| Callsign { project, number: rest.join(" "), named: true })
     }
@@ -87,13 +106,17 @@ impl Callsign {
             return None;
         }
         let named = Callsign { project: project.clone(), number: self.number.clone(), named: true };
-        Some(if self.named && !live.contains(&named) { named } else { Callsign::next_for(&project, live) })
+        Some(if self.named && !live.contains(&named) { named } else { Callsign::next_in(&project, live) })
     }
     /// The next free callsign for a session in this folder: the folder's name plus the lowest unused number.
     /// What has no name a team could be called by (the top of a disk) is turned away where agents report in
     /// (`Inner::placeable` in the tower), so it never comes here.
     pub fn next_for(cwd: &str, live: &[Callsign]) -> Callsign {
-        let project = team_name(cwd).unwrap_or_default();
+        Callsign::next_in(&team_name(cwd).unwrap_or_default(), live)
+    }
+    /// The next free callsign in this team: its name plus the lowest unused number.
+    pub fn next_in(team: &str, live: &[Callsign]) -> Callsign {
+        let project = team.to_string();
         let mut n = 1;
         loop {
             let number = WORDS.get(n).map(|w| w.to_string()).unwrap_or_else(|| n.to_string());
@@ -213,6 +236,9 @@ mod tests {
         assert_eq!(team_name("garden").as_deref(), Some("garden"));
         // nothing a team could be called
         assert_eq!((team_name("/"), team_name("  "), team_name("!!")), (None, None, None));
+        assert_eq!(team_names("/a/Work/shop/"), ["shop", "work shop", "a work shop"]);
+        assert_eq!(team_names("/"), Vec::<String>::new());
+        assert_eq!(team_on("Charles's Laptop", "shop"), "charless laptop shop");
         let c = |project: &str, number: &str, named: bool| Callsign { project: project.into(), number: number.into(), named };
         assert_eq!((c("shop", "three", false).shown(), c("warehouse", "removals", true).shown(), c("shop", "13", false).shown()), ("shop 3".to_string(), "warehouse removals".to_string(), "shop 13".to_string()));
     }
@@ -222,11 +248,14 @@ mod tests {
         let c = |p: &str, n: &str| Callsign { project: p.into(), number: n.into(), named: !WORDS.contains(&n) };
         // a name he gave is one whatever it reads like: "shop 2" is his name for it, not the tower's number
         let t = |p: &str, n: &str| Callsign { project: p.into(), number: n.into(), named: true };
-        assert_eq!(Callsign::titled("/x/shop", "shop 2"), Some(t("shop", "two")));
-        assert_eq!(Callsign::titled("/x/warehouse", "warehouse removals"), Some(t("warehouse", "removals")));
-        assert_eq!(Callsign::titled("/x/backoffice", "Back Office: login fix"), Some(t("backoffice", "login fix")));
-        assert_eq!(Callsign::titled("/x/shop", "curriculum"), Some(t("shop", "curriculum")));
-        assert_eq!(Callsign::titled("/x/shop", "shop"), None);
+        assert_eq!(Callsign::titled("shop", "/x/shop", "shop 2"), Some(t("shop", "two")));
+        assert_eq!(Callsign::titled("warehouse", "/x/warehouse", "warehouse removals"), Some(t("warehouse", "removals")));
+        assert_eq!(Callsign::titled("backoffice", "/x/backoffice", "Back Office: login fix"), Some(t("backoffice", "login fix")));
+        assert_eq!(Callsign::titled("shop", "/x/shop", "curriculum"), Some(t("shop", "curriculum")));
+        assert_eq!(Callsign::titled("shop", "/x/shop", "shop"), None);
+        // in a team other than its folder's: neither name is said twice
+        assert_eq!(Callsign::titled("returns", "/x/orders", "orders hooks"), Some(t("returns", "hooks")));
+        assert_eq!(Callsign::titled("work shop", "/b/work/shop", "shop labels"), Some(t("work shop", "labels")));
         let live = [c("warehouse", "removals"), c("warehouse", "one"), c("backoffice", "login fix")];
         // only a tag addresses: his own words are not read here
         assert!(parse_utterance("warehouse removals, stop", &live).to.is_empty());

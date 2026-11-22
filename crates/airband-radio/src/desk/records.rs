@@ -155,6 +155,10 @@ pub struct DeskFolders {
     pub up: Option<String>,
     /// The folders inside, by name.
     pub folders: Vec<String>,
+    /// The team that works in this folder, or the name the computer would give one there.
+    pub team: String,
+    /// A team works here already: a new agent joins it.
+    pub has_team: bool,
 }
 /// A folder the coding tools on a computer have had sessions in.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]

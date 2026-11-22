@@ -66,7 +66,7 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
     // what a new agent could be started in and on, if anything
     // any tool this computer can start will do for knowing that one can be: which one is settled when it starts
     let launcher = app.cfg.launchers.values().next();
-    let projects: Vec<String> = app.read().launchable(&app.cfg).into_keys().collect();
+    let projects: Vec<String> = app.read().launchable().into_keys().collect();
     // with agents of another computer on his screen there is always more than one it could be for
     let can_start = (launcher.is_some() && !projects.is_empty()) || !others.is_empty();
     let launcher = launcher.filter(|_| !projects.is_empty());
@@ -333,7 +333,7 @@ async fn place_idea(app: &Arc<App>, idea: &str, projects: &[String]) -> Result<S
     }
     let lines: Vec<String> = {
         let inner = app.read();
-        let folders = inner.launchable(&app.cfg);
+        let folders = inner.launchable();
         projects
             .iter()
             .enumerate()
@@ -475,7 +475,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
     // pictures to show beside them in the chat
     let (mut files, shown_files) = if attached.is_empty() { (String::new(), Vec::new()) } else { attachments::describe(attached).await };
     // starting a new agent comes next: it is addressed to the tower, not to anyone on the radio
-    let projects: Vec<String> = app.read().launchable(&app.cfg).into_keys().collect();
+    let projects: Vec<String> = app.read().launchable().into_keys().collect();
     // "Which project?" was just asked about an idea. A model says whether this answers it and with which one.
     // Words that are about something else leave the idea waiting for its answer, for as long as it would have.
     let held_idea = app.passing().call(radio).unplaced_idea.take().filter(|(_, when)| when.elapsed() < Duration::from_secs(90));

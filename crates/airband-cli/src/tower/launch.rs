@@ -22,7 +22,7 @@ pub(super) struct Idea {
 pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply {
     let task = idea.task.as_str();
     let say = |s: String| Reply { say: s, listen: false, ..Reply::default() };
-    let Some(cwd) = app.read().launchable(&app.cfg).get(project).cloned() else {
+    let Some(cwd) = app.read().launchable().get(project).cloned() else {
         return say(format!("I do not know a project called {project}."));
     };
     if !std::path::Path::new(&cwd).is_dir() {

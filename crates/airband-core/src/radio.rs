@@ -327,6 +327,12 @@ pub struct Folders {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub up: Option<String>,
     pub folders: Vec<String>,
+    /// The team that works in this folder, or the name a team there would have.
+    #[serde(default)]
+    pub team: String,
+    /// A team works here already: a new agent joins it.
+    #[serde(default)]
+    pub has_team: bool,
 }
 
 /// `GET recent`: the folders the coding tools on this computer have had sessions in, newest first, for
@@ -397,6 +403,14 @@ pub struct EndAgent {
 /// never read: the answer itself is [`Act::Verdict`].
 pub const ALLOW: &str = "Allow";
 pub const DENY: &str = "Deny";
+
+/// `POST team/rename`: he renamed one of his teams on this computer. Only what it is called changes: its agents,
+/// folder and colour stay with it. `{team}` (the name it now has) or `{error}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenameTeam {
+    pub team: String,
+    pub to: String,
+}
 
 /// `POST taken`: the names agents go by on his other computers, as his radio shows them ("shop 1"). A tower
 /// gives none of its own agents a numbered name on this list, and moves one that already has one to the next

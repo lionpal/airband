@@ -271,12 +271,6 @@ fn parse(text: &str) -> Result<Config, String> {
 
 /// The file's text for these settings. The keys are never in it: they are kept encrypted (`vault`) and the
 /// text has a mark in each of their places, from the first time the file is written.
-/// Settings in which nothing has been chosen, for a test elsewhere in this program.
-#[cfg(test)]
-pub(crate) fn blank() -> Config {
-    parse("{}").unwrap()
-}
-
 fn render(cfg: &Config) -> Result<String, String> {
     if let Some(why) = keyless() {
         return Err(format!("the settings cannot be changed from here: {why}"));

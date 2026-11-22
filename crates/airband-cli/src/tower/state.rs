@@ -32,6 +32,12 @@ pub(super) struct Inner {
     /// Every project an agent has been seen working in, by spoken name, with its folder. A new agent can be
     /// launched in any of these.
     pub(super) projects: BTreeMap<String, String>,
+    /// The teams he named himself. One of these keeps its name though a team on another of his computers has it.
+    pub(super) named_teams: BTreeSet<String>,
+    /// The teams the configuration lists, by name, with their folders. Never kept: read from it at the start.
+    pub(super) configured: BTreeMap<String, String>,
+    /// This computer's name, as a phone paired with several shows it. Never kept.
+    pub(super) here: String,
     /// The folders his coding tools have had sessions in, as last read from their records
     /// (`adapters::worked_all`): the folder, the tools, when. Never kept: it is read again every minute.
     pub(super) worked: Vec<(String, Vec<String>, u64)>,
@@ -75,6 +81,8 @@ pub(crate) struct Saved {
     pub(super) sessions: Vec<Session>,
     #[serde(default)]
     pub(super) projects: BTreeMap<String, String>,
+    #[serde(default)]
+    pub(super) named_teams: BTreeSet<String>,
     #[serde(default)]
     pub(super) colours: BTreeMap<String, u8>,
     #[serde(default)]
@@ -152,39 +160,38 @@ impl Inner {
         self.sessions.iter().map(|s| RosterEntry { id: s.agent.id.clone(), callsign: s.callsign.text(), group: s.callsign.project.clone(), number: s.callsign.number.clone(), named: s.callsign.named, harness: s.agent.harness.clone(), waiting: s.waiting, state: self.state_of(s, &open), subagents: s.subagents, reachable: s.agent.deliver.is_some(), doing: s.doing.clone().filter(|_| !s.waiting), held: s.agent.deliver == Some(Deliver::Held), terminal: matches!(s.agent.deliver, Some(Deliver::Keys { .. } | Deliver::Socket { .. })), ends: match &s.agent.deliver { Some(Deliver::Held) => true, Some(Deliver::Harness { name, .. }) => crate::adapters::puts_away(name), _ => false }, model: s.model.clone(), effort: s.effort.clone() }).collect()
     }
     /// His teams that have a folder: what the configuration lists, then wherever agents have been seen.
-    pub(super) fn teams(&self, cfg: &Config) -> BTreeMap<String, String> {
+    pub(super) fn teams(&self) -> BTreeMap<String, String> {
         let mut all = self.projects.clone();
-        all.extend(cfg.projects.iter().map(|(k, v)| (k.to_lowercase(), v.clone())));
+        all.extend(self.configured.clone());
         // a project whose folder has gone is not offered
         all.retain(|_, folder| std::path::Path::new(folder).is_dir());
         all
     }
     /// Where a new agent can be started by name: his teams, then the folders his coding tools have lately
     /// had sessions in, each by the name a team there would have. A team's name is never taken from it.
-    pub(super) fn launchable(&self, cfg: &Config) -> BTreeMap<String, String> {
-        let mut all = self.teams(cfg);
-        for recent in self.recent(cfg).into_iter().filter(|r| !r.team && !r.name.is_empty()).take(20) {
+    pub(super) fn launchable(&self) -> BTreeMap<String, String> {
+        let mut all = self.teams();
+        for recent in self.recent().into_iter().filter(|r| !r.team && !r.name.is_empty()).take(20) {
             all.entry(recent.name).or_insert(recent.folder);
         }
         all
     }
     /// The folders his coding tools have had sessions in, newest first, with his teams: one that has a team
     /// is called by it, and a team no tool has a record of comes last.
-    pub(super) fn recent(&self, cfg: &Config) -> Vec<airband_core::radio::RecentFolder> {
-        let teams = self.teams(cfg);
-        let team_in = |folder: &str| teams.iter().find(|(_, has)| has.as_str() == folder).map(|(name, _)| name.clone());
+    pub(super) fn recent(&self) -> Vec<airband_core::radio::RecentFolder> {
+        let teams = self.teams();
         let mut all: Vec<airband_core::radio::RecentFolder> = self
             .worked
             .iter()
             .take(60)
             .cloned()
             .map(|(folder, tools, at)| {
-                let team = team_in(&folder);
-                airband_core::radio::RecentFolder { shown: shown(std::path::Path::new(&folder)), name: team.clone().or_else(|| airband_core::routing::team_name(&folder)).unwrap_or_default(), team: team.is_some(), tools, at, folder }
+                let team = self.team_at(&folder);
+                airband_core::radio::RecentFolder { shown: shown(std::path::Path::new(&folder)), name: team.clone().or_else(|| self.folder_team(&folder)).unwrap_or_default(), team: team.is_some(), tools, at, folder }
             })
             .collect();
         for (name, folder) in teams {
-            if !all.iter().any(|r| r.folder == folder) {
+            if !all.iter().any(|r| real_folder(&r.folder) == real_folder(&folder)) {
                 all.push(airband_core::radio::RecentFolder { shown: shown(std::path::Path::new(&folder)), name, team: true, tools: Vec::new(), at: 0, folder });
             }
         }
@@ -221,7 +228,6 @@ mod tests {
 
     #[test]
     fn a_new_agent_can_be_started_by_name_in_a_folder_a_coding_tool_has_worked_in() {
-        let cfg = config::blank();
         let here = std::env::temp_dir().join(format!("airband-recent-{}", config::random_hex(6)));
         let folder = |name: &str| {
             std::fs::create_dir_all(here.join(name)).unwrap();
@@ -231,19 +237,84 @@ mod tests {
         let mut inner = Inner::default();
         inner.check_in(&agent("a", &shop, None));
         inner.worked = vec![(back.clone(), vec!["codex".into()], 9), (other_shop.clone(), vec!["claude-code".into()], 7), (shop.clone(), vec!["claude-code".into(), "codex".into()], 5)];
-        let recent = inner.recent(&cfg);
+        let recent = inner.recent();
         let listed: Vec<(&str, &str, bool, u64)> = recent.iter().map(|r| (r.name.as_str(), r.folder.as_str(), r.team, r.at)).collect();
         // newest first; a folder is called as its team is when it has one, and as a team there would be when not
-        assert_eq!(listed, [("back office", back.as_str(), false, 9), ("shop", other_shop.as_str(), false, 7), ("shop", shop.as_str(), true, 5)]);
+        // another folder called as his team is would be a team of its own, its parent's name in front
+        assert_eq!(listed, [("back office", back.as_str(), false, 9), ("elsewhere shop", other_shop.as_str(), false, 7), ("shop", shop.as_str(), true, 5)]);
         // by name: his team keeps its name, and a folder that is only recent never takes it
-        let launchable = inner.launchable(&cfg);
-        assert_eq!(launchable.get("shop"), Some(&shop));
+        let launchable = inner.launchable();
+        assert_eq!(launchable.get("shop").map(|f| real_folder(f)), Some(real_folder(&shop)));
+        assert_eq!(launchable.get("elsewhere shop"), Some(&other_shop));
         assert_eq!(launchable.get("back office"), Some(&back));
-        assert_eq!(inner.teams(&cfg).len(), 1);
+        assert_eq!(inner.teams().len(), 1);
         // a team no tool has a record of is still listed, last
         inner.worked = vec![(back.clone(), vec!["codex".into()], 9)];
-        assert_eq!(inner.recent(&cfg).iter().map(|r| (r.name.as_str(), r.team, r.at)).collect::<Vec<_>>(), [("back office", false, 9), ("shop", true, 0)]);
+        assert_eq!(inner.recent().iter().map(|r| (r.name.as_str(), r.team, r.at)).collect::<Vec<_>>(), [("back office", false, 9), ("shop", true, 0)]);
         let _ = std::fs::remove_dir_all(&here);
+    }
+
+    #[test]
+    fn a_team_is_a_folder_and_two_folders_that_read_alike_are_two_teams_called_apart() {
+        let mut inner = Inner { here: "Laptop".into(), ..Inner::default() };
+        assert_eq!(inner.check_in(&agent("a", "/a/work/shop", None)).text(), "shop one");
+        // another folder of the same name: its parent's name goes in front, so the two are never said alike
+        assert_eq!(inner.check_in(&agent("b", "/b/work/shop", None)).text(), "work shop one");
+        // and a third goes up one more
+        assert_eq!(inner.check_in(&agent("c", "/c/work/shop", None)).text(), "c work shop one");
+        // a second agent in a folder joins that folder's team, however the path is written
+        assert_eq!(inner.check_in(&agent("d", "/b/work/shop/", None)).text(), "work shop two");
+        assert_eq!(inner.check_in(&agent("e", "/a/work/shop", None)).text(), "shop two");
+        assert_eq!(inner.team_at("/b/work/shop").as_deref(), Some("work shop"));
+        assert_eq!(inner.folder_team("/d/shop").as_deref(), Some("d shop"));
+    }
+
+    #[test]
+    fn a_folder_whose_name_another_computer_has_takes_this_computers_name_in_front() {
+        let theirs = |team: &str| Callsign { project: team.into(), number: "one".into(), named: false };
+        let mut inner = Inner { here: "Laptop".into(), ..Inner::default() };
+        // told first: a new folder's team keeps off the name
+        inner.taken_elsewhere(&[theirs("shop")]);
+        assert_eq!(inner.check_in(&agent("a", "/x/shop", None)).text(), "laptop shop one");
+        // told after: a team here that has the name is renamed, and its agents go with it
+        assert_eq!(inner.check_in(&agent("b", "/x/garden", None)).text(), "garden one");
+        assert!(inner.taken_elsewhere(&[theirs("shop"), theirs("garden")]));
+        assert_eq!(names(&inner), ["laptop shop one", "laptop garden one"]);
+        assert_eq!(inner.team_at("/x/garden").as_deref(), Some("laptop garden"));
+        // a name he gave a team is his: it stays, and only numbers that clash move
+        inner.rename_team("laptop garden", "garden").unwrap();
+        assert!(inner.taken_elsewhere(&[theirs("shop"), theirs("garden")]));
+        assert_eq!(names(&inner), ["laptop shop one", "garden two"]);
+    }
+
+    #[test]
+    fn renaming_a_team_changes_only_what_it_is_called() {
+        let mut inner = Inner::default();
+        inner.check_in(&agent("a", "/x/shop", Some("refunds")));
+        inner.check_in(&agent("b", "/x/shop", None));
+        let colour = inner.colours.get("shop").copied();
+        assert_eq!(inner.rename_team("shop", "Store Front"), Ok("store front".to_string()));
+        assert_eq!(names(&inner), ["store front refunds", "store front one"]);
+        assert_eq!(inner.colours.get("store front").copied(), colour);
+        // its folder is still its folder: a new agent there joins it
+        assert_eq!(inner.check_in(&agent("c", "/x/shop", None)).text(), "store front two");
+        // a name another team has, or none, is refused in words
+        inner.check_in(&agent("d", "/x/garden", None));
+        assert_eq!(inner.rename_team("garden", "store front"), Err("There is already a team called store front.".to_string()));
+        assert!(inner.rename_team("garden", "!!").is_err());
+        assert!(inner.rename_team("nobody", "x").is_err());
+    }
+
+    #[test]
+    fn kept_agents_from_two_folders_in_one_team_go_back_to_their_own_folders_teams() {
+        // as kept before teams went by folder: one name, two folders
+        let session = |id: &str, cwd: &str, number: &str| Session { agent: agent(id, cwd, None), callsign: Callsign { project: "shop".into(), number: number.into(), named: false }, waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false, hooked: false, turn: None };
+        let mut inner = Inner { sessions: vec![session("a", "/a/work/shop", "one"), session("b", "/b/work/shop", "two")], projects: [("shop".to_string(), "/a/work/shop".to_string())].into(), ..Inner::default() };
+        inner.settle_teams();
+        assert_eq!(names(&inner), ["shop one", "work shop one"]);
+        // once is enough: doing it again changes nothing
+        inner.settle_teams();
+        assert_eq!(names(&inner), ["shop one", "work shop one"]);
     }
 
     #[test]

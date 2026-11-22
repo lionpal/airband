@@ -681,6 +681,16 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// Put an agent in another team: one that is there, or a new one of that name. If he was looking at that
     /// agent alone, he still is, under its new name.
+    func renameTeam(_ team: String, to name: String) {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != team else { return }
+        ask("It was not renamed.", { try self.desk.renameTeam(team: team, to: name) }) { now, wrong in
+            if let wrong { self.problem = wrong; return }
+            // still looking at the same team, under its new name
+            if self.room == team, let now { self.room = now }
+        }
+    }
+
     func moveAgent(_ agent: DeskMember, to team: String) {
         let team = team.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !team.isEmpty else { return }

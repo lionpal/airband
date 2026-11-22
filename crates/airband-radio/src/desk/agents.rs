@@ -16,7 +16,7 @@ impl Desk {
     /// home folder. Blocks: call it off the main thread.
     pub fn folders(&self, computer: String, under: String) -> Result<DeskFolders, RadioError> {
         let f = self.station_radio(&computer)?.folders(under)?;
-        Ok(DeskFolders { path: f.path, shown: f.shown, up: f.up, folders: f.folders })
+        Ok(DeskFolders { path: f.path, shown: f.shown, up: f.up, folders: f.folders, team: f.team, has_team: f.has_team })
     }
     /// The folders the coding tools on a computer have had sessions in, newest first, then the teams there
     /// that no tool has a record of. `computer` is its name, or empty when he has only one. Blocks: call it
@@ -122,6 +122,25 @@ impl Desk {
         }
         self.shared.host.changed();
         Ok(())
+    }
+    /// Rename one of his teams, on the computer whose team it is. Only what it is called changes: its agents
+    /// stay in it. Answers with the name it now has. Blocks: call it off the main thread.
+    pub fn rename_team(&self, team: String, to: String) -> Result<String, RadioError> {
+        let radio = {
+            let state = self.shared.state.lock().unwrap();
+            state.stations.iter().find(|s| s.agents.iter().any(|a| a.group == team)).map(|s| s.radio.clone())
+        };
+        let now = radio.ok_or(RadioError::Told { reason: "That team has no agents now.".into() })?.rename_team(team.clone(), to)?;
+        {
+            // shown as the tower now has it, without waiting for the next look at the feed
+            let mut state = self.shared.state.lock().unwrap();
+            for a in state.stations.iter_mut().flat_map(|s| s.agents.iter_mut()).filter(|a| a.group == team) {
+                a.callsign = airband_core::routing::Callsign { project: now.clone(), ..a.parts() }.text();
+                a.group = now.clone();
+            }
+        }
+        self.shared.host.changed();
+        Ok(now)
     }
     /// Stop what an agent is doing, now: one its computer runs itself. What he said to it meanwhile it then
     /// reads together. Blocks: call it off the main thread.

@@ -127,6 +127,18 @@ async fn team(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::M
     })
 }
 
+/// He renamed one of his teams, from a radio.
+async fn team_rename(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::RenameTeam>) -> Json<Value> {
+    let mut inner = app.change();
+    Json(match inner.rename_team(&to.team, &to.to) {
+        Ok(team) => {
+            inner.tell();
+            json!({ "team": team })
+        }
+        Err(why) => json!({ "error": why }),
+    })
+}
+
 /// A folder on this computer, as it really is on disk (links followed). With none named, his home folder:
 /// that is where a walk starts, and from there he can go up to the top and into other disks.
 fn folder_at(path: &str) -> Result<std::path::PathBuf, String> {
@@ -141,7 +153,7 @@ fn folder_at(path: &str) -> Result<std::path::PathBuf, String> {
 /// time a program opens some of his folders (the desktop, his documents, another disk), and the read waits for
 /// his answer: so it is done to one side and given a few seconds, and he is told when it is the Mac that is
 /// in the way.
-async fn folders(Json(ask): Json<airband_core::radio::FoldersAsk>) -> Json<Value> {
+async fn folders(State(app): State<Arc<App>>, Json(ask): Json<airband_core::radio::FoldersAsk>) -> Json<Value> {
     let read = tokio::task::spawn_blocking(move || {
         folder_at(&ask.under).and_then(|at| {
             let entries = std::fs::read_dir(&at).map_err(|e| match e.kind() {
@@ -150,11 +162,17 @@ async fn folders(Json(ask): Json<airband_core::radio::FoldersAsk>) -> Json<Value
             })?;
             let mut inside: Vec<String> = entries.flatten().filter(|e| e.path().is_dir()).filter_map(|e| e.file_name().into_string().ok()).filter(|n| !n.starts_with('.')).collect();
             inside.sort_by_key(|n| n.to_lowercase());
-            Ok(airband_core::radio::Folders { path: at.display().to_string(), shown: shown(&at), up: at.parent().map(|p| p.display().to_string()), folders: inside })
+            Ok(airband_core::radio::Folders { path: at.display().to_string(), shown: shown(&at), up: at.parent().map(|p| p.display().to_string()), folders: inside, team: String::new(), has_team: false })
         })
     });
     Json(match tokio::time::timeout(Duration::from_secs(5), read).await {
-        Ok(Ok(Ok(f))) => serde_json::to_value(f).unwrap(),
+        Ok(Ok(Ok(mut f))) => {
+            // the team that works here, or the name one would have
+            let inner = app.read();
+            f.has_team = inner.team_at(&f.path).is_some();
+            f.team = inner.folder_team(&f.path).unwrap_or_default();
+            serde_json::to_value(f).unwrap()
+        }
         Ok(Ok(Err(why))) => json!({ "error": why }),
         Ok(Err(_)) => json!({ "error": "That folder cannot be opened from here." }),
         Err(_) => json!({ "error": "This folder is taking too long to open. Your Mac may be asking whether airband can open it. Answer at the Mac, then try again." }),
@@ -163,7 +181,7 @@ async fn folders(Json(ask): Json<airband_core::radio::FoldersAsk>) -> Json<Value
 
 /// The folders his coding tools have had sessions in, newest first, then his teams no tool has a record of.
 async fn recent(State(app): State<Arc<App>>) -> Json<airband_core::radio::Recent> {
-    Json(airband_core::radio::Recent { folders: app.read().recent(&app.cfg) })
+    Json(airband_core::radio::Recent { folders: app.read().recent() })
 }
 
 /// Read again which folders his coding tools have had sessions in, and keep the answer. Reads their
@@ -178,7 +196,7 @@ pub(super) fn read_worked(app: &App) {
 async fn project(State(app): State<Arc<App>>, Json(new): Json<airband_core::radio::NewProject>) -> Json<Value> {
     // a team's name is part of what its agents are called, and is said aloud: short, and written as a
     // callsign is
-    let Some(name) = airband_core::routing::team_name(&new.name).filter(|n| n.chars().count() <= 24) else {
+    let Some(mut name) = airband_core::routing::team_name(&new.name).filter(|n| n.chars().count() <= 24) else {
         return Json(json!({ "error": "A team\u{2019}s name is letters and numbers, 24 at most." }));
     };
     let folder = if new.make {
@@ -209,15 +227,20 @@ async fn project(State(app): State<Arc<App>>, Json(new): Json<airband_core::radi
     };
     {
         let mut inner = app.change();
-        // the same folder, however it was written when the team was made
-        let same = |has: &String| std::path::Path::new(has).canonicalize().is_ok_and(|has| has == folder);
-        match inner.teams(&app.cfg).get(&name) {
-            Some(has) if !same(has) => return Json(json!({ "error": format!("There is already a team called {name}, in another folder.") })),
-            // another agent for a team that is there
-            Some(_) => {}
+        let at = folder.display().to_string();
+        match inner.team_at(&at) {
+            // a folder that has a team: another agent joins it
+            Some(team) => name = team,
+            None if inner.teams().contains_key(&name) || inner.sessions.iter().any(|s| s.callsign.project == name) => {
+                return Json(json!({ "error": format!("There is already a team called {name}, in another folder.") }));
+            }
             None => {
-                inner.projects.insert(name.clone(), folder.display().to_string());
-                log(format!("a radio made the team {name}, in {}", folder.display()));
+                // a name other than the one the folder would give is one he chose, and stays his
+                if inner.folder_team(&at).as_deref() != Some(name.as_str()) {
+                    inner.named_teams.insert(name.clone());
+                }
+                inner.projects.insert(name.clone(), sessions::real_folder(&at));
+                log(format!("a radio made the team {name}, in {at}"));
             }
         }
     }
@@ -644,7 +667,7 @@ async fn feed(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
                 m
             })
             .collect();
-        return Json(Feed { schema: airband_core::radio::SCHEMA.into(), rev: upto, messages, roster: inner.roster_entries(), roster_rev: inner.roster_rev(), reads: { let r = judge::reader(&app.cfg); r.offer(crate::providers::Job::Summary).map(|(_, o)| o.label.clone()).unwrap_or_default() }, direct: config::lan_addrs().into_iter().filter(|_| app.cfg.lan).chain(config::overlay_addrs()).map(|a| format!("http://{a}:{}", app.cfg.port)).collect(), colours: inner.colours.clone(), seq: inner.seq, projects: inner.teams(&app.cfg).into_keys().collect(), open: open.into_iter().collect(), quick: airband_core::radio::quick_defaults().into_iter().chain(app.cfg.quick.iter().cloned()).collect(), station: config::station(&app.cfg), reads_failed: judge::failed(), answers: inner.settled_for(&radio, since) });
+        return Json(Feed { schema: airband_core::radio::SCHEMA.into(), rev: upto, messages, roster: inner.roster_entries(), roster_rev: inner.roster_rev(), reads: { let r = judge::reader(&app.cfg); r.offer(crate::providers::Job::Summary).map(|(_, o)| o.label.clone()).unwrap_or_default() }, direct: config::lan_addrs().into_iter().filter(|_| app.cfg.lan).chain(config::overlay_addrs()).map(|a| format!("http://{a}:{}", app.cfg.port)).collect(), colours: inner.colours.clone(), seq: inner.seq, projects: inner.teams().into_keys().collect(), open: open.into_iter().collect(), quick: airband_core::radio::quick_defaults().into_iter().chain(app.cfg.quick.iter().cloned()).collect(), station: config::station(&app.cfg), reads_failed: judge::failed(), answers: inner.settled_for(&radio, since) });
     }
 }
 
@@ -740,7 +763,7 @@ async fn status(State(app): State<Arc<App>>) -> Json<Value> {
         "held": inner.calls.values().any(|c| c.held),
         "radios": inner.calls.iter().filter(|(_, c)| c.connected()).map(|(id, _)| id.clone()).collect::<Vec<_>>(),
         "answering": inner.answering.len(),
-        "projects": inner.launchable(&app.cfg),
+        "projects": inner.launchable(),
         "kept": { "messages": app.store.counts().0, "events": app.store.counts().1 },
         "sessions": inner.sessions.iter().map(|s| json!({
             "callsign": s.callsign.text(), "harness": s.agent.harness, "cwd": s.agent.cwd,
@@ -774,6 +797,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/radio/accounts", get(accounts_list))
         .route("/v1/radio/accounts/use", post(accounts_use))
         .route("/v1/radio/team", post(team))
+        .route("/v1/radio/team/rename", post(team_rename))
         .route("/v1/radio/folders", post(folders))
         .route("/v1/radio/recent", get(recent))
         .route("/v1/radio/project", post(project))
