@@ -65,7 +65,7 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, store: Arc<Store>, host: Arc<dyn R
             continue;
         };
         link.keeps_at_relay(outbox.iter().any(|o| o.stage == Stage::Left && o.failed.is_none() && o.id != next.id));
-        let (got, steps) = link.utterance_once(&airband_core::radio::Utterance { text: next.text.clone(), id: next.id.clone(), re: next.re.clone(), scope: next.scope.clone(), label: next.label.clone(), attachments: next.attachments.clone(), others, to: next.to.clone(), act });
+        let (got, steps) = link.utterance_once(&airband_core::radio::Utterance { text: next.text.clone(), id: next.id.clone(), re: next.re.clone(), scope: next.scope.clone(), label: next.label.clone(), attachments: next.attachments.clone(), others, to: next.to.clone(), act, answers: next.answers.clone() });
         // It went straight to his computer while the relay still keeps earlier words of his for it: these
         // arrive first. Worth a line, for whoever wonders about the order.
         let kept = outbox.iter().filter(|o| o.stage == Stage::Left && o.failed.is_none() && o.id != next.id).count();
@@ -75,6 +75,7 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, store: Arc<Store>, host: Arc<dyn R
         match got {
             Ok(Sent::Answered(reply)) => {
                 wait = 1;
+                link.asked_back(&reply);
                 settle(&store, &*host, &next.id, airband_core::radio::Outcome::Answered { reply });
             }
             Ok(Sent::Taken) => {

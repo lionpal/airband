@@ -403,7 +403,14 @@ try:
     check("and words about this computer's work still go to its own agent (model)", told.get("say") == "Sent to catalog part page." and not told.get("elsewhere"), told)
     unsure = said("hm, what about the other thing", others=there)
     check("when it cannot tell, it says who it might be for, to tap, and delivers nothing (model)", len(unsure.get("ask", [])) >= 2 and unsure["say"].startswith("Who is that for?"), unsure)
-    say("@catalogpartpage never mind")  # so the words it was holding are not waiting for a name
+    check("the question it asks back has an id, for his next words to answer", bool(unsure.get("question")), unsure)
+    before = received("page")
+    check("a tag that does not answer the question by its id sends only what it says", say("@catalogpartpage never mind") == "Sent to catalog part page."
+          and "the other thing" not in received("page")[len(before):], received("page")[len(before):])
+    unsure = said("hm, what about the other thing", others=there)
+    before = received("page")
+    check("a tag that answers it by its id sends the words it was holding", say("@catalogpartpage", answers=unsure.get("question")) == "Sent to catalog part page."
+          and "the other thing" in received("page")[len(before):], received("page")[len(before):])
     check("the computer has no voice and no ears: it makes no speech, hands out no listening pass and takes no recording", http("GET", "/v1/radio/speech/x")[0] == 404 and http("GET", "/v1/radio/ears")[0] == 404 and http("POST", "/v1/radio/hear", {"clip": "c", "data": "", "samples": 0, "last": True})[0] in (404, 405) and "listens" not in feed())
     asked = http("GET", f"/v1/radio/message/{q['id']}?form=spoken&part=asked")[1] or {}
     check("a question can be read out as it was asked: who asks, its short form, and its answers", asked.get("text", "").startswith("orders refunds. ") and all(o in asked["text"] for o in q["options"]) and "in your own words" in asked["text"], asked)

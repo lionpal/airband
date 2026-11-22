@@ -81,6 +81,9 @@ pub(crate) struct Link {
     /// has told it.
     awaited: Mutex<std::collections::HashMap<String, Option<Reply>>>,
     told: std::sync::Condvar,
+    /// The question his computer last asked him back, by its id, until the next thing he says to it, which
+    /// carries it as its answer. Not kept across restarts.
+    question: Mutex<Option<String>>,
 }
 
 /// What a failed send came to: nothing answered, or it took too long.
@@ -109,7 +112,7 @@ impl Link {
             Pairing::Direct { url, token } => Route::Direct { url, auth: format!("Bearer {token}"), radio: radio.to_string() },
             Pairing::Relay { relay, secret } => Route::Relay { relay, keys: Keys::derive(&secret)? },
         };
-        Ok(Link { route, agent, near: crate::net::agent_quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct { addrs: at, ..Direct::default() }), trail: Mutex::new(trail), trail_file, presence: Mutex::default(), kept_at_relay: Default::default(), lost: Mutex::default(), awaited: Mutex::default(), told: std::sync::Condvar::new(), armed: Mutex::new(Vec::new()) })
+        Ok(Link { route, agent, near: crate::net::agent_quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct { addrs: at, ..Direct::default() }), trail: Mutex::new(trail), trail_file, presence: Mutex::default(), kept_at_relay: Default::default(), lost: Mutex::default(), awaited: Mutex::default(), told: std::sync::Condvar::new(), question: Mutex::default(), armed: Mutex::new(Vec::new()) })
     }
 
     /// The tower said where it can be reached without the relay. Anything new is tried at the next request.
@@ -206,6 +209,7 @@ impl Link {
 
     /// The feed told what came of something he said. Whoever is waiting for it here is given it.
     pub(crate) fn answered(&self, id: &str, reply: &Reply) {
+        self.asked_back(reply);
         if let Some(slot) = self.awaited.lock().unwrap().get_mut(id) {
             *slot = Some(reply.clone());
             self.told.notify_all();
@@ -461,12 +465,26 @@ impl Link {
     /// takes it at once; its answer comes by the feed, or to this asking again, and is waited for as long as a
     /// person on a call would. Nothing, when the tower has it and has not said what came of it in that time:
     /// it is in the chat when it does.
+    /// His computer asked him something back: what he says next to it answers that.
+    pub(crate) fn asked_back(&self, reply: &Reply) {
+        if let Some(question) = &reply.question {
+            *self.question.lock().unwrap() = Some(question.clone());
+        }
+    }
+    /// The question his next words answer, taken: only the next thing he says carries it.
+    pub(crate) fn take_question(&self) -> Option<String> {
+        self.question.lock().unwrap().take()
+    }
+
     pub(crate) fn utterance(&self, text: &str, re: Option<String>, scope: Option<String>, act: Option<airband_core::radio::Act>) -> Result<Option<Reply>, LinkError> {
         // what he has attached goes with what he says; if this fails for good they are his to send again
         let attachments = self.take_armed();
-        let u = Utterance { text: text.to_string(), id: random_hex(12), re, scope, attachments: attachments.clone(), act, ..Default::default() };
+        let u = Utterance { text: text.to_string(), id: random_hex(12), re, scope, attachments: attachments.clone(), act, answers: self.take_question(), ..Default::default() };
         self.awaited.lock().unwrap().insert(u.id.clone(), None);
         let got = self.say_and_wait(&u);
+        if let Ok(Some(reply)) = &got {
+            self.asked_back(reply);
+        }
         self.awaited.lock().unwrap().remove(&u.id);
         if got.is_err() {
             // it never got there: what was attached is still his to send

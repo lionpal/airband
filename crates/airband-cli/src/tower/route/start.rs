@@ -107,9 +107,11 @@ pub(super) async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, p
         (Some(named), _) => named.clone(),
         (None, true) => match place_idea(app, &idea.task, projects).await {
             Ok(project) => project,
-            Err(reply) => {
+            Err(mut reply) => {
                 if reply.listen {
-                    app.passing().call(radio).unplaced_idea = Some((idea, Instant::now()));
+                    let question = config::random_hex(8);
+                    app.passing().call(radio).unplaced_idea = Some((question.clone(), idea));
+                    reply.question = Some(question);
                 }
                 log(format!("← radio: \"{text}\" → a new agent, project not clear"));
                 return reply;
@@ -117,9 +119,10 @@ pub(super) async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, p
         },
         (None, false) if idea.task.is_empty() || projects.is_empty() => return place_idea(app, &idea.task, projects).await.err().unwrap_or(Reply { say: String::new(), listen: false, ..Reply::default() }),
         (None, false) => {
-            app.passing().call(radio).unplaced_idea = Some((idea, Instant::now()));
+            let question = config::random_hex(8);
+            app.passing().call(radio).unplaced_idea = Some((question.clone(), idea));
             log(format!("← radio: \"{text}\" → a new agent, project not clear"));
-            return Reply { say: which_project(projects), listen: true, ..Reply::default() };
+            return Reply { say: which_project(projects), listen: true, question: Some(question), ..Reply::default() };
         }
     };
     log(format!("← radio: \"{text}\" → launch in {project}"));

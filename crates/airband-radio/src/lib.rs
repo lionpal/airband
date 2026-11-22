@@ -176,6 +176,10 @@ pub struct Outgoing {
     /// For the tower, not for a host to read: what a button of his stood for, as JSON. Empty for words.
     #[serde(default)]
     pub act: String,
+    /// The question of his computer's this answers, by its id: set when it is the next thing he said after
+    /// the computer asked him something back.
+    #[serde(default)]
+    pub answers: Option<String>,
     /// How many times it has been tried.
     #[serde(default)]
     pub tries: u32,
@@ -238,7 +242,7 @@ pub enum Stage {
 impl Outgoing {
     /// Something he has just said, not yet tried.
     pub(crate) fn new(id: String, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, attachments: Vec<String>, others: String) -> Outgoing {
-        Outgoing { id, text, re, at: now_ms(), scope, label, attachments, others, to: Vec::new(), act: String::new(), tries: 0, last_tried: 0, trail: Vec::new(), failed: None, stage: Stage::Trying }
+        Outgoing { id, text, re, at: now_ms(), scope, label, attachments, others, to: Vec::new(), act: String::new(), answers: None, tries: 0, last_tried: 0, trail: Vec::new(), failed: None, stage: Stage::Trying }
     }
 }
 

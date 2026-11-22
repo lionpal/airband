@@ -121,6 +121,11 @@ pub struct Utterance {
     /// ever what he said.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub act: Option<Act>,
+    /// The question of the tower's this answers, by the id its reply gave it (`Reply::question`): the next
+    /// thing he said to that computer after it asked. With it the tower reads these words as the answer, and
+    /// without it they answer nothing it asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answers: Option<String>,
 }
 
 /// Something he did with a button.
@@ -246,6 +251,10 @@ pub struct Reply {
     /// By the agent's id, as `others` gave it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub elsewhere: Option<String>,
+    /// The tower asked him something back ("Which project is that for?"): its id. The next thing he says to
+    /// this computer carries it as `Utterance::answers`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question: Option<String>,
 }
 
 #[cfg(test)]

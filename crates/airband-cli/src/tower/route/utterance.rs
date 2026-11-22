@@ -124,17 +124,22 @@ async fn leave(app: &Arc<App>, text: &str, said: &airband_core::radio::Utterance
 /// A new agent: the answer to "Which project?" asked about an idea just now, or one asked for from a radio's own
 /// screen, which says what it is and needs no reading. `None` when this is not about a new agent.
 async fn new_agent(app: &Arc<App>, radio: &str, text: &str, said: &airband_core::radio::Utterance, files: &str, projects: &[String]) -> Option<Reply> {
-    // A model says whether this answers the question and with which project. Words that are about something else
-    // leave the idea waiting for its answer, for as long as it would have.
-    let held_idea = app.passing().call(radio).unplaced_idea.take().filter(|(_, when)| when.elapsed() < Duration::from_secs(90));
-    if let Some((idea, when)) = held_idea {
-        if said.act.is_none() && said.to.is_empty()
-            && let Some(project) = named_project(app, &idea.task, text, projects).await {
-                log(format!("← radio: \"{text}\" → launch in {project}"));
-                return Some(launch(app, &project, &idea).await);
-            }
-        app.passing().call(radio).unplaced_idea = Some((idea, when));
-    }
+    // Words that answer the question by its id: a model says with which project. The idea is let go either way:
+    // the next thing he said after the question was this, and it named none.
+    let held_idea = {
+        let mut inner = app.passing();
+        let call = inner.call(radio);
+        match (&call.unplaced_idea, &said.answers) {
+            (Some((question, _)), Some(answers)) if question == answers => call.unplaced_idea.take().map(|(_, idea)| idea),
+            _ => None,
+        }
+    };
+    if let Some(idea) = held_idea
+        && said.act.is_none() && said.to.is_empty()
+        && let Some(project) = named_project(app, &idea.task, text, projects).await {
+            log(format!("← radio: \"{text}\" → launch in {project}"));
+            return Some(launch(app, &project, &idea).await);
+        }
     let Some(Act::Launch(new)) = &said.act else { return None };
     let Some(project) = app.read().teams.get(&new.team).map(|t| t.name.clone()) else {
         return Some(say("That team is not on this computer any more.".into()));
@@ -161,7 +166,12 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
             inner.call(radio).focus = Some(one.agent.id.clone());
         }
         let names = inner.sessions.iter().map(|s| s.callsign.text()).collect::<Vec<_>>();
-        let held = inner.call(radio).asked.take().filter(|(_, _, when)| when.elapsed() < Duration::from_secs(90)).map(|(t, f, _)| (t, f));
+        // only words that answer "Who is that for?" by its id take what it holds
+        let call = inner.call(radio);
+        let held = match (&call.asked, &said.answers) {
+            (Some((question, _, _)), Some(answers)) if question == answers => call.asked.take().map(|(_, t, f)| (t, f)),
+            _ => None,
+        };
         (parsed, named, inner.roster(), names, inner.unheard().count(), held)
     };
     let (mut rest, mut files) = (parsed.rest, files);
@@ -199,10 +209,11 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
             Routed::Ask(options) if options.is_empty() => return Err(say("No agents are running.".into())),
             Routed::Ask(options) => {
                 // held with its files, so they go along when he says who it was for
-                app.passing().call(radio).asked = Some((rest.clone(), files.clone(), Instant::now()));
+                let question = config::random_hex(8);
+                app.passing().call(radio).asked = Some((question.clone(), rest.clone(), files.clone()));
                 let names: Vec<String> = options.iter().map(|s| s.callsign.text()).collect();
                 log(format!("← radio: \"{text}\" → unsure; asking between {}", names.join(", ")));
-                return Err(Reply { ask: options.iter().map(|s| s.agent.id.clone()).collect(), ..ask(format!("Who is that for? {}.", names.join(", or "))) });
+                return Err(Reply { ask: options.iter().map(|s| s.agent.id.clone()).collect(), question: Some(question), ..ask(format!("Who is that for? {}.", names.join(", or "))) });
             }
         }
     };

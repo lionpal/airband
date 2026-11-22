@@ -165,7 +165,9 @@ impl Radio {
         let id = random_hex(12);
         let waiting = self.store.change(|s| {
             // whatever he attached and has reached the tower goes with this
-            s.outbox.push(Outgoing { to, act, ..Outgoing::new(id.clone(), text, re, scope, label, self.link.take_armed(), others) });
+            // the next thing he says after his computer asked him something back is his answer to it
+            let answers = self.link.take_question();
+            s.outbox.push(Outgoing { to, act, answers, ..Outgoing::new(id.clone(), text, re, scope, label, self.link.take_armed(), others) });
             s.outbox.clone()
         });
         self.wake.ring();

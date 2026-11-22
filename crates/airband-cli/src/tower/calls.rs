@@ -20,10 +20,12 @@ pub(super) struct Call {
     pub(super) handed: Option<Transmission>,
     /// When this radio last did anything at all: a radio that only reads the feed and types never polls.
     pub(super) seen: Option<Instant>,
-    /// Words he said that the tower could not place, held while it asks him who they are for.
-    pub(super) asked: Option<(String, String, Instant)>,
-    /// An idea for a new agent whose project the tower could not work out, held while it asks him which.
-    pub(super) unplaced_idea: Option<(Idea, Instant)>,
+    /// Words he said that the tower could not place, with their files, held under the id of the question it
+    /// asked him back ("Who is that for?"). Only an utterance that answers that id takes them.
+    pub(super) asked: Option<(String, String, String)>,
+    /// An idea for a new agent whose project the tower could not work out, held under the id of the question
+    /// it asked him back ("Which project?").
+    pub(super) unplaced_idea: Option<(String, Idea)>,
     /// How far this radio has the chat on screen: the highest change count it has asked for what follows of,
     /// while it was showing the chat. A line changed after this is one he may not have seen.
     pub(super) has: u64,
