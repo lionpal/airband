@@ -15,9 +15,10 @@ pub(super) const A_DAY: u32 = 2000;
 
 
 pub(super) struct Signups {
-    minute: Limiter,
-    day: Limiter,
-    by_address: Limiter,
+    /// Everyone's, under one key.
+    minute: Limiter<()>,
+    day: Limiter<()>,
+    by_address: Limiter<Caller>,
 }
 
 impl Default for Signups {
@@ -29,20 +30,22 @@ impl Default for Signups {
 impl Signups {
     /// May this one be taken? Counts it if so, against everyone's minute and day and its own address's hour:
     /// all three or none.
-    pub(super) fn allow(&mut self, address: &str, now: Instant) -> bool {
-        // everyone's counts are kept under one key
-        const ALL: &str = "";
-        if !(self.minute.room(ALL, now) && self.day.room(ALL, now) && self.by_address.room(address, now)) {
+    pub(super) fn allow(&mut self, address: &Caller, now: Instant) -> bool {
+        if !(self.minute.room(&(), now) && self.day.room(&(), now) && self.by_address.room(address, now)) {
             return false;
         }
-        self.minute.allow(ALL, now) && self.day.allow(ALL, now) && self.by_address.allow(address, now)
+        self.minute.allow(&(), now) && self.day.allow(&(), now) && self.by_address.allow(address, now)
     }
 }
 
 /// The headers that let the homepage, and only it, call this from a browser.
-pub(super) fn from_site(headers: &HeaderMap) -> [(&'static str, String); 4] {
-    let origin = header(headers, "origin").filter(|o| SITES.contains(o)).unwrap_or(SITES[0]);
-    [("access-control-allow-origin", origin.to_string()), ("access-control-allow-methods", "POST, OPTIONS".into()), ("access-control-allow-headers", "content-type".into()), ("vary", "origin".into())]
+/// A page from anywhere else is named nothing, so its browser refuses it.
+pub(super) fn from_site(headers: &HeaderMap) -> axum::response::AppendHeaders<Vec<(&'static str, String)>> {
+    let mut named = vec![("access-control-allow-methods", "POST, OPTIONS".to_string()), ("access-control-allow-headers", "content-type".into()), ("vary", "origin".into())];
+    if let Some(origin) = header(headers, "origin").filter(|o| SITES.contains(o)) {
+        named.push(("access-control-allow-origin", origin.to_string()));
+    }
+    axum::response::AppendHeaders(named)
 }
 
 /// Is this plausibly an email address? Whether it is a real one only a message to it can tell. Only the plain
@@ -114,6 +117,9 @@ pub(super) async fn waitlist(State(relay): State<Arc<Relay>>, headers: HeaderMap
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn at(a: &str) -> Caller {
+        Caller::At(a.into())
+    }
 
     #[test]
     fn what_passes_for_an_email_address() {
@@ -129,35 +135,36 @@ mod tests {
     fn sign_ups_are_counted_per_caller_per_minute_and_per_day() {
         let (mut s, t0) = (Signups::default(), Instant::now());
         // one caller: five in an hour, and again after the hour
-        assert!((0..5).all(|_| s.allow("1.1.1.1", t0)) && !s.allow("1.1.1.1", t0));
-        assert!(s.allow("1.1.1.1", t0 + Duration::from_secs(3601)));
+        assert!((0..5).all(|_| s.allow(&at("1.1.1.1"), t0)) && !s.allow(&at("1.1.1.1"), t0));
+        assert!(s.allow(&at("1.1.1.1"), t0 + Duration::from_secs(3601)));
         // everyone together: twenty in a minute, whoever they are
         let (mut s, mut taken) = (Signups::default(), 0);
         for i in 0..40 {
-            taken += s.allow(&format!("2.2.2.{i}"), t0) as u32;
+            taken += s.allow(&at(&format!("2.2.2.{i}")), t0) as u32;
         }
         assert_eq!(taken, A_MINUTE);
-        assert!(s.allow("3.3.3.3", t0 + Duration::from_secs(61)));
+        assert!(s.allow(&at("3.3.3.3"), t0 + Duration::from_secs(61)));
         // and a day's worth, however slowly they come
         let mut s = Signups::default();
-        let taken = (0..3000u64).filter(|i| s.allow(&format!("a{i}"), t0 + Duration::from_secs(i * 20))).count() as u32;
+        let taken = (0..3000u64).filter(|i| s.allow(&at(&format!("a{i}")), t0 + Duration::from_secs(i * 20))).count() as u32;
         assert_eq!(taken, A_DAY);
     }
 
     #[test]
     fn the_caller_is_the_address_the_load_balancer_added() {
         let mut h = HeaderMap::new();
-        assert_eq!(caller(&h), "direct");
+        assert_eq!(caller(&h), Caller::Unseen);
         h.insert("x-forwarded-for", "9.9.9.9, 203.0.113.7".parse().unwrap()); // the first is whatever the caller sent
-        assert_eq!(caller(&h), "203.0.113.7");
+        assert_eq!(caller(&h), Caller::At("203.0.113.7".into()));
     }
 
     #[test]
     fn only_the_homepage_is_named_as_an_allowed_origin() {
         let mut h = HeaderMap::new();
         h.insert("origin", "https://evil.example".parse().unwrap());
-        assert_eq!(from_site(&h)[0].1, "https://airband.dev");
+        let named = |h: &HeaderMap| from_site(h).0.into_iter().find(|(n, _)| *n == "access-control-allow-origin").map(|(_, v)| v);
+        assert_eq!(named(&h), None, "another site is named nothing");
         h.insert("origin", "https://www.airband.dev".parse().unwrap());
-        assert_eq!(from_site(&h)[0].1, "https://www.airband.dev");
+        assert_eq!(named(&h).as_deref(), Some("https://www.airband.dev"));
     }
 }

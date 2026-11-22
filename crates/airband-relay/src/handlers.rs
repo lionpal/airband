@@ -25,7 +25,7 @@ pub(super) async fn open(State(relay): State<Arc<Relay>>, Path(channel): Path<St
         if !limits.opened_by_address.allow(&caller(&headers), now) {
             return say(StatusCode::TOO_MANY_REQUESTS, "too many new pairings from this address today; try again tomorrow");
         }
-        if !limits.opened.allow("all", now) {
+        if !limits.opened.allow(&(), now) {
             return say(StatusCode::TOO_MANY_REQUESTS, "the relay is taking no new pairings for a while; try again in an hour");
         }
     }
