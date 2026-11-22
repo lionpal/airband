@@ -38,8 +38,19 @@ pub(super) struct HeldItem {
 pub(super) fn held_dir(dir: &Path, channel: &str) -> PathBuf {
     dir.join("held").join(channel)
 }
+/// A channel's list. One that cannot be read is moved aside and said, and the channel starts again with
+/// nothing kept, so it is never refused for ever; only one that cannot even be moved aside is an error, left
+/// as it is.
 pub(super) fn held_list(held: &Path) -> Result<HeldList, String> {
-    airband_io::kept::read(&held.join("list.json")).map(Option::unwrap_or_default)
+    let (list, _, loaded) = airband_io::kept::Keeper::open::<HeldList>(Some(held.join("list.json")));
+    match loaded {
+        airband_io::kept::Loaded::LeftInPlace { why } => Err(why),
+        airband_io::kept::Loaded::SetAside { why } => {
+            eprintln!("airband-relay: the list of kept messages on a channel could not be read; it starts again: {why}");
+            Ok(list)
+        }
+        airband_io::kept::Loaded::Fresh | airband_io::kept::Loaded::Read => Ok(list),
+    }
 }
 impl HeldItem {
     /// Still within the time a kept message waits for its tower.
@@ -73,10 +84,10 @@ pub(super) fn held_keep(held: &Path, list: &HeldList) -> Result<(), String> {
     airband_io::kept::save(&held.join("list.json"), list).map_err(|e| e.to_string())
 }
 
-pub(super) fn load(dir: &Path) -> Result<HashMap<String, Saved>, String> {
+fn load(dir: &Path) -> Result<HashMap<String, Saved>, String> {
     read_channels(dir)
 }
-pub(super) fn join_waitlist(dir: &Path, email: &str) -> Result<(), String> {
+fn join_waitlist(dir: &Path, email: &str) -> Result<(), String> {
     let _one = LISTS.lock().unwrap();
     let file = dir.join("waitlist.txt");
     // not there yet is an empty list; there and unreadable is an error, never written over as empty
@@ -90,19 +101,25 @@ pub(super) fn join_waitlist(dir: &Path, email: &str) -> Result<(), String> {
     }
     airband_io::files::write_private(&file, format!("{have}{email}\n")).map_err(|e| format!("cannot save {}: {e}", file.display()))
 }
-pub(super) fn remove(dir: &Path, channel: &str) -> Result<(), String> {
+fn remove(dir: &Path, channel: &str) -> Result<(), String> {
     let _one = LISTS.lock().unwrap();
     let mut all = read_channels(dir)?;
     all.remove(channel);
-    write_channels(dir, &all)
+    write_channels(dir, &all)?;
+    // what was kept for it goes too: no tower will ever come for it
+    let _held = HELD.lock().unwrap();
+    match std::fs::remove_dir_all(held_dir(dir, channel)) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("the channel is forgotten, but what was kept for it could not be removed: {e}")),
+        _ => Ok(()),
+    }
 }
-pub(super) fn add(dir: &Path, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<(), String> {
+fn add(dir: &Path, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<(), String> {
     let _one = LISTS.lock().unwrap();
     let mut all = read_channels(dir)?;
     all.entry(channel.into()).or_insert(Saved { pull_hash: pull_hash.into(), radio_hash: radio_hash.into() });
     write_channels(dir, &all)
 }
-pub(super) fn hold(dir: &Path, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<bool, String> {
+fn hold(dir: &Path, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<bool, String> {
     let _one = HELD.lock().unwrap();
     let held = held_dir(dir, channel);
     std::fs::create_dir_all(&held).map_err(|e| e.to_string())?;
@@ -120,7 +137,7 @@ pub(super) fn hold(dir: &Path, channel: &str, id: &str, sealed: &[u8], most: usi
     list.items.push(HeldItem { seq, id: id.to_string(), at: airband_core::clock::now_secs() });
     held_keep(&held, &list).map(|_| true)
 }
-pub(super) fn held_next(dir: &Path, channel: &str) -> Result<Option<(String, Vec<u8>)>, String> {
+fn held_next(dir: &Path, channel: &str) -> Result<Option<(String, Vec<u8>)>, String> {
     let _one = HELD.lock().unwrap();
     let held = held_dir(dir, channel);
     let mut list = held_list(&held)?;
@@ -150,13 +167,13 @@ pub(super) fn held_next(dir: &Path, channel: &str) -> Result<Option<(String, Vec
     }
     Ok(found)
 }
-pub(super) fn held_done(dir: &Path, channel: &str, id: &str) -> Result<(), String> {
+fn held_done(dir: &Path, channel: &str, id: &str) -> Result<(), String> {
     let _one = HELD.lock().unwrap();
     let held = held_dir(dir, channel);
     let mut list = held_list(&held)?;
     drop_from(&held, &mut list, |h| h.id == id)
 }
-pub(super) fn held_purge(dir: &Path) -> Result<(), String> {
+fn held_purge(dir: &Path) -> Result<(), String> {
     let _one = HELD.lock().unwrap();
     let Ok(channels) = std::fs::read_dir(dir.join("held")) else { return Ok(()) };
     let now = airband_core::clock::now_secs();
@@ -165,4 +182,40 @@ pub(super) fn held_purge(dir: &Path) -> Result<(), String> {
         drop_from(&held, &mut list, |h| !h.fresh(now))?;
     }
     Ok(())
+}
+
+/// The folder store: the jobs above, for a relay with a disk.
+pub(crate) struct Folder {
+    pub(super) dir: PathBuf,
+}
+
+#[async_trait::async_trait]
+impl ChannelStore for Folder {
+    fn describe(&self) -> String {
+        format!("the folder {}", self.dir.display())
+    }
+    async fn load(&self) -> Result<HashMap<String, Saved>, String> {
+        load(&self.dir)
+    }
+    async fn join_waitlist(&self, email: &str) -> Result<(), String> {
+        join_waitlist(&self.dir, email)
+    }
+    async fn remove(&self, channel: &str) -> Result<(), String> {
+        remove(&self.dir, channel)
+    }
+    async fn add(&self, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<(), String> {
+        add(&self.dir, channel, pull_hash, radio_hash)
+    }
+    async fn hold(&self, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<bool, String> {
+        hold(&self.dir, channel, id, sealed, most)
+    }
+    async fn held_next(&self, channel: &str) -> Result<Option<(String, Vec<u8>)>, String> {
+        held_next(&self.dir, channel)
+    }
+    async fn held_done(&self, channel: &str, id: &str) -> Result<(), String> {
+        held_done(&self.dir, channel, id)
+    }
+    async fn held_purge(&self) -> Result<(), String> {
+        held_purge(&self.dir)
+    }
 }

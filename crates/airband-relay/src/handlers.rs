@@ -232,14 +232,14 @@ pub(super) async fn wake_phone(State(relay): State<Arc<Relay>>, Path(channel): P
     match relay.push.send(ask.provider, &ask.to, &ask.sealed, ask.question).await {
         None => answer(StatusCode::SERVICE_UNAVAILABLE, false, false, "this relay has no such push service"),
         Some(push::Outcome::Sent) => answer(StatusCode::OK, true, false, ""),
-        Some(push::Outcome::Gone(why)) => answer(StatusCode::GONE, false, true, &why),
-        Some(push::Outcome::Refused(why)) => {
-            eprintln!("airband-relay: the push service refused a notification: {why}");
-            answer(StatusCode::BAD_GATEWAY, false, false, &why)
+        Some(push::Outcome::Gone) => answer(StatusCode::GONE, false, true, "the phone's address is no longer good"),
+        Some(push::Outcome::Refused(said)) => {
+            eprintln!("airband-relay: a notification was refused: {said}");
+            answer(StatusCode::BAD_GATEWAY, false, false, &said.to_string())
         }
         Some(push::Outcome::Failed(why)) => {
             eprintln!("airband-relay: a notification could not be sent: {why}");
-            answer(StatusCode::BAD_GATEWAY, false, false, &why)
+            answer(StatusCode::BAD_GATEWAY, false, false, &why.to_string())
         }
     }
 }
@@ -253,7 +253,7 @@ mod tests {
     fn relay_in_a_folder(admission: Option<&str>) -> (Arc<Relay>, std::path::PathBuf) {
         let folder = std::env::temp_dir().join(format!("airband-relay-test-{}", random_hex(6)));
         std::fs::create_dir_all(&folder).unwrap();
-        (Arc::new(Relay::new(push::Push::default(), HashMap::new(), store::Store::Folder(folder.clone()), admission.map(str::to_string))), folder)
+        (Arc::new(Relay::new(push::Push::default(), HashMap::new(), store::folder(folder.clone()), admission.map(str::to_string))), folder)
     }
     fn with(pairs: &[(&str, &str)]) -> HeaderMap {
         let mut headers = HeaderMap::new();
@@ -284,6 +284,7 @@ mod tests {
         text(hold(State(relay.clone()), Path(channel.to_string()), headers, Bytes::from_static(b"sealed")).await).await
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_kept_message_and_a_channel_leave_memory_only_once_the_store_has_let_them_go() {
         let (relay, folder) = relay_in_a_folder(None);
@@ -295,16 +296,17 @@ mod tests {
         let handed = pull(State(relay.clone()), Path(keys.channel.clone()), tower.clone()).await;
         assert_eq!(handed.headers().get(REQUEST_HEADER).unwrap(), "aaaaaaaa01");
         // the store cannot let it go: the answer says so, and it is still held, as it was
-        let list = folder.join("held").join(&keys.channel).join("list.json");
-        let good = std::fs::read(&list).unwrap();
-        std::fs::write(&list, b"{broken").unwrap();
+        // (its folder cannot be written just now)
+        use std::os::unix::fs::PermissionsExt;
+        let held = folder.join("held").join(&keys.channel);
+        std::fs::set_permissions(&held, std::fs::Permissions::from_mode(0o500)).unwrap();
         let mut kept = tower.clone();
         kept.insert(airband_core::relay::KEPT_HEADER, "1".parse().unwrap());
         let said = reply(State(relay.clone()), Path((keys.channel.clone(), "aaaaaaaa01".into())), kept.clone(), Bytes::new()).await;
         assert_eq!(said.status().as_u16(), 503);
         assert!(relay.channels.lock().unwrap()[&keys.channel].holding.is_some());
         // once it can, it is let go, and only then is the holding cleared
-        std::fs::write(&list, good).unwrap();
+        std::fs::set_permissions(&held, std::fs::Permissions::from_mode(0o700)).unwrap();
         assert_eq!(reply(State(relay.clone()), Path((keys.channel.clone(), "aaaaaaaa01".into())), kept, Bytes::new()).await.status().as_u16(), 204);
         assert!(relay.channels.lock().unwrap()[&keys.channel].holding.is_none());
         assert_eq!(relay.store.held_next(&keys.channel).await, Ok(None));
@@ -351,8 +353,8 @@ mod tests {
         assert_eq!(call(State(relay.clone()), Path("0".repeat(32)), HeaderMap::new(), Bytes::from_static(b"sealed")).await.status().as_u16(), 401);
 
         // a relay started again on the same folder remembers all of it
-        let saved = store::Store::Folder(folder.clone()).load().await.unwrap();
-        let again = Arc::new(Relay::new(push::Push::default(), saved.into_iter().map(|(c, s)| (c, Channel::from(s))).collect(), store::Store::Folder(folder.clone()), None));
+        let saved = store::folder(folder.clone()).load().await.unwrap();
+        let again = Arc::new(Relay::new(push::Push::default(), saved.into_iter().map(|(c, s)| (c, Channel::from(s))).collect(), store::folder(folder.clone()), None));
         assert_eq!(leave(&again, &mine.channel, "", "aaaaaaaa07").await, refused);
         assert_eq!(leave(&again, &mine.channel, &mine.radio_token, "aaaaaaaa07").await.0, 202);
         assert_eq!(leave(&again, &other.channel, &other.radio_token, "aaaaaaaa08").await.0, 202);
@@ -471,7 +473,7 @@ mod tests {
         let keys = Keys::derive(&airband_core::relay::new_secret()).unwrap();
         let apns = push::Apns::new(&key, "KEY123", "TEAM456", "dev.example.app", &format!("http://{at}")).unwrap();
         let folder = std::env::temp_dir().join(format!("airband-relay-test-{}", random_hex(6)));
-        let relay = Arc::new(Relay::new(push::Push::with_apns(apns), HashMap::from([(keys.channel.clone(), Channel::new(token_hash(&keys.pull_token), token_hash(&keys.radio_token)))]), store::Store::Folder(folder), None));
+        let relay = Arc::new(Relay::new(push::Push::with_apns(apns), HashMap::from([(keys.channel.clone(), Channel::new(token_hash(&keys.pull_token), token_hash(&keys.radio_token)))]), store::folder(folder), None));
         let ask = |token: &str, provider: airband_core::relay::PushService, to: &str| {
             let (relay, channel) = (relay.clone(), keys.channel.clone());
             let mut headers = HeaderMap::new();
@@ -488,8 +490,8 @@ mod tests {
         assert_eq!(ask("someone-else", airband_core::relay::PushService::Apns, "aa11").await.0, 403);
         assert_eq!(seen.load(Ordering::SeqCst), 0);
         assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "aa11").await, (200, true, false, String::new()));
-        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "bb22").await, (410, false, true, "Unregistered".into()));
-        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "cc33").await, (410, false, true, "BadDeviceToken".into()));
+        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "bb22").await, (410, false, true, "the phone's address is no longer good".into()));
+        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "cc33").await, (410, false, true, "the phone's address is no longer good".into()));
         assert_eq!(seen.load(Ordering::SeqCst), 3);
         // a service this relay does not have, and an address that is not one
         assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Unknown, "aa11").await.0, 503);

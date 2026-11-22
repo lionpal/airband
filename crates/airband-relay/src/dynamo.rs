@@ -126,33 +126,14 @@ impl Dynamo {
         Ok(Creds { key: field("AccessKeyId")?, secret: field("SecretAccessKey")?, token: Some(field("Token")?) })
     }
 
-    /// One page of a `Scan` or a `Query`: its items, and where the next page starts when there is one.
-    /// `from` is where this page starts, as the page before it said; nothing for the first.
-    pub(crate) async fn page(&self, operation: &str, mut ask: Value, from: Option<Value>) -> Result<(Vec<Value>, Option<Value>), String> {
-        if let Some(from) = from {
-            ask["ExclusiveStartKey"] = from;
-        }
-        let mut page = self.call(operation, ask).await.map_err(|e| e.to_string())?;
-        let next = page.get("LastEvaluatedKey").filter(|k| k.is_object()).cloned();
-        let items = match page["Items"].take() {
-            Value::Array(items) => items,
-            _ => Vec::new(),
-        };
-        Ok((items, next))
-    }
-
     /// Every item a `Scan` or a `Query` finds, page after page. For a reader that stops at the first it can use,
-    /// [`Dynamo::page`].
+    /// [`Pages`].
     pub(crate) async fn all(&self, operation: &str, ask: Value) -> Result<Vec<Value>, String> {
-        let (mut all, mut from) = (Vec::new(), None);
-        loop {
-            let (items, next) = self.page(operation, ask.clone(), from.take()).await?;
+        let (mut all, mut pages) = (Vec::new(), Pages::new(operation, ask));
+        while let Some(items) = pages.next(self).await? {
             all.extend(items);
-            match next {
-                Some(next) => from = Some(next),
-                None => return Ok(all),
-            }
         }
+        Ok(all)
     }
 
     /// One DynamoDB operation, such as `PutItem`. Tried again a few times when the service is busy, cannot be
@@ -199,6 +180,34 @@ impl Dynamo {
             last = Failed { kind, message, reasons };
         }
         Err(last)
+    }
+}
+
+/// A `Scan` or a `Query` read a page at a time: the one way the relay pages through DynamoDB.
+pub(crate) struct Pages {
+    operation: String,
+    ask: Value,
+    /// Where the next page starts; nothing once the last has been read.
+    from: Option<Option<Value>>,
+}
+
+impl Pages {
+    pub(crate) fn new(operation: &str, ask: Value) -> Pages {
+        Pages { operation: operation.into(), ask, from: Some(None) }
+    }
+    /// The next page's items; nothing once every page has been read.
+    pub(crate) async fn next(&mut self, db: &Dynamo) -> Result<Option<Vec<Value>>, String> {
+        let Some(from) = self.from.take() else { return Ok(None) };
+        let mut ask = self.ask.clone();
+        if let Some(from) = from {
+            ask["ExclusiveStartKey"] = from;
+        }
+        let mut page = db.call(&self.operation, ask).await.map_err(|e| e.to_string())?;
+        self.from = page.get("LastEvaluatedKey").filter(|k| k.is_object()).cloned().map(Some);
+        Ok(Some(match page["Items"].take() {
+            Value::Array(items) => items,
+            _ => Vec::new(),
+        }))
     }
 }
 

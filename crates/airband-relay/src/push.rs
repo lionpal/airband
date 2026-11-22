@@ -22,11 +22,44 @@ use std::time::{Duration, Instant};
 pub(crate) enum Outcome {
     Sent,
     /// The address is no longer good: the app was removed, or the address was never this service's.
-    Gone(String),
-    /// The service said no for another reason, in its own word for it.
-    Refused(String),
-    /// The service could not be reached, or did not answer.
-    Failed(String),
+    Gone,
+    /// The service said no for another reason.
+    Refused(Said),
+    /// It never got to the service.
+    Failed(Unsent),
+}
+
+/// What a push service said when it refused one: its status, and the reason it gave in its own answer, if any.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Said {
+    pub(crate) status: u16,
+    pub(crate) reason: Option<String>,
+}
+impl std::fmt::Display for Said {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.reason {
+            Some(reason) => write!(f, "the push service said no ({reason}, status {})", self.status),
+            None => write!(f, "the push service said no (status {})", self.status),
+        }
+    }
+}
+
+/// Why a notification never got to the service.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Unsent {
+    /// The relay's own key could not sign the pass the service asks for.
+    CannotSign,
+    TimedOut,
+    Unreachable,
+}
+impl std::fmt::Display for Unsent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Unsent::CannotSign => "the push key could not sign",
+            Unsent::TimedOut => "the push service did not answer in time",
+            Unsent::Unreachable => "the push service could not be reached",
+        })
+    }
 }
 
 /// Every push service this relay can use.
@@ -94,7 +127,7 @@ impl Apns {
     }
 
     /// The pass Apple asks for with every notification: a JWT signed with the key (ES256).
-    fn pass(&self) -> Result<String, String> {
+    fn pass(&self) -> Result<String, Unsent> {
         let mut pass = self.pass.lock().unwrap();
         if let Some((made, when)) = pass.as_ref()
             && when.elapsed() < PASS_FOR {
@@ -103,7 +136,7 @@ impl Apns {
         let now = airband_core::clock::now_secs();
         let part = |v: serde_json::Value| base64_url(v.to_string().as_bytes());
         let signed = format!("{}.{}", part(serde_json::json!({ "alg": "ES256", "kid": self.key_id })), part(serde_json::json!({ "iss": self.team, "iat": now })));
-        let signature = self.key.sign(&SystemRandom::new(), signed.as_bytes()).map_err(|_| "the push key could not sign")?;
+        let signature = self.key.sign(&SystemRandom::new(), signed.as_bytes()).map_err(|_| Unsent::CannotSign)?;
         let made = format!("{signed}.{}", base64_url(signature.as_ref()));
         *pass = Some((made.clone(), Instant::now()));
         Ok(made)
@@ -138,22 +171,23 @@ impl Apns {
                 .await;
             let res = match sent {
                 Ok(res) => res,
-                Err(e) => return Outcome::Failed(if e.is_timeout() { "the push service did not answer in time".into() } else { "the push service could not be reached".into() }),
+                Err(e) => return Outcome::Failed(if e.is_timeout() { Unsent::TimedOut } else { Unsent::Unreachable }),
             };
             let status = res.status().as_u16();
             if status == 200 {
                 return Outcome::Sent;
             }
-            let reason = res.json::<serde_json::Value>().await.ok().and_then(|v| v["reason"].as_str().map(String::from)).unwrap_or_else(|| format!("status {status}"));
-            return match (status, reason.as_str()) {
+            // Apple's answer names its reason in a field of its own, from a list it publishes
+            let reason = res.json::<serde_json::Value>().await.ok().and_then(|v| v["reason"].as_str().map(String::from));
+            return match (status, reason.as_deref()) {
                 // the pass went stale between two notifications: make another and try once more
-                (403, "ExpiredProviderToken") if !tried_again => {
+                (403, Some("ExpiredProviderToken")) if !tried_again => {
                     *self.pass.lock().unwrap() = None;
                     tried_again = true;
                     continue;
                 }
-                (410, _) | (400, "BadDeviceToken" | "DeviceTokenNotForTopic") => Outcome::Gone(reason),
-                _ => Outcome::Refused(reason),
+                (410, _) | (400, Some("BadDeviceToken" | "DeviceTokenNotForTopic")) => Outcome::Gone,
+                _ => Outcome::Refused(Said { status, reason }),
             };
         }
     }
@@ -224,6 +258,6 @@ pub(crate) mod tests {
         let apns = Apns::new(&key, &std::env::var("APNS_KEY_ID").unwrap(), &std::env::var("APNS_TEAM_ID").unwrap(), &std::env::var("APNS_TOPIC").unwrap(), "https://api.push.apple.com").unwrap();
         let outcome = apns.send(&"ab".repeat(32), "c2VhbGVk", false).await;
         println!("Apple answered: {outcome:?}");
-        assert_eq!(outcome, Outcome::Gone("BadDeviceToken".into()));
+        assert_eq!(outcome, Outcome::Gone);
     }
 }

@@ -64,7 +64,7 @@ fn var(k: &str) -> Option<String> {
 }
 
 async fn relay_from_env() -> Arc<Relay> {
-    let store = store::Store::from_env().unwrap_or_else(|e| {
+    let store = store::from_env().unwrap_or_else(|e| {
         eprintln!("airband-relay: {e}");
         std::process::exit(2);
     });

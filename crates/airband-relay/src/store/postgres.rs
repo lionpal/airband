@@ -1,5 +1,6 @@
 //! The relay's records kept in Postgres: the same jobs the folder and DynamoDB stores do, in its tables.
 use super::*;
+use std::sync::Arc;
 use tokio_postgres::{Client, Config, NoTls};
 
 pub(crate) struct Pg {
@@ -60,7 +61,14 @@ impl Pg {
             }
         }
     }
-    pub(super) async fn load(&self) -> Result<HashMap<String, Saved>, String> {
+}
+
+#[async_trait::async_trait]
+impl ChannelStore for Pg {
+    fn describe(&self) -> String {
+        format!("the database {} on {}", self.name, self.host)
+    }
+    async fn load(&self) -> Result<HashMap<String, Saved>, String> {
         // a database cannot be created from inside itself: ask the server's own `postgres` database
         let admin = self.connect("postgres").await?;
         let exists = admin.query_opt("select 1 from pg_database where datname = $1", &[&self.name]).await.map_err(|e| e.to_string())?.is_some();
@@ -81,20 +89,24 @@ impl Pg {
         let rows = db.query("select channel, pull_hash, radio_hash from relay_channels", &[]).await.map_err(|e| e.to_string())?;
         Ok(rows.iter().map(|r| (r.get(0), Saved { pull_hash: r.get(1), radio_hash: r.get(2) })).collect())
     }
-    pub(super) async fn join_waitlist(&self, email: &str) -> Result<(), String> {
+    async fn join_waitlist(&self, email: &str) -> Result<(), String> {
         let db = self.connect(&self.name).await?;
         db.execute("insert into waitlist (email) values ($1) on conflict (email) do nothing", &[&email]).await.map(|_| ()).map_err(|e| e.to_string())
     }
-    pub(super) async fn remove(&self, channel: &str) -> Result<(), String> {
-        let db = self.connect(&self.name).await?;
-        db.execute("delete from relay_channels where channel = $1", &[&channel]).await.map(|_| ()).map_err(|e| e.to_string())
+    async fn remove(&self, channel: &str) -> Result<(), String> {
+        // the channel and what was kept for it, together or not at all
+        let mut db = self.connect(&self.name).await?;
+        let tx = db.transaction().await.map_err(|e| e.to_string())?;
+        tx.execute("delete from relay_held where channel = $1", &[&channel]).await.map_err(|e| e.to_string())?;
+        tx.execute("delete from relay_channels where channel = $1", &[&channel]).await.map_err(|e| e.to_string())?;
+        tx.commit().await.map_err(|e| e.to_string())
     }
-    pub(super) async fn add(&self, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<(), String> {
+    async fn add(&self, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<(), String> {
         // one short connection per new channel: channels are opened rarely, and nothing is held open to go stale
         let db = self.connect(&self.name).await?;
         db.execute("insert into relay_channels (channel, pull_hash, radio_hash) values ($1, $2, $3) on conflict (channel) do nothing", &[&channel, &pull_hash, &radio_hash]).await.map(|_| ()).map_err(|e| e.to_string())
     }
-    pub(super) async fn hold(&self, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<bool, String> {
+    async fn hold(&self, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<bool, String> {
         // counted and kept in one transaction, under a lock on the channel held until it ends, so two at
         // once cannot both see room for one more and both be kept
         let mut db = self.connect(&self.name).await?;
@@ -111,16 +123,16 @@ impl Pg {
         tx.execute("insert into relay_held (channel, id, sealed) values ($1, $2, $3) on conflict (channel, id) do nothing", &[&channel, &id, &sealed]).await.map_err(|e| e.to_string())?;
         tx.commit().await.map(|_| true).map_err(|e| e.to_string())
     }
-    pub(super) async fn held_next(&self, channel: &str) -> Result<Option<(String, Vec<u8>)>, String> {
+    async fn held_next(&self, channel: &str) -> Result<Option<(String, Vec<u8>)>, String> {
         let db = self.connect(&self.name).await?;
         let row = db.query_opt("select id, sealed from relay_held where channel = $1 and held_at > now() - make_interval(secs => $2) order by seq limit 1", &[&channel, &(HELD_FOR_SECS as f64)]).await.map_err(|e| e.to_string())?;
         Ok(row.map(|r| (r.get(0), r.get(1))))
     }
-    pub(super) async fn held_done(&self, channel: &str, id: &str) -> Result<(), String> {
+    async fn held_done(&self, channel: &str, id: &str) -> Result<(), String> {
         let db = self.connect(&self.name).await?;
         db.execute("delete from relay_held where channel = $1 and id = $2", &[&channel, &id]).await.map(|_| ()).map_err(|e| e.to_string())
     }
-    pub(super) async fn held_purge(&self) -> Result<(), String> {
+    async fn held_purge(&self) -> Result<(), String> {
         let db = self.connect(&self.name).await?;
         db.execute("delete from relay_held where held_at < now() - make_interval(secs => $1)", &[&(HELD_FOR_SECS as f64)]).await.map(|_| ()).map_err(|e| e.to_string())
     }
