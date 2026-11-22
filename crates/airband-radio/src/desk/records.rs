@@ -119,8 +119,7 @@ pub struct DeskChoice {
     pub badge: String,
     pub colour: Option<u8>,
 }
-/// One file he attached. `state` is `sending` (with `sent` of `total` bytes there so far), `ready` (it goes with
-/// the next thing he says or sends) or `failed`.
+/// One file he attached: how far it has got ([`UploadState`]), with `sent` of `total` bytes there so far.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct DeskUpload {
     pub id: String,

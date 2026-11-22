@@ -43,7 +43,6 @@ struct AttachPicker<Label: View>: View {
     }
 }
 
-/// The lightning button's panel, now behind a +: his photos first, then the things he says all the time.
 /// A round button that opens the photo picker and nothing else: for adding to what he is saying while the
 /// microphone is open.
 struct AttachButton: View {

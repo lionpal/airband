@@ -3,7 +3,7 @@ use super::*;
 
 /// How many lines of the feed a view carries.
 const FEED_SHOWN: usize = 80;
-/// What he has read: for each agent, by callsign, the time of the last thing it said that was on screen in
+/// What he has read: for each agent, by its id, the time of the last thing it said that was on screen in
 /// front of him. Kept on the device in one small file, so it holds across launches. Something said after that
 /// time is unread, wherever he is looking now.
 #[derive(Default, serde::Serialize, serde::Deserialize)]

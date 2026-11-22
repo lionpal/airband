@@ -1,5 +1,5 @@
 //! Reaching the tower: straight to it, or sealed through a relay. Everything above this module makes
-//! `airband.radio/2` requests and does not know which way they travel. A new transport is a new [`Route`].
+//! `airband.radio/3` requests and does not know which way they travel. A new transport is a new [`Route`].
 use super::*;
 
 mod errors;

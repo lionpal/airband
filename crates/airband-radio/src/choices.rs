@@ -145,6 +145,12 @@ pub(crate) struct Chooser {
     working: Mutex<Option<Work>>,
 }
 
+/// What he chose that this build has no code for, said one way: what it cannot do, and where to choose again.
+fn cannot(what: &str, job: ChoiceJob) -> String {
+    let section = if job == ChoiceJob::Voice { "Voice" } else { "Listening" };
+    format!("This version of airband cannot {what}. Choose another in Settings, under {section}.")
+}
+
 fn told(reason: impl Into<String>) -> RadioError {
     RadioError::Told { reason: reason.into() }
 }
@@ -188,18 +194,18 @@ impl Chooser {
         let key = |id: &str| host.secret(id.to_string()).unwrap_or_default();
         senses.ears.set(saved.pick(ChoiceJob::Ears).map(|ears| match ears.place {
             ChoicePlace::Phone => match self.model(&ears.id).filter(|m| m.job == Job::Ears) {
-                None => crate::ears::Own::Cannot("This version of airband cannot run the listening model you chose. Choose another in Settings, under Listening.".into()),
+                None => crate::ears::Own::Cannot(cannot("run the listening model you chose", ChoiceJob::Ears)),
                 Some(m) if !crate::models::fetched(&self.dir, &m) => crate::ears::Own::Cannot(format!("{} is not on this phone yet. Download it in Settings, under Listening.", m.name)),
                 Some(m) => crate::ears::Own::Model(senses.ears.held(&m, crate::models::folder(&self.dir, &m))),
             },
             ChoicePlace::Service => {
                 let with = crate::services::service_of(&ears.id, &ears.offer, &key(&ears.id), ears.set.clone().into_iter().collect());
-                if with.offer(Job::Ears).is_some_and(|(_, o)| crate::hears::listens(&o)) { crate::ears::Own::Service(with) } else { crate::ears::Own::Cannot("This version of airband cannot listen with the service you chose. Choose another in Settings, under Listening.".into()) }
+                if with.offer(Job::Ears).is_some_and(|(_, o)| crate::hears::listens(&o)) { crate::ears::Own::Service(with) } else { crate::ears::Own::Cannot(cannot("listen with the service you chose", ChoiceJob::Ears)) }
             }
         }));
         senses.mouth.set(saved.pick(ChoiceJob::Voice).map(|voice| match voice.place {
             ChoicePlace::Phone => match self.model(&voice.id).filter(|m| m.job == Job::Voice) {
-                None => crate::mouth::Own::Cannot("This version of airband cannot run the voice you chose. Choose another in Settings, under Voice.".into()),
+                None => crate::mouth::Own::Cannot(cannot("run the voice you chose", ChoiceJob::Voice)),
                 Some(m) if !crate::models::fetched(&self.dir, &m) => crate::mouth::Own::Cannot(format!("{} is not on this phone yet. Download it in Settings, under Voice.", m.name)),
                 // none picked yet: the voice the row names as its usual one
                 Some(m) => match m.voices.iter().map(|v| &v.0).find(|name| name.as_str() == m.voice(&voice.voice)) {
@@ -210,7 +216,7 @@ impl Chooser {
             },
             ChoicePlace::Service => {
                 let with = crate::services::service_of(&voice.id, &voice.offer, &key(&voice.id), voice.set.clone().into_iter().collect());
-                if crate::voices::synth(&with).is_ok() { crate::mouth::Own::Service(with) } else { crate::mouth::Own::Cannot("This version of airband cannot speak with the service you chose. Choose another in Settings, under Voice.".into()) }
+                if crate::voices::synth(&with).is_ok() { crate::mouth::Own::Service(with) } else { crate::mouth::Own::Cannot(cannot("speak with the service you chose", ChoiceJob::Voice)) }
             }
         }));
     }
