@@ -1,6 +1,5 @@
 //! The relay's records kept in a folder on its own disk: `channels.json`, `waitlist.txt`, and under `held/`
 //! one folder per channel with its kept messages and their list. For a relay run on a machine with a disk.
-#![allow(clippy::disallowed_methods, reason = "the folder store is files by design")]
 use super::*;
 use std::path::Path;
 
@@ -76,9 +75,8 @@ fn drop_from(held: &Path, list: &mut HeldList, out: impl Fn(&HeldItem) -> bool) 
 /// Remove a kept message's body once the list no longer names it. One that cannot be removed is said: it
 /// counts for nothing, as the list is what is read, but it takes room on the disk.
 fn remove_body(held: &Path, seq: u64) {
-    match std::fs::remove_file(held.join(seq.to_string())) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => eprintln!("airband-relay: a kept message's body could not be removed: {e}"),
-        _ => {}
+    if let Err(e) = airband_io::files::remove(&held.join(seq.to_string())) {
+        eprintln!("airband-relay: a kept message's body could not be removed: {e}");
     }
 }
 pub(super) fn held_keep(held: &Path, list: &HeldList) -> Result<(), String> {
@@ -92,11 +90,7 @@ fn join_waitlist(dir: &Path, email: &str) -> Result<(), String> {
     let _one = LISTS.lock().unwrap();
     let file = dir.join("waitlist.txt");
     // not there yet is an empty list; there and unreadable is an error, never written over as empty
-    let have = match std::fs::read_to_string(&file) {
-        Ok(have) => have,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(format!("cannot read {}: {e}", file.display())),
-    };
+    let have = airband_io::files::read_text(&file).map_err(|e| format!("cannot read {}: {e}", file.display()))?.unwrap_or_default();
     if have.lines().any(|l| l == email) {
         return Ok(());
     }
@@ -123,7 +117,7 @@ fn add(dir: &Path, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<(
 fn hold(dir: &Path, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<bool, String> {
     let _one = HELD.lock().unwrap();
     let held = held_dir(dir, channel);
-    std::fs::create_dir_all(&held).map_err(|e| e.to_string())?;
+    airband_io::files::make_folder(&held).map_err(|e| e.to_string())?;
     let mut list = held_list(&held)?;
     if list.items.iter().any(|h| h.id == id) {
         return Ok(true);
@@ -149,12 +143,12 @@ fn held_next(dir: &Path, channel: &str) -> Result<Option<(String, Vec<u8>)>, Str
     let mut lost = Vec::new();
     let mut found = None;
     for item in list.items.iter().filter(|h| h.fresh(now)) {
-        match std::fs::read(held.join(item.seq.to_string())) {
-            Ok(sealed) => {
+        match airband_io::files::read_bytes(&held.join(item.seq.to_string())) {
+            Ok(Some(sealed)) => {
                 found = Some((item.id.clone(), sealed));
                 break;
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => lost.push(item.seq),
+            Ok(None) => lost.push(item.seq),
             Err(e) => return Err(e.to_string()),
         }
     }

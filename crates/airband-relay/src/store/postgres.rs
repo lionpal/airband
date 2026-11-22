@@ -1,5 +1,4 @@
 //! The relay's records kept in Postgres: the same jobs the folder and DynamoDB stores do, in its tables.
-#![allow(clippy::disallowed_methods, reason = "reads the database's certificate file")]
 use super::*;
 use std::sync::Arc;
 use tokio_postgres::{Client, Config, NoTls};
@@ -21,7 +20,7 @@ impl Pg {
             None
         } else {
             let ca = var("DB_CA").ok_or("DB_HOST is set, so set DB_CA to a PEM file of authorities to trust, or DB_SSL=off for a local database")?;
-            let pem = std::fs::read(&ca).map_err(|e| format!("cannot read DB_CA {ca}: {e}"))?;
+            let pem = airband_io::files::read_bytes(std::path::Path::new(&ca)).map_err(|e| format!("cannot read DB_CA {ca}: {e}"))?.ok_or_else(|| format!("DB_CA {ca} is not there"))?;
             let mut roots = rustls::RootCertStore::empty();
             for cert in rustls_pemfile::certs(&mut pem.as_slice()) {
                 roots.add(cert.map_err(|e| format!("DB_CA {ca} is not PEM: {e}"))?).map_err(|e| format!("DB_CA {ca}: {e}"))?;

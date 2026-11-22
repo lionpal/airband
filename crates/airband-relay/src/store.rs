@@ -30,7 +30,6 @@
 //!   DB_HOST, DB_PORT (5432 when not set), DB_USER, DB_PASS, DB_NAME (airband)
 //!   DB_CA    a PEM file of certificate authorities to trust for the connection (for Amazon RDS, its global bundle)
 //!   DB_SSL   `off` for a plain local database
-#![allow(clippy::disallowed_methods, reason = "picks the store and its folder")]
 use std::collections::HashMap;
 use std::path::PathBuf;
 #[cfg(test)]
@@ -104,7 +103,7 @@ pub(crate) fn from_env() -> Result<Store, String> {
     }
     let Some(host) = var("DB_HOST") else {
         let dir = PathBuf::from(var("AIRBAND_RELAY_DATA").unwrap_or_else(|| "relay-data".into()));
-        std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        airband_io::files::make_folder(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
         return Ok(folder(dir));
     };
     Ok(Box::new(Pg::from_env(host)?))
