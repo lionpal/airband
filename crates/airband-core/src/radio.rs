@@ -59,6 +59,9 @@ pub enum Kind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Transmission {
     pub id: String,
+    /// The agent that said it, by id; empty for airband's own words.
+    #[serde(default)]
+    pub agent: String,
     pub callsign: String,
     pub kind: Kind,
     /// The words to speak, callsign first.

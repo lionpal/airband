@@ -20,6 +20,8 @@ extension FeedView {
         guard model.micOpen || model.replyingTo != nil else { return nil }
         return model.replyingTo.map { name(of: $0) } ?? model.onlyName
     }
+    /// The agent it will go to, by id: the one that wrote the message he picked, or the one he is looking at.
+    private var aimedAgent: String? { model.replyingTo.map { $0.agent ?? "" }.flatMap { $0.isEmpty ? nil : $0 } ?? model.only }
     /// One quiet line above the buttons: who he is answering, or what the radio is doing.
     private var statusLine: String? {
         // who it will go to, whenever that is already settled: the message he picked, or the agent he is looking at
@@ -29,7 +31,7 @@ extension FeedView {
         switch model.status {
         case .listening: return "listening \u{b7} tap to send"
         case .sending: return "sending"
-        case .speaking(let callsign): return callsign ?? "airband"
+        case .speaking(_, let callsign): return callsign ?? "airband"
         default: return nil
         }
     }
@@ -90,7 +92,7 @@ extension FeedView {
                 } else if model.hearing.isEmpty {
                     HStack(spacing: 6) {
                         // whoever it will go to, with its badge, when that is settled
-                        if let aim = aimed, let badge = badge(of: aim) {
+                        if aimed != nil, let agent = aimedAgent, let badge = model.badge(of: agent) {
                             Badge(text: badge.0, colour: badge.1, size: 16)
                         }
                         Text(statusLine ?? " ").font(.system(size: 14, weight: .medium)).foregroundStyle(statusLine == nil ? Palette.quiet : Palette.soft)
@@ -104,7 +106,7 @@ extension FeedView {
                     if let aim = model.replyingTo.map({ name(of: $0) }) ?? model.onlyName {
                         HStack(spacing: 5) {
                             Text("to")
-                            if let badge = badge(of: aim) { Badge(text: badge.0, colour: badge.1, size: 16) }
+                            if let agent = aimedAgent, let badge = model.badge(of: agent) { Badge(text: badge.0, colour: badge.1, size: 16) }
                             Text(aim)
                         }
                         .font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.soft)

@@ -601,7 +601,7 @@ mod tests {
         assert_eq!(inner.free_radio().as_deref(), Some("phone"));
         inner.check_in(&agent("a", "/x/shop", None));
         let t = queued(&mut inner, "a", Kind::NeedsYou, "Ship it?");
-        inner.call("phone").outbox = Some(Transmission { id: t.clone(), callsign: "shop one".into(), kind: Kind::NeedsYou, say: String::new(), waiting: 0 });
+        inner.call("phone").outbox = Some(Transmission { id: t.clone(), agent: String::new(), callsign: "shop one".into(), kind: Kind::NeedsYou, say: String::new(), waiting: 0 });
         inner.call("phone").ready = false;
         // the agent goes back to work: what the phone was about to say is withdrawn, and only there
         inner.no_longer_waiting("a");
@@ -742,7 +742,7 @@ mod tests {
         inner.check_in(&agent("a", "/x/shop", None));
         let report = queued(&mut inner, "a", Kind::Report, "Shipped.");
         inner.set_aloud(&report, Aloud::Handed { radio: "phone".into(), at: 1 });
-        inner.call("phone").handed = Some(Transmission { id: report.clone(), callsign: "shop one".into(), kind: Kind::Report, say: String::new(), waiting: 0 });
+        inner.call("phone").handed = Some(Transmission { id: report.clone(), agent: String::new(), callsign: "shop one".into(), kind: Kind::Report, say: String::new(), waiting: 0 });
         assert_eq!(inner.unheard().count(), 1);
         inner.give_back("phone");
         assert_eq!(aloud(&inner, &report), Aloud::Waiting);

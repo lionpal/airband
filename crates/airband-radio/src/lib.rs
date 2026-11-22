@@ -82,8 +82,8 @@ pub enum RadioStatus {
     Offline,
     /// Connected, nothing happening.
     Idle,
-    /// Speaking what this agent said, or with nobody named, airband's own words.
-    Speaking { callsign: Option<String> },
+    /// Speaking what this agent said (its id, and what it is called), or with nobody named, airband's own words.
+    Speaking { agent: Option<String>, callsign: Option<String> },
     /// The microphone is open.
     Listening,
     /// Sending what was said.

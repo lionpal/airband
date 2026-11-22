@@ -52,14 +52,6 @@ extension FeedView {
         .padding(.leading, 8).padding(.trailing, 12).padding(.top, 2).padding(.bottom, 6)
     }
 
-    /// An agent's badge and its team's colour, by its callsign.
-    func badge(of callsign: String) -> (String, UInt8?)? {
-        for room in model.view.rooms {
-            if let agent = room.members.first(where: { $0.callsign == callsign }) { return (agent.badge, room.colour) }
-        }
-        return nil
-    }
-
     /// The team he is in: the one he picked, or the team of the agent he is looking at.
     var team: DeskRoom? {
         if let room = model.room { return model.view.rooms.first { $0.id == room } }

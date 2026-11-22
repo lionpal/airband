@@ -56,7 +56,7 @@ pub(super) async fn pump(app: &Arc<App>) {
     let spoken_line = format!("{}. {say}", cap(&callsign));
     let waiting = inner.unheard().count() as u32 - 1;
     inner.set_aloud(&next.id, Aloud::Handed { radio: radio.clone(), at: now_ms() });
-    transmit(app, &mut inner, &radio, Transmission { id: next.id.clone(), callsign, kind, say: spoken_line, waiting });
+    transmit(app, &mut inner, &radio, Transmission { id: next.id.clone(), agent: next.agent.clone().unwrap_or_default(), callsign, kind, say: spoken_line, waiting });
 }
 
 /// Hand a radio its next transmission. If it takes it and never says it is ready for another, it is assumed
@@ -112,7 +112,7 @@ fn remind(app: &Arc<App>, inner: &mut Inner, radio: &str) {
     let from = inner.sender(&e).map(|s| s.callsign.text()).unwrap_or_else(|| e.from.clone());
     log(format!("→ {radio}: {from} ({}): {say}", if first { "waiting" } else { "reminder" }));
     let spoken_line = if first { format!("{} is waiting. {say}", cap(&from)) } else { format!("Still waiting: {from}. {say}") };
-    transmit(app, inner, radio, Transmission { id: e.id.clone(), callsign: from, kind: Kind::NeedsYou, say: spoken_line, waiting: 0 });
+    transmit(app, inner, radio, Transmission { id: e.id.clone(), agent: e.agent.clone().unwrap_or_default(), callsign: from, kind: Kind::NeedsYou, say: spoken_line, waiting: 0 });
 }
 
 fn cap(t: &str) -> String {

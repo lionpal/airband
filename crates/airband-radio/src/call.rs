@@ -105,7 +105,7 @@ pub(crate) fn work(jobs: Receiver<Job>, link: Arc<Link>, host: Arc<dyn RadioHost
                 link.tell("/ready", &serde_json::json!({}));
             }
             Job::Transmission(t) => {
-                host.status(RadioStatus::Speaking { callsign: Some(t.callsign.clone()) });
+                host.status(RadioStatus::Speaking { agent: Some(t.agent.clone()).filter(|a| !a.is_empty()), callsign: Some(t.callsign.clone()) });
                 let heard = voice::say_until(&*host, &senses.mouth, &t.say, &|| !calling.load(Ordering::SeqCst));
                 // "heard" is what takes it off the tower's list: if this is lost, he hears it once more, never zero
                 // times. What made no sound was not heard: the tower is told why and keeps it.
@@ -176,13 +176,13 @@ pub(crate) fn converse(link: &Arc<Link>, host: &dyn RadioHost, ears: &ears::Ears
             Ok(None) => return,
             Err(e) => {
                 // said aloud, with what went wrong
-                host.status(RadioStatus::Speaking { callsign: None });
+                host.status(RadioStatus::Speaking { agent: None, callsign: None });
                 voice::say(host, mouth, &format!("That was not sent: {}.", e.told()));
                 return;
             }
         };
         if !reply.say.is_empty() {
-            host.status(RadioStatus::Speaking { callsign: None });
+            host.status(RadioStatus::Speaking { agent: None, callsign: None });
             voice::say(host, mouth, &reply.say);
         }
         if !reply.listen {

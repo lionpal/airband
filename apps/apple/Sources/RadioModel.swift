@@ -165,6 +165,13 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// Every agent on the radio, in the order the teams are shown.
     var agents: [DeskMember] { view.rooms.flatMap(\.members) }
+    /// An agent's badge and its team's colour, by the agent's id.
+    func badge(of agent: String) -> (String, UInt8?)? {
+        for room in view.rooms {
+            if let member = room.members.first(where: { $0.id == agent }) { return (member.badge, room.colour) }
+        }
+        return nil
+    }
     /// His computers that gave themselves a name.
     var computers: [String] { view.stations.filter { !$0.isEmpty } }
     /// What he is told when a computer cannot be reached: which, when more than one could be meant.

@@ -73,7 +73,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         // Who is waiting on him: choosing one has its question read out, then opens the microphone for the
         // answer. What it asked is heard, not shown.
         let waiting = agents.filter { $0.state == .asking }.map { agent -> CPListItem in
-            let item = CPListItem(text: agent.callsign, detailText: "Waiting on you", image: avatar(of: agent.callsign, side: 44))
+            let item = CPListItem(text: agent.callsign, detailText: "Waiting on you", image: avatar(of: agent.id, side: 44))
             item.handler = { [weak self] _, done in
                 self?.start(then: agent.id)
                 done()
@@ -82,7 +82,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
         if !waiting.isEmpty { sections.append(CPListSection(items: waiting, header: "Waiting on you", sectionIndexTitle: nil)) }
         let working = agents.filter { $0.state == .working }.map { agent -> CPListItem in
-            let item = CPListItem(text: agent.callsign, detailText: "Working", image: avatar(of: agent.callsign, side: 44))
+            let item = CPListItem(text: agent.callsign, detailText: "Working", image: avatar(of: agent.id, side: 44))
             item.handler = { [weak self] _, done in
                 self?.model.only = agent.id
                 self?.start(then: nil)
@@ -134,7 +134,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             state(.idle, with.map { ["Waiting for \($0)", "Waiting"] } ?? ["Waiting for your agents", "Waiting"], "ellipsis", talk: ("Talk", "mic.fill")),
             state(.listening, with.map { ["Listening, for \($0)", "Listening"] } ?? ["Listening"], "mic.fill", talk: ("Send", "arrow.up"), other: ("Cancel", "xmark", { [weak self] in self?.model.cancelTalk() })),
             state(.sending, ["Sending"], "arrow.up.circle.fill", talk: nil),
-            state(.speaking, with.map { ["\($0) is speaking", "Speaking"] } ?? ["Speaking"], "speaker.wave.2.fill", picture: with.flatMap { avatar(of: $0, side: 120) }, talk: ("Talk", "mic.fill"), other: ("Quiet", "speaker.slash.fill", { [weak self] in self?.model.voice.hush() })),
+            state(.speaking, with.map { ["\($0) is speaking", "Speaking"] } ?? ["Speaking"], "speaker.wave.2.fill", picture: model.only.flatMap { avatar(of: $0, side: 120) }, talk: ("Talk", "mic.fill"), other: ("Quiet", "speaker.slash.fill", { [weak self] in self?.model.voice.hush() })),
             state(.offline, ["Can\u{2019}t reach your computer", "Offline"], "wifi.slash", talk: nil),
         ])
         if #available(iOS 26.4, *) {
@@ -147,7 +147,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             let who = CPBarButton(title: with ?? "") { _ in }
             who.isEnabled = false
             // and its badge beside its name, as on the phone
-            let face = CPBarButton(image: with.flatMap { avatar(of: $0, side: 28) } ?? UIImage()) { _ in }
+            let face = CPBarButton(image: model.only.flatMap { avatar(of: $0, side: 28) } ?? UIImage()) { _ in }
             face.isEnabled = false
             screen.trailingNavigationBarButtons = [face, who]
             (speaker, speakerFace) = (who, face)
@@ -190,10 +190,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         return made
     }
 
-    /// An agent's badge as a picture: its two letters on its team's colour, as the phone shows it.
-    private func avatar(of callsign: String, side: CGFloat) -> UIImage? {
-        guard let team = model.view.rooms.first(where: { $0.members.contains { $0.callsign == callsign } }), let agent = team.members.first(where: { $0.callsign == callsign }) else { return nil }
-        return badgePicture(agent.badge, fill: UIColor(Palette.team(team.colour)), side: side).withRenderingMode(.alwaysOriginal)
+    /// An agent's badge as a picture, found by its id: its two letters on its team's colour, as the phone shows it.
+    private func avatar(of agent: String, side: CGFloat) -> UIImage? {
+        guard let found = model.badge(of: agent) else { return nil }
+        return badgePicture(found.0, fill: UIColor(Palette.team(found.1)), side: side).withRenderingMode(.alwaysOriginal)
     }
 
     /// Show the state the conversation is in. The screen may drop a change that comes too soon after another,
@@ -208,9 +208,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         case .speaking: wanted = .speaking
         case .idle: wanted = model.micOpen ? .listening : .idle
         }
-        if case .speaking(let callsign?) = model.status, speaker?.title != callsign {
+        if case .speaking(let agent, let callsign?) = model.status, speaker?.title != callsign {
             speaker?.title = callsign
-            if let face = avatar(of: callsign, side: 28) { speakerFace?.image = face }
+            if let agent, let face = avatar(of: agent, side: 28) { speakerFace?.image = face }
         }
         guard screen.activeStateIdentifier != wanted.rawValue else { return }
         screen.activateVoiceControlState(withIdentifier: wanted.rawValue)
