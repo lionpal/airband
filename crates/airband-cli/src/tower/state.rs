@@ -292,10 +292,12 @@ mod tests {
         assert_eq!(names(&inner), ["laptop shop one", "laptop garden one"]);
         let garden = inner.team_at("/x/garden").unwrap();
         assert_eq!(inner.team_name(&garden), "laptop garden");
+        // he cannot give a team a name a team on another of his computers has: names stay distinct
+        assert!(inner.rename_team(&garden, "garden").is_err());
         // a name he gave a team is his: it stays, and only numbers that clash move
-        inner.rename_team(&garden, "garden").unwrap();
-        assert!(inner.taken_elsewhere(&[theirs("shop"), theirs("garden")]));
-        assert_eq!(names(&inner), ["laptop shop one", "garden two"]);
+        inner.rename_team(&garden, "orchard").unwrap();
+        assert!(inner.taken_elsewhere(&[theirs("shop"), theirs("garden"), theirs("orchard")]));
+        assert_eq!(names(&inner), ["laptop shop one", "orchard two"]);
     }
 
     #[test]

@@ -106,6 +106,11 @@ impl Inner {
     fn taken_there(&self, name: &str) -> bool {
         self.elsewhere.iter().any(|c| c.project == name)
     }
+    /// Can a team he names take this name: no other team of his, here (other than `except`, by id) or on
+    /// another of his computers, has it?
+    pub(super) fn name_free(&self, name: &str, except: Option<&str>) -> bool {
+        !self.taken_here(name, except) && !self.taken_there(name)
+    }
     /// The team for a folder: the one that works there, or a new one, named as [`Self::name_for_folder`] says.
     /// Its id. Nothing when the folder has no name to give a team.
     pub(super) fn folder_team(&mut self, folder: &str) -> Option<String> {
@@ -153,7 +158,13 @@ impl Inner {
     /// Can this agent be put in a team? A team is called by the name the agent was started under, or by its
     /// folder's own name. One with neither is turned away and its tool told why: no name is made up for it.
     pub(super) fn placeable(&self, agent: &Agent) -> bool {
-        self.find(&agent.id).is_some() || agent.name.as_deref().or(agent.cwd.as_deref()).and_then(airband_core::routing::team_name).is_some()
+        // exactly as `team_of` places it, so the two never disagree
+        self.find(&agent.id).is_some()
+            || match (&agent.name, &agent.cwd) {
+                (Some(name), _) => airband_core::routing::team_name(name).is_some(),
+                (None, Some(cwd)) => self.team_at(cwd).is_some() || self.name_for_folder(cwd).is_some(),
+                (None, None) => false,
+            }
     }
     /// An agent reported in. A new one is given a callsign; a known one has what it reported about itself
     /// brought up to date, and takes the name he gave its session if that is new. Returns its callsign.
@@ -319,7 +330,7 @@ impl Inner {
         let Some(was) = self.teams.get(team).map(|t| t.name.clone()) else {
             return Err("That team is not on this computer any more.".into());
         };
-        if to != was && self.taken_here(&to, Some(team)) {
+        if to != was && !self.name_free(&to, Some(team)) {
             return Err(format!("There is already a team called {to}."));
         }
         self.set_team_name(team, &to);

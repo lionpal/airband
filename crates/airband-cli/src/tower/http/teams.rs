@@ -118,14 +118,14 @@ pub(super) async fn project(State(app): State<Arc<App>>, Json(new): Json<airband
                 name = inner.team_name(&team);
                 team
             }
-            None if inner.team_called(&name).is_some() => {
-                return Json(json!({ "error": format!("There is already a team called {name}, in another folder.") }));
+            None if !inner.name_free(&name, None) => {
+                return Json(json!({ "error": format!("There is already a team called {name}, here or on another of your computers.") }));
             }
             None => {
-                // a name other than the one the folder would give is one he chose, and stays his
-                let named = inner.name_for_folder(&at).as_deref() != Some(name.as_str());
+                // the name came from his radio, so he chose it, even where it is the one the folder would give,
+                // and it stays his
                 let id = sessions::real_folder(&at);
-                inner.teams.insert(id.clone(), Team { name: name.clone(), folder: Some(id.clone()), named, configured: false });
+                inner.teams.insert(id.clone(), Team { name: name.clone(), folder: Some(id.clone()), named: true, configured: false });
                 log(format!("a radio made the team {name}, in {at}"));
                 id
             }

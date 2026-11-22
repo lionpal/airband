@@ -14,11 +14,16 @@ pub struct Callsign {
     pub named: bool,
 }
 
-/// The team a folder or a name he gave stands for: the folder's own name, as the system reads the path, the
-/// way a callsign writes it. None when there is nothing in it a team could be called (the top of a disk).
+/// A name he gave a team, written the way a callsign writes it. Only written so: no part of it is taken for a
+/// path ("shop/front" is "shop front"). None when it has no letters or numbers.
 pub fn team_name(text: &str) -> Option<String> {
-    let base = std::path::Path::new(text.trim()).file_name()?.to_string_lossy().into_owned();
-    Some(norm(&base)).filter(|name| !name.is_empty())
+    Some(norm(text)).filter(|name| !name.is_empty())
+}
+
+/// The team a folder stands for: the folder's own name, as the system reads the path, the way a callsign
+/// writes it. None when there is nothing in it a team could be called (the top of a disk).
+pub fn folder_name(path: &str) -> Option<String> {
+    team_name(&std::path::Path::new(path.trim()).file_name()?.to_string_lossy())
 }
 
 /// The names a team in this folder could take, plainest first: the folder's own name, then its parent's name
@@ -112,7 +117,7 @@ impl Callsign {
     /// What has no name a team could be called by (the top of a disk) is turned away where agents report in
     /// (`Inner::placeable` in the tower), so it never comes here.
     pub fn next_for(cwd: &str, live: &[Callsign]) -> Callsign {
-        Callsign::next_in(&team_name(cwd).unwrap_or_default(), live)
+        Callsign::next_in(&folder_name(cwd).unwrap_or_default(), live)
     }
     /// The next free callsign in this team: its name plus the lowest unused number.
     pub fn next_in(team: &str, live: &[Callsign]) -> Callsign {
@@ -232,8 +237,11 @@ fn figure(number: &str) -> Option<u32> {
 mod tests {
     #[test]
     fn a_team_is_named_by_the_last_part_of_a_folder_and_a_callsign_is_shown_with_a_figure() {
-        assert_eq!(team_name("/work/Shop Front/").as_deref(), Callsign::next_for("/work/Shop Front/", &[]).project.as_str().into());
+        assert_eq!(folder_name("/work/Shop Front/").as_deref(), Callsign::next_for("/work/Shop Front/", &[]).project.as_str().into());
         assert_eq!(team_name("garden").as_deref(), Some("garden"));
+        // a name he typed is never read as a path
+        assert_eq!(team_name("shop/front").as_deref(), Some("shop front"));
+        assert_eq!(folder_name("/"), None);
         // nothing a team could be called
         assert_eq!((team_name("/"), team_name("  "), team_name("!!")), (None, None, None));
         assert_eq!(team_names("/a/Work/shop/"), ["shop", "work shop", "a work shop"]);
