@@ -15,7 +15,7 @@ cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
 # the linter first: a warning from it fails the check
 cargo clippy -q --workspace --all-targets -- -D warnings
-cargo test -q --release -p airband-core -p airband-relay -p airband-radio -p airband-cli
+cargo test -q --release -p airband-core -p airband-io -p airband-relay -p airband-radio -p airband-cli
 [ "$1" = "--full" ] || exit 0
 cargo build -q --release -p airband-cli -p airband-relay
 python3 tools/e2e-relay.py
