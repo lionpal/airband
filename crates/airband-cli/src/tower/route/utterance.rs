@@ -139,7 +139,7 @@ async fn new_agent(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
     let Some(project) = app.read().teams.get(&new.team).map(|t| t.name.clone()) else {
         return Some(say("That team is not on this computer any more.".into()));
     };
-    let idea = Idea { tool: new.tool.clone(), project: Some(project), model: new.model.clone(), effort: new.effort.clone(), task: format!("{}{files}", new.task) };
+    let idea = Idea { tool: new.tool.clone(), project: Some(project), model: new.model.clone().map(Pick::Id), effort: new.effort.clone().map(Pick::Id), task: format!("{}{files}", new.task) };
     Some(start(app, radio, text, idea, projects, false).await)
 }
 

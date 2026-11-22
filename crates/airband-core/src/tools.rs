@@ -61,28 +61,6 @@ pub struct Offers {
     pub efforts: Vec<Choice>,
 }
 
-/// The one of `choices` he named, by its name or by the tool's own id for it, written in any case and with or
-/// without spaces. Nothing else is taken for it.
-pub fn named<'a>(choices: &'a [Choice], said: &str) -> Option<&'a Choice> {
-    let key = |s: &str| s.chars().filter(|c| !c.is_whitespace()).flat_map(char::to_lowercase).collect::<String>();
-    let said = key(said);
-    choices.iter().find(|c| key(&c.id) == said).or_else(|| choices.iter().find(|c| key(&c.name) == said))
-}
-
-impl Offers {
-    /// Every word a model here answers to: each one's name and its id.
-    pub fn model_words(&self) -> Vec<String> {
-        words(&self.models)
-    }
-    pub fn effort_words(&self) -> Vec<String> {
-        words(&self.efforts)
-    }
-}
-fn words(choices: &[Choice]) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    choices.iter().flat_map(|c| [&c.name, &c.id]).for_each(|w| if !out.contains(w) { out.push(w.clone()) });
-    out
-}
 
 impl Launcher {
     /// What this launcher's own row says its agents can be started on.
@@ -142,14 +120,8 @@ mod tests {
     }
 
     #[test]
-    fn a_model_is_named_by_its_name_or_its_id_and_by_nothing_else() {
-        let models = vec![Choice { id: "gpt-6.2-sol".into(), name: "6.2 Sol".into() }, Choice { id: "gpt-6-luna".into(), name: "6 Luna".into() }];
-        assert_eq!(named(&models, "6.2 sol").map(|c| c.id.as_str()), Some("gpt-6.2-sol"));
-        assert_eq!(named(&models, "GPT-6-Luna").map(|c| c.id.as_str()), Some("gpt-6-luna"));
-        assert_eq!(named(&models, "luna"), None);
-        assert_eq!(named(&models, ""), None);
+    fn a_rows_models_are_offered_by_name_with_the_tools_own_id() {
         let row = Launcher { models: [("opus".to_string(), "claude-opus".to_string())].into(), efforts: vec!["high".into()], ..Launcher::default() };
         assert_eq!(row.offers(), Offers { models: vec![Choice { id: "claude-opus".into(), name: "opus".into() }], efforts: vec![Choice { id: "high".into(), name: "high".into() }] });
-        assert_eq!(row.offers().model_words(), ["opus", "claude-opus"]);
     }
 }

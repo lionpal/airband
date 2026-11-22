@@ -19,7 +19,7 @@
 use crate::adapters;
 use crate::hold::{Held, Msg, Tell};
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, SCHEMA};
-use airband_core::tools::{Choice, Offers, named};
+use airband_core::tools::{Choice, Offers};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -169,7 +169,7 @@ impl Opening<'_> {
         for (category, noun, what, said, request) in [(MODEL, "model", "a model", &asked.model, 5), (EFFORT, "effort", "an effort", &asked.effort, 6)] {
             let Some(said) = said else { continue };
             let has = setting(&settings, category);
-            let (Some(s), Some(choice)) = (has.as_ref(), has.as_ref().and_then(|s| named(&s.choices, said))) else {
+            let (Some(s), Some(choice)) = (has.as_ref(), has.as_ref().and_then(|s| s.choices.iter().find(|c| c.id == *said || c.name == *said))) else {
                 return Err(no_such(noun, what, said, has.as_ref()));
             };
             if s.now.as_deref() != Some(choice.id.as_str()) {

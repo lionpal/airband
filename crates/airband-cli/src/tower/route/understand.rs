@@ -313,8 +313,8 @@ fn answered(mut judged: Out, scene: &Scene, listed: &[Listed], menus: &Menus, pr
             // one he named that the tower does not know is not swapped for another: he is asked which. He named
             // none, and there is one place it could be: that one.
             project: at(new.project, projects).or_else(|| (own(new.project_said).is_none() && projects.len() == 1).then(|| projects[0].clone())),
-            model: at(new.model, &menus.models).or(own(new.model_said)),
-            effort: at(new.effort, &menus.efforts).or(own(new.effort_said)),
+            model: at(new.model, &menus.models).map(Pick::Listed).or(own(new.model_said).map(Pick::Said)),
+            effort: at(new.effort, &menus.efforts).map(Pick::Listed).or(own(new.effort_said).map(Pick::Said)),
             // with no work named it is started with nothing to do yet, or he is asked what it should do
             task: new.task.trim().to_string(),
         });

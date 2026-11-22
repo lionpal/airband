@@ -14,9 +14,35 @@ pub(super) struct Idea {
     /// The harness he asked for by name ("a codex agent"), when he did and a launcher starts it.
     pub(super) tool: Option<String>,
     pub(super) project: Option<String>,
-    pub(super) model: Option<String>,
-    pub(super) effort: Option<String>,
+    pub(super) model: Option<Pick>,
+    pub(super) effort: Option<Pick>,
     pub(super) task: String,
+}
+
+/// A model or an effort he asked for, as it came to the tower.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Pick {
+    /// From the phone: the tool's own id for it.
+    Id(String),
+    /// From his words: the name of one on the list the routing model was shown, by the number it answered.
+    Listed(String),
+    /// From his words: something on no list, as he said it. Only an agent that lists its own settings can be
+    /// asked for it, and that agent is told exactly this.
+    Said(String),
+}
+
+/// The one of `choices` he asked for: by the tool's own id, or by the name on the list he was offered, compared
+/// whole. Something on no list goes as he said it only to an agent that lists its own settings (`agent_says`).
+/// Anything else is his word back, for telling him it is not there.
+fn chosen(asked: Option<&Pick>, choices: &[airband_core::tools::Choice], agent_says: bool) -> Result<Option<airband_core::tools::Choice>, String> {
+    let found = |is: &dyn Fn(&airband_core::tools::Choice) -> bool| choices.iter().find(|c| is(c)).cloned();
+    match asked {
+        None => Ok(None),
+        Some(Pick::Id(id)) => found(&|c| c.id == *id).map(Some).ok_or_else(|| id.clone()),
+        Some(Pick::Listed(name)) => found(&|c| c.name == *name).map(Some).ok_or_else(|| name.clone()),
+        Some(Pick::Said(said)) if agent_says => Ok(Some(airband_core::tools::Choice { id: said.clone(), name: said.clone() })),
+        Some(Pick::Said(said)) => Err(said.clone()),
+    }
 }
 
 pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply {
@@ -53,16 +79,7 @@ pub(super) async fn launch(app: &Arc<App>, project: &str, idea: &Idea) -> Reply 
         [] => format!("Agents started this way cannot be given {what}."),
         choices => format!("It can be {}.", choices.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", ")),
     };
-    let chosen = |said: Option<&String>, choices: &[airband_core::tools::Choice]| -> Result<Option<airband_core::tools::Choice>, String> {
-        match said {
-            None => Ok(None),
-            Some(said) => match airband_core::tools::named(choices, said) {
-                Some(choice) => Ok(Some(choice.clone())),
-                None if agent_says => Ok(Some(airband_core::tools::Choice { id: said.clone(), name: said.clone() })),
-                None => Err(said.clone()),
-            },
-        }
-    };
+    let chosen = |asked: Option<&Pick>, choices: &[airband_core::tools::Choice]| chosen(asked, choices, agent_says);
     let model = match chosen(idea.model.as_ref(), &menu.models) {
         Ok(model) => model,
         Err(m) => return say(format!("I cannot start one on {m}. {}", offers("a model", &menu.models))),
@@ -141,4 +158,25 @@ fn launched(app: &App, project: &str, with: &str, task: &str, agent: Option<Stri
     let team = inner.team_called(project).unwrap_or_default();
     inner.record(Entry { id: config::random_hex(8), from: HIM.into(), his: true, team, to: vec![launch_label(project)], to_agents: agent.into_iter().collect(), short: Some(task.into()), full: task.into(), ..Entry::default() });
     format!("Launching in {project}{with}.")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use airband_core::tools::Choice;
+
+    #[test]
+    fn a_model_is_taken_by_its_id_or_its_listed_name_whole_and_never_by_a_near_word() {
+        let models = vec![Choice { id: "gpt-6.2-sol".into(), name: "6.2 Sol".into() }, Choice { id: "gpt-6-luna".into(), name: "6 Luna".into() }];
+        let id = |r: Result<Option<Choice>, String>| r.map(|c| c.map(|c| c.id));
+        assert_eq!(id(chosen(Some(&Pick::Id("gpt-6-luna".into())), &models, false)), Ok(Some("gpt-6-luna".into())));
+        assert_eq!(id(chosen(Some(&Pick::Listed("6.2 Sol".into())), &models, false)), Ok(Some("gpt-6.2-sol".into())));
+        // nothing loosened: another case, a part of it, or a name used as an id is not it
+        assert_eq!(id(chosen(Some(&Pick::Listed("6.2 sol".into())), &models, false)), Err("6.2 sol".into()));
+        assert_eq!(id(chosen(Some(&Pick::Id("6 Luna".into())), &models, false)), Err("6 Luna".into()));
+        assert_eq!(id(chosen(Some(&Pick::Said("luna".into())), &models, false)), Err("luna".into()));
+        // an agent that lists its own settings is asked for exactly what he said
+        assert_eq!(id(chosen(Some(&Pick::Said("luna".into())), &models, true)), Ok(Some("luna".into())));
+        assert_eq!(id(chosen(None, &models, false)), Ok(None));
+    }
 }
