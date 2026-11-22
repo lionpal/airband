@@ -51,7 +51,7 @@ impl Store {
         .map_err(|e| format!("cannot prepare {}: {e}", path.display()))?;
         // columns added since the table was first made: what a request for leave asked and where it stands,
         // and what airband says around the tool's words
-        for (column, kind) in [("request", "text"), ("note", "text"), ("his", "integer")] {
+        for (column, kind) in [("request", "text"), ("note", "text"), ("his", "integer"), ("more", "integer")] {
             if db.prepare(&format!("select {column} from messages limit 0")).is_err() {
                 db.execute_batch(&format!("alter table messages add column {column} {kind};")).map_err(|e| format!("cannot prepare {}: {e}", path.display()))?;
                 // Kept from before whether a line is his had its own column: his lines were the ones written
@@ -116,7 +116,7 @@ impl Store {
     /// The newest `keep` messages, oldest first. A row this build cannot read, or a column of one that does not
     /// read as what it should be, is said in the log with the message's number, never passed over in silence.
     fn messages(db: &Connection, keep: usize) -> Vec<Entry> {
-        let Some(mut q) = Self::warn("reading messages", db.prepare("select seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his from messages order by seq desc limit ?1")) else { return Vec::new() };
+        let Some(mut q) = Self::warn("reading messages", db.prepare("select seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his, more from messages order by seq desc limit ?1")) else { return Vec::new() };
         let rows = q.query_map(params![keep as i64], |r| {
             let seq = r.get::<_, i64>(0)? as u64;
             let column = |n: usize| r.get::<_, Option<String>>(n);
@@ -136,6 +136,7 @@ impl Store {
                 pictures: read_json(seq, "pictures", column(12)?).unwrap_or_default(),
                 agent: r.get(13)?,
                 his: r.get::<_, Option<bool>>(25)?.unwrap_or(false),
+                more: r.get::<_, Option<bool>>(26)?.unwrap_or(false),
                 to_agents: read_json(seq, "to_agents", column(14)?).unwrap_or_default(),
                 rev: r.get::<_, Option<i64>>(15)?.unwrap_or(0) as u64,
                 read: r.get(16)?,
@@ -203,9 +204,9 @@ impl Store {
     fn put_one(db: &Connection, e: &Entry) -> rusqlite::Result<usize> {
         let kind = e.kind.as_ref().and_then(word);
         db.execute(
-            "insert into messages (seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
-             on conflict (seq) do update set grp = excluded.grp, kind = excluded.kind, short = excluded.short, full = excluded.full, detail = excluded.detail, options = excluded.options, recommended = excluded.recommended, rev = excluded.rev, read = excluded.read, waiting = excluded.waiting, seen = excluded.seen, leave = excluded.leave, request = excluded.request, own_session = excluded.own_session, aloud = excluded.aloud",
-            params![e.seq as i64, e.id, e.at as i64, e.from, e.team.as_ref().map_or("", |t| t.as_str()), serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, e.held.as_ref().and_then(word), e.seen.map(|t| t as i64), e.leave.is_some() as i64, e.own_session as i64, serde_json::to_string(&e.aloud).unwrap(), e.notice as i64, e.leave.as_ref().map(|r| serde_json::to_string(r).unwrap()), e.note.as_ref().and_then(word), e.his],
+            "insert into messages (seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his, more) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
+             on conflict (seq) do update set grp = excluded.grp, kind = excluded.kind, short = excluded.short, full = excluded.full, detail = excluded.detail, options = excluded.options, recommended = excluded.recommended, rev = excluded.rev, read = excluded.read, waiting = excluded.waiting, seen = excluded.seen, leave = excluded.leave, request = excluded.request, own_session = excluded.own_session, aloud = excluded.aloud, more = excluded.more",
+            params![e.seq as i64, e.id, e.at as i64, e.from, e.team.as_ref().map_or("", |t| t.as_str()), serde_json::to_string(&e.to).unwrap(), kind, e.short, e.full, e.detail, serde_json::to_string(&e.options).unwrap(), e.recommended.map(|n| n as i64), serde_json::to_string(&e.pictures).unwrap(), e.agent, serde_json::to_string(&e.to_agents).unwrap(), e.rev as i64, e.read, e.held.as_ref().and_then(word), e.seen.map(|t| t as i64), e.leave.is_some() as i64, e.own_session as i64, serde_json::to_string(&e.aloud).unwrap(), e.notice as i64, e.leave.as_ref().map(|r| serde_json::to_string(r).unwrap()), e.note.as_ref().and_then(word), e.his, e.more],
         )
     }
 

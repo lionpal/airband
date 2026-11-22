@@ -52,6 +52,8 @@ pub(super) fn listed<T>(n: Option<usize>, list: &[T]) -> Option<&T> {
 
 /// What the judge decided about one message.
 pub(super) struct Judged {
+    /// `say` is cut down from the message, so there is more to read: the model's verdict.
+    pub(crate) cut: bool,
     pub(crate) kind: Kind,
     pub(crate) say: String,
     /// Answers he could give with one tap.
@@ -70,7 +72,7 @@ pub(super) struct Judged {
 impl Judged {
     /// The message as its agent wrote it, of this kind, with nothing read into it.
     fn as_written(item: &Item, kind: Kind) -> Judged {
-        Judged { kind, say: spoken(&item.full), options: Vec::new(), recommended: None, read: None, background: false, own_session: false }
+        Judged { kind, say: spoken(&item.full), cut: false, options: Vec::new(), recommended: None, read: None, background: false, own_session: false }
     }
 }
 
@@ -242,8 +244,10 @@ fn judged(item: &Item, o: Answer) -> Judged {
     let options = if kind == Kind::NeedsYou && !own_session { o.options.iter().map(|c| c.trim().to_string()).filter(|c| !c.is_empty() && c.chars().count() <= 24).take(3).collect() } else { Vec::new() };
     let recommended = o.recommended.filter(|i| (*i as usize) < options.len());
     // only for a message with more in it than its line: a name of a few words, and nothing for chatter
-    let read = o.read.map(|r| r.trim().to_string()).filter(|r| !r.is_empty() && r.chars().count() <= 32 && kind != Kind::Fyi && spoken(&item.full) != say);
-    Judged { kind, say, options, recommended, read, background: o.background && kind != Kind::NeedsYou, own_session }
+    // cut down by the model: its own verdict, never read from the words
+    let cut = !o.as_written;
+    let read = o.read.map(|r| r.trim().to_string()).filter(|r| !r.is_empty() && r.chars().count() <= 32 && kind != Kind::Fyi && cut);
+    Judged { kind, say, cut, options, recommended, read, background: o.background && kind != Kind::NeedsYou, own_session }
 }
 
 /// An agent has been at work for a while without a word. From the labels of its steps: is there something he

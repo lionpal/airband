@@ -36,6 +36,10 @@ pub(super) struct Entry {
     pub(super) kind: Option<Kind>,
     /// The short version, once it has been made.
     pub(super) short: Option<String>,
+    /// The short version is cut down from the message: there is more of it to read. Set by whoever made the
+    /// short version, from what it knows (the model's own verdict, or a cut it made), never by comparing words.
+    #[serde(default)]
+    pub(super) more: bool,
     pub(super) full: String,
     pub(super) detail: Option<String>,
     /// Answers he can give with one tap, when the judge found some.
@@ -111,6 +115,17 @@ impl Entry {
     pub(super) fn line(&self) -> String {
         self.short.clone().unwrap_or_else(|| opening(&self.said_whole()))
     }
+    /// Whether there is more to the message than its line. A line with no short version yet is the message's
+    /// opening, cut here, so whether it was cut is known here.
+    pub(super) fn more_to_read(&self) -> bool {
+        match &self.short {
+            Some(_) => self.more,
+            None => {
+                let whole = self.said_whole();
+                opening(&whole) != spoken(&whole)
+            }
+        }
+    }
     /// The words as they are read and shown: the tool's, after airband's own note when there is one.
     pub(super) fn said_whole(&self) -> String {
         self.note.map_or_else(|| self.full.clone(), |n| n.said(&self.full))
@@ -182,8 +197,8 @@ impl Inner {
                 continue;
             }
             // his words as he typed them. Something very long (a pasted log) is shown by its opening and kept whole
-            let short = airband_core::prose::clip(&t.text, 1500);
-            self.record_at(Entry { short: Some(short), pictures, ..Entry::his(id, std::slice::from_ref(&to), t.text) }, t.at);
+            let (short, more) = (airband_core::prose::clip(&t.text, 1500), t.text.chars().count() > 1500);
+            self.record_at(Entry { short: Some(short), more, pictures, ..Entry::his(id, std::slice::from_ref(&to), t.text) }, t.at);
         }
         if let Some(s) = self.session(agent_id) {
             s.told_upto = upto;
@@ -225,6 +240,7 @@ impl Inner {
         if let Some(e) = self.log.iter_mut().find(|e| e.id == id) {
             e.kind = Some(j.kind);
             e.short = Some(airband_core::redact::redact(&j.say));
+            e.more = j.cut;
             e.options = j.options.clone();
             e.recommended = j.recommended;
             e.read = j.read.clone();
@@ -276,7 +292,7 @@ impl Inner {
             team: self.line_team(e),
             to,
             kind: e.kind,
-            long: spoken(&e.full) != text,
+            long: e.more_to_read(),
             text,
             options: e.options.clone(),
             recommended: e.recommended,
