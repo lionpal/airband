@@ -4,7 +4,7 @@
 //! Each way of sending a recording is an interface: a function here and a line of [`UPLOADS`]. A service that
 //! speaks OpenAI's transcription interface (`POST {url}/audio/transcriptions`) is a row of the catalogue and
 //! no code. There is one such interface today.
-use airband_core::providers::{By, Interface, Job, Offer, Use};
+use airband_core::providers::{By, Interface, Job, Offer, Trouble, Use};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -91,13 +91,15 @@ fn transcriptions(with: &Use, by: &By, wav: &[u8], phrases: &[String]) -> Result
     if let Some((header, value)) = by.key_header(&with.key).map_err(|_| "This version of airband was not told how that service takes its key.")? {
         req = req.header(header.as_str(), value.as_str());
     }
-    let mut res = req.send(&body[..]).map_err(|_| "Could not reach the listening service.".to_string())?;
+    // what went wrong is worded once, for every service, by the service's own row and name
+    let service = airband_core::providers::provider(&with.kind);
+    let (name, check) = (service.as_ref().map(|p| p.name.as_str()).unwrap_or_default(), service.as_ref().and_then(|p| p.check.as_ref()));
+    let mut res = req.send(&body[..]).map_err(|_| Trouble::Unreachable.said(name))?;
     match res.status().as_u16() {
         200 => {}
-        401 | 403 => return Err("The listening service did not accept that key.".into()),
-        code => return Err(format!("The listening service said no ({code}).")),
+        code => return Err(Trouble::of_status(code, check).said(name)),
     }
-    let v: Value = res.body_mut().read_json().map_err(|_| "The listening service answered with something unreadable.".to_string())?;
+    let v: Value = res.body_mut().read_json().map_err(|_| Trouble::NoAnswer.said(name))?;
     Ok(v["text"].as_str().unwrap_or_default().trim().to_string())
 }
 

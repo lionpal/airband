@@ -15,10 +15,10 @@ const WIRE: Wire = Wire { connect, audio, end: |_| Message::text(json!({ "realti
 /// The service's short-lived token: asked for with how long it is to last, good for twenty minutes and for
 /// any number of connections in that time, so one fetched ahead is still good when he opens the microphone,
 /// and again if a connection drops.
-fn pass(by: &By, name: &str, set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
+fn pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
     let until = crate::ears_stream::stamp_at(now_ms() + 20 * 60 * 1000);
     let body = serde_json::json!({ "uses": 0, "expireTime": until, "newSessionExpireTime": until });
-    pass_field(by, name, set, key, Some(body), "name")
+    pass_field(by, service, set, key, Some(body), "name")
 }
 
 /// The pass goes in the address; the model, the language and the names to expect go in the first message.

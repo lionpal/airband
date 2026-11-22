@@ -76,6 +76,6 @@ fn read(m: &Message, kept: &mut Vec<String>, ended: &mut bool) -> Option<String>
 }
 
 /// The service's token for a key: asked for with nothing in the request, and the answer is the token itself.
-fn pass(by: &By, name: &str, set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
-    pass_whole(by, name, set, key)
+fn pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
+    pass_whole(by, service, set, key)
 }

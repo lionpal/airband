@@ -4,15 +4,15 @@
 //! comes back (`rate`).
 use super::{Made, Reach, Synth, Voicing};
 use airband_core::audio::base64_decode;
-use airband_core::providers::{By, Interface, Job, Use};
+use airband_core::providers::{By, Interface, Job, Provider, Use};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
 use std::time::Duration;
 
 pub(super) const VOICING: Voicing = Voicing { is: Interface { name: "timed-stream", can: &[], told: &["url", "auth", "rate"] }, make };
 
-fn make(voice: &Use, by: &By, name: &str) -> Made {
-    Ok(Box::new(Timed { reach: Reach::of(voice, by, name)?, model: voice.get(Job::Voice, "model") }))
+fn make(voice: &Use, by: &By, provider: &Provider) -> Made {
+    Ok(Box::new(Timed { reach: Reach::of(voice, by, provider)?, model: voice.get(Job::Voice, "model") }))
 }
 
 struct Timed {
@@ -25,7 +25,7 @@ impl Synth for Timed {
         self.reach.rate
     }
     fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8]), mark: &mut dyn FnMut(u32, u32)) -> Result<(), String> {
-        let res = self.reach.post(Duration::from_secs(60)).send_json(json!({ "text": text, "model_id": self.model })).map_err(|e| e.to_string())?;
+        let res = self.reach.post(Duration::from_secs(60)).send_json(json!({ "text": text, "model_id": self.model })).map_err(|_| self.reach.unreachable())?;
         if res.status().as_u16() != 200 {
             return Err(self.reach.answered(res.status().as_u16()));
         }

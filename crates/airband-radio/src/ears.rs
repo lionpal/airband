@@ -13,7 +13,7 @@
 //! choose. Nothing here or in the app names a service.
 use super::*;
 use airband_core::audio::{Endpointer, Heard, samples};
-use airband_core::providers::{By, Interface, Job, Offer, Use};
+use airband_core::providers::{By, Interface, Job, Offer, Provider, Trouble, Use};
 use std::collections::BTreeMap;
 use std::sync::mpsc::sync_channel;
 use std::time::Instant;
@@ -56,26 +56,26 @@ impl Pass {
 }
 
 /// What he is told when a service answered and gave nothing to listen with.
-fn no_pass(name: &str) -> String {
-    format!("{name} gave no pass to listen with.")
+fn no_pass(service: &Provider) -> String {
+    Trouble::NoAnswer.said(&service.name)
 }
 
 /// A pass that a service gives as one field of a JSON answer.
-fn pass_field(by: &By, name: &str, set: &BTreeMap<String, String>, key: &str, body: Option<Value>, field: &str) -> Result<String, String> {
-    let mut res = ask_pass(by, name, set, key, body)?;
-    res.body_mut().read_json::<Value>().ok().and_then(|v| v[field].as_str().map(String::from)).ok_or_else(|| no_pass(name))
+fn pass_field(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str, body: Option<Value>, field: &str) -> Result<String, String> {
+    let mut res = ask_pass(by, service, set, key, body)?;
+    res.body_mut().read_json::<Value>().ok().and_then(|v| v[field].as_str().map(String::from)).ok_or_else(|| no_pass(service))
 }
 
 /// A pass that a service gives as the whole of its answer.
-fn pass_whole(by: &By, name: &str, set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
-    ask_pass(by, name, set, key, None)?.body_mut().read_to_string().map_err(|_| no_pass(name))
+fn pass_whole(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
+    ask_pass(by, service, set, key, None)?.body_mut().read_to_string().map_err(|_| no_pass(service))
 }
 
 /// Ask a live service for a pass, the way every dialect here does: one request to where its row says
 /// (`pass`), with the key presented as its row says (`auth`), and `body` when the dialect sends one. The
 /// answer comes back for the dialect to take its pass from. Err says why not, in words for him, naming the
 /// service as its row does.
-fn ask_pass(by: &By, name: &str, set: &BTreeMap<String, String>, key: &str, body: Option<Value>) -> Result<ureq::http::Response<ureq::Body>, String> {
+fn ask_pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str, body: Option<Value>) -> Result<ureq::http::Response<ureq::Body>, String> {
     let url = airband_core::providers::fill(by.text("pass"), &|field| set.get(field).cloned().unwrap_or_default())?;
     let auth = by.auth().ok_or("This version of airband was not told how that listening service takes its key.")?;
     let req = crate::net::agent(Duration::from_secs(8)).post(&url).header(auth.header.as_str(), auth.value(key.trim()).as_str());
@@ -83,10 +83,10 @@ fn ask_pass(by: &By, name: &str, set: &BTreeMap<String, String>, key: &str, body
         Some(body) => req.send_json(&body),
         None => req.header("Content-Length", "0").send_empty(),
     }
-    .map_err(|_| format!("{name} could not be reached. Check your connection."))?;
+    .map_err(|_| Trouble::Unreachable.said(&service.name))?;
     match res.status().as_u16() {
         200 => Ok(res),
-        code => Err(format!("{name} would not give a pass to listen with (status {code}). Check its key and settings, in Settings, under Listening.")),
+        code => Err(Trouble::of_status(code, service.check.as_ref()).said(&service.name)),
     }
 }
 
@@ -94,7 +94,7 @@ fn ask_pass(by: &By, name: &str, set: &BTreeMap<String, String>, key: &str, body
 pub(crate) const NOTHING_CHOSEN: &str = "Nothing is chosen to listen with on this device. Choose it in Settings, under Listening.";
 
 /// How a dialect gets its pass: from the row, the service's name, his settings and his key.
-type AskPass = fn(&By, &str, &BTreeMap<String, String>, &str) -> Result<String, String>;
+type AskPass = fn(&By, &Provider, &BTreeMap<String, String>, &str) -> Result<String, String>;
 
 /// A live listening dialect: how one service is listened with while he talks. Each is a file under `ears/`
 /// and a line of [`LISTENERS`].
@@ -217,14 +217,14 @@ pub(crate) fn pass_for(with: &Use) -> Result<Pass, String> {
     let (provider, offer) = with.offer(Job::Ears).ok_or("This version of airband does not know that listening service.")?;
     let l = live(&offer).ok_or("That service does not listen live.")?;
     let set = with.settings(Job::Ears);
-    Ok(Pass { dialect: l.is.name.into(), token: (l.pass)(&offer.by, &provider.name, &set, &with.key)?, set, phrases: Vec::new(), by: offer.by.clone() })
+    Ok(Pass { dialect: l.is.name.into(), token: (l.pass)(&offer.by, &provider, &set, &with.key)?, set, phrases: Vec::new(), by: offer.by.clone() })
 }
 
 /// Does this service listen with this key and these settings? One real call to it.
 pub(crate) fn check(with: &Use) -> Result<(), String> {
     let (provider, offer) = with.offer(Job::Ears).ok_or("This version of airband does not know that listening service.")?;
     match live(&offer) {
-        Some(l) => (l.pass)(&offer.by, &provider.name, &with.settings(Job::Ears), &with.key).map(|_| ()),
+        Some(l) => (l.pass)(&offer.by, &provider, &with.settings(Job::Ears), &with.key).map(|_| ()),
         None => crate::hears::check(with),
     }
 }
@@ -284,7 +284,7 @@ impl Ears {
                         if let Some(pass) = self.kept().filter(|p| p.dialect == l.is.name && p.set == set) {
                             return Way::Live { pass: Pass { phrases, ..pass }, with: l };
                         }
-                        match (l.pass)(&offer.by, &provider.name, &set, &with.key) {
+                        match (l.pass)(&offer.by, &provider, &set, &with.key) {
                             Ok(token) => {
                                 let pass = Pass { dialect: l.is.name.into(), token, set, phrases, by: offer.by.clone() };
                                 self.keep(&pass);

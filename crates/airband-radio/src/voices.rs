@@ -5,7 +5,7 @@
 //! [`Voicing`] that names it, and a line of [`VOICES`]. A provider's row names the interface it speaks
 //! (`by.interface`) and tells it what it needs (`by.with`). A service that speaks OpenAI's speech interface
 //! is a row and no code; one with a route of its own is one file here and its row.
-use airband_core::providers::{By, Interface, Job, Offer, Use};
+use airband_core::providers::{By, Interface, Job, Offer, Provider, Trouble, Use};
 
 mod generate_content;
 mod ssml;
@@ -29,7 +29,7 @@ type Made = Result<Box<dyn Synth>, String>;
 struct Voicing {
     is: Interface,
     /// The voice a setting names, with what the row tells this interface and what the service is called.
-    make: fn(&Use, &By, &str) -> Made,
+    make: fn(&Use, &By, &Provider) -> Made,
 }
 
 /// Where a voice service with a route of its own is reached and how, all of it from its row: the address
@@ -41,7 +41,28 @@ pub(crate) struct Reach {
     auth: Option<(String, String)>,
     headers: Vec<(String, String)>,
     pub rate: u32,
+    service: Service,
+}
+
+/// The service, as far as telling him what went wrong goes: what it is called, and which of its statuses its
+/// row says mean a wrong key or a refusal.
+#[derive(Clone)]
+struct Service {
     name: String,
+    check: Option<airband_core::providers::Check>,
+}
+impl Service {
+    fn of(provider: &Provider) -> Service {
+        Service { name: provider.name.clone(), check: provider.check.clone() }
+    }
+    /// It answered with anything but the sound.
+    fn answered(&self, status: u16) -> String {
+        Trouble::of_status(status, self.check.as_ref()).said(&self.name)
+    }
+    /// It could not be reached.
+    fn unreachable(&self) -> String {
+        Trouble::Unreachable.said(&self.name)
+    }
 }
 
 /// The rates a voice's sound can be played at.
@@ -50,11 +71,6 @@ const RATES: std::ops::RangeInclusive<u32> = 8000..=48000;
 /// How a voice service takes this key, by its row. One sent no key needs nothing said.
 fn key_header(by: &By, key: &str) -> Result<Option<(String, String)>, String> {
     by.key_header(key).map_err(|_| "This version of airband was not told how that voice service takes its key.".to_string())
-}
-
-/// What is said when a voice service answers with anything but the sound.
-fn answered(name: &str, status: u16) -> String {
-    format!("{name} answered {status}")
 }
 
 /// Hand a service's sound on as it arrives, a tenth of a second at a time.
@@ -69,12 +85,12 @@ fn pump(mut sound: impl std::io::Read, sink: &mut dyn FnMut(&[u8])) -> Result<()
 }
 
 impl Reach {
-    fn of(voice: &Use, by: &By, name: &str) -> Result<Reach, String> {
+    fn of(voice: &Use, by: &By, provider: &Provider) -> Result<Reach, String> {
         let url = airband_core::providers::fill(by.text("url"), &|field| voice.get(Job::Voice, field))?;
         let auth = key_header(by, &voice.key)?;
         let rate = by.with.get("rate").and_then(serde_json::Value::as_u64).map(|r| r as u32).filter(|r| RATES.contains(r)).ok_or("That voice service's row does not say the rate of its sound.")?;
         let headers = by.with.get("headers").and_then(serde_json::Value::as_object).map(|h| h.iter().filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string()))).collect()).unwrap_or_default();
-        Ok(Reach { url, auth, headers, rate, name: name.into() })
+        Ok(Reach { url, auth, headers, rate, service: Service::of(provider) })
     }
 
     /// A request to it, with the key and what else the row says to send.
@@ -84,7 +100,11 @@ impl Reach {
 
     /// What is said when it answers with anything but the sound.
     fn answered(&self, status: u16) -> String {
-        answered(&self.name, status)
+        self.service.answered(status)
+    }
+    /// What is said when it could not be reached.
+    fn unreachable(&self) -> String {
+        self.service.unreachable()
     }
 }
 
@@ -103,7 +123,7 @@ pub fn synth(voice: &Use) -> Made {
     }
     let (provider, offer) = voice.offer(Job::Voice).ok_or("This version of airband has no such voice service.")?;
     let voicing = VOICES.iter().find(|v| v.is.fits(&offer)).ok_or("This version of airband cannot speak through that voice service yet. Update airband.")?;
-    (voicing.make)(voice, &offer.by, &provider.name)
+    (voicing.make)(voice, &offer.by, &provider)
 }
 
 /// The same, for a caller with nothing to say about why not.

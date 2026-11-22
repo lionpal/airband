@@ -171,8 +171,9 @@ pub(crate) fn service_of(kind: &str, offer: &str, key: &str, settings: HashMap<S
 pub(crate) fn check(with: &airband_core::providers::Use) -> Result<(), String> {
     let synth = crate::voices::synth(with)?;
     let mut bytes = 0usize;
-    synth.speak("Ready.", &mut |pcm| bytes += pcm.len(), &mut |_, _| {}).map_err(|e| format!("The voice service did not speak: {e}."))?;
-    if bytes == 0 { Err("The voice service answered with no sound.".into()) } else { Ok(()) }
+    synth.speak("Ready.", &mut |pcm| bytes += pcm.len(), &mut |_, _| {})?;
+    let name = airband_core::providers::provider(&with.kind).map(|p| p.name.clone()).unwrap_or_default();
+    if bytes == 0 { Err(airband_core::providers::Trouble::NoAnswer.said(&name)) } else { Ok(()) }
 }
 
 /// A clip of sound: 16-bit little-endian mono PCM at `rate` samples a second.

@@ -15,8 +15,8 @@ const WIRE: Wire = Wire { connect, audio: |_, bytes| chunk(bytes, false), end: |
 
 /// The service's token: asked for with nothing in the request, good for a quarter of an hour and for one
 /// connection.
-fn pass(by: &By, name: &str, set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
-    pass_field(by, name, set, key, None, "token")
+fn pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str) -> Result<String, String> {
+    pass_field(by, service, set, key, None, "token")
 }
 
 /// The pass goes in the address, with the model, the language and the names he is likely to say.
