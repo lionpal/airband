@@ -1,0 +1,44 @@
+{
+  "id": "github-issue",
+  "name": "Issue",
+  "symbol": "smallcircle.filled.circle",
+  "host": "github.com",
+  "path": [
+    "{owner}",
+    "{repo}",
+    "issues",
+    "{number:digits}"
+  ],
+  "label": "{repo} #{number}",
+  "ask": {
+    "program": "gh",
+    "args": [
+      "issue",
+      "view",
+      "{number}",
+      "--repo",
+      "{owner}/{repo}",
+      "--json",
+      "title,state,stateReason",
+      "--jq",
+      "{title: .title, state: (if .state == \"CLOSED\" and .stateReason == \"NOT_PLANNED\" then \"NOT_PLANNED\" else .state end)}"
+    ],
+    "states": [
+      {
+        "is": "OPEN",
+        "name": "Open",
+        "tone": "good"
+      },
+      {
+        "is": "CLOSED",
+        "name": "Done",
+        "tone": "done"
+      },
+      {
+        "is": "NOT_PLANNED",
+        "name": "Closed",
+        "tone": "stopped"
+      }
+    ]
+  }
+}

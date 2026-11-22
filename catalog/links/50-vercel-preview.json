@@ -1,0 +1,9 @@
+{
+  "id": "vercel-preview",
+  "name": "Preview",
+  "symbol": "globe",
+  "host": "*.vercel.app",
+  "path": [],
+  "more": true,
+  "label": ""
+}

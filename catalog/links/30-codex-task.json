@@ -1,0 +1,12 @@
+{
+  "id": "codex-task",
+  "name": "Codex task",
+  "symbol": "cloud",
+  "host": "chatgpt.com",
+  "path": [
+    "codex",
+    "tasks",
+    "{id}"
+  ],
+  "label": "Codex"
+}

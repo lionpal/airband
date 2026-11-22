@@ -631,9 +631,10 @@ pub struct Message {
     /// only goes up. Pass the feed's `rev` back as `since` to get everything changed after it.
     #[serde(default)]
     pub rev: u64,
-    /// Web links the agent wrote (an artifact, a pull request), which the short version leaves out.
+    /// The web addresses that go with it: ones the agent wrote, and things its tool said it made (an artifact,
+    /// a pull request). The short version leaves them out, so a client shows each as a card.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub links: Vec<String>,
+    pub links: Vec<crate::links::Link>,
     /// It needs him and nothing has answered it yet: the agent is still stopped, he has not replied, and the
     /// agent has said nothing since. These are what an inbox shows, and what he is reminded of.
     #[serde(default)]

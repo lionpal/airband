@@ -191,31 +191,59 @@ private struct Zoomable: View {
     }
 }
 
-/// The web links an agent wrote, as buttons, each called by the site it goes to. They open in the browser.
+/// The things at web addresses that go with a message (a pull request, an artifact, a plain link), one card
+/// each: what it is called, what kind of thing it is, and how it stands. Every kind is drawn the same way from
+/// what the core says about it; there is no list of kinds here. A tap opens the address, which the phone hands
+/// to the app that owns such addresses when it is installed, and to the browser otherwise.
 struct LinkRow: View {
     @Environment(\.openURL) private var openURL
     let m: ChatMessage
 
-    /// What to call a link: the site it goes to.
-    static func label(_ url: URL) -> String {
-        let host = url.host ?? "link"
-        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    static func colour(_ tone: LinkTone) -> Color {
+        switch tone {
+        case .good: return Palette.signal
+        case .done: return Palette.read
+        case .trouble: return Palette.trouble
+        case .waiting: return Palette.ask
+        case .stopped, .plain: return Palette.quiet
+        }
+    }
+
+    /// What a card is read out as: "Stop the retry charging twice, Pull request, Open".
+    static func spoken(_ link: ChatLink) -> String {
+        [link.title, link.kind, link.state].filter { !$0.isEmpty }.joined(separator: ", ")
     }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(m.links.compactMap { URL(string: $0) }, id: \.absoluteString) { url in
-                    Button { openURL(url) } label: {
-                        HStack(spacing: 6) {
-                            Text(LinkRow.label(url)).font(.system(size: 15, weight: .semibold)).lineLimit(1)
-                            Image(systemName: "arrow.up.right").font(.system(size: 12, weight: .bold))
+        VStack(spacing: 8) {
+            ForEach(m.links, id: \.address) { link in
+                Button { if let url = URL(string: link.address) { openURL(url) } } label: {
+                    HStack(spacing: 11) {
+                        if !link.symbol.isEmpty {
+                            Image(systemName: link.symbol).font(.system(size: 15, weight: .medium)).foregroundStyle(Palette.soft)
+                                .frame(width: 32, height: 32).background(Palette.field, in: RoundedRectangle(cornerRadius: 9))
                         }
-                        .foregroundStyle(Palette.ink).padding(.horizontal, 14).frame(minHeight: 44)
-                        .background(Palette.raised, in: Capsule())
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(link.title).font(.system(size: 15, weight: .semibold)).foregroundStyle(Palette.ink).lineLimit(1)
+                            if !link.kind.isEmpty {
+                                HStack(spacing: 6) {
+                                    Text(link.kind).foregroundStyle(Palette.quiet)
+                                    if !link.state.isEmpty {
+                                        Text("\u{00B7}").foregroundStyle(Palette.dim)
+                                        Circle().fill(LinkRow.colour(link.tone)).frame(width: 7, height: 7)
+                                        Text(link.state).foregroundStyle(LinkRow.colour(link.tone))
+                                    }
+                                }
+                                .font(.system(size: 13)).lineLimit(1)
+                            }
+                        }
+                        Spacer(minLength: 4)
+                        Image(systemName: "arrow.up.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Palette.quiet)
                     }
-                    .buttonStyle(.plain).accessibilityLabel("Open \(LinkRow.label(url))")
+                    .padding(.horizontal, 12).padding(.vertical, 9).frame(minHeight: 44)
+                    .background(Palette.raised, in: RoundedRectangle(cornerRadius: 14))
                 }
+                .buttonStyle(.plain).accessibilityLabel("Open \(LinkRow.spoken(link))")
             }
         }
     }

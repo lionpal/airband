@@ -1,0 +1,11 @@
+{
+  "id": "claude-artifact",
+  "name": "Artifact",
+  "symbol": "doc.richtext",
+  "host": "claude.ai",
+  "path": [
+    "artifact",
+    "{id}"
+  ],
+  "label": "Claude"
+}

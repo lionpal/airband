@@ -10,6 +10,7 @@ use std::io::Read;
 ///   echo "long message" | airband report --id build-7 --harness codex said -
 ///   airband report --id build-7 --harness codex show chart.png      (a picture for him, shown with what it says next)
 ///   airband report --id build-7 --harness codex permission "run the production migration"   (waits for his yes or no)
+///   airband report --id build-7 --harness codex made https://example.com/preview/7 "Checkout preview"   (a card for it)
 ///   airband report --id build-7 --harness codex signoff
 ///
 /// `--meta key=value` (repeatable) records anything else about the agent: its model, a branch, a ticket.
@@ -78,11 +79,13 @@ pub fn run(args: &[String]) -> Result<(), String> {
         Some("notice") => Event::Notice { text: body()? },
         // a picture goes with the next thing the agent says: `show` for one he should see, `picture` for one it only looked at
         Some(word @ ("picture" | "show")) => Event::Picture { path: std::path::absolute(rest.get(1).ok_or("give the picture's file")?).map_err(|e| e.to_string())?.display().to_string(), shown: word == "show" },
+        // something it made that lives at a web address, shown with the next thing it says: `made <address> [title]`
+        Some("made") => Event::Made { address: rest.get(1).filter(|a| a.starts_with("https://") || a.starts_with("http://")).ok_or("give the web address of what was made")?.clone(), title: rest.get(2).cloned(), kind: None },
         Some("doing") => Event::Activity { text: body()? },
         // what it runs on: `model "Opus 4.7" high`; the effort is left off where the harness has none
         Some("model") => Event::Model { name: rest.get(1).ok_or("give the model's name")?.clone(), effort: rest.get(2).cloned() },
         Some("signoff") => Event::Signoff,
-        _ => return Err("expected one of: checkin, working, doing <text>, model <name> [effort], said <text>, asked <text>, notice <text>, show <picture file>, picture <picture file>, signoff".into()),
+        _ => return Err("expected one of: checkin, working, doing <text>, model <name> [effort], said <text>, asked <text>, notice <text>, show <picture file>, picture <picture file>, made <address> [title], signoff".into()),
     };
     if post(&AgentEvent { schema: SCHEMA.into(), agent, event }) { Ok(()) } else { Err("airband did not answer (is it running? `airband status`)".into()) }
 }

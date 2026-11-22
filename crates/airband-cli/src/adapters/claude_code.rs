@@ -474,6 +474,8 @@ pub fn events(hook: &Value) -> Vec<AgentEvent> {
         // it is handing part of the work to a subagent
         Some("PreToolUse") if is_subagent(hook) => vec![Event::Subagent { done: false, what: hook["tool_input"]["description"].as_str().unwrap_or("").to_string() }],
         Some("PostToolUse") if is_subagent(hook) => vec![Event::Subagent { done: true, what: hook["tool_input"]["description"].as_str().unwrap_or("").to_string() }],
+        // it published a page: the tool's own answer says where it is and what it is called
+        Some("PostToolUse") if hook["tool_name"].as_str() == Some(ARTIFACT_TOOL) => made_artifact(hook).into_iter().collect(),
         // it read a picture, took a screenshot, or sent him a file
         Some("PostToolUse") => {
             let mut paths = Vec::new();
@@ -488,9 +490,27 @@ pub fn events(hook: &Value) -> Vec<AgentEvent> {
 
 // ---- setting Claude Code up to report: its hooks, in its own settings file ----
 
-/// The Claude Code tools worth hearing about once they have run: the ones that look at a picture, make one, or
-/// hand him one, and the one that runs a subagent.
-const AFTER_TOOLS: &str = "Read|SendUserFile|Agent|Task|mcp__.*screenshot.*";
+/// Claude Code's tool for publishing a page on claude.ai, and the kind of link (`catalog/links`) such a page is.
+const ARTIFACT_TOOL: &str = "Artifact";
+const ARTIFACT_KIND: &str = "claude-artifact";
+
+/// The page the Artifact tool just published, from the tool's own answer. The tool says which of its actions
+/// it was asked for (publishing is the one it does when none is named); reading a page, listing them or
+/// adding a file to one publishes nothing.
+fn made_artifact(hook: &Value) -> Option<Event> {
+    let asked = &hook["tool_input"];
+    if !matches!(asked["action"].as_str(), None | Some("publish")) || asked["asset"].as_bool() == Some(true) {
+        return None;
+    }
+    let answer = &hook["tool_response"];
+    let address = answer["url"].as_str().filter(|a| a.starts_with("https://"))?;
+    let title = answer["title"].as_str().map(str::trim).filter(|t| !t.is_empty()).map(String::from);
+    Some(Event::Made { address: address.to_string(), title, kind: Some(ARTIFACT_KIND.to_string()) })
+}
+
+/// The Claude Code tools worth hearing about once they have run: the ones that look at a picture, make one,
+/// hand him one or publish a page, and the one that runs a subagent.
+const AFTER_TOOLS: &str = "Read|SendUserFile|Artifact|Agent|Task|mcp__.*screenshot.*";
 /// The ones worth hearing about as they start: a subagent.
 const BEFORE_TOOLS: &str = "Agent|Task";
 /// Permission is asked on the radio first. The time allowed is long because he is the one being waited for; the
@@ -663,6 +683,17 @@ mod tests {
         assert_eq!(call("PreToolUse"), Event::Subagent { done: false, what: "map the columns".into() });
         assert_eq!(call("PostToolUse"), Event::Subagent { done: true, what: "map the columns".into() });
     }
+    #[test]
+    fn a_page_it_published_is_reported_as_the_tool_itself_described_it() {
+        let asked = |input: Value, answer: Value| json!({ "session_id": "s1", "cwd": "/x/shop", "hook_event_name": "PostToolUse", "tool_name": "Artifact", "tool_input": input, "tool_response": answer });
+        let hook = |answer: Value| asked(json!({ "file_path": "/x/shop/plan.html" }), answer);
+        let made = events(&hook(json!({ "url": "https://claude.ai/artifact/abc123", "title": "Refund plan", "seq": 1, "audience": "owner" })));
+        assert_eq!(made[0].event, Event::Made { address: "https://claude.ai/artifact/abc123".into(), title: Some("Refund plan".into()), kind: Some("claude-artifact".into()) });
+        // looking one up publishes nothing
+        assert!(events(&asked(json!({ "action": "read", "url": "https://claude.ai/artifact/abc123" }), json!({ "url": "https://claude.ai/artifact/abc123", "title": "Refund plan" }))).is_empty());
+        assert!(events(&hook(json!({ "error": "refused" }))).is_empty());
+    }
+
     #[test]
     fn a_picture_a_tool_touched_is_reported() {
         let dir = std::env::temp_dir().join(format!("airband-adapter-{}", std::process::id()));

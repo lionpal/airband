@@ -1,0 +1,56 @@
+{
+  "id": "github-pull",
+  "name": "Pull request",
+  "symbol": "arrow.triangle.pull",
+  "host": "github.com",
+  "path": [
+    "{owner}",
+    "{repo}",
+    "pull",
+    "{number:digits}"
+  ],
+  "more": true,
+  "label": "{repo} #{number}",
+  "ask": {
+    "program": "gh",
+    "args": [
+      "pr",
+      "view",
+      "{number}",
+      "--repo",
+      "{owner}/{repo}",
+      "--json",
+      "title,state,isDraft,statusCheckRollup",
+      "--jq",
+      "{title: .title, state: (if .state == \"OPEN\" and .isDraft then \"DRAFT\" elif .state == \"OPEN\" and ([.statusCheckRollup[]? | (.conclusion // .state // \"\")] | any(. == \"FAILURE\" or . == \"ERROR\" or . == \"TIMED_OUT\")) then \"FAILING\" else .state end)}"
+    ],
+    "states": [
+      {
+        "is": "OPEN",
+        "name": "Open",
+        "tone": "good"
+      },
+      {
+        "is": "DRAFT",
+        "name": "Draft",
+        "tone": "waiting"
+      },
+      {
+        "is": "FAILING",
+        "name": "Checks failing",
+        "tone": "trouble"
+      },
+      {
+        "is": "MERGED",
+        "name": "Merged",
+        "tone": "done",
+        "last": true
+      },
+      {
+        "is": "CLOSED",
+        "name": "Closed",
+        "tone": "stopped"
+      }
+    ]
+  }
+}

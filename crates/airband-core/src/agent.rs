@@ -154,6 +154,16 @@ pub enum Event {
         #[serde(default)]
         shown: bool,
     },
+    /// Its tool made something that lives at a web address (it published an artifact), and says so itself:
+    /// where it is, what it is called, and which kind of thing it is by the id of that kind's row
+    /// (`links.rs`). The tower shows it with the next thing the agent says.
+    Made {
+        address: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<String>,
+    },
     /// It started a subagent to do part of the work, or one of its subagents finished. For showing how much is
     /// going on under one agent; nothing is decided from it.
     Subagent {

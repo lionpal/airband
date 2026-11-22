@@ -1,0 +1,59 @@
+{
+  "id": "github-run",
+  "name": "Workflow run",
+  "symbol": "play.circle",
+  "host": "github.com",
+  "path": [
+    "{owner}",
+    "{repo}",
+    "actions",
+    "runs",
+    "{number:digits}"
+  ],
+  "more": true,
+  "label": "{repo} run",
+  "ask": {
+    "program": "gh",
+    "args": [
+      "run",
+      "view",
+      "{number}",
+      "--repo",
+      "{owner}/{repo}",
+      "--json",
+      "displayTitle,status,conclusion",
+      "--jq",
+      "{title: .displayTitle, state: (if .status == \"completed\" then .conclusion else .status end)}"
+    ],
+    "states": [
+      {
+        "is": "queued",
+        "name": "Queued",
+        "tone": "waiting"
+      },
+      {
+        "is": "in_progress",
+        "name": "Running",
+        "tone": "waiting"
+      },
+      {
+        "is": "success",
+        "name": "Passed",
+        "tone": "done",
+        "last": true
+      },
+      {
+        "is": "failure",
+        "name": "Failed",
+        "tone": "trouble",
+        "last": true
+      },
+      {
+        "is": "cancelled",
+        "name": "Cancelled",
+        "tone": "stopped",
+        "last": true
+      }
+    ]
+  }
+}

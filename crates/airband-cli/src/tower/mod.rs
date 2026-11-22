@@ -42,6 +42,7 @@ mod launch;
 mod local;
 mod permit;
 mod place;
+mod links;
 mod pictures;
 mod pump;
 mod push;
@@ -360,6 +361,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         let (saved, entries) = store.load(LOG_KEEP);
         let (seq, rev) = store.last_counts();
         let mut inner = Inner { sessions: saved.sessions, projects: saved.projects, colours: saved.colours, held: saved.held, menus: saved.menus, tools: saved.tools, placed: saved.placed, seq, rev, log: entries, ..Inner::default() };
+        inner.links = links::Book::load();
         inner.reap();
         inner.close_requests_from_before();
         // credentials said before the chat masked them: masked now, and sent to every radio again as they are
@@ -386,6 +388,7 @@ pub fn run(cfg: Config) -> Result<(), String> {
         tokio::spawn(accounts::keep_alive(app.clone()));
         tokio::spawn(progress_loop(app.clone()));
         tokio::spawn(activity_loop(app.clone()));
+        tokio::spawn(links::keep_asking(app.clone()));
         held::carry_on(&app).await;
         // tools that have no hooks and are watched (a server of the tool's own): each adapter that watches is
         // started, and tells the tower what it sees the same way an event over HTTP is taken
