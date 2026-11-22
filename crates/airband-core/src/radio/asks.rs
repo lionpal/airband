@@ -160,8 +160,7 @@ pub struct RecentFolder {
 
 /// `POST project`: make a new team, or start another agent in one that is there. Agents started in it work
 /// in `folder` (a whole path, anywhere on the computer), which is made first when `make` is set. The tower then starts an agent there with
-/// nothing to do yet, if it runs agents itself. The answer is `{say, team}` (the team's name as the tower
-/// writes it) or `{error}`.
+/// nothing to do yet, if it runs agents itself. The answer is a [`ProjectMade`], or `{error}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewProject {
     /// The team's name as he wrote it; the tower makes it a team's name. With `make`, the new folder is
@@ -174,6 +173,16 @@ pub struct NewProject {
     /// The coding tool its first agent is, by id; the tower's usual one when left out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool: Option<String>,
+}
+
+/// What `POST project` answers: what to tell him, and the team the agent is in.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectMade {
+    pub say: String,
+    /// The team's name, as the tower writes it.
+    pub team: String,
+    /// The team's id on that computer.
+    pub id: String,
 }
 
 /// `POST takeover`: have the tower take over an agent he started in a terminal of his own. That terminal's
@@ -314,9 +323,6 @@ pub struct ReadsAsk {
     pub usual: String,
 }
 
-/// `POST push`: where this radio can be woken when it is not listening: its address at a push service. The tower
-/// keeps it with the pairing it came through and uses it only for what deserves a notification. An empty
-/// `token` takes the address away.
 /// `POST tools`: the coding tools he uses, by the ids their rows give them, the one he uses most first. He
 /// chooses them on his phone. A new agent he asks for without naming a tool is started with the first.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -324,6 +330,9 @@ pub struct UsesTools {
     pub tools: Vec<String>,
 }
 
+/// `POST push`: where this radio can be woken when it is not listening: its address at a push service. The tower
+/// keeps it with the pairing it came through and uses it only for what deserves a notification. An empty
+/// `token` takes the address away.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PushTarget {
     /// The push service.

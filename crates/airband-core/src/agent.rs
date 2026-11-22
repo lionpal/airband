@@ -36,7 +36,8 @@ pub enum Via {
 pub struct Agent {
     /// Stable for the life of the agent's session; unique on this machine.
     pub id: String,
-    /// Which harness runs it: "claude-code", "codex", anything. For display and for adapters; the tower has no rules per harness.
+    /// Which coding tool runs it, by the id the tool's catalogue row gives it. For display and for adapters; the
+    /// tower has no rules per tool.
     pub harness: String,
     /// The folder it works in. Its last part names the callsign unless `name` is given.
     #[serde(default, skip_serializing_if = "Option::is_none")]

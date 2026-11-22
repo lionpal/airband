@@ -273,7 +273,6 @@ impl Reader<'_> {
     }
 }
 
-/// The words of some spans, with nothing of how they were marked.
 /// The scanner for web addresses written out bare in a run of words: whole addresses that name how they are
 /// reached (`https://…`), and nothing else.
 fn addresses() -> linkify::LinkFinder {

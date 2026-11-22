@@ -116,7 +116,7 @@ pub(crate) fn work(jobs: Receiver<Job>, link: Arc<Link>, host: Arc<dyn RadioHost
                         link.tell("/heard", &Heard { id: t.id.clone() });
                     }
                     voice::Said::Nothing(why) => {
-                        link.tell("/unheard", &serde_json::json!({ "id": t.id, "why": why }));
+                        link.tell("/unheard", &airband_core::radio::Unheard { id: t.id.clone(), why });
                     }
                 }
                 // A question is read to him and then waits in the chat, where he answers it when he chooses, by

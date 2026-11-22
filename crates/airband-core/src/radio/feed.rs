@@ -294,7 +294,7 @@ pub struct RosterEntry {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Feed {
-    /// Always `airband.radio/2` from a tower that says; a client need not check it, but can.
+    /// Always [`crate::radio::SCHEMA`] from a tower that says; a client need not check it, but can.
     #[serde(default)]
     pub schema: String,
     /// The log's change count as of this answer: pass it back as `since`. Lower than the one a client holds
