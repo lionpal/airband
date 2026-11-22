@@ -31,7 +31,7 @@ pub(in crate::tower) async fn set_reader(settings: &Settings, wanted: airband_co
     // a model on this computer is fetched the first time it is chosen: this call waits through that, and only
     // this one (every other is told it is not ready yet, and gives the message as written)
     if let Some((model, server)) = local_model(&using) {
-        tokio::task::spawn_blocking(move || super::local::ensure(&model, &server, true)).await.map_err(|e| e.to_string())?.map_err(|more| said(Failed(Trouble::Program, more)))?;
+        tokio::task::spawn_blocking(move || super::local::ensure(&model, &server, super::local::Patience::Long)).await.map_err(|e| e.to_string())?.map_err(|more| said(Failed(Trouble::Program, more)))?;
     }
     ask(&using, READY.into(), None).await.map_err(said)?;
     let keyed = p.key;

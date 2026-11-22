@@ -25,7 +25,9 @@
 //! - `place`: whether an agent is in the right team
 //! - `route`: who a reply is for, and the controls the tower answers itself (`understand` also reads his answer
 //!   to "Who is that for?")
-//! - `deliver`: the ways of getting his words to an agent
+//! - `deliver`: getting his words to an agent
+//! - `edges`: what the tower reaches outside itself through (the model, processes, folders, the ways to an
+//!   agent), each a trait with a stand-in for tests
 //! - `launch` and `held`: starting a new agent, and the ones the tower runs itself
 //! - `pump`: call mode's one-at-a-time queue
 //! - `http`: the routes
@@ -43,6 +45,7 @@ mod aloud;
 mod attachments;
 mod calls;
 mod deliver;
+mod edges;
 mod entries;
 mod held;
 mod http;
@@ -163,23 +166,14 @@ fn log(msg: impl AsRef<str>) {
     println!("{} {}", clock(), msg.as_ref());
 }
 
-#[cfg(unix)]
+/// Whether a process on this computer is running ([`edges::procs::Procs::alive`]).
 fn alive(pid: u32) -> bool {
-    // signal 0 only asks; "not permitted" still means it exists
-    unsafe { libc::kill(pid as i32, 0) == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM) }
-}
-#[cfg(not(unix))]
-fn alive(_pid: u32) -> bool {
-    true // not checked on this platform yet: an agent leaves when it signs off or a delivery fails
+    use edges::procs::Procs;
+    edges::procs::SystemProcs.alive(pid)
 }
 
-/// Ask a process to end: asked, not killed, so it can finish what it must and pass the word on to its own.
-/// Nothing on a system with no such way of asking.
+/// Ask a process to end: asked, not killed ([`edges::procs::Procs::terminate`]).
 fn terminate(pid: u32) {
-    #[cfg(unix)]
-    unsafe {
-        libc::kill(pid as i32, libc::SIGTERM);
-    }
-    #[cfg(not(unix))]
-    let _ = pid;
+    use edges::procs::Procs;
+    edges::procs::SystemProcs.terminate(pid)
 }

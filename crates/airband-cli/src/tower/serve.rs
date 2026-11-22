@@ -96,7 +96,7 @@ fn start_local_model(cfg: &Config) {
     local::listen_after(cfg.port);
     if let Some((model, server)) = judge::local_model(&cfg.summarizer) {
         std::thread::spawn(move || {
-            match local::ensure(&model, &server, true) {
+            match local::ensure(&model, &server, local::Patience::Long) {
                 Ok(_) => log("local model: ready"),
                 Err(why) => log(format!("local model: {why}")),
             }

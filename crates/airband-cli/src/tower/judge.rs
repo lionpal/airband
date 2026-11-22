@@ -2,6 +2,7 @@
 //! Also the fuller version, for "say more". The model is the one chosen to read (`models`).
 use super::*;
 use crate::providers::{By, Interface, Job, Offer};
+use super::edges::models::Model;
 
 mod brief;
 mod chosen;
@@ -327,39 +328,67 @@ pub(super) async fn consent(settings: &Settings, said: &str) -> Option<bool> {
     }
 }
 
-pub(super) async fn detail(settings: &Settings, item: &Item) -> String {
+/// The fuller spoken version of one message, from `model`. Err says why there is none.
+pub(super) async fn detail(model: &dyn Model, name: &str, item: &Item) -> Result<String, String> {
     let prompt = format!(
         "Below is a message a coding agent wrote to {name}, who is driving. He heard this short version: \"{say}\" and asked for more.\n\
          Give the fuller spoken version: four to six sentences of plain spoken English covering what was done, what was found, and any open decision. \
          No file paths, code, lists or markdown. Do not repeat the short version word for word. Output only the words to be spoken.\n\n<message>\n{msg}\n</message>",
-        name = settings.current().name,
         say = item.say.as_deref().unwrap_or(""),
         msg = airband_core::prose::tail(&item.full, 12000)
     );
-    match ask_model(settings, prompt).await {
-        Ok(t) => spoken(&t),
-        Err(e) => {
-            log(format!("no detail, reading the message instead: {e}"));
-            airband_core::prose::clip(&spoken(&item.full), 900)
-        }
-    }
+    model.ask(prompt, None).await.map(|t| spoken(&t))
 }
 
-/// The fuller spoken version of a logged message, made once and kept.
+/// The fuller spoken version of a logged message, made once and kept. When the model has none to give, he
+/// gets the message itself this time, and nothing is kept, so the next time he asks it is made again. Why
+/// the model gave none he is told where he is told of the model that reads (`Settings::asked`).
 pub(super) async fn detail_of(app: &Arc<App>, id: &str) -> Option<String> {
+    detail_by(app, &ChosenModel(&app.settings), id).await
+}
+
+pub(super) async fn detail_by(app: &Arc<App>, model: &dyn Model, id: &str) -> Option<String> {
     let entry = app.read().log.iter().find(|e| e.id == id).cloned()?;
     if let Some(d) = entry.detail {
         return Some(d);
     }
     let item = Item { id: entry.id.clone(), notice: false, full: entry.full.clone(), kind: entry.kind, say: entry.short.clone(), asked: None };
-    let d = detail(&app.settings, &item).await;
-    let mut inner = app.change();
-    if let Some(e) = inner.log.iter_mut().find(|e| e.id == id) {
-        e.detail = Some(d.clone());
-        inner.unsaved.borrow_mut().insert(id.to_string());
+    let name = app.cfg().name.clone();
+    match detail(model, &name, &item).await {
+        Ok(d) => {
+            let mut inner = app.change();
+            if let Some(e) = inner.log.iter_mut().find(|e| e.id == id) {
+                e.detail = Some(d.clone());
+                inner.unsaved.borrow_mut().insert(id.to_string());
+            }
+            Some(d)
+        }
+        Err(e) => {
+            log(format!("no detail, reading the message instead: {e}"));
+            Some(airband_core::prose::clip(&spoken(&item.full), 900))
+        }
     }
-    drop(inner);
-    Some(d)
+}
+
+#[cfg(test)]
+mod detail_tests {
+    use super::*;
+    use crate::tower::edges::models::FakeModel;
+
+    #[tokio::test]
+    async fn a_detail_the_model_could_not_make_is_not_kept_and_is_asked_for_again() {
+        let app = crate::tower::http::tests::app("detail");
+        app.change().log.push(Entry { id: "m1".into(), full: "The build passed after the fix.".into(), ..Entry::default() });
+        let failing = FakeModel::answers(Err("no answer"));
+        assert_eq!(detail_by(&app, &failing, "m1").await.as_deref(), Some("The build passed after the fix."));
+        assert!(app.read().log[0].detail.is_none(), "nothing made is kept");
+        let working = FakeModel::answers(Ok("It passed, after one fix."));
+        assert_eq!(detail_by(&app, &working, "m1").await.as_deref(), Some("It passed, after one fix."));
+        assert_eq!(working.asked.load(std::sync::atomic::Ordering::SeqCst), 1, "asked again once the first gave none");
+        // kept now: never asked again
+        assert_eq!(detail_by(&app, &failing, "m1").await.as_deref(), Some("It passed, after one fix."));
+        assert_eq!(failing.asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
 }
 
 #[cfg(test)]

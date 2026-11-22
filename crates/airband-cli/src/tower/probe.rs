@@ -18,7 +18,7 @@ pub(crate) fn try_model(cfg: &Config) -> Result<String, String> {
     local::listen_after(cfg.port);
     if let Some((model, server)) = judge::local_model(&cfg.summarizer) {
         println!("  Fetching the model and starting it. The first time this is a few gigabytes and takes a while.");
-        if let Err(why) = local::ensure(&model, &server, true) {
+        if let Err(why) = local::ensure(&model, &server, local::Patience::Long) {
             local::stop();
             return Err(why);
         }
