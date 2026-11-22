@@ -17,6 +17,7 @@ mod reading;
 mod records;
 mod rules;
 mod send;
+mod talk;
 mod station_host;
 mod tell;
 #[cfg(test)]
@@ -154,6 +155,9 @@ pub(crate) struct State {
     epochs: u64,
     calling: bool,
     uploads: Vec<Upload>,
+    /// Words of his waiting for the files he attached to reach another computer: sent when the last of them
+    /// has got there, failed, or been taken off ([`uploads::move_files`]).
+    after_files: Option<AfterFiles>,
     /// Where this device can be woken with a notification (a push service's name and the device's address
     /// there), and the links of the computers that have been told.
     push: Option<(PushService, String)>,

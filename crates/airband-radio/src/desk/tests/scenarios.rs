@@ -153,7 +153,7 @@ fn n31_a_notification_answer_kept_for_later_is_not_told_as_refused() {
     let got = radio.answer_now("Leave".into(), "q1".into(), Some(Act::Option { index: 1 }));
     let kept: Vec<Option<String>> = radio.unsent().into_iter().map(|o| o.re).collect();
     assert_eq!(kept, [Some("q1".to_string())], "it was not kept to go later");
-    assert!(matches!(got, Err(RadioError::Kept { .. })), "kept to go later, but told as {got:?}");
+    assert!(matches!(got, AnswerOutcome::KeptForLater { .. }), "kept to go later, but told as {got:?}");
 }
 
 // A computer is shown by the name it last said, kept on the phone, from the moment the app opens: never by its

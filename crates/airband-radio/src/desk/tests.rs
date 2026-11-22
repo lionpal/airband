@@ -396,7 +396,7 @@ fn a_tapped_answer_kept_for_later_is_still_what_the_button_stood_for() {
     let radio = Radio::start("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t".into(), String::new(), Arc::new(Quiet)).unwrap();
     radio.stop();
     let act = Act::Option { index: 1 };
-    assert!(radio.answer_now("Leave".into(), "q1".into(), Some(act.clone())).is_err());
+    assert!(matches!(radio.answer_now("Leave".into(), "q1".into(), Some(act.clone())), AnswerOutcome::KeptForLater { .. }));
     let kept: Vec<(Option<String>, Option<Act>)> = radio.unsent().into_iter().map(|o| (o.re, o.act)).collect();
     assert_eq!(kept, [(Some("q1".to_string()), Some(act))]);
 }
@@ -750,8 +750,8 @@ fn trouble_of_his_computers_own_is_not_told_as_a_refusal() {
 #[test]
 fn a_notification_answer_his_computer_cannot_take_just_now_is_kept_not_refused() {
     let radio = radio_at(tower_saying(503, r#"{"refusal":"not_now","reason":"It is still starting."}"#));
-    let e = radio.answer_now("yes".into(), "q1".into(), None).unwrap_err();
-    assert!(matches!(&e, RadioError::Kept { .. }), "{e:?}");
+    let e = radio.answer_now("yes".into(), "q1".into(), None);
+    assert!(matches!(&e, AnswerOutcome::KeptForLater { .. }), "{e:?}");
     assert_eq!(radio.unsent().len(), 1);
 }
 
@@ -784,8 +784,8 @@ fn a_no_with_a_reason_is_told_with_its_reason_whatever_its_status() {
 #[test]
 fn an_answer_kept_after_his_computer_had_trouble_is_told_as_kept() {
     let radio = radio_at(tower_saying(503, "{}"));
-    let e = radio.answer_now("yes".into(), "q1".into(), None).unwrap_err();
-    assert!(matches!(&e, RadioError::Kept { reason } if reason.ends_with("It is on this phone and goes when it can.")), "{e:?}");
+    let e = radio.answer_now("yes".into(), "q1".into(), None);
+    assert!(matches!(&e, AnswerOutcome::KeptForLater { why } if why.ends_with("It is on this phone and goes when it can.")), "{e:?}");
     assert_eq!(radio.unsent().len(), 1);
 }
 
@@ -878,3 +878,4 @@ fn an_account_on_two_computers_is_never_taken_for_one_by_what_it_is_called() {
 mod fake;
 mod lifetimes;
 mod scenarios;
+mod sending;
