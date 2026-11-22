@@ -33,6 +33,12 @@ pub const MAX_MESSAGE: usize = 256 * 1024;
 /// What sealing adds to a message: its nonce and its tag.
 const SEALING: usize = 12 + 16;
 
+/// What the radio is told when an answer is larger than a relay passes ([`MAX_MESSAGE`]): the one wording, for
+/// an answer too large to seal and one too large to read whole alike.
+pub fn too_big_for_relay() -> String {
+    format!("The answer is larger than a relay passes ({} KB), so it was not sent.", MAX_MESSAGE / 1024)
+}
+
 /// The hash of the radio's own key, on a tower's opening of a channel: which radio the channel is for.
 pub const RADIO_HASH_HEADER: &str = "x-airband-radio-hash";
 /// The relay's admission key, when the relay asks for one.
@@ -131,7 +137,7 @@ impl Keys {
     }
 
     pub fn open(&self, dir: Direction, sealed: &[u8]) -> Result<Vec<u8>, String> {
-        if sealed.len() < 12 + 16 {
+        if sealed.len() < SEALING {
             return Err("too short to be a sealed message".into());
         }
         let (nonce, body) = sealed.split_at(12);
@@ -171,7 +177,7 @@ impl Keys {
         if plain.len() + SEALING <= MAX_MESSAGE {
             return self.seal(Direction::ToRadio, &plain);
         }
-        let told = serde_json::json!({ "error": format!("The answer is larger than a relay passes ({} KB), so it was not sent.", MAX_MESSAGE / 1024) });
+        let told = serde_json::json!({ "error": too_big_for_relay() });
         self.seal_answer(&Answer { id: answer.id.clone(), status: 413, body: told })
     }
     /// The tower's answer to one request, by the request's id. Nothing for bytes this pairing's key does

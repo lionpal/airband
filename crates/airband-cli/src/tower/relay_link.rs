@@ -325,7 +325,7 @@ impl Serve {
         let status = res.status().as_u16();
         // an answer bigger than the relay takes could never reach the radio: it is told so instead of waiting
         let Ok(bytes) = axum::body::to_bytes(res.into_body(), airband_core::relay::MAX_MESSAGE).await else {
-            return self.refused(call, via, 413, "That answer is too big to send through the relay.");
+            return self.refused(call, via, 413, &airband_core::relay::too_big_for_relay());
         };
         match serde_json::from_slice(&bytes) {
             Ok(body) => (status, body),
