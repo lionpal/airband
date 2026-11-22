@@ -299,7 +299,7 @@ impl Link {
         Some(Err(last))
     }
 
-    /// One `airband.radio/2` request. `path` is what follows `/v1/radio`. An answer from the tower comes back
+    /// One request of the radio protocol ([`airband_core::radio::SCHEMA`]). `path` is what follows `/v1/radio`. An answer from the tower comes back
     /// with its status, whatever that is; an error is a request the tower never answered.
     pub(crate) fn request(&self, method: Method, path: &str, body: Option<Value>) -> Result<(u16, Value), LinkError> {
         self.request_as(method, path, body, false, &mut Vec::new())

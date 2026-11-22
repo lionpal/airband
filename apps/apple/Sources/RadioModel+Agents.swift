@@ -17,7 +17,7 @@ extension RadioModel {
     }
 
     /// Start an agent in a folder on a computer: in the team that works there, or a new one of this name.
-    /// Calls back with the team's name as the computer writes it, or with what is wrong.
+    /// Calls back with the team's room id ([`DeskRoom.id`]), or with what is wrong.
     func newTeam(_ name: String, on computer: String, folder: String, make: Bool, tool: String?, done: @escaping (String?, String?) -> Void) {
         ask(Self.unreached, { try self.desk.newTeam(computer: computer, name: name, folder: folder, make: make, tool: tool) }, then: done)
     }

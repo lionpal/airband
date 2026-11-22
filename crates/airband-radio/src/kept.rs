@@ -5,8 +5,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::path::Path;
 
-/// What `path` holds, or the default for a file that is not there. One that cannot be read has been moved
-/// aside by core's `kept::load`, and the default is used in its place.
+/// What `path` holds, or the default for a file that is not there. One that cannot be read is set aside by
+/// core's `kept::load`, which says whether it could be, and the default is used in its place.
 pub(crate) fn load_or_set_aside<T: DeserializeOwned + Default>(path: &Path) -> T {
     airband_core::kept::load(path).unwrap_or_else(|why| {
         eprintln!("airband: {why}");

@@ -4,14 +4,14 @@ use super::*;
 #[uniffi::export]
 impl Desk {
     /// The folders inside one of his on a computer, for choosing where a new team works. `computer` is its
-    /// name, or empty when he has only one; `under` is a folder's whole path, or empty for his
+    /// [`DeskComputer::id`], or empty when he has only one; `under` is a folder's whole path, or empty for his
     /// home folder. Blocks: call it off the main thread.
     pub fn folders(&self, computer: String, under: String) -> Result<DeskFolders, RadioError> {
         let f = self.station_radio(&computer)?.folders(under)?;
         Ok(DeskFolders { path: f.path, shown: f.shown, up: f.up, folders: f.folders.into_iter().map(|f| DeskFolder { name: f.name, path: f.path }).collect(), team: f.team, has_team: f.has_team })
     }
     /// The folders the coding tools on a computer have had sessions in, newest first, then the teams there
-    /// that no tool has a record of. `computer` is its name, or empty when he has only one. Blocks: call it
+    /// that no tool has a record of. `computer` is its [`DeskComputer::id`], or empty when he has only one. Blocks: call it
     /// off the main thread.
     pub fn recent_folders(&self, computer: String) -> Result<Vec<DeskRecent>, RadioError> {
         let tools = airband_core::catalog::current();
@@ -22,7 +22,8 @@ impl Desk {
     /// and the folder its agents work in (with `make`, the folder a new one called by that name is made in).
     /// Its first agent is started there with nothing to do yet. Blocks: call it off the main thread.
     /// `tool` is the coding tool its first agent is, by id; nothing is the computer's usual one.
-    /// Answers with the team's room on his screen ([`DeskRoom::id`]).
+    /// `computer` is its [`DeskComputer::id`], or empty when he has only one. Answers with the team's room on
+    /// his screen ([`DeskRoom::id`]).
     pub fn new_team(&self, computer: String, name: String, folder: String, make: bool, tool: Option<String>) -> Result<String, RadioError> {
         let (radio, station) = self.station_of(&computer)?;
         Ok(room_id(&station, &radio.new_project(name, folder, make, tool.filter(|t| !t.is_empty()))?))

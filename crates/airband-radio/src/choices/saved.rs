@@ -5,7 +5,7 @@ use super::*;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(super) struct Pick {
     pub(super) place: ChoicePlace,
-    /// The model's kind or the provider's id. Empty for his computer's choice.
+    /// The model's kind or the provider's id.
     #[serde(default)]
     pub(super) id: String,
     /// For a service: which of its provider's offers.

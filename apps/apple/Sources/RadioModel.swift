@@ -153,7 +153,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     func answerNow(station: String, message: String, text: String, tapped: Tapped?) throws { try desk.answerNow(station: station, messageId: message, text: text, tapped: tapped) }
 
     /// Look at everyone, at one team, or at one agent. Whatever he was answering is let go: it may no longer be
-    /// in view. Every place that changes who he is looking at goes through here.
+    /// in view. Every change he makes to who he is looking at goes through here; only a team that has gone is let go
+    /// of without him (`refresh`).
     func look(room: String? = nil, agent: String? = nil) {
         replyingTo = nil
         self.room = room
@@ -288,26 +289,8 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         }
     }
 
-    /// The banners up now, by the agent each is for.
-    private var banners: [String: Activity<NeedsYouAttributes>] = [:]
-
-    /// While he is on a call, each agent that is waiting on him has a banner: on the lock screen, and on a
-    /// car's screen when another app is in front. It comes down when the agent has its answer or the call ends.
-    private func syncBanners() {
-        let waiting = calling ? agents.filter { $0.state == .asking } : []
-        for (id, banner) in banners where !waiting.contains(where: { $0.id == id }) {
-            banners[id] = nil
-            Task { await banner.end(nil, dismissalPolicy: .immediate) }
-        }
-        guard !waiting.isEmpty, ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-        for agent in waiting where banners[agent.id] == nil {
-            let state = NeedsYouAttributes.ContentState(waiting: waiting.count, question: agent.question)
-            guard let banner = try? Activity.request(attributes: NeedsYouAttributes(agent: agent.id, callsign: agent.callsign, badge: agent.badge), content: .init(state: state, staleDate: nil)) else { continue }
-            banners[agent.id] = banner
-            // the alert is what makes it show itself, and not only sit on the lock screen
-            Task { await banner.update(.init(state: state, staleDate: nil), alertConfiguration: .init(title: "\(agent.callsign) needs you", body: LocalizedStringResource(stringLiteral: agent.question.isEmpty ? "Tap to answer" : agent.question), sound: .default)) }
-        }
-    }
+    /// The banners up now, by the agent each is for (`RadioModel+Banners.swift`).
+    var banners: [String: Activity<NeedsYouAttributes>] = [:]
 
     /// The coding tools he uses, by id, the one he uses most first. The core keeps them: what can write his
     /// summaries follows from them.

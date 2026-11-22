@@ -163,7 +163,7 @@ pub struct Outgoing {
     pub re: Option<String>,
     /// When he sent it, in milliseconds since 1970.
     pub at: u64,
-    /// The room he was looking at when he sent it  by its team's name, if he was in one.
+    /// The team of the room he was looking at when he sent it, by the team's id, if he was in one.
     #[serde(default)]
     pub scope: Option<String>,
     /// For a quick message: the words on the button. `text` is then the whole instruction.

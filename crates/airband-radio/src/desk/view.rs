@@ -11,7 +11,7 @@ pub(super) struct ReadMarks {
     /// When this device began keeping count: what an agent said before then is not counted against him.
     pub(super) since: u64,
     pub(super) upto: HashMap<String, u64>,
-    /// His main computer, by name, once he has chosen one: where his words go when nothing says which
+    /// His main computer, once he has chosen one: where his words go when nothing says which
     /// computer they are for, by its [`DeskComputer::id`]. It works out who they are for and passes them on.
     #[serde(default)]
     pub(super) main: Option<String>,

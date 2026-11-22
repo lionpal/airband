@@ -79,8 +79,8 @@ fn drain(wire: &Wire, socket: &mut Socket, kept: &mut Vec<String>, ended: &mut b
 /// `manual` it is one reply: it ends when he stops talking. With it he opened the microphone himself: all of it
 /// is sent, pauses and all, until the host closes the microphone, and if the service ends its turn before then
 /// (a long silence) a new one is opened and what he said so far is kept.
-/// Ok(None) is silence. Err is a failure of the service or the line before anything was heard: nothing was lost
-/// that the caller cannot get by listening again another way.
+/// Ok(None) is silence. Err is a failure of the service or the line before anything was heard; nothing else
+/// listens in its place, and he is told.
 pub(crate) fn live(wire: &'static Wire, pass: Arc<dyn Fn() -> Option<Pass> + Send + Sync>, host: &dyn RadioHost, rate: u32, header: Vec<u8>, manual: bool) -> Result<Option<String>, ()> {
     // what goes first on every connection: a recording's header, for a service that wants one
     let header: Vec<Vec<u8>> = if wire.header { vec![header] } else { Vec::new() };
@@ -192,8 +192,8 @@ impl Stream<'_> {
         }
     }
 
-    /// The connection, once it is up. Err when it failed with nothing heard yet: the caller can listen another
-    /// way. With something heard it is kept, and the connection tried again.
+    /// The connection, once it is up. Err when it failed with nothing heard yet. With something heard it is
+    /// kept, and the connection tried again.
     fn connected(&mut self) -> Result<(), ()> {
         if self.socket.is_none() {
             match self.opening.try_recv() {

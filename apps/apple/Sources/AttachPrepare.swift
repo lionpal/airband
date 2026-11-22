@@ -33,7 +33,7 @@ private struct PickedMovie: Transferable {
     }
 }
 
-/// Making what he picked ready to send. A photo is sent at a size an agent can use (2400 points at most on its
+/// Making what he picked ready to send. A photo is sent at a size an agent can use (2400 pixels at most on its
 /// long side), a video at 960x540, so neither takes long on a phone connection. Returns the file, what to call it,
 /// and a small picture of it.
 enum Prepare {

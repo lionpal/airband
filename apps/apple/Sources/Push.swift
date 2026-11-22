@@ -120,17 +120,3 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
     }
 }
-
-final class AppDelegate: NSObject, UIApplicationDelegate {
-    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
-        // before the launch ends, so an answer given on a notification while the app was not running is handled
-        UNUserNotificationCenter.current().delegate = Push.shared
-        return true
-    }
-    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-        RadioModel.shared.pushAddress(deviceToken.map { String(format: "%02x", $0) }.joined())
-    }
-    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
-        // no address: the app works as before, without notifications. Nothing to tell him that he can act on.
-    }
-}

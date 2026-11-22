@@ -51,6 +51,12 @@ extension RadioModel {
         }
     }
 
+    /// How far the voice has got in what it is saying, in characters, by the clock of the sound itself.
+    func captionReached() -> Int {
+        guard let caption, let position = voice.clipPosition() else { return 0 }
+        return caption.reached(position)
+    }
+
     // MARK: DeskHost: called by the core, on its own threads
 
     func play(rate: UInt32, pcm: Data, last: Bool) { voice.play(rate: rate, pcm: pcm, last: last) }
@@ -74,11 +80,6 @@ extension RadioModel {
             let more = zip(starts, atMs).map { (Int($0), Double($1) / 1000) }
             if text.isEmpty { self.caption?.marks.append(contentsOf: more) } else { self.caption = Caption(text: text, marks: more) }
         }
-    }
-    /// How far the voice has got in what it is saying, in characters, by the clock of the sound itself.
-    func captionReached() -> Int {
-        guard let caption, let position = voice.clipPosition() else { return 0 }
-        return caption.reached(position)
     }
     func note(text: String) {
         // he may not be looking at the screen: it is heard as well as shown

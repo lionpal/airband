@@ -92,7 +92,7 @@ pub struct Choice {
     pub id: String,
     pub place: ChoicePlace,
     /// For a service: its provider's id, which is also what its key is kept under (one key serves everything
-    /// a provider offers). For a model on this device: the model's kind. Empty for his computer's choice.
+    /// a provider offers). For a model on this device: the model's kind.
     pub provider: String,
     /// For a service: which of its provider's offers this is. Empty otherwise.
     pub offer: String,
