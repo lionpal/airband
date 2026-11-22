@@ -69,6 +69,9 @@ async fn presence_said(State(app): State<Arc<App>>, req: Request, next: Next) ->
 
 /// Every route the tower serves. The relay link hands sealed requests to this same router, so a request is
 /// handled identically however it arrived.
+/// The route something he said comes by: the one request a relay may keep while the tower is away.
+pub(super) const UTTERANCE: &str = "/v1/radio/utterance";
+
 pub(super) fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/v1/agent/events", post(events))
@@ -80,7 +83,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
         .route("/v1/radio/presence", post(presence))
         .route("/v1/radio/unheard", post(unheard))
         .route("/v1/radio/ready", post(ready))
-        .route("/v1/radio/utterance", post(utterance))
+        .route(UTTERANCE, post(utterance))
         .route("/v1/radio/feed", get(feed))
         .route("/v1/radio/picture/{id}", get(picture_part))
         .route("/v1/radio/reads", get(reads_offered).post(feed::reads))
@@ -118,7 +121,7 @@ pub(super) mod tests {
         let _ = std::fs::remove_file(&path);
         let store = Store::open(&path).unwrap();
         let cfg: Config = serde_json::from_str(r#"{"token":"own","radio_token":"radio"}"#).unwrap();
-        let push = push::Wake::load(&store);
+        let push = push::Wake::load(&store).unwrap();
         Arc::new(App { push, cfg, store, inner: Mutex::new(Inner::default()), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default() })
     }
 

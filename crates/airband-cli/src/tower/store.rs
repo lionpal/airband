@@ -1,12 +1,14 @@
 //! What the tower keeps on disk: one SQLite file, `~/.airband/airband.db`.
 //!
-//! - `messages`: the chat log, every message in either direction, for good (pictures by id; the copies are files). Memory holds only the newest thousand.
+//! - `messages`: the chat log, every message in either direction, for good (pictures by id; the copies are files).
+//!   Memory holds only the newest thousand. Its `grp` column is the id of the team a line was written under.
 //! - `events`: every `airband.agent/1` event as it arrived, understood or not (minus any delivery token), for good.
 //!   This is the raw record: what the judge is tested against, and what an adapter's tests should replay.
 //! - `receipts`: every utterance id the tower has taken, with the answer it gave. A retry of the same id gets the
 //!   same answer and is never delivered twice, across restarts.
 //! - `deliveries`: each attempt to hand his words to an agent, and how it went.
-//! - `state`: who is on the radio, what is unheard, which projects are known. Small, rewritten on change.
+//! - `state`: who is on the radio, his teams, the agents the tower holds, and (apart) where each phone can be
+//!   woken. Small, rewritten on change.
 //!
 //! Intent is written before anything is done about it: an utterance has a receipt before it is routed, and an
 //! event is in `events` before it is acted on.
@@ -65,21 +67,28 @@ impl Store {
         r.map_err(|e| log(format!("database: {what}: {e}"))).ok()
     }
 
-    /// Everything needed to carry on after a restart: the saved state and the newest messages, oldest first.
-    pub(super) fn load(&self, keep: usize) -> (Saved, Vec<Entry>) {
-        let db = self.db.lock().unwrap();
-        let text = db.query_row("select value from state where key = 'tower'", [], |r| r.get::<_, String>(0)).optional().ok().flatten();
-        let saved = match text.as_deref().map(serde_json::from_str::<Saved>) {
-            Some(Ok(saved)) => saved,
-            None => Saved::default(),
-            // state this build cannot read is set aside, not written over: agents check in again by themselves,
-            // but what was there may matter to whoever looks into why
+    /// A value kept under `key` in the state table, read as `T`; the default when none is kept. One this build
+    /// cannot read is set aside under `<key>.unreadable`, not written over, and the default is used: what was
+    /// there may matter to whoever looks into why. A database that cannot be read at all is an error, and nothing
+    /// is started on top of it.
+    fn kept<T: serde::de::DeserializeOwned + Default>(db: &rusqlite::Connection, key: &str) -> Result<T, String> {
+        let text = db.query_row("select value from state where key = ?1", params![key], |r| r.get::<_, String>(0)).optional().map_err(|e| format!("the database could not be read ({e})"))?;
+        match text.as_deref().map(serde_json::from_str::<T>) {
+            None => Ok(T::default()),
+            Some(Ok(value)) => Ok(value),
             Some(Err(e)) => {
-                log(format!("database: the saved state could not be read ({e}); kept as 'tower.unreadable', starting with nobody on the radio"));
-                Self::warn("setting state aside", db.execute("insert into state (key, value) values ('tower.unreadable', ?1) on conflict (key) do update set value = excluded.value", params![text]));
-                Saved::default()
+                log(format!("database: what was kept as '{key}' could not be read ({e}); kept as '{key}.unreadable', starting without it"));
+                Self::warn("setting state aside", db.execute("insert into state (key, value) values (?1, ?2) on conflict (key) do update set value = excluded.value", params![format!("{key}.unreadable"), text]));
+                Ok(T::default())
             }
-        };
+        }
+    }
+
+    /// Everything needed to carry on after a restart: the saved state and the newest messages, oldest first.
+    /// Agents check in again by themselves, so state this build cannot read starts with nobody on the radio.
+    pub(super) fn load(&self, keep: usize) -> Result<(Saved, Vec<Entry>), String> {
+        let db = self.db.lock().unwrap();
+        let saved: Saved = Self::kept(&db, "tower")?;
         let mut entries = Vec::new();
         if let Some(mut q) = Self::warn("reading messages", db.prepare("select seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his from messages order by seq desc limit ?1")) {
             let rows = q.query_map(params![keep as i64], |r| {
@@ -126,7 +135,7 @@ impl Store {
                 entries.sort_by_key(|e: &Entry| (e.at, e.seq));
             }
         }
-        (saved, entries)
+        Ok((saved, entries))
     }
 
     pub(super) fn save_state(&self, saved: &Saved) {
@@ -136,10 +145,8 @@ impl Store {
 
     /// Where each paired radio can be woken with a notification, by the radio's name. Kept apart from the rest
     /// of the state: it changes rarely, and it is not something a status page should ever show.
-    pub(super) fn push_targets(&self) -> BTreeMap<String, Vec<airband_core::radio::PushTarget>> {
-        let db = self.db.lock().unwrap();
-        let text = db.query_row("select value from state where key = 'push'", [], |r| r.get::<_, String>(0)).optional().ok().flatten();
-        text.and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    pub(super) fn push_targets(&self) -> Result<BTreeMap<String, Vec<airband_core::radio::PushTarget>>, String> {
+        Self::kept(&self.db.lock().unwrap(), "push")
     }
     pub(super) fn save_push_targets(&self, targets: &BTreeMap<String, Vec<airband_core::radio::PushTarget>>) {
         let db = self.db.lock().unwrap();
@@ -166,9 +173,10 @@ impl Store {
     }
 
     /// The highest message number and change count ever used, so both carry on after a restart even past what
-    /// memory holds.
-    pub(super) fn last_counts(&self) -> (u64, u64) {
-        self.db.lock().unwrap().query_row("select coalesce(max(seq), 0), coalesce(max(rev), 0) from messages", [], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64))).unwrap_or((0, 0))
+    /// memory holds. A database that cannot say is an error: counting again from nothing would write new lines
+    /// over old ones.
+    pub(super) fn last_counts(&self) -> Result<(u64, u64), String> {
+        self.db.lock().unwrap().query_row("select coalesce(max(seq), 0), coalesce(max(rev), 0) from messages", [], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64))).map_err(|e| format!("the database could not say how many messages it holds ({e})"))
     }
 
     /// Drop what is too old to be wanted, so the file does not grow for ever: the record of raw events and of
@@ -238,10 +246,10 @@ impl Store {
     }
 
     /// Counts, for `airband status`.
-    pub(super) fn counts(&self) -> (u64, u64) {
+    pub(super) fn counts(&self) -> Option<(u64, u64)> {
         let db = self.db.lock().unwrap();
-        let n = |sql: &str| db.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap_or(0) as u64;
-        (n("select count(*) from messages"), n("select count(*) from events"))
+        let n = |sql: &str| db.query_row(sql, [], |r| r.get::<_, i64>(0)).ok().map(|n| n as u64);
+        Some((n("select count(*) from messages")?, n("select count(*) from events")?))
     }
 }
 
@@ -266,11 +274,11 @@ mod tests {
         let (s, path) = store("his");
         // an agent that calls itself what his lines are labelled, and a line of his
         s.put_messages(&[Entry { seq: 1, id: "a".into(), from: HIM.into(), team: "/w/shop".into(), ..Entry::default() }, Entry { seq: 2, id: "b".into(), from: HIM.into(), his: true, ..Entry::default() }]);
-        let (_, kept) = s.load(10);
+        let (_, kept) = s.load(10).unwrap();
         assert_eq!(kept.iter().map(|e| (e.id.as_str(), e.his)).collect::<Vec<_>>(), [("a", false), ("b", true)]);
         // a line saved again under its team's id is kept under it
         s.put_messages(&[Entry { seq: 1, id: "a".into(), team: "/w/garden".into(), ..Entry::default() }]);
-        assert_eq!(s.load(10).1[0].team, "/w/garden");
+        assert_eq!(s.load(10).unwrap().1[0].team, "/w/garden");
         let _ = std::fs::remove_file(path);
     }
 
@@ -304,6 +312,24 @@ mod tests {
         let (event, about): (String, String) = s.db.lock().unwrap().query_row("select event, agent_doc from events", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
         assert_eq!(serde_json::from_str::<Value>(&event).unwrap(), json!({ "type": "molting", "depth": 3 }));
         assert!(about.contains("/s") && !about.contains("secret"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn where_phones_are_woken_that_cannot_be_read_is_set_aside_and_not_written_over() {
+        let (s, path) = store("push-unreadable");
+        s.db.lock().unwrap().execute("insert into state (key, value) values ('push', 'not json')", []).unwrap();
+        assert_eq!(s.push_targets().unwrap().len(), 0);
+        let aside: String = s.db.lock().unwrap().query_row("select value from state where key = 'push.unreadable'", [], |r| r.get(0)).unwrap();
+        assert_eq!(aside, "not json");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_database_that_cannot_count_its_messages_stops_the_start() {
+        let (s, path) = store("counts");
+        s.db.lock().unwrap().execute("drop table messages", []).unwrap();
+        assert!(s.last_counts().is_err());
         let _ = std::fs::remove_file(path);
     }
 }
