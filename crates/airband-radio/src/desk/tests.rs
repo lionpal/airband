@@ -532,6 +532,8 @@ fn a_message_that_cannot_be_fetched_to_read_aloud_says_why() {
     assert_eq!(host.0.lock().unwrap().as_slice(), ["That could not be read aloud: cannot reach your computer."]);
 }
 
+// Unix only: it makes the folder unwritable by its permission bits
+#[cfg(unix)]
 #[test]
 fn what_he_said_that_the_phone_could_not_keep_is_told_once() {
     let dir = temp_dir("unkept");

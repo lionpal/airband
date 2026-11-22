@@ -443,6 +443,8 @@ mod tests {
         assert!(said.reads.is_none());
     }
 
+    // Unix only: it makes the folder unwritable by its permission bits
+    #[cfg(unix)]
     #[test]
     fn a_choice_the_phone_could_not_keep_says_so() {
         let dir = std::env::temp_dir().join(format!("airband-choices-{}", random_hex(4)));
