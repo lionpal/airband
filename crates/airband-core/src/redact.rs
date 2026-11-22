@@ -8,39 +8,24 @@
 
 const DOTS: &str = "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}";
 
-/// A credential's prefix, the characters its body is made of besides letters and digits, and how many of
-/// them there must be at least.
-const SHAPES: &[(&str, &str, usize)] = &[
-    ("github_pat_", "_", 40),
-    ("ghp_", "", 30),
-    ("gho_", "", 30),
-    ("ghu_", "", 30),
-    ("ghs_", "", 30),
-    ("ghr_", "", 30),
-    ("glpat-", "-_", 20),
-    ("sk_live_", "", 16),
-    ("sk_test_", "", 16),
-    ("rk_live_", "", 16),
-    ("rk_test_", "", 16),
-    ("whsec_", "", 16),
-    ("sk-ant-", "-_", 24),
-    ("sk-proj-", "-_", 24),
-    ("sk-", "-_", 32),
-    ("AIza", "-_", 35),
-    ("xoxb-", "-", 20),
-    ("xoxp-", "-", 20),
-    ("xoxa-", "-", 20),
-    ("xoxs-", "-", 20),
-    ("npm_", "", 36),
-    ("hf_", "", 30),
-    ("AKIA", "", 16),
-    ("ASIA", "", 16),
-];
+/// One shape a credential comes in, as its issuer fixes it: a row of the catalogue (`catalog/secrets/`). Rows
+/// are tried in order, so a longer prefix comes before a shorter one that starts it.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct Shape {
+    pub id: String,
+    pub prefix: String,
+    /// The characters its body is made of besides letters and digits.
+    #[serde(default)]
+    pub extra: String,
+    /// How many characters its body has at least.
+    pub least: usize,
+}
 
 /// `text` with every credential in it replaced by its prefix and a row of dots.
 pub fn redact(text: &str) -> String {
+    let shapes = &crate::catalog::built().secrets;
     // nothing that could start one: the usual case, and no copy is made for it beyond the return
-    if !SHAPES.iter().any(|(p, _, _)| text.contains(p)) && !text.contains("PRIVATE KEY-----") && !text.contains("secret=") && !text.contains("eyJ") {
+    if !shapes.iter().any(|s| text.contains(s.prefix.as_str())) && !text.contains("PRIVATE KEY-----") && !text.contains("secret=") && !text.contains("eyJ") {
         return text.to_string();
     }
     let mut out = String::with_capacity(text.len());
@@ -58,8 +43,8 @@ pub fn redact(text: &str) -> String {
         // only at the start of a word: "task-force" holds no key
         let at_word = out.chars().next_back().is_none_or(|c| !c.is_ascii_alphanumeric() && c != '_' && c != '-');
         if at_word {
-            for (prefix, extra, least) in SHAPES {
-                if let Some(body) = rest.strip_prefix(prefix) {
+            for Shape { prefix, extra, least, .. } in shapes {
+                if let Some(body) = rest.strip_prefix(prefix.as_str()) {
                     let n = body.bytes().take_while(|b| b.is_ascii_alphanumeric() || extra.as_bytes().contains(b)).count();
                     if n >= *least {
                         out.push_str(prefix);

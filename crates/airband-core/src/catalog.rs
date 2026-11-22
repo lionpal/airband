@@ -50,6 +50,9 @@ pub struct Catalog {
     /// The kinds of thing an agent's tool can say it made (`links.rs`): what to call each. The tools that
     /// name them are this build's own, so these are always the ones compiled in.
     pub links: Vec<crate::links::LinkKind>,
+    /// The shapes credentials come in (`redact.rs`), one row an issuer's shape: what is kept out of the chat's
+    /// copy of what is said. Always the ones compiled in, so no later copy can take one away.
+    pub secrets: Vec<crate::redact::Shape>,
     /// Words of the trade that a recogniser otherwise hears as everyday ones ("sync" as "sink").
     pub phrases: Vec<String>,
     /// Providers that are no more, by id. One this build has compiled in and a later copy neither lists nor
@@ -295,6 +298,7 @@ fn weigh_against(text: &str, now: u64, have: &Catalog, built: &Catalog) -> Resul
     }
     newer.servers = built.servers.clone();
     newer.links = built.links.clone();
+    newer.secrets = built.secrets.clone();
     // How a coding tool is started is a program to run, and is this build's own for every tool it knows. What
     // a later copy says about that is not kept: a tool new to this build comes with no way to start it.
     for t in newer.tools.iter_mut() {
@@ -464,6 +468,8 @@ struct Document {
     #[serde(default)]
     links: Vec<Value>,
     #[serde(default)]
+    secrets: Vec<Value>,
+    #[serde(default)]
     phrases: Vec<String>,
     #[serde(default)]
     retired: Vec<String>,
@@ -552,6 +558,7 @@ fn read(text: &str) -> Result<Catalog, String> {
     }
     let servers = doc.servers.into_iter().filter_map(|row| serde_json::from_value::<Server>(row).ok()).collect();
     let links = doc.links.into_iter().filter_map(|row| serde_json::from_value::<crate::links::LinkKind>(row).ok()).collect();
+    let secrets = doc.secrets.into_iter().filter_map(|row| serde_json::from_value::<crate::redact::Shape>(row).ok()).collect();
     let tools = doc
         .tools
         .into_iter()
@@ -561,7 +568,7 @@ fn read(text: &str) -> Result<Catalog, String> {
             Tool { id: t.id, name: t.name, maker: t.maker, first: t.first, launchers, with: t.with }
         })
         .collect();
-    Ok(Catalog { rev: doc.rev, hash: doc.hash, providers, tools, models, servers, links, phrases: doc.phrases, retired: doc.retired, left_out })
+    Ok(Catalog { rev: doc.rev, hash: doc.hash, providers, tools, models, servers, links, secrets, phrases: doc.phrases, retired: doc.retired, left_out })
 }
 
 #[cfg(test)]
