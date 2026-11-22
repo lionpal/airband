@@ -321,7 +321,7 @@ try:
         if placed.get("group") == "logistics": break
         time.sleep(1)
     check("an agent opened in one project and working in another is moved to that team by the tower (model)", placed.get("group") == "logistics", placed)
-    check("and the chat says what it is called now", [m for m in feed()["messages"] if "is now logistics" in m["text"]], [m["text"] for m in feed()["messages"]][-4:])
+    check("and the chat says so in airband's own note, under the name it has now", [m for m in feed()["messages"] if m.get("note") == "moved" and m["from"].startswith("logistics")], [(m["from"], m["text"], m.get("note")) for m in feed()["messages"]][-4:])
     http("POST", "/v1/radio/team", {"agent": "st", "to": {"team": {"id": team_of("catalog")}}})
     for _ in range(2):
         session("st", "catalog", {"type": "working"}, record=stock)

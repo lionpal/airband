@@ -92,12 +92,13 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
         return;
     }
     let Some(to) = listed.filter(|id| inner.teams.contains_key(id)).or_else(|| out.new_team.as_deref().and_then(|n| inner.named_team(n))) else { return };
-    let Some((was, now)) = inner.move_to(&agent_id, &to, Mover::Tower) else { return };
+    let Some((was, _)) = inner.move_to(&agent_id, &to, Mover::Tower) else { return };
     // said in the chat and not aloud: the name he knew it by has changed
     if let Some(s) = inner.find(&agent_id).cloned() {
-        let line = format!("{} is now {}: it is working on {}.", was.spoken(), now.text(), now.project);
-        // a note in the chat under its new name, and not something the agent said: a question it has open stays open
-        inner.record(Entry { short: Some(line.clone()), agent: None, ..Entry::said(config::random_hex(8), &s, Some(Kind::Report), line) });
+        // airband's own note in the chat, under its new name: never the agent's words, and a question it has open
+        // stays open
+        let note = Entry { agent: None, note: Some(airband_core::radio::Note::Moved), ..Entry::said(config::random_hex(8), &s, Some(Kind::Report), was.text()) };
+        inner.record(Entry { short: Some(note.said_whole()), ..note });
     }
     inner.tell();
 }

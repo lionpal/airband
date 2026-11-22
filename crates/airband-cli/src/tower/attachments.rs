@@ -94,7 +94,8 @@ pub(super) fn take(part: AttachmentPart) -> Result<u64, String> {
         }
     };
     if whole && !dir.join(".ready").exists() && !dir.join(".whole").exists() {
-        let _ = std::fs::write(dir.join(".whole"), "");
+        // the file is named where it is first whole: what is read back is this name, never whatever the folder lists first
+        let _ = std::fs::write(dir.join(".whole"), path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default());
         log(format!("he attached {} ({} KB)", path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), next / 1024));
         if what(&path) == What::Video {
             frames(&path);
@@ -145,7 +146,8 @@ pub(super) async fn find(id: &str) -> Option<Attached> {
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
-    let path = std::fs::read_dir(&dir).ok()?.flatten().map(|e| e.path()).find(|p| p.is_file() && !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')))?;
+    let name = std::fs::read_to_string(dir.join(".whole")).ok().filter(|n| !n.is_empty())?;
+    let path = Some(dir.join(safe(&name))).filter(|p| p.is_file())?;
     let mut frames: Vec<PathBuf> = std::fs::read_dir(dir.join("frames")).map(|d| d.flatten().map(|e| e.path()).collect()).unwrap_or_default();
     frames.sort();
     Some(Attached { what: what(&path), bytes: std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0), path, frames })

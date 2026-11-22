@@ -216,6 +216,8 @@ pub enum Note {
     AtKeyboard,
     /// The agent's turn failed and it stopped.
     TurnFailed,
+    /// The tower moved the agent to this team, where its work belongs. The words are the name it had before.
+    Moved,
 }
 
 impl Note {
@@ -224,6 +226,7 @@ impl Note {
         match self {
             Note::AtKeyboard => format!("Needs you at the keyboard: {text}"),
             Note::TurnFailed => format!("Its turn failed, and it has stopped. {text}"),
+            Note::Moved => format!("Moved here from {text}: what it is working on belongs to this team."),
         }
     }
 }

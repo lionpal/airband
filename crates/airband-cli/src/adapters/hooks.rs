@@ -37,10 +37,10 @@ pub fn tool_use(harness: &str, tool: &str) -> Value {
     airband_core::catalog::built().tools.iter().find(|t| t.id == harness).map(|t| t.with["tools"][tool].clone()).unwrap_or(Value::Null)
 }
 
-/// A command a tool asks leave to run, as he is asked it: in its row's words for its `shell` tool, else the
-/// command itself, whole.
+/// A command a tool asks leave to run, as he is asked it: in its row's words for its `shell` tool, else in
+/// airband's own (a tool reached through the Agent Client Protocol says only that the call runs a command).
 pub fn to_run(harness: &str, command: &str) -> String {
-    fill(&tool_use(harness, "shell")["asks"], &serde_json::json!({ "command": command })).unwrap_or_else(|| command.to_string())
+    fill(&tool_use(harness, "shell")["asks"], &serde_json::json!({ "command": command })).unwrap_or_else(|| format!("run `{command}`"))
 }
 
 /// A tool's `PermissionRequest` hook: the tool it asks for, and what that tool is given. Nothing for any other
