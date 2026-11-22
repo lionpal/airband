@@ -331,7 +331,7 @@ mod tests {
         // a name another team has, or none, is refused in words
         inner.check_in(&agent("d", "/x/garden", None));
         let garden = inner.team_at("/x/garden").unwrap();
-        assert_eq!(inner.rename_team(&garden, "store front"), Err("There is already a team called store front.".to_string()));
+        assert_eq!(inner.rename_team(&garden, "store front"), Err("There is already a team called store front, here or on another of your computers.".to_string()));
         assert!(inner.rename_team(&garden, "!!").is_err());
         // a team is found by its id, and never by what it is called
         assert!(inner.rename_team("garden", "x").is_err());
