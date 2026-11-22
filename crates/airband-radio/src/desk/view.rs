@@ -14,7 +14,7 @@ pub(super) struct ReadMarks {
     /// His main computer, once he has chosen one: where his words go when nothing says which
     /// computer they are for, by its [`DeskComputer::id`]. It works out who they are for and passes them on.
     #[serde(default)]
-    pub(super) main: Option<String>,
+    pub(super) main: Option<StationId>,
     #[serde(skip)]
     keeper: airband_io::kept::Keeper,
     /// What he is to be told about the file when the desk opens: it could not be read.
@@ -42,7 +42,7 @@ impl Desk {
     pub fn set_main_computer(&self, computer: String) {
         let lost = {
             let mut state = self.shared.state.lock().unwrap();
-            state.read.main = Some(computer);
+            state.read.main = Some(StationId::from(computer));
             state.read.keep()
         };
         if let Some(lost) = lost {
@@ -114,7 +114,7 @@ impl Desk {
         // what an agent is waiting on him for: its newest question still open
         let asked = |a: &ChatAgent| all.iter().rev().find(|m| m.needs_you && m.agent.as_deref() == Some(a.id.as_str()) && state.is_open(&m.id));
         for a in &agents {
-            let member = DeskMember { tool_name: tools.iter().find(|t| t.id == a.harness).map(|t| t.name.clone()).unwrap_or_default(), id: a.id.clone(), callsign: a.callsign.clone(), state: a.state, subagents: a.subagents, doing: a.doing.clone(), held: a.held, terminal: a.terminal, ends: a.ends, unread: unread_from.get(a.id.as_str()).copied().unwrap_or(0), question: asked(a).map(|m| m.text.clone()).unwrap_or_default(), question_id: asked(a).map(|m| m.id.clone()).unwrap_or_default(), harness: a.harness.clone(), badge: a.badge.clone(), model: a.model.clone().unwrap_or_default(), effort: a.effort.clone().unwrap_or_default(), number: a.number.clone(), station: if state.computers.len() > 1 { state.computers.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(Computer::id).unwrap_or_default() } else { String::new() } };
+            let member = DeskMember { tool_name: tools.iter().find(|t| t.id == a.harness).map(|t| t.name.clone()).unwrap_or_default(), id: a.id.clone(), callsign: a.callsign.clone(), state: a.state, subagents: a.subagents, doing: a.doing.clone(), held: a.held, terminal: a.terminal, ends: a.ends, unread: unread_from.get(a.id.as_str()).copied().unwrap_or(0), question: asked(a).map(|m| m.text.clone()).unwrap_or_default(), question_id: asked(a).map(|m| m.id.clone()).unwrap_or_default(), harness: a.harness.clone(), badge: a.badge.clone(), model: a.model.clone().unwrap_or_default(), effort: a.effort.clone().unwrap_or_default(), number: a.number.clone(), station: if state.computers.len() > 1 { state.computers.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(|s| s.id().to_string()).unwrap_or_default() } else { String::new() } };
             // what the team is doing is said in the name of whoever is doing it, without the team's own name
             let doing = a.doing.as_ref().map(|d| match Some(a.number.as_str()).filter(|rest| !rest.is_empty()) {
                 Some(who) => format!("{who}: {d}"),
@@ -146,7 +146,7 @@ impl Desk {
         let away: Vec<String> = if state.computers.len() > 1 { state.computers.iter().filter(|s| s.tried && !s.online).map(|s| state.computer_name(&s.id())).collect() } else { Vec::new() };
         let view = DeskView {
             focus: DeskFocus { room: room.clone(), agent: agent.clone() },
-            new_agent: NewAgentDefaults { computer: (state.computers.len() == 1).then(|| state.computers[0].id()), tool: (used.len() == 1).then(|| used[0].clone()) },
+            new_agent: NewAgentDefaults { computer: (state.computers.len() == 1).then(|| state.computers[0].id().to_string()), tool: (used.len() == 1).then(|| used[0].clone()) },
             tools: used,
             cannot_reach: if away.is_empty() { "Can\u{2019}t reach your computer".to_string() } else { format!("Can\u{2019}t reach {}", away.join(", ")) },
             colours: state.colours.all(),
@@ -167,8 +167,8 @@ impl Desk {
                 .flat_map(|s| s.radio.unsent().into_iter().filter(|o| !s.messages.iter().any(|m| m.id == o.id)).chain(s.landing.iter().filter(|(o, at)| at.elapsed() < Duration::from_secs(15) && !s.messages.iter().any(|m| m.id == o.id)).map(|(o, _)| o.clone())))
                 .map(|o| DeskOutgoing::from(&o))
                 .collect(),
-            stations: state.computers.iter().map(|s| DeskComputer { id: s.id(), name: state.computer_name(&s.id()) }).collect(),
-            main_computer: state.main().map(Computer::id),
+            stations: state.computers.iter().map(|s| DeskComputer { id: s.id().to_string(), name: state.computer_name(&s.id()) }).collect(),
+            main_computer: state.main().map(|s| s.id().to_string()),
             choose_main: state.computers.len() > 1 && state.main().is_none(),
             uploads: state.uploads.iter().map(|u| u.shown.clone()).collect(),
             intents: self.intents_view(&state),

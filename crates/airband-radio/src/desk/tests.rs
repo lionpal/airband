@@ -157,8 +157,8 @@ fn a_computer_is_never_picked_for_him() {
     assert_eq!((unsent(0), unsent(1)), (0, 1));
     assert_eq!(*host.0.lock().unwrap(), ["That computer is no longer paired.", "That computer is no longer paired."]);
     // the same for anything else asked of a computer he did not name
-    assert!(matches!(desk.station_radio(""), Err(RadioError::Told { .. })));
-    assert!(matches!(desk.station_radio("laptop"), Err(RadioError::Offline)));
+    assert!(matches!(desk.station_radio(&StationId::default()), Err(RadioError::Told { .. })));
+    assert!(matches!(desk.station_radio(&StationId::from("laptop")), Err(RadioError::Offline)));
 }
 
 #[test]
@@ -341,7 +341,7 @@ fn waiting_is_what_is_open_and_not_just_answered() {
     state.answered.insert("q1".into());
     assert!(!state.is_open("q1"));
     // labelled with its computer, by its id, because there are two
-    let (mini, macbook) = (state.computers[0].id(), state.computers[1].id());
+    let (mini, macbook) = (state.computers[0].id().to_string(), state.computers[1].id().to_string());
     assert_eq!(state.merged().iter().map(|m| (m.id.clone(), m.station.clone())).collect::<Vec<_>>(), [("q1".into(), mini.clone()), ("d1".into(), mini), ("q2".into(), macbook)]);
 }
 
@@ -440,9 +440,9 @@ fn a_summary_choice_made_offline_waits_for_every_computer() {
     let shared = Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open(dir.to_str().unwrap(), HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None };
     crate::choices::computer_reached(&shared, &mini);
     // the first computer has it, and it still waits for the other
-    let ids: Vec<String> = shared.state.lock().unwrap().computers.iter().map(Computer::id).collect();
+    let ids: Vec<String> = shared.state.lock().unwrap().computers.iter().map(|s| s.id().to_string()).collect();
     let per = kept_reads(&dir)["per"].clone();
-    assert_eq!((per[&ids[0]]["state"].clone(), per.get(&ids[1]).cloned()), (serde_json::json!("done"), None), "{per}");
+    assert_eq!((per[ids[0].as_str()]["state"].clone(), per.get(&ids[1]).cloned()), (serde_json::json!("done"), None), "{per}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -481,8 +481,8 @@ fn a_summary_choice_some_computers_took_is_remembered_as_taken_there() {
     assert!(chose.is_ok(), "{chose:?}");
     // mini has it, laptop said no and is not asked again, and it still waits for the one away
     let per = kept_reads(&dir)["per"].clone();
-    assert_eq!(per[&ids[0]], serde_json::json!({ "state": "done" }), "{per}");
-    assert_eq!(per[&ids[1]], serde_json::json!({ "state": "refused", "reason": crate::choices::NO_KEY }), "{per}");
+    assert_eq!(per[ids[0].as_str()], serde_json::json!({ "state": "done" }), "{per}");
+    assert_eq!(per[ids[1].as_str()], serde_json::json!({ "state": "refused", "reason": crate::choices::NO_KEY }), "{per}");
     // and he sees laptop's no, by its name, with why
     let view = looked(&desk, None, None);
     let lines: Vec<(String, DeskDelivery)> = view.intents.iter().filter(|i| i.kind == IntentKind::Reads).flat_map(|i| i.computers.iter().map(|c| (c.name.clone(), c.state.clone()))).collect();
@@ -501,7 +501,7 @@ fn a_computer_that_refuses_a_waiting_summary_choice_does_not_cancel_it_for_the_o
     // still waiting for mini
     let reads = kept_reads(&dir);
     assert_eq!(reads["wanted"]["id"], "anthropic", "{reads}");
-    assert!(reads["per"].get(&mini_id).is_none(), "{reads}");
+    assert!(reads["per"].get(mini_id.as_str()).is_none(), "{reads}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 #[test]
@@ -620,7 +620,7 @@ fn an_unnamed_computer_can_be_chosen_as_main_by_its_id() {
     assert_eq!(shown.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["127.0.0.1", "127.0.0.1"]);
     desk.set_main_computer(shown[1].id.clone());
     let main = desk.shared.state.lock().unwrap().main().map(Computer::id);
-    assert_eq!(main, Some(shown[1].id.clone()));
+    assert_eq!(main, Some(StationId::from(shown[1].id.as_str())));
     assert_eq!(looked(&desk, None, None).main_computer, Some(shown[1].id.clone()));
 }
 
@@ -857,7 +857,7 @@ fn a_message_names_its_computer_by_the_id_every_other_place_uses() {
     let mut state = two();
     // neither computer has said its name, and two computers could say the same one
     state.computers.iter_mut().for_each(|s| s.name.clear());
-    let ids: Vec<String> = state.computers.iter().map(|s| s.id()).collect();
+    let ids: Vec<String> = state.computers.iter().map(|s| s.id().to_string()).collect();
     let desk = desk_of(state);
     let view = looked(&desk, None, None);
     let q2 = view.feed.iter().find(|m| m.id == "q2").unwrap();

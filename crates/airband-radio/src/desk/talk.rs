@@ -16,7 +16,7 @@ impl Desk {
             state.discard = false;
             // any computer that is there can do the listening; where the words go is worked out when he sends them
             let pick = files_at(&state).or_else(|| pick_station(&state, "", re.as_deref(), room.as_deref(), agent.as_deref()));
-            let online = |id: &String| state.computer(id).is_some_and(|s| s.online);
+            let online = |id: &StationId| state.computer(id).is_some_and(|s| s.online);
             let Some(pick) = pick.clone().filter(online).or_else(|| state.computers.iter().find(|s| s.online).map(Computer::id)).or(pick) else { return };
             let Some(computer) = state.computer(&pick) else { return };
             computer.radio.clone()

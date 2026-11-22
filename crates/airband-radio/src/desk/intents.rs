@@ -30,7 +30,7 @@ pub(crate) struct Intent<T> {
     pub(crate) rev: u64,
     pub(crate) wanted: T,
     #[serde(default)]
-    pub(crate) per: BTreeMap<String, Delivery>,
+    pub(crate) per: BTreeMap<StationId, Delivery>,
 }
 
 impl<T> Intent<T> {
@@ -39,24 +39,24 @@ impl<T> Intent<T> {
         Intent { rev: before.map_or(1, |b| b.rev + 1), wanted, per: BTreeMap::new() }
     }
     /// That computer has not answered it yet: it is still to be sent.
-    pub(crate) fn owed(&self, computer: &str) -> bool {
+    pub(crate) fn owed(&self, computer: &StationId) -> bool {
         matches!(self.per.get(computer), None | Some(Delivery::Pending))
     }
     /// Keep what that computer did with it.
-    pub(crate) fn record<R>(&mut self, computer: &str, reach: &Reach<R>) {
+    pub(crate) fn record<R>(&mut self, computer: &StationId, reach: &Reach<R>) {
         let now = match reach {
             Reach::Done(_) => Delivery::Done,
             Reach::Unreachable => Delivery::Pending,
             Reach::Refused(why) | Reach::Skipped(why) => Delivery::Refused { reason: why.clone() },
         };
-        self.per.insert(computer.to_string(), now);
+        self.per.insert(computer.clone(), now);
     }
     /// At least one computer has it.
     pub(crate) fn taken(&self) -> bool {
         self.per.values().any(|d| *d == Delivery::Done)
     }
     /// Every one of these computers has it: nothing is left to send or to tell him.
-    pub(crate) fn done_by_all(&self, everyone: &[String]) -> bool {
+    pub(crate) fn done_by_all(&self, everyone: &[StationId]) -> bool {
         everyone.iter().all(|c| self.per.get(c) == Some(&Delivery::Done))
     }
 }
@@ -125,7 +125,7 @@ pub(super) fn lines<T>(intent: &Intent<T>, state: &State) -> Vec<DeskReachLine> 
                 Some(Delivery::Refused { reason }) => DeskDelivery::Refused { reason: reason.clone() },
                 Some(Delivery::Pending) | None => DeskDelivery::Waiting,
             };
-            Some(DeskReachLine { computer: id.clone(), name: state.computer_name(&id), state: state_now })
+            Some(DeskReachLine { computer: id.to_string(), name: state.computer_name(&id), state: state_now })
         })
         .collect()
 }

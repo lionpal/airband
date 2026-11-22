@@ -6,26 +6,26 @@ use super::*;
 #[derive(Default)]
 pub(super) struct Floor {
     /// The computer that has it, by its id.
-    pub(super) holder: Mutex<Option<String>>,
+    pub(super) holder: Mutex<Option<StationId>>,
     pub(super) freed: Condvar,
 }
 impl Floor {
-    pub(super) fn take(&self, computer: &str) {
+    pub(super) fn take(&self, computer: &StationId) {
         let mut holder = self.holder.lock().unwrap();
-        while holder.as_deref().is_some_and(|h| h != computer) {
+        while holder.as_ref().is_some_and(|h| h != computer) {
             holder = self.freed.wait(holder).unwrap();
         }
-        *holder = Some(computer.to_string());
+        *holder = Some(computer.clone());
     }
     /// Give it up if `computer` has it. Returns whether `computer` may show its status: it has the floor or
     /// nobody does.
-    pub(super) fn release(&self, computer: &str, give_up: bool) -> bool {
+    pub(super) fn release(&self, computer: &StationId, give_up: bool) -> bool {
         let mut holder = self.holder.lock().unwrap();
-        if give_up && holder.as_deref() == Some(computer) {
+        if give_up && holder.as_ref() == Some(computer) {
             *holder = None;
             self.freed.notify_all();
         }
-        holder.as_deref().is_none_or(|h| h == computer)
+        holder.as_ref().is_none_or(|h| h == computer)
     }
     pub(super) fn clear(&self) {
         *self.holder.lock().unwrap() = None;
@@ -36,7 +36,7 @@ impl Floor {
 pub(super) struct ComputerHost {
     pub(super) shared: Arc<Shared>,
     /// The computer, by its id.
-    pub(super) station: String,
+    pub(super) station: StationId,
     /// The connection this host belongs to: once the computer has another, this one's callbacks do nothing.
     pub(super) epoch: u64,
 }

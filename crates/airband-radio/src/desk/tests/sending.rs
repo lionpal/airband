@@ -41,7 +41,7 @@ fn a_notification_answer_goes_only_to_the_computer_it_came_from() {
     two.refuses::<at::Utterance>(409, &Refusal::Told { reason: "That question was closed.".into() });
     let desk = desk_with(vec![(link(1), one.clone()), (link(2), two.clone())]);
     desk.set_links(vec![link(1), link(2)]);
-    let got = desk.answer_now(station_id(&link(2)), "m1".into(), "yes".into(), None);
+    let got = desk.answer_now(station_id(&link(2)).to_string(), "m1".into(), "yes".into(), None);
     let gone = desk.answer_now("not-a-computer".into(), "m2".into(), "yes".into(), None);
     let answered = desk.shared.state.lock().unwrap().answered.clone();
     desk.stop();
