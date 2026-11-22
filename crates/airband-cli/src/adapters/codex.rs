@@ -19,7 +19,6 @@
 //! One thing he has to do himself, once: Codex runs a hook only after he has looked at it and trusted it
 //! (`/hooks` inside Codex), and again whenever it changes. `airband install` writes the hooks and says so.
 #![expect(clippy::disallowed_macros, reason = "speaks the tool's own app-server protocol")]
-#![expect(clippy::disallowed_methods, reason = "lists, opens or removes files, or closes a channel, directly: to move to airband_io (audit 6)")]
 use super::env;
 use super::hooks::{On, on, text};
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk};
@@ -351,14 +350,12 @@ fn watch(_tower: super::Tower) {}
 /// The folders Codex has had sessions in: each session's file starts with a line that says where it was.
 /// The newest few hundred files are asked.
 fn worked_in(codex: &std::path::Path) -> Vec<super::Worked> {
-    use std::io::BufRead;
     // sessions/<year>/<month>/<day>/<one file per session>
-    let inside = |dirs: Vec<PathBuf>| -> Vec<PathBuf> { dirs.iter().filter_map(|d| std::fs::read_dir(d).ok()).flat_map(|d| d.flatten().map(|e| e.path())).collect() };
+    let inside = |dirs: Vec<PathBuf>| -> Vec<PathBuf> { dirs.iter().filter_map(|d| airband_io::files::entries(d).ok()).flatten().collect() };
     let mut files: Vec<PathBuf> = inside(inside(inside(inside(vec![codex.join(super::row_says(NAME, "sessions"))])))).into_iter().filter(|p| p.extension().is_some_and(|e| e == "jsonl")).collect();
     files.sort();
     let found = files.iter().rev().take(300).filter_map(|file| {
-        let mut first = String::new();
-        std::io::BufReader::new(std::fs::File::open(file).ok()?).read_line(&mut first).ok()?;
+        let first = airband_io::files::first_lines(file, 1).ok()?.into_iter().next()?;
         let line: Value = serde_json::from_str(&first).ok()?;
         let folder = line["payload"]["cwd"].as_str().filter(|c| !c.is_empty() && line["type"] == "session_meta")?.to_string();
         Some(super::Worked { folder, at: super::written(file) })
