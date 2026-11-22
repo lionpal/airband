@@ -9,7 +9,7 @@ private struct Speaker: View {
     let m: ChatMessage
 
     var body: some View {
-        Button { model.look(agent: m.from) } label: {
+        Button { model.look(agent: m.agent) } label: {
             HStack(spacing: 7) {
                 if !m.badge.isEmpty { Badge(text: m.badge, colour: m.colour, size: 20) }
                 Text(m.station.isEmpty ? m.from : "\(m.from) · \(m.station)").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.quiet)
@@ -174,7 +174,7 @@ struct Mine: View {
             if !m.to.isEmpty {
                 // who it went to, with that agent's badge when it went to one. A tap shows only that agent, so
                 // what he says next goes to it
-                Button { if m.to.count == 1 { model.look(agent: m.to[0]) } } label: {
+                Button { if m.toAgents.count == 1 { model.look(agent: m.toAgents[0]) } } label: {
                     HStack(spacing: 5) {
                         Text("to").font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.quiet)
                         if !m.badge.isEmpty { Badge(text: m.badge, colour: m.colour, size: 16) }

@@ -26,7 +26,7 @@ impl RadioHost for Quiet {
 }
 
 fn msg(id: &str, seq: u64, from: &str, group: &str, needs: bool) -> ChatMessage {
-    ChatMessage { seq, id: id.into(), at: seq, his: from == "you", from: from.into(), group: group.into(), to: Vec::new(), needs_you: needs, fyi: false, unjudged: String::new(), stalled: false, text: id.into(), long: false, queued: false, seen: 0, options: Vec::new(), recommended: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: Some(from.into()), station: String::new(), open: needs, badge: String::new(), colour: 0, read: None, own_session: false, not_read: String::new() }
+    ChatMessage { seq, id: id.into(), at: seq, his: from == "you", from: from.into(), group: group.into(), to: Vec::new(), to_agents: Vec::new(), needs_you: needs, fyi: false, unjudged: String::new(), stalled: false, text: id.into(), long: false, queued: false, seen: 0, options: Vec::new(), recommended: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: Some(from.into()), station: String::new(), open: needs, badge: String::new(), colour: 0, read: None, own_session: false, not_read: String::new() }
 }
 fn station(name: &str, port: u16, agents: &[(&str, &str)], messages: Vec<ChatMessage>) -> Station {
     let link = format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A{port}&token=t");
@@ -43,7 +43,7 @@ fn station(name: &str, port: u16, agents: &[(&str, &str)], messages: Vec<ChatMes
         failing_since: None,
         reads: String::new(),
         reads_failed: String::new(),
-        agents: agents.iter().map(|(c, g)| ChatAgent { id: c.to_string(), callsign: c.to_string(), group: g.to_string(), number: c.strip_prefix(g).unwrap_or(c).trim().to_string(), named: false, harness: "h".into(), waiting: false, reachable: true, state: AgentState::Working, subagents: 0, doing: None, held: false, ends: false, model: None, effort: None }).collect(),
+        agents: agents.iter().map(|(c, g)| (c, g, c.strip_prefix(g).unwrap_or(c).trim().to_string())).map(|(c, g, number)| ChatAgent { id: c.to_string(), callsign: c.to_string(), badge: airband_core::routing::Callsign { project: g.to_string(), number: number.clone(), named: false }.badge(), group: g.to_string(), number: number.clone(), number_kept: number, named: false, harness: "h".into(), waiting: false, reachable: true, state: AgentState::Working, subagents: 0, doing: None, held: false, ends: false, model: None, effort: None }).collect(),
         open: messages.iter().filter(|m| m.needs_you).map(|m| m.id.clone()).collect(),
         sending: Vec::new(),
         landing: Vec::new(),
@@ -245,10 +245,10 @@ fn a_notification_is_opened_by_the_pairing_that_sealed_it_and_no_other() {
     let (mini, laptop, stranger) = (airband_core::relay::new_secret(), airband_core::relay::new_secret(), airband_core::relay::new_secret());
     let keys = Keys::derive(&laptop).unwrap();
     let seal = |n: &Notice| airband_core::audio::base64_encode(&keys.seal(Direction::Push, &serde_json::to_vec(n).unwrap()));
-    let question = Notice { id: "m1".into(), from: "shop three".into(), group: "shop".into(), colour: 2, station: "laptop".into(), text: "Rewrite or leave?".into(), kind: Some(Kind::NeedsYou), options: vec!["Rewrite".into(), "Leave".into()], permission: false };
+    let question = Notice { id: "m1".into(), from: "shop 3".into(), agent: Some("a3".into()), badge: "S3".into(), group: "shop".into(), colour: 2, station: "laptop".into(), text: "Rewrite or leave?".into(), kind: Some(Kind::NeedsYou), options: vec!["Rewrite".into(), "Leave".into()], permission: false };
     let got = open_notice(vec![link(&mini), link(&laptop)], seal(&question)).unwrap();
     assert_eq!((got.title.as_str(), got.subtitle.as_str(), got.body.as_str(), got.badge.as_str(), got.colour), ("shop 3", "laptop", "Rewrite or leave?", "S3", 2));
-    assert_eq!((got.station.as_str(), got.message.as_str(), got.room.as_str(), got.agent.as_str(), got.question), (keys.channel.as_str(), "m1", "shop", "shop 3", true));
+    assert_eq!((got.station.as_str(), got.message.as_str(), got.room.as_str(), got.agent.as_str(), got.question), (keys.channel.as_str(), "m1", "shop", "a3", true));
     assert_eq!(got.options, ["Rewrite", "Leave"]);
     // one computer: its name says nothing he does not know
     assert_eq!(open_notice(vec![link(&laptop)], seal(&question)).unwrap().subtitle, "");

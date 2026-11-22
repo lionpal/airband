@@ -138,19 +138,24 @@ fn link_from(cfg: &Config, args: &[String]) -> String {
     args.iter().position(|a| a == "--link").and_then(|i| args.get(i + 1)).cloned().unwrap_or_else(|| Pairing::Direct { url: format!("http://127.0.0.1:{}", cfg.port), token: cfg.radio_token.clone() }.link())
 }
 
-/// `airband feed [all | <group> | "<callsign>"] [--once]`: the chat, in a terminal. Each message is the short version.
+/// `airband feed [--team <team> | --agent "<callsign>"] [--once]`: the chat, in a terminal. Each message is the
+/// short version.
 pub fn feed(cfg: &Config, args: &[String]) -> Result<(), String> {
     let radio = Radio::start(link_from(cfg, args), String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
     let once = args.iter().any(|a| a == "--once");
-    let named = args.iter().find(|a| !a.starts_with("--") && !a.starts_with("airband://")).cloned().unwrap_or_else(|| "all".into());
-    let scope = match named.as_str() {
-        "all" => "all".to_string(),
-        n if n.contains(' ') => format!("agent:{n}"),
-        n => format!("group:{n}"),
+    let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
+    let team = flag("--team");
+    // the agent he named, by the id its callsign has now
+    let agent = match flag("--agent") {
+        Some(named) => {
+            let roster = radio.feed(None, None, u64::MAX, 0).map_err(|e| e.to_string())?.agents;
+            Some(roster.into_iter().find(|a| a.callsign == named || a.parts().text() == named).map(|a| a.id).ok_or(format!("No agent is called {named}."))?)
+        }
+        None => None,
     };
     let mut after = 0;
     loop {
-        let f = radio.feed(scope.clone(), after, if once { 0 } else { 25 }).map_err(|e| e.to_string())?;
+        let f = radio.feed(team.clone(), agent.clone(), after, if once { 0 } else { 25 }).map_err(|e| e.to_string())?;
         if after == 0 {
             let who: Vec<String> = f.agents.iter().map(|a| format!("{}{}", a.callsign, if a.waiting { " (waiting)" } else { "" })).collect();
             println!("Your agents: {}", if who.is_empty() { "nobody".into() } else { who.join(", ") });

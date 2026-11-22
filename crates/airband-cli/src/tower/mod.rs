@@ -83,7 +83,7 @@ use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Notify;
 use airband_core::agent::{self, Agent, AgentEvent, Deliver, Event};
-use airband_core::radio::{Act, AgentState, Feed, Heard, Kind, Message, More, Reply, RosterEntry, Transmission, Utterance, in_scope};
+use airband_core::radio::{Act, AgentState, Feed, Heard, Kind, Message, More, Reply, RosterEntry, Transmission, Utterance};
 use airband_core::routing::{Callsign, Control, parse_utterance};
 use airband_radio::prose::{opening, plain as spoken};
 

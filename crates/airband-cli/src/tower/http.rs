@@ -551,7 +551,8 @@ impl Drop for Reading {
 /// With no `since`, `after=<seq>` gives the lines added after that position, and never a change to an earlier one.
 async fn feed(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>) -> Json<Feed> {
     let radio = radio_of(&headers);
-    let scope = q.get("scope").cloned().unwrap_or_else(|| "all".into());
+    // all of it, or one team's (`team`), or one agent's (`agent`, its id)
+    let (team, agent) = (q.get("team").cloned(), q.get("agent").cloned());
     let since: Option<u64> = q.get("since").and_then(|v| v.parse().ok());
     // A radio that is showing the chat has everything up to the change count it asks from: nothing up to there
     // needs a notification on that radio. One that says the chat is not in front of him is following it
@@ -566,7 +567,7 @@ async fn feed(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
         }
     }
     // while a request for the whole chat is open, what agents say is read by it
-    let _reading = (scope == "all").then(|| {
+    let _reading = (team.is_none() && agent.is_none()).then(|| {
         app.passing().readers += 1;
         Reading(app.clone())
     });
@@ -582,7 +583,7 @@ async fn feed(State(app): State<Arc<App>>, headers: HeaderMap, Query(q): Query<H
             inner.reap();
             let roster_same = roster_seen.is_none_or(|seen| seen == inner.roster_rev());
             let settled = !inner.settled_for(&radio, since).is_empty();
-            let wanted = |e: &&Entry| in_scope(&scope, &inner.message(e));
+            let wanted = |e: &&Entry| inner.in_view(e, team.as_deref(), agent.as_deref());
             match since {
                 Some(0) | None => {
                     let hits: Vec<&Entry> = inner.log.iter().filter(|e| e.seq > after).filter(wanted).collect();
@@ -653,7 +654,8 @@ async fn message(State(app): State<Arc<App>>, Path(id): Path<String>, Query(q): 
     if q.get("form").map(String::as_str) == Some("spoken") {
         // `part=asked` is the question as he would be asked it on a call: who is asking, its short form, and
         // the answers it offers, for a radio that reads it to him before he answers
-        let text: Option<String> = app.read().log.iter().find(|e| e.id == id).map(|e| match q.get("part").map(String::as_str) {
+        let inner = app.read();
+        let text: Option<String> = inner.log.iter().find(|e| e.id == id).map(|e| match q.get("part").map(String::as_str) {
             Some("asked") => {
                 let short = e.short.clone().unwrap_or_else(|| spoken(&e.full).chars().take(600).collect());
                 let choices = match e.options.as_slice() {
@@ -661,7 +663,7 @@ async fn message(State(app): State<Arc<App>>, Path(id): Path<String>, Query(q): 
                     [one] => format!(" You can say {one}, or answer in your own words."),
                     [first @ .., last] => format!(" You can say {}, or {last}, or answer in your own words.", first.join(", ")),
                 };
-                format!("{}. {short}{choices}", airband_core::routing::shown(&e.from))
+                format!("{}. {short}{choices}", inner.sender(e).map(|s| s.callsign.text()).unwrap_or_else(|| e.from.clone()))
             }
             // the whole of it, read from its blocks: no mark is said, a table goes row by row, code is passed over
             _ => spoken(&e.full).chars().take(3000).collect(),

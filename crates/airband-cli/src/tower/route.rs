@@ -17,12 +17,12 @@ pub(super) fn list(names: &[String]) -> String {
 pub(super) enum Routed {
     /// Certain: he named them, or the radio said which message he was answering.
     Sure(Vec<Session>),
-    /// Nobody to choose from, or the choice could not be made: ask him.
-    Ask(Vec<String>),
+    /// Nobody to choose from, or the choice could not be made: ask him, between these, likeliest first.
+    Ask(Vec<Session>),
     /// It is not for anyone running: he wants a new agent started.
     New(Idea),
-    /// It is for an agent on another of his computers, by this callsign.
-    Elsewhere(String),
+    /// It is for an agent on another of his computers.
+    Elsewhere(airband_core::radio::Other),
 }
 
 /// Who an untagged reply is for, or that it asks for a new agent. What is certain without reading comes first
@@ -79,7 +79,7 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
             // "ship the login fix" goes to whoever is working on the login fix, whoever spoke last.
             let now = now_ms();
             // each with the two letters the app shows for it: he may say those and not the name
-            let letters = |s: &Session| airband_core::routing::badge(&s.callsign.project, &s.callsign.text());
+            let letters = |s: &Session| s.callsign.badge();
             // Everyone he could mean, in the order the model is shown them. Each is listed under a number, and
             // the model answers with numbers: nothing it writes is matched against a name.
             enum Listed<'a> {
@@ -109,7 +109,7 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
             // the agents he can see that another of his computers has: his words may be for one of them
             for o in others.iter().take(8) {
                 listed.push(Listed::Elsewhere(o));
-                let (n, letters) = (listed.len(), airband_core::routing::badge(&o.group, &o.callsign));
+                let (n, letters) = (listed.len(), o.badge.clone());
                 lines.push(if o.said.is_empty() { format!("{n}. {} (letters {letters}; on another of his computers; has said nothing yet)", o.callsign) } else { format!("{n}. {} (letters {letters}; on another of his computers; {} ago): {}", o.callsign, ago(o.ago * 1000), o.said) });
             }
             let last = match &focus {
@@ -257,7 +257,7 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                 return match all.as_slice() {
                     [] => Routed::Ask(Vec::new()),
                     [only] if !could_be_new => Routed::Sure(vec![only.clone()]),
-                    several => Routed::Ask(several.iter().take(3).map(|s| s.callsign.text()).collect()),
+                    several => Routed::Ask(several.iter().take(3).cloned().collect()),
                 };
             };
             if let Some(new) = judged.new.take().filter(|_| can_start) {
@@ -285,7 +285,7 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
             let here: Vec<Session> = meant.iter().filter_map(|l| if let Listed::Here(s) = l { Some((*s).clone()) } else { None }).collect();
             // one of the agents on another computer, and none here: the radio takes it there
             if let Some(o) = meant.iter().find_map(|l| if let Listed::Elsewhere(o) = l { Some(*o) } else { None }).filter(|_| judged.sure && here.is_empty()) {
-                return Routed::Elsewhere(o.callsign.clone());
+                return Routed::Elsewhere(o.clone());
             }
             // all of them, said outright
             if judged.sure && judged.all {
@@ -295,9 +295,9 @@ pub(super) async fn route(app: &Arc<App>, radio: &str, rest: &str, re: Option<&s
                 Routed::Sure(here)
             } else {
                 // the likeliest first, so "the first one" or a bare callsign settles it
-                let mut names: Vec<String> = here.iter().map(|s| s.callsign.text()).collect();
-                everyone.iter().take(3).for_each(|s| if !names.contains(&s.callsign.text()) { names.push(s.callsign.text()) });
-                Routed::Ask(names)
+                let mut likely: Vec<Session> = here.clone();
+                everyone.iter().take(3).for_each(|s| if !likely.iter().any(|l| l.agent.id == s.agent.id) { likely.push((*s).clone()) });
+                Routed::Ask(likely)
             }
         }
     }
@@ -384,7 +384,7 @@ async fn named_project(app: &Arc<App>, idea: &str, said: &str, projects: &[Strin
 async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope: Option<&str>) -> Option<Vec<Session>> {
     let room = scope;
     let all: Vec<Session> = app.read().sessions.iter().filter(|s| room.is_none_or(|g| s.callsign.project == g)).cloned().collect();
-    let letters = |s: &Session| airband_core::routing::badge(&s.callsign.project, &s.callsign.text());
+    let letters = |s: &Session| s.callsign.badge();
     let prompt = format!(
         "{name} said this to his coding agents: \"{first}\"\nIt was not clear who it was for, and he was asked. The agents:\n{list}\n\n\
          He now says: \"{said}\"\n\n\
@@ -539,9 +539,9 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
     } else {
         match route(app, radio, &parsed.rest, re, scope, others).await {
             Routed::Sure(t) => t,
-            Routed::Elsewhere(callsign) => {
-                log(format!("← radio: \"{text}\" → {callsign}, on another computer"));
-                return Reply { elsewhere: Some(callsign), ..Reply::default() };
+            Routed::Elsewhere(other) => {
+                log(format!("← radio: \"{text}\" → {}, on another computer", other.callsign));
+                return Reply { elsewhere: Some(other.id), ..Reply::default() };
             }
             Routed::New(mut idea) => {
                 idea.task.push_str(&files);
@@ -551,8 +551,9 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
             Routed::Ask(options) => {
                 // held with its files, so they go along when he says who it was for
                 app.passing().call(radio).asked = Some((parsed.rest.clone(), files.clone(), Instant::now()));
-                log(format!("← radio: \"{text}\" → unsure; asking between {}", options.join(", ")));
-                return Reply { ask: options.clone(), ..ask(format!("Who is that for? {}.", options.join(", or "))) };
+                let names: Vec<String> = options.iter().map(|s| s.callsign.text()).collect();
+                log(format!("← radio: \"{text}\" → unsure; asking between {}", names.join(", ")));
+                return Reply { ask: options.iter().map(|s| s.agent.id.clone()).collect(), ..ask(format!("Who is that for? {}.", names.join(", or "))) };
             }
         }
     };

@@ -205,8 +205,13 @@ pub enum NotRead {
 /// An agent on another of his computers, as his screen shows it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Other {
+    /// The agent's id on the computer that has it: what the tower answers with when the words are for it.
+    pub id: String,
     pub callsign: String,
     pub group: String,
+    /// Its two characters, as that computer gave them.
+    #[serde(default)]
+    pub badge: String,
     /// The last thing it said, in its short form. Empty if it has said nothing.
     #[serde(default)]
     pub said: String,
@@ -399,7 +404,7 @@ pub const DENY: &str = "Deny";
 /// computers, so they do not both move. `{}`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Taken {
-    pub callsigns: Vec<String>,
+    pub callsigns: Vec<crate::routing::Callsign>,
 }
 
 /// `POST dismiss`: he does not mean to answer this question. It stops being open: it no longer waits on him
@@ -446,10 +451,12 @@ pub struct Reply {
     pub listen: bool,
     /// The tower could not tell who his words are for: the agents it could be, likeliest first. A radio with a
     /// screen offers them to tap; `say` asks the same thing in words for one without.
+    /// By agent id; each is one this tower has, or one of the utterance's `others`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ask: Vec<String>,
     /// His words are for this agent, which another of his computers has (one of the utterance's `others`).
     /// Nothing was delivered: the radio sends them there.
+    /// By the agent's id, as `others` gave it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub elsewhere: Option<String>,
 }
@@ -578,8 +585,14 @@ pub struct PushTarget {
 pub struct Notice {
     /// The message's id: what an answer is sent as the answer to (`re`).
     pub id: String,
-    /// The agent's callsign as the tower has it, and its team.
+    /// The agent's callsign as a screen shows it, and its team.
     pub from: String,
+    /// The agent's id, the same as in the roster.
+    #[serde(default)]
+    pub agent: Option<String>,
+    /// Its two characters.
+    #[serde(default)]
+    pub badge: String,
     #[serde(default)]
     pub group: String,
     /// The team's colour: its place in the client's list of team colours.
@@ -617,16 +630,23 @@ pub struct Message {
     pub id: String,
     /// Milliseconds since 1970.
     pub at: u64,
-    /// What to show it as coming from: a callsign, or a label for him.
+    /// What to show it as coming from: its sender's callsign as a screen shows it.
     pub from: String,
+    /// Two characters for whoever said it, or for the one agent his message went to. Empty when the sender is
+    /// no longer known as a callsign the tower can take apart (a line kept from before it was written down).
+    #[serde(default)]
+    pub badge: String,
     /// He said it. A client goes by this and never by what `from` reads.
     #[serde(default)]
     pub his: bool,
     /// The group (the project's name) this belongs to; empty for a message of his to several groups.
     pub group: String,
-    /// For his messages: the callsigns it went to.
+    /// For his messages: the callsigns it went to, as a screen shows them.
     #[serde(default)]
     pub to: Vec<String>,
+    /// For his messages: the ids of the agents it went to.
+    #[serde(default)]
+    pub to_agents: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<Kind>,
     /// The short version.
@@ -810,35 +830,15 @@ pub struct More {
     pub text: String,
 }
 
-/// Does a message belong in a scope? `all`, `group:<name>`, `agent:<callsign>`.
-pub fn in_scope(scope: &str, m: &Message) -> bool {
-    match scope.split_once(':') {
-        Some(("group", g)) => m.group == g || m.to.iter().any(|c| c.rsplit_once(' ').is_some_and(|(project, _)| project == g)),
-        Some(("agent", a)) => m.from == a || m.to.iter().any(|c| c == a),
-        _ => true,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn m(from: &str, group: &str, to: &[&str]) -> Message {
-        Message { seq: 1, id: "x".into(), at: 0, his: from == "you", from: from.into(), group: group.into(), to: to.iter().map(|s| s.to_string()).collect(), kind: None, text: String::new(), long: false, options: Vec::new(), recommended: None, read: None, own_session: false, permission: false, pictures: Vec::new(), links: Vec::new(), agent: None, rev: 0, open: false, queued: false, seen: None, cancelled: false, not_read: None }
-    }
     #[test]
     fn a_feed_from_a_newer_tower_still_reads() {
         let feed: Feed = serde_json::from_str(r#"{"messages":[{"seq":1,"id":"a","at":0,"from":"shop one","group":"shop","kind":"celebration","text":"x","mood":"good"}],"roster":[{"callsign":"shop one","group":"shop","harness":"h","waiting":false,"reachable":true,"colour":"red"}],"seq":1,"weather":"fine"}"#).unwrap();
         assert_eq!(feed.messages[0].kind, Some(Kind::Unknown));
         let t: Transmission = serde_json::from_str(r#"{"id":"a","callsign":"shop one","kind":"celebration","say":"x"}"#).unwrap();
         assert_eq!(t.kind, Kind::Unknown);
-    }
-    #[test]
-    fn scopes() {
-        let said = m("shop two", "shop", &[]);
-        let mine = m("you", "", &["shop two", "backoffice one"]);
-        assert!(in_scope("all", &said) && in_scope("group:shop", &said) && in_scope("agent:shop two", &said));
-        assert!(!in_scope("group:backoffice", &said) && !in_scope("agent:shop one", &said));
-        assert!(in_scope("group:backoffice", &mine) && in_scope("agent:shop two", &mine) && !in_scope("agent:shop one", &mine));
     }
 }

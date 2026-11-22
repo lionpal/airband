@@ -150,7 +150,7 @@ pub(crate) fn settle(store: &Store, host: &dyn RadioHost, id: &str, outcome: air
         Outcome::Answered { reply } if reply.elsewhere.is_some() || !reply.ask.is_empty() => {
             host.outbox(gone(), None);
             // names as the screen shows them
-            host.unplaced(was, reply.elsewhere.map(|c| airband_core::routing::shown(&c)), reply.ask.iter().map(|c| airband_core::routing::shown(c)).collect());
+            host.unplaced(was, reply.elsewhere, reply.ask);
         }
         // what was done as he asked shows as his own line in the chat; anything else he has to see
         Outcome::Answered { reply } => host.outbox(gone(), (!reply.say.is_empty() && !reply.done).then_some(reply.say)),
@@ -311,8 +311,8 @@ mod tests {
         settle(&store, &host, "c", Outcome::Answered { reply: Reply { say: "Sent to shop two.".into(), done: true, ..Reply::default() } });
         assert_eq!(ids(), ["d", "e"]);
         // the tower cannot tell who it is for: it leaves this list and the host asks him
-        settle(&store, &host, "d", Outcome::Answered { reply: Reply { ask: vec!["shop two".into(), "shop one".into()], ..Reply::default() } });
-        assert_eq!((ids(), last().1.as_deref()), (vec!["e".to_string()], Some("unplaced: shop 2, shop 1")));
+        settle(&store, &host, "d", Outcome::Answered { reply: Reply { ask: vec!["a2".into(), "a1".into()], ..Reply::default() } });
+        assert_eq!((ids(), last().1.as_deref()), (vec!["e".to_string()], Some("unplaced: a2, a1")));
         // one his computer got too late: it stays, with the reason, to send again or let go, and he is told
         settle(&store, &host, "e", Outcome::Rejected { why: Rejected::TooOld });
         let kept = store.saved.lock().unwrap().outbox.clone();

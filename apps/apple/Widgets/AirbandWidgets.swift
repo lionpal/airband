@@ -66,7 +66,7 @@ struct NeedsYouBanner: Widget {
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
             .activityBackgroundTint(ground)
-            .widgetURL(OpenWith.answer(context.attributes.callsign))
+            .widgetURL(OpenWith.answer(context.attributes.agent))
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) { SquareBadge(text: context.attributes.badge, fill: ask, size: 36) }
@@ -84,7 +84,7 @@ struct NeedsYouBanner: Widget {
             } minimal: {
                 Image(systemName: "mic.fill").foregroundStyle(ask)
             }
-            .widgetURL(OpenWith.answer(context.attributes.callsign))
+            .widgetURL(OpenWith.answer(context.attributes.agent))
         }
     }
 }

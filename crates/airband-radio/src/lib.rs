@@ -122,7 +122,7 @@ pub trait RadioHost: Send + Sync {
     /// It stays chosen. A host with a screen says so; one without need not.
     fn told(&self, text: String);
     /// The tower did not deliver this message of his. Either it is for an agent another of his computers has
-    /// (`elsewhere`, a callsign), or the tower could not tell who it is for (`ask`: who it might be, likeliest
+    /// (`elsewhere`, its id), or the tower could not tell who it is for (`ask`: who it might be by id, likeliest
     /// first). A host with a screen offers the choice; nothing more is sent until he makes it.
     fn unplaced(&self, message: Outgoing, elsewhere: Option<String>, ask: Vec<String>);
 }
@@ -244,16 +244,25 @@ impl Outgoing {
     }
 }
 
+impl ChatAgent {
+    /// Its callsign as the typed parts it was made from.
+    pub fn parts(&self) -> airband_core::routing::Callsign {
+        airband_core::routing::Callsign { project: self.group.clone(), number: self.number_kept.clone(), named: self.named }
+    }
+}
+
 fn chat(m: airband_core::radio::Message) -> ChatMessage {
-    use airband_core::routing::shown;
-    ChatMessage { seq: m.seq, id: m.id, at: m.at, his: m.his, from: shown(&m.from), group: m.group, to: m.to.iter().map(|t| shown(t)).collect(), needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), unjudged: if m.kind == Some(Kind::Unjudged) { "Shown as the agent wrote it. No summary was made.".into() } else { String::new() }, text: m.text, long: m.long, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links.into_iter().map(chat_link).collect(), agent: m.agent, station: String::new(), open: m.open, badge: String::new(), colour: 0, read: m.read, own_session: m.own_session, not_read: m.not_read.map(not_read).unwrap_or_default().to_string() }
+    ChatMessage { seq: m.seq, id: m.id, at: m.at, his: m.his, from: m.from, badge: m.badge, to_agents: m.to_agents, group: m.group, to: m.to, needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), unjudged: if m.kind == Some(Kind::Unjudged) { "Shown as the agent wrote it. No summary was made.".into() } else { String::new() }, text: m.text, long: m.long, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links.into_iter().map(chat_link).collect(), agent: m.agent, station: String::new(), open: m.open, colour: 0, read: m.read, own_session: m.own_session, not_read: m.not_read.map(not_read).unwrap_or_default().to_string() }
 }
 
 fn chat_feed(feed: Feed) -> ChatFeed {
     ChatFeed {
         seq: feed.seq,
         messages: feed.messages.into_iter().map(chat).collect(),
-        agents: feed.roster.into_iter().map(|r| ChatAgent { id: r.id, callsign: airband_core::routing::shown(&r.callsign), group: r.group, number: airband_core::routing::shown_number(&r.number), named: r.named, harness: r.harness, waiting: r.waiting, reachable: r.reachable, state: r.state.into(), subagents: r.subagents, doing: r.doing, held: r.held, ends: r.ends, model: r.model, effort: r.effort }).collect(),
+        agents: feed.roster.into_iter().map(|r| {
+            let callsign = airband_core::routing::Callsign { project: r.group.clone(), number: r.number.clone(), named: r.named };
+            ChatAgent { id: r.id, callsign: callsign.shown(), badge: callsign.badge(), group: r.group, number: callsign.shown_rest(), number_kept: r.number, named: r.named, harness: r.harness, waiting: r.waiting, reachable: r.reachable, state: r.state.into(), subagents: r.subagents, doing: r.doing, held: r.held, ends: r.ends, model: r.model, effort: r.effort }
+        }).collect(),
         quick: feed.quick.into_iter().map(|q| QuickMessage { label: q.label, text: q.text }).collect(),
         projects: feed.projects,
         colours: feed.colours.into_iter().collect(),
@@ -320,6 +329,8 @@ pub struct ChatMessage {
     pub group: String,
     /// For his messages: who it went to.
     pub to: Vec<String>,
+    /// For his messages: the ids of the agents it went to.
+    pub to_agents: Vec<String>,
     /// The agent is stopped until he answers or acts.
     pub needs_you: bool,
     /// Not worth his attention: show it dimmed or folded away.
@@ -404,11 +415,16 @@ pub struct ChatAgent {
     /// Stable while the agent runs.
     pub id: String,
     pub callsign: String,
+    /// Its two characters.
+    pub badge: String,
     pub group: String,
     /// What tells it from the others of its team: the part of its callsign after the team's name.
     pub number: String,
     /// That part is a name he gave the session, not a number his computer handed out.
     pub named: bool,
+    /// That part as his computer keeps it (a number as its word), for telling his other computers which names
+    /// are taken.
+    pub number_kept: String,
     pub harness: String,
     pub waiting: bool,
     pub reachable: bool,
@@ -749,7 +765,7 @@ impl Radio {
         // with an address of the tower's still to try, this request does not wait for news: it only finds out
         // whether the tower is there, so the straight path is in use (and shown) within a moment
         let wait = if self.link.untried() { 0 } else { wait_seconds.min(25) };
-        let feed: Feed = self.asked("GET", &format!("/feed?scope=all&since={since}&roster={roster}&wait={wait}"), None)?;
+        let feed: Feed = self.asked("GET", &format!("/feed?since={since}&roster={roster}&wait={wait}"), None)?;
         spoken_alike(&feed)?;
         self.roster.store(feed.roster_rev, Ordering::SeqCst);
         self.link.set_direct(feed.direct.clone());
@@ -797,12 +813,14 @@ impl Radio {
         self.stands(|p| p.on_call = on);
     }
 
-    /// Chat: everything said since `after` in a scope ("all", "group:shop", "agent:shop two"), each message
-    /// cut to a line or two. Waits up to `wait_seconds` (25 at most) for something new. Blocks: call it off
-    /// the main thread.
-    pub fn feed(&self, scope: String, after: u64, wait_seconds: u32) -> Result<ChatFeed, RadioError> {
-        let scope: String = scope.bytes().map(|b| if b.is_ascii_alphanumeric() || b == b':' { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
-        let feed: Feed = self.asked("GET", &format!("/feed?scope={scope}&after={after}&wait={}", wait_seconds.min(25)), None)?;
+    /// Chat: everything said since `after`, all of it or one team's (`team`) or one agent's (`agent`, its id),
+    /// each message cut to a line or two. Waits up to `wait_seconds` (25 at most) for something new. Blocks:
+    /// call it off the main thread.
+    pub fn feed(&self, team: Option<String>, agent: Option<String>, after: u64, wait_seconds: u32) -> Result<ChatFeed, RadioError> {
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        team.iter().for_each(|t| { query.append_pair("team", t); });
+        agent.iter().for_each(|a| { query.append_pair("agent", a); });
+        let feed: Feed = self.asked("GET", &format!("/feed?{}&after={after}&wait={}", query.finish(), wait_seconds.min(25)), None)?;
         spoken_alike(&feed)?;
         self.link.set_direct(feed.direct.clone());
         Ok(chat_feed(feed))
@@ -863,8 +881,9 @@ impl Radio {
         self.ask("/end", serde_json::json!({ "agent": agent }))
     }
     /// Tell this computer which names his other computers' agents go by. Blocks.
-    pub(crate) fn taken(&self, callsigns: &[String]) -> bool {
-        self.link.request("POST", "/taken", Some(serde_json::json!({ "callsigns": callsigns }))).is_ok_and(|(status, _)| status == 200)
+    pub(crate) fn taken(&self, callsigns: &[airband_core::routing::Callsign]) -> bool {
+        let taken = airband_core::radio::Taken { callsigns: callsigns.to_vec() };
+        self.link.request("POST", "/taken", Some(serde_json::to_value(taken).unwrap())).is_ok_and(|(status, _)| status == 200)
     }
     /// Let a question go without answering it. Blocks: call it off the main thread.
     pub fn dismiss(&self, message: String) -> Result<(), RadioError> {

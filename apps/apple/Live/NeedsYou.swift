@@ -10,7 +10,8 @@ struct NeedsYouAttributes: ActivityAttributes {
         /// What this one asked, in its short form.
         var question: String
     }
-    /// The agent as it is called, and the two letters that stand for it. A tap answers this agent.
+    /// The agent's id, which a tap answers; what it is called, and the two letters that stand for it.
+    var agent: String
     var callsign: String
     var badge: String
 }
@@ -19,10 +20,10 @@ struct NeedsYouAttributes: ActivityAttributes {
 enum OpenWith {
     /// Open the microphone, for whoever his words turn out to be for.
     static let talk = URL(string: "airband://talk")!
-    /// Open the microphone to answer one agent.
-    static func answer(_ callsign: String) -> URL {
+    /// Open the microphone to answer one agent, by its id.
+    static func answer(_ agent: String) -> URL {
         var parts = URLComponents(string: "airband://answer")!
-        parts.queryItems = [URLQueryItem(name: "agent", value: callsign)]
+        parts.queryItems = [URLQueryItem(name: "agent", value: agent)]
         return parts.url ?? talk
     }
     /// The agent an address of that kind names.

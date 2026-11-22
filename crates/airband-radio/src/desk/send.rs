@@ -241,7 +241,7 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
         state.uploads.retain(|u| !(u.station == pick && u.shown.state == UploadState::Ready));
         // the agent he is looking at, by id: the tower reads nothing to find who it is for
         let to: Vec<String> = match (&agent, aimed) {
-            (Some(callsign), true) => state.stations[pick].agents.iter().find(|a| a.callsign == *callsign).map(|a| a.id.clone()).into_iter().collect(),
+            (Some(id), true) => state.stations[pick].agents.iter().find(|a| a.id == *id).map(|a| a.id.clone()).into_iter().collect(),
             _ => Vec::new(),
         };
         let scope = room.clone().filter(|_| re.is_none() && agent.is_none() && !tagged);
@@ -269,7 +269,7 @@ fn others(state: &State, pick: usize, room: Option<&str>) -> String {
         .filter(|(_, a)| room.is_none_or(|r| a.group == r) && seen.insert(a.id.clone()))
         .map(|(s, a)| {
             let last = s.messages.iter().rev().find(|m| m.agent.as_deref() == Some(a.id.as_str()) && !m.fyi);
-            airband_core::radio::Other { callsign: a.callsign.clone(), group: a.group.clone(), said: last.map(|m| m.text.chars().take(240).collect()).unwrap_or_default(), ago: last.map(|m| now.saturating_sub(m.at) / 1000).unwrap_or(0) }
+            airband_core::radio::Other { id: a.id.clone(), callsign: a.callsign.clone(), badge: a.badge.clone(), group: a.group.clone(), said: last.map(|m| m.text.chars().take(240).collect()).unwrap_or_default(), ago: last.map(|m| now.saturating_sub(m.at) / 1000).unwrap_or(0) }
         })
         .collect();
     if list.is_empty() { String::new() } else { serde_json::to_string(&list).unwrap_or_default() }
@@ -283,14 +283,14 @@ pub(super) fn pick_station(state: &State, text: &str, re: Option<&str>, room: Op
     // the computer that has whoever he tagged: read the tags the way the tower will
     if text.starts_with('@') {
         let named = state.stations.iter().position(|s| {
-            let live: Vec<Callsign> = s.agents.iter().map(|a| Callsign { project: a.group.clone(), number: a.number.clone(), named: a.named }).collect();
+            let live: Vec<Callsign> = s.agents.iter().map(|a| a.parts()).collect();
             !parse_utterance(text, &live).to.is_empty()
         });
         if let Some(i) = named {
             return Some(i);
         }
     }
-    if let Some(i) = agent.and_then(|c| state.stations.iter().position(|s| s.agents.iter().any(|a| a.callsign == c))) {
+    if let Some(i) = agent.and_then(|id| state.stations.iter().position(|s| s.agents.iter().any(|a| a.id == id))) {
         return Some(i);
     }
     // the room he is looking at, when only one computer has agents in it

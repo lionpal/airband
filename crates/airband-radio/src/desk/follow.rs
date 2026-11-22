@@ -4,7 +4,7 @@ use super::*;
 /// Keeps one computer's part of the chat current. One request is always open with its tower.
 pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, generation: u64) {
     let mut first = true;
-    let mut told_taken: Option<Vec<String>> = None;
+    let mut told_taken: Option<Vec<airband_core::routing::Callsign>> = None;
     loop {
         // a computer that has not been told where this device can be woken is told as soon as it is reached
         tell_push(&shared, &radio, index, generation);
@@ -94,11 +94,10 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, gener
         // Two computers number their agents without knowing of each other. The later one in his list is told
         // the names the earlier ones use, whenever those change, and keeps off them.
         if got.is_ok() && index > 0 {
-            let elsewhere: Vec<String> = {
+            let elsewhere: Vec<airband_core::routing::Callsign> = {
                 let state = shared.state.lock().unwrap();
-                let mut names: Vec<String> = state.stations.iter().take(index).flat_map(|s| s.agents.iter().map(|a| a.callsign.clone())).collect();
-                names.sort();
-                names.dedup();
+                let mut names: Vec<airband_core::routing::Callsign> = Vec::new();
+                state.stations.iter().take(index).flat_map(|s| s.agents.iter().map(|a| a.parts())).for_each(|c| if !names.contains(&c) { names.push(c) });
                 names
             };
             if told_taken.as_ref() != Some(&elsewhere) && radio.taken(&elsewhere) {

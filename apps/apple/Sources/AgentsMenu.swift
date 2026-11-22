@@ -90,9 +90,9 @@ struct AgentsMenu: View {
                     .dropDestination(for: String.self) { ids, _ in drop(ids, on: room.name) } isTargeted: { over = $0 ? room.name : (over == room.name ? nil : over) }
                     .padding(.top, 4)
                     ForEach(room.members, id: \.id) { agent in
-                        row(dot: agent.state, title: titled(agent, in: room), detail: nil, strong: false, on: model.only == agent.callsign, inset: 22, colour: room.colour, badge: agent.badge, lead: agent.model, engine: under(agent), doing: agent.doing) {
-                            let was = model.only == agent.callsign
-                            model.look(agent: was ? nil : agent.callsign)
+                        row(dot: agent.state, title: titled(agent, in: room), detail: nil, strong: false, on: model.only == agent.id, inset: 22, colour: room.colour, badge: agent.badge, lead: agent.model, engine: under(agent), doing: agent.doing) {
+                            let was = model.only == agent.id
+                            model.look(agent: was ? nil : agent.id)
                         }
                         // which tool it is, and which computer it is on when there are several
                         .overlay(alignment: .trailing) { AgentMarks(agent: agent).padding(.trailing, 12).allowsHitTesting(false) }

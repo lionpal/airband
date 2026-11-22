@@ -376,9 +376,9 @@ try:
     check("a team named alone narrows it to that team, and the work decides which of its agents (model)", say("to catalog. how is the supplier import going, did all the parts come in") == "Sent to catalog import.")
     check("what an agent gets is his words with one line in front and nothing after", received("page").rstrip().endswith("and keep the price next to it") and "From Charles, on his phone through Airband." in received("page"), received("page")[-300:])
     # what his phone adds when he is paired with a second computer: the agents he can see that this tower does not have
-    there = [{"callsign": "warehouse stock", "group": "warehouse", "said": "Counted the shelves in bay 4: 212 units, 9 short of what the system says.", "ago": 40}]
+    there = [{"id": "w1", "callsign": "warehouse stock", "badge": "WS", "group": "warehouse", "said": "Counted the shelves in bay 4: 212 units, 9 short of what the system says.", "ago": 40}]
     told = said("recount bay 4 and tell me which units are missing", others=there)
-    check("words about the work of an agent on another computer are handed back for that computer (model)", told.get("elsewhere") == "warehouse stock" and not told.get("say") and "bay 4" not in "".join(received(a) for a in ("page", "import", "rates", "refunds", "schedule")), told)
+    check("words about the work of an agent on another computer are handed back for that computer (model)", told.get("elsewhere") == "w1" and not told.get("say") and "bay 4" not in "".join(received(a) for a in ("page", "import", "rates", "refunds", "schedule")), told)
     told = said("make the photo on the part page a bit smaller again", others=there)
     check("and words about this computer's work still go to its own agent (model)", told.get("say") == "Sent to catalog part page." and not told.get("elsewhere"), told)
     unsure = said("hm, what about the other thing", others=there)

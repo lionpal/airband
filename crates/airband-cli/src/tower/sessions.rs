@@ -92,11 +92,10 @@ impl Inner {
         let free = |inner: &Inner, c: &Callsign| !inner.sessions.iter().any(|s| s.callsign == *c);
         if self.find(&agent.id).is_none() {
             let callsign = wanted.clone().filter(|c| free(self, c)).unwrap_or_else(|| {
-                // the next free number, among the names in use here and on his other computers (as his radio
-                // shows them: "shop 2" there takes "shop two" here)
+                // the next free number, among the names in use here and on his other computers
                 let mut taken = self.callsigns();
                 let mut c = Callsign::next_for(&named, &taken);
-                while self.elsewhere.iter().any(|e| airband_core::routing::shown(&e.text()) == airband_core::routing::shown(&c.text())) {
+                while self.elsewhere.contains(&c) {
                     taken.push(c.clone());
                     c = Callsign::next_for(&named, &taken);
                 }
@@ -205,20 +204,17 @@ impl Inner {
     }
     /// A radio said which names his other computers use. Any agent here that was given one of them by number
     /// takes the next free number. Returns whether anything was renamed.
-    pub(super) fn taken_elsewhere(&mut self, shown: &[String]) -> bool {
-        use airband_core::routing::shown as as_shown;
-        // as callsigns: the team is everything before the last word
-        self.elsewhere = shown.iter().filter_map(|c| c.rsplit_once(' ')).map(|(project, number)| Callsign { project: project.to_string(), number: number.to_string(), named: false }).collect();
-        let clashing: Vec<String> = self.sessions.iter().filter(|s| s.callsign.numbered() && shown.iter().any(|c| *c == as_shown(&s.callsign.text()))).map(|s| s.agent.id.clone()).collect();
+    pub(super) fn taken_elsewhere(&mut self, there: &[Callsign]) -> bool {
+        self.elsewhere = there.to_vec();
+        let clashing: Vec<String> = self.sessions.iter().filter(|s| s.callsign.numbered() && there.contains(&s.callsign)).map(|s| s.agent.id.clone()).collect();
         for id in &clashing {
             let Some(project) = self.find(id).map(|s| s.callsign.project.clone()) else { continue };
-            // a name nobody has, here or there: numbers are compared as the radio shows them
+            // a name nobody has, here or there
             let mut n = 1;
             let free = loop {
                 let c = Callsign::next_for(&project, &[]);
                 let candidate = Callsign { project: c.project.clone(), number: airband_core::routing::number_name(n), named: false };
-                let text = as_shown(&candidate.text());
-                if !shown.contains(&text) && !self.sessions.iter().any(|s| as_shown(&s.callsign.text()) == text) {
+                if !there.contains(&candidate) && !self.sessions.iter().any(|s| s.callsign == candidate) {
                     break candidate;
                 }
                 n += 1;

@@ -75,7 +75,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let waiting = agents.filter { $0.state == .asking }.map { agent -> CPListItem in
             let item = CPListItem(text: agent.callsign, detailText: "Waiting on you", image: avatar(of: agent.callsign, side: 44))
             item.handler = { [weak self] _, done in
-                self?.start(then: agent.callsign)
+                self?.start(then: agent.id)
                 done()
             }
             return item
@@ -84,7 +84,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let working = agents.filter { $0.state == .working }.map { agent -> CPListItem in
             let item = CPListItem(text: agent.callsign, detailText: "Working", image: avatar(of: agent.callsign, side: 44))
             item.handler = { [weak self] _, done in
-                self?.model.only = agent.callsign
+                self?.model.only = agent.id
                 self?.start(then: nil)
                 done()
             }
@@ -105,7 +105,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     /// first and the microphone then opens for the answer.
     private func start(then answer: String?) {
         Task { @MainActor in
-            if let answer, let team = self.model.view.rooms.first(where: { $0.members.contains { $0.callsign == answer } }) {
+            if let answer, let team = self.model.view.rooms.first(where: { $0.members.contains { $0.id == answer } }) {
                 self.model.room = team.name
                 self.model.only = answer
             }
@@ -129,7 +129,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         // The words of a state cannot change once the screen is made, so they are made for this conversation:
         // with one agent when he is answering one, with all of them otherwise. Longest first; the car shows
         // the longest that fits.
-        let with = model.only
+        let with = model.onlyName
         let screen = CPVoiceControlTemplate(voiceControlStates: [
             state("idle", with.map { ["Waiting for \($0)", "Waiting"] } ?? ["Waiting for your agents", "Waiting"], "ellipsis", talk: ("Talk", "mic.fill")),
             state("listening", with.map { ["Listening, for \($0)", "Listening"] } ?? ["Listening"], "mic.fill", talk: ("Send", "arrow.up"), other: ("Cancel", "xmark", { [weak self] in self?.model.cancelTalk() })),

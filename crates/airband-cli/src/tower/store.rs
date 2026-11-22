@@ -106,7 +106,7 @@ impl Store {
                     // answer to it is never passed on as words
                     leave: match r.get::<_, Option<String>>(23)?.and_then(|t| serde_json::from_str(&t).ok()) {
                         Some(request) => Some(request),
-                        None => (r.get::<_, Option<i64>>(19)? == Some(1)).then(|| super::permit::Request { what: None, at_keyboard: true }),
+                        None => (r.get::<_, Option<i64>>(19)? == Some(1)).then_some(super::permit::Request { what: None, at_keyboard: true }),
                     },
                     aloud: r.get::<_, Option<String>>(21)?.and_then(|a| serde_json::from_str(&a).ok()).unwrap_or_default(),
                     notice: r.get::<_, Option<i64>>(22)? == Some(1),

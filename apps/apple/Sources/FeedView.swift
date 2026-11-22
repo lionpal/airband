@@ -186,7 +186,7 @@ struct FeedView: View {
     /// The team he is in: the one he picked, or the team of the agent he is looking at.
     private var team: DeskRoom? {
         if let room = model.room { return model.view.rooms.first { $0.name == room } }
-        if let only = model.only { return model.view.rooms.first { $0.members.contains { $0.callsign == only } } }
+        if let only = model.only { return model.view.rooms.first { $0.members.contains { $0.id == only } } }
         return nil
     }
     /// How many unread things are outside the team he is in: shown on the way back to all of them.
@@ -231,10 +231,10 @@ struct FeedView: View {
                     .buttonStyle(.plain).id("team:" + team.name).accessibilityLabel(team.unread > 0 && model.only != nil ? "\(team.name), \(team.unread) unread" : team.name)
                     ForEach(team.members, id: \.id) { agent in
                         let short = agent.number.isEmpty ? agent.callsign : agent.number
-                        Button { model.look(room: team.name, agent: model.only == agent.callsign ? nil : agent.callsign) } label: {
-                            chip(short, on: model.only == agent.callsign, dot: agent.state, badge: (agent.badge, team.colour), unread: agent.unread)
+                        Button { model.look(room: team.name, agent: model.only == agent.id ? nil : agent.id) } label: {
+                            chip(short, on: model.only == agent.id, dot: agent.state, badge: (agent.badge, team.colour), unread: agent.unread)
                         }
-                        .buttonStyle(.plain).id("agent:" + agent.callsign).accessibilityLabel(agent.unread > 0 ? "\(agent.callsign), \(agent.unread) unread" : agent.callsign)
+                        .buttonStyle(.plain).id("agent:" + agent.id).accessibilityLabel(agent.unread > 0 ? "\(agent.callsign), \(agent.unread) unread" : agent.callsign)
                     }
                 } else {
                     Button { model.look() } label: { chip("all", on: true) }
@@ -447,7 +447,7 @@ struct FeedView: View {
     }
     private var placeholder: String {
         if let re = model.replyingTo { return "reply to \(name(of: re))" }
-        if let only = model.only { return "message \(only)" }
+        if let only = model.onlyName { return "message \(only)" }
         if let room = model.room { return "message \(room)" }
         return "say anything"
     }
@@ -455,12 +455,12 @@ struct FeedView: View {
     /// agent he is looking at, while the microphone is open or a message is picked.
     private var aimed: String? {
         guard model.micOpen || model.replyingTo != nil else { return nil }
-        return model.replyingTo.map { name(of: $0) } ?? model.only
+        return model.replyingTo.map { name(of: $0) } ?? model.onlyName
     }
     /// One quiet line above the buttons: who he is answering, or what the radio is doing.
     private var statusLine: String? {
         // who it will go to, whenever that is already settled: the message he picked, or the agent he is looking at
-        let aim = model.replyingTo.map { name(of: $0) } ?? model.only
+        let aim = model.replyingTo.map { name(of: $0) } ?? model.onlyName
         if model.micOpen { return aim.map { "to \($0) \u{b7} tap to send" } ?? "listening \u{b7} tap to send" }
         if let re = model.replyingTo { return "to \(name(of: re)) \u{b7} tap here to undo" }
         switch model.status {
@@ -538,7 +538,7 @@ struct FeedView: View {
                         .onTapGesture { if !model.micOpen { model.replyingTo = nil } }
                 } else {
                     // his own words, as he says them: the end of a long sentence stays in view
-                    if let aim = model.replyingTo.map({ name(of: $0) }) ?? model.only {
+                    if let aim = model.replyingTo.map({ name(of: $0) }) ?? model.onlyName {
                         HStack(spacing: 5) {
                             Text("to")
                             if let badge = badge(of: aim) { Badge(text: badge.0, colour: badge.1, size: 16) }

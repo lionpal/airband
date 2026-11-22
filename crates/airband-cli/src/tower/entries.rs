@@ -214,13 +214,21 @@ impl Inner {
     pub(super) fn message(&self, e: &Entry) -> Message {
         let text = e.short.clone().unwrap_or_else(|| opening(&e.full));
         let sender = self.sender(e);
-        let to = if e.to_agents.is_empty() { e.to.clone() } else { e.to_agents.iter().zip(&e.to).map(|(id, was)| self.find(id).map(|s| s.callsign.text()).unwrap_or_else(|| was.clone())).collect() };
+        // a callsign is shown from its parts while its agent is here; one that has gone keeps what it was called
+        let to = if e.to_agents.is_empty() { e.to.clone() } else { e.to_agents.iter().zip(&e.to).map(|(id, was)| self.find(id).map(|s| s.callsign.shown()).unwrap_or_else(|| was.clone())).collect() };
+        let badge = match (sender, e.to_agents.as_slice()) {
+            (Some(s), _) => s.callsign.badge(),
+            (None, [one]) if e.his => self.find(one).map(|s| s.callsign.badge()).unwrap_or_default(),
+            _ => String::new(),
+        };
         Message {
             seq: e.seq,
             his: e.his,
             id: e.id.clone(),
             at: e.at,
-            from: sender.map(|s| s.callsign.text()).unwrap_or_else(|| e.from.clone()),
+            from: sender.map(|s| s.callsign.shown()).unwrap_or_else(|| e.from.clone()),
+            badge,
+            to_agents: e.to_agents.clone(),
             // the team it belongs to now: its sender's, or for something he said, the team of who it went to
             group: sender.map(|s| s.callsign.project.clone()).unwrap_or_else(|| {
                 let teams: HashSet<&String> = e.to_agents.iter().filter_map(|id| self.find(id)).map(|s| &s.callsign.project).collect();
@@ -247,6 +255,14 @@ impl Inner {
             open: false,
             not_read: e.aloud.not_read(),
         }
+    }
+    /// Does this line belong in one team's view (`team`), or one agent's (`agent`, its id)? With neither, every
+    /// line does. His words belong with the agents they went to.
+    pub(super) fn in_view(&self, e: &Entry, team: Option<&str>, agent: Option<&str>) -> bool {
+        let of = |id: &String| self.find(id).map(|s| s.callsign.project.as_str());
+        let by_agent = agent.is_none_or(|a| e.agent.as_deref() == Some(a) || e.to_agents.iter().any(|t| t == a));
+        let by_team = team.is_none_or(|t| self.message(e).group == t || e.to_agents.iter().any(|id| of(id) == Some(t)));
+        by_agent && by_team
     }
     /// The messages that need him and that nothing has answered yet. One at most per agent: its latest, while
     /// it has said nothing since, he has sent it nothing since, and it is still on the radio.

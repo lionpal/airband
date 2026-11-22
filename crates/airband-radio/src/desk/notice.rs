@@ -17,7 +17,7 @@ pub struct OpenedNotice {
     /// The agent's two characters, and its team's place in the host's list of team colours.
     pub badge: String,
     pub colour: u8,
-    /// The agent's team and its name: where the app opens when he taps the notification.
+    /// The agent's team and its id: where the app opens when he taps the notification.
     pub room: String,
     pub agent: String,
     /// It is a question to him (not a report).
@@ -71,7 +71,6 @@ pub fn leave_word(allow: bool) -> String {
 /// needs no desk: a host calls it from wherever its system hands it a notification.
 #[uniffi::export]
 pub fn open_notice(links: Vec<String>, sealed: String) -> Option<OpenedNotice> {
-    use airband_core::routing::{badge, shown};
     let sealed = airband_core::audio::base64_decode(&sealed)?;
     let several = links.len() > 1;
     links.iter().find_map(|link| {
@@ -81,13 +80,13 @@ pub fn open_notice(links: Vec<String>, sealed: String) -> Option<OpenedNotice> {
         Some(OpenedNotice {
             station: keys.channel,
             message: n.id,
-            title: shown(&n.from),
+            title: n.from.clone(),
             subtitle: if several { n.station } else { String::new() },
             body: n.text,
-            badge: badge(&n.group, &n.from),
+            badge: n.badge,
             colour: n.colour,
             room: n.group,
-            agent: shown(&n.from),
+            agent: n.agent.unwrap_or_default(),
             question: n.kind == Some(Kind::NeedsYou),
             options: if n.permission { Vec::new() } else { n.options },
             permission: n.permission,

@@ -51,6 +51,29 @@ impl Callsign {
         let rest: Vec<String> = words[lead..].iter().take(4).map(|w| number_word(w)).collect();
         (!rest.is_empty()).then(|| Callsign { project, number: rest.join(" "), named: true })
     }
+    /// As a screen shows it: a number as a figure ("shop 3"), a name he gave as he gave it ("warehouse
+    /// removals").
+    pub fn shown(&self) -> String {
+        let rest = self.shown_rest();
+        if rest.is_empty() { self.project.clone() } else { format!("{} {rest}", self.project) }
+    }
+    /// The part after the team, as a screen shows it: "3", or "removals".
+    pub fn shown_rest(&self) -> String {
+        match figure(&self.number).filter(|_| !self.named) {
+            Some(n) => n.to_string(),
+            None => self.number.clone(),
+        }
+    }
+    /// Two characters to stand for it where the whole callsign will not fit: the team's initial and its number,
+    /// or the initial of the name he gave it. "shop three" is S3, "catalog part page" is CP.
+    pub fn badge(&self) -> String {
+        let initial = |w: &str| w.chars().find(|c| c.is_alphanumeric()).map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+        let second = match figure(&self.number).filter(|_| !self.named) {
+            Some(n) => n.to_string(),
+            None => initial(self.number.split_whitespace().next().unwrap_or("")),
+        };
+        format!("{}{}", initial(&self.project), second)
+    }
     /// Is this one of the names the tower hands out by number ("shop two"), and not one he gave?
     pub fn numbered(&self) -> bool {
         !self.named
@@ -175,34 +198,11 @@ pub fn number_name(n: usize) -> String {
     WORDS.get(n).map(|w| w.to_string()).unwrap_or_else(|| n.to_string())
 }
 
-/// A callsign as a screen shows it: a number said as a word is written as a figure ("shop three" is "shop 3").
-/// Aloud it is still the word; either form is understood when he says or types it.
-pub fn shown(callsign: &str) -> String {
-    match callsign.rsplit_once(' ') {
-        Some((team, last)) => format!("{team} {}", shown_number(last)),
-        None => callsign.to_string(),
-    }
-}
 
-/// The part of a callsign after its team, as a screen shows it: "three" is "3", "removals" is "removals".
-pub fn shown_number(number: &str) -> String {
-    match WORDS.iter().position(|w| *w == number) {
-        Some(n) if n > 0 => n.to_string(),
-        _ => number.to_string(),
-    }
-}
-
-/// Two characters to stand for an agent where its whole callsign will not fit: the team's initial and its
-/// number, or the initial of the name he gave it. "shop three" is S3, "catalog part page" is CP.
-pub fn badge(project: &str, callsign: &str) -> String {
-    let initial = |w: &str| w.chars().find(|c| c.is_alphanumeric()).map(|c| c.to_uppercase().to_string()).unwrap_or_default();
-    let rest = callsign.strip_prefix(project).unwrap_or(callsign).trim();
-    let first = rest.split_whitespace().next().unwrap_or("");
-    let second = match WORDS.iter().position(|w| *w == first.to_lowercase()) {
-        Some(n) => n.to_string(),
-        None => initial(first),
-    };
-    format!("{}{}", initial(project), second)
+/// A number the tower handed out, as a figure: "three" is "3". The tower writes numbers as its own words up
+/// to twelve and as figures past that.
+fn figure(number: &str) -> Option<u32> {
+    WORDS.iter().position(|w| *w == number).map(|n| n as u32).or_else(|| number.parse().ok())
 }
 
 #[cfg(test)]
@@ -213,7 +213,8 @@ mod tests {
         assert_eq!(team_name("garden").as_deref(), Some("garden"));
         // nothing a team could be called
         assert_eq!((team_name("/"), team_name("  "), team_name("!!")), (None, None, None));
-        assert_eq!((shown_number("three"), shown_number("removals"), shown("shop three")), ("3".to_string(), "removals".to_string(), "shop 3".to_string()));
+        let c = |project: &str, number: &str, named: bool| Callsign { project: project.into(), number: number.into(), named };
+        assert_eq!((c("shop", "three", false).shown(), c("warehouse", "removals", true).shown(), c("shop", "13", false).shown()), ("shop 3".to_string(), "warehouse removals".to_string(), "shop 13".to_string()));
     }
 
     #[test]
@@ -279,12 +280,13 @@ mod tests {
 
     #[test]
     fn a_badge_is_the_team_and_the_number_or_name() {
-        assert_eq!(badge("shop", "shop three"), "S3");
-        assert_eq!(badge("catalog", "catalog part page"), "CP");
-        assert_eq!(badge("backoffice", "backoffice f1"), "BF");
-        assert_eq!(badge("shop", "shop twelve"), "S12");
-        assert_eq!(badge("orders", "orders"), "O");
-        // a callsign from before its team was renamed still gets something
-        assert_eq!(badge("shop", "catalog import"), "SC");
+        let c = |project: &str, number: &str, named: bool| Callsign { project: project.into(), number: number.into(), named };
+        assert_eq!(c("shop", "three", false).badge(), "S3");
+        assert_eq!(c("catalog", "part page", true).badge(), "CP");
+        assert_eq!(c("backoffice", "f1", true).badge(), "BF");
+        assert_eq!(c("shop", "twelve", false).badge(), "S12");
+        assert_eq!(c("orders", "", false).badge(), "O");
+        // a name he gave that reads like a number is still a name
+        assert_eq!((c("shop", "one", true).shown(), c("shop", "one", true).badge()), ("shop one".to_string(), "SO".to_string()));
     }
 }

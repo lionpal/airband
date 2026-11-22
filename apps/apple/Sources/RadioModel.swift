@@ -17,8 +17,10 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     @Published var view = DeskView(paired: false, online: false, connecting: false, near: false, away: [], feed: [], rooms: [], unread: 0, canPoke: false, quick: [], sending: [], stations: [], mainComputer: nil, chooseMain: false, reads: "", uploads: [], asking: nil)
     /// A project: show just its agents, and keep what he says among them.
     @Published var room: String? { didSet { refresh() } }
-    /// A callsign: show just that agent.
+    /// An agent, by id: show just that agent.
     @Published var only: String? { didSet { refresh() } }
+    /// What the agent he is looking at is called now.
+    var onlyName: String? { only.flatMap { id in agents.first { $0.id == id }?.callsign } }
     @Published var full: [String: String] = [:] // message id → exactly what the agent wrote
     /// He reads everything each agent wrote, not the short form, unless he closes one.
     @Published var showWhole = UserDefaults.standard.bool(forKey: "airband.show.whole") { didSet { UserDefaults.standard.set(showWhole, forKey: "airband.show.whole") } }
@@ -213,7 +215,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
             replyingTo = nil
             Task { @MainActor in if !self.micOpen { await self.talk() } }
         case "answer":
-            if let callsign = OpenWith.agent(in: url) { answer(callsign) } else { Task { @MainActor in if !self.micOpen { await self.talk() } } }
+            if let agent = OpenWith.agent(in: url) { answer(agent) } else { Task { @MainActor in if !self.micOpen { await self.talk() } } }
         default:
             pair(with: url.absoluteString)
         }
@@ -222,12 +224,12 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// Answer an agent that is waiting on him, hands free: its question is read out again, with the answers
     /// it offers, and then the microphone opens. What he says is the answer to that question, in whatever
     /// words he uses.
-    func answer(_ callsign: String) {
-        guard let team = view.rooms.first(where: { $0.members.contains { $0.callsign == callsign } }), let agent = team.members.first(where: { $0.callsign == callsign }) else { return }
+    func answer(_ id: String) {
+        guard let team = view.rooms.first(where: { $0.members.contains { $0.id == id } }), let agent = team.members.first(where: { $0.id == id }) else { return }
         // look at that agent, so the question is in view and his words go to it
         replyingTo = nil
         room = team.name
-        only = callsign
+        only = id
         let question = view.feed.last { $0.id == agent.questionId }
         guard !agent.questionId.isEmpty else {
             Task { @MainActor in if !self.micOpen { await self.talk() } }
@@ -253,15 +255,15 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// car's screen when another app is in front. It comes down when the agent has its answer or the call ends.
     private func syncBanners() {
         let waiting = calling ? agents.filter { $0.state == .asking } : []
-        for (callsign, banner) in banners where !waiting.contains(where: { $0.callsign == callsign }) {
-            banners[callsign] = nil
+        for (id, banner) in banners where !waiting.contains(where: { $0.id == id }) {
+            banners[id] = nil
             Task { await banner.end(nil, dismissalPolicy: .immediate) }
         }
         guard !waiting.isEmpty, ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-        for agent in waiting where banners[agent.callsign] == nil {
+        for agent in waiting where banners[agent.id] == nil {
             let state = NeedsYouAttributes.ContentState(waiting: waiting.count, question: agent.question)
-            guard let banner = try? Activity.request(attributes: NeedsYouAttributes(callsign: agent.callsign, badge: agent.badge), content: .init(state: state, staleDate: nil)) else { continue }
-            banners[agent.callsign] = banner
+            guard let banner = try? Activity.request(attributes: NeedsYouAttributes(agent: agent.id, callsign: agent.callsign, badge: agent.badge), content: .init(state: state, staleDate: nil)) else { continue }
+            banners[agent.id] = banner
             // the alert is what makes it show itself, and not only sit on the lock screen
             Task { await banner.update(.init(state: state, staleDate: nil), alertConfiguration: .init(title: "\(agent.callsign) needs you", body: LocalizedStringResource(stringLiteral: agent.question.isEmpty ? "Tap to answer" : agent.question), sound: .default)) }
         }
@@ -440,7 +442,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// The agents he could stop right now: at work, run by their computer, and in the room or agent he is looking at.
     var stoppable: [DeskMember] {
-        view.rooms.filter { room == nil || $0.name == room }.flatMap(\.members).filter { $0.held && $0.state == .working && (only == nil || $0.callsign == only) }
+        view.rooms.filter { room == nil || $0.name == room }.flatMap(\.members).filter { $0.held && $0.state == .working && (only == nil || $0.id == only) }
     }
 
     /// Stop what an agent is doing, now. What he said to it meanwhile it then reads together.
@@ -450,7 +452,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// End an agent its computer runs: it finishes and leaves the radio.
     func end(_ agent: DeskMember) {
-        tell("It did not end.", { try self.desk.endAgent(agent: agent.id) }) { if self.only == agent.callsign { self.only = nil } }
+        tell("It did not end.", { try self.desk.endAgent(agent: agent.id) }) { if self.only == agent.id { self.only = nil } }
     }
 
     /// The app's own folder: the core keeps what he chose there, and the models that run on this phone.
@@ -680,10 +682,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     func moveAgent(_ agent: DeskMember, to team: String) {
         let team = team.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !team.isEmpty else { return }
-        let watched = only == agent.callsign
-        tell("It did not move.", { try self.desk.moveAgent(agent: agent.id, team: team) }) {
-            if watched { self.only = self.agents.first { $0.id == agent.id }?.callsign }
-        }
+        tell("It did not move.", { try self.desk.moveAgent(agent: agent.id, team: team) }) {}
     }
 
     /// Fetch a picture, once. The core keeps the file, so after the first time this is immediate and works offline.

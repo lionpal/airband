@@ -170,15 +170,8 @@ impl State {
             .iter()
             .flat_map(|s| {
                 s.messages.iter().map(move |m| {
-                    let his = m.his;
                     ChatMessage {
                         station: if several { s.name.clone() } else { String::new() },
-                        // on his own message, the badge of the agent it went to, when it went to one
-                        badge: match (his, m.to.as_slice()) {
-                            (false, _) => airband_core::routing::badge(&m.group, &m.from),
-                            (true, [one]) if !m.group.is_empty() => airband_core::routing::badge(&m.group, one),
-                            _ => String::new(),
-                        },
                         colour: s.colours.get(&m.group).copied().unwrap_or(0),
                         ..m.clone()
                     }
