@@ -1,5 +1,5 @@
 //! The pass a live listening service gives: asked for with his key, kept for the minutes it lasts.
-#![allow(clippy::disallowed_methods, reason = "asks the listening service for a pass")]
+#![expect(clippy::disallowed_methods, reason = "asks the listening service for a pass")]
 use super::*;
 
 /// What the phone needs to listen live with a service: which dialect to speak, a pass from the service that

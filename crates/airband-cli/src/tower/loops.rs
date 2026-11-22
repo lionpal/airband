@@ -81,7 +81,7 @@ pub(super) async fn progress_loop(app: Arc<App>) {
             if steps.len() < FEWEST {
                 continue;
             }
-            let Some(note) = judge::progress(&app.settings, &steps).await else { continue };
+            let Some(note) = judge::progress(&app.settings, &app.cfg().name, &steps).await else { continue };
             let mut inner = app.change();
             // it spoke for itself while the model was reading: its own words are the news
             let Some(s) = inner.find(&agent.id).filter(|s| !s.waiting).cloned() else { continue };

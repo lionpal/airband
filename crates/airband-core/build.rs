@@ -1,5 +1,5 @@
 //! Puts the files under `catalog/` together into the one document that is compiled in (see `src/catalog.rs`).
-#![allow(clippy::disallowed_methods, reason = "the build script reads the catalogue rows")]
+#![expect(clippy::disallowed_methods, reason = "the build script reads the catalogue rows")]
 use std::path::Path;
 
 include!("src/catalog_hash.rs");

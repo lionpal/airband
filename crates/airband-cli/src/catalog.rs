@@ -2,7 +2,6 @@
 //! and `airband catalog` puts out what is built in, for publishing. See `airband_core::catalog`. Reading a
 //! kept copy and fetching a new one are the phone core's (`airband_io::catalog::load_kept`, `refresh`),
 //! the same code the app runs.
-#![allow(clippy::disallowed_methods, reason = "the command that fetches and writes the catalogue")]
 use crate::config;
 use airband_core::catalog;
 use std::sync::Mutex;
@@ -50,19 +49,19 @@ pub(crate) fn command(args: &[String]) -> Result<(), String> {
         Some("sign") => {
             use ed25519_dalek::Signer;
             let (path, doc) = (words.first().ok_or(USAGE)?, words.get(1).ok_or(USAGE)?);
-            let hex = std::fs::read_to_string(path).map_err(|e| format!("cannot read the key file: {e}"))?;
+            let hex = text_of(path).map_err(|e| format!("cannot read the key file: {e}"))?;
             let hex = hex.trim();
             let seed = airband_core::encode::unhex(hex).ok_or("that file does not hold a key")?;
             let seed: [u8; 32] = seed.try_into().map_err(|_| "that file does not hold a key")?;
-            let doc = std::fs::read(doc).map_err(|e| format!("cannot read the document: {e}"))?;
+            let doc = bytes_of(doc).map_err(|e| format!("cannot read the document: {e}"))?;
             println!("{}", airband_core::encode::base64(&ed25519_dalek::SigningKey::from_bytes(&seed).sign(&doc).to_bytes()));
             Ok(())
         }
         Some("check") => {
-            let doc = std::fs::read(words.first().ok_or(USAGE)?).map_err(|e| e.to_string())?;
+            let doc = bytes_of(words.first().ok_or(USAGE)?)?;
             let text = std::str::from_utf8(&doc).map_err(|e| e.to_string())?;
             if let Some(sig) = words.get(1) {
-                catalog::signed(&doc, &std::fs::read_to_string(sig).map_err(|e| e.to_string())?)?;
+                catalog::signed(&doc, &text_of(sig)?)?;
             }
             // every row of it is one this source can use: summaries by this program, listening and speaking by
             // the phone's core. What it would leave out is a mistake in a row, or an interface nobody has
@@ -77,7 +76,7 @@ pub(crate) fn command(args: &[String]) -> Result<(), String> {
                 return Err(format!("this build would leave rows of it out: {}", c.left_out.iter().chain(&unspoken).cloned().collect::<Vec<_>>().join("; ")));
             }
             if let Some(before) = crate::option(args, "--against") {
-                let before = std::fs::read_to_string(before).map_err(|e| e.to_string())?;
+                let before = text_of(&before)?;
                 catalog::would_take(text, &before)?;
                 println!("A build that has the copy published before would take it.");
             }
@@ -88,12 +87,12 @@ pub(crate) fn command(args: &[String]) -> Result<(), String> {
             // the rows changed since the number was given: the next number, and what they hash to now
             let path = words.first().ok_or(USAGE)?;
             let built = catalog::built();
-            let stamped = std::fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?;
+            let stamped = text_of(path).map_err(|e| format!("cannot read {path}: {e}"))?;
             if stamped.lines().nth(1).map(str::trim) == Some(built.hash.as_str()) {
                 println!("The rows have not changed since rev {}.", built.rev);
                 return Ok(());
             }
-            std::fs::write(path, format!("{}\n{}\n", built.rev + 1, built.hash)).map_err(|e| e.to_string())?;
+            airband_io::files::write_atomic(std::path::Path::new(path), format!("{}\n{}\n", built.rev + 1, built.hash)).map_err(|e| e.to_string())?;
             println!("The rows changed: now rev {}. Build again before publishing.", built.rev + 1);
             Ok(())
         }
@@ -102,4 +101,12 @@ pub(crate) fn command(args: &[String]) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+/// A file named on the command line, whole: one that is not there is an error like any other.
+fn text_of(path: &str) -> Result<String, String> {
+    airband_io::files::read_text(std::path::Path::new(path)).map_err(|e| e.to_string())?.ok_or_else(|| format!("{path} is not there"))
+}
+fn bytes_of(path: &str) -> Result<Vec<u8>, String> {
+    airband_io::files::read_bytes(std::path::Path::new(path)).map_err(|e| e.to_string())?.ok_or_else(|| format!("{path} is not there"))
 }

@@ -107,7 +107,7 @@ async fn leave(app: &Arc<App>, text: &str, said: &airband_core::radio::Utterance
             _ => None,
         },
         // The model is given his words and nothing of the request, which the asking agent wrote.
-        permit::Leave::Waiting => match judge::consent(&app.settings, text).await {
+        permit::Leave::Waiting => match judge::consent(&app.settings, &app.cfg().name, text).await {
             Some(true) => Some(true),
             // his own words, which are not a yes: they refuse it and go back to the agent as the reason
             Some(false) => None,

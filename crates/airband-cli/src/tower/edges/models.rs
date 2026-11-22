@@ -1,5 +1,5 @@
 //! The model that reads for the tower, as the tower asks it. The real one is the model he chose
-//! (`judge::ChosenModel`); tests put a stand-in in its place.
+//! (the tower's `Settings`); tests put a stand-in in its place.
 use super::Boxed;
 use serde_json::Value;
 

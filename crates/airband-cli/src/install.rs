@@ -1,5 +1,4 @@
 //! `airband install` / `uninstall`: putting the tower in place and starting it at login.
-#![allow(clippy::disallowed_methods, reason = "installing writes the program and its service file")]
 use crate::config;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -45,11 +44,11 @@ pub(crate) fn install() -> Result<(), String> {
         None => {
             // a copy of this binary that a rebuild cannot pull out from under running sessions
             let exe = installed_exe();
-            fs::create_dir_all(exe.parent().unwrap()).map_err(|e| e.to_string())?;
+            airband_io::files::make_folder(exe.parent().unwrap()).map_err(|e| e.to_string())?;
             if me != exe {
                 let tmp = exe.with_extension("new");
                 fs::copy(&me, &tmp).map_err(|e| format!("cannot copy the binary to {}: {e}", exe.display()))?;
-                fs::rename(&tmp, &exe).map_err(|e| e.to_string())?;
+                airband_io::files::move_to(&tmp, &exe).map_err(|e| e.to_string())?;
             }
             exe
         }
@@ -82,8 +81,8 @@ fn start_at_login(exe: &std::path::Path) -> Result<(), String> {
         exe = exe.display(),
         log = log.display()
     );
-    fs::create_dir_all(plist_path().parent().unwrap()).map_err(|e| e.to_string())?;
-    fs::write(plist_path(), plist).map_err(|e| e.to_string())?;
+    airband_io::files::make_folder(plist_path().parent().unwrap()).map_err(|e| e.to_string())?;
+    airband_io::files::write_atomic(&plist_path(), plist).map_err(|e| e.to_string())?;
     let uid = unsafe { libc::getuid() };
     Command::new("launchctl").args(["bootout", &format!("gui/{uid}/{LABEL}")]).output().ok();
     // stopping the old one takes a moment, and starting before it has gone fails ("Input/output error"): this left
@@ -116,7 +115,7 @@ pub(crate) fn uninstall() -> Result<(), String> {
     {
         let uid = unsafe { libc::getuid() };
         std::process::Command::new("launchctl").args(["bootout", &format!("gui/{uid}/{LABEL}")]).output().ok();
-        fs::remove_file(plist_path()).ok();
+        airband_io::files::remove(&plist_path()).ok();
     }
     println!("airband is stopped and will not start at login. Your coding tools no longer report to it.");
     Ok(())

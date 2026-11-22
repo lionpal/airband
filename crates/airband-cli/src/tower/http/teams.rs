@@ -43,7 +43,7 @@ pub(super) async fn folders(State(app): State<Arc<App>>, Sent(ask): Sent<at::Fol
                 .filter_map(|e| Some(airband_core::radio::Folder { name: e.file_name().into_string().ok()?, path: e.path().display().to_string() }))
                 .filter(|f| !f.name.starts_with('.')).collect();
             inside.sort_by_key(|f| f.name.to_lowercase());
-            Ok(airband_core::radio::Folders { path: at.display().to_string(), shown: shown(&at), up: at.parent().map(|p| p.display().to_string()), folders: inside, team: String::new(), has_team: false })
+            Ok(airband_core::radio::Folders { path: at.display().to_string(), shown: edges::folders::Folders::shown(&edges::folders::Disk, &at), up: at.parent().map(|p| p.display().to_string()), folders: inside, team: String::new(), has_team: false })
         })
     });
     match tokio::time::timeout(Duration::from_secs(5), read).await {

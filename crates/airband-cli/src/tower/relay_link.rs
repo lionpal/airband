@@ -4,7 +4,7 @@
 //! The tower only ever calls out, so it works behind any router with no port opened. The relay sees sealed
 //! bytes; a request that does not open with a paired radio's key, is not fresh, or was already answered is
 //! dropped here.
-#![allow(clippy::disallowed_methods, reason = "the tower's own connection to the relay")]
+#![expect(clippy::disallowed_methods, reason = "the tower's own connection to the relay")]
 use airband_core::radio::wire::Refusal;
 use crate::config::PairedRadio;
 use super::{App, PRESENCE_HEADER, VIA_HEADER, log, now_ms};

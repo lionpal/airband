@@ -1,5 +1,6 @@
 # Files and the network are reached through airband-io, so a damaged file is handled one way and core never
-# touches either. A module that must still reach them directly says so at its top with the reason.
+# touches either. A module that must still reach them directly says so at its top with `#![expect(..., reason)]`,
+# so one that no longer needs to fails the lint.
 disallowed-methods = [
   { path = "std::fs::write", reason = "write through airband_io::files (atomic, kept policy)" },
   { path = "std::fs::read", reason = "read through airband_io" },

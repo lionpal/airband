@@ -37,7 +37,7 @@ pub(crate) fn progress(cfg: Config) -> Result<(), String> {
     std::io::Read::read_to_string(&mut std::io::stdin(), &mut text).map_err(|e| e.to_string())?;
     let steps: Vec<String> = text.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect();
     let rt = runtime()?;
-    println!("{}", rt.block_on(judge::progress(&Settings::held(cfg), &steps)).unwrap_or_else(|| "none".into()));
+    println!("{}", rt.block_on(async { let s = Settings::held(cfg); let name = s.current().name.clone(); judge::progress(&s, &name, &steps).await }).unwrap_or_else(|| "none".into()));
     Ok(())
 }
 

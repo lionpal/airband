@@ -64,8 +64,8 @@ pub struct Notice {
     #[serde(default)]
     pub group: String,
     /// Its team's id on that computer. `group` is only shown.
-    #[serde(default)]
-    pub team: crate::ids::TeamId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<crate::ids::TeamId>,
     /// What this computer is called.
     #[serde(default)]
     pub station: String,
@@ -130,9 +130,9 @@ pub struct Message {
     pub his: bool,
     /// What the team this belongs to is called, to show; empty for a message of his to several teams.
     pub group: String,
-    /// That team's id on this computer: what views and colours go by. Empty when `group` is.
-    #[serde(default)]
-    pub team: crate::ids::TeamId,
+    /// That team's id on this computer: what views and colours go by. None when `group` is empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<crate::ids::TeamId>,
     /// For his messages: the callsigns it went to, as a screen shows them.
     #[serde(default)]
     pub to: Vec<String>,

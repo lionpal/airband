@@ -1,5 +1,4 @@
 //! Running the tower: its keys settled, its state opened, everything it watches started, and its addresses served.
-#![allow(clippy::disallowed_methods, reason = "the tower's start writes its pid and port")]
 use super::*;
 
 pub(crate) fn run(cfg: Config) -> Result<(), String> {
@@ -57,7 +56,7 @@ async fn told_to_stop() {
 fn settle_keys() {
     if crate::vault::carry_asked().exists() {
         // asked for from a shell that could not read the keychain: this run can
-        std::fs::remove_file(crate::vault::carry_asked()).ok();
+        airband_io::files::remove(&crate::vault::carry_asked()).ok();
         match crate::vault::carry() {
             Ok(true) => log("the keys are out of the keychain and sealed in a file, ready for a copy signed with another certificate"),
             Ok(false) => {}

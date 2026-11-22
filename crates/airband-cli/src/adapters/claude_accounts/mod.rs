@@ -14,7 +14,6 @@
 //!
 //! Only where Claude Code keeps its login in the keychain; elsewhere it keeps it differently, and that is not
 //! written yet.
-#![allow(clippy::disallowed_methods, reason = "the account store's lock file and folder")]
 mod live;
 mod saved;
 mod service;
@@ -110,7 +109,7 @@ pub(super) fn dir() -> PathBuf {
 /// One thing at a time across every airband process on this computer: a saved login must never be refreshed
 /// twice at once, or switched while it is being refreshed.
 fn locked<T>(here: &Here, work: impl FnOnce() -> T) -> T {
-    std::fs::create_dir_all(&here.dir).ok();
+    airband_io::files::make_folder(&here.dir).ok();
     let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(here.dir.join("accounts.lock")).ok();
     #[cfg(unix)]
     if let Some(f) = &file {
@@ -286,7 +285,7 @@ fn switch_in(here: &Here, id: &str) -> Res<std::thread::JoinHandle<()>> {
                 if SWITCHES.load(std::sync::atomic::Ordering::SeqCst) != mine {
                     return;
                 }
-                if live::oauth_account(&file).as_ref().and_then(|a| a.get("emailAddress")).and_then(|e| e.as_str()) != Some(target.as_str())
+                if !same_account(live::oauth_account(&file).as_ref(), &acct)
                     && let Err(e) = live::set_oauth_account(&file, &acct)
                 {
                     eprintln!("airband: the account file could not be set back to the account chosen: {e}");
@@ -294,6 +293,12 @@ fn switch_in(here: &Here, id: &str) -> Res<std::thread::JoinHandle<()>> {
             }
         }))
     })
+}
+
+/// Whether the account file holds this account: by the account's own id, never by its email.
+fn same_account(file: Option<&Value>, acct: &Value) -> bool {
+    let id = |a: &Value| a.get("accountUuid").and_then(|u| u.as_str()).map(String::from);
+    matches!((file.and_then(id), id(acct)), (Some(a), Some(b)) if a == b)
 }
 
 // ── what the rest of airband calls ──
@@ -323,11 +328,11 @@ pub(crate) fn save() -> Res<String> {
 /// running session are untouched, then keep that login.
 pub(crate) fn add() -> Res<String> {
     let here = Here::this_computer();
-    std::fs::create_dir_all(&here.dir).map_err(|e| e.to_string())?;
+    airband_io::files::make_folder(&here.dir).map_err(|e| e.to_string())?;
     let tmp = here.dir.join(format!("login-{}", airband_core::clock::now_ms()));
-    std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    airband_io::files::make_folder(&tmp).map_err(|e| e.to_string())?;
     let service = login_item(Some(&tmp));
-    std::fs::write(tmp.join(row("account_file")), "{\"hasCompletedOnboarding\":true}").map_err(|e| e.to_string())?;
+    airband_io::files::write_atomic(&tmp.join(row("account_file")), "{\"hasCompletedOnboarding\":true}").map_err(|e| e.to_string())?;
     println!("A browser opens: sign in to the account to add. The login in use now is not touched.");
     let program = row("program");
     let status = Command::new(&program).args(["auth", "login"]).env(row("home_env"), &tmp).status().map_err(|e| format!("could not run {program}: {e}"));

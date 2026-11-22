@@ -98,6 +98,54 @@ pub fn prune_older(dir: &Path, age: std::time::Duration) {
     }
 }
 
+/// A file's text, or None when it is not there. Any other failure to read it is an error, never "not there".
+pub fn read_text(path: &Path) -> std::io::Result<Option<String>> {
+    not_there_is_none(std::fs::read_to_string(path))
+}
+
+/// A file's bytes, or None when it is not there. Any other failure to read it is an error.
+pub fn read_bytes(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
+    not_there_is_none(std::fs::read(path))
+}
+
+fn not_there_is_none<T>(read: std::io::Result<T>) -> std::io::Result<Option<T>> {
+    match read {
+        Ok(v) => Ok(Some(v)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Remove a file. One that is already gone is removed.
+pub fn remove(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
+/// Move a file to another name, replacing what is there.
+pub fn move_to(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::rename(from, to)
+}
+
+/// Make a folder and the folders it is in, as the system makes them. One that is there is made.
+pub fn make_folder(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)
+}
+
+/// Make a folder only its owner can open (it holds sockets, tokens or keys), and the folders it is in. One that
+/// is there is made private too.
+pub fn private_folder(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
 /// A folder of its own in the system's temporary folder, for a test.
 #[cfg(test)]
 pub(crate) fn folder() -> PathBuf {
@@ -108,6 +156,30 @@ pub(crate) fn folder() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_file_not_there_reads_as_none_and_is_removed_and_a_private_folder_is_its_owners() {
+        let dir = folder();
+        let f = dir.join("a.txt");
+        assert_eq!(read_text(&f).unwrap(), None);
+        assert_eq!(read_bytes(&f).unwrap(), None);
+        remove(&f).unwrap();
+        write_atomic(&f, "hi").unwrap();
+        assert_eq!(read_text(&f).unwrap().as_deref(), Some("hi"));
+        move_to(&f, &dir.join("b.txt")).unwrap();
+        assert_eq!(read_bytes(&dir.join("b.txt")).unwrap().as_deref(), Some(&b"hi"[..]));
+        // a folder read as a file is an error, never "not there"
+        assert!(read_text(&dir).is_err());
+        let private = dir.join("x/y");
+        private_folder(&private).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&private).unwrap().permissions().mode() & 0o777, 0o700);
+        }
+        make_folder(&dir.join("z")).unwrap();
+        assert!(dir.join("z").is_dir());
+    }
+
     use super::*;
 
     #[test]

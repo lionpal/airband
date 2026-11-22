@@ -10,7 +10,7 @@
 //! Nothing here knows which push service a phone uses: an address is a provider's name and a token, as the
 //! phone gave them. The log says when a notification was asked for and what came back, and never an address or
 //! a message's words.
-#![allow(clippy::disallowed_methods, reason = "asks the relay to wake his phone")]
+#![expect(clippy::disallowed_methods, reason = "asks the relay to wake his phone")]
 use super::*;
 use airband_core::radio::{Notice, PushTarget, deserves_notice};
 use airband_core::relay::{Direction, Keys, PUSH_MOST, PushAnswer, PushRequest};

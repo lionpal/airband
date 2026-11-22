@@ -5,7 +5,7 @@
 //! service (IMDSv2) and asked again every quarter of an hour. Nothing is read from a credentials file. For a
 //! test on a developer's machine the three standard variables are taken if they are set
 //! (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN).
-#![allow(clippy::disallowed_macros, reason = "DynamoDB's own item shapes")]
+#![expect(clippy::disallowed_macros, reason = "DynamoDB's own item shapes")]
 use ring::{digest, hmac};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};

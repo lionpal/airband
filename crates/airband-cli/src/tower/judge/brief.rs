@@ -1,5 +1,4 @@
 //! The folder a command-line reader is run in, with its brief.
-#![allow(clippy::disallowed_methods, reason = "the brief of a long message is kept as a file")]
 use super::*;
 
 /// What a coding tool is told when it is used only to rewrite a message: one line, and no tools. Kept in a
@@ -17,10 +16,10 @@ pub(super) fn brief_folder(by: &By) -> Result<std::path::PathBuf, String> {
         let path = own["path"].as_str().map(std::path::Path::new).filter(|p| p.is_relative() && !p.components().any(|c| matches!(c, std::path::Component::ParentDir))).ok_or("the brief's place in this row is not inside the folder it runs in")?;
         files.push((folder.join(path), format!("{}{BRIEF}\n", own["head"].as_str().unwrap_or_default())));
     }
-    if files.iter().any(|(path, text)| std::fs::read_to_string(path).ok().as_deref() != Some(text.as_str())) {
+    if files.iter().any(|(path, text)| airband_io::files::read_text(path).ok().flatten().as_deref() != Some(text.as_str())) {
         for (path, text) in &files {
-            std::fs::create_dir_all(path.parent().unwrap_or(&folder)).map_err(|e| e.to_string())?;
-            std::fs::write(path, text).map_err(|e| e.to_string())?;
+            airband_io::files::make_folder(path.parent().unwrap_or(&folder)).map_err(|e| e.to_string())?;
+            airband_io::files::write_atomic(path, text).map_err(|e| e.to_string())?;
         }
     }
     Ok(folder)

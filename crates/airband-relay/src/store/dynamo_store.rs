@@ -1,5 +1,5 @@
 //! The relay's records kept in DynamoDB: the same jobs the folder and Postgres stores do, in its tables.
-#![allow(clippy::disallowed_macros, reason = "DynamoDB's own item shapes")]
+#![expect(clippy::disallowed_macros, reason = "DynamoDB's own item shapes")]
 use super::*;
 use crate::dynamo::{Pages, b};
 

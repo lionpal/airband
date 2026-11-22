@@ -1,8 +1,7 @@
 //! Saved logins: one keychain item each (service `airband`, account: the email), with the list of emails, and
 //! nothing secret, in `accounts.json`. A list that cannot be read is never taken for an empty one: writing it
 //! back would orphan every login it names.
-#![allow(clippy::disallowed_methods, reason = "saved logins are files kept beside the tool's own")]
-#![allow(clippy::disallowed_macros, reason = "writes records in the tool's own shape")]
+#![expect(clippy::disallowed_macros, reason = "writes records in the tool's own shape")]
 use super::{Here, Res, ADD_AGAIN};
 use crate::config;
 use serde_json::{json, Value};
@@ -15,9 +14,9 @@ fn index_path(here: &Here) -> std::path::PathBuf {
 /// be read is an error, and nothing is changed.
 pub(super) fn index(here: &Here) -> Res<Vec<String>> {
     let p = index_path(here);
-    let text = match std::fs::read_to_string(&p) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+    let text = match airband_io::files::read_text(&p) {
+        Ok(Some(t)) => t,
+        Ok(None) => return Ok(Vec::new()),
         Err(e) => return Err(unreadable(&p, &e.to_string())),
     };
     #[derive(serde::Deserialize)]
@@ -30,7 +29,7 @@ fn unreadable(p: &std::path::Path, why: &str) -> String {
     format!("The list of saved accounts ({}) cannot be read ({why}), so nothing was changed. Put it right or move it aside, then try again.", p.display())
 }
 fn write_index(here: &Here, list: &[String]) -> Res<()> {
-    std::fs::create_dir_all(&here.dir).map_err(|e| e.to_string())?;
+    airband_io::files::make_folder(&here.dir).map_err(|e| e.to_string())?;
     config::write_private(&index_path(here), json!({ "accounts": list }).to_string()).map_err(|e| e.to_string())
 }
 

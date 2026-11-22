@@ -11,8 +11,8 @@
 //! - Its requests for leave are listed by the same server (`GET …/permission`) and answered there
 //!   (`POST …/permission/<id>/reply`). Each is put to him, and his answer is the one that is sent: once, or
 //!   refused with his reason. One nobody answered from a phone stays where it was, on OpenCode's own screen.
-#![allow(clippy::disallowed_methods, reason = "reaches the tool's own server and files")]
-#![allow(clippy::disallowed_macros, reason = "the tool's own request bodies")]
+#![expect(clippy::disallowed_methods, reason = "reaches the tool's own server")]
+#![expect(clippy::disallowed_macros, reason = "the tool's own request bodies")]
 use super::Tower;
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk};
 use serde_json::{Value, json};
@@ -32,7 +32,7 @@ const QUIET: u64 = 2 * 3600 * 1000;
 
 /// Where OpenCode's server is and the password for it, when it is running.
 fn service() -> Option<(String, String)> {
-    let v: Value = serde_json::from_slice(&std::fs::read(super::tool_home(NAME).join(super::row_says(NAME, "state")).join(super::row_says(NAME, "service"))).ok()?).ok()?;
+    let v: Value = serde_json::from_slice(&airband_io::files::read_bytes(&super::tool_home(NAME).join(super::row_says(NAME, "state")).join(super::row_says(NAME, "service"))).ok()??).ok()?;
     Some((v["url"].as_str()?.trim_end_matches('/').to_string(), v["password"].as_str()?.to_string()))
 }
 

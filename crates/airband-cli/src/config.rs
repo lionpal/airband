@@ -1,5 +1,4 @@
 //! ~/.airband: the config (port, token, who to call him, which model summarises), state and log.
-#![allow(clippy::disallowed_methods, reason = "the settings file and its folder are read and written here only")]
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -248,7 +247,7 @@ pub(crate) fn file() -> PathBuf {
 
 /// The settings in this file, or None when it cannot be read.
 pub(crate) fn read_from(path: &Path) -> Option<Config> {
-    parse(&fs::read_to_string(path).ok()?).ok()
+    parse(&airband_io::files::read_text(path).ok()??).ok()
 }
 
 /// When this file was last changed, or None when there is none.
@@ -305,7 +304,7 @@ fn render(cfg: &Config) -> Result<String, String> {
     if let Some(why) = &cfg.keyless {
         return Err(format!("the settings cannot be changed from here: {why}"));
     }
-    let existing = fs::read_to_string(dir().join("config.json")).unwrap_or_default();
+    let existing = airband_io::files::read_text(&dir().join("config.json")).ok().flatten().unwrap_or_default();
     let mut doc = serde_json::to_value(cfg).unwrap();
     name_keys(&mut doc);
     let before = if crate::vault::sealed(&existing) { kept()? } else { Default::default() };
@@ -325,8 +324,8 @@ pub(crate) fn save(cfg: &Config) -> Result<(), String> {
 /// Read the config, creating it (with a fresh token) on first use.
 pub(crate) fn load() -> Config {
     let path = dir().join("config.json");
-    fs::create_dir_all(dir()).expect("cannot create ~/.airband");
-    let existing = fs::read_to_string(&path).ok();
+    airband_io::files::make_folder(&dir()).expect("cannot create ~/.airband");
+    let existing = airband_io::files::read_text(&path).ok().flatten();
     let cfg: Config = match existing.as_deref().map(parse) {
         Some(Ok(cfg)) => cfg,
         None => parse("{}").unwrap(),

@@ -3,7 +3,7 @@
 //! be (`commit` on a final piece of silence, when he has finished) or by the service itself after about half a
 //! minute of speech (`committed_transcript`). Where the service is, where its pass is asked for and how the
 //! key is presented are its row's to say (`stream`, `pass`, `auth`).
-#![allow(clippy::disallowed_macros, reason = "a listening service's own messages")]
+#![expect(clippy::disallowed_macros, reason = "a listening service's own messages")]
 use super::*;
 use crate::ears_stream::{Socket, Wire, dial, read_briefly};
 use serde_json::json;

@@ -3,7 +3,7 @@
 //! one himself from a radio, and it stays where he put it. The tower also looks, on some of an agent's reports,
 //! at the files and commands of its latest steps, and has a model say which project that work is part of; one
 //! that is plainly working somewhere else is moved, and he is told.
-#![allow(clippy::disallowed_macros, reason = "the model's answer shape")]
+#![expect(clippy::disallowed_macros, reason = "the model's answer shape")]
 use super::*;
 
 /// He moved an agent to a team, from a radio: one of his teams by its id, or a new one he named. Returns what it

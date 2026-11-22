@@ -6,17 +6,10 @@
 //! names the session), and a later agent can be given a callsign an earlier one had. So a message records the id
 //! of the agent that said it, and every question about "which agent" is answered by id.
 use super::*;
-/// A folder's path as he would read it: "~/Companies/shop" inside his home folder, whole anywhere else.
-pub(super) fn shown(at: &std::path::Path) -> String {
-    let homes = [config::home().canonicalize().ok(), Some(config::home())];
-    match homes.iter().flatten().find_map(|home| at.strip_prefix(home).ok()) {
-        Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
-        Some(rest) => format!("~/{}", rest.display()),
-        None => at.display().to_string(),
-    }
-}
 #[derive(Default)]
 pub(super) struct Inner {
+    /// The disk folders are asked about on: this computer's, or a stand-in in tests.
+    pub(super) disk: super::edges::folders::Disks,
     /// By the id each delivery of his words went out under, the chat lines it carried. The agent's own record
     /// names that id when it takes the words in: that, and nothing about the words, is how a line is marked read.
     pub(super) receipts: HashMap<String, Vec<String>>,
