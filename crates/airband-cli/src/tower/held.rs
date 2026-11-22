@@ -133,18 +133,16 @@ const STARTS_WITHIN: Duration = Duration::from_secs(150);
 /// holder says so), with what its tool calls its session; or with why it is not.
 #[cfg(unix)]
 async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Started, String> {
-    let cfg = app.cfg();
+    spawn_with(app, &edges::procs::SystemProcs, kept, fresh).await
+}
+
+/// What starts a held agent's holder: this program's `hold`, told the socket, the folder, the program and how
+/// its turns are given. Nothing is started here.
+fn holder_run(cfg: &config::Config, me: std::path::PathBuf, sock: &std::path::Path, kept: &Kept, fresh: bool) -> Result<(edges::procs::Run, Vec<String>), String> {
     let launcher = cfg.launchers.get(&kept.launcher).ok_or_else(|| format!("no launcher called {} is configured", kept.launcher))?;
     let held = launcher.held.as_ref().ok_or_else(|| format!("the launcher {} does not hold its agents", kept.launcher))?;
-    let me = std::env::current_exe().map_err(|e| e.to_string())?;
-    let sock = socket(&kept.id);
-    if let Some(dir) = sock.parent() {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| format!("cannot make {} private: {e}", dir.display()))?;
-    }
-    let mut holder = std::process::Command::new(me);
-    holder.arg("hold").arg("--sock").arg(&sock).arg("--cwd").arg(&kept.cwd).arg("--id").arg(&kept.id).arg("--harness").arg(&launcher.harness);
+    let mut holder = edges::procs::Run { program: me, ..Default::default() };
+    holder.arg("hold").arg("--sock").arg(sock).arg("--cwd").arg(&kept.cwd).arg("--id").arg(&kept.id).arg("--harness").arg(&launcher.harness);
     // whether the program was started under the id the tower chose: one that was reports under it by itself
     let mut given_id = false;
     holder.arg("--by").arg(crate::hold::By::of(held).word());
@@ -180,36 +178,34 @@ async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Started, Stri
             program.clone()
         }
     };
-    holder
-        .arg("--")
-        .args(&program)
-        // AIRBAND_INTERNAL must not leak in: the agent has to report to the tower. AIRBAND_HELD tells its
-        // adapter that this tower holds it, so it says so when it reports in.
-        .env_remove("AIRBAND_INTERNAL")
-        .env_remove("AIRBAND_HELD_ID")
-        .env("AIRBAND_HELD", "1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+    holder.arg("--");
+    for a in &program {
+        holder.arg(a);
+    }
+    // AIRBAND_INTERNAL must not leak in: the agent has to report to the tower. AIRBAND_HELD tells its adapter
+    // that this tower holds it, so it says so when it reports in.
+    holder.unset = vec!["AIRBAND_INTERNAL".into(), "AIRBAND_HELD_ID".into()];
+    holder.set.push(("AIRBAND_HELD".into(), "1".into()));
     // a program that does not know the id reports under whatever its tool calls the session: its adapter is
     // told the id to report under
     if !given_id && matches!(held, config::Held::Lines { .. }) {
-        holder.env("AIRBAND_HELD_ID", &kept.id);
+        holder.set.push(("AIRBAND_HELD_ID".into(), kept.id.clone()));
     }
-    // a session of its own: whatever stops the tower and its children leaves this alone
-    unsafe {
-        use std::os::unix::process::CommandExt;
-        holder.pre_exec(|| {
-            libc::setsid();
-            Ok(())
-        });
+    Ok((holder, program))
+}
+
+#[cfg(unix)]
+async fn spawn_with(app: &Arc<App>, procs: &dyn edges::procs::Procs, kept: &Kept, fresh: bool) -> Result<Started, String> {
+    let me = std::env::current_exe().map_err(|e| e.to_string())?;
+    let sock = socket(&kept.id);
+    let (holder, program) = holder_run(&app.cfg(), me, &sock, kept, fresh)?;
+    if let Some(dir) = sock.parent() {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| format!("cannot make {} private: {e}", dir.display()))?;
     }
     std::fs::remove_file(&sock).ok();
-    let mut child = holder.spawn().map_err(|e| format!("its holder did not start: {e}"))?;
-    // it is not waited for as a child would be: collect it when it ends, so it does not linger as a dead entry
-    std::thread::spawn(move || {
-        child.wait().ok();
-    });
+    procs.start_apart(holder).map_err(|e| format!("its holder did not start: {e}"))?;
     let called = program.first().cloned().unwrap_or_default();
     let until = Instant::now() + STARTS_WITHIN;
     let mut listening = false;
@@ -551,6 +547,27 @@ mod tests {
         let disk = FakeFolders(vec!["/work/shop".into()]);
         let carried = to_carry_on(vec![kept("a", "/work/shop"), kept("b", "/work/gone")], &disk);
         assert_eq!(carried.iter().map(|k| k.id.as_str()).collect::<Vec<_>>(), ["a"]);
+    }
+
+    #[test]
+    fn a_holder_is_told_its_socket_folder_and_program_and_the_agent_its_id_when_the_program_does_not_know_it() {
+        let held = airband_core::tools::Held::Lines { fresh: vec!["--new".into()], resume: vec!["--again".into()], line: "{text}".into(), stop: None };
+        let launcher = airband_core::tools::Launcher { name: "l".into(), harness: "tool".into(), argv: vec!["tool".into(), "--in".into(), "{cwd}".into()], held: Some(held), ..Default::default() };
+        let mut cfg: config::Config = serde_json::from_str(r#"{"token":"own","radio_token":"radio"}"#).unwrap();
+        cfg.launchers = [("l".to_string(), launcher)].into();
+        let (run, program) = holder_run(&cfg, "/bin/airband".into(), std::path::Path::new("/s/a.sock"), &kept("a", "/work/shop"), true).unwrap();
+        assert_eq!(program, ["tool", "--in", "/work/shop", "--new"]);
+        let words = run.words();
+        assert_eq!(&words[..9], ["hold", "--sock", "/s/a.sock", "--cwd", "/work/shop", "--id", "a", "--harness", "tool"]);
+        assert_eq!(words[words.len() - 5..], ["--", "tool", "--in", "/work/shop", "--new"]);
+        assert!(run.set.contains(&("AIRBAND_HELD_ID".into(), "a".into())), "the program was not given the id");
+        assert!(run.unset.contains(&"AIRBAND_INTERNAL".into()));
+        let procs = edges::procs::FakeProcs::ending_after(None);
+        edges::procs::Procs::start_apart(&procs, run.clone()).unwrap();
+        assert_eq!(procs.started.lock().unwrap().as_slice(), [run]);
+        // carried on, a program with no launcher of that name is never started
+        let unknown = Kept { launcher: "gone".into(), ..kept("b", "/work/shop") };
+        assert!(holder_run(&cfg, "/bin/airband".into(), std::path::Path::new("/s/b.sock"), &unknown, false).is_err());
     }
 
     #[test]

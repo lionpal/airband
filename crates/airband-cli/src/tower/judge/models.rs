@@ -50,12 +50,11 @@ pub(super) async fn ask_shaped(settings: &Settings, prompt: String, shape: Optio
     asked.map_err(|Failed(trouble, more)| if more.is_empty() { format!("{trouble:?}") } else { format!("{trouble:?} ({more})") })
 }
 
-/// The model he chose, as the tower's edge to a model ([`crate::tower::edges::models::Model`]).
-pub(in crate::tower) struct ChosenModel<'a>(pub(in crate::tower) &'a Settings);
-
-impl crate::tower::edges::models::Model for ChosenModel<'_> {
+/// The model he chose, as the tower's edge to a model ([`crate::tower::edges::models::Model`]): the settings
+/// say which it is, and asking them asks it.
+impl crate::tower::edges::models::Model for Settings {
     fn ask<'a>(&'a self, prompt: String, shape: Option<Value>) -> crate::tower::edges::Boxed<'a, Result<String, String>> {
-        Box::pin(ask_shaped(self.0, prompt, shape))
+        Box::pin(ask_shaped(self, prompt, shape))
     }
 }
 

@@ -36,9 +36,9 @@ pub(super) fn json_of<T: serde::de::DeserializeOwned>(out: &str) -> Option<T> {
 
 /// Ask the model and read its answer as JSON of one shape. `what` names the question for the trace: with
 /// `AIRBAND_TRACE` set, what was asked and what came back are logged. Err says why there is no answer.
-pub(super) async fn ask_json<T: serde::de::DeserializeOwned>(settings: &Settings, what: &str, prompt: String, shape: Option<Value>) -> Result<T, String> {
+pub(super) async fn ask_json<T: serde::de::DeserializeOwned>(model: &dyn Model, what: &str, prompt: String, shape: Option<Value>) -> Result<T, String> {
     let traced = std::env::var_os("AIRBAND_TRACE").is_some().then(|| prompt.clone());
-    let answer = ask_shaped(settings, prompt, shape).await;
+    let answer = model.ask(prompt, shape).await;
     if let Some(prompt) = traced {
         log(format!("{what} asked:\n{prompt}\nand was told: {answer:?}"));
     }
@@ -249,7 +249,7 @@ fn judged(item: &Item, o: Answer) -> Judged {
 /// An agent has been at work for a while without a word. From the labels of its steps: is there something he
 /// would want to know now, before it reports? One sentence if so. The labels say what it set out to do, not
 /// how it went, and the sentence must not claim more.
-pub(super) async fn progress(settings: &Settings, steps: &[String]) -> Option<String> {
+pub(super) async fn progress(model: &dyn Model, name: &str, steps: &[String]) -> Option<String> {
     let prompt = format!(
         "Below are the steps a coding agent has taken, in order, since it last said anything to {name}, who is away from its screen. \
          Each line is the agent's own label for a step: what it set out to do, not whether it worked.\n\n\
@@ -263,7 +263,6 @@ pub(super) async fn progress(settings: &Settings, steps: &[String]) -> Option<St
          in the first person as the agent, saying what it is doing or \
          has set going, with any number or name from the labels that finds it (a build number, a commit id, where a deploy goes). \
          Do not say that anything succeeded, finished or failed: the labels do not tell. No file paths, no markdown.\n\n<steps>\n{steps}\n</steps>",
-        name = settings.current().name,
         steps = steps.join("\n")
     );
     #[derive(Deserialize)]
@@ -278,7 +277,7 @@ pub(super) async fn progress(settings: &Settings, steps: &[String]) -> Option<St
         "required": ["tell", "say"],
         "additionalProperties": false
     });
-    let out: Out = ask_json(settings, "what to tell him of its progress", prompt, Some(shape)).await.ok()?;
+    let out: Out = ask_json(model, "what to tell him of its progress", prompt, Some(shape)).await.ok()?;
     let said = out.say.trim();
     (out.tell && !said.is_empty() && said.chars().count() < 400).then(|| said.to_string())
 }
@@ -289,7 +288,7 @@ pub(super) async fn progress(settings: &Settings, steps: &[String]) -> Option<St
 ///
 /// The model sees his words only. The request is text the asking agent wrote, and nothing an agent writes is
 /// put beside the one question whose answer lets a command run.
-pub(super) async fn consent(settings: &Settings, said: &str) -> Option<bool> {
+pub(super) async fn consent(model: &dyn Model, name: &str, said: &str) -> Option<bool> {
     let prompt = format!(
         "A coding agent asked {name} for permission to do one thing on his computer. He was shown exactly what, \
          and answered in his own words.\n\nHis answer:\n<answer>\n{said}\n</answer>\n\n\
@@ -301,7 +300,6 @@ pub(super) async fn consent(settings: &Settings, said: &str) -> Option<bool> {
          - unclear: only when his words give the agent nothing to go on: he hands the choice back (\"whatever you \
          think\"), asks a question, or is talking about something else.\n\
          When in doubt between allow and anything else, it is not allow.",
-        name = settings.current().name,
         said = airband_core::prose::tail(said, 1000)
     );
     #[derive(Deserialize)]
@@ -322,7 +320,7 @@ pub(super) async fn consent(settings: &Settings, said: &str) -> Option<bool> {
         "additionalProperties": false
     });
     // anything that is not exactly this shape with one of these three values settles nothing
-    match ask_json::<Out>(settings, "whether his words allow it", prompt, Some(shape)).await.ok()?.verdict {
+    match ask_json::<Out>(model, "whether his words allow it", prompt, Some(shape)).await.ok()?.verdict {
         Verdict::Allow => Some(true),
         Verdict::Refuse => Some(false),
         Verdict::Unclear => None,
@@ -345,7 +343,7 @@ pub(super) async fn detail(model: &dyn Model, name: &str, item: &Item) -> Result
 /// gets the message itself this time, and nothing is kept, so the next time he asks it is made again. Why
 /// the model gave none he is told where he is told of the model that reads (`Settings::asked`).
 pub(super) async fn detail_of(app: &Arc<App>, id: &str) -> Option<String> {
-    detail_by(app, &ChosenModel(&app.settings), id).await
+    detail_by(app, &app.settings, id).await
 }
 
 pub(super) async fn detail_by(app: &Arc<App>, model: &dyn Model, id: &str) -> Option<String> {
@@ -389,6 +387,24 @@ mod detail_tests {
         // kept now: never asked again
         assert_eq!(detail_by(&app, &failing, "m1").await.as_deref(), Some("It passed, after one fix."));
         assert_eq!(failing.asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn his_words_allow_a_request_only_on_a_plain_yes_from_the_model_and_nothing_else_settles_it() {
+        for (answer, settles) in [(r#"{"verdict":"allow"}"#, Some(true)), (r#"{"verdict":"refuse"}"#, Some(false)), (r#"{"verdict":"unclear"}"#, None), (r#"{"verdict":"maybe"}"#, None), ("yes", None)] {
+            let model = FakeModel::answers(Ok(answer));
+            assert_eq!(consent(&model, "Charles", "go ahead").await, settles, "{answer}");
+        }
+        assert_eq!(consent(&FakeModel::answers(Err("no answer")), "Charles", "go ahead").await, None);
+    }
+
+    #[tokio::test]
+    async fn progress_is_told_only_when_the_model_says_to_and_gives_a_sentence() {
+        let told = FakeModel::answers(Ok(r#"{"tell":true,"say":"I pushed build 41."}"#));
+        assert_eq!(progress(&told, "Charles", &["push".into()]).await.as_deref(), Some("I pushed build 41."));
+        for quiet in [r#"{"tell":false,"say":""}"#, r#"{"tell":true,"say":"  "}"#, "not json"] {
+            assert_eq!(progress(&FakeModel::answers(Ok(quiet)), "Charles", &["read".into()]).await, None, "{quiet}");
+        }
     }
 }
 
