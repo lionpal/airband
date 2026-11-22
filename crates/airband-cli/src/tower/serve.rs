@@ -72,12 +72,10 @@ fn start_local_model(cfg: &Config) {
     local::listen_after(cfg.port);
     if let Some((model, server)) = judge::local_model(&cfg.summarizer) {
         std::thread::spawn(move || {
-            local::wait_for_it(true);
-            match local::ensure(&model, &server) {
+            match local::ensure(&model, &server, true) {
                 Ok(_) => log("local model: ready"),
                 Err(why) => log(format!("local model: {why}")),
             }
-            local::wait_for_it(false);
         });
     }
 }
@@ -123,7 +121,7 @@ fn watch_tools(app: &Arc<App>) {
         crate::adapters::Tower {
             event: Box::new(move |event| {
                 let _here = runtime.enter();
-                intake::record_and_take(&taking, event)
+                intake::record_and_take(&taking, event).is_ok()
             }),
             holds: Box::new(move |session| held::holds(&holding.read(), session)),
             found: Box::new(move |agent, idle| {
@@ -145,7 +143,7 @@ fn found(app: &Arc<App>, agent: Agent, idle: bool) -> bool {
     let id = agent.id.clone();
     let new = app.read().find(&id).is_none();
     let event = AgentEvent { schema: agent::SCHEMA.into(), agent, event: Event::Checkin, via: None };
-    if !intake::record_and_take(app, event) {
+    if intake::record_and_take(app, event).is_err() {
         return false;
     }
     // asked every few seconds for every open session: only one that is to be marked is changed

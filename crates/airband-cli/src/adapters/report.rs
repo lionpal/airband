@@ -119,6 +119,7 @@ fn said(posted: Posted) -> Result<(), String> {
             eprintln!("airband did not answer; the report is kept and handed over when it is back.");
             Ok(())
         }
+        Posted::Refused(why) => Err(format!("airband refused the report: {why}")),
         Posted::Lost => Err("airband did not answer, and the report could not be kept (is it running? `airband status`)".into()),
     }
 }
@@ -132,5 +133,6 @@ mod tests {
         assert!(said(Posted::Taken).is_ok());
         assert!(said(Posted::Kept).is_ok());
         assert!(said(Posted::Lost).is_err());
+        assert!(said(Posted::Refused("not an agent".into())).is_err());
     }
 }

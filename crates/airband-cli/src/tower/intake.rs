@@ -46,9 +46,9 @@ pub(super) fn take(app: &Arc<App>, ev: AgentEvent) -> Result<(), String> {
 }
 
 /// The same for an event a watcher inside the tower saw: written down first, as one that came over HTTP is.
-pub(super) fn record_and_take(app: &Arc<App>, ev: AgentEvent) -> bool {
+pub(super) fn record_and_take(app: &Arc<App>, ev: AgentEvent) -> Result<(), String> {
     app.store.event(&serde_json::to_value(&ev).unwrap_or_default());
-    take(app, ev).is_ok()
+    take(app, ev)
 }
 
 pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
