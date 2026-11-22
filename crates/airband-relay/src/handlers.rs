@@ -60,11 +60,10 @@ pub(super) async fn pull(State(relay): State<Arc<Relay>>, Path(channel): Path<St
                 }
             }
             // then what was kept while it was away: one at a time, the oldest first, the next only once this one is taken
-            let due = ch.has_held && ch.holding.as_ref().is_none_or(|(_, at)| at.elapsed() > HAND_AGAIN);
-            (ch.wake.clone(), due)
+            (ch.wake.clone(), ch.kept_due())
         };
         let (wake, due) = wake;
-        if due {
+        if let Some(seen) = due {
             match relay.store.held_next(&channel).await {
                 Ok(Some((id, sealed))) => {
                     if let Some(ch) = relay.channels.lock().unwrap().get_mut(&channel) {
@@ -74,7 +73,7 @@ pub(super) async fn pull(State(relay): State<Arc<Relay>>, Path(channel): Path<St
                 }
                 Ok(None) => {
                     if let Some(ch) = relay.channels.lock().unwrap().get_mut(&channel) {
-                        ch.has_held = false;
+                        ch.found_nothing_kept(seen);
                     }
                 }
                 Err(e) => eprintln!("airband-relay: cannot read what is kept for a channel: {e}"),
@@ -156,8 +155,7 @@ pub(super) async fn keep(relay: &Arc<Relay>, channel: &str, headers: &HeaderMap,
     match relay.store.hold(channel, id, &sealed, HELD_MOST).await {
         Ok(true) => {
             if let Some(ch) = relay.channels.lock().unwrap().get_mut(channel) {
-                ch.has_held = true;
-                ch.wake.notify_one();
+                ch.kept_one();
             }
             StatusCode::ACCEPTED.into_response()
         }

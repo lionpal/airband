@@ -21,6 +21,9 @@ pub(super) struct Channel {
     pub(super) wake: Arc<Notify>,
     /// There may be messages kept for this tower from while it was away. Assumed after a restart, until looked.
     pub(super) has_held: bool,
+    /// How many messages have been kept for it since the relay started: a pull that found nothing kept unmarks
+    /// `has_held` only when none came in while it looked.
+    pub(super) keeps: u64,
     /// The kept message the tower has been handed and has not yet said it took, and when.
     pub(super) holding: Option<(String, Instant)>,
     /// The hash of the token the paired radio proves itself with, as the tower gave it when it opened the
@@ -36,7 +39,28 @@ impl Channel {
         Channel::from(store::Saved { pull_hash, radio_hash })
     }
     pub(super) fn from(saved: store::Saved) -> Channel {
-        Channel { pull_hash: saved.pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, holding: None, radio_hash: saved.radio_hash, pushed: None }
+        Channel { pull_hash: saved.pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, keeps: 0, holding: None, radio_hash: saved.radio_hash, pushed: None }
+    }
+}
+
+impl Channel {
+    /// Is a kept message to be handed to the tower now? The count of keeps seen so far, when it is: there may be
+    /// one, and none has been handed and left unanswered for less than [`HAND_AGAIN`].
+    pub(super) fn kept_due(&self) -> Option<u64> {
+        (self.has_held && self.holding.as_ref().is_none_or(|(_, at)| at.elapsed() > HAND_AGAIN)).then_some(self.keeps)
+    }
+    /// The store had nothing kept, as looked at when `seen` keeps had come in. Unmarked only if none came since:
+    /// one kept while the store was being read is still there, and newer ordered words must not pass it.
+    pub(super) fn found_nothing_kept(&mut self, seen: u64) {
+        if self.keeps == seen {
+            self.has_held = false;
+        }
+    }
+    /// A message was kept for it: marked, and the tower woken for it.
+    pub(super) fn kept_one(&mut self) {
+        self.keeps += 1;
+        self.has_held = true;
+        self.wake.notify_one();
     }
 }
 
@@ -132,5 +156,19 @@ mod tests {
         assert!(!line.contains(&channel[..7]));
         // a name that is not a channel's at all says nothing of itself either
         assert!(failed_line("queue", "../../etc/passwd", 400, Duration::ZERO, 0, (0, false, false)).contains("queue on ecad answered 400"));
+    }
+
+    #[test]
+    fn a_message_kept_while_the_store_is_read_keeps_the_channel_marked() {
+        // N18: a pull looks, a message is kept meanwhile, then the pull's read comes back empty
+        let mut ch = Channel::new("p".into(), "r".into());
+        let seen = ch.kept_due().unwrap();
+        ch.kept_one();
+        ch.found_nothing_kept(seen);
+        assert!(ch.has_held && ch.kept_due().is_some());
+        // with nothing kept meanwhile, an empty store unmarks it
+        let seen = ch.kept_due().unwrap();
+        ch.found_nothing_kept(seen);
+        assert!(!ch.has_held && ch.kept_due().is_none());
     }
 }
