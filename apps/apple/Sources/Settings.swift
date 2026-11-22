@@ -47,7 +47,7 @@ struct SetupView: View {
                 if !model.computers.isEmpty {
                     Section {
                         if model.computers.count > 1 {
-                            Picker("Main computer", selection: Binding(get: { model.view.mainComputer ?? "" }, set: { model.setMainComputer($0) })) {
+                            Picker("Default computer", selection: Binding(get: { model.view.mainComputer ?? "" }, set: { model.setMainComputer($0) })) {
                                 if model.view.mainComputer == nil { Text("Not chosen").tag("") }
                                 ForEach(model.computers, id: \.id) { c in Text(c.name).tag(c.id) }
                             }

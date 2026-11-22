@@ -149,7 +149,8 @@ pub(crate) fn pair(mut cfg: Config, name: &str) -> Result<(), String> {
             Pairing::Near { at, secret }
         }
     };
-    let link = pairing.link();
+    // the phone shows this computer by its name from the start, before it has reached it
+    let link = pairing.link_named(&config::station(&cfg));
     // on a terminal, the link as a picture to point the phone's camera at; piped somewhere, only the link
     if std::io::IsTerminal::is_terminal(&std::io::stdout())
         && let Ok(code) = qrcode::QrCode::with_error_correction_level(link.as_bytes(), qrcode::EcLevel::L) {

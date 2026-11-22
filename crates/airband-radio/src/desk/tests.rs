@@ -163,7 +163,7 @@ fn a_button_is_sent_as_what_it_stands_for_and_never_as_words_to_be_read() {
     state.stations[0].agents[0].state = AgentState::Stalled;
     let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend }), data_dir: String::new() };
     let sent = |desk: &Desk| desk.shared.state.lock().unwrap().stations[0].radio.unsent().into_iter().map(|o| (o.text, o.re, o.act, o.to)).collect::<Vec<_>>();
-    let act = |a: Act| serde_json::to_string(&a).unwrap();
+    let act = Some;
     // a yes to a request, an answer he tapped, and one the message does not have (nothing goes)
     desk.tap("q1".into(), Tapped::Allow);
     desk.tap("q1".into(), Tapped::Option { index: 1 });
@@ -181,7 +181,7 @@ fn a_button_is_sent_as_what_it_stands_for_and_never_as_words_to_be_read() {
             ("Leave".to_string(), Some("q1".to_string()), act(Act::Option { index: 1 }), vec![]),
             ("Keep going.".to_string(), None, act(Act::Control { control: airband_core::routing::Control::Poke }), vec![]),
             ("New agent in shop".to_string(), None, act(Act::Launch(airband_core::radio::Launch { team: "shop".into(), ..Default::default() })), vec![]),
-            ("ship it".to_string(), None, String::new(), vec!["shop two".to_string()]),
+            ("ship it".to_string(), None, None, vec!["shop two".to_string()]),
         ]
     );
 }
@@ -379,7 +379,7 @@ fn words_sent_again_go_to_the_agent_he_picked_whatever_tag_they_start_with() {
 #[test]
 fn unplaced_words_he_places_keep_the_files_they_took() {
     let mut state = two();
-    let mut message = Outgoing::new("u1".into(), "look at this".into(), None, None, None, vec!["f1".into()], String::new());
+    let mut message = Outgoing::new("u1".into(), "look at this".into(), None, None, None, vec!["f1".into()], Vec::new());
     message.label = None;
     state.asking = Some(Asking { message, guesses: Vec::new(), at: state.stations[0].id() });
     let agent = state.stations[0].agents[0].id.clone();
@@ -396,8 +396,8 @@ fn a_tapped_answer_kept_for_later_is_still_what_the_button_stood_for() {
     radio.stop();
     let act = Act::Option { index: 1 };
     assert!(radio.answer_now("Leave".into(), "q1".into(), Some(act.clone())).is_err());
-    let kept: Vec<(Option<String>, String)> = radio.unsent().into_iter().map(|o| (o.re, o.act)).collect();
-    assert_eq!(kept, [(Some("q1".to_string()), serde_json::to_string(&act).unwrap())]);
+    let kept: Vec<(Option<String>, Option<Act>)> = radio.unsent().into_iter().map(|o| (o.re, o.act)).collect();
+    assert_eq!(kept, [(Some("q1".to_string()), Some(act))]);
 }
 
 /// A computer on this machine that answers every request with 200 and `body`. Its port.
@@ -428,7 +428,7 @@ fn kept_reads(dir: &std::path::Path) -> serde_json::Value {
 fn a_summary_choice_made_offline_waits_for_every_computer() {
     let dir = temp_dir("reads");
     std::fs::write(dir.join("choices.json"), r#"{"reads":{"id":"anthropic","offer":"haiku","his":true}}"#).unwrap();
-    let state = State { stations: vec![station("mini", tower_answering("{}"), &[], vec![]), station("laptop", 9, &[], vec![])], ..State::default() };
+    let state = State { stations: vec![station("mini", tower_answering(r#"{"reads":"Haiku"}"#), &[], vec![]), station("laptop", 9, &[], vec![])], ..State::default() };
     let mini = state.stations[0].radio.clone();
     let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
     let shared = Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open(dir.to_str().unwrap(), HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend };
@@ -440,8 +440,8 @@ fn a_summary_choice_made_offline_waits_for_every_computer() {
 
 #[test]
 fn when_one_computer_refuses_a_summary_choice_the_ones_after_it_are_still_asked() {
-    let laptop = station("laptop", tower_answering(r#"{"error":"That service is not offered here."}"#), &[], vec![]);
-    let mini = station("mini", tower_answering("{}"), &[], vec![]);
+    let laptop = station("laptop", tower_saying(409, r#"{"refusal":"told","reason":"That service is not offered here."}"#), &[], vec![]);
+    let mini = station("mini", tower_answering(r#"{"reads":"Haiku"}"#), &[], vec![]);
     let radios = [("laptop".to_string(), laptop.id(), laptop.radio.clone()), ("mini".to_string(), mini.id(), mini.radio.clone())];
     let wanted = SetReads { kind: "anthropic".into(), offer: "haiku".into(), key: String::new(), set: Default::default() };
     let answers = crate::choices::switch_all(&radios, &wanted);
@@ -463,8 +463,8 @@ fn desk_choosing(dir: &std::path::Path, stations: Vec<Station>, reads: serde_jso
 #[test]
 fn a_summary_choice_some_computers_took_is_remembered_as_taken_there() {
     let dir = temp_dir("partly");
-    let mini = station("mini", tower_answering("{}"), &[], vec![]);
-    let laptop = station("laptop", tower_answering(r#"{"error":"Enter your API key."}"#), &[], vec![]);
+    let mini = station("mini", tower_answering(r#"{"reads":"Haiku"}"#), &[], vec![]);
+    let laptop = station("laptop", tower_saying(409, r#"{"refusal":"told","reason":"Enter your API key."}"#), &[], vec![]);
     let away = station("away", 9, &[], vec![]);
     let ids = [mini.id(), laptop.id()];
     let desk = desk_choosing(&dir, vec![mini, laptop, away], serde_json::Value::Null);
@@ -482,7 +482,7 @@ fn a_summary_choice_some_computers_took_is_remembered_as_taken_there() {
 #[test]
 fn a_computer_that_refuses_a_waiting_summary_choice_does_not_cancel_it_for_the_others() {
     let dir = temp_dir("refused-one");
-    let laptop = station("laptop", tower_answering(r#"{"error":"Enter your API key."}"#), &[], vec![]);
+    let laptop = station("laptop", tower_saying(409, r#"{"refusal":"told","reason":"Enter your API key."}"#), &[], vec![]);
     let mini = station("mini", 9, &[], vec![]);
     let (laptop_radio, mini_id) = (laptop.radio.clone(), mini.id());
     let desk = desk_choosing(&dir, vec![laptop, mini], serde_json::json!({ "id": "anthropic", "offer": "haiku", "his": true }));
@@ -498,7 +498,7 @@ fn a_summary_service_whose_key_his_computer_keeps_is_chosen_with_no_key_on_the_p
     let dir = temp_dir("kept-there");
     let offered = serde_json::json!({ "offered": { "offers": [{ "provider": "anthropic", "offer": "haiku", "label": "Haiku", "key": true, "has_key": true, "key_name": "API key", "preferred": true }] } });
     std::fs::write(dir.join("choices.json"), offered.to_string()).unwrap();
-    let state = State { stations: vec![station("mini", tower_answering("{}"), &[], vec![])], ..State::default() };
+    let state = State { stations: vec![station("mini", tower_answering(r#"{"reads":"Haiku"}"#), &[], vec![])], ..State::default() };
     let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
     let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open(dir.to_str().unwrap(), HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend }), data_dir: String::new() };
     let id = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "anthropic").map(|c| c.id).unwrap();
@@ -605,7 +605,8 @@ fn an_unnamed_computer_can_be_chosen_as_main_by_its_id() {
     state.stations.iter_mut().for_each(|s| s.name.clear());
     let desk = desk_of(state);
     let shown = desk.view(None, None).stations;
-    assert_eq!(shown.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["Computer 1", "Computer 2"]);
+    // never by its place in the list: by where its pairing link reaches it
+    assert_eq!(shown.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["127.0.0.1", "127.0.0.1"]);
     desk.set_main_computer(shown[1].id.clone());
     assert_eq!(desk.shared.state.lock().unwrap().main(), Some(1));
     assert_eq!(desk.view(None, None).main_computer, Some(shown[1].id.clone()));
@@ -680,7 +681,7 @@ fn a_button_a_poke_or_words_sent_on_leave_his_files_and_his_question_for_his_own
 #[test]
 fn unplaced_words_he_places_still_answer_what_they_answered() {
     let mut state = two();
-    let message = Outgoing { answers: Some("q7".into()), ..Outgoing::new("u1".into(), "yes do it".into(), None, None, None, Vec::new(), String::new()) };
+    let message = Outgoing { answers: Some("q7".into()), ..Outgoing::new("u1".into(), "yes do it".into(), None, None, None, Vec::new(), Vec::new()) };
     state.asking = Some(Asking { message, guesses: Vec::new(), at: state.stations[0].id() });
     let agent = state.stations[0].agents[0].id.clone();
     let radio = state.stations[0].radio.clone();
@@ -722,8 +723,59 @@ fn radio_at(port: u16) -> Arc<Radio> {
 }
 
 #[test]
+fn a_refusal_without_words_and_one_for_another_version_are_each_told_as_what_they_are() {
+    // a no with no reason is a refusal, never something that goes when it can
+    let gone = radio_at(tower_saying(404, r#"{"refusal":"gone"}"#));
+    assert!(matches!(gone.recent(), Err(RadioError::Refused)));
+    // a computer that speaks another version: he is asked to update
+    let other = radio_at(tower_saying(426, r#"{"refusal":"other_version","speaks":"airband.radio/9"}"#));
+    assert!(matches!(other.recent(), Err(RadioError::Told { reason }) if reason.contains("another version of airband")));
+    // a 4xx that carries no refusal is a no, not an answer and not trouble that passes
+    let bare = radio_at(tower_saying(400, "{}"));
+    assert!(matches!(bare.recent(), Err(RadioError::Refused)));
+}
+
+#[test]
+fn trouble_of_his_computers_own_is_not_told_as_a_refusal() {
+    let radio = radio_at(tower_saying(500, "{}"));
+    let e = radio.recent().unwrap_err();
+    assert!(matches!(&e, RadioError::Told { reason } if reason.contains("ran into trouble") && !reason.contains("refused")), "{e:?}");
+    // a refusal is read by its tag, never by its status: "not now" is told with its reason
+    let busy = radio_at(tower_saying(503, r#"{"refusal":"not_now","reason":"It is still starting."}"#));
+    assert!(matches!(busy.recent(), Err(RadioError::Told { reason }) if reason == "It is still starting."));
+}
+
+#[test]
+fn a_notification_answer_his_computer_cannot_take_just_now_is_kept_not_refused() {
+    let radio = radio_at(tower_saying(503, r#"{"refusal":"not_now","reason":"It is still starting."}"#));
+    let e = radio.answer_now("yes".into(), "q1".into(), None).unwrap_err();
+    assert!(matches!(&e, RadioError::Kept { .. }), "{e:?}");
+    assert_eq!(radio.unsent().len(), 1);
+}
+
+#[test]
+fn every_request_straight_to_the_tower_says_the_protocol_it_speaks_and_nothing_waiting_is_null() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let seen = Arc::new(Mutex::new(String::new()));
+    let kept = seen.clone();
+    thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else { return };
+        let mut buf = [0u8; 8192];
+        let n = stream.read(&mut buf).unwrap_or(0);
+        *kept.lock().unwrap() = String::from_utf8_lossy(&buf[..n]).to_lowercase();
+        let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 4\r\nconnection: close\r\n\r\nnull");
+    });
+    let radio = radio_at(port);
+    assert!(matches!(radio.link.next(false, ""), Ok(None)));
+    let request = seen.lock().unwrap().clone();
+    assert!(request.contains(&format!("{}: {}", airband_core::radio::SCHEMA_HEADER, airband_core::radio::SCHEMA)), "{request}");
+}
+
+#[test]
 fn a_no_with_a_reason_is_told_with_its_reason_whatever_its_status() {
-    let radio = radio_at(tower_saying(400, r#"{"error":"That folder is gone."}"#));
+    let radio = radio_at(tower_saying(409, r#"{"refusal":"told","reason":"That folder is gone."}"#));
     assert!(matches!(radio.recent(), Err(RadioError::Told { reason }) if reason == "That folder is gone."));
 }
 

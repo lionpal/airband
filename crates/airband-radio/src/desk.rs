@@ -176,10 +176,15 @@ impl State {
     /// What a computer is called wherever one is named to him: the name it gave itself, and for one that
     /// gave none, "Your computer" when it is the only one and its place among them when there are several.
     pub(super) fn computer_name(&self, index: usize) -> String {
-        match self.stations.get(index).map(|s| s.name.as_str()).filter(|n| !n.is_empty()) {
-            Some(name) => name.to_string(),
+        let Some(station) = self.stations.get(index) else { return String::new() };
+        if !station.name.is_empty() {
+            return station.name.clone();
+        }
+        // one that has never said its name: what its pairing link calls it, or where the link reaches it
+        match airband_core::pairing::Pairing::computer_in(&station.link) {
+            Some(name) => name,
             None if self.stations.len() == 1 => "Your computer".to_string(),
-            None => format!("Computer {}", index + 1),
+            None => "New computer".to_string(),
         }
     }
     /// Every computer's radio with its id and what it is called.
@@ -313,10 +318,12 @@ impl Desk {
             let Ok(radio) = Radio::start_with(link.clone(), &dir, host, self.shared.senses.clone(), kept) else { continue };
             radio.set_call_mode(calling);
             let sending = radio.unsent();
+            // what it last said it is called, kept on the phone: known before it answers again
+            let name = was.map(|s| s.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| radio.store.saved.lock().unwrap().computer.clone());
             let mut station = Station {
                 messages: radio.history(),
                 radio,
-                name: was.map(|s| s.name.clone()).unwrap_or_default(),
+                name,
                 online: was.is_some_and(|s| s.online),
                 tried: false,
                 answered_at: was.and_then(|s| s.answered_at),

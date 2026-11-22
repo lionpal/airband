@@ -142,6 +142,7 @@ impl Desk {
                 .stations
                 .iter()
                 .flat_map(|s| s.sending.iter().filter(|o| !s.messages.iter().any(|m| m.id == o.id)).cloned().chain(s.landing.iter().filter(|(o, at)| at.elapsed() < Duration::from_secs(15) && !s.messages.iter().any(|m| m.id == o.id)).map(|(o, _)| o.clone())))
+                .map(|o| DeskOutgoing::from(&o))
                 .collect(),
             stations: state.stations.iter().enumerate().map(|(i, s)| DeskComputer { id: s.id(), name: state.computer_name(i) }).collect(),
             main_computer: state.main().map(|i| state.stations[i].id()),

@@ -86,7 +86,7 @@ pub struct DeskView {
     /// The quick messages to offer.
     pub quick: Vec<QuickMessage>,
     /// His messages still on their way.
-    pub sending: Vec<Outgoing>,
+    pub sending: Vec<DeskOutgoing>,
     /// Each paired computer, in the order they were paired.
     pub stations: Vec<DeskComputer>,
     /// Each team's place in the host's list of team colours, the same on every computer. A host keeps a copy
@@ -201,4 +201,29 @@ pub struct DeskComputer {
     pub id: String,
     /// Its own name once it has said one, or "Your computer", or its place in the list.
     pub name: String,
+}
+
+/// One of his messages on its way, as a host shows it.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct DeskOutgoing {
+    /// Its id: what [`Desk::send_again`] and [`Desk::discard_unsent`] are given.
+    pub id: String,
+    /// What it shows as: a quick message's button words, or what he typed.
+    pub shown: String,
+    /// How far it has got.
+    pub stage: crate::Stage,
+    /// It is no longer being tried, and why, in a sentence. He can send it again or let it go.
+    pub failed: Option<String>,
+    /// While it is still being tried and has been for a while: how the tries are going, in sentences ("Trying.
+    /// The relay says your computer is not connected. 3 tries.").
+    pub trying: Option<String>,
+}
+
+impl From<&crate::Outgoing> for DeskOutgoing {
+    fn from(o: &crate::Outgoing) -> Self {
+        // how the tries go is worth showing only once they have gone on for ten seconds and said something
+        let trying = (o.failed.is_none() && !o.trail.is_empty() && o.last_tried >= o.at + 10_000)
+            .then(|| format!("Trying. {}{}", o.trail.join(" "), if o.tries > 1 { format!(" {} tries.", o.tries) } else { String::new() }));
+        DeskOutgoing { id: o.id.clone(), shown: o.label.clone().unwrap_or_else(|| o.text.clone()), stage: o.stage, failed: o.failed.clone(), trying }
+    }
 }

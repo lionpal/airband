@@ -56,6 +56,8 @@ pub enum Refusal {
     BadAsk { reason: String },
     /// The radio speaks another version of the protocol: this one.
     OtherVersion { speaks: String },
+    /// Not now, for the reason given, in words for him: it may work later, and is not a no.
+    NotNow { reason: String },
     /// Too big to pass through the relay.
     TooBig,
     /// What it names is not there (any more).
@@ -77,6 +79,7 @@ impl Refusal {
             Refusal::Told { .. } => 409,
             Refusal::BadAsk { .. } | Refusal::Unknown => 400,
             Refusal::OtherVersion { .. } => 426,
+            Refusal::NotNow { .. } => 503,
             Refusal::TooBig => 413,
             Refusal::Gone => 404,
             Refusal::NotAllowed => 403,
@@ -85,7 +88,7 @@ impl Refusal {
     /// What to tell him, when the tower gave words for it.
     pub fn reason(&self) -> Option<&str> {
         match self {
-            Refusal::Told { reason } | Refusal::BadAsk { reason } => Some(reason),
+            Refusal::Told { reason } | Refusal::BadAsk { reason } | Refusal::NotNow { reason } => Some(reason),
             _ => None,
         }
     }

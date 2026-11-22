@@ -42,6 +42,9 @@ pub const VIA_HEADER: &str = "x-airband-via";
 /// The header a radio says where it stands in, as JSON ([`Presence`]). A radio that comes through the relay
 /// says it inside the sealed request, and the relay link puts it here.
 pub const PRESENCE_HEADER: &str = "x-airband-presence";
+/// The header a radio that comes straight to the tower names the protocol it speaks in ([`SCHEMA`]). Through
+/// the relay it is said inside the sealed request ([`crate::relay::Call::schema`]).
+pub const SCHEMA_HEADER: &str = "x-airband-schema";
 
 /// How much a message deserves his attention. Deciding this is the tower's main job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

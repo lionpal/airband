@@ -46,14 +46,6 @@ impl Desk {
         radio.queue(text, Some(message_id), None, None);
         self.shared.host.changed();
     }
-    /// The radio of the computer that has a message; when none has it now, nothing, and he is told why.
-    fn owner_or_say(&self, message_id: &str) -> Option<Arc<Radio>> {
-        let radio = self.radio_of(message_id);
-        if radio.is_none() {
-            self.shared.host.note(UNPAIRED.into());
-        }
-        radio
-    }
     /// An answer given from a notification: send it now, as the answer to that message, and wait until the
     /// computer has it. `tapped` is the button, when it was one: `text` is then the button's words for an
     /// option, and is not used for Allow and Deny. `station` is the computer the notification came from ([`OpenedNotice::station`]).
@@ -243,7 +235,7 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
         // the room's team on that computer, by its id
         let scope = room.as_ref().filter(|_| re.is_none() && agent.is_none() && !tagged).and_then(|r| state.stations[pick].agents.iter().find(|a| a.room == *r)).map(|a| a.team.clone());
         // when the tower has to work out who it is for, it is told who else is on his screen
-        let others = if tagged || aimed || re.is_some() || state.stations.len() < 2 { String::new() } else { others(&state, pick, room.as_deref()) };
+        let others = if tagged || aimed || re.is_some() || state.stations.len() < 2 { Vec::new() } else { others(&state, pick, room.as_deref()) };
         (state.stations[pick].radio.clone(), text, re, scope, others, to)
     };
     radio.queue_his(Outgoing { re, scope, label, others, to, ..Outgoing::of(text) });
@@ -275,13 +267,13 @@ pub(super) fn place(shared: &Arc<Shared>, from: &str, message: Outgoing, agent: 
 }
 /// The agents on his screen that computers other than `pick` have, each with the last thing it said: for the
 /// tower his words are going to. In one room, only that room's.
-fn others(state: &State, pick: usize, room: Option<&str>) -> String {
+fn others(state: &State, pick: usize, room: Option<&str>) -> Vec<airband_core::radio::Other> {
     let now = now_ms();
     let mut seen = HashSet::new();
     state.stations[pick].agents.iter().for_each(|a| {
         seen.insert(a.id.clone());
     });
-    let list: Vec<airband_core::radio::Other> = state
+    state
         .stations
         .iter()
         .enumerate()
@@ -292,8 +284,7 @@ fn others(state: &State, pick: usize, room: Option<&str>) -> String {
             let last = s.messages.iter().rev().find(|m| m.agent.as_deref() == Some(a.id.as_str()) && !m.fyi);
             airband_core::radio::Other { id: a.id.clone(), callsign: a.callsign.clone(), badge: a.badge.clone(), group: a.group.clone(), team: a.team.clone(), said: last.map(|m| m.text.chars().take(240).collect()).unwrap_or_default(), ago: last.map(|m| now.saturating_sub(m.at) / 1000).unwrap_or(0) }
         })
-        .collect();
-    if list.is_empty() { String::new() } else { serde_json::to_string(&list).unwrap_or_default() }
+        .collect()
 }
 /// The first computer that has someone his words tag, read the way the tower reads tags. Nothing when they tag
 /// nobody.
@@ -326,4 +317,15 @@ pub(super) fn pick_station(state: &State, text: &str, re: Option<&str>, room: Op
     // Nothing says: his main computer, which works out who it is for and passes it on. With several computers
     // and none chosen there is no answer, and he is asked to choose (`DeskView::choose_main`).
     state.main()
+}
+
+impl Desk {
+    /// The radio of the computer that has a message; when none has it now, nothing, and he is told why.
+    fn owner_or_say(&self, message_id: &str) -> Option<Arc<Radio>> {
+        let radio = self.radio_of(message_id);
+        if radio.is_none() {
+            self.shared.host.note(UNPAIRED.into());
+        }
+        radio
+    }
 }

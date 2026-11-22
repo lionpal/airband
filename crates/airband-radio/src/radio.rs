@@ -1,5 +1,6 @@
 //! One paired computer's radio: its link, its jobs thread, and everything a host can ask of it.
 use super::*;
+use airband_core::radio::wire::{self, Nothing, at};
 mod asks;
 
 /// What the radio's waiting threads sleep on: they are woken when there is something to do (a message to send,
@@ -43,7 +44,6 @@ impl Kept {
     }
 }
 
-#[derive(uniffi::Object)]
 pub struct Radio {
     pub(crate) jobs: Mutex<Sender<Job>>,
     pub(crate) stop: Arc<AtomicBool>,
@@ -62,12 +62,10 @@ pub struct Radio {
     pub(crate) reading: std::sync::atomic::AtomicU64,
 }
 
-#[uniffi::export]
 impl Radio {
     /// Start working with the tower this pairing link leads to (the link `airband pair` prints). Returns at
     /// once; fails only if the link is not a pairing link. `data_dir` is a folder of the app's own where
     /// unsent messages and the recent chat are kept across restarts; empty keeps nothing.
-    #[uniffi::constructor]
     pub fn start(link: String, data_dir: String, host: Arc<dyn RadioHost>) -> Result<Arc<Self>, RadioError> {
         // a radio on its own is a text radio (a terminal): what is said is shown by the host and what he says
         // is a line he types. That is what it is started with, as its choice for each.
@@ -129,23 +127,6 @@ impl Radio {
         Kept { session: self.session.clone(), store: self.store.clone() }
     }
 
-    /// Ask this computer something and read its answer. A reason it gives in words (`error`) is told to him
-    /// as it is; anything else that is not the answer asked for is a refusal. Every request but his own words
-    /// goes through here.
-    fn asked<T: serde::de::DeserializeOwned>(&self, method: Method, path: &str, body: Option<Value>) -> Result<T, RadioError> {
-        let (status, v) = self.link.request(method, path, body)?;
-        match (status, v["error"].as_str()) {
-            (200, None) => serde_json::from_value(v).map_err(|_| RadioError::Refused),
-            // a no, with its reason when it gave one: read the one way every refusal is ([`LinkError::Tower`])
-            (status, error) => Err(LinkError::Tower { status, error: error.unwrap_or_default().into() }.into()),
-        }
-    }
-
-    /// A request whose answer is nothing or a reason in words. `body` is one of the tower's own request types.
-    fn ask(&self, path: &str, body: &impl serde::Serialize) -> Result<(), RadioError> {
-        self.asked::<serde::de::IgnoredAny>(Method::Post, path, Some(serde_json::to_value(body).expect("a request type writes as JSON"))).map(|_| ())
-    }
-
     /// Is this computer being reached straight, on its own network, and not through the relay?
     pub(crate) fn near(&self) -> bool {
         self.link.is_direct()
@@ -165,14 +146,10 @@ impl Radio {
         }
         // His computer is asked for the words as they are read, and they are said here. When the voice he chose
         // cannot speak he is told why (`say_until` does), and nothing else reads it in its place.
-        #[derive(serde::Deserialize)]
-        struct Words {
-            text: String,
-        }
-        let words: Words = match self.asked(Method::Get, &format!("/message/{id}?{}", airband_core::radio::wire::query_of(&airband_core::radio::wire::MessageQuery { form: Some(airband_core::radio::Form::Spoken), part })), None) {
+        let words = match self.link.call::<at::Message>(Some(id), &wire::MessageQuery { form: Some(airband_core::radio::Form::Spoken), part }, &Nothing {}) {
             Ok(words) => words,
             Err(e) => {
-                self.host.told(match e {
+                self.host.told(match RadioError::from(e) {
                     RadioError::Told { reason } => reason,
                     e => format!("That could not be read aloud: {e}."),
                 });
@@ -290,9 +267,8 @@ impl Radio {
         // with an address of the tower's still to try, this request does not wait for news: it only finds out
         // whether the tower is there, so the straight path is in use (and shown) within a moment
         let wait = if self.link.untried() { 0 } else { wait_seconds };
-        let ask = airband_core::radio::wire::FeedQuery { since: Some(since), roster: Some(roster), wait, ..Default::default() };
-        let feed: Feed = self.asked(Method::Get, &format!("/feed?{}", airband_core::radio::wire::query_of(&ask)), None)?;
-        spoken_alike(&feed)?;
+        let ask = wire::FeedQuery { since: Some(since), roster: Some(roster), wait, ..Default::default() };
+        let feed = self.link.call::<at::Feed>(None, &ask, &Nothing {})?;
         self.roster.store(feed.roster_rev, Ordering::SeqCst);
         self.link.set_direct(feed.direct.clone());
         // what has come of things he said: a typed message leaves the outbox, and whoever is waiting on
@@ -344,9 +320,8 @@ impl Radio {
     /// each message cut to a line or two. Waits up to `wait_seconds` (25 at most) for something new. Blocks:
     /// call it off the main thread.
     pub fn feed(&self, team: Option<String>, agent: Option<String>, after: u64, wait_seconds: u32) -> Result<ChatFeed, RadioError> {
-        let ask = airband_core::radio::wire::FeedQuery { team: team.map(Into::into), agent: agent.map(Into::into), after, wait: wait_seconds, ..Default::default() };
-        let feed: Feed = self.asked(Method::Get, &format!("/feed?{}", airband_core::radio::wire::query_of(&ask)), None)?;
-        spoken_alike(&feed)?;
+        let ask = wire::FeedQuery { team: team.map(Into::into), agent: agent.map(Into::into), after, wait: wait_seconds, ..Default::default() };
+        let feed = self.link.call::<at::Feed>(None, &ask, &Nothing {})?;
         self.link.set_direct(feed.direct.clone());
         Ok(chat_feed(feed))
     }
@@ -377,7 +352,7 @@ impl Radio {
         }
         let (mut bytes, mut from) = (Vec::new(), 0u32);
         loop {
-            let part: airband_core::radio::PicturePart = self.asked(Method::Get, &format!("/picture/{id}?from={from}"), None)?;
+            let part = self.link.call::<at::Picture>(Some(&id), &wire::PartQuery { from: from as usize }, &Nothing {})?;
             bytes.extend(airband_core::encode::unbase64(&part.data).ok_or(RadioError::Refused)?);
             // a part that moves nothing forward would loop for ever
             if part.done || part.next <= from {
@@ -392,7 +367,7 @@ impl Radio {
     /// He has read these in the chat, so call mode will not also read them out.
     pub(crate) fn seen(&self, ids: Vec<String>) {
         for id in ids {
-            self.link.tell("/heard", &Heard { id });
+            self.link.tell::<at::Heard>(&Heard { id });
         }
     }
 
@@ -437,8 +412,8 @@ impl Radio {
     /// that time it is left in the outbox under the same id, to go when it can, and the caller is told.
     pub(crate) fn answer_now(&self, text: String, re: String, act: Option<Act>) -> Result<(), RadioError> {
         // one record of it, tried now and kept as it is: a button's answer stays what the button stood for
-        let out = Outgoing::new(random_hex(12), text, Some(re), None, None, Vec::new(), String::new()).with_act(act.as_ref());
-        let u = out.utterance().expect("made here, so it reads");
+        let out = Outgoing::new(random_hex(12), text, Some(re), None, None, Vec::new(), Vec::new()).with_act(act.as_ref());
+        let u = out.utterance();
         let mut failed = LinkError::Unreachable(Way::Relay);
         for attempt in 0..3 {
             if attempt > 0 {

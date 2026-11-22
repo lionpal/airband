@@ -3,98 +3,101 @@
 use super::*;
 
 impl Radio {
+    /// A request whose answer is nothing but that it was done.
+    fn done<E: wire::Endpoint<Query = Nothing, Answer = wire::Done>>(&self, body: &E::Body) -> Result<(), RadioError> {
+        self.link.call::<E>(None, &Nothing {}, body)?;
+        Ok(())
+    }
+
     /// The rest of a message: the fuller spoken version, or with `full` exactly what the agent wrote.
     pub(crate) fn more(&self, id: String, full: bool) -> Result<String, RadioError> {
-        #[derive(serde::Deserialize)]
-        struct Whole {
-            text: String,
-        }
-        Ok(self.asked::<Whole>(Method::Get, &format!("/message/{id}?{}", airband_core::radio::wire::query_of(&airband_core::radio::wire::MessageQuery { form: Some(if full { airband_core::radio::Form::Full } else { airband_core::radio::Form::Detail }), part: None })), None)?.text)
+        let form = Some(if full { airband_core::radio::Form::Full } else { airband_core::radio::Form::Detail });
+        Ok(self.link.call::<at::Message>(Some(&id), &wire::MessageQuery { form, part: None }, &Nothing {})?.text)
     }
 
     /// The accounts the agents on this computer can run under, and how much of each is used. `fresh` asks the
     /// tower to check again now. Blocks: call it off the main thread.
-    pub(crate) fn accounts(&self, computer: &crate::DeskComputer, fresh: bool) -> Result<StationAccounts, RadioError> {
-        Ok(StationAccounts::from(computer, self.asked(Method::Get, if fresh { "/accounts?fresh=1" } else { "/accounts" }, None)?))
+    pub(crate) fn accounts(&self, fresh: bool) -> Result<airband_core::radio::Accounts, RadioError> {
+        Ok(self.link.call::<at::Accounts>(None, &wire::AccountsQuery { fresh }, &Nothing {})?)
     }
 
     /// Move this computer's sessions of one harness to another account. Returns how things stand afterwards.
     /// Blocks: call it off the main thread.
     pub(crate) fn use_account(&self, computer: &crate::DeskComputer, harness: String, id: String) -> Result<StationAccounts, RadioError> {
-        Ok(StationAccounts::from(computer, self.asked(Method::Post, "/accounts/use", Some(serde_json::to_value(airband_core::radio::UseAccount { harness, id }).unwrap()))?))
+        Ok(StationAccounts::from(computer, self.link.call::<at::UseAccount>(None, &Nothing {}, &airband_core::radio::UseAccount { harness, id })?))
     }
 
     /// Put an agent in another team: one that exists, or a new one of that name. Returns what the agent is
     /// called now and the team it is in. Blocks: call it off the main thread.
     pub(crate) fn move_agent(&self, agent: String, to: airband_core::radio::TeamPick) -> Result<airband_core::radio::Moved, RadioError> {
-        self.asked(Method::Post, "/team", Some(serde_json::to_value(airband_core::radio::MoveAgent { agent, to }).unwrap()))
+        Ok(self.link.call::<at::Team>(None, &Nothing {}, &airband_core::radio::MoveAgent { agent, to })?)
     }
 
     /// Stop what an agent the tower runs is doing, now. Blocks: call it off the main thread.
     pub(crate) fn stop_agent(&self, agent: String) -> Result<(), RadioError> {
-        self.ask("/stop", &airband_core::radio::StopAgent { agent })
+        self.done::<at::Stop>(&airband_core::radio::StopAgent { agent })
     }
     /// End an agent the tower runs. Blocks: call it off the main thread.
     pub(crate) fn end_agent(&self, agent: String) -> Result<(), RadioError> {
-        self.ask("/end", &airband_core::radio::EndAgent { agent })
+        self.done::<at::End>(&airband_core::radio::EndAgent { agent })
     }
     /// Tell this computer which names his other computers' agents go by. Blocks.
     pub(crate) fn taken(&self, callsigns: &[airband_core::routing::Callsign]) -> bool {
-        let taken = airband_core::radio::Taken { callsigns: callsigns.to_vec() };
-        self.link.request(Method::Post, "/taken", Some(serde_json::to_value(taken).unwrap())).is_ok_and(|(status, _)| status == 200)
+        self.done::<at::Taken>(&airband_core::radio::Taken { callsigns: callsigns.to_vec() }).is_ok()
     }
     /// Let a question go without answering it. Blocks: call it off the main thread.
     pub(crate) fn dismiss(&self, message: String) -> Result<(), RadioError> {
-        self.ask("/dismiss", &airband_core::radio::Dismiss { message })
+        self.done::<at::Dismiss>(&airband_core::radio::Dismiss { message })
     }
-    /// Take back something he said that is still waiting its turn. Blocks: call it off the main thread.
     /// Choose what reads for this tower. Blocks while the tower tries it with a real call.
     pub(crate) fn set_reads(&self, wanted: &airband_core::radio::SetReads) -> Result<(), RadioError> {
-        self.ask("/reads", wanted)
+        self.link.call::<at::Reads>(None, &Nothing {}, wanted)?;
+        Ok(())
     }
 
     /// What this computer can read with, and what it reads with now, by its own account. Nothing when it
     /// cannot be reached, or is a version from before it could say. Blocks.
     pub(crate) fn reads_offered(&self) -> Option<airband_core::radio::ReadsOffered> {
-        self.asked(Method::Get, "/reads", None).ok()
+        self.link.call::<at::ReadsOffered>(None, &Nothing {}, &Nothing {}).ok()
     }
 
     /// Rename one of his teams on this computer. Answers with the name it now has. Blocks.
     pub(crate) fn rename_team(&self, team: String, to: String) -> Result<String, RadioError> {
-        Ok(self.asked::<airband_core::radio::TeamRenamed>(Method::Post, "/team/rename", Some(serde_json::to_value(airband_core::radio::RenameTeam { team, to }).unwrap()))?.team)
+        Ok(self.link.call::<at::RenameTeam>(None, &Nothing {}, &airband_core::radio::RenameTeam { team, to })?.team)
     }
     /// The folders inside one of his on this computer. Blocks.
     pub(crate) fn folders(&self, under: String) -> Result<airband_core::radio::Folders, RadioError> {
-        self.asked(Method::Post, "/folders", Some(serde_json::to_value(airband_core::radio::FoldersAsk { under }).unwrap()))
+        Ok(self.link.call::<at::Folders>(None, &Nothing {}, &airband_core::radio::FoldersAsk { under })?)
     }
     /// The folders the coding tools on this computer have had sessions in, newest first. Blocks.
     pub(crate) fn recent(&self) -> Result<airband_core::radio::Recent, RadioError> {
-        self.asked(Method::Get, "/recent", None)
+        Ok(self.link.call::<at::Recent>(None, &Nothing {}, &Nothing {})?)
     }
     /// Make a new team on this computer, or start another agent in one that is there. Blocks.
     /// Answers with the team's id on the computer.
     pub(crate) fn new_project(&self, name: String, folder: String, make: bool, tool: Option<String>) -> Result<String, RadioError> {
-        Ok(self.asked::<airband_core::radio::ProjectMade>(Method::Post, "/project", Some(serde_json::to_value(airband_core::radio::NewProject { name, folder, make, tool }).unwrap()))?.id)
+        Ok(self.link.call::<at::Project>(None, &Nothing {}, &airband_core::radio::NewProject { name, folder, make, tool })?.id)
     }
 
+    /// Take back something he said that is still waiting its turn. Blocks: call it off the main thread.
     pub(crate) fn unsend(&self, message: String) -> Result<(), RadioError> {
-        self.ask("/unsend", &airband_core::radio::Unsend { message })
+        self.done::<at::Unsend>(&airband_core::radio::Unsend { message })
     }
 
     /// Have the tower take over an agent he started in a terminal: that session ends there and carries on in a
     /// process the tower holds. Blocks: call it off the main thread.
     pub(crate) fn take_over(&self, agent: String) -> Result<(), RadioError> {
-        self.ask("/takeover", &airband_core::radio::TakeOver { agent })
+        self.done::<at::TakeOver>(&airband_core::radio::TakeOver { agent })
     }
 
     /// Tell the tower which coding tools he uses, the one he uses most first.
     pub(crate) fn uses_tools(&self, tools: &[String]) -> Result<(), RadioError> {
-        self.ask("/tools", &airband_core::radio::UsesTools { tools: tools.to_vec() })
+        self.done::<at::Tools>(&airband_core::radio::UsesTools { tools: tools.to_vec() })
     }
 
     /// Tell the tower where this radio can be woken with a notification (its address at a push service), or
     /// with an empty token that it no longer can.
     pub(crate) fn push_target(&self, provider: desk::PushService, token: &str) -> Result<(), RadioError> {
-        self.ask("/push", &airband_core::radio::PushTarget { provider, token: token.into() })
+        self.done::<at::Push>(&airband_core::radio::PushTarget { provider, token: token.into() })
     }
 }

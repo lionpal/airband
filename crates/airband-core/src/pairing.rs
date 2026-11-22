@@ -34,6 +34,28 @@ impl Pairing {
             _ => Err("that is not a whole pairing link: copy it again from your computer, or scan its code".into()),
         }
     }
+    /// The link, with the name of the computer it pairs with: what a phone calls that computer before it has
+    /// ever reached it.
+    pub fn link_named(&self, computer: &str) -> String {
+        if computer.is_empty() {
+            return self.link();
+        }
+        format!("{}&{}", self.link(), query(&[("name", computer)]))
+    }
+    /// What a phone may call the computer a link pairs with before it has ever reached it: the name the link
+    /// carries, or else the host the link reaches it at. Nothing for a link through a relay that names none.
+    pub fn computer_in(link: &str) -> Option<String> {
+        let query = link.trim().strip_prefix("airband://pair?")?;
+        if let Some((_, name)) = url::form_urlencoded::parse(query.as_bytes()).find(|(k, v)| k == "name" && !v.is_empty()) {
+            return Some(name.into_owned());
+        }
+        let at = match Pairing::parse(link).ok()? {
+            Pairing::Direct { url, .. } => url,
+            Pairing::Near { at, .. } => at.into_iter().next()?,
+            Pairing::Relay { .. } => return None,
+        };
+        url::Url::parse(&at).ok()?.host_str().map(str::to_string)
+    }
     pub fn link(&self) -> String {
         match self {
             Pairing::Relay { relay, secret } => format!("airband://pair?{}", query(&[("relay", relay), ("secret", secret)])),
@@ -53,6 +75,16 @@ mod tests {
             assert_eq!(Pairing::parse(&p.link()).unwrap(), p);
         }
         assert_eq!(Pairing::parse("airband://pair?url=http%3A%2F%2Fx%3A1%2F&token=a").unwrap(), Pairing::Direct { url: "http://x:1".into(), token: "a".into() });
+    }
+    #[test]
+    fn a_link_says_what_its_computer_is_called_or_where_it_is_and_still_reads_as_the_same_pairing() {
+        let relay = Pairing::Relay { relay: "https://relay.example".into(), secret: "ab".repeat(32) };
+        let named = relay.link_named("Studio Mac");
+        assert_eq!(Pairing::parse(&named).unwrap(), relay);
+        assert_eq!(Pairing::computer_in(&named).as_deref(), Some("Studio Mac"));
+        assert_eq!(Pairing::computer_in(&relay.link()), None);
+        let direct = Pairing::Direct { url: "http://studio.local:7373".into(), token: "t".into() };
+        assert_eq!(Pairing::computer_in(&direct.link()).as_deref(), Some("studio.local"));
     }
     #[test]
     fn refuses_what_is_not_a_pairing() {
