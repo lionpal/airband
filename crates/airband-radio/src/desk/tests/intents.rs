@@ -42,7 +42,7 @@ fn temp(what: &str) -> std::path::PathBuf {
     dir
 }
 fn reads_lines(desk: &Desk) -> Vec<(String, DeskDelivery)> {
-    desk.view(None, None).intents.into_iter().filter(|i| i.kind == IntentKind::Reads).flat_map(|i| i.computers.into_iter().map(|c| (c.name, c.state))).collect()
+    looked(desk, None, None).intents.into_iter().filter(|i| i.kind == IntentKind::Reads).flat_map(|i| i.computers.into_iter().map(|c| (c.name, c.state))).collect()
 }
 
 #[test]
@@ -166,7 +166,7 @@ fn where_the_phone_can_be_woken_goes_to_each_computer_once_and_a_no_stays_with_t
     // the follow loop goes round again: neither is asked again, the one that said no included
     thread::sleep(Duration::from_millis(100));
     let after = (studio.asked_on::<at::Push>(), laptop.asked_on::<at::Push>());
-    let lines: Vec<(String, DeskDelivery)> = desk.view(None, None).intents.into_iter().filter(|i| i.kind == IntentKind::Push).flat_map(|i| i.computers.into_iter().map(|c| (c.name, c.state))).collect();
+    let lines: Vec<(String, DeskDelivery)> = looked(&desk, None, None).intents.into_iter().filter(|i| i.kind == IntentKind::Push).flat_map(|i| i.computers.into_iter().map(|c| (c.name, c.state))).collect();
     desk.stop();
     let _ = std::fs::remove_dir_all(&dir);
     assert!(asked.0 >= 1 && asked.1 >= 1, "{asked:?}");

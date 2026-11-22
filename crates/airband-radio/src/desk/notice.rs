@@ -89,3 +89,78 @@ pub fn open_notice(links: Vec<String>, sealed: String, colours: std::collections
         })
     })
 }
+
+/// The id of the button for the answer at `index` among a notification's answers. [`notice_tap`] reads it back.
+#[uniffi::export]
+pub fn notice_option_id(index: u32) -> String {
+    format!("{OPTION}{index}")
+}
+/// What a notification button stood for, from the id it was made with: allow, deny, or one of the answers it
+/// offered. Nothing for any other id (the reply box, or a tap on the notification itself).
+#[uniffi::export]
+pub fn notice_tap(action: String) -> Option<Tapped> {
+    match action.as_str() {
+        ALLOW_ID => Some(Tapped::Allow),
+        DENY_ID => Some(Tapped::Deny),
+        _ => action.strip_prefix(OPTION).and_then(|n| n.parse().ok()).map(|index| Tapped::Option { index }),
+    }
+}
+/// The name of the set of buttons for these answers: the same answers always get the same name.
+#[uniffi::export]
+pub fn notice_answers_name(options: Vec<String>) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in options.join("\u{1}").bytes() {
+        h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{ANSWERS}{h:x}")
+}
+/// The set of buttons is one made for a question's answers ([`notice_answers_name`]): one of those the host
+/// lets go of once there are many.
+#[uniffi::export]
+pub fn notice_is_answers(name: String) -> bool {
+    name.strip_prefix(ANSWERS).is_some_and(|h| !h.is_empty() && u64::from_str_radix(h, 16).is_ok())
+}
+/// The ids notification buttons are made with.
+#[uniffi::export]
+pub fn notice_allow_id() -> String {
+    ALLOW_ID.into()
+}
+#[uniffi::export]
+pub fn notice_deny_id() -> String {
+    DENY_ID.into()
+}
+const ALLOW_ID: &str = "allow";
+const DENY_ID: &str = "deny";
+const OPTION: &str = "option.";
+const ANSWERS: &str = "airband.o.";
+
+/// An agent's state, as it is said to someone who cannot see its dot.
+#[uniffi::export]
+pub fn spoken_state(state: AgentState) -> String {
+    match state {
+        AgentState::Asking => "waiting on you",
+        AgentState::Stalled => "stopped",
+        AgentState::Working => "working",
+        AgentState::Idle => "idle",
+        AgentState::Unknown => "state not known",
+    }
+    .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_button_id_reads_back_as_what_it_was_made_for_and_no_other_id_does() {
+        assert_eq!(notice_tap(notice_option_id(2)), Some(Tapped::Option { index: 2 }));
+        assert_eq!(notice_tap(notice_allow_id()), Some(Tapped::Allow));
+        assert_eq!(notice_tap(notice_deny_id()), Some(Tapped::Deny));
+        assert_eq!(notice_tap("reply".into()), None);
+        assert_eq!(notice_tap("option.x".into()), None);
+        let name = notice_answers_name(vec!["Yes".into(), "No".into()]);
+        assert_eq!(name, notice_answers_name(vec!["Yes".into(), "No".into()]));
+        assert!(notice_is_answers(name));
+        assert!(!notice_is_answers("airband.reply".into()));
+    }
+}

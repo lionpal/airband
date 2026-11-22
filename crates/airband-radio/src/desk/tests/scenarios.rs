@@ -67,7 +67,7 @@ fn n25_what_did_not_go_is_still_shown_after_a_relaunch_and_can_be_let_go() {
     // the app is opened again
     let desk = opened(&dir);
     desk.set_links(vec![nobody(1)]);
-    let shown: Vec<String> = desk.view(None, None).sending.into_iter().map(|o| o.id).collect();
+    let shown: Vec<String> = looked(&desk, None, None).sending.into_iter().map(|o| o.id).collect();
     let kept: Vec<String> = radio_at(&desk, 0).unsent().into_iter().map(|o| o.id).collect();
     let let_go = desk.discard_unsent(given_up.clone());
     desk.stop();
@@ -168,7 +168,7 @@ fn a_computer_is_called_what_it_last_said_from_the_moment_the_app_opens() {
     // the app is opened again, and neither computer has answered yet
     let desk = opened(&dir);
     desk.set_links(vec![nobody(1), nobody(2)]);
-    let names: Vec<String> = desk.view(None, None).stations.into_iter().map(|c| c.name).collect();
+    let names: Vec<String> = looked(&desk, None, None).stations.into_iter().map(|c| c.name).collect();
     desk.stop();
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(names[1], "Studio");

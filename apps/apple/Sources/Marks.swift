@@ -30,7 +30,7 @@ struct AgentMarks: View {
             }
         }
         .foregroundStyle(Palette.quiet)
-        .accessibilityElement().accessibilityLabel([model.tool(of: agent.harness)?.name ?? "", model.computerName(agent.station)].filter { !$0.isEmpty }.joined(separator: ", "))
+        .accessibilityElement().accessibilityLabel([agent.toolName, model.computerName(agent.station)].filter { !$0.isEmpty }.joined(separator: ", "))
     }
 }
 /// How many things have been said somewhere he is not looking: a small count. Nothing when there are none.

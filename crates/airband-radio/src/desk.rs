@@ -169,8 +169,40 @@ pub(crate) struct State {
     /// What every computer is to be told about this device, with how each stands with it.
     pub(crate) intents: intents::KeptIntents,
     read: ReadMarks,
+    /// What he is looking at: kept here so it stays valid as teams come and go ([`Desk::look`]).
+    focus: Focus,
+}
+/// What he is looking at: everyone, one team, or one agent; and a team he has just made, which stays open
+/// while it waits for its first agent.
+#[derive(Default)]
+pub(crate) struct Focus {
+    room: Option<String>,
+    agent: Option<String>,
+    made: Option<String>,
 }
 impl State {
+    /// Keep what he is looking at valid. A team he has just made stays open until its first agent shows; any
+    /// other team or agent that is no longer there is let go, once a computer can be reached to say so.
+    fn keep_focus(&mut self) {
+        let rooms: HashSet<String> = self.computers.iter().flat_map(|s| s.agents.iter().map(|a| a.room.clone())).collect();
+        if self.focus.made.as_ref().is_some_and(|m| rooms.contains(m)) {
+            self.focus.made = None;
+        }
+        if !self.computers.iter().any(|s| s.online) {
+            return;
+        }
+        if let Some(room) = &self.focus.room
+            && !rooms.contains(room)
+            && self.focus.made.as_ref() != Some(room)
+        {
+            self.focus = Focus { made: self.focus.made.take(), ..Focus::default() };
+        }
+        if let Some(agent) = &self.focus.agent
+            && !self.computers.iter().any(|s| s.agents.iter().any(|a| a.id == *agent))
+        {
+            self.focus.agent = None;
+        }
+    }
     /// Every computer's radio, in the computers' order.
     fn radios(&self) -> Vec<Arc<Radio>> {
         self.computers.iter().map(|s| s.radio.clone()).collect()
@@ -243,6 +275,7 @@ impl State {
                 s.messages.iter().map(move |m| {
                     ChatMessage {
                         station: if several { s.id() } else { String::new() },
+                        computer: if several { self.computer_name(&s.id()) } else { String::new() },
                         colour: self.colours.of(&m.room),
                         ..m.clone()
                     }

@@ -101,6 +101,53 @@ impl StationAccounts {
     }
 }
 
+/// One coding tool's accounts, over all his computers: what the accounts screen shows under the tool's name.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ToolAccounts {
+    /// The tool's id, and what it is called (from the catalogue; its id when the catalogue does not list it).
+    pub harness: String,
+    pub name: String,
+    pub rows: Vec<AccountRow>,
+}
+/// One account on one computer, as a row.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AccountRow {
+    /// The computer, by id, to pass back to switch; and its name, shown only when he has several.
+    pub station: String,
+    pub computer: String,
+    /// What the row says: the account's name, or "Key …ab12" for a key.
+    pub shown: String,
+    pub entry: AccountEntry,
+}
+
+/// Every computer's accounts, grouped by coding tool in the catalogue's order: the accounts screen.
+#[uniffi::export]
+pub fn accounts_by_tool(accounts: Vec<StationAccounts>) -> Vec<ToolAccounts> {
+    let several = accounts.len() > 1;
+    let tools = crate::services::coding_tools();
+    let mut out: Vec<ToolAccounts> = Vec::new();
+    for station in &accounts {
+        for entry in &station.accounts {
+            let row = AccountRow {
+                station: station.station.clone(),
+                computer: if several { station.name.clone() } else { String::new() },
+                shown: match &entry.who {
+                    AccountWho::Key { last4 } => format!("Key \u{2026}{last4}"),
+                    _ => entry.label.clone(),
+                },
+                entry: entry.clone(),
+            };
+            match out.iter_mut().find(|t| t.harness == entry.harness) {
+                Some(t) => t.rows.push(row),
+                None => out.push(ToolAccounts { harness: entry.harness.clone(), name: tools.iter().find(|t| t.id == entry.harness).map(|t| t.name.clone()).unwrap_or_else(|| entry.harness.clone()), rows: vec![row] }),
+            }
+        }
+    }
+    let place = |h: &str| tools.iter().position(|t| t.id == h).unwrap_or(usize::MAX);
+    out.sort_by_key(|t| place(&t.harness));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,5 +200,16 @@ mod tests {
         let other_org = AccountIdentity::Id { id: "p1".into(), org: Some("other".into()) };
         let told = [(computer("mini"), on(vec![account("me", person("p1"), true)])), (computer("laptop"), on(vec![account("me", other_org, false)]))];
         assert!(StationAccounts::across(&told)[1].accounts[0].limits.is_empty());
+    }
+
+    #[test]
+    fn accounts_are_shown_by_tool_and_a_key_by_its_last_four() {
+        let mut key = account("x", AccountIdentity::of_key("openai", "sk-abcd1234"), false);
+        key.harness = "codex".into();
+        let told = [(computer("mini"), on(vec![account("me@example.com", person("p1"), true), key]))];
+        let shown = accounts_by_tool(StationAccounts::across(&told));
+        let names: Vec<(&str, Vec<&str>)> = shown.iter().map(|t| (t.harness.as_str(), t.rows.iter().map(|r| r.shown.as_str()).collect())).collect();
+        assert!(names.iter().any(|(h, rows)| *h == "codex" && rows == &vec!["Key \u{2026}1234"]), "{names:?}");
+        assert!(shown.iter().all(|t| t.rows.iter().all(|r| r.computer.is_empty())), "one computer is never named");
     }
 }

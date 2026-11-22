@@ -104,7 +104,7 @@ fn a_computer_that_refuses_this_phone_is_shown_as_out_of_reach_and_the_others_ar
     assert!(answered(&desk, &link(1)));
     let mut away = Vec::new();
     for _ in 0..300 {
-        away = desk.view(None, None).away;
+        away = looked(&desk, None, None).away;
         if !away.is_empty() {
             break;
         }
@@ -114,4 +114,23 @@ fn a_computer_that_refuses_this_phone_is_shown_as_out_of_reach_and_the_others_ar
     desk.stop();
     assert!(asked >= 2, "the refusing computer was not asked through its own connection");
     assert_eq!(away, ["127.0.0.1"], "only the computer that refused is out of reach");
+}
+
+#[test]
+fn a_team_that_has_gone_is_let_go_of_and_one_just_made_stays_open_until_its_first_agent() {
+    let desk = desk_with(vec![(link(1), tower("studio"))]);
+    desk.set_links(vec![link(1)]);
+    assert!(answered(&desk, &link(1)), "the stand-in tower was never heard");
+    desk.look(Some("gone-room".into()), Some("gone-agent".into()));
+    let gone = desk.view().focus;
+    desk.shared.state.lock().unwrap().focus = Focus { room: Some("made-room".into()), agent: None, made: Some("made-room".into()) };
+    let made = desk.view().focus;
+    desk.look(None, None);
+    let after = desk.view().focus;
+    let still_made = desk.shared.state.lock().unwrap().focus.made.clone();
+    desk.stop();
+    assert_eq!(gone, DeskFocus::default(), "a team no computer has is let go of");
+    assert_eq!(made.room.as_deref(), Some("made-room"), "a team he has just made stays open while it waits for its first agent");
+    assert_eq!(after, DeskFocus::default());
+    assert_eq!(still_made.as_deref(), Some("made-room"), "looking elsewhere does not forget the team waiting for its agent");
 }
