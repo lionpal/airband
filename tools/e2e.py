@@ -55,9 +55,15 @@ env = dict(os.environ, HOME=home, AIRBAND_TRACE="1", AIRBAND_CLAUDE_API=f"http:/
 env.pop("CLAUDE_CONFIG_DIR", None)
 
 results = []
+skipped = []
 def check(name, ok, detail=""):
     results.append((name, bool(ok)))
     print(("  ok    " if ok else "  FAIL  ") + name + (f"   [{detail}]" if detail and not ok else ""), flush=True)
+def skip(names, why):
+    # a check that does not run is said, and counted, so a smaller total is never taken for a pass
+    for name in names:
+        skipped.append(name)
+        print(f"  skip  {name}   [{why}]", flush=True)
 
 # Where each radio here says it stands, which every request of a radio's says: the one that types has the chat
 # in front of him; the ones that read aloud are on a call.
@@ -538,6 +544,8 @@ Send it as written, or do you want changes?""")
     if sys.platform == "darwin":
         print("Accounts")
         accounts_check()
+    else:
+        skip(["the accounts checks"], "they need macOS's keychain")
 
     if "--claude" in sys.argv:
         print("A real Claude Code session asks permission")
@@ -566,6 +574,8 @@ Send it as written, or do you want changes?""")
             say("Allow", re=card["id"], act={"kind": "verdict", "allow": True})
         t.join(180)
         check("after Allow from the radio, Claude ran it", os.path.exists(os.path.join(proj, "made-by-claude.txt")), done)
+    else:
+        skip(["Claude Code's permission prompt arrives as a question", "it says exactly what will run", "after Allow from the radio, Claude ran it"], "run with --claude")
     print("An answer that comes late")
     os.makedirs(os.path.join(projects, "late"), exist_ok=True)
     report("late1", "late", "late", "checkin")
@@ -695,7 +705,7 @@ finally:
     tower.wait(10)
 
 failed = [name for name, ok in results if not ok]
-print(f"\n{len(results) - len(failed)} of {len(results)} passed." + ("" if not failed else "  Failed:\n  - " + "\n  - ".join(failed)))
+print(f"\n{len(results) - len(failed)} of {len(results)} passed." + (f" {len(skipped)} skipped." if skipped else "") + ("" if not failed else "  Failed:\n  - " + "\n  - ".join(failed)))
 if failed:
     print(f"The tower's log, with what the routing model was asked and said: {os.path.join(work, 'tower.log')}")
 if not failed:
