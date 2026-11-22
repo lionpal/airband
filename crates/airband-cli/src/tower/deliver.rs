@@ -65,6 +65,11 @@ pub(super) async fn deliver(app: &Arc<App>, how: &Deliver, agent_id: &str, conte
             Deliver::Unknown => Err("this tower does not know its kind of delivery".into()),
         }
     };
+    // one the tower runs may have to be carried on first, which has its own, longer bounds: cut part way, its
+    // holder would go on starting with nobody keeping track of it
+    if *how == Deliver::Held {
+        return run.await;
+    }
     tokio::time::timeout(Duration::from_secs(30), run).await.map_err(|_| "it did not take the message within 30 seconds".to_string())?
 }
 
