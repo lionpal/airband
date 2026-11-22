@@ -26,7 +26,7 @@ struct AccountsView: View {
                 }
                 if model.accounts.isEmpty {
                     Text(model.accountsLoading ? "Checking…" : "No accounts yet.").font(.system(size: 15)).foregroundStyle(Palette.quiet).padding(.horizontal, 6)
-                } else {
+                } else if model.accounts.contains(where: { !$0.accounts.isEmpty }) {
                     Text("To add an account, sign in on the computer.").font(.system(size: 14)).foregroundStyle(Palette.quiet).padding(.horizontal, 6)
                 }
             }
