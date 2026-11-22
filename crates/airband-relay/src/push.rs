@@ -35,9 +35,7 @@ pub struct Push {
     apns: Option<Apns>,
 }
 
-fn var(k: &str) -> Option<String> {
-    std::env::var(k).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
-}
+use super::var;
 
 impl Push {
     pub fn from_env() -> Push {
@@ -167,12 +165,7 @@ pub const PUSHES_IN: Duration = Duration::from_secs(600);
 
 /// May this channel send another now? Counts it if so.
 pub fn allow(slot: &mut Option<(Instant, u32)>, now: Instant) -> bool {
-    let (began, sent) = slot.filter(|(began, _)| now.duration_since(*began) < PUSHES_IN).unwrap_or((now, 0));
-    if sent >= PUSHES {
-        return false;
-    }
-    *slot = Some((began, sent + 1));
-    true
+    super::limits::count(slot, PUSHES, PUSHES_IN, now)
 }
 
 #[cfg(test)]

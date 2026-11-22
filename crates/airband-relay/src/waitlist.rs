@@ -13,32 +13,29 @@ pub(super) const A_MINUTE: u32 = 20;
 
 pub(super) const A_DAY: u32 = 2000;
 
-/// How many internet addresses are remembered at once for the hourly count.
-pub(super) const ADDRESSES_KEPT: usize = 20_000;
 
-#[derive(Default)]
 pub(super) struct Signups {
-    pub(super) minute: Option<(Instant, u32)>,
-    pub(super) day: Option<(Instant, u32)>,
-    pub(super) by_address: HashMap<String, (Instant, u32)>,
+    minute: Limiter,
+    day: Limiter,
+    by_address: Limiter,
+}
+
+impl Default for Signups {
+    fn default() -> Signups {
+        Signups { minute: Limiter::new(A_MINUTE, 60), day: Limiter::new(A_DAY, 86_400), by_address: Limiter::new(PER_ADDRESS_AN_HOUR, 3600) }
+    }
 }
 
 impl Signups {
-    /// May this one be taken? Counts it if so.
+    /// May this one be taken? Counts it if so, against everyone's minute and day and its own address's hour:
+    /// all three or none.
     pub(super) fn allow(&mut self, address: &str, now: Instant) -> bool {
-        let fresh = |slot: &Option<(Instant, u32)>, window: u64| slot.filter(|(began, _)| now.duration_since(*began) < Duration::from_secs(window)).unwrap_or((now, 0));
-        let (minute, day) = (fresh(&self.minute, 60), fresh(&self.day, 86_400));
-        self.by_address.retain(|_, (began, _)| now.duration_since(*began) < Duration::from_secs(3600));
-        let mine = self.by_address.get(address).copied().unwrap_or((now, 0));
-        // an address not seen before, with the table full: refuse rather than forget who has already had their five
-        let room = self.by_address.contains_key(address) || self.by_address.len() < ADDRESSES_KEPT;
-        if minute.1 >= A_MINUTE || day.1 >= A_DAY || mine.1 >= PER_ADDRESS_AN_HOUR || !room {
+        // everyone's counts are kept under one key
+        const ALL: &str = "";
+        if !(self.minute.room(ALL, now) && self.day.room(ALL, now) && self.by_address.room(address, now)) {
             return false;
         }
-        self.minute = Some((minute.0, minute.1 + 1));
-        self.day = Some((day.0, day.1 + 1));
-        self.by_address.insert(address.to_string(), (mine.0, mine.1 + 1));
-        true
+        self.minute.allow(ALL, now) && self.day.allow(ALL, now) && self.by_address.allow(address, now)
     }
 }
 

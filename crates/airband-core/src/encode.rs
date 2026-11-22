@@ -55,6 +55,11 @@ pub fn unbase64_url(text: &str) -> Option<Vec<u8>> {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(text.trim()).ok()
 }
 
+/// Is this hex, of a length in `len`? How an id or a hash is checked before anything is made of it.
+pub fn is_hex(s: &str, len: std::ops::RangeInclusive<usize>) -> bool {
+    len.contains(&s.len()) && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 /// A unit enum's word as its serde name writes it: how a kind or a state is kept in a column, logged, or put in a
 /// query string.
 pub fn word<T: serde::Serialize>(v: &T) -> Option<String> {

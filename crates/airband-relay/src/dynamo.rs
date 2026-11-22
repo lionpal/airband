@@ -49,9 +49,7 @@ impl std::fmt::Display for Failed {
     }
 }
 
-fn var(k: &str) -> Option<String> {
-    std::env::var(k).ok().filter(|v| !v.is_empty())
-}
+use super::var;
 use airband_core::encode::hex;
 fn sha256(data: &[u8]) -> String {
     hex(digest::digest(&digest::SHA256, data).as_ref())

@@ -88,6 +88,11 @@ use waitlist::*;
 /// How many keys (channels or internet addresses) one limit remembers at once.
 const KEYS_KEPT: usize = 20_000;
 
+/// A setting from the environment, trimmed. Nothing when it is not set or says nothing.
+fn var(k: &str) -> Option<String> {
+    std::env::var(k).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+}
+
 struct Relay {
     /// The push services this relay can wake phones through.
     push: push::Push,
@@ -120,14 +125,14 @@ fn bearer(headers: &HeaderMap) -> &str {
     headers.get("authorization").and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).unwrap_or("")
 }
 fn valid_channel(c: &str) -> bool {
-    c.len() == 32 && c.bytes().all(|b| b.is_ascii_hexdigit())
+    airband_core::encode::is_hex(c, 32..=32)
 }
 fn say(code: StatusCode, why: &str) -> Response {
     (code, why.to_string()).into_response()
 }
 /// A token's hash as a tower sends it: 64 hex characters.
 fn radio_hash_given(headers: &HeaderMap) -> Option<&str> {
-    headers.get(RADIO_HASH_HEADER).and_then(|v| v.to_str().ok()).filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+    headers.get(RADIO_HASH_HEADER).and_then(|v| v.to_str().ok()).filter(|h| airband_core::encode::is_hex(h, 64..=64))
 }
 /// What a radio's request gets when it may not use the channel. The same whether the token is missing or wrong
 /// or there is no such channel, so asking tells a stranger nothing about which channels exist.
@@ -332,7 +337,7 @@ async fn hold(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, head
 }
 async fn keep(relay: &Arc<Relay>, channel: &str, headers: &HeaderMap, sealed: Bytes) -> Response {
     let id = headers.get(ID_HEADER).and_then(|v| v.to_str().ok()).unwrap_or("");
-    if !(8..=40).contains(&id.len()) || !id.bytes().all(|b| b.is_ascii_hexdigit()) || sealed.is_empty() {
+    if !airband_core::encode::is_hex(id, 8..=40) || sealed.is_empty() {
         return say(StatusCode::BAD_REQUEST, "a kept message needs an id and a body");
     }
     if let Err(no) = relay.admit(Asks::Queue, channel, headers).await {

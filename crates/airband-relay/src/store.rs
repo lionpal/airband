@@ -80,9 +80,7 @@ pub struct Pg {
     tls: Option<Arc<rustls::ClientConfig>>,
 }
 
-fn var(k: &str) -> Option<String> {
-    std::env::var(k).ok().filter(|v| !v.is_empty())
-}
+use super::var;
 
 impl Store {
     /// From the environment. Fails at once, with the reason, on a half-configured database.

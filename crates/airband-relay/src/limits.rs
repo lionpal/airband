@@ -1,11 +1,22 @@
 //! How much one caller may ask of the relay, and how often.
 use super::*;
 
+/// One count in one stretch of time: may another be taken, at most `most` in each `window`? Counts it if so.
+/// The one rule every limit here is made of.
+pub(super) fn count(slot: &mut Option<(Instant, u32)>, most: u32, window: Duration, now: Instant) -> bool {
+    let (began, taken) = slot.filter(|(began, _)| now.duration_since(*began) < window).unwrap_or((now, 0));
+    if taken >= most {
+        return false;
+    }
+    *slot = Some((began, taken + 1));
+    true
+}
+
 /// At most so many requests per key in each stretch of time. A key is a channel or an internet address.
 pub(super) struct Limiter {
     pub(super) most: u32,
     pub(super) window: Duration,
-    pub(super) by: HashMap<String, (Instant, u32)>,
+    pub(super) by: HashMap<String, Option<(Instant, u32)>>,
     pub(super) swept: Option<Instant>,
 }
 
@@ -13,30 +24,29 @@ impl Limiter {
     pub(super) fn new(most: u32, seconds: u64) -> Limiter {
         Limiter { most, window: Duration::from_secs(seconds), by: HashMap::new(), swept: None }
     }
+    /// Would this one be taken now? Counts nothing.
+    pub(super) fn room(&mut self, key: &str, now: Instant) -> bool {
+        self.sweep(now);
+        match self.by.get(key) {
+            Some(slot) => count(&mut slot.clone(), self.most, self.window, now),
+            // a key not seen before, with the table full: refuse rather than forget what others have used
+            None => self.by.len() < KEYS_KEPT && self.most > 0,
+        }
+    }
     /// May this one be taken? Counts it if so.
     pub(super) fn allow(&mut self, key: &str, now: Instant) -> bool {
-        // forget stretches that are over: now and then, and at once when there is no room left
+        if !self.room(key, now) {
+            return false;
+        }
+        count(self.by.entry(key.to_string()).or_default(), self.most, self.window, now)
+    }
+    /// Forget stretches that are over: now and then, and at once when there is no room left.
+    fn sweep(&mut self, now: Instant) {
         if self.by.len() >= KEYS_KEPT || self.swept.is_none_or(|at| now.duration_since(at) >= self.window) {
             let window = self.window;
-            self.by.retain(|_, (began, _)| now.duration_since(*began) < window);
+            self.by.retain(|_, slot| slot.is_some_and(|(began, _)| now.duration_since(began) < window));
             self.swept = Some(now);
         }
-        let full = self.by.len() >= KEYS_KEPT;
-        match self.by.get_mut(key) {
-            Some((began, count)) if now.duration_since(*began) < self.window => {
-                if *count >= self.most {
-                    return false;
-                }
-                *count += 1;
-            }
-            Some(slot) => *slot = (now, 1),
-            // a key not seen before, with the table full: refuse rather than forget what others have used
-            None if full => return false,
-            None => {
-                self.by.insert(key.to_string(), (now, 1));
-            }
-        }
-        true
     }
 }
 
