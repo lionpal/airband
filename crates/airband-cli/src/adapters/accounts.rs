@@ -1,5 +1,7 @@
-//! A coding tool's accounts: listing them for every tool that has them, switching, and `airband accounts`.
+//! A coding tool's accounts: listing them for every tool that has them, switching, and `airband accounts`; and
+//! who an account is, read the way its tool's row says.
 use super::*;
+use airband_core::identity::{AccountIdentity, IdSource, Place, Under};
 
 /// Every account of every harness that has them.
 pub(crate) fn accounts() -> Accounts {
@@ -17,6 +19,82 @@ fn book(harness: &str) -> Result<&'static AccountBook, String> {
 }
 pub(crate) fn use_account(harness: &str, id: &str) -> Result<std::thread::JoinHandle<()>, String> {
     (book(harness)?.switch)(id)
+}
+
+/// Where a tool row's identity sources are looked for on this computer, and how its tool's environment and
+/// keychain items are read. Tests give throwaway folders and stand-ins.
+pub(crate) struct Looking<'a> {
+    /// The tool's own folder (`Under::Home`).
+    pub(crate) tool_home: std::path::PathBuf,
+    /// His home folder (`Under::User`).
+    pub(crate) user_home: std::path::PathBuf,
+    pub(crate) env: &'a dyn Fn(&str) -> Option<String>,
+    /// A keychain item's value. The one way in is the keychain read a tool's accounts already use; with none,
+    /// keychain sources give nothing.
+    pub(crate) keychain: &'a dyn Fn(&str) -> Option<String>,
+}
+
+/// Who the account a tool is signed in with is, as its row says to find out: the first of its `account_id`
+/// sources that gives anything. A source that holds several (a table of credentials) gives one only when it holds
+/// exactly one: with several, nothing says which is the one in use.
+pub(crate) fn identity_of(tool: &str, at: &Looking) -> AccountIdentity {
+    let Some(row) = super::tool_row(tool) else { return AccountIdentity::None };
+    let Ok(sources) = airband_core::identity::sources(&row.with) else { return AccountIdentity::None };
+    for src in &sources {
+        let mut found = found_at(src, at);
+        if found.len() == 1 {
+            return found.remove(0);
+        }
+        if !found.is_empty() {
+            return AccountIdentity::None;
+        }
+    }
+    AccountIdentity::None
+}
+
+/// Who an account is, from a copy of one of its tool's own files that airband keeps (a saved login keeps the
+/// account record its tool wrote). `file` is the file's name as the row gives it; only the row's sources in a
+/// file of that name are read from the copy.
+pub(crate) fn identity_in_copy(tool: &str, file: &str, doc: &Value) -> AccountIdentity {
+    let Some(row) = super::tool_row(tool) else { return AccountIdentity::None };
+    let Ok(sources) = airband_core::identity::sources(&row.with) else { return AccountIdentity::None };
+    sources
+        .iter()
+        .filter(|s| matches!(&s.place, Place::File { file: f, .. } if f == file))
+        .find_map(|s| s.identity(doc, None))
+        .unwrap_or_default()
+}
+
+/// Every identity one source gives: none, one, or one per row of a table. What is read stays in here: a key is
+/// turned into its fingerprint and last four characters and goes no further.
+fn found_at(src: &IdSource, at: &Looking) -> Vec<AccountIdentity> {
+    let folder = |under: &Under| match under {
+        Under::Home => at.tool_home.clone(),
+        Under::User => at.user_home.clone(),
+    };
+    let one = |doc: Option<Value>| doc.and_then(|d| src.identity(&d, None)).into_iter().collect();
+    match &src.place {
+        Place::File { file, under } => one(std::fs::read(folder(under).join(file)).ok().and_then(|b| serde_json::from_slice(&b).ok())),
+        Place::Env { name } => one((at.env)(name).map(Value::String)),
+        Place::Keychain { service } => one((at.keychain)(service).map(|v| serde_json::from_str(&v).unwrap_or(Value::String(v)))),
+        Place::Sqlite { file, under, table, column, provider_column } => table_rows(&folder(under).join(file), table, column, provider_column)
+            .into_iter()
+            .filter_map(|(provider, doc)| src.identity(&doc, Some(&provider)))
+            .collect(),
+    }
+}
+
+/// Each row's provider and JSON value, read from a database the tool may be writing: opened read-only. Names
+/// come from the built-in row and are quoted whole; one with a quote in it reads nothing.
+fn table_rows(path: &std::path::Path, table: &str, column: &str, provider_column: &str) -> Vec<(String, Value)> {
+    use rusqlite::{Connection, OpenFlags};
+    if [table, column, provider_column].iter().any(|n| n.contains('"')) || !path.is_file() {
+        return Vec::new();
+    }
+    let Ok(db) = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX) else { return Vec::new() };
+    let Ok(mut q) = db.prepare(&format!("SELECT \"{provider_column}\", \"{column}\" FROM \"{table}\"")) else { return Vec::new() };
+    let rows = q.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)));
+    rows.map(|it| it.filter_map(Result::ok).filter_map(|(p, v)| Some((p, serde_json::from_str(&v).ok()?))).collect()).unwrap_or_default()
 }
 
 /// What came of asking the tower on this computer.
@@ -123,6 +201,72 @@ mod tests {
             ByTower::Said(Err(why)) => assert!(why.contains("did not answer in time"), "{why}"),
             other => panic!("a slow tower must not make the switch run here as well: {other:?}"),
         }
+    }
+
+    /// A throwaway folder for one test: his home and the tool's own, with nothing of his in it.
+    fn folder() -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("airband-identity-{}", config::random_hex(4)));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+    fn looking<'a>(home: &std::path::Path, env: &'a dyn Fn(&str) -> Option<String>, keychain: &'a dyn Fn(&str) -> Option<String>) -> Looking<'a> {
+        Looking { tool_home: home.to_path_buf(), user_home: home.to_path_buf(), env, keychain }
+    }
+    const NOTHING: &dyn Fn(&str) -> Option<String> = &|_| None;
+
+    #[test]
+    fn a_signed_in_account_is_known_by_the_id_its_tool_wrote_and_a_key_by_its_fingerprint() {
+        let home = folder();
+        // nothing there: nothing known, never a guess
+        assert_eq!(identity_of("claude-code", &looking(&home, NOTHING, NOTHING)), AccountIdentity::None);
+        // a key in the tool's environment, with no account record: its fingerprint, and its last four to show
+        let env = |k: &str| (k == "ANTHROPIC_API_KEY").then(|| "fake-key-0000-wxyz".to_string());
+        assert_eq!(identity_of("claude-code", &looking(&home, &env, NOTHING)), AccountIdentity::of_key("anthropic", "fake-key-0000-wxyz"));
+        // the account record wins over the key: the first source that gives anything
+        std::fs::write(home.join(".claude.json"), r#"{"oauthAccount":{"accountUuid":"person-1","organizationUuid":"org-1","emailAddress":"x"}}"#).unwrap();
+        assert_eq!(identity_of("claude-code", &looking(&home, &env, NOTHING)), AccountIdentity::Id { id: "person-1".into(), org: Some("org-1".into()) });
+        // a saved copy of that record is read the same way
+        let saved = serde_json::json!({ "email": "x", "oauthAccount": { "accountUuid": "person-2", "organizationUuid": "org-1" } });
+        assert_eq!(identity_in_copy("claude-code", ".claude.json", &saved), AccountIdentity::Id { id: "person-2".into(), org: Some("org-1".into()) });
+        assert_eq!(identity_in_copy("claude-code", "another.json", &saved), AccountIdentity::None, "only sources in a file of that name");
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn an_id_inside_a_token_is_read_from_its_payload_and_the_person_is_told_from_the_workspace() {
+        let home = folder();
+        let auth = serde_json::json!({ "https://api.openai.com/auth": { "chatgpt_user_id": "person-1", "chatgpt_account_id": "workspace-1" } });
+        let token = format!("head.{}.sig", airband_core::encode::base64_url(auth.to_string().as_bytes()));
+        std::fs::write(home.join("auth.json"), serde_json::json!({ "tokens": { "id_token": token } }).to_string()).unwrap();
+        assert_eq!(identity_of("codex", &looking(&home, NOTHING, NOTHING)), AccountIdentity::Id { id: "person-1".into(), org: Some("workspace-1".into()) });
+        // signed in with a key instead: the key in the same file
+        std::fs::write(home.join("auth.json"), r#"{"OPENAI_API_KEY":"fake-openai-1234"}"#).unwrap();
+        assert_eq!(identity_of("codex", &looking(&home, NOTHING, NOTHING)), AccountIdentity::of_key("openai", "fake-openai-1234"));
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn a_table_of_credentials_gives_its_one_key_by_its_rows_provider_and_nothing_when_it_holds_several() {
+        let home = folder();
+        let db_path = home.join(".local/share/opencode/opencode.db");
+        std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+        let db = rusqlite::Connection::open(&db_path).unwrap();
+        db.execute_batch("CREATE TABLE credential (id TEXT, integration_id TEXT, value TEXT);").unwrap();
+        db.execute("INSERT INTO credential VALUES ('c1', 'provider-a', ?1)", [r#"{"type":"key","key":"fake-a-5678"}"#]).unwrap();
+        assert_eq!(identity_of("opencode", &looking(&home, NOTHING, NOTHING)), AccountIdentity::of_key("provider-a", "fake-a-5678"));
+        db.execute("INSERT INTO credential VALUES ('c2', 'provider-b', ?1)", [r#"{"type":"key","key":"fake-b-9999"}"#]).unwrap();
+        assert_eq!(identity_of("opencode", &looking(&home, NOTHING, NOTHING)), AccountIdentity::None, "two keys and nothing says which is in use");
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn a_keychain_source_reads_only_through_the_keychain_it_is_given() {
+        let src: IdSource = serde_json::from_value(serde_json::json!({ "place": { "kind": "keychain", "service": "a-service" }, "take": { "kind": "key", "provider": "p" } })).unwrap();
+        let home = folder();
+        assert!(found_at(&src, &looking(&home, NOTHING, NOTHING)).is_empty());
+        let kc = |s: &str| (s == "a-service").then(|| "fake-kc-4321".to_string());
+        assert_eq!(found_at(&src, &looking(&home, NOTHING, &kc)), vec![AccountIdentity::of_key("p", "fake-kc-4321")]);
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]

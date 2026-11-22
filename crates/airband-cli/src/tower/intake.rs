@@ -6,6 +6,10 @@ use airband_core::radio::Note;
 /// Take in one event of an agent's, and set going what follows from it. The one way in, for an event that
 /// came over HTTP and for one a watcher inside the tower saw. Call it where a runtime can be reached.
 pub(super) fn take(app: &Arc<App>, ev: AgentEvent) -> Result<(), String> {
+    // a report its reporter sent again (it did not hear the tower take it in time) is the same report
+    if !app.passing().events_taken.first_time(&ev.id) {
+        return Ok(());
+    }
     // what a turn said is taken once, whichever of its tool's ways of saying it came first
     if let Event::Said { turn: Some(turn), .. } = &ev.event {
         let mut inner = app.passing();
@@ -43,6 +47,34 @@ pub(super) fn take(app: &Arc<App>, ev: AgentEvent) -> Result<(), String> {
         tokio::spawn(place::look(app.clone(), id));
     }
     Ok(())
+}
+
+/// The ids of the events lately taken in, the newest last. Enough to cover a reporter sending one again after
+/// a timeout or from its kept folder; an event without an id is never taken for another.
+#[derive(Default)]
+pub(super) struct Taken {
+    order: std::collections::VecDeque<String>,
+    ids: HashSet<String>,
+}
+
+impl Taken {
+    const MOST: usize = 2000;
+    /// Whether this is the first time the event with this id is seen; it is remembered from now on.
+    pub(super) fn first_time(&mut self, id: &str) -> bool {
+        if id.is_empty() {
+            return true;
+        }
+        if !self.ids.insert(id.to_string()) {
+            return false;
+        }
+        self.order.push_back(id.to_string());
+        if self.order.len() > Self::MOST
+            && let Some(old) = self.order.pop_front()
+        {
+            self.ids.remove(&old);
+        }
+        true
+    }
 }
 
 /// The same for an event a watcher inside the tower saw: written down first, as one that came over HTTP is.
@@ -190,4 +222,22 @@ pub(super) fn enqueue(inner: &mut Inner, agent_id: &str, notice: bool, full: Str
     // the line is its own place in the reading queue (a key in it is masked as it is recorded, so the copy a
     // model reads to shorten it has none either)
     inner.record(Entry { pictures, short, notice, note, aloud: Aloud::Waiting, ..Entry::said(id, &session, kind, full) });
+}
+
+#[cfg(test)]
+mod taken_tests {
+    use super::Taken;
+
+    #[test]
+    fn a_report_sent_again_is_taken_once_and_one_without_an_id_is_never_taken_for_another() {
+        let mut t = Taken::default();
+        assert!(t.first_time("e1"));
+        assert!(!t.first_time("e1"), "the same report sent again is not taken twice");
+        assert!(t.first_time("e2"));
+        assert!(t.first_time("") && t.first_time(""), "no id: nothing to know it again by");
+        for i in 0..Taken::MOST {
+            t.first_time(&format!("x{i}"));
+        }
+        assert!(t.first_time("e1"), "only the latest are remembered");
+    }
 }
