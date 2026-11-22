@@ -9,6 +9,8 @@ export PATH="$HOME/.cargo/bin:$PATH"
 # whatever this Mac's SDK is
 export IPHONEOS_DEPLOYMENT_TARGET=18.0
 cargo build --release -p airband-radio --target aarch64-apple-ios
+# and for the simulator, which the project links when it builds for one
+cargo build --release -p airband-radio --target aarch64-apple-ios-sim
 # the generator reads the API out of a host build of the same library
 cargo build -p airband-radio
 rm -rf apps/apple/Generated && mkdir -p apps/apple/Generated
