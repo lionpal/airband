@@ -6,7 +6,7 @@
 //   record…                 the microphone as plain PCM, for what he chose on this phone to listen with
 // His computer makes no sound and hears none. Apple's own voice and recognition are never used.
 //
-// Microphone settings follow what Backoffice learned on real phones (apps/mobile/ios/App/App/MicAecPlugin.swift):
+// Microphone settings, as learned on real phones:
 // voice processing on the input gives echo cancellation and noise suppression, and is only held while listening,
 // because it makes everything played sound quiet.
 import AVFoundation

@@ -34,7 +34,7 @@ private struct PickedMovie: Transferable {
 }
 
 /// Making what he picked ready to send. A photo is sent at a size an agent can use (2400 points at most on its
-/// long side), a video at 720p, so neither takes long on a phone connection. Returns the file, what to call it,
+/// long side), a video at 960x540, so neither takes long on a phone connection. Returns the file, what to call it,
 /// and a small picture of it.
 enum Prepare {
     static func photo(_ data: Data, number: Int) -> (URL, String, UIImage)? {
@@ -64,7 +64,7 @@ enum Prepare {
         frames.maximumSize = CGSize(width: 400, height: 400)
         let first = CMTime(seconds: kept?.lowerBound ?? 0, preferredTimescale: 600)
         if let frame = try? frames.copyCGImage(at: first, actualTime: nil) { picture = thumb(UIImage(cgImage: frame)) }
-        // smaller first: a minute at 720p is around a tenth of what the camera recorded
+        // smaller first: a minute at 960x540 is around a tenth of what the camera recorded
         let whole = "video-\(number).\(source.pathExtension.isEmpty ? "mov" : source.pathExtension)"
         guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset960x540) else { return (source, whole, picture) }
         export.outputURL = file
