@@ -304,8 +304,11 @@ impl Desk {
     #[uniffi::constructor]
     pub fn open(data_dir: String, host: Arc<dyn DeskHost>) -> Arc<Self> {
         let device = host.device();
-        let state = State { read: ReadMarks::load(&data_dir), colours: Colours::open(&data_dir, device.team_colours), ..State::default() };
+        let mut state = State { read: ReadMarks::load(&data_dir), colours: Colours::open(&data_dir, device.team_colours), ..State::default() };
         let chooser = crate::choices::Chooser::open(&data_dir, device);
+        // a file of his that could not be read is told once, as the app opens
+        let damaged = [state.read.opened.take(), state.colours.opened.take(), chooser.opened.lock().unwrap_or_else(|e| e.into_inner()).take()];
+        damaged.into_iter().flatten().for_each(|told| host.note(told));
         let senses: Arc<Senses> = Arc::default();
         // what he chose to listen and speak with is in use from the start
         chooser.apply(&*host, &senses);

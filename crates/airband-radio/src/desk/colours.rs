@@ -14,12 +14,14 @@ pub(crate) struct Colours {
     /// The rooms seen since the app opened: a new one is given the colour the fewest of these have. Rooms kept
     /// from before that are not seen again (a team gone, a computer paired again) count for nothing.
     seen: std::collections::BTreeSet<String>,
+    /// What he is to be told about the file when the desk opens: it could not be read.
+    pub(crate) opened: Option<String>,
 }
 
 impl Colours {
     pub(crate) fn open(dir: &str, count: u8) -> Colours {
-        let (by_team, keeper) = crate::kept::open(crate::kept::file(dir, "colours.json"));
-        Colours { keeper, count, by_team, seen: Default::default() }
+        let (by_team, keeper, opened) = crate::kept::open(crate::kept::file(dir, "colours.json"), "Team colours");
+        Colours { keeper, count, by_team, seen: Default::default(), opened }
     }
     /// Teams seen in a computer's chat: one seen for the first time is given the colour the fewest teams on
     /// his screen have, the lowest of those when several tie. The words to tell him when the colours could
@@ -42,6 +44,17 @@ impl Colours {
             changed = true;
         }
         if !changed {
+            return None;
+        }
+        crate::kept::told(self.keeper.save(&self.by_team), "Team colours may change when the app opens again.")
+    }
+    /// Let go of the colour of every room not in `rooms`: what every paired computer has now, once each has
+    /// answered, so the file holds only teams that are still there. The words to tell him when it could not be kept.
+    #[must_use]
+    pub(crate) fn keep_only(&mut self, rooms: &std::collections::BTreeSet<String>) -> Option<String> {
+        let before = self.by_team.len();
+        self.by_team.retain(|room, _| rooms.contains(room));
+        if self.by_team.len() == before {
             return None;
         }
         crate::kept::told(self.keeper.save(&self.by_team), "Team colours may change when the app opens again.")

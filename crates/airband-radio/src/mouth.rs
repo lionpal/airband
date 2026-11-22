@@ -23,7 +23,7 @@ pub(crate) enum Own {
     /// A voice service reached straight from the device with a key of his own.
     Service(airband_core::providers::Use),
     /// What he chose cannot speak as things are, and why. Nothing else speaks in its place.
-    Cannot(String),
+    Cannot(crate::senses::Cannot),
     /// The host says it, its own way, with no sound made here: a radio in a terminal, which prints. This is
     /// what such a radio is started with ([`Radio::start`]); it is never put in the place of something else.
     Host,
@@ -40,7 +40,7 @@ pub(crate) struct Mouth {
 /// Why what is chosen makes no sound: for everything but a service or a model.
 fn silent(own: Option<Own>) -> String {
     match own {
-        Some(Own::Cannot(why)) => why,
+        Some(Own::Cannot(why)) => why.told(),
         Some(Own::Host) => "This radio shows what is said and makes no sound.".into(),
         _ => crate::voice::NOTHING_CHOSEN.into(),
     }

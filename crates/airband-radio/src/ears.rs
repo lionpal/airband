@@ -75,7 +75,7 @@ pub(crate) enum Own {
     /// anywhere but to the service it is for.
     Service(Use),
     /// What he chose cannot be used as things are, and why. Nothing else listens in its place.
-    Cannot(String),
+    Cannot(crate::senses::Cannot),
     /// The host takes a line he types: a radio in a terminal. This is what such a radio is started with
     /// ([`Radio::start`]); it is never put in the place of something else.
     Host,
@@ -126,7 +126,7 @@ impl Chosen {
     pub(crate) fn cannot(&self) -> Option<String> {
         match self.using() {
             None => Some(NOTHING_CHOSEN.into()),
-            Some(Own::Cannot(why)) => Some(why),
+            Some(Own::Cannot(why)) => Some(why.told()),
             Some(_) => None,
         }
     }
@@ -222,7 +222,7 @@ impl Ears {
         match self.chosen.ears.using() {
             None => Way::Nothing(NOTHING_CHOSEN.into()),
             Some(Own::Model(held)) => Way::Mic(Mic::Model(held)),
-            Some(Own::Cannot(why)) => Way::Nothing(why),
+            Some(Own::Cannot(why)) => Way::Nothing(why.told()),
             Some(Own::Host) => Way::Host,
             Some(Own::Service(with)) => match with.offer(Job::Ears).map(|(_, o)| (live(&o), crate::hears::by_upload(&with))) {
                 Some((Some(l), _)) => Way::Mic(Mic::Live { with: l }),

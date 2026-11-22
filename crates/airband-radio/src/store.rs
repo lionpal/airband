@@ -37,7 +37,10 @@ pub(crate) struct Store {
 
 impl Store {
     pub(crate) fn open(data_dir: &str, host: Option<Arc<dyn RadioHost>>) -> Store {
-        let (saved, keeper) = crate::kept::open(crate::kept::file(data_dir, "radio.json"));
+        let (saved, keeper, damaged) = crate::kept::open(crate::kept::file(data_dir, "radio.json"), "This computer's unsent messages and chat");
+        if let (Some(told), Some(host)) = (damaged, &host) {
+            host.told(told);
+        }
         Store { saved: Mutex::new(saved), host, keeper }
     }
     /// Where fetched pictures are kept: beside the saved chat, or in the system's temporary folder when the

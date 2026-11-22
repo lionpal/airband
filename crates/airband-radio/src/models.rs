@@ -38,6 +38,8 @@ pub(crate) mod field {
     pub(crate) const RATE: &str = "rate";
     /// A voice service's setting: which of its voices speaks.
     pub(crate) const VOICE: &str = "voice";
+    /// A service row: further headers each request carries.
+    pub(crate) const HEADERS: &str = "headers";
 }
 
 /// The setting a voice service's voice is chosen by, for a host that lays out its own voice picker.

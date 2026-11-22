@@ -42,6 +42,7 @@ mod models;
 mod mouth;
 mod outbox;
 mod services;
+mod senses;
 mod session;
 mod store;
 mod voice;
