@@ -114,7 +114,7 @@ never carries an error. Every request a radio makes says which version it speaks
 none, is answered `other_version` (426) and goes no further. A token that opens nothing is answered 401
 `not_allowed`. A radio names itself in the
 `x-airband-radio` header so the tower can keep its place in a call apart from another radio's; for a sealed
-request the tower uses the pairing's name.
+request the tower uses the pairing's channel (`Keys::channel`).
 
 Call mode, one spoken transmission at a time:
 
@@ -314,8 +314,8 @@ that lets only the radio send to it (`Keys::radio_token`), and one ChaCha20-Poly
 8439, a random 96-bit nonce on each message). The relay stores the hash of each token.
 
 Inside each sealed request is `{ t, id, method, path, body, schema }`: an `airband.radio/4` call with the time
-and a random id. The tower answers 408 to one more than two minutes off its clock, drops one it has answered
-before, answers 400 to a `schema` it does not speak, and serves only `/v1/radio/`. The answer is
+and a random id. The tower answers 409 to one more than two minutes off its clock, drops one it has answered
+before, answers 426 (`other_version`) to a `schema` it does not speak, and serves only `/v1/radio/`. The answer is
 `{ id, status, body }`, and the phone refuses one that is not to its own request.
 
 `airband.relay/1` is part of how the keys are derived, so a later version cannot read or be read by this one.
@@ -338,7 +338,7 @@ with the hash it holds, in constant time.
 
 | Who | Routes | Token |
 |---|---|---|
-| The tower | `PUT /v1/channels/<channel>` (open), `GET …/pull` (held 25 s), `POST …/reply/<id>`, `POST …/push`, `DELETE` (close; `airband unpair` sends it) | The pull token. Opening a channel the relay does not know also takes the relay's admission key (`x-airband-admission`), if it has one. 403 with another channel's token. |
+| The tower | `PUT /v1/channels/<channel>` (open), `GET …/pull` (held 25 s), `POST …/reply/<id>`, `POST …/push`, `DELETE` (close; `airband unpair` sends it) | The pull token. Opening a channel the relay does not know also takes the relay's admission key (`x-airband-admission`), if it has one. 403 with another channel's token: whose a channel is is what the relay's records say, so two towers opening one name at once are told the same. A closed channel is remembered as closed: opening it again is 410, and only a new pairing (a new channel) opens one. |
 | The radio | `POST …/call`, `POST …/queue` | The radio token. 401 without it, with a wrong one, or on a channel that does not exist: the same answer for all three. |
 
 The tower gives the relay the radio token's hash in `x-airband-radio-hash` when it opens the channel; a channel
@@ -364,7 +364,7 @@ to pass it on:
 
 | Call | Body → answer | Meaning |
 |---|---|---|
-| `POST /v1/channels/<channel>/push` | `{ provider, to, sealed, question }` → `{ sent, gone, reason }` | `to` is the phone's address, `sealed` the notification in base64 (2400 bytes at most before base64), `question` whether it is one. 200 sent; 410 the address is no longer good and the tower forgets it; 429 more than 60 from this channel in ten minutes, or 240 from one internet address; 503 this relay has no such push service; 502 the service refused or could not be reached. |
+| `POST /v1/channels/<channel>/push` | `{ provider, to, sealed, question }` → `{ sent, gone, why, reason }` | `to` is the phone's address, `sealed` the notification in base64 (2400 bytes at most before base64), `question` whether it is one. 200 sent; 410 the address is no longer good and the tower forgets it; 429 more than 60 from this channel in ten minutes, or 240 from one internet address; 503 this relay has no such push service; 502 the service refused or could not be reached. `why` says which, as a fact (`NotPushed`: `refused` carries the service's status); `reason` is the relay's own words for it, never the push service's. |
 
 The relay holds the push service's key and adds the same visible words to every notification ("airband", "New
 message" or "A question for you"), which is what shows if the phone cannot open it. The relay and the push
@@ -376,9 +376,11 @@ opens it with `open_notice` in the radio core. An answer given on the notificati
 
 A relay that has not heard from a tower for 45 seconds answers a call with 503. What he said is then left with
 the relay: `POST …/queue`, the same sealed request, with the utterance's own id in `x-airband-id`. The relay
-keeps at most 200 per channel for a week, and one left twice under the same id is kept once. When the tower
-pulls again it is handed them oldest first, one at a time, each under a request id that starts with `held-`;
-its reply takes that one off the relay. The tower takes a kept request only if it is an utterance with an id,
+keeps at most 200 per channel for a week, and one left twice under the same id is kept once; one left again
+after its week is kept again, as new. When the tower pulls again it is handed them oldest first, one at a time,
+each marked `x-airband-kept`; its reply, with the same header, takes that one off the relay. A request the
+relay handed to a pull whose answer was never written out (the tower's connection gone) goes back to the front
+of the line while its radio still waits. The tower takes a kept request only if it is an utterance with an id,
 and tells the radio in its feed when it will not take one (`rejected`). The radio shows a kept message as with
 the relay until the tower's outcome for it arrives.
 While some are still kept, the relay turns back a new utterance (409 to a call that carries
