@@ -4,7 +4,7 @@ use super::*;
 
 impl Radio {
     /// The rest of a message: the fuller spoken version, or with `full` exactly what the agent wrote.
-    pub fn more(&self, id: String, full: bool) -> Result<String, RadioError> {
+    pub(crate) fn more(&self, id: String, full: bool) -> Result<String, RadioError> {
         #[derive(serde::Deserialize)]
         struct Whole {
             text: String,
@@ -14,13 +14,13 @@ impl Radio {
 
     /// The accounts the agents on this computer can run under, and how much of each is used. `fresh` asks the
     /// tower to check again now. Blocks: call it off the main thread.
-    pub fn accounts(&self, station: String, fresh: bool) -> Result<StationAccounts, RadioError> {
+    pub(crate) fn accounts(&self, station: String, fresh: bool) -> Result<StationAccounts, RadioError> {
         Ok(StationAccounts::from(&station, self.asked("GET", if fresh { "/accounts?fresh=1" } else { "/accounts" }, None)?))
     }
 
     /// Move this computer's sessions of one harness to another account. Returns how things stand afterwards.
     /// Blocks: call it off the main thread.
-    pub fn use_account(&self, station: String, harness: String, id: String) -> Result<StationAccounts, RadioError> {
+    pub(crate) fn use_account(&self, station: String, harness: String, id: String) -> Result<StationAccounts, RadioError> {
         Ok(StationAccounts::from(&station, self.asked("POST", "/accounts/use", Some(serde_json::json!({ "harness": harness, "id": id })))?))
     }
 
@@ -31,11 +31,11 @@ impl Radio {
     }
 
     /// Stop what an agent the tower runs is doing, now. Blocks: call it off the main thread.
-    pub fn stop_agent(&self, agent: String) -> Result<(), RadioError> {
+    pub(crate) fn stop_agent(&self, agent: String) -> Result<(), RadioError> {
         self.ask("/stop", serde_json::json!({ "agent": agent }))
     }
     /// End an agent the tower runs. Blocks: call it off the main thread.
-    pub fn end_agent(&self, agent: String) -> Result<(), RadioError> {
+    pub(crate) fn end_agent(&self, agent: String) -> Result<(), RadioError> {
         self.ask("/end", serde_json::json!({ "agent": agent }))
     }
     /// Tell this computer which names his other computers' agents go by. Blocks.
@@ -44,7 +44,7 @@ impl Radio {
         self.link.request("POST", "/taken", Some(serde_json::to_value(taken).unwrap())).is_ok_and(|(status, _)| status == 200)
     }
     /// Let a question go without answering it. Blocks: call it off the main thread.
-    pub fn dismiss(&self, message: String) -> Result<(), RadioError> {
+    pub(crate) fn dismiss(&self, message: String) -> Result<(), RadioError> {
         self.ask("/dismiss", serde_json::json!({ "message": message }))
     }
     /// Take back something he said that is still waiting its turn. Blocks: call it off the main thread.
@@ -85,13 +85,13 @@ impl Radio {
         Ok(self.asked::<Made>("POST", "/project", Some(serde_json::to_value(airband_core::radio::NewProject { name, folder, make, tool }).unwrap()))?.id)
     }
 
-    pub fn unsend(&self, message: String) -> Result<(), RadioError> {
+    pub(crate) fn unsend(&self, message: String) -> Result<(), RadioError> {
         self.ask("/unsend", serde_json::json!({ "message": message }))
     }
 
     /// Have the tower take over an agent he started in a terminal: that session ends there and carries on in a
     /// process the tower holds. Blocks: call it off the main thread.
-    pub fn take_over(&self, agent: String) -> Result<(), RadioError> {
+    pub(crate) fn take_over(&self, agent: String) -> Result<(), RadioError> {
         self.ask("/takeover", serde_json::json!({ "agent": agent }))
     }
 

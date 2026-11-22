@@ -269,8 +269,6 @@ pub struct RosterEntry {
     /// How many subagents it has running, when its harness reports them.
     #[serde(default)]
     pub subagents: u32,
-    /// A reply can be delivered to it.
-    pub reachable: bool,
     /// What it is doing right now, in a few words, while it is working and that is known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub doing: Option<String>,

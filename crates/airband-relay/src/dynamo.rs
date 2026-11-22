@@ -9,7 +9,7 @@ use ring::{digest, hmac};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-pub struct Dynamo {
+pub(crate) struct Dynamo {
     region: String,
     http: reqwest::Client,
     creds: tokio::sync::Mutex<Option<(Creds, Instant)>>,
@@ -24,21 +24,21 @@ struct Creds {
 
 /// Why a request failed. `kind` is DynamoDB's own name for it, such as `ConditionalCheckFailedException`.
 #[derive(Debug)]
-pub struct Failed {
-    pub kind: String,
-    pub message: String,
+pub(crate) struct Failed {
+    pub(crate) kind: String,
+    pub(crate) message: String,
     /// For a transaction that was cancelled: what became of each of its parts, in order ("None" for a part
     /// that would have gone through).
-    pub reasons: Vec<String>,
+    pub(crate) reasons: Vec<String>,
 }
 
 impl Failed {
     /// A condition written into the request did not hold. For these requests that is an answer, not a fault.
-    pub fn condition(&self) -> bool {
+    pub(crate) fn condition(&self) -> bool {
         self.kind == "ConditionalCheckFailedException"
     }
     /// The transaction's part at `index` is the one whose condition did not hold.
-    pub fn part_refused(&self, index: usize) -> bool {
+    pub(crate) fn part_refused(&self, index: usize) -> bool {
         self.kind == "TransactionCanceledException" && self.reasons.get(index).is_some_and(|r| r == "ConditionalCheckFailed")
     }
 }
@@ -85,11 +85,11 @@ fn signed(creds: &Creds, region: &str, host: &str, target: &str, body: &[u8], se
 }
 
 impl Dynamo {
-    pub fn new(region: String) -> Dynamo {
+    pub(crate) fn new(region: String) -> Dynamo {
         let http = reqwest::Client::builder().timeout(Duration::from_secs(10)).connect_timeout(Duration::from_secs(4)).pool_idle_timeout(Duration::from_secs(50)).build().expect("an HTTP client can be made");
         Dynamo { region, http, creds: tokio::sync::Mutex::new(None) }
     }
-    pub fn region(&self) -> &str {
+    pub(crate) fn region(&self) -> &str {
         &self.region
     }
 
@@ -128,7 +128,7 @@ impl Dynamo {
 
     /// One page of a `Scan` or a `Query`: its items, and where the next page starts when there is one.
     /// `from` is where this page starts, as the page before it said; nothing for the first.
-    pub async fn page(&self, operation: &str, mut ask: Value, from: Option<Value>) -> Result<(Vec<Value>, Option<Value>), String> {
+    pub(crate) async fn page(&self, operation: &str, mut ask: Value, from: Option<Value>) -> Result<(Vec<Value>, Option<Value>), String> {
         if let Some(from) = from {
             ask["ExclusiveStartKey"] = from;
         }
@@ -144,7 +144,7 @@ impl Dynamo {
     /// One DynamoDB operation, such as `PutItem`. Tried again a few times when the service is busy, cannot be
     /// reached, or two transactions touched the same item at once; a refusal that trying again cannot change
     /// comes back at once.
-    pub async fn call(&self, operation: &str, body: Value) -> Result<Value, Failed> {
+    pub(crate) async fn call(&self, operation: &str, body: Value) -> Result<Value, Failed> {
         let host = format!("dynamodb.{}.amazonaws.com", self.region);
         let bytes = serde_json::to_vec(&body).expect("JSON can be written");
         let mut last = Failed { kind: "Unreachable".into(), message: String::new(), reasons: Vec::new() };
@@ -189,22 +189,22 @@ impl Dynamo {
 }
 
 /// A text value, a number and bytes, as DynamoDB writes them.
-pub fn s(text: &str) -> Value {
+pub(crate) fn s(text: &str) -> Value {
     json!({ "S": text })
 }
-pub fn n(number: u64) -> Value {
+pub(crate) fn n(number: u64) -> Value {
     json!({ "N": number.to_string() })
 }
-pub fn b(bytes: &[u8]) -> Value {
+pub(crate) fn b(bytes: &[u8]) -> Value {
     json!({ "B": airband_core::encode::base64(bytes) })
 }
-pub fn text(item: &Value, name: &str) -> Option<String> {
+pub(crate) fn text(item: &Value, name: &str) -> Option<String> {
     item[name]["S"].as_str().map(str::to_string)
 }
-pub fn number(item: &Value, name: &str) -> Option<u64> {
+pub(crate) fn number(item: &Value, name: &str) -> Option<u64> {
     item[name]["N"].as_str().and_then(|n| n.parse().ok())
 }
-pub fn bytes(item: &Value, name: &str) -> Option<Vec<u8>> {
+pub(crate) fn bytes(item: &Value, name: &str) -> Option<Vec<u8>> {
     item[name]["B"].as_str().and_then(airband_core::encode::unbase64)
 }
 

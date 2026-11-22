@@ -113,10 +113,10 @@ pub(super) type Asked<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = R
 /// One way of reaching a model that reads: its name in a provider's row (`by.interface`), what it can do
 /// that a row may say it needs, and what a row has to tell it.
 pub(crate) struct Reader {
-    pub is: Interface,
+    pub(crate) is: Interface,
     /// It starts a program on this computer. Such an offer is honoured only as it is compiled in
     /// (`airband_core::catalog::BUILT_IN_ONLY`).
-    pub runs: bool,
+    pub(crate) runs: bool,
     ask: for<'a> fn(&'a Summarizer, &'a By, String, Option<Value>) -> Asked<'a>,
 }
 

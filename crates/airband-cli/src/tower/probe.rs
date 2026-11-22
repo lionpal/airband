@@ -1,7 +1,7 @@
 //! Commands for trying the tower's judgement by hand, and for `airband setup` to see that its model answers.
 use super::*;
 
-pub fn triage(cfg: Config) -> Result<(), String> {
+pub(crate) fn triage(cfg: Config) -> Result<(), String> {
     let mut full = String::new();
     std::io::Read::read_to_string(&mut std::io::stdin(), &mut full).map_err(|e| e.to_string())?;
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
@@ -12,7 +12,7 @@ pub fn triage(cfg: Config) -> Result<(), String> {
 }
 
 /// Does the model that reads for the tower answer? For `airband setup`.
-pub fn try_model(cfg: &Config) -> Result<String, String> {
+pub(crate) fn try_model(cfg: &Config) -> Result<String, String> {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
     // a model on this computer is fetched the first time: wait through that, and say so
     local::listen_after(cfg.port);
@@ -29,7 +29,7 @@ pub fn try_model(cfg: &Config) -> Result<String, String> {
 
 /// `airband progress`: the labels of an agent's steps on standard input, one to a line; prints the note he
 /// would be given for them, or "none". For trying the judgement by hand.
-pub fn progress(cfg: Config) -> Result<(), String> {
+pub(crate) fn progress(cfg: Config) -> Result<(), String> {
     let mut text = String::new();
     std::io::Read::read_to_string(&mut std::io::stdin(), &mut text).map_err(|e| e.to_string())?;
     let steps: Vec<String> = text.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect();

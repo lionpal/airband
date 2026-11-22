@@ -46,7 +46,7 @@ fn agent_of(hook: &Value) -> Option<Agent> {
     })
 }
 
-pub fn events(hook: &Value) -> Vec<AgentEvent> {
+pub(crate) fn events(hook: &Value) -> Vec<AgentEvent> {
     let events = super::hooks::session_events(hook).unwrap_or_else(|| match hook["hook_event_name"].as_str() {
         Some("SubagentStart") => vec![Event::Subagent { done: false, what: text(hook, "agent_type").unwrap_or_default() }],
         Some("SubagentStop") => vec![Event::Subagent { done: true, what: text(hook, "agent_type").unwrap_or_default() }],
@@ -56,12 +56,12 @@ pub fn events(hook: &Value) -> Vec<AgentEvent> {
 }
 
 /// What it runs on, which every event of its says. What it is doing is not known without reading its record.
-pub fn glance(agent: &Agent) -> super::Glance {
+pub(crate) fn glance(agent: &Agent) -> super::Glance {
     super::Glance { doing: None, model: agent.meta.get("model").and_then(Value::as_str).map(String::from), effort: None }
 }
 
 /// A request for leave, as he is asked it: whole, never cut, because what he reads is what will run.
-pub fn permission(hook: &Value) -> Option<PermissionAsk> {
+pub(crate) fn permission(hook: &Value) -> Option<PermissionAsk> {
     let (tool, input) = super::hooks::permission_hook(hook)?;
     // the row's words for one of Codex's own tools; any other says what it is doing itself, or is named
     let row = super::hooks::tool_use(NAME, tool);
@@ -362,7 +362,7 @@ fn home() -> PathBuf {
     std::env::var_os(super::row_says(NAME, "home_env")).map(PathBuf::from).unwrap_or_else(|| crate::config::home().join(super::row_says(NAME, "home")))
 }
 
-pub struct Codex;
+pub(crate) struct Codex;
 
 impl super::Harness for Codex {
     fn name(&self) -> &'static str {

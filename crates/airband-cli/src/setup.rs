@@ -118,7 +118,7 @@ fn choose(cfg: &mut Config, title: &str, about: &str, none: &str) {
 }
 
 /// `airband setup [--no-start]`. With `--no-start` the choices are saved and nothing is started or paired.
-pub fn setup(mut cfg: Config, start: bool) -> Result<(), String> {
+pub(crate) fn setup(mut cfg: Config, start: bool) -> Result<(), String> {
     if !std::io::stdin().is_terminal() {
         return Err("airband setup asks questions: run it in a terminal.".into());
     }
@@ -159,7 +159,7 @@ fn used_for(cfg: &Config, secret: &str) -> Vec<&'static str> {
 }
 
 /// `airband keys [add <name> <provider> | remove <name>]`. A key is never shown.
-pub fn keys(args: &[String]) -> Result<(), String> {
+pub(crate) fn keys(args: &[String]) -> Result<(), String> {
     let mut cfg = config::load();
     if let Some(why) = config::keyless() {
         return Err(format!("The keys cannot be read from here: {why}"));

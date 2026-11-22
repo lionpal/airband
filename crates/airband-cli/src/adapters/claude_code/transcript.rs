@@ -129,7 +129,7 @@ pub(super) fn remote_control_line(line: &[u8]) -> Option<String> {
 /// latest step, and the model and effort its latest answer was made with. A command or a subagent comes with a
 /// description Claude wrote for it ("Run the payments tests"); for the rest, a few plain words. Reads at most
 /// the last 96 KB of the file, so it is quick however long the session.
-pub fn glance(agent: &Agent) -> super::super::Glance {
+pub(crate) fn glance(agent: &Agent) -> super::super::Glance {
     let Some(tail) = tail_of(agent, 96 * 1024) else { return super::super::Glance::default() };
     let (model, effort) = engine_in(&tail).unzip();
     super::super::Glance { doing: step_in(&tail), model, effort: effort.flatten() }
@@ -151,7 +151,7 @@ pub(super) fn tail_of(agent: &Agent, most: u64) -> Option<String> {
 /// hundreds of kilobytes. The file is read a line at a time and only his own lines are kept, so this costs the
 /// memory of one line however much there is to go through. Whole lines only: one still being written is left
 /// for the next call.
-pub fn told(agent: &Agent, from: u64) -> (Vec<super::super::Told>, u64) {
+pub(crate) fn told(agent: &Agent, from: u64) -> (Vec<super::super::Told>, u64) {
     let read = || {
         let file = std::fs::File::open(agent.meta.get("transcript")?.as_str()?).ok()?;
         let size = file.metadata().ok()?.len();
@@ -222,7 +222,7 @@ pub(super) fn told_in(piece: &str) -> Vec<super::super::Told> {
 }
 
 /// The files a session has lately read or changed and the commands it has run, newest first, as written.
-pub fn touched(agent: &Agent) -> Vec<String> {
+pub(crate) fn touched(agent: &Agent) -> Vec<String> {
     tail_of(agent, 256 * 1024).map(|tail| touched_in(&tail)).unwrap_or_default()
 }
 
@@ -293,7 +293,7 @@ pub(super) fn step_in(tail: &str) -> Option<String> {
 
 /// Every step a session has taken since `since`, oldest first. From the end of its transcript only: a turn
 /// longer than that reaches back is told by its later steps.
-pub fn steps(agent: &Agent, since: u64) -> Vec<String> {
+pub(crate) fn steps(agent: &Agent, since: u64) -> Vec<String> {
     tail_of(agent, 1024 * 1024).map(|tail| steps_in(&tail, since)).unwrap_or_default()
 }
 

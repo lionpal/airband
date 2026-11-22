@@ -10,14 +10,14 @@ use std::sync::Mutex;
 static SAID: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// Use the newest copy this computer has kept, if it is newer than the one built in. Nothing is fetched.
-pub fn load() {
+pub(crate) fn load() {
     *SAID.lock().unwrap() = airband_core::catalog::load_kept(&config::dir(), &crate::providers::speaks);
 }
 
 /// Fetch the published copy and, if it is airband's and newer, use it and keep it. Quietly does nothing
 /// when there is no network. Blocks for a few seconds at most. True when it is now the one in use, with what
 /// is worth a line in a log (rows this build cannot use, a copy that was refused).
-pub fn refresh() -> (bool, Vec<String>) {
+pub(crate) fn refresh() -> (bool, Vec<String>) {
     let mut lines = std::mem::take(&mut *SAID.lock().unwrap());
     let (changed, more) = airband_core::catalog::refresh(&config::dir(), &crate::providers::speaks);
     lines.extend(more);
@@ -48,7 +48,7 @@ const USAGE: &str = "  airband catalog export [--expires-in-days 180]\n  airband
 /// `sign` prints a document's signature, made with the private key in a file (32 bytes, in hex). `check` says
 /// whether a document would be taken by this build. `stamp` gives the rows a
 /// new number when they have changed. `scripts/publish-catalog.sh` and `scripts/catalog-stamp.sh` use them.
-pub fn command(args: &[String]) -> Result<(), String> {
+pub(crate) fn command(args: &[String]) -> Result<(), String> {
     let words = plain(args.get(1..).unwrap_or_default());
     match args.first().map(String::as_str) {
         Some("export") => {

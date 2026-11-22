@@ -50,19 +50,19 @@ pub(super) fn listed<T>(n: Option<usize>, list: &[T]) -> Option<&T> {
 
 /// What the judge decided about one message.
 pub(super) struct Judged {
-    pub kind: Kind,
-    pub say: String,
+    pub(crate) kind: Kind,
+    pub(crate) say: String,
     /// Answers he could give with one tap.
-    pub options: Vec<String>,
+    pub(crate) options: Vec<String>,
     /// Which of them the agent itself recommended, if it said.
-    pub recommended: Option<u32>,
+    pub(crate) recommended: Option<u32>,
     /// What the message holds that he should be able to read whole, in two or three words, if anything.
-    pub read: Option<String>,
+    pub(crate) read: Option<String>,
     /// It stopped only to wait for work of its own that is still running: it is still at work.
-    pub background: bool,
+    pub(crate) background: bool,
     /// The agent says it will take this answer only from him in its own session, and not from a message that
     /// reaches it another way: an answer sent from a radio to an agent the tower does not run would not count.
-    pub own_session: bool,
+    pub(crate) own_session: bool,
 }
 
 /// The tower's main job: decide how much of his attention a message deserves, what to tell him of it, and, when

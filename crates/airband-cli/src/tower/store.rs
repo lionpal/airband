@@ -13,7 +13,7 @@
 use super::*;
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub struct Store {
+pub(crate) struct Store {
     db: Mutex<Connection>,
 }
 
@@ -245,6 +245,12 @@ impl Store {
     }
 }
 
+/// Where a line stands, as the `waiting` column keeps it.
+fn held(r: &rusqlite::Row) -> rusqlite::Result<Option<Held>> {
+    Ok(r.get::<_, Option<String>>(17)?.and_then(|t| serde_json::from_value(Value::String(t)).ok()))
+}
+pub(super) use airband_core::encode::word;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,9 +306,4 @@ mod tests {
         assert!(about.contains("/s") && !about.contains("secret"));
         let _ = std::fs::remove_file(path);
     }
-}
-
-pub(super) use airband_core::encode::word;
-fn held(r: &rusqlite::Row) -> rusqlite::Result<Option<Held>> {
-    Ok(r.get::<_, Option<String>>(17)?.and_then(|t| serde_json::from_value(Value::String(t)).ok()))
 }

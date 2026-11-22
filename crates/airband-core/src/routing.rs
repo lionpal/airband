@@ -15,7 +15,7 @@ pub struct Callsign {
 }
 
 /// The most characters a team's name may have: it is part of what its agents are called, and is said aloud.
-pub const TEAM_NAME_MOST: usize = 24;
+pub(crate) const TEAM_NAME_MOST: usize = 24;
 
 /// A name he chose for a team (a new one, or a rename), as it is kept: [`team_name`], and short. The one check
 /// every place he names a team goes through.
@@ -27,12 +27,6 @@ pub fn chosen_team_name(text: &str) -> Result<String, &'static str> {
 /// path ("shop/front" is "shop front"). None when it has no letters or numbers.
 pub fn team_name(text: &str) -> Option<String> {
     Some(norm(text)).filter(|name| !name.is_empty())
-}
-
-/// The team a folder stands for: the folder's own name, as the system reads the path, the way a callsign
-/// writes it. None when there is nothing in it a team could be called (the top of a disk).
-pub fn folder_name(path: &str) -> Option<String> {
-    team_name(&std::path::Path::new(path.trim()).file_name()?.to_string_lossy())
 }
 
 /// The names a team in this folder could take, plainest first: the folder's own name, then its parent's name
@@ -216,7 +210,7 @@ pub fn parse_utterance(text: &str, live: &[Callsign]) -> Parsed {
 }
 
 /// The word a tower numbers an agent with: "one", "two", and figures past twelve.
-pub fn number_name(n: usize) -> String {
+pub(crate) fn number_name(n: usize) -> String {
     WORDS.get(n).map(|w| w.to_string()).unwrap_or_else(|| n.to_string())
 }
 
@@ -231,11 +225,10 @@ fn figure(number: &str) -> Option<u32> {
 mod tests {
     #[test]
     fn a_team_is_named_by_the_last_part_of_a_folder_and_a_callsign_is_shown_with_a_figure() {
-        assert_eq!(folder_name("/work/Shop Front/").as_deref(), Some("shop front"));
+        assert_eq!(team_names("/work/Shop Front/").first().map(String::as_str), Some("shop front"));
         assert_eq!(team_name("garden").as_deref(), Some("garden"));
         // a name he typed is never read as a path
         assert_eq!(team_name("shop/front").as_deref(), Some("shop front"));
-        assert_eq!(folder_name("/"), None);
         // nothing a team could be called
         assert_eq!((team_name("/"), team_name("  "), team_name("!!")), (None, None, None));
         assert_eq!(team_names("/a/Work/shop/"), ["shop", "work shop", "a work shop"]);

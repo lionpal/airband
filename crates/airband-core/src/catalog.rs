@@ -32,7 +32,7 @@ pub use kept::*;
 pub use rows::*;
 
 /// Where the signed copy is kept.
-pub const ADDRESS: &str = "https://airband.dev/catalog/catalog.json";
+pub(crate) const ADDRESS: &str = "https://airband.dev/catalog/catalog.json";
 
 /// The public half of the key that signs the hosted copy.
 const SIGNED_BY: [u8; 32] = include!("catalog.key.in");
@@ -105,7 +105,7 @@ impl Tool {
 
 /// Something a row tells the code, as text: what is written under one name in its `with`. Empty when the row
 /// does not say, or says something other than text. The one way a row's word is read.
-pub fn row_text(said: Option<&Value>) -> &str {
+pub(crate) fn row_text(said: Option<&Value>) -> &str {
     said.and_then(Value::as_str).unwrap_or_default()
 }
 

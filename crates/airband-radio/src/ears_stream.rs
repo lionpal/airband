@@ -275,7 +275,7 @@ pub(crate) struct Tape {
 #[cfg(test)]
 impl Tape {
     /// `pcm` is 16 kHz 16-bit mono. A second and a half of quiet follows it, as after someone stops talking.
-    pub fn of(pcm: &[u8], print: bool) -> Tape {
+    pub(crate) fn of(pcm: &[u8], print: bool) -> Tape {
         let mut parts: VecDeque<Vec<u8>> = pcm.chunks(3200).map(|c| c.to_vec()).collect();
         parts.extend(std::iter::repeat_n(vec![0u8; 3200], 15));
         Tape { left: Mutex::new(parts), heard: Mutex::new(Vec::new()), began: Instant::now(), print }

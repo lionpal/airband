@@ -70,7 +70,7 @@ pub(super) struct KeyRow {
 }
 
 /// What the rows of a document hash to (`build.rs` writes it into the document; see `catalog_hash.rs`).
-pub fn hash_of(document: &str) -> Result<String, String> {
+pub(crate) fn hash_of(document: &str) -> Result<String, String> {
     serde_json::from_str::<Value>(document).map(|doc| content_hash(&doc)).map_err(|e| e.to_string())
 }
 include!("../catalog_hash.rs");

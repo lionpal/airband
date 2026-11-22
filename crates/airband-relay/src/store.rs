@@ -37,7 +37,7 @@ use tokio_postgres::{Client, Config, NoTls};
 use crate::dynamo::{self, Dynamo, b, n, s};
 use serde_json::{Value, json};
 
-pub enum Store {
+pub(crate) enum Store {
     Folder(PathBuf),
     Postgres(Pg),
     Dynamo(Dyn),
@@ -45,16 +45,16 @@ pub enum Store {
 
 /// What is remembered about one channel.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct Saved {
+pub(crate) struct Saved {
     /// The hash of the token its tower pulls with.
     #[serde(rename = "pull")]
-    pub pull_hash: String,
+    pub(crate) pull_hash: String,
     /// The hash of the token its radio proves itself with.
     #[serde(rename = "radio")]
-    pub radio_hash: String,
+    pub(crate) radio_hash: String,
 }
 
-pub struct Dyn {
+pub(crate) struct Dyn {
     db: Dynamo,
     channels: String,
     held: String,
@@ -71,7 +71,7 @@ fn write_channels(dir: &std::path::Path, all: &HashMap<String, Saved>) -> Result
     airband_core::kept::save(&file, all).map_err(|e| format!("cannot save {}: {e}", file.display()))
 }
 
-pub struct Pg {
+pub(crate) struct Pg {
     host: String,
     port: u16,
     user: String,
@@ -84,7 +84,7 @@ use super::var;
 
 impl Store {
     /// From the environment. Fails at once, with the reason, on a half-configured database.
-    pub fn from_env() -> Result<Store, String> {
+    pub(crate) fn from_env() -> Result<Store, String> {
         if let Some(prefix) = var("AIRBAND_RELAY_DYNAMO") {
             let region = var("AWS_REGION").or_else(|| var("AWS_DEFAULT_REGION")).ok_or("AIRBAND_RELAY_DYNAMO is set, so set AWS_REGION to the region its tables are in")?;
             return Ok(Store::Dynamo(Dyn { db: Dynamo::new(region), channels: format!("{prefix}-channels"), held: format!("{prefix}-held"), waitlist: format!("{prefix}-waitlist") }));
@@ -120,7 +120,7 @@ impl Store {
         }))
     }
 
-    pub fn describe(&self) -> String {
+    pub(crate) fn describe(&self) -> String {
         match self {
             Store::Folder(dir) => format!("the folder {}", dir.display()),
             Store::Postgres(pg) => format!("the database {} on {}", pg.name, pg.host),
@@ -129,7 +129,7 @@ impl Store {
     }
 
     /// Every channel and what is remembered about it. For Postgres, also makes the database and table if they are missing.
-    pub async fn load(&self) -> Result<HashMap<String, Saved>, String> {
+    pub(crate) async fn load(&self) -> Result<HashMap<String, Saved>, String> {
         match self {
             Store::Folder(dir) => read_channels(dir),
             Store::Dynamo(d) => {
@@ -172,7 +172,7 @@ impl Store {
     }
 
     /// Put an address on the waiting list. Returns only once it is kept; an address already there is left as it is.
-    pub async fn join_waitlist(&self, email: &str) -> Result<(), String> {
+    pub(crate) async fn join_waitlist(&self, email: &str) -> Result<(), String> {
         match self {
             Store::Folder(dir) => {
                 let file = dir.join("waitlist.txt");
@@ -191,7 +191,7 @@ impl Store {
     }
 
     /// Forget a channel its tower has closed.
-    pub async fn remove(&self, channel: &str) -> Result<(), String> {
+    pub(crate) async fn remove(&self, channel: &str) -> Result<(), String> {
         match self {
             Store::Folder(dir) => {
                 let mut all = read_channels(dir)?;
@@ -208,7 +208,7 @@ impl Store {
 
     /// Remember a new channel, with its radio's token hash. Returns only once it is durable. A channel
     /// already there is left as it is.
-    pub async fn add(&self, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<(), String> {
+    pub(crate) async fn add(&self, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<(), String> {
         match self {
             Store::Folder(dir) => {
                 let mut all = read_channels(dir)?;
@@ -398,7 +398,7 @@ impl Store {
     }
 
     /// Keep one. False when the channel already has as many as it may; true when it is kept, now or before.
-    pub async fn hold(&self, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<bool, String> {
+    pub(crate) async fn hold(&self, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<bool, String> {
         match self {
             Store::Folder(dir) => {
                 let _one = HELD.lock().unwrap();
@@ -434,7 +434,7 @@ impl Store {
     }
 
     /// The oldest one kept for a channel, if any.
-    pub async fn held_next(&self, channel: &str) -> Result<Option<(String, Vec<u8>)>, String> {
+    pub(crate) async fn held_next(&self, channel: &str) -> Result<Option<(String, Vec<u8>)>, String> {
         match self {
             Store::Folder(dir) => {
                 let _one = HELD.lock().unwrap();
@@ -454,7 +454,7 @@ impl Store {
     }
 
     /// The tower has taken one: it is kept no longer.
-    pub async fn held_done(&self, channel: &str, id: &str) -> Result<(), String> {
+    pub(crate) async fn held_done(&self, channel: &str, id: &str) -> Result<(), String> {
         match self {
             Store::Folder(dir) => {
                 let _one = HELD.lock().unwrap();
@@ -475,7 +475,7 @@ impl Store {
     }
 
     /// Nothing is kept for ever: what a tower never came back for is dropped after this many days.
-    pub async fn held_purge(&self, days: u64) -> Result<(), String> {
+    pub(crate) async fn held_purge(&self, days: u64) -> Result<(), String> {
         match self {
             Store::Folder(dir) => {
                 let _one = HELD.lock().unwrap();

@@ -58,7 +58,7 @@ pub fn listens(offer: &Offer) -> bool {
 }
 
 /// Does this setting listen by upload? False for a live dialect, and for anything that does not listen.
-pub fn by_upload(with: &Use) -> bool {
+pub(crate) fn by_upload(with: &Use) -> bool {
     with.offer(Job::Ears).is_some_and(|(_, o)| upload(&o).is_some())
 }
 

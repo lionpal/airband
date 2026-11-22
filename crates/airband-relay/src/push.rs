@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 /// What became of one notification.
 #[derive(Debug, PartialEq, Eq)]
-pub enum Outcome {
+pub(crate) enum Outcome {
     Sent,
     /// The address is no longer good: the app was removed, or the address was never this service's.
     Gone(String),
@@ -31,14 +31,14 @@ pub enum Outcome {
 
 /// Every push service this relay can use.
 #[derive(Default)]
-pub struct Push {
+pub(crate) struct Push {
     apns: Option<Apns>,
 }
 
 use super::var;
 
 impl Push {
-    pub fn from_env() -> Push {
+    pub(crate) fn from_env() -> Push {
         let apns = match (var("APNS_KEY"), var("APNS_KEY_ID"), var("APNS_TEAM_ID"), var("APNS_TOPIC")) {
             (Some(key), Some(key_id), Some(team), Some(topic)) => match Apns::new(&key, &key_id, &team, &topic, &var("APNS_HOST").unwrap_or_else(|| "https://api.push.apple.com".into())) {
                 Ok(apns) => Some(apns),
@@ -52,14 +52,14 @@ impl Push {
         Push { apns }
     }
     #[cfg(test)]
-    pub fn with_apns(apns: Apns) -> Push {
+    pub(crate) fn with_apns(apns: Apns) -> Push {
         Push { apns: Some(apns) }
     }
-    pub fn describe(&self) -> &'static str {
+    pub(crate) fn describe(&self) -> &'static str {
         if self.apns.is_some() { "can wake iPhones (Apple's push service)" } else { "has no push service: phones are not woken" }
     }
     /// Hand a sealed notification to the service an address belongs to. Nothing when this relay has no such service.
-    pub async fn send(&self, provider: PushService, to: &str, sealed: &str, question: bool) -> Option<Outcome> {
+    pub(crate) async fn send(&self, provider: PushService, to: &str, sealed: &str, question: bool) -> Option<Outcome> {
         match provider {
             PushService::Apns => Some(self.apns.as_ref()?.send(to, sealed, question).await),
             PushService::Unknown => None,
@@ -68,7 +68,7 @@ impl Push {
 }
 
 /// Apple's push service, with a signing key (token-based authentication, HTTP/2).
-pub struct Apns {
+pub(crate) struct Apns {
     key: EcdsaKeyPair,
     key_id: String,
     team: String,
@@ -84,7 +84,7 @@ const PASS_FOR: Duration = Duration::from_secs(40 * 60);
 
 impl Apns {
     /// `key` is the text of the .p8 file: PKCS#8, base64, between its two marker lines.
-    pub fn new(key: &str, key_id: &str, team: &str, topic: &str, host: &str) -> Result<Apns, String> {
+    pub(crate) fn new(key: &str, key_id: &str, team: &str, topic: &str, host: &str) -> Result<Apns, String> {
         // however the lines were kept (an environment variable may hold them joined, or with "\n" written out)
         let text = key.replace("\\n", "\n");
         let der = rustls_pemfile::pkcs8_private_keys(&mut text.as_bytes()).next().and_then(Result::ok).ok_or("it is not a .p8 key file's text")?;
@@ -160,21 +160,21 @@ impl Apns {
 
 /// How many notifications one channel may send, and in how long. A tower sends one for a question or a report,
 /// to each phone paired with it; anything faster than this is not a person's agents.
-pub const PUSHES: u32 = 60;
-pub const PUSHES_IN: Duration = Duration::from_secs(600);
+pub(crate) const PUSHES: u32 = 60;
+pub(crate) const PUSHES_IN: Duration = Duration::from_secs(600);
 
 /// May this channel send another now? Counts it if so.
-pub fn allow(slot: &mut Option<(Instant, u32)>, now: Instant) -> bool {
+pub(crate) fn allow(slot: &mut Option<(Instant, u32)>, now: Instant) -> bool {
     super::limits::count(slot, PUSHES, PUSHES_IN, now)
 }
 
 #[cfg(test)]
-pub mod tests {
+pub(crate) mod tests {
     use super::*;
     use ring::signature::{ECDSA_P256_SHA256_FIXED, KeyPair, UnparsedPublicKey};
 
     /// A signing key made for a test, as a .p8 file's text, and its public half.
-    pub fn test_key() -> (String, Vec<u8>) {
+    pub(crate) fn test_key() -> (String, Vec<u8>) {
         let made = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &SystemRandom::new()).unwrap();
         let pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, made.as_ref(), &SystemRandom::new()).unwrap();
         let text = airband_core::encode::base64(made.as_ref());
@@ -184,7 +184,7 @@ pub mod tests {
     }
 
     /// Is this the pass Apple would accept: the right fields, signed by the key?
-    pub fn pass_is_good(pass: &str, public: &[u8], key_id: &str, team: &str) -> bool {
+    pub(crate) fn pass_is_good(pass: &str, public: &[u8], key_id: &str, team: &str) -> bool {
         let parts: Vec<&str> = pass.split('.').collect();
         let [head, claims, signature] = parts.as_slice() else { return false };
         let read = |part: &str| airband_core::encode::unbase64_url(part).and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()).unwrap_or_default();

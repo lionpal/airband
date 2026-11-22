@@ -33,7 +33,7 @@ fn served() -> &'static Mutex<HashMap<String, Serve>> {
 /// The one route a radio uses to reach the tower without the relay: the sealed request it would have given the
 /// relay, answered with the sealed answer. Whoever sends it needs the pairing key to make a request the tower
 /// will open, and to read what comes back; nothing else is served here.
-pub fn sealed_router() -> Router {
+pub(crate) fn sealed_router() -> Router {
     Router::new().route("/v1/sealed/{channel}", axum::routing::post(sealed))
 }
 
@@ -49,7 +49,7 @@ async fn sealed(axum::extract::Path(channel): axum::extract::Path<String>, body:
 
 /// Watch the config: a pairing added by `airband pair` starts being served, one removed by `airband unpair`
 /// stops, and a changed relay address moves everything, all without restarting the tower.
-pub fn start(app: Arc<App>, router: Router, handle: Handle) {
+pub(crate) fn start(app: Arc<App>, router: Router, handle: Handle) {
     std::thread::spawn(move || {
         // each link that is up, by its relay and its radio, with the way to stop it
         type Running = HashMap<(Option<String>, PairedRadio), (Arc<AtomicBool>, std::thread::JoinHandle<()>)>;

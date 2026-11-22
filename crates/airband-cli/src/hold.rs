@@ -28,7 +28,7 @@ use std::time::Duration;
 
 
 /// What the tower says to a holder.
-pub enum Tell {
+pub(crate) enum Tell {
     /// His words, as the agent's next turn, and the id this delivery of them goes under.
     Say(String, String),
     /// Leave off what you are doing.
@@ -38,7 +38,7 @@ pub enum Tell {
 }
 
 impl Tell {
-    pub fn line(&self) -> String {
+    pub(crate) fn line(&self) -> String {
         match self {
             Tell::Say(text, receipt) => json!({ "say": text, "receipt": receipt }),
             Tell::Stop => json!({ "stop": true }),
@@ -56,12 +56,12 @@ impl Tell {
     }
 }
 /// The line that asks a holder where it has got to. The answer is a [`State`].
-pub const STATUS: &str = r#"{"status":true}"#;
+pub(crate) const STATUS: &str = r#"{"status":true}"#;
 
 /// Where a holder has got to with its program.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "state", rename_all = "kebab-case")]
-pub enum State {
+pub(crate) enum State {
     Starting,
     /// The agent is there and takes his words. `session` is what the agent's own tool calls its session, when
     /// that is not the id the tower gave it: what carries it on later.
@@ -86,30 +86,30 @@ pub(crate) enum Msg {
 
 /// What a driver is given.
 pub(crate) struct Held {
-    pub id: String,
-    pub harness: String,
-    pub cwd: String,
-    pub rx: mpsc::Receiver<Msg>,
-    pub to_program: Arc<Mutex<Option<ChildStdin>>>,
-    pub state: Arc<Mutex<State>>,
+    pub(crate) id: String,
+    pub(crate) harness: String,
+    pub(crate) cwd: String,
+    pub(crate) rx: mpsc::Receiver<Msg>,
+    pub(crate) to_program: Arc<Mutex<Option<ChildStdin>>>,
+    pub(crate) state: Arc<Mutex<State>>,
     /// The last of what the program printed as an error.
-    pub errors: Arc<Mutex<String>>,
+    pub(crate) errors: Arc<Mutex<String>>,
 }
 
 impl Held {
-    pub fn write(&self, line: &str) {
+    pub(crate) fn write(&self, line: &str) {
         if let Some(to) = self.to_program.lock().unwrap().as_mut() {
             let _ = writeln!(to, "{line}").and_then(|()| to.flush());
         }
     }
-    pub fn close_input(&self) {
+    pub(crate) fn close_input(&self) {
         *self.to_program.lock().unwrap() = None;
     }
-    pub fn ready(&self, session: Option<String>, offers: airband_core::tools::Offers) {
+    pub(crate) fn ready(&self, session: Option<String>, offers: airband_core::tools::Offers) {
         *self.state.lock().unwrap() = State::Ready { session, offers };
     }
     /// Why it failed, with what the program itself had to say.
-    pub fn why(&self, what: &str) -> String {
+    pub(crate) fn why(&self, what: &str) -> String {
         let said = self.errors.lock().unwrap().trim().to_string();
         if said.is_empty() { what.to_string() } else { format!("{what}: {said}") }
     }
@@ -150,7 +150,7 @@ fn told(held: &Held, tell: Tell, line: &str, stop: Option<&str>) {
 
 /// Run a coding tool's program held for the tower (`airband hold --sock … --by … -- program args`), driving it
 /// as `--by` says until it ends.
-pub fn run(args: &[String]) -> Result<(), String> {
+pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let (named, argv) = flags(args)?;
     let sock = named.get("sock").cloned().ok_or("airband hold needs --sock")?;
     let (program, rest) = argv.split_first().ok_or("airband hold needs a program after --")?;

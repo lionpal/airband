@@ -43,7 +43,7 @@ fn agent_of(hook: &Value) -> Option<Agent> {
 
 /// Claude Code is about to show a permission prompt (its `PermissionRequest` hook): the request to put to him.
 /// What he reads is the thing itself, not a description of it: the command, the file, the address.
-pub fn permission(hook: &Value) -> Option<PermissionAsk> {
+pub(crate) fn permission(hook: &Value) -> Option<PermissionAsk> {
     let (tool, input) = super::hooks::permission_hook(hook).filter(|_| !headless())?;
     // whole, never cut: what he reads is what will run
     let row = super::hooks::tool_use(HARNESS, tool);
@@ -93,7 +93,7 @@ fn files_sent(hook: &Value) -> Vec<String> {
 
 /// Claude Code: installed for SessionStart, Stop, Notification, UserPromptSubmit and SessionEnd, and after the
 /// tools that look at or hand over a picture.
-pub fn events(hook: &Value) -> Vec<AgentEvent> {
+pub(crate) fn events(hook: &Value) -> Vec<AgentEvent> {
     if headless() {
         return Vec::new();
     }
@@ -177,7 +177,7 @@ const HOOKS: &[On] = &[
 
 static ACCOUNTS: super::AccountBook = super::AccountBook { list: super::claude_accounts::list, switch: super::claude_accounts::switch, save: super::claude_accounts::save, add: super::claude_accounts::add, forget: super::claude_accounts::forget };
 
-pub struct ClaudeCode;
+pub(crate) struct ClaudeCode;
 
 impl super::Harness for ClaudeCode {
     fn name(&self) -> &'static str {

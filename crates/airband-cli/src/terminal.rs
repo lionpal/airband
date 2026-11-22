@@ -59,7 +59,7 @@ impl RadioHost for Terminal {
     }
 }
 
-pub fn run(cfg: &Config, args: &[String]) -> Result<(), String> {
+pub(crate) fn run(cfg: &Config, args: &[String]) -> Result<(), String> {
     let flag = |name: &str| crate::option(args, name);
     let link = link_or_here(cfg, args);
     let route = match Pairing::parse(&link)? {
@@ -144,7 +144,7 @@ fn link_or_here(cfg: &Config, args: &[String]) -> String {
 
 /// `airband feed [--team <team> | --agent "<callsign>"] [--once]`: the chat, in a terminal. Each message is the
 /// short version.
-pub fn feed(cfg: &Config, args: &[String]) -> Result<(), String> {
+pub(crate) fn feed(cfg: &Config, args: &[String]) -> Result<(), String> {
     let radio = Radio::start(link_from(cfg, args), String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
     let once = args.iter().any(|a| a == "--once");
     let flag = |name: &str| crate::option(args, name);
@@ -181,7 +181,7 @@ pub fn feed(cfg: &Config, args: &[String]) -> Result<(), String> {
 
 /// `airband launch <team> [--tool <id>] [--model <name>] [--effort <name>] [task…]`: start a new agent in one of
 /// his teams. The flags are this command's own; the task is everything else, in his words.
-pub fn launch(cfg: &Config, args: &[String]) -> Result<(), String> {
+pub(crate) fn launch(cfg: &Config, args: &[String]) -> Result<(), String> {
     let mut rest: Vec<String> = Vec::new();
     let mut flags: std::collections::HashMap<&str, String> = Default::default();
     let mut words = args.iter();
@@ -202,7 +202,7 @@ pub fn launch(cfg: &Config, args: &[String]) -> Result<(), String> {
 }
 
 /// `airband send "@shop2 leave them"`: say something from the terminal.
-pub fn send(cfg: &Config, args: &[String]) -> Result<(), String> {
+pub(crate) fn send(cfg: &Config, args: &[String]) -> Result<(), String> {
     let words: Vec<&str> = args.iter().take_while(|a| *a != "--link").map(String::as_str).collect();
     if words.is_empty() {
         return Err("say what to send: airband send \"@shop2 leave them\"  (@group and @all work too)".into());

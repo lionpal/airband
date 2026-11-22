@@ -25,7 +25,7 @@ use std::time::Duration;
 
 type Res<T> = Result<T, String>;
 
-pub const HARNESS: &str = "claude-code";
+pub(crate) const HARNESS: &str = "claude-code";
 /// The keychain item Claude Code keeps its login under, as its row names it.
 fn live_base() -> String {
     super::row_says(HARNESS, "keychain_service")
@@ -377,7 +377,7 @@ fn account(email: String, live: bool, checked: Result<Vec<Limit>, Unchecked>) ->
 }
 
 /// Every account, with its allowances, and anything he should know about the list.
-pub fn list() -> (Vec<Account>, Option<String>) {
+pub(crate) fn list() -> (Vec<Account>, Option<String>) {
     if !cfg!(target_os = "macos") {
         return (Vec::new(), Some(format!("Switching {} accounts works on a Mac only for now.", tool())));
     }
@@ -414,7 +414,7 @@ static SWITCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::ne
 /// Make a saved account the one every running session uses. The login is swapped at once; the returned thread
 /// then holds the account's name in place for a few seconds, because a session still on the old login may
 /// write its own back.
-pub fn switch(id: &str) -> Res<std::thread::JoinHandle<()>> {
+pub(crate) fn switch(id: &str) -> Res<std::thread::JoinHandle<()>> {
     locked(|| {
         let target = resolve(id)?;
         // the account record Claude Code is given is the real one, asked for with that account's own token;
@@ -453,13 +453,13 @@ pub fn switch(id: &str) -> Res<std::thread::JoinHandle<()>> {
 }
 
 /// `airband accounts save`: keep the login Claude Code is using now.
-pub fn save() -> Res<String> {
+pub(crate) fn save() -> Res<String> {
     locked(save_live)
 }
 
 /// `airband accounts add`: sign in to another account in a private folder, so the login in use and every
 /// running session are untouched, then keep that login.
-pub fn add() -> Res<String> {
+pub(crate) fn add() -> Res<String> {
     std::fs::create_dir_all(dir()).map_err(|e| e.to_string())?;
     let tmp = dir().join(format!("login-{}", now_ms()));
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
@@ -487,7 +487,7 @@ pub fn add() -> Res<String> {
 }
 
 /// `airband accounts forget <account>`: delete a saved login.
-pub fn forget(id: &str) -> Res<String> {
+pub(crate) fn forget(id: &str) -> Res<String> {
     locked(|| {
         let email = resolve(id)?;
         key_delete(&vault_service(), &email);

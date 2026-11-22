@@ -1,7 +1,7 @@
 //! Running the tower: its keys settled, its state opened, everything it watches started, and its addresses served.
 use super::*;
 
-pub fn run(cfg: Config) -> Result<(), String> {
+pub(crate) fn run(cfg: Config) -> Result<(), String> {
     if let Some(why) = config::keyless() {
         return Err(format!("airband's keys could not be read: {why}"));
     }

@@ -30,7 +30,7 @@ fn in_opt(opt: &Path, real: &Path) -> PathBuf {
     opt.join("bin").join(real.file_name().unwrap_or_default())
 }
 
-pub fn install() -> Result<(), String> {
+pub(crate) fn install() -> Result<(), String> {
     config::load();
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
     let real = fs::canonicalize(&me).unwrap_or_else(|_| me.clone());
@@ -107,7 +107,7 @@ fn start_at_login(exe: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-pub fn uninstall() -> Result<(), String> {
+pub(crate) fn uninstall() -> Result<(), String> {
     crate::adapters::uninstall()?;
     #[cfg(target_os = "macos")]
     {
@@ -120,7 +120,7 @@ pub fn uninstall() -> Result<(), String> {
 }
 
 /// `airband relay <url> [--admission <key>]` / `airband relay off`
-pub fn relay(mut cfg: Config, args: &[String]) -> Result<(), String> {
+pub(crate) fn relay(mut cfg: Config, args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         None => println!("{}", cfg.relay.as_deref().map(|r| format!("Your phone reaches this computer through {r}.")).unwrap_or("No relay: your phone reaches this computer at its own addresses, on the same network or over a private network.".into())),
         Some("off") => {
@@ -159,7 +159,7 @@ pub fn relay(mut cfg: Config, args: &[String]) -> Result<(), String> {
 /// A key is never given on the command line, where the shell and other programs can see it: it comes from an
 /// environment variable, or is one already kept for that provider (`airband keys`).
 /// What reads each agent's message and decides what is worth showing, and who his words are for.
-pub fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
+pub(crate) fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
     use crate::providers::{self, Use};
     let (job, cmd, what, without) = (providers::Job::Summary, "model", "Model", "You get every message in full, and with several agents you are asked who yours is for.");
     let offered = || providers::offering(job).iter().map(|p| p.id.clone()).collect::<Vec<_>>().join(", ");
@@ -217,7 +217,7 @@ pub fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
 }
 
 /// `airband lan [on | off]`: whether a paired phone on the same network may reach this computer straight.
-pub fn lan(mut cfg: Config, args: &[String]) -> Result<(), String> {
+pub(crate) fn lan(mut cfg: Config, args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         None => {
             println!("{}", if cfg.lan { "On: a paired phone on the same network reaches this computer directly, encrypted. Away from that network it goes through the relay." } else { "Off: a paired phone always goes through the relay." });
@@ -233,7 +233,7 @@ pub fn lan(mut cfg: Config, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-pub fn pair(mut cfg: Config, name: &str) -> Result<(), String> {
+pub(crate) fn pair(mut cfg: Config, name: &str) -> Result<(), String> {
     // a slip like `airband pair --help` must not make a pairing called "--help"
     if name.starts_with('-') {
         return Err(format!("\"{name}\" is not a name for a phone. Use:  airband pair [name]"));
@@ -276,7 +276,7 @@ pub fn pair(mut cfg: Config, name: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn unpair(mut cfg: Config, name: Option<&str>) -> Result<(), String> {
+pub(crate) fn unpair(mut cfg: Config, name: Option<&str>) -> Result<(), String> {
     let name = name.ok_or_else(|| format!("which one? paired: {}", cfg.pairings.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")))?;
     let Some(gone) = cfg.pairings.iter().find(|p| p.name == name).cloned() else {
         return Err(format!("no phone is paired as \"{name}\""));
@@ -297,7 +297,7 @@ pub fn unpair(mut cfg: Config, name: Option<&str>) -> Result<(), String> {
 ///   airband quick add "Make no mistakes"           the label is also what is sent
 ///   airband quick add "Anti-AI" "Reread the writing style guide and fix what breaks it."
 ///   airband quick remove "Make no mistakes"
-pub fn quick(mut cfg: Config, args: &[String]) -> Result<(), String> {
+pub(crate) fn quick(mut cfg: Config, args: &[String]) -> Result<(), String> {
     match (args.first().map(String::as_str), args.get(1)) {
         (None, _) => {
             for q in airband_core::radio::quick_defaults().iter().chain(&cfg.quick) {
@@ -324,7 +324,7 @@ pub fn quick(mut cfg: Config, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-pub fn status(cfg: &Config) {
+pub(crate) fn status(cfg: &Config) {
     let res = crate::config::taken(crate::config::Tower::here(cfg, std::time::Duration::from_secs(5)).get("/v1/status").call());
     let Some(j) = res.and_then(|mut r| r.body_mut().read_json::<Value>().ok()) else {
         println!("airband is not running.");

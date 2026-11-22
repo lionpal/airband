@@ -27,9 +27,9 @@ pub enum Heard {
 
 impl Endpointer {
     /// Seconds to wait for him to start, the pause that ends a reply, and the longest reply taken.
-    pub const OPEN: f32 = 6.0;
-    pub const PAUSE: f32 = 1.2;
-    pub const LONGEST: f32 = 40.0;
+    pub(crate) const OPEN: f32 = 6.0;
+    pub(crate) const PAUSE: f32 = 1.2;
+    pub(crate) const LONGEST: f32 = 40.0;
 
     pub fn new(rate: u32) -> Self {
         Endpointer { rate, floor: 0.0, heard: 0, loud: 0, quiet: 0, speaking: false }

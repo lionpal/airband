@@ -31,8 +31,8 @@ const OPENING: Duration = Duration::from_secs(120);
 /// What he asked a new agent to be set to, in his own words for it: a name the agent lists, or its id.
 #[derive(Default)]
 pub(crate) struct Asked {
-    pub model: Option<String>,
-    pub effort: Option<String>,
+    pub(crate) model: Option<String>,
+    pub(crate) effort: Option<String>,
 }
 
 /// The protocol's words for the two kinds of setting airband sets (a setting's `category`).

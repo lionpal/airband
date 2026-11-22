@@ -10,12 +10,12 @@
 //!   which of its sessions are open now (`open`) and which folders it has worked in (`worked`).
 //!   Its row in `catalog/tools/` says what it is called and how the tower starts one. `claude_code.rs` is the
 //!   model for hooks, `opencode.rs` for a server.
-pub mod claude_accounts;
-pub mod claude_code;
-pub mod codex;
-pub mod hooks;
-pub mod opencode;
-pub mod report;
+pub(crate) mod claude_accounts;
+pub(crate) mod claude_code;
+pub(crate) mod codex;
+pub(crate) mod hooks;
+pub(crate) mod opencode;
+pub(crate) mod report;
 
 use crate::config;
 use airband_core::agent::{Agent, AgentEvent, PermissionAsk, PermissionState};
@@ -110,65 +110,65 @@ pub(crate) trait Harness: Sync {
 
 /// A session its tool says is open: who it is, where, and how his words reach it.
 #[derive(Debug, Clone)]
-pub struct Open {
-    pub agent: Agent,
+pub(crate) struct Open {
+    pub(crate) agent: Agent,
     /// Its tool says it is doing nothing right now. One the tower first learns of this way starts out
     /// waiting for him, not working; what it does after that comes with its own reports.
-    pub idle: bool,
+    pub(crate) idle: bool,
 }
 
 /// A folder a tool has had a session in.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Worked {
-    pub folder: String,
+pub(crate) struct Worked {
+    pub(crate) folder: String,
     /// When its latest session there was last written to, in milliseconds since 1970.
-    pub at: u64,
+    pub(crate) at: u64,
 }
 
 /// Asks the tower which sessions of a harness it has that their tool has listed.
-pub type Listed = Box<dyn Fn(&str) -> Vec<String> + Send>;
+pub(crate) type Listed = Box<dyn Fn(&str) -> Vec<String> + Send>;
 
 /// What a watcher is given of the tower it runs in.
-pub struct Tower {
+pub(crate) struct Tower {
     /// Hand the tower an event. False when it was not taken: it should be offered again.
-    pub event: Box<dyn Fn(AgentEvent) -> bool + Send>,
+    pub(crate) event: Box<dyn Fn(AgentEvent) -> bool + Send>,
     /// Is this session of the tool's one the tower runs itself? Those are reported by their own driver.
-    pub holds: Box<dyn Fn(&str) -> bool + Send>,
+    pub(crate) holds: Box<dyn Fn(&str) -> bool + Send>,
     /// A session its tool lists as open. The tower puts it on the radio if it is not there, and marks it as
     /// one its tool lists. False when it was not taken: it should be offered again.
-    pub found: Box<dyn Fn(Agent, bool) -> bool + Send>,
+    pub(crate) found: Box<dyn Fn(Agent, bool) -> bool + Send>,
     /// The sessions of a harness on the tower's roster that its tool has listed as open, now or before the
     /// tower last stopped. One of these the tool no longer lists has gone.
-    pub listed: Listed,
+    pub(crate) listed: Listed,
     /// Has this session reported by its tool's hooks? One that has asks for leave by its hook.
-    pub hooked: Box<dyn Fn(&str) -> bool + Send>,
+    pub(crate) hooked: Box<dyn Fn(&str) -> bool + Send>,
 }
 
 /// Something he said to an agent directly, at its keyboard.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Told {
+pub(crate) struct Told {
     /// The harness's own id for it: the same words are never taken twice.
-    pub id: String,
+    pub(crate) id: String,
     /// When he said it, in milliseconds since 1970.
-    pub at: u64,
+    pub(crate) at: u64,
     /// His words, as he typed them. Empty when he gave it only a picture.
-    pub text: String,
+    pub(crate) text: String,
     /// Pictures he gave it with those words, as the files' own bytes. At most four.
-    pub images: Vec<Vec<u8>>,
+    pub(crate) images: Vec<Vec<u8>>,
     /// False for something the tower passed on to the agent, seen here at the moment the agent took it in:
     /// that is how the tower knows a message of his has been read.
-    pub his: bool,
+    pub(crate) his: bool,
 }
 
 /// What a look at an agent can tell. Anything the harness cannot say is left out.
 #[derive(Default, Debug, PartialEq, Eq)]
-pub struct Glance {
+pub(crate) struct Glance {
     /// What it is doing right now, in a few words.
-    pub doing: Option<String>,
+    pub(crate) doing: Option<String>,
     /// The model it runs on, as a person would say it: "Opus 4.7".
-    pub model: Option<String>,
+    pub(crate) model: Option<String>,
     /// How hard it is set to think: "high".
-    pub effort: Option<String>,
+    pub(crate) effort: Option<String>,
 }
 
 /// How one harness's accounts are listed, switched and kept. Every function answers in words for him.
@@ -203,37 +203,37 @@ fn harness(name: &str) -> Option<&'static dyn Harness> {
 }
 
 /// `airband install`: set up every harness that can be. One line to say for each.
-pub fn install(exe: &std::path::Path) -> Result<Vec<String>, String> {
+pub(crate) fn install(exe: &std::path::Path) -> Result<Vec<String>, String> {
     HARNESSES.iter().filter_map(|h| h.hooks().map(|file| (h, file))).map(|(h, file)| file.install(exe).map(|changed| h.installed(&file, changed))).collect()
 }
-pub fn uninstall() -> Result<(), String> {
+pub(crate) fn uninstall() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     HARNESSES.iter().filter_map(|h| h.hooks()).try_for_each(|file| file.uninstall(&exe))
 }
 
 /// What this agent is doing right now and what it runs on, as far as its harness's adapter can tell.
-pub fn glance(agent: &Agent) -> Glance {
+pub(crate) fn glance(agent: &Agent) -> Glance {
     harness(&agent.harness).map(|h| h.glance(agent)).unwrap_or_default()
 }
 
 /// The files and commands of this agent's latest steps, if its harness's adapter can tell.
-pub fn touched(agent: &Agent) -> Vec<String> {
+pub(crate) fn touched(agent: &Agent) -> Vec<String> {
     harness(&agent.harness).map(|h| h.touched(agent)).unwrap_or_default()
 }
 
 /// The steps this agent has taken since `since`, if its harness's adapter can tell.
-pub fn steps(agent: &Agent, since: u64) -> Vec<String> {
+pub(crate) fn steps(agent: &Agent, since: u64) -> Vec<String> {
     harness(&agent.harness).map(|h| h.steps(agent, since)).unwrap_or_default()
 }
 
 /// What he has typed to this agent at its keyboard since `from`, if its harness's adapter can tell.
-pub fn told(agent: &Agent, from: u64) -> (Vec<Told>, u64) {
+pub(crate) fn told(agent: &Agent, from: u64) -> (Vec<Told>, u64) {
     harness(&agent.harness).map(|h| h.told(agent, from)).unwrap_or((Vec::new(), from))
 }
 
 /// Start watching every tool that is watched and not hooked, each on a thread of its own. `tower` makes
 /// what each is given.
-pub fn watch_all(tower: impl Fn() -> Tower) {
+pub(crate) fn watch_all(tower: impl Fn() -> Tower) {
     for h in HARNESSES {
         let tower = tower();
         std::thread::spawn(move || h.watch(tower));
@@ -244,7 +244,7 @@ pub fn watch_all(tower: impl Fn() -> Tower) {
 /// session its tool lists that the tower does not have is put on the radio, and one the tool listed before
 /// and lists no longer is signed off. One way for every tool; a tool that cannot say what is open is left
 /// to its own reports. Blocks: run it on a thread of its own.
-pub fn find_all(tower: Tower) {
+pub(crate) fn find_all(tower: Tower) {
     // what was last handed to the tower of each session, so that only news is handed over
     let mut told: std::collections::HashMap<String, Value> = Default::default();
     loop {
@@ -277,7 +277,7 @@ fn look(h: &dyn Harness, tower: &Tower, told: &mut std::collections::HashMap<Str
 
 /// Every folder a coding tool here has had a session in, with the tools that did and when the last one
 /// was, newest first. Folders that are gone are left out. Reads each tool's records: not for a hot path.
-pub fn worked_all() -> Vec<(String, Vec<String>, u64)> {
+pub(crate) fn worked_all() -> Vec<(String, Vec<String>, u64)> {
     let mut all: Vec<(String, Vec<String>, u64)> = Vec::new();
     for h in HARNESSES {
         for w in h.worked() {
@@ -317,21 +317,21 @@ pub(crate) fn written(path: &std::path::Path) -> u64 {
 }
 
 /// His words into a session of a tool's own, by that tool's way in. Blocks.
-pub fn deliver(name: &str, session: &str, words: &str) -> Result<(), String> {
+pub(crate) fn deliver(name: &str, session: &str, words: &str) -> Result<(), String> {
     harness(name).ok_or_else(|| format!("there is no adapter for \"{name}\""))?.deliver(session, words)
 }
 
 /// Put a session of a tool's own away, by that tool's way. Blocks.
-pub fn put_away(name: &str, session: &str) -> Result<(), String> {
+pub(crate) fn put_away(name: &str, session: &str) -> Result<(), String> {
     harness(name).and_then(|h| h.put_away(session)).unwrap_or_else(|| Err("Only an agent airband runs can be ended from here.".into()))
 }
 /// Whether a tool's sessions can be put away from here.
-pub fn puts_away(name: &str) -> bool {
+pub(crate) fn puts_away(name: &str) -> bool {
     harness(name).is_some_and(|h| h.puts_away())
 }
 
 /// Every account of every harness that has them.
-pub fn accounts() -> Accounts {
+pub(crate) fn accounts() -> Accounts {
     let (mut all, mut notes) = (Vec::new(), Vec::new());
     for book in HARNESSES.iter().filter_map(|h| h.accounts()) {
         let (accounts, note) = (book.list)();
@@ -344,13 +344,13 @@ pub fn accounts() -> Accounts {
 fn book(harness: &str) -> Result<&'static AccountBook, String> {
     self::harness(harness).and_then(|h| h.accounts()).ok_or_else(|| format!("{} has no accounts to switch between.", called(harness).0))
 }
-pub fn use_account(harness: &str, id: &str) -> Result<std::thread::JoinHandle<()>, String> {
+pub(crate) fn use_account(harness: &str, id: &str) -> Result<std::thread::JoinHandle<()>, String> {
     (book(harness)?.switch)(id)
 }
 
 /// `airband accounts`: list them. `save`, `add`, `use <account>`, `forget <account>`. With a tower running,
 /// listing and switching go through it, so there is one keeper of the saved logins at a time.
-pub fn accounts_command(cfg: &config::Config, args: &[String]) -> Result<(), String> {
+pub(crate) fn accounts_command(cfg: &config::Config, args: &[String]) -> Result<(), String> {
     let harness = HARNESSES.iter().find(|h| h.accounts().is_some()).map(|h| h.name()).ok_or("None of your coding tools has accounts to switch between here.")?;
     let tower = |method: &str, path: &str, body: Option<Value>| -> Option<Result<Accounts, String>> {
         let here = config::Tower::here(cfg, Duration::from_secs(60));
@@ -396,7 +396,7 @@ pub fn accounts_command(cfg: &config::Config, args: &[String]) -> Result<(), Str
     Ok(())
 }
 
-pub fn names() -> Vec<&'static str> {
+pub(crate) fn names() -> Vec<&'static str> {
     HARNESSES.iter().map(|h| h.name()).collect()
 }
 
@@ -405,7 +405,7 @@ pub(crate) fn env(k: &str) -> Option<String> {
 }
 
 /// `airband hook <harness>`: read the harness's notification from standard input, translate it, post it.
-pub fn hook(name: Option<&str>) -> Result<(), String> {
+pub(crate) fn hook(name: Option<&str>) -> Result<(), String> {
     // said aloud, because this is a mistake in someone's setup, not a failure to hide from a running agent
     let unknown = || format!("there is an adapter for: {}. Any other harness can use `airband report`.", names().join(", "));
     let name = name.ok_or_else(|| format!("usage: airband hook <harness>; {}", unknown()))?;
@@ -533,7 +533,7 @@ pub(crate) fn ask_him_while(request: &PermissionAsk, still: Option<&dyn Fn() -> 
 /// Post one event to the tower on this machine. One the tower did not take (it is being restarted or
 /// updated) is kept in a folder and handed over when the tower is back: a report is not lost because it was
 /// made in those few seconds.
-pub fn post(event: &AgentEvent) -> bool {
+pub(crate) fn post(event: &AgentEvent) -> bool {
     if send(event) {
         return true;
     }
@@ -554,7 +554,7 @@ fn send(event: &AgentEvent) -> bool {
 /// takes each as it takes any event. Stops at the first it does not take, so order holds.
 /// Something kept for more than ten minutes, or that does not read, is thrown away: the tower was away for
 /// longer than an update takes, and what an agent said then is no longer news to act on.
-pub fn drain_spool(take: impl Fn(AgentEvent) -> bool) {
+pub(crate) fn drain_spool(take: impl Fn(AgentEvent) -> bool) {
     let Ok(dir) = std::fs::read_dir(config::dir().join("spool")) else { return };
     let mut kept: Vec<std::path::PathBuf> = dir.flatten().map(|f| f.path()).collect();
     kept.sort();

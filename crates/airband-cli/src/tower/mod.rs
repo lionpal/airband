@@ -59,8 +59,8 @@ mod access;
 mod loops;
 mod probe;
 mod serve;
-pub use probe::{progress, triage, try_model};
-pub use serve::run;
+pub(crate) use probe::{progress, triage, try_model};
+pub(crate) use serve::run;
 use loops::*;
 
 use aloud::*;
@@ -116,8 +116,8 @@ const STILL_ITS_OWN_WORK_MS: u64 = 20 * 60 * 1000;
 /// One radio's line: what it said is worked on in the order it was put here.
 type Line = tokio::sync::mpsc::UnboundedSender<std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>>;
 
-pub struct App {
-    pub cfg: Config,
+pub(crate) struct App {
+    pub(crate) cfg: Config,
     store: Store,
     inner: Mutex<Inner>,
     kick: Notify,

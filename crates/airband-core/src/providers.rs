@@ -430,7 +430,7 @@ impl Offer {
 
 /// Words that stand where a provider's id or a setting's name would (a choice on the phone, the fields of a
 /// `Use` as written down). No provider, offer or setting may take one of these as its name.
-pub const NOT_AN_ID: &[&str] = &["none", "kind", "offer", "key"];
+pub(crate) const NOT_AN_ID: &[&str] = &["none", "kind", "offer", "key"];
 
 impl Use {
     /// Every setting of a job as it stands, set or usual: what a phone is told beside its pass.

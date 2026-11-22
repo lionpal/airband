@@ -222,15 +222,15 @@ impl Radio {
     }
 
     /// A file he attached has reached the tower: the next thing he says or sends from this radio takes it along.
-    pub fn arm(&self, id: String) {
+    pub(crate) fn arm(&self, id: String) {
         self.link.arm(id);
     }
     /// He took it off again before sending.
-    pub fn disarm(&self, id: String) {
+    pub(crate) fn disarm(&self, id: String) {
         self.link.disarm(&id);
     }
     /// The attached files still waiting for something to go with.
-    pub fn armed(&self) -> Vec<String> {
+    pub(crate) fn armed(&self) -> Vec<String> {
         self.link.armed()
     }
 
@@ -240,7 +240,7 @@ impl Radio {
     }
 
     /// The recent chat as last seen, from the device: there at once, with or without a connection.
-    pub fn history(&self) -> Vec<ChatMessage> {
+    pub(crate) fn history(&self) -> Vec<ChatMessage> {
         self.store.saved.lock().unwrap().history.iter().cloned().map(chat).collect()
     }
 
@@ -333,7 +333,7 @@ impl Radio {
 
     /// A picture, as a JPEG file on the device: fetched from the tower the first time and kept, so it is there
     /// at once afterwards and without a connection. Returns the file's path. Blocks: call it off the main thread.
-    pub fn picture(&self, id: String) -> Result<String, RadioError> {
+    pub(crate) fn picture(&self, id: String) -> Result<String, RadioError> {
         if id.is_empty() || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(RadioError::Refused);
         }
@@ -356,7 +356,7 @@ impl Radio {
     }
 
     /// He has read these in the chat, so call mode will not also read them out.
-    pub fn seen(&self, ids: Vec<String>) {
+    pub(crate) fn seen(&self, ids: Vec<String>) {
         for id in ids {
             self.link.tell("/heard", &Heard { id });
         }
@@ -370,7 +370,7 @@ impl Radio {
     }
 
     /// Stop for good. A transmission already being spoken finishes.
-    pub fn stop(&self) {
+    pub(crate) fn stop(&self) {
         self.stop.store(true, Ordering::SeqCst);
         self.wake.ring();
     }

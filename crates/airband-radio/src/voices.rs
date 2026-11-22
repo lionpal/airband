@@ -14,7 +14,7 @@ mod speech;
 use airband_core::providers::Answering;
 
 /// A voice service.
-pub trait Synth: Send + Sync {
+pub(crate) trait Synth: Send + Sync {
     /// Samples a second of the PCM it produces.
     fn rate(&self) -> u32;
     /// Speak `text`, handing each piece of 16-bit little-endian mono PCM to `sink` as it arrives. A service that
@@ -95,7 +95,7 @@ pub fn speaks(offer: &Offer) -> bool {
 }
 
 /// The voice a setting names, through whichever interface its row says. Err says why not, in words for him.
-pub fn synth(voice: &Use) -> Made {
+pub(crate) fn synth(voice: &Use) -> Made {
     if voice.is_none() {
         return Err("No voice is set.".into());
     }
@@ -105,7 +105,7 @@ pub fn synth(voice: &Use) -> Made {
 }
 
 /// The same, for a caller with nothing to say about why not.
-pub fn synth_for(voice: &Use) -> Option<Box<dyn Synth>> {
+pub(crate) fn synth_for(voice: &Use) -> Option<Box<dyn Synth>> {
     synth(voice).ok()
 }
 

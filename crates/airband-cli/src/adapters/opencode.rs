@@ -215,7 +215,7 @@ fn put_away(session: &str) -> Result<(), String> {
     }
 }
 
-pub struct OpenCode;
+pub(crate) struct OpenCode;
 
 impl super::Harness for OpenCode {
     fn name(&self) -> &'static str {

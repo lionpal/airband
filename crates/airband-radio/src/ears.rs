@@ -42,13 +42,13 @@ pub(crate) struct Pass {
 
 impl Pass {
     /// One of the settings, or empty.
-    pub fn get(&self, field: &str) -> &str {
+    pub(crate) fn get(&self, field: &str) -> &str {
         self.set.get(field).map(String::as_str).unwrap_or_default()
     }
 
     /// Where the live connection is made, as the row says (`stream`, with his settings filled in where it
     /// names them), and the host in it.
-    pub fn stream(&self) -> Result<(String, String), ()> {
+    pub(crate) fn stream(&self) -> Result<(String, String), ()> {
         let url = airband_core::providers::fill(self.by.text("stream"), &|field| self.get(field).to_string()).map_err(|_| ())?;
         let host = Some(airband_core::links::site(&url)).filter(|h| !h.is_empty()).ok_or(())?;
         Ok((url, host))

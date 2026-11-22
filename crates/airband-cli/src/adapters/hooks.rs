@@ -7,14 +7,14 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 /// A field of an event as text: trimmed, and nothing when it is absent, not text, or empty.
-pub fn text(v: &Value, key: &str) -> Option<String> {
+pub(crate) fn text(v: &Value, key: &str) -> Option<String> {
     v[key].as_str().map(str::trim).filter(|t| !t.is_empty()).map(String::from)
 }
 
 /// What the events every tool of this kind sends alike come to: a session starting and ending, his prompt
 /// going in, a turn ending with what was said. Nothing for an event that is the tool's own to read. A tool
 /// that names its turns says which turn ended (`turn_id`).
-pub fn session_events(hook: &Value) -> Option<Vec<Event>> {
+pub(crate) fn session_events(hook: &Value) -> Option<Vec<Event>> {
     Some(match hook["hook_event_name"].as_str()? {
         "SessionStart" => vec![Event::Checkin],
         "UserPromptSubmit" => vec![Event::Working],
@@ -25,7 +25,7 @@ pub fn session_events(hook: &Value) -> Option<Vec<Event>> {
 }
 
 /// Events as the tower takes them, each from this agent. None of them when the hook did not say who it is.
-pub fn from_agent(agent: Option<Agent>, events: Vec<Event>) -> Vec<AgentEvent> {
+pub(crate) fn from_agent(agent: Option<Agent>, events: Vec<Event>) -> Vec<AgentEvent> {
     let Some(agent) = agent else { return Vec::new() };
     events.into_iter().map(|event| AgentEvent { schema: SCHEMA.into(), agent: agent.clone(), event, via: Some(airband_core::agent::Via::Hook) }).collect()
 }
@@ -33,35 +33,35 @@ pub fn from_agent(agent: Option<Agent>, events: Vec<Event>) -> Vec<AgentEvent> {
 /// What a coding tool's row says about one of its own tools, by the name the tool calls it (`with.tools`):
 /// what it is doing (`doing`), what it asks leave for (`asks`), whether it is bookkeeping, and its part
 /// (`role`: subagent, question, files, artifact). Null when the row does not list it.
-pub fn tool_use(harness: &str, tool: &str) -> Value {
+pub(crate) fn tool_use(harness: &str, tool: &str) -> Value {
     airband_core::catalog::built().tools.iter().find(|t| t.id == harness).map(|t| t.with["tools"][tool].clone()).unwrap_or(Value::Null)
 }
 
 /// A command a tool asks leave to run, as he is asked it: in its row's words for its `shell` tool, else in
 /// airband's own (a tool reached through the Agent Client Protocol says only that the call runs a command).
-pub fn to_run(harness: &str, command: &str) -> String {
+pub(crate) fn to_run(harness: &str, command: &str) -> String {
     fill(&tool_use(harness, "shell")["asks"], &serde_json::json!({ "command": command })).unwrap_or_else(|| format!("run `{command}`"))
 }
 
 /// A tool's `PermissionRequest` hook: the tool it asks for, and what that tool is given. Nothing for any other
 /// hook.
-pub fn permission_hook(hook: &Value) -> Option<(&str, &Value)> {
+pub(crate) fn permission_hook(hook: &Value) -> Option<(&str, &Value)> {
     (hook["hook_event_name"].as_str() == Some("PermissionRequest")).then(|| (hook["tool_name"].as_str().unwrap_or("a tool"), &hook["tool_input"]))
 }
 
 /// What he said when he said no from his phone, for the tool to read.
-pub fn said_no(reason: &str) -> String {
+pub(crate) fn said_no(reason: &str) -> String {
     if reason.is_empty() { "He said no from his phone.".to_string() } else { format!("He said no from his phone: {reason}") }
 }
 
 /// Where the rest of a request too long to show is: at the tool's own keyboard.
-pub const AT_KEYBOARD: &str = " The rest is at the keyboard.";
+pub(crate) const AT_KEYBOARD: &str = " The rest is at the keyboard.";
 
 /// The mark on a hook airband put in a tool's settings: an argument the hook command passes over.
 const OURS: &str = "--put-there-by-airband";
 
 /// The tools a row gives one of these parts, by their own names.
-pub fn with_role(harness: &str, roles: &[&str]) -> Vec<String> {
+pub(crate) fn with_role(harness: &str, roles: &[&str]) -> Vec<String> {
     let rows = airband_core::catalog::built();
     let tools = rows.tools.iter().find(|t| t.id == harness).and_then(|t| t.with["tools"].as_object().cloned()).unwrap_or_default();
     tools.into_iter().filter(|(_, v)| v["role"].as_str().is_some_and(|r| roles.contains(&r))).map(|(k, _)| k).collect()
@@ -70,7 +70,7 @@ pub fn with_role(harness: &str, roles: &[&str]) -> Vec<String> {
 /// A row's words for a tool call, filled from what the call was given. `{a}` is the field `a`; `{a|b}` the
 /// first of them given; `.file` after it takes a path's own name, `.line` its first line, `.site` an address's
 /// site. A list is tried in order and the first whose fields are all given is the one; None when none is.
-pub fn fill(words: &Value, input: &Value) -> Option<String> {
+pub(crate) fn fill(words: &Value, input: &Value) -> Option<String> {
     let one = |t: &str| -> Option<String> {
         let mut out = String::new();
         let mut rest = t;
@@ -100,23 +100,23 @@ pub fn fill(words: &Value, input: &Value) -> Option<String> {
 }
 
 /// One event a tool is asked to run `airband hook <name>` on.
-pub struct On {
-    pub event: &'static str,
+pub(crate) struct On {
+    pub(crate) event: &'static str,
     /// How long the tool waits for the hook, in seconds.
-    pub timeout: u32,
+    pub(crate) timeout: u32,
     /// Only for the tools this names, in the tool's own pattern language, made from its row.
-    pub only: Option<fn() -> String>,
+    pub(crate) only: Option<fn() -> String>,
 }
-pub const fn on(event: &'static str, timeout: u32) -> On {
+pub(crate) const fn on(event: &'static str, timeout: u32) -> On {
     On { event, timeout, only: None }
 }
 
 /// A tool's hooks file, and what of ours goes in it.
-pub struct File {
+pub(crate) struct File {
     /// The adapter's name: the hook is `airband hook <name>`.
-    pub name: &'static str,
-    pub path: PathBuf,
-    pub events: &'static [On],
+    pub(crate) name: &'static str,
+    pub(crate) path: PathBuf,
+    pub(crate) events: &'static [On],
 }
 
 impl File {
@@ -161,7 +161,7 @@ impl File {
     }
     /// Put our hooks in, replacing any from an earlier install and leaving everyone else's as they were.
     /// Returns whether the file changed: a tool that asks him to trust its hooks asks again only then.
-    pub fn install(&self, exe: &Path) -> Result<bool, String> {
+    pub(crate) fn install(&self, exe: &Path) -> Result<bool, String> {
         let mut file = self.read()?;
         let before = file.clone();
         self.strip(&mut file, exe);
@@ -181,7 +181,7 @@ impl File {
         }
         self.write(&file).map(|()| true)
     }
-    pub fn uninstall(&self, exe: &Path) -> Result<(), String> {
+    pub(crate) fn uninstall(&self, exe: &Path) -> Result<(), String> {
         if !self.path.is_file() {
             return Ok(());
         }
@@ -193,7 +193,7 @@ impl File {
 }
 
 /// The longest thing he is asked to allow from the phone. It is shown whole or not asked there at all.
-pub const SHOWN_WHOLE: usize = 4000;
+pub(crate) const SHOWN_WHOLE: usize = 4000;
 /// How much of a request's whole input goes with it, for when he wants to see all of it.
 const DETAIL: usize = 6000;
 
@@ -202,7 +202,7 @@ const DETAIL: usize = 6000;
 /// will run: one too long to put in front of him whole on a phone is not asked there at all (nothing comes
 /// back), and the tool asks in its own way. `input` is everything the tool said about the request; a long one
 /// is cut, and says so, with `elsewhere` saying where the rest can be read.
-pub fn leave(agent: Agent, tool: &str, what: String, input: &Value, elsewhere: &str, question: Option<airband_core::agent::Asked>) -> Option<PermissionAsk> {
+pub(crate) fn leave(agent: Agent, tool: &str, what: String, input: &Value, elsewhere: &str, question: Option<airband_core::agent::Asked>) -> Option<PermissionAsk> {
     if what.chars().count() > SHOWN_WHOLE {
         return None;
     }
@@ -217,7 +217,7 @@ pub fn leave(agent: Agent, tool: &str, what: String, input: &Value, elsewhere: &
 /// His answer to a request, as a tool with hooks of this shape wants it printed. A refusal carries his reason.
 /// `answered` is for a question of the agent's that he answered: the asking tool is not run (its own screen
 /// would only ask again), and his answer goes back in its place.
-pub fn decision(allow: bool, reason: &str, answered: bool) -> String {
+pub(crate) fn decision(allow: bool, reason: &str, answered: bool) -> String {
     let decision = if answered {
         json!({ "behavior": "deny", "message": format!("He answered this from his phone, through Airband. His answer: {reason}\nTake that as his answer to the question and carry on. Do not ask it again.") })
     } else if allow {

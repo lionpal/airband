@@ -14,7 +14,7 @@ use std::io::Read;
 ///   airband report --id build-7 --harness codex signoff
 ///
 /// `--meta key=value` (repeatable) records anything else about the agent: its model, a branch, a ticket.
-pub fn run(args: &[String]) -> Result<(), String> {
+pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let mut agent = Agent { id: String::new(), harness: "custom".into(), cwd: std::env::current_dir().ok().map(|p| p.display().to_string()), name: None, title: None, pid: None, deliver: None, meta: Default::default() };
     let mut rest = Vec::new();
     let (mut terminal, mut pane) = (None, None);

@@ -22,7 +22,7 @@
 use serde_json::{Map, Value};
 
 /// What a secret's place in the file holds while the secret is in the keychain.
-pub const MARK: &str = "in-keychain";
+pub(crate) const MARK: &str = "in-keychain";
 #[cfg(target_os = "macos")]
 const SERVICE: &str = "dev.airband.tower";
 #[cfg(target_os = "macos")]
@@ -61,7 +61,7 @@ fn each(doc: &mut Value, f: &mut dyn FnMut(String, &mut Value)) {
 
 /// Take the secrets out of the settings, leaving the mark. A place that already holds the mark is filled from
 /// `kept` (what the keychain has), so nothing is lost by sealing twice.
-pub fn seal(doc: &mut Value, kept: &Map<String, Value>) -> Map<String, Value> {
+pub(crate) fn seal(doc: &mut Value, kept: &Map<String, Value>) -> Map<String, Value> {
     let mut out = Map::new();
     each(doc, &mut |name, v| {
         let secret = if v.as_str() == Some(MARK) { kept.get(&name).cloned() } else { Some(v.clone()) };
@@ -74,7 +74,7 @@ pub fn seal(doc: &mut Value, kept: &Map<String, Value>) -> Map<String, Value> {
 }
 
 /// Put the secrets back where the marks are. Err names the first one the keychain does not have.
-pub fn open(doc: &mut Value, kept: &Map<String, Value>) -> Result<(), String> {
+pub(crate) fn open(doc: &mut Value, kept: &Map<String, Value>) -> Result<(), String> {
     let mut missing = None;
     each(doc, &mut |name, v| {
         if v.as_str() == Some(MARK) {
@@ -89,7 +89,7 @@ pub fn open(doc: &mut Value, kept: &Map<String, Value>) -> Result<(), String> {
 
 /// Do these settings have secrets kept elsewhere: is one of the places that holds a secret marked as kept in the
 /// keychain? Read as settings, never by looking for the mark in the text. Text that is not settings has none.
-pub fn sealed(text: &str) -> bool {
+pub(crate) fn sealed(text: &str) -> bool {
     let Ok(mut doc) = serde_json::from_str::<Value>(text) else { return false };
     let mut marked = false;
     each(&mut doc, &mut |_, v| marked |= v.as_str() == Some(MARK));
@@ -108,7 +108,7 @@ mod mac {
         std::env::var("HOME").is_ok_and(|h| h.trim_end_matches('/') == real.trim_end_matches('/'))
     }
 
-    pub fn get() -> Result<Map<String, Value>, String> {
+    pub(crate) fn get() -> Result<Map<String, Value>, String> {
         if !at_home() {
             return Err("the keychain is not used outside his own home folder".into());
         }
@@ -118,7 +118,7 @@ mod mac {
         serde_json::from_slice(&bytes).map_err(|_| "what the keychain holds for airband cannot be read".to_string())
     }
 
-    pub fn put(kept: &Map<String, Value>) -> Result<(), String> {
+    pub(crate) fn put(kept: &Map<String, Value>) -> Result<(), String> {
         if !at_home() {
             return Err("the keychain is not used outside his own home folder".into());
         }
@@ -127,7 +127,7 @@ mod mac {
     }
 
     /// Take airband's item out of the keychain.
-    pub fn forget() {
+    pub(crate) fn forget() {
         if at_home() {
             let _ = delete_generic_password(SERVICE, ACCOUNT);
         }
@@ -135,7 +135,7 @@ mod mac {
 
     /// Is this program signed with a developer certificate, and in his own home? Only then is it the same
     /// program to the keychain after the next build, with a keychain to find.
-    pub fn signed() -> bool {
+    pub(crate) fn signed() -> bool {
         if !at_home() {
             return false;
         }
@@ -227,11 +227,11 @@ mod file {
         Ok(ChaCha20Poly1305::new((&key).into()))
     }
 
-    pub fn has() -> bool {
+    pub(crate) fn has() -> bool {
         sealed_at().is_file()
     }
 
-    pub fn get() -> Result<Map<String, Value>, String> {
+    pub(crate) fn get() -> Result<Map<String, Value>, String> {
         let sealed = std::fs::read(sealed_at()).map_err(|_| "airband's keys are not on this computer".to_string())?;
         if sealed.len() < 12 + 16 {
             return Err("the sealed keys are cut short".into());
@@ -241,24 +241,24 @@ mod file {
         serde_json::from_slice(&plain).map_err(|_| "the sealed keys cannot be read".to_string())
     }
 
-    pub fn put(kept: &Map<String, Value>) -> Result<(), String> {
+    pub(crate) fn put(kept: &Map<String, Value>) -> Result<(), String> {
         let mut nonce = [0u8; 12];
         getrandom::fill(&mut nonce).map_err(|e| e.to_string())?;
         let sealed = cipher(true)?.encrypt(Nonce::from_slice(&nonce), Payload { msg: &serde_json::to_vec(kept).unwrap(), aad: BOUND }).map_err(|_| "the keys could not be sealed".to_string())?;
         crate::config::write_private(&sealed_at(), [nonce.as_slice(), &sealed].concat()).map_err(|e| format!("cannot write the sealed keys: {e}"))
     }
 
-    pub fn forget() {
+    pub(crate) fn forget() {
         let _ = std::fs::remove_file(sealed_at());
         let _ = std::fs::remove_file(salt_at());
     }
     #[cfg(test)]
-    pub mod tests_folder {
+    pub(crate) mod tests_folder {
         thread_local!(static DIR: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) });
-        pub fn set(dir: std::path::PathBuf) {
+        pub(crate) fn set(dir: std::path::PathBuf) {
             DIR.with(|d| *d.borrow_mut() = Some(dir));
         }
-        pub fn get() -> Option<std::path::PathBuf> {
+        pub(crate) fn get() -> Option<std::path::PathBuf> {
             DIR.with(|d| d.borrow().clone())
         }
     }
@@ -272,7 +272,7 @@ fn keychain() -> bool {
 }
 
 /// Where the keys are kept on this computer, in words for him.
-pub fn place() -> &'static str {
+pub(crate) fn place() -> &'static str {
     #[cfg(target_os = "macos")]
     if keychain() && !file::has() {
         return "in the keychain";
@@ -281,7 +281,7 @@ pub fn place() -> &'static str {
 }
 
 /// The keys. From the keychain where this program can use it, else from the sealed file.
-pub fn get() -> Result<Map<String, Value>, String> {
+pub(crate) fn get() -> Result<Map<String, Value>, String> {
     #[cfg(target_os = "macos")]
     if keychain() && !file::has() {
         return mac::get();
@@ -292,7 +292,7 @@ pub fn get() -> Result<Map<String, Value>, String> {
 /// Keep the keys. In the keychain for a signed build on a Mac, and in the sealed file for every other (an
 /// unsigned build, another system). Never anywhere in the clear. A keychain that will not take them is an
 /// error he is told: they are not quietly put somewhere else.
-pub fn put(kept: &Map<String, Value>) -> Result<(), String> {
+pub(crate) fn put(kept: &Map<String, Value>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     if keychain() {
         mac::put(kept).map_err(|why| format!("{why}. Run this at the computer itself, logged in, and not over SSH."))?;
@@ -303,7 +303,7 @@ pub fn put(kept: &Map<String, Value>) -> Result<(), String> {
 }
 
 /// Where a request to carry the keys waits for a tower that can read the keychain (a shell over SSH cannot).
-pub fn carry_asked() -> std::path::PathBuf {
+pub(crate) fn carry_asked() -> std::path::PathBuf {
     crate::config::dir().join("carry-keys")
 }
 
@@ -312,7 +312,7 @@ pub fn carry_asked() -> std::path::PathBuf {
 /// copy could not read what this one put there. It reads the sealed file instead, and puts the keys back in
 /// the keychain as its own (`settle`). Nothing is taken out of the keychain until the file gives the same
 /// keys back. Ok(false) when there was nothing in the keychain to move.
-pub fn carry() -> Result<bool, String> {
+pub(crate) fn carry() -> Result<bool, String> {
     #[cfg(target_os = "macos")]
     if keychain() && !file::has() {
         let kept = mac::get()?;
@@ -329,7 +329,7 @@ pub fn carry() -> Result<bool, String> {
 
 /// Keys sealed in the file by a run that could not use the keychain are moved into it by one that can: the
 /// tower, at its start. Says so when it moved them.
-pub fn settle() -> bool {
+pub(crate) fn settle() -> bool {
     #[cfg(target_os = "macos")]
     if keychain() && file::has()
         && let Ok(kept) = file::get()
