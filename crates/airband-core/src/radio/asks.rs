@@ -83,6 +83,13 @@ pub struct MoveAgent {
     pub to: TeamPick,
 }
 
+/// The answer to [`MoveAgent`]: what the agent is called now, as its typed parts, and its team's id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Moved {
+    pub callsign: crate::routing::Callsign,
+    pub team: String,
+}
+
 /// Which team an agent goes to: one of his teams on that computer, by its id, or a new one he named.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

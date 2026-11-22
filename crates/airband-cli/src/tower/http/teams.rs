@@ -4,7 +4,7 @@ use super::*;
 /// He moved an agent to another team.
 pub(super) async fn team(State(app): State<Arc<App>>, Json(to): Json<airband_core::radio::MoveAgent>) -> Json<Value> {
     Json(match place::by_him(&app, &to.agent, &to.to) {
-        Ok((callsign, team, id)) => json!({ "callsign": callsign, "team": team, "id": id }),
+        Ok(moved) => json!(moved),
         Err(why) => refused(why),
     })
 }

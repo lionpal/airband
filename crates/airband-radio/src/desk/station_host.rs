@@ -58,7 +58,7 @@ impl RadioHost for StationHost {
                 s.landing.retain(|(o, _)| o.id != message.id);
             }
             // the tower read his words as for an agent another computer has: they go there, addressed to it
-            let there = elsewhere.as_ref().and_then(|c| state.stations.iter().enumerate().filter(|(i, _)| *i != self.index).find_map(|(_, s)| s.agents.iter().find(|a| a.id == *c).map(|a| (s.radio.clone(), a.id.clone()))));
+            let there = elsewhere.as_ref().and_then(|c| state.station_with_agent(c).filter(|i| *i != self.index).map(|i| (state.stations[i].radio.clone(), c.clone())));
             match (there, elsewhere) {
                 (Some((radio, agent)), Some(_)) => {
                     drop(state);

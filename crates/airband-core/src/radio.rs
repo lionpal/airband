@@ -88,7 +88,7 @@ pub struct Heard {
     pub id: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Utterance {
     pub text: String,
     /// Random, the same on every retry of this utterance: the tower takes each id once, and tells what came

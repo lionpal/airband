@@ -39,14 +39,6 @@ pub struct Radio {
     pub(crate) reading: std::sync::atomic::AtomicU64,
 }
 
-/// What an agent moved to another team is called now, and that team: what it is called and its id.
-#[derive(serde::Deserialize)]
-pub(crate) struct Moved {
-    pub(crate) callsign: String,
-    pub(crate) team: String,
-    pub(crate) id: String,
-}
-
 #[uniffi::export]
 impl Radio {
     /// Start working with the tower this pairing link leads to (the link `airband pair` prints). Returns at
@@ -354,7 +346,7 @@ impl Radio {
 
     /// Put an agent in another team: one that exists, or a new one of that name. Returns what the agent is
     /// called now and the team it is in. Blocks: call it off the main thread.
-    pub(crate) fn move_agent(&self, agent: String, to: airband_core::radio::TeamPick) -> Result<Moved, RadioError> {
+    pub(crate) fn move_agent(&self, agent: String, to: airband_core::radio::TeamPick) -> Result<airband_core::radio::Moved, RadioError> {
         self.asked("POST", "/team", Some(serde_json::to_value(airband_core::radio::MoveAgent { agent, to }).unwrap()))
     }
 
@@ -510,7 +502,7 @@ impl Radio {
             if attempt > 0 {
                 thread::sleep(Duration::from_secs(2));
             }
-            match self.link.utterance_once(&airband_core::radio::Utterance { text: text.clone(), id: id.clone(), re: Some(re.clone()), scope: None, label: None, attachments: Vec::new(), others: Vec::new(), to: Vec::new(), act: act.clone() }).0 {
+            match self.link.utterance_once(&airband_core::radio::Utterance { text: text.clone(), id: id.clone(), re: Some(re.clone()), act: act.clone(), ..Default::default() }).0 {
                 // left with the relay for a computer that is away: it will get there, and he should know it has not yet
                 Ok(Sent::Left { away: true }) => return Err(RadioError::Told { reason: AWAY.into() }),
                 // his computer has it: that is the answer given

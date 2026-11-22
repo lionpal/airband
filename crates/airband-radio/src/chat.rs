@@ -18,6 +18,11 @@ pub(crate) fn not_read(why: airband_core::radio::NotRead) -> &'static str {
 }
 
 impl ChatAgent {
+    /// Called this now: every form of its name shown, from the typed parts, as the feed would give them.
+    pub(crate) fn call(&mut self, c: airband_core::routing::Callsign) {
+        (self.callsign, self.badge, self.number) = (c.shown(), c.badge(), c.shown_rest());
+        (self.group, self.number_kept, self.named) = (c.project, c.number, c.named);
+    }
     /// Its callsign as the typed parts it was made from.
     pub fn parts(&self) -> airband_core::routing::Callsign {
         airband_core::routing::Callsign { project: self.group.clone(), number: self.number_kept.clone(), named: self.named }
@@ -33,8 +38,9 @@ pub(crate) fn chat_feed(feed: Feed) -> ChatFeed {
         seq: feed.seq,
         messages: feed.messages.into_iter().map(chat).collect(),
         agents: feed.roster.into_iter().map(|r| {
-            let callsign = airband_core::routing::Callsign { project: r.group.clone(), number: r.number.clone(), named: r.named };
-            ChatAgent { id: r.id, callsign: callsign.shown(), badge: callsign.badge(), group: r.group, team: r.team, room: String::new(), number: callsign.shown_rest(), number_kept: r.number, named: r.named, harness: r.harness, waiting: r.waiting, reachable: r.reachable, state: r.state.into(), subagents: r.subagents, doing: r.doing, held: r.held, terminal: r.terminal, ends: r.ends, model: r.model, effort: r.effort }
+            let mut agent = ChatAgent { id: r.id, callsign: String::new(), badge: String::new(), group: String::new(), team: r.team, room: String::new(), number: String::new(), number_kept: String::new(), named: false, harness: r.harness, waiting: r.waiting, reachable: r.reachable, state: r.state.into(), subagents: r.subagents, doing: r.doing, held: r.held, terminal: r.terminal, ends: r.ends, model: r.model, effort: r.effort };
+            agent.call(airband_core::routing::Callsign { project: r.group, number: r.number, named: r.named });
+            agent
         }).collect(),
         quick: feed.quick.into_iter().map(|q| QuickMessage { label: q.label, text: q.text }).collect(),
         open: feed.open,

@@ -56,11 +56,13 @@ impl Desk {
         };
         // a key is kept under its provider's id, whichever of the provider's offers it was given for
         let (provider, offer) = (choice.provider.clone(), choice.offer.clone());
+        // the key he gave now, else the one kept for that provider
+        let the_key = || key.clone().or_else(|| host.secret(provider.clone())).unwrap_or_default();
         // A service that takes a key is asked, by this device, whether it takes this one: the request its row
         // names, which costs nothing. A key that does not pass is not kept and goes nowhere else.
         let row = airband_core::providers::provider(&provider).filter(|p| p.key && choice.place == ChoicePlace::Service);
         if let Some(p) = &row {
-            let with = crate::mouth::service_of(&provider, &offer, &key.clone().or_else(|| host.secret(provider.clone())).unwrap_or_default(), set.clone().into_iter().collect());
+            let with = crate::mouth::service_of(&provider, &offer, &the_key(), set.clone().into_iter().collect());
             if with.key.is_empty() {
                 return done(Err(told(format!("Enter your {}.", p.key_name))));
             }
@@ -88,7 +90,7 @@ impl Desk {
             }
             chooser.work(job, &id, "Asking your computer to switch", false);
             host.changed();
-            let wanted = SetReads { kind: provider.clone(), offer, key: key.or_else(|| host.secret(provider.clone())).unwrap_or_default(), set };
+            let wanted = SetReads { kind: provider.clone(), offer, key: the_key(), set };
             let sent = radios.iter().try_for_each(|radio| radio.set_reads(&wanted));
             if sent.is_ok() {
                 let offered = radios.iter().find_map(|radio| radio.reads_offered());
@@ -103,7 +105,7 @@ impl Desk {
         }
         let pick = match choice.place {
             ChoicePlace::Service => {
-                let with = crate::mouth::service_of(&provider, &offer, &key.clone().or_else(|| host.secret(provider.clone())).unwrap_or_default(), set.clone().into_iter().collect());
+                let with = crate::mouth::service_of(&provider, &offer, &the_key(), set.clone().into_iter().collect());
                 // one with no key (a server of his own) has nothing to test but itself: one short real call
                 if row.is_none() {
                     let tried = match job {
@@ -197,7 +199,7 @@ impl Desk {
 
     /// The coding tools he uses, by id, the one he uses most first.
     pub fn tools(&self) -> Vec<String> {
-        self.shared.chooser.saved().tools
+        self.shared.chooser.tools()
     }
 
     /// He uses these coding tools, the one he uses most first. What can write his summaries follows from them.

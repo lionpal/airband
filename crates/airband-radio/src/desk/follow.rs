@@ -40,7 +40,7 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, gener
                     // what reads there has stopped working: he is told once, when it stops, and each message
                     // comes as it was written until it works again
                     if !feed.reads_failed.is_empty() && station.reads_failed != feed.reads_failed {
-                        reads_trouble = Some(format!("Summaries are not working on {}. {} You are getting each message as it was written. To change what makes them, open Settings, then Summaries.", if feed.station.is_empty() { "your computer" } else { feed.station.as_str() }, feed.reads_failed));
+                        reads_trouble = Some(feed.reads_failed.clone());
                     }
                     station.reads_failed = feed.reads_failed.clone();
                     station.agents = feed.agents.clone();
@@ -85,8 +85,9 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, index: usize, gener
             shared.senses.ears.expect(names);
         }
         shared.host.changed();
-        if let Some(trouble) = reads_trouble {
-            shared.host.note(trouble);
+        if let Some(why) = reads_trouble {
+            let name = shared.state.lock().unwrap().computer_name(index);
+            shared.host.note(format!("{name}: summaries are not working. {why} You are getting each message as it was written. To change what makes them, open Settings, then Summaries."));
         }
         if !seen.is_empty() {
             radio.seen(seen);

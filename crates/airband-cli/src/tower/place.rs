@@ -7,7 +7,7 @@ use super::*;
 
 /// He moved an agent to a team, from a radio: one of his teams by its id, or a new one he named. Returns what it
 /// is called now, and the team it is in: what that is called and its id.
-pub(super) fn by_him(app: &App, agent: &str, to: &airband_core::radio::TeamPick) -> Result<(String, String, String), String> {
+pub(super) fn by_him(app: &App, agent: &str, to: &airband_core::radio::TeamPick) -> Result<airband_core::radio::Moved, String> {
     let mut inner = app.change();
     if inner.find(agent).is_none() {
         return Err("That agent is no longer running.".into());
@@ -19,7 +19,7 @@ pub(super) fn by_him(app: &App, agent: &str, to: &airband_core::radio::TeamPick)
     };
     inner.move_to(agent, &team, Mover::Him);
     inner.tell();
-    Ok(inner.find(agent).map(|s| (s.callsign.text(), s.callsign.project.clone(), s.team.clone())).unwrap_or_default())
+    inner.find(agent).map(|s| airband_core::radio::Moved { callsign: s.callsign.clone(), team: s.team.clone() }).ok_or_else(|| "That agent is no longer running.".into())
 }
 
 /// Is this report one to look at where the agent belongs on? Its first, so one in the wrong team is not left

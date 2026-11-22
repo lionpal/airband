@@ -464,7 +464,7 @@ impl Link {
     pub(crate) fn utterance(&self, text: &str, re: Option<String>, scope: Option<String>, act: Option<airband_core::radio::Act>) -> Result<Option<Reply>, LinkError> {
         // what he has attached goes with what he says; if this fails for good they are his to send again
         let attachments = self.take_armed();
-        let u = Utterance { text: text.to_string(), id: random_hex(12), re, scope, label: None, attachments: attachments.clone(), others: Vec::new(), to: Vec::new(), act };
+        let u = Utterance { text: text.to_string(), id: random_hex(12), re, scope, attachments: attachments.clone(), act, ..Default::default() };
         self.awaited.lock().unwrap().insert(u.id.clone(), None);
         let got = self.say_and_wait(&u);
         self.awaited.lock().unwrap().remove(&u.id);
@@ -532,7 +532,7 @@ mod tests {
     }
 
     fn said(id: &str, text: &str) -> Utterance {
-        Utterance { text: text.into(), id: id.into(), re: None, scope: None, label: None, attachments: Vec::new(), others: Vec::new(), to: Vec::new(), act: None }
+        Utterance { text: text.into(), id: id.into(), ..Default::default() }
     }
 
     /// A link to a relay nobody is at, with a tower address nobody is at either.

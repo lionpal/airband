@@ -7,7 +7,7 @@ impl Desk {
     pub fn choose(&self, agent: String) {
         let sent = {
             let mut state = self.shared.state.lock().unwrap();
-            let to = state.stations.iter().find_map(|s| s.agents.iter().find(|a| a.id == agent).map(|_| s.radio.clone()));
+            let to = state.radio_with_agent(&agent);
             match (to, state.asking.take()) {
                 (Some(radio), Some(asking)) => Some((radio, asking.message.text, asking.message.label)),
                 (_, asking) => {
@@ -33,7 +33,7 @@ impl Desk {
         let sent = {
             let mut state = self.shared.state.lock().unwrap();
             let text = match &tapped {
-                Tapped::Option { index } => state.stations.iter().find_map(|s| s.messages.iter().find(|m| m.id == message_id)).and_then(|m| m.options.get(*index as usize).cloned()),
+                Tapped::Option { index } => state.message(&message_id).and_then(|(_, m)| m.options.get(*index as usize).cloned()),
                 Tapped::Allow | Tapped::Deny => Some(tapped.words()),
             };
             text.map(|text| {
@@ -89,7 +89,7 @@ impl Desk {
     pub fn resend(&self, message_id: String, agent_id: String) {
         let (text, known) = {
             let state = self.shared.state.lock().unwrap();
-            let found = state.stations.iter().find_map(|s| s.messages.iter().find(|m| m.id == message_id).map(|m| (m.text.clone(), m.long)));
+            let found = state.message(&message_id).map(|(_, m)| (m.text.clone(), m.long));
             let known = state.stations.iter().flat_map(|s| s.agents.iter()).any(|a| a.id == agent_id);
             (found, known)
         };
@@ -299,7 +299,7 @@ pub(super) fn pick_station(state: &State, text: &str, re: Option<&str>, room: Op
     if let Some(i) = tags_someone(state, text) {
         return Some(i);
     }
-    if let Some(i) = agent.and_then(|id| state.stations.iter().position(|s| s.agents.iter().any(|a| a.id == id))) {
+    if let Some(i) = agent.and_then(|id| state.station_with_agent(id)) {
         return Some(i);
     }
     // the room he is looking at, when only one computer has agents in it

@@ -146,13 +146,17 @@ impl State {
     fn radios(&self) -> Vec<Arc<Radio>> {
         self.stations.iter().map(|s| s.radio.clone()).collect()
     }
+    /// The computer that has this agent, by the agent's id: its place among them.
+    fn station_with_agent(&self, id: &str) -> Option<usize> {
+        self.stations.iter().position(|s| s.agents.iter().any(|a| a.id == id))
+    }
     /// The radio of the computer that has this agent, by the agent's id.
     fn radio_with_agent(&self, id: &str) -> Option<Arc<Radio>> {
-        self.stations.iter().find(|s| s.agents.iter().any(|a| a.id == id)).map(|s| s.radio.clone())
+        self.station_with_agent(id).map(|i| self.stations[i].radio.clone())
     }
     /// What a computer is called wherever one is named to him: the name it gave itself, and for one that
     /// gave none, "Your computer" when it is the only one and its place among them when there are several.
-    fn computer_name(&self, index: usize) -> String {
+    pub(super) fn computer_name(&self, index: usize) -> String {
         match self.stations.get(index).map(|s| s.name.as_str()).filter(|n| !n.is_empty()) {
             Some(name) => name.to_string(),
             None if self.stations.len() == 1 => "Your computer".to_string(),
@@ -357,7 +361,8 @@ impl Desk {
         let found = match (computer.is_empty(), state.stations.as_slice()) {
             (true, [only]) => Some(only),
             (true, [_, _, ..]) => return Err(RadioError::Told { reason: "Choose which computer first.".into() }),
-            _ => state.stations.iter().find(|s| s.name == computer),
+            // by what it is called to him, which is its own name once it has said one
+            _ => (0..state.stations.len()).find(|&i| state.computer_name(i) == computer).map(|i| &state.stations[i]),
         };
         found.filter(|s| s.online).map(|s| (s.radio.clone(), station_id(&s.link))).ok_or(RadioError::Offline)
     }

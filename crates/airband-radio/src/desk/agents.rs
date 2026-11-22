@@ -78,7 +78,7 @@ impl Desk {
     /// Move one computer's sessions to another of its accounts. `station`, `harness` and `id` are as
     /// [`Desk::accounts`] gave them. Blocks: call it off the main thread.
     pub fn use_account(&self, station: String, harness: String, id: String) -> Result<StationAccounts, RadioError> {
-        let radio = self.shared.state.lock().unwrap().stations.iter().find(|s| s.name == station).map(|s| s.radio.clone()).ok_or(RadioError::Refused)?;
+        let radio = self.station_radio(&station)?;
         radio.use_account(station, harness, id)
     }
     /// Put an agent in another team: a room on screen with that agent's computer ([`DeskRoom::id`]), or a new
@@ -103,7 +103,8 @@ impl Desk {
             let mut state = self.shared.state.lock().unwrap();
             for s in state.stations.iter_mut().filter(|s| s.agents.iter().any(|a| a.id == agent)) {
                 for a in s.agents.iter_mut().filter(|a| a.id == agent) {
-                    (a.callsign, a.group, a.team) = (now.callsign.clone(), now.team.clone(), now.id.clone());
+                    a.call(now.callsign.clone());
+                    a.team = now.team.clone();
                 }
                 s.settle_rooms();
             }
@@ -121,8 +122,7 @@ impl Desk {
             // shown as the tower now has it, without waiting for the next look at the feed
             let mut state = self.shared.state.lock().unwrap();
             for a in state.stations.iter_mut().flat_map(|s| s.agents.iter_mut()).filter(|a| a.room == room) {
-                a.callsign = airband_core::routing::Callsign { project: now.clone(), ..a.parts() }.text();
-                a.group = now.clone();
+                a.call(airband_core::routing::Callsign { project: now.clone(), ..a.parts() });
             }
         }
         self.shared.host.changed();
