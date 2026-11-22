@@ -24,7 +24,7 @@ fn pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str) 
 /// The pass goes in the address; the model, the language and the names to expect go in the first message.
 fn connect(grant: &Pass, _request: &str) -> Result<Socket, ()> {
     let (url, host) = grant.stream()?;
-    let url = format!("{url}?access_token={}", grant.token);
+    let url = super::with_query(&url, &[("access_token", &grant.token)]);
     let mut socket = dial(&host, url.into_client_request().map_err(|_| ())?)?;
     let mut hearing = json!({ "mode": "VERBATIM" });
     if !grant.get("language").is_empty() {

@@ -22,16 +22,16 @@ fn pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str) 
 /// The pass goes in the address, with the model, the language and the names he is likely to say.
 fn connect(grant: &Pass, _request: &str) -> Result<Socket, ()> {
     let (stream, host) = grant.stream()?;
-    let enc = |s: &str| s.bytes().map(|b| if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' { (b as char).to_string() } else { format!("%{b:02X}") }).collect::<String>();
-    let mut url = format!("{stream}?model_id={}&audio_format=pcm_16000&commit_strategy=manual&token={}", enc(grant.get("model")), enc(&grant.token));
+    let model = grant.get("model");
+    let mut query: Vec<(&str, &str)> = vec![("model_id", &model), ("audio_format", "pcm_16000"), ("commit_strategy", "manual"), ("token", &grant.token)];
     // its language codes are two letters ("en"), where a setting may say "en-US"
-    if let Some(language) = grant.get("language").split('-').next().filter(|l| !l.is_empty()) {
-        url.push_str(&format!("&language_code={}", enc(language)));
+    let language = grant.get("language");
+    if let Some(language) = language.split('-').next().filter(|l| !l.is_empty()) {
+        query.push(("language_code", language));
     }
     // the names he is likely to say, so "shop two" is not heard as something else
-    for term in grant.phrases.iter().take(50) {
-        url.push_str(&format!("&keyterms={}", enc(term)));
-    }
+    query.extend(grant.phrases.iter().take(50).map(|term| ("keyterms", term.as_str())));
+    let url = super::with_query(&stream, &query);
     let mut socket = dial(&host, url.into_client_request().map_err(|_| ())?)?;
     // it says when the session has started, or why it will not
     loop {

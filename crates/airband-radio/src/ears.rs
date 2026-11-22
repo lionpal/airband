@@ -85,6 +85,13 @@ fn ask_pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &s
     })
 }
 
+/// An address with its query, each value encoded: the one way a live service's address is put together.
+fn with_query(base: &str, pairs: &[(&str, &str)]) -> String {
+    let mut q = url::form_urlencoded::Serializer::new(String::new());
+    q.extend_pairs(pairs);
+    format!("{base}?{}", q.finish())
+}
+
 /// Said when he opens the microphone with nothing chosen to listen with.
 pub(crate) const NOTHING_CHOSEN: &str = "Nothing is chosen to listen with on this device. Choose it in Settings, under Listening.";
 
