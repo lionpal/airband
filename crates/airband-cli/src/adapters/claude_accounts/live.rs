@@ -1,6 +1,6 @@
 //! The live login: the keychain item Claude Code keeps it in (JSON, with the claude.ai login under
-//! `claudeAiOauth` beside the MCP logins), the account record in its account file, and which account it is.
-use super::{saved, service, tool, Here, Res};
+//! the key its row names beside the MCP logins), the account record in its account file, and which account it is.
+use super::{login_key, saved, service, tool, Here, Res};
 use serde_json::{Map, Value};
 use std::path::Path;
 
@@ -15,14 +15,14 @@ pub(super) fn blob(here: &Here) -> Res<Option<Map<String, Value>>> {
 }
 /// The claude.ai login in the live item, when there is one.
 fn oauth(blob: &Map<String, Value>) -> Option<&Value> {
-    blob.get("claudeAiOauth")
+    blob.get(&login_key())
 }
 fn field<'a>(o: &'a Value, name: &str) -> Option<&'a str> {
     o.get(name)?.as_str().filter(|t| !t.is_empty())
 }
 /// The live login's access token.
 pub(super) fn token(here: &Here) -> Option<String> {
-    blob(here).ok()??.get("claudeAiOauth").and_then(|o| field(o, "accessToken")).map(String::from)
+    oauth(&blob(here).ok()??).and_then(|o| field(o, "accessToken")).map(String::from)
 }
 
 /// The account record in Claude Code's account file.
@@ -32,11 +32,19 @@ pub(super) fn oauth_account(file: &Path) -> Option<Value> {
 }
 /// Set `oauthAccount`, reading the file again just before writing so nothing else in it is lost.
 pub(super) fn set_oauth_account(file: &Path, acct: &Value) -> Res<()> {
+    write_account_file(file, with_oauth_account(file, acct)?)
+}
+/// The account file as it is now with `oauthAccount` set, to be written: an error, before anything is changed,
+/// when it cannot be read.
+pub(super) fn with_oauth_account(file: &Path, acct: &Value) -> Res<String> {
     let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
     let mut d: Value = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", file.display()))?;
     d.as_object_mut().ok_or_else(|| format!("{} is not in the form expected", file.display()))?.insert("oauthAccount".into(), acct.clone());
-    // his own file, which holds his login: whole or not at all, and as private as it was
-    airband_core::kept::write_keeping(file, serde_json::to_string_pretty(&d).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+    serde_json::to_string_pretty(&d).map_err(|e| e.to_string())
+}
+/// His own file, which holds his login: whole or not at all, and as private as it was.
+pub(super) fn write_account_file(file: &Path, text: String) -> Res<()> {
+    airband_core::kept::write_keeping(file, text).map_err(|e| format!("{}: {e}", file.display()))
 }
 
 /// Which account the live login is.

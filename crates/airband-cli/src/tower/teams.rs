@@ -17,6 +17,11 @@ pub(super) struct Place {
     pub(super) folder: String,
 }
 
+/// One folder in the recent list, shown as he would read its path.
+fn recent_folder(folder: String, name: String, team: bool, tools: Vec<String>, at: u64) -> airband_core::radio::RecentFolder {
+    airband_core::radio::RecentFolder { shown: shown(std::path::Path::new(&folder)), name, team, tools, at, folder }
+}
+
 impl Inner {
     /// What the team with this id is called. Empty for an id that is no team of his.
     pub(super) fn team_name(&self, id: &str) -> String {
@@ -161,8 +166,12 @@ impl Inner {
             return;
         }
         t.name = to.to_string();
-        let ids: Vec<(String, Callsign)> = self.sessions.iter().filter(|s| s.team == team).map(|s| (s.agent.id.clone(), Callsign { project: to.to_string(), ..s.callsign.clone() })).collect();
-        for (id, callsign) in ids {
+        // each keeps its number or the name he gave it under the new name when nobody else has that, else the next free
+        let ids: Vec<String> = self.sessions.iter().filter(|s| s.team == team).map(|s| s.agent.id.clone()).collect();
+        for id in ids {
+            let Some(was) = self.find(&id).map(|s| s.callsign.clone()) else { continue };
+            let same = Callsign { project: to.to_string(), ..was };
+            let callsign = if self.callsign_free(&same, Some(&id)) { same } else { self.next_free(to, Some(&id), &[]) };
             self.rename(&id, callsign);
         }
         let lines: Vec<String> = self.log.iter().filter(|e| e.team == team).map(|e| e.id.clone()).collect();
@@ -176,25 +185,21 @@ impl Inner {
         self.settle_teams(old, named);
         self.configure_teams(listed);
     }
-    /// The teams the configuration lists, by name with their folders: each is his team in that folder, called
-    /// that unless he has renamed it since. One whose name cannot be a team's, or that another team already has,
-    /// is left out and said in the log.
+    /// The teams the configuration lists, by name with their folders: each is his team in that folder. The name
+    /// is given when the team is made; a team the tower already keeps keeps the name it has, whether he gave it
+    /// or the tower chose it to stay distinct from his other computers' teams. One whose name cannot be a team's,
+    /// or that another team already has, is left out and said in the log.
     pub(super) fn configure_teams(&mut self, listed: &BTreeMap<String, String>) {
         for (name, folder) in listed {
             let id = real_folder(folder);
-            let name = match self.chosen_team(name, Some(&id)) {
-                Ok(name) => name,
-                Err(why) => {
-                    log(format!("the configured team \"{name}\" is left out: {why}"));
-                    continue;
-                }
-            };
-            match self.teams.get_mut(&id) {
-                Some(team) if team.named => {}
-                Some(team) => team.name = name,
-                None => {
+            if self.teams.contains_key(&id) {
+                continue;
+            }
+            match self.chosen_team(name, Some(&id)) {
+                Ok(name) => {
                     self.new_folder_team(folder, name, false);
                 }
+                Err(why) => log(format!("the configured team \"{name}\" is left out: {why}")),
             }
         }
     }
@@ -264,21 +269,34 @@ impl Inner {
     /// His teams that have a folder, by what each is called, with the folder: what the configuration lists
     /// and wherever agents have been seen. A team whose folder has gone is not offered.
     pub(super) fn folder_teams(&self) -> BTreeMap<String, String> {
-        self.teams.values().filter_map(|t| t.folder.clone().filter(|f| std::path::Path::new(f).is_dir()).map(|f| (t.name.clone(), f))).collect()
+        self.teams.values().filter_map(|t| t.live_folder().map(|f| (t.name.clone(), f))).collect()
     }
-    /// Where a new agent can be started, by name: his teams, then the folders his coding tools have lately
-    /// had sessions in, each by the name a team there would have. A team's name is never taken from it.
-    pub(super) fn launchable(&self) -> Vec<Place> {
-        let mut all = self.folder_teams();
-        for recent in self.recent().into_iter().filter(|r| !r.team && !r.name.is_empty()).take(20) {
-            all.entry(recent.name).or_insert(recent.folder);
+    /// What a folder is called in his lists: by the team that works there, or by the name one would have, and
+    /// whether there is one. Nothing for a folder with no name to give a team.
+    pub(super) fn folder_called(&self, folder: &str) -> (Option<String>, bool) {
+        match self.team_at(folder).and_then(|id| self.teams.get(&id)) {
+            Some(team) => (Some(team.name.clone()), true),
+            None => (self.name_for_folder(folder), false),
         }
-        all.into_iter().map(|(name, folder)| Place { name, folder }).collect()
+    }
+    /// Where a new agent can be started: his teams, then the folders his coding tools have lately had sessions
+    /// in, each by the name a team there would have. Every folder is listed once; one whose name another place
+    /// in the list already has is called by where it is instead, so none is left out and none is taken for another.
+    pub(super) fn launchable(&self) -> Vec<Place> {
+        let mut all: Vec<Place> = self.folder_teams().into_iter().map(|(name, folder)| Place { name, folder }).collect();
+        for recent in self.recent().into_iter().filter(|r| !r.team && !r.name.is_empty()).take(20) {
+            if all.iter().any(|p| real_folder(&p.folder) == real_folder(&recent.folder)) {
+                continue;
+            }
+            let name = if all.iter().any(|p| p.name == recent.name) { recent.shown } else { recent.name };
+            all.push(Place { name, folder: recent.folder });
+        }
+        all
     }
     /// The place of one of his teams, by its id, when it has a folder that is there.
     pub(super) fn team_place(&self, id: &str) -> Option<Place> {
         let team = self.teams.get(id)?;
-        team.folder.clone().filter(|f| std::path::Path::new(f).is_dir()).map(|folder| Place { name: team.name.clone(), folder })
+        team.live_folder().map(|folder| Place { name: team.name.clone(), folder })
     }
     /// The folders his coding tools have had sessions in, newest first, with his teams: one that has a team
     /// is called by it, and a team no tool has a record of comes last.
@@ -290,13 +308,13 @@ impl Inner {
             .take(60)
             .cloned()
             .map(|(folder, tools, at)| {
-                let team = self.team_at(&folder).and_then(|id| self.teams.get(&id)).map(|t| t.name.clone());
-                airband_core::radio::RecentFolder { shown: shown(std::path::Path::new(&folder)), name: team.clone().or_else(|| self.name_for_folder(&folder)).unwrap_or_default(), team: team.is_some(), tools, at, folder }
+                let (name, team) = self.folder_called(&folder);
+                recent_folder(folder, name.unwrap_or_default(), team, tools, at)
             })
             .collect();
         for (name, folder) in teams {
             if !all.iter().any(|r| real_folder(&r.folder) == real_folder(&folder)) {
-                all.push(airband_core::radio::RecentFolder { shown: shown(std::path::Path::new(&folder)), name, team: true, tools: Vec::new(), at: 0, folder });
+                all.push(recent_folder(folder, name, true, Vec::new(), 0));
             }
         }
         all

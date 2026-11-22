@@ -36,7 +36,7 @@ pub(super) struct Call {
     /// so a voice that is not answering does not run the whole queue past him in silence.
     pub(super) quiet_until: Option<Instant>,
 }
-/// Whether a radio is there: what it last said of itself (`airband.radio/2`'s `Presence`, which every request
+/// Whether a radio is there: what it last said of itself (`airband.radio/3`'s `Presence`, which every request
 /// of its carries), and when. The tower infers nothing from which requests it makes. Every rule that turns on
 /// "is he there" reads this, by the one clock [`THERE`]: who can be handed something to read out, whether there
 /// is anyone to ask for leave, whether a notification is needed, whether it is worth asking the harnesses what
@@ -110,8 +110,11 @@ impl Inner {
             let call = self.call(radio);
             (call.began, call.ready, call.outbox) = (now_ms(), true, None);
             self.give_back(radio);
-            self.reap();
         }
+    }
+    /// The agent this radio last heard or spoke to, while it is still on the radio.
+    pub(super) fn focused(&self, radio: &str) -> Option<&Session> {
+        self.calls.get(radio).and_then(|c| c.focus.as_deref()).and_then(|f| self.find(f))
     }
     pub(super) fn call(&mut self, radio: &str) -> &mut Call {
         let call = self.calls.entry(radio.to_string()).or_default();

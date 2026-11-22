@@ -31,12 +31,16 @@ use std::time::Duration;
 
 type Res<T> = Result<T, String>;
 
-pub(crate) const HARNESS: &str = "claude-code";
+use super::claude_code::HARNESS;
 const ADD_AGAIN: &str = "Sign in to it again on the computer: airband accounts add";
 
 /// What Claude Code's row says about it.
 fn row(what: &str) -> String {
     super::row_says(HARNESS, what)
+}
+/// Where in the tool's login item, and in a saved copy of it, the account's login is kept: its row says.
+pub(super) fn login_key() -> String {
+    row("login_key")
 }
 /// What the tool is called, and who makes it, as its row has them: for what he is told.
 fn tool() -> String {
@@ -67,15 +71,20 @@ fn sha8(s: &str) -> String {
     airband_core::encode::hex(&Sha256::digest(s.as_bytes())[..4])
 }
 
+/// The keychain item Claude Code keeps its login in for a home folder: named after the folder when it was moved
+/// from the usual one.
+fn login_item(moved: Option<&std::path::Path>) -> String {
+    match moved {
+        Some(d) => format!("{}-{}", row("keychain_service"), sha8(&d.to_string_lossy())),
+        None => row("keychain_service"),
+    }
+}
+
 impl Here {
     fn this_computer() -> Here {
         let place = |key: &str, default: String| super::env(key).unwrap_or(default);
-        let moved = super::claude_code::moved_home();
-        let live_service = super::env("AIRBAND_CLAUDE_LIVE_SERVICE").unwrap_or_else(|| match &moved {
-            // Claude Code names the item for a moved home after that folder
-            Some(d) => format!("{}-{}", row("keychain_service"), sha8(&d.to_string_lossy())),
-            None => row("keychain_service"),
-        });
+        let moved = super::moved_home(HARNESS);
+        let live_service = super::env("AIRBAND_CLAUDE_LIVE_SERVICE").unwrap_or_else(|| login_item(moved.as_deref()));
         Here {
             vault: Box::new(vault::Keychain),
             api: place("AIRBAND_CLAUDE_API", row("accounts_api")),
@@ -113,9 +122,21 @@ fn locked<T>(here: &Here, work: impl FnOnce() -> T) -> T {
 }
 
 /// Save the login Claude Code is using now. Returns its email.
+/// Keep the newest login of the account a switch moves away from, known to be `email`: found by the server
+/// or by the refresh token a saved copy shares. Its record is the saved one, or the server's when there is none.
+fn keep_outgoing(here: &Here, email: &str, blob: &serde_json::Map<String, Value>) -> Res<()> {
+    let oauth = blob.get(&login_key()).ok_or_else(|| format!("{} is signed in with an API key or a setup token, which cannot be switched.", tool()))?;
+    let token = oauth.get("accessToken").and_then(|t| t.as_str()).unwrap_or("");
+    let acct = match saved::entry(here, email).ok().and_then(|e| e.get("oauthAccount").filter(|a| a["accountUuid"].is_string()).cloned()) {
+        Some(acct) => acct,
+        None => service::profile(here, token).filter(|(e, _)| e == email).map(|(_, a)| a).ok_or_else(|| format!("Could not tell which account {} is signed in to: {} did not say.", tool(), maker()))?,
+    };
+    saved::keep(here, email, oauth, &acct)
+}
+
 fn save_live(here: &Here) -> Res<String> {
     let blob = live::blob(here)?.ok_or_else(|| format!("{} is not signed in on this computer.", tool()))?;
-    let oauth = blob.get("claudeAiOauth").cloned().ok_or_else(|| format!("{} is signed in with an API key or a setup token, which cannot be switched.", tool()))?;
+    let oauth = blob.get(&login_key()).cloned().ok_or_else(|| format!("{} is signed in with an API key or a setup token, which cannot be switched.", tool()))?;
     let token = oauth.get("accessToken").and_then(|t| t.as_str()).unwrap_or("");
     // whose login it is, from the server and never from the file a switch itself rewrites
     let (email, acct) = service::profile(here, token).ok_or_else(|| format!("Could not tell which account {} is signed in to: {} did not say.", tool(), maker()))?;
@@ -127,7 +148,7 @@ fn save_live(here: &Here) -> Res<String> {
 /// once, but only when `may_refresh`: never while the login in use may be this one.
 fn saved_token(here: &Here, email: &str, may_refresh: bool) -> Res<String> {
     let entry = saved::entry(here, email)?;
-    let o = entry.get("claudeAiOauth").ok_or(ADD_AGAIN)?;
+    let o = entry.get(login_key()).ok_or(ADD_AGAIN)?;
     let token = o.get("accessToken").and_then(|x| x.as_str()).unwrap_or("");
     let now = airband_core::clock::now_ms() as i64;
     // also while the refresh token has under a week left, so a login unused for weeks never lapses
@@ -205,26 +226,44 @@ fn switch_in(here: &Here, id: &str) -> Res<std::thread::JoinHandle<()>> {
         let target = saved::resolve(here, id)?;
         // which account is in use comes first: a saved copy of it must not be refreshed, and asking blind could be
         // refreshing that very login
-        match live::who(here, &saved::index(here)?).map_err(|e| format!("Did not switch: {e}"))? {
+        let outgoing = match live::who(here, &saved::index(here)?).map_err(|e| format!("Did not switch: {e}"))? {
             Live::Known(e) if e == target => return Ok(std::thread::spawn(|| {})),
             Live::Unknown => return Err(format!("Did not switch: {} did not say which account {} is using just now, and switching without knowing could sign it out. Try again in a moment.", maker(), tool())),
-            _ => {}
-        }
+            Live::Known(e) => Some(e),
+            Live::Out => None,
+        };
         // the account record Claude Code is given is the real one, asked for with that account's own token;
         // without it there is no switch, rather than a record made up from the email
         let token = saved_token(here, &target, true)?;
         let acct = service::profile(here, &token).map(|(_, a)| a).ok_or_else(|| format!("Did not switch: {} would not say whose login that is just now. Try again in a moment.", maker()))?;
-        let incoming = saved::entry(here, &target)?.get("claudeAiOauth").cloned().ok_or(ADD_AGAIN)?;
+        let incoming = saved::entry(here, &target)?.get(login_key()).cloned().ok_or(ADD_AGAIN)?;
         let blob = live::blob(here).map_err(|e| format!("Did not switch: {e}"))?;
         // keep the outgoing account's newest login: its refresh token has changed since it was saved
-        if blob.is_some() {
-            save_live(here).map_err(|e| format!("Did not switch: the current login could not be saved first. {e}"))?;
+        if let (Some(email), Some(blob)) = (&outgoing, &blob) {
+            keep_outgoing(here, email, blob).map_err(|e| format!("Did not switch: the current login could not be saved first. {e}"))?;
         }
+        // the account file must take the new record, or the login is not swapped at all
+        let record = live::with_oauth_account(&here.account_file, &acct).map_err(|e| format!("Did not switch: {e}"))?;
         // swap the claude.ai login inside the live item, keeping the MCP logins beside it
+        let before = blob.clone().map(|b| Value::Object(b).to_string());
         let mut blob = blob.unwrap_or_default();
-        blob.insert("claudeAiOauth".into(), incoming);
-        here.vault.write(&here.live_service, here.user()?, &Value::Object(blob).to_string())?;
-        live::set_oauth_account(&here.account_file, &acct)?;
+        blob.insert(login_key(), incoming);
+        let user = here.user()?;
+        here.vault.write(&here.live_service, user, &Value::Object(blob).to_string()).map_err(|e| format!("Did not switch: {e}"))?;
+        if let Err(e) = live::write_account_file(&here.account_file, record) {
+            // the login goes back as it was, so the two never disagree
+            let undone = match &before {
+                Some(before) => here.vault.write(&here.live_service, user, before),
+                None => {
+                    here.vault.delete(&here.live_service, user);
+                    Ok(())
+                }
+            };
+            return Err(match undone {
+                Ok(()) => format!("Did not switch: {e}"),
+                Err(u) => format!("The switch went half way: the login was swapped, the account file could not be written ({e}), and the login could not be put back ({u}). Sign in to {} again.", tool()),
+            });
+        }
         // a later switch ends this one's hold, or the two would fight over the name
         let mine = SWITCHES.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         let file = here.account_file.clone();
@@ -272,7 +311,7 @@ pub(crate) fn add() -> Res<String> {
     std::fs::create_dir_all(&here.dir).map_err(|e| e.to_string())?;
     let tmp = here.dir.join(format!("login-{}", airband_core::clock::now_ms()));
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
-    let service = format!("{}-{}", row("keychain_service"), sha8(&tmp.to_string_lossy()));
+    let service = login_item(Some(&tmp));
     std::fs::write(tmp.join(row("account_file")), "{\"hasCompletedOnboarding\":true}").map_err(|e| e.to_string())?;
     println!("A browser opens: sign in to the account to add. The login in use now is not touched.");
     let program = row("program");
@@ -282,7 +321,7 @@ pub(crate) fn add() -> Res<String> {
             return Err("The sign-in did not finish.".into());
         }
         let blob: Value = serde_json::from_str(&here.vault.read(&service, here.user()?)?.ok_or("The sign-in saved no login.")?).map_err(|e| e.to_string())?;
-        let oauth = blob.get("claudeAiOauth").cloned().ok_or("The sign-in saved no login for an account.")?;
+        let oauth = blob.get(login_key()).cloned().ok_or("The sign-in saved no login for an account.")?;
         let acct = live::oauth_account(&tmp.join(row("account_file"))).ok_or("The sign-in saved no account record.")?;
         let email = acct.get("emailAddress").and_then(|e| e.as_str()).map(String::from).ok_or("The account record has no email.")?;
         locked(&here, || saved::keep(&here, &email, &oauth, &acct))?;

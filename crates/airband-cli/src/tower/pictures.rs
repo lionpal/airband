@@ -29,7 +29,7 @@ fn folder() -> PathBuf {
 
 /// Where the copy with this id is. Nothing for an id that is not one of ours, so a request cannot name another file.
 fn file(id: &str) -> Option<PathBuf> {
-    (id.len() == 24 && id.bytes().all(|b| b.is_ascii_hexdigit())).then(|| folder().join(format!("{id}.jpg")))
+    airband_core::encode::is_hex(id, 24..=24).then(|| folder().join(format!("{id}.jpg")))
 }
 
 /// Keep a copy of the picture at `path`. Nothing if it is not there, not a picture, or too large. Slow (it
@@ -41,7 +41,6 @@ pub(super) fn keep(path: &Path) -> Option<Picture> {
     keep_as(airband_core::encode::hex(&digest[..12]), || image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.decode().ok())
 }
 
-/// Keep a copy of a picture he pasted in, given as its bytes.
 /// The pictures he pasted in with each thing he typed at an agent's keyboard, kept: one list per thing typed,
 /// empty for what was not his.
 pub(super) fn pasted(told: &[crate::adapters::Told]) -> Vec<Vec<airband_core::radio::Picture>> {

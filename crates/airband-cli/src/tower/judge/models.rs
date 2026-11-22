@@ -1,5 +1,5 @@
-//! The model that reads for the tower: which one is set, asking it (by its service, a command, or a server on
-//! this computer), and what came of the last time.
+//! Asking the model that reads for the tower: by its service, a command, or a server on this computer. Which
+//! one is chosen, and what came of the last time, is `chosen`'s.
 use super::*;
 
 /// What a model is asked to see that it answers at all.
@@ -29,65 +29,6 @@ pub(super) async fn ask_api(url: String, auth: Option<(String, String)>, body: V
 }
 
 pub(crate) use airband_core::providers::Trouble;
-
-/// What reads, when he has changed it from a radio since this tower started: used from then on, with no
-/// restart. The settings file has it too, for the next start.
-pub(super) static READER: Mutex<Option<Summarizer>> = Mutex::new(None);
-
-/// What reads for the tower now.
-pub(in crate::tower) fn reader(cfg: &Config) -> Summarizer {
-    READER.lock().unwrap().clone().unwrap_or_else(|| cfg.summarizer.clone())
-}
-
-/// Choose what reads, asked for from a radio. Only a provider he could choose in `airband setup`, reached the
-/// way its row says: a radio cannot name a command to run here. It is tried with a real call before anything
-/// is kept. The key is kept encrypted with the others. Returns the provider's name.
-pub(in crate::tower) async fn set_reader(wanted: airband_core::radio::SetReads) -> Result<String, String> {
-    use crate::providers::{Job, Use};
-    // one of this tower's own list, named by its provider and its own id
-    let (p, offer) = crate::providers::in_order(Job::Summary).into_iter().find(|(p, o)| p.id == wanted.kind && o.id == wanted.offer).ok_or("That is not something that can be chosen to read here.")?;
-    let mut cfg = config::read().filter(|_| config::keyless().is_none()).ok_or("This computer's settings cannot be read right now.")?;
-    let key = match (p.key, wanted.key.trim()) {
-        (false, _) => String::new(),
-        (true, "") => cfg.key_of(&p.id).ok_or_else(|| format!("{} needs a key.", p.name))?,
-        (true, given) => given.to_string(),
-    };
-    // only the settings its row asks for
-    let set = wanted.set.into_iter().filter(|(field, value)| !value.trim().is_empty() && offer.asks.iter().any(|a| a.field == *field)).map(|(f, v)| (f, Value::String(v.trim().to_string()))).collect();
-    let using = Use { kind: p.id.clone(), offer: offer.id.clone(), key: key.clone(), set };
-    // a model on this computer is fetched the first time it is chosen: wait through that
-    super::local::wait_for_it(true);
-    let tried = ask(&using, READY.into(), None).await;
-    super::local::wait_for_it(false);
-    tried.map_err(|Failed(trouble, more)| {
-        if !more.is_empty() {
-            log(format!("trying {} to read: {more}", p.name));
-        }
-        trouble.said(&offer.label)
-    })?;
-    if p.key {
-        // a provider has one key here: a new one takes the place of the one before
-        cfg.keep_key(&p.id, key);
-    }
-    cfg.summarizer = using.clone();
-    config::save(&cfg)?;
-    // a model this tower was running for the last choice is stopped, unless it is the new one too
-    if local_model(&using).is_none() {
-        super::local::stop();
-    }
-    *READER.lock().unwrap() = Some(using);
-    log(format!("a radio chose what reads: {}", offer.label));
-    Ok(offer.label.to_string())
-}
-
-/// Why what reads could not, the last time it was asked: said to him on his phone, and gone when it next
-/// answers. Nothing else is asked in its place.
-pub(super) static FAILED: Mutex<Option<Trouble>> = Mutex::new(None);
-
-/// Why what reads could not, the last time it was asked. Nothing while it works.
-pub(in crate::tower) fn failed() -> Option<Trouble> {
-    *FAILED.lock().unwrap()
-}
 
 /// Ask the model that reads for the tower. When it does not answer, that is the answer: he is told why on his
 /// phone and gets what the agent wrote, and no other model is asked.
@@ -186,7 +127,7 @@ pub(super) async fn on_this_computer(_model: &Summarizer, by: &By, prompt: Strin
     let (name, server) = (by.text("model").to_string(), by.text("server").to_string());
     let url = {
         let name = name.clone();
-        tokio::task::spawn_blocking(move || super::local::ensure(&name, &server)).await.map_err(|e| Failed(Trouble::Program, e.to_string()))?.map_err(|e| Failed(Trouble::Program, e))?
+        tokio::task::spawn_blocking(move || super::local::ensure(&name, &server, false)).await.map_err(|e| Failed(Trouble::Program, e.to_string()))?.map_err(|e| Failed(Trouble::Program, e))?
     };
     let mut body = json!({ "model": name, "messages": [{ "role": "user", "content": prompt }], "temperature": 0, "max_tokens": 400 });
     if let Some(shape) = shape {
@@ -266,31 +207,4 @@ pub(super) async fn command(model: &Summarizer, by: &By, prompt: String, shape: 
         return Err(program_failed(format!("{program} stopped with {}", out.status)));
     }
     Ok(text)
-}
-
-/// What can read on this tower, for a radio that offers the choice: the tower's own list for its own job, so
-/// a phone with another copy of the catalogue offers nothing this tower would refuse.
-pub(in crate::tower) fn offered(cfg: &Config) -> airband_core::radio::ReadsOffered {
-    use airband_core::radio::{ReadsAsk, ReadsOffer, ReadsOffered};
-    let now = reader(cfg);
-    let kept: std::collections::HashSet<String> = cfg.keys.values().map(|k| k.provider.clone()).collect();
-    let offers = crate::providers::in_order(Job::Summary)
-        .into_iter()
-        .map(|(p, o)| ReadsOffer {
-            provider: p.id.clone(),
-            offer: o.id.clone(),
-            label: o.label.clone(),
-            about: o.about.clone(),
-            price: o.price.clone(),
-            preferred: o.preferred,
-            free: o.local,
-            login: o.login.clone(),
-            key: p.key,
-            has_key: p.key && kept.contains(&p.id),
-            key_name: p.key_name.clone(),
-            keys_at: p.keys_at.clone(),
-            asks: o.asks.iter().map(|a| ReadsAsk { field: a.field.clone(), question: a.question.clone(), usual: a.usual.clone() }).collect(),
-        })
-        .collect();
-    ReadsOffered { now: (!now.is_none()).then(|| airband_core::radio::OfferName { provider: now.kind.clone(), offer: now.offer.clone() }), failed: failed(), offers }
 }

@@ -60,6 +60,11 @@ pub(super) enum Mover {
     Him,
     Tower,
 }
+/// The callsign the name he gave an agent's session makes, in this team.
+fn titled(team_name: &str, agent: &Agent, title: &str) -> Option<Callsign> {
+    Callsign::titled(team_name, agent.cwd.as_deref().unwrap_or_default(), title)
+}
+
 impl Inner {
     /// The team an agent goes in, by id: the one it is in; where it was put before it went away; the team of the
     /// name it was started under; or its folder's team. A team found by the name is written down as where it
@@ -71,18 +76,20 @@ impl Inner {
         if let Some((team, _)) = self.placed.get(&agent.id).filter(|(team, _)| self.teams.contains_key(team)) {
             return Some(team.clone());
         }
-        match (&agent.name, &agent.cwd) {
-            (Some(name), _) => {
-                let team = self.team_he_named(name).ok()?;
-                self.put(&agent.id, &team, Mover::Tower);
-                Some(team)
+        if let Some(name) = &agent.name {
+            match self.team_he_named(name) {
+                Ok(team) => {
+                    self.put(&agent.id, &team, Mover::Tower);
+                    return Some(team);
+                }
+                // a name no team can have does not turn it away: it goes in its folder's team, as one started with no name does
+                Err(why) => log(format!("an agent of {} was started under the team name \"{name}\", which cannot be used: {why}", agent.harness)),
             }
-            (None, Some(cwd)) => self.folder_team(cwd),
-            (None, None) => None,
         }
+        self.folder_team(agent.cwd.as_deref()?)
     }
     /// Write down which team an agent was put in, by whom. Only the latest few hundred are remembered.
-    fn put(&mut self, id: &str, team: &str, by: Mover) {
+    pub(super) fn put(&mut self, id: &str, team: &str, by: Mover) {
         self.placed.insert(id.to_string(), (team.to_string(), by));
         while self.placed.len() > 400 {
             let Some(first) = self.placed.keys().next().cloned() else { break };
@@ -111,7 +118,7 @@ impl Inner {
         };
         let team_name = self.team_name(&team);
         // the name he gave the session, when it is new to the tower or has changed
-        let wanted = agent.title.as_deref().filter(|t| self.find(&agent.id).is_none_or(|s| s.agent.title.as_deref() != Some(*t))).and_then(|t| Callsign::titled(&team_name, agent.cwd.as_deref().unwrap_or_default(), t));
+        let wanted = agent.title.as_deref().filter(|t| self.find(&agent.id).is_none_or(|s| s.agent.title.as_deref() != Some(*t))).and_then(|t| titled(&team_name, agent, t));
         if let Some(want) = &wanted {
             self.make_room(&agent.id, want, &team_name);
         }
@@ -157,7 +164,7 @@ impl Inner {
     /// arrived in, that one moves to the next free number; one that was given the name by him keeps it.
     fn make_room(&mut self, id: &str, want: &Callsign, team_name: &str) {
         let Some(holder) = self.sessions.iter().find(|s| s.callsign == *want && s.agent.id != id).cloned() else { return };
-        if holder.agent.title.as_deref().and_then(|t| Callsign::titled(team_name, holder.agent.cwd.as_deref().unwrap_or_default(), t)).as_ref() == Some(want) {
+        if holder.agent.title.as_deref().and_then(|t| titled(team_name, &holder.agent, t)).as_ref() == Some(want) {
             return;
         }
         let to = self.next_free(team_name, Some(&holder.agent.id), std::slice::from_ref(want));
@@ -168,7 +175,7 @@ impl Inner {
         self.sessions.iter().filter(|s| Some(s.agent.id.as_str()) != except).map(|s| s.callsign.clone()).chain(self.elsewhere.iter().cloned()).collect()
     }
     /// Can the agent `except` (by id) be called this: no other agent here or on his other computers is?
-    fn callsign_free(&self, callsign: &Callsign, except: Option<&str>) -> bool {
+    pub(super) fn callsign_free(&self, callsign: &Callsign, except: Option<&str>) -> bool {
         !self.taken_callsigns(except).contains(callsign)
     }
     /// The next free numbered callsign in the team called `team_name`: free among the callsigns in use (but

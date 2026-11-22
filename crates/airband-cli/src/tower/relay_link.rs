@@ -20,7 +20,6 @@ use tower::ServiceExt;
 use airband_core::relay::{Answer, Call, FRESH_MS, Keys, fresh};
 
 
-/// What a radio whose clock is wrong is told.
 /// Why a request too far from this computer's clock is refused, said from the limit itself.
 fn wrong_clock() -> String {
     format!("the clocks of your phone and your computer are more than {} minutes apart", FRESH_MS / 60_000)
@@ -58,7 +57,11 @@ pub(crate) fn start(app: Arc<App>, router: Router, handle: Handle) {
         type Running = HashMap<(Option<String>, PairedRadio), (Arc<AtomicBool>, std::thread::JoinHandle<()>)>;
         let mut running: Running = HashMap::new();
         loop {
-            let cfg = config::read().unwrap_or_else(|| app.cfg.clone());
+            // settings read without their keys hold marks for the pairings' secrets: nothing is changed on those
+            let Some(cfg) = config::read_keyed() else {
+                std::thread::sleep(Duration::from_secs(10));
+                continue;
+            };
             // every pairing is served straight, at the tower's own addresses; through the relay too when there is one
             let wanted: Vec<(Option<String>, PairedRadio)> = cfg.pairings.iter().map(|p| (cfg.relay.clone(), p.clone())).collect();
             running.retain(|key, (stop, serving)| {
@@ -167,7 +170,11 @@ impl Serve {
                 Ok(mut res) => match res.status().as_u16() {
                     200 => {
                         wait = 1;
-                        let id = res.headers().get(REQUEST_HEADER).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+                        // a request with no id could never be answered: the relay has broken its side of the contract
+                        let Some(id) = res.headers().get(REQUEST_HEADER).and_then(|v| v.to_str().ok()).map(String::from) else {
+                            log(format!("{relay} handed over a request for \"{}\" with no id; it cannot be answered", self.name));
+                            continue;
+                        };
                         // the relay says outright when it had been keeping this one; nothing is read from the id
                         let kept = res.headers().contains_key(airband_core::relay::KEPT_HEADER);
                         if let Ok(sealed) = res.body_mut().read_to_vec() {
@@ -323,9 +330,10 @@ impl Serve {
         };
         let Ok(res) = self.router.clone().oneshot(req).await;
         let status = res.status().as_u16();
-        // an answer bigger than the relay takes could never reach the radio: it is told so instead of waiting
-        let Ok(bytes) = axum::body::to_bytes(res.into_body(), airband_core::relay::MAX_MESSAGE).await else {
-            return self.refused(call, via, 413, &airband_core::relay::too_big_for_relay());
+        // the whole answer: one too big for the relay is told so when it is sealed for the relay
+        // (`seal_answer_for_relay`), and one given straight has no such bound
+        let Ok(bytes) = axum::body::to_bytes(res.into_body(), usize::MAX).await else {
+            return (500, serde_json::json!({ "error": "airband could not read its own answer." }));
         };
         match serde_json::from_slice(&bytes) {
             Ok(body) => (status, body),

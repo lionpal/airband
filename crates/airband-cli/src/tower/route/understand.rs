@@ -148,7 +148,7 @@ fn scene(app: &App, radio: &str, re: Option<&str>, room: Option<&str>) -> Result
                 spoken.push((s.clone(), e.clone()));
             }
     }
-    let focus = inner.calls.get(radio).and_then(|c| c.focus.clone()).and_then(|f| inner.find(&f).filter(|s| within(s)).cloned());
+    let focus = inner.focused(radio).filter(|s| within(s)).cloned();
     // the last thing he said and who it went to, so "and keep the price next to it" can be read as carrying on
     let before = inner.log.iter().rev().find(|e| e.his && !e.to_agents.is_empty()).and_then(|e| {
         let to: Vec<String> = e.to_agents.iter().filter_map(|id| inner.find(id)).filter(|s| within(s)).map(|s| s.callsign.text()).collect();
@@ -367,8 +367,9 @@ fn answered(mut judged: Out, scene: &Scene, listed: &[Listed], menus: &Menus, pr
 }
 
 /// He was asked who something he said was for, and has said something more. The agents his words name, or
-/// nothing when they are not an answer to that (or no model said): then they are a message of their own.
-pub(super) async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope: Option<&str>) -> Option<Vec<Session>> {
+/// nothing when they are not an answer to that: then they are a message of their own. `Err` when no model
+/// could say.
+pub(super) async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope: Option<&str>) -> Result<Option<Vec<Session>>, String> {
     let all: Vec<Session> = app.read().sessions.iter().filter(|s| scope.is_none_or(|g| s.team == g)).cloned().collect();
     let letters = |s: &Session| s.callsign.badge();
     let prompt = format!(
@@ -397,7 +398,7 @@ pub(super) async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope:
         "required": ["to", "all"],
         "additionalProperties": false
     });
-    let judged: Out = judge::ask_json(&app.cfg, "who he meant", prompt, Some(shape)).await.ok()?;
+    let judged: Out = judge::ask_json(&app.cfg, "who he meant", prompt, Some(shape)).await?;
     let meant: Vec<Session> = if judged.all { all } else { judged.to.iter().filter_map(|n| judge::listed(Some(*n), &all).cloned()).collect() };
-    (!meant.is_empty()).then_some(meant)
+    Ok((!meant.is_empty()).then_some(meant))
 }

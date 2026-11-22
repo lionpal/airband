@@ -2,8 +2,7 @@
 //! lately worked in) and says what the agent should do; the tower runs the configured launcher there. One the
 //! tower runs itself is held by it; one handed off reports in like any other, through its own adapter.
 //!
-//! Only into known places: his teams' folders, and folders his coding tools have had sessions in. A launcher is
-//! a command template, so another agent tool is another entry in `launchers`, not code here.
+//! A launcher is a command template, so another agent tool is another entry in `launchers`, not code here.
 use super::*;
 
 /// A new agent he asked for: where, on what, and to do what. The place is nothing until it is known; the model
@@ -74,7 +73,7 @@ pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Reply 
     let agent_says = matches!(launcher.held, Some(config::Held::Acp { .. }));
     let offers = |what: &str, choices: &[airband_core::tools::Choice]| match choices {
         [] => format!("Agents started this way cannot be given {what}."),
-        choices => format!("It can be {}.", choices.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", ")),
+        choices => format!("It can be {}.", either(&choices.iter().map(|c| c.name.as_str()).collect::<Vec<_>>())),
     };
     let chosen = |asked: Option<&Pick>, choices: &[airband_core::tools::Choice]| chosen(asked, choices, agent_says);
     let model = match chosen(idea.model.as_ref(), &menu.models) {
@@ -106,7 +105,7 @@ pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Reply 
             }
             Err(e) => {
                 log(format!("launch in {project} failed: {e}"));
-                say(format!("Could not launch in {project}: {}", spoken(&e).chars().take(120).collect::<String>()))
+                say(format!("Could not launch in {project}: {}", airband_core::prose::clip(&spoken(&e), 120)))
             }
         };
     }
@@ -125,7 +124,7 @@ pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Reply 
         }
         Ok(Ok(out)) => {
             log(format!("launch in {project} failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
-            say(format!("Could not launch in {project}: {}", spoken(String::from_utf8_lossy(&out.stderr).trim()).chars().take(120).collect::<String>()))
+            say(format!("Could not launch in {project}: {}", airband_core::prose::clip(&spoken(String::from_utf8_lossy(&out.stderr).trim()), 120)))
         }
         Ok(Err(e)) => {
             log(format!("launch in {project} failed: cannot run {program}: {e}"));

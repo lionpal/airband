@@ -1,4 +1,4 @@
-//! OpenAI's Codex, in a terminal he opened himself.
+//! Codex, in a terminal he opened himself or reached through its own server.
 //!
 //! Codex has hooks in the same shape as Claude Code's: a command run on an event, the event as JSON on its
 //! standard input, and for a permission request the decision as JSON on its standard output. So this adapter
@@ -48,8 +48,7 @@ fn agent_of(hook: &Value) -> Option<Agent> {
 
 pub(crate) fn events(hook: &Value) -> Vec<AgentEvent> {
     let events = super::hooks::session_events(hook).unwrap_or_else(|| match hook["hook_event_name"].as_str() {
-        Some("SubagentStart") => vec![Event::Subagent { done: false, what: text(hook, "agent_type").unwrap_or_default() }],
-        Some("SubagentStop") => vec![Event::Subagent { done: true, what: text(hook, "agent_type").unwrap_or_default() }],
+        Some(at @ ("SubagentStart" | "SubagentStop")) => vec![Event::Subagent { done: at == "SubagentStop", what: text(hook, "agent_type").unwrap_or_default() }],
         _ => Vec::new(),
     });
     super::hooks::from_agent(agent_of(hook), events)
@@ -72,7 +71,7 @@ pub(crate) fn permission(hook: &Value) -> Option<PermissionAsk> {
 /// His words into that session as a turn of his own, by Codex's own queue.
 fn deliver(session: &str, words: &str) -> Result<(), String> {
     let done = std::process::Command::new(super::row_says(NAME, "program")).args(["queue", "--thread", session, "--resume", "--message", words]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped()).output().map_err(|e| format!("{} could not be started: {e}", super::called(NAME).0))?;
-    if done.status.success() { Ok(()) } else { Err(format!("{} did not take it: {}", super::called(NAME).0, String::from_utf8_lossy(&done.stderr).trim().chars().take(200).collect::<String>())) }
+    if done.status.success() { Ok(()) } else { Err(format!("{} did not take it: {}", super::called(NAME).0, airband_core::prose::clip(String::from_utf8_lossy(&done.stderr).trim(), 200))) }
 }
 
 // ---- what Codex itself says is open, and where it has worked ----
@@ -215,6 +214,7 @@ fn leave_of(agent: Agent, request: &Value) -> Option<PermissionAsk> {
 fn put_to_him(agent: Agent, asking: std::sync::Arc<std::sync::Mutex<super::Asking>>) {
     use std::cell::{Cell, RefCell};
     let thread = agent.id.clone();
+    let mut key = thread.clone();
     let outcome = (|| {
         let mut server = Server::connect()?;
         // following the thread is what makes the server send its pending request here too
@@ -226,12 +226,14 @@ fn put_to_him(agent: Agent, asking: std::sync::Arc<std::sync::Mutex<super::Askin
             if said["id"] == 1_000_000 && said.get("error").is_some() {
                 return None;
             }
-            if said["params"]["threadId"] == thread.as_str() && !said["id"].is_null() && said["method"].as_str().is_some_and(|m| APPROVALS.contains(&m)) {
+            // one of this thread's requests that was not answered or left already
+            if said["params"]["threadId"] == thread.as_str() && !said["id"].is_null() && said["method"].as_str().is_some_and(|m| APPROVALS.contains(&m)) && !asking.lock().unwrap().done(&request_key(&said, &thread)) {
                 request = Some(said);
                 break;
             }
         }
         let request = request?;
+        key = request_key(&request, &thread);
         let Some(ask) = leave_of(agent.clone(), &request) else { return Some(super::Answer::Unanswered) };
         let _ = server.socket.get_ref().set_read_timeout(Some(std::time::Duration::from_millis(200)));
         let (server, settled) = (RefCell::new(server), Cell::new(false));
@@ -259,14 +261,24 @@ fn put_to_him(agent: Agent, asking: std::sync::Arc<std::sync::Mutex<super::Askin
         if let super::Answer::Said(allow, _) = &answer
             && !settled.get()
         {
-            let _ = server.borrow_mut().socket.send(tungstenite::Message::text(serde_json::json!({ "jsonrpc": "2.0", "id": request["id"], "result": { "decision": if *allow { "accept" } else { "decline" } } }).to_string()));
-            let _ = server.borrow_mut().socket.flush();
+            // his answer counts once the server has it; one that could not be sent is put to him again
+            let mut server = server.borrow_mut();
+            let reply = serde_json::json!({ "jsonrpc": "2.0", "id": request["id"], "result": { "decision": if *allow { "accept" } else { "decline" } } }).to_string();
+            server.socket.send(tungstenite::Message::text(reply)).ok()?;
+            server.socket.flush().ok()?;
         }
         Some(answer)
     })();
-    // nobody there to ask, or the server could not be followed just now: tried again in a while; answered, here
-    // or at the keyboard, or left: not asked again while the session waits on the same one
-    asking.lock().unwrap().over(&thread, outcome.as_ref());
+    // nobody there to ask, the server could not be followed, or his answer could not be given: tried again in a
+    // while; answered, here or at the keyboard, or left: that request is not asked again, and the next one the
+    // session waits on is put to him at once
+    asking.lock().unwrap().over(&thread, &key, outcome.as_ref());
+}
+
+/// What one request of a thread's is known by from one connection to the next: the item it asks about. The
+/// server's own id for it is only this connection's. A request with no item is known by its thread.
+fn request_key(request: &Value, thread: &str) -> String {
+    request["params"]["itemId"].as_str().unwrap_or(thread).to_string()
 }
 
 /// Watch Codex's server for as long as the tower runs: what each open session's newest turn has come to.
@@ -358,7 +370,7 @@ fn control_socket() -> PathBuf {
     home().join(super::row_says(NAME, "control_socket"))
 }
 fn home() -> PathBuf {
-    std::env::var_os(super::row_says(NAME, "home_env")).map(PathBuf::from).unwrap_or_else(|| crate::config::home().join(super::row_says(NAME, "home")))
+    super::tool_home(NAME)
 }
 
 pub(crate) struct Codex;

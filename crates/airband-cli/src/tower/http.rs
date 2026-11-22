@@ -1,4 +1,4 @@
-//! The tower's HTTP surface: `airband.agent/1` in, `airband.radio/2` both ways, and a status page for the
+//! The tower's HTTP surface: `airband.agent/1` in, `airband.radio/3` both ways, and a status page for the
 //! command line. Handlers are thin: they lock, call into the other modules, and answer.
 use super::*;
 
@@ -39,8 +39,8 @@ async fn auth(State(app): State<Arc<App>>, req: Request, next: Next) -> Response
         return (StatusCode::UNAUTHORIZED, Json(refused("bad token"))).into_response();
     }
     let mut req = req;
-    // A radio must say which one it is. The computer's own command line (the tower's token) is no radio: it
-    // may ask what any radio may ask that is not kept per radio (accounts, the feed), and says no name.
+    // A radio must say which one it is. A caller with the tower's own token (the hooks, `airband status`) is no
+    // radio: it may ask what any radio may ask that is not kept per radio (accounts, the feed), naming none.
     let named = req.headers().get(RADIO_HEADER).is_some();
     if req.uri().path().starts_with(airband_core::radio::PATH) && req.extensions().get::<RadioId>().is_none() && (radio || named) {
         match req.headers().get(RADIO_HEADER).and_then(|v| v.to_str().ok()).filter(|v| !v.is_empty()).map(String::from) {
@@ -64,11 +64,11 @@ async fn presence_said(State(app): State<Arc<App>>, req: Request, next: Next) ->
     next.run(req).await
 }
 
-/// Every route the tower serves. The relay link hands sealed requests to this same router, so a request is
-/// handled identically however it arrived.
 /// The route something he said comes by: the one request a relay may keep while the tower is away.
 pub(super) const UTTERANCE: &str = "/v1/radio/utterance";
 
+/// Every route the tower serves. The relay link hands sealed requests to this same router, so a request is
+/// handled identically however it arrived.
 pub(super) fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/v1/agent/events", post(events))
@@ -131,6 +131,16 @@ pub(super) mod tests {
             req = req.extension(r);
         }
         req.body(axum::body::Body::from(r#"{"on_call":true,"showing_chat":false}"#)).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_query_value_that_is_not_a_number_is_refused_not_read_as_none() {
+        let app = app("query-numbers");
+        let get = |uri: &str, token: &str| Request::builder().method("GET").uri(uri).header("authorization", format!("Bearer {token}")).extension(RadioId("kitchen".into())).body(axum::body::Body::empty()).unwrap();
+        let res = router(app.clone()).oneshot(get("/v1/radio/picture/abcd?from=middle", "radio")).await.unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        let res = router(app.clone()).oneshot(get("/v1/agent/permission/p1?wait=soon", "own")).await.unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

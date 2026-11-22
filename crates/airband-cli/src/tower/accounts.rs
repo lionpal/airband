@@ -14,8 +14,10 @@ const LOOK_EVERY: Duration = Duration::from_secs(3 * 3600);
 #[derive(Default)]
 pub(super) struct Kept(tokio::sync::Mutex<Option<(Instant, Accounts)>>);
 
-async fn read() -> Accounts {
-    tokio::task::spawn_blocking(crate::adapters::accounts).await.unwrap_or_default()
+/// The accounts as the tools have them now. `Err` with what to tell him when reading them broke part way: that
+/// is not an empty list, and is not kept as one.
+async fn read() -> Result<Accounts, Accounts> {
+    tokio::task::spawn_blocking(crate::adapters::accounts).await.map_err(|_| Accounts { schema: airband_core::radio::SCHEMA.into(), note: Some("The accounts could not be read just now. Try again in a moment.".into()), ..Accounts::default() })
 }
 
 /// The accounts, from memory when that is recent enough. Held while it is read, so two radios asking at once
@@ -25,9 +27,13 @@ pub(super) async fn list(app: &Arc<App>, fresh: bool) -> Accounts {
     if let Some((_, value)) = kept.as_ref().filter(|(at, _)| at.elapsed() < if fresh { FRESH_AFTER } else { GOOD_FOR }) {
         return value.clone();
     }
-    let value = read().await;
-    *kept = Some((Instant::now(), value.clone()));
-    value
+    match read().await {
+        Ok(value) => {
+            *kept = Some((Instant::now(), value.clone()));
+            value
+        }
+        Err(told) => told,
+    }
 }
 
 /// Switch, then say how things stand now. An error is words for him.
@@ -38,9 +44,17 @@ pub(super) async fn switch(app: &Arc<App>, to: UseAccount) -> Result<Accounts, S
     // the swap is done when this returns; the thread it hands back only holds the name in place afterwards
     tokio::task::spawn_blocking(move || crate::adapters::use_account(&h, &i).map(|_holding| ())).await.map_err(|_| "The switch did not finish.".to_string())??;
     log(format!("{harness} now runs as {id}"));
-    let value = read().await;
-    *kept = Some((Instant::now(), value.clone()));
-    Ok(value)
+    Ok(match read().await {
+        Ok(value) => {
+            *kept = Some((Instant::now(), value.clone()));
+            value
+        }
+        // switched, and the list could not be read after: none is kept, so the next ask reads it again
+        Err(told) => {
+            *kept = None;
+            told
+        }
+    })
 }
 
 pub(super) async fn keep_alive(app: Arc<App>) {

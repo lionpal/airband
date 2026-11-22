@@ -36,6 +36,9 @@ pub(super) struct Book {
     /// By agent: what its tool has made since it last spoke.
     #[serde(skip)]
     pending: HashMap<String, Vec<String>>,
+    /// The file there could not be read, nor moved aside: it is never written over.
+    #[serde(skip)]
+    unwritable: bool,
 }
 
 fn file() -> std::path::PathBuf {
@@ -44,17 +47,24 @@ fn file() -> std::path::PathBuf {
 
 impl Book {
     pub(super) fn load() -> Book {
-        let mut book: Book = airband_core::kept::load(&file()).unwrap_or_else(|why| {
-            log(format!("links: {why}"));
-            None
-        }).unwrap_or_default();
+        Self::load_from(&file())
+    }
+    fn load_from(path: &std::path::Path) -> Book {
+        let mut book: Book = match airband_core::kept::load(path) {
+            Ok(found) => found.unwrap_or_default(),
+            Err(why) => {
+                log(format!("links: {why}"));
+                // one that could not be read and is still there could not be moved aside: nothing is written over it
+                Book { unwritable: path.exists(), ..Book::default() }
+            }
+        };
         let oldest = airband_core::clock::now_secs().saturating_sub(KEPT_FOR);
         book.known.retain(|_, k| k.at >= oldest);
         book
     }
     fn keep(&self) {
         // a test's book is not the tower's
-        if cfg!(test) {
+        if cfg!(test) || self.unwritable {
             return;
         }
         if let Err(e) = airband_core::kept::save(&file(), self) {
@@ -115,6 +125,22 @@ impl Book {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_book_that_cannot_be_read_or_moved_aside_is_never_written_over() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("airband-links-{}", config::random_hex(6)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("links.json");
+        std::fs::write(&path, "not json").unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let book = Book::load_from(&path);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(book.unwritable);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "not json");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn kinds() -> Vec<LinkKind> {
         airband_core::catalog::built().links.clone()

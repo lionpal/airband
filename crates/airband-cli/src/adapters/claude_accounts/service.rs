@@ -68,12 +68,12 @@ pub(super) fn account_record(v: &Value) -> Option<(String, Value)> {
         "accountUuid": a.uuid,
         "emailAddress": a.email,
         "organizationUuid": o.uuid,
-        "accountCreatedAt": a.created_at,
-        "claudeCodeTrialEndsAt": o.claude_code_trial_ends_at,
-        "claudeCodeTrialDurationDays": o.claude_code_trial_duration_days,
-        "seatTier": o.seat_tier,
     });
     let given = [
+        ("accountCreatedAt", a.created_at),
+        ("claudeCodeTrialEndsAt", o.claude_code_trial_ends_at),
+        ("claudeCodeTrialDurationDays", o.claude_code_trial_duration_days),
+        ("seatTier", o.seat_tier),
         ("hasExtraUsageEnabled", o.has_extra_usage_enabled.map(Value::Bool)),
         ("ccOnboardingFlags", o.cc_onboarding_flags),
         ("billingType", o.billing_type),

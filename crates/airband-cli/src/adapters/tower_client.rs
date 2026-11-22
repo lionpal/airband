@@ -31,43 +31,49 @@ pub(crate) fn taken(res: Result<ureq::http::Response<ureq::Body>, ureq::Error>) 
     res.ok().filter(|r| r.status().as_u16() == 200)
 }
 
-/// Requests for leave a watcher puts to him itself, each by a key (the request's id, or its session's): one is
-/// put to him once at a time; one that found nobody there is tried again after a while; one answered or left
-/// is not put again while it is still waiting.
+/// Requests for leave a watcher puts to him itself. Each is put by its owner (a session, or the request itself),
+/// one at a time for each owner; an owner whose try found nobody there is tried again after a while. Each
+/// request answered or left, by its own id, is not put again while its owner still waits.
 #[derive(Default)]
 pub(crate) struct Asking {
     busy: std::collections::HashSet<String>,
-    done: std::collections::HashSet<String>,
     again: std::collections::HashMap<String, std::time::Instant>,
+    /// Requests answered or left, each with its owner.
+    done: std::collections::HashMap<String, String>,
 }
 
 impl Asking {
     /// How long one that found nobody there waits before it is tried again.
     const AGAIN: Duration = Duration::from_secs(20);
-    /// Take this one to put to him now. False while it is being put, once it was, or before it is due again.
-    pub(crate) fn take(&mut self, key: &str) -> bool {
-        let due = !self.busy.contains(key) && !self.done.contains(key) && self.again.get(key).is_none_or(|at| *at <= std::time::Instant::now());
+    /// Take this owner's requests to put to him now. False while one is being put, or before it is due again.
+    pub(crate) fn take(&mut self, owner: &str) -> bool {
+        let due = !self.busy.contains(owner) && self.again.get(owner).is_none_or(|at| *at <= std::time::Instant::now());
         if due {
-            self.busy.insert(key.to_string());
+            self.busy.insert(owner.to_string());
         }
         due
     }
-    /// What came of putting it to him. Nothing is a try that could not be made (the tool could not be followed).
-    pub(crate) fn over(&mut self, key: &str, came: Option<&Answer>) {
-        self.busy.remove(key);
+    /// Was this request answered or left already?
+    pub(crate) fn done(&self, request: &str) -> bool {
+        self.done.contains_key(request)
+    }
+    /// What came of putting the owner's request to him. Nothing is a try that could not be made (the tool could
+    /// not be followed, or his answer could not be given to it), and is tried again after a while.
+    pub(crate) fn over(&mut self, owner: &str, request: &str, came: Option<&Answer>) {
+        self.busy.remove(owner);
         match came {
             Some(Answer::Nobody) | None => {
-                self.again.insert(key.to_string(), std::time::Instant::now() + Self::AGAIN);
+                self.again.insert(owner.to_string(), std::time::Instant::now() + Self::AGAIN);
             }
             Some(_) => {
-                self.again.remove(key);
-                self.done.insert(key.to_string());
+                self.again.remove(owner);
+                self.done.insert(request.to_string(), owner.to_string());
             }
         }
     }
-    /// Forget the ones put to him that are no longer waiting: one waiting again is a new request.
+    /// Forget the requests of owners that are no longer waiting: one waiting again has a new request.
     pub(crate) fn keep_only(&mut self, waiting: impl Fn(&str) -> bool) {
-        self.done.retain(|k| waiting(k));
+        self.done.retain(|_, owner| waiting(owner));
     }
 }
 
@@ -124,24 +130,34 @@ pub(crate) fn ask_him_while(request: &PermissionAsk, still: Option<&dyn Fn() -> 
 }
 
 /// What came of posting an event.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Posted {
     /// The tower took it.
     Taken,
+    /// The tower read it and refused it, saying why. Kept, it would only be refused again.
+    Refused(String),
     /// The tower did not answer, and it is kept to be handed over when the tower is back.
     Kept,
     /// The tower did not answer, and it could not be kept.
     Lost,
 }
 
-/// Post one event to the tower on this machine. One the tower did not take (it is being restarted or
+/// Post one event to the tower on this machine. One the tower did not answer (it is being restarted or
 /// updated) is kept in a folder and handed over when the tower is back: a report is not lost because it was
 /// made in those few seconds.
 pub(crate) fn post(event: &AgentEvent) -> Posted {
-    if send(event) {
-        return Posted::Taken;
+    match send(event) {
+        Sent::Taken => Posted::Taken,
+        Sent::Refused(why) => Posted::Refused(why),
+        Sent::NoAnswer => spool(&config::dir().join("spool"), event),
     }
-    spool(&config::dir().join("spool"), event)
+}
+
+/// What came of handing an event to the tower.
+enum Sent {
+    Taken,
+    Refused(String),
+    NoAnswer,
 }
 
 /// Keep an event the tower did not take in `dir`, under a name that sorts by when it was made. A full folder
@@ -160,24 +176,35 @@ fn spool(dir: &std::path::Path, event: &AgentEvent) -> Posted {
     }
 }
 
-fn send(event: &AgentEvent) -> bool {
-    let Some(cfg) = config::read() else { return false };
-    taken(TowerHere::here(&cfg, Duration::from_millis(1500)).post("/v1/agent/events").send_json(event)).is_some()
+fn send(event: &AgentEvent) -> Sent {
+    let Some(cfg) = config::read() else { return Sent::NoAnswer };
+    match TowerHere::here(&cfg, Duration::from_millis(1500)).post("/v1/agent/events").config().http_status_as_error(false).build().send_json(event) {
+        Ok(res) if res.status().as_u16() == 200 => Sent::Taken,
+        // it read the event and said no: in the answer it says why
+        Ok(mut res) if res.status().is_client_error() => Sent::Refused(res.body_mut().read_json::<Value>().ok().and_then(|v| v["error"].as_str().map(String::from)).unwrap_or_else(|| format!("it answered {}", res.status()))),
+        // not there, not answering in time, or failing itself: kept for when it is back. One that took it and
+        // answered too late hands over a turn's words twice, and the tower takes each turn once.
+        _ => Sent::NoAnswer,
+    }
 }
 
 /// The tower takes what was kept for it, oldest first, by `take`: it is the tower that calls this, and it
-/// takes each as it takes any event. Stops at the first it does not take, so order holds.
-/// Something kept for more than ten minutes, or that does not read, is thrown away: the tower was away for
-/// longer than an update takes, and what an agent said then is no longer news to act on.
-pub(crate) fn drain_spool(take: impl Fn(AgentEvent) -> bool) {
-    let Ok(dir) = std::fs::read_dir(config::dir().join("spool")) else { return };
-    let mut kept: Vec<std::path::PathBuf> = dir.flatten().map(|f| f.path()).collect();
+/// takes each as it takes any event. One it refuses is let go, as one posted to it then would have been, so
+/// it never holds up the rest. Something kept for more than ten minutes, or that does not read, is thrown
+/// away: the tower was away for longer than an update takes, and what an agent said then is no longer news
+/// to act on.
+pub(crate) fn drain_spool(take: impl Fn(AgentEvent) -> Result<(), String>) {
+    drain(&config::dir().join("spool"), take)
+}
+fn drain(dir: &std::path::Path, take: impl Fn(AgentEvent) -> Result<(), String>) {
+    let Ok(listed) = std::fs::read_dir(dir) else { return };
+    let mut kept: Vec<std::path::PathBuf> = listed.flatten().map(|f| f.path()).collect();
     kept.sort();
     for path in kept {
         let old = std::fs::metadata(&path).and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|age| age > Duration::from_secs(600)));
         if let Some(event) = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<AgentEvent>(&b).ok()).filter(|_| !old)
-            && !take(event) {
-                return;
+            && let Err(why) = take(event) {
+                eprintln!("airband: a kept report was refused: {why}");
             }
         let _ = std::fs::remove_file(&path);
     }
@@ -186,6 +213,41 @@ pub(crate) fn drain_spool(take: impl Fn(AgentEvent) -> bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_second_request_of_one_session_is_put_to_him_once_the_first_is_answered() {
+        let mut asking = Asking::default();
+        assert!(asking.take("thread"));
+        assert!(!asking.take("thread"), "one at a time");
+        asking.over("thread", "call_1", Some(&Answer::Said(true, String::new())));
+        // the session still waits, now on another request: that one is put to him at once, the first never again
+        assert!(asking.take("thread"));
+        assert!(asking.done("call_1") && !asking.done("call_2"));
+        asking.keep_only(|_| false);
+        assert!(!asking.done("call_1"));
+    }
+
+    #[test]
+    fn an_answer_that_could_not_be_given_to_the_tool_is_put_to_him_again() {
+        let mut asking = Asking::default();
+        assert!(asking.take("r1"));
+        asking.over("r1", "r1", None);
+        assert!(!asking.done("r1"));
+        assert!(asking.again.contains_key("r1"));
+    }
+
+    #[test]
+    fn a_kept_report_the_tower_refuses_never_holds_up_the_ones_after_it() {
+        let dir = std::env::temp_dir().join(format!("airband-spool-{}", config::random_hex(4)));
+        let event = |id: &str| AgentEvent { schema: airband_core::agent::SCHEMA.into(), agent: airband_core::agent::Agent { id: id.into(), harness: "test".into(), cwd: None, name: None, title: None, pid: None, deliver: None, meta: Default::default() }, event: airband_core::agent::Event::Checkin, via: None };
+        assert_eq!(spool(&dir, &event("refused")), Posted::Kept);
+        assert_eq!(spool(&dir, &event("taken")), Posted::Kept);
+        let took = std::sync::Mutex::new(Vec::new());
+        drain(&dir, |ev| if ev.agent.id == "refused" { Err("no team".into()) } else { took.lock().unwrap().push(ev.agent.id); Ok(()) });
+        assert_eq!(*took.lock().unwrap(), ["taken"]);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn an_event_the_tower_did_not_take_is_kept_and_said_to_be() {

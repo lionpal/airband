@@ -30,13 +30,17 @@ const QUIET: u64 = 2 * 3600 * 1000;
 
 /// Where OpenCode's server is and the password for it, when it is running.
 fn service() -> Option<(String, String)> {
-    let state = std::env::var_os("XDG_STATE_HOME").map(std::path::PathBuf::from).unwrap_or_else(|| crate::config::home().join(".local").join("state"));
-    let v: Value = serde_json::from_slice(&std::fs::read(state.join(super::row_says(NAME, "state")).join(super::row_says(NAME, "service"))).ok()?).ok()?;
+    let v: Value = serde_json::from_slice(&std::fs::read(super::tool_home(NAME).join(super::row_says(NAME, "state")).join(super::row_says(NAME, "service"))).ok()?).ok()?;
     Some((v["url"].as_str()?.trim_end_matches('/').to_string(), v["password"].as_str()?.to_string()))
 }
 
 fn client() -> ureq::Agent {
-    ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(4))).http_status_as_error(false).build().into()
+    airband_core::net::agent(Duration::from_secs(4))
+}
+
+/// The sessions the server lists that may be on the radio: the newest few.
+fn listed() -> Option<Value> {
+    get("/api/session?limit=40")
 }
 fn auth(password: &str) -> String {
     format!("Basic {}", airband_core::encode::base64(format!("{}:{password}", super::row_says(NAME, "user")).as_bytes()))
@@ -98,18 +102,25 @@ fn leave(request: &Value, cwd: Option<&str>) -> Option<PermissionAsk> {
 fn put_to_him(session: String, request: Value, cwd: Option<String>, asked: Arc<Mutex<super::Asking>>) {
     let Some(id) = request["id"].as_str().map(String::from) else { return };
     let Some(ask) = leave(&request, cwd.as_deref()) else {
-        asked.lock().unwrap().over(&id, Some(&super::Answer::Unanswered));
+        asked.lock().unwrap().over(&id, &id, Some(&super::Answer::Unanswered));
         return;
     };
     // it can be answered on OpenCode's own screen meanwhile: then it is no longer in the list, and the question
     // is taken back from the phone
     let still = || get(&format!("/api/session/{session}/permission")).is_none_or(|list| list["data"].as_array().is_some_and(|l| l.iter().any(|r| r["id"] == id.as_str())));
     let answer = super::ask_him_while(&ask, Some(&still));
-    if let super::Answer::Said(allow, reason) = &answer {
-        let message = if *allow { Value::Null } else { super::hooks::said_no(reason).into() };
-        let _ = post(&format!("/api/session/{session}/permission/{id}/reply"), json!({ "decision": if *allow { "once" } else { "reject" }, "message": message }));
+    // his answer counts once OpenCode has taken it; one it did not take is put to him again
+    let given = match &answer {
+        super::Answer::Said(allow, reason) => {
+            let message = if *allow { Value::Null } else { super::hooks::said_no(reason).into() };
+            post(&format!("/api/session/{session}/permission/{id}/reply"), json!({ "decision": if *allow { "once" } else { "reject" }, "message": message })).is_some_and(|status| (200..300).contains(&status))
+        }
+        _ => true,
+    };
+    if !given {
+        eprintln!("airband: {} did not take his answer to a request for leave; it is asked again", tool());
     }
-    asked.lock().unwrap().over(&id, Some(&answer));
+    asked.lock().unwrap().over(&id, &id, given.then_some(&answer));
 }
 
 /// The sessions on the radio, of those the server lists: not the ones put away (a one-off run, a summary
@@ -121,7 +132,7 @@ fn current(sessions: &[Value], now: u64) -> Vec<&Value> {
 
 /// The sessions open now, as the server lists them. Nothing when OpenCode is not running.
 fn open() -> Option<Vec<super::Open>> {
-    let list = get("/api/session?limit=40")?;
+    let list = listed()?;
     Some(current(list["data"].as_array()?, airband_core::clock::now_ms()).into_iter().filter_map(|s| Some(super::Open { agent: agent(s["id"].as_str()?, s["location"]["directory"].as_str()), // idle only when its own clocks say so: one with no idle time is not taken to be idle
         idle: s["time"]["idle"].as_u64().is_some_and(|idle| s["time"]["busy"].as_u64().is_none_or(|busy| idle >= busy)) })).collect())
 }
@@ -146,7 +157,7 @@ fn watch(tower: Tower) {
     let mut first = true;
     loop {
         std::thread::sleep(Duration::from_secs(if service().is_some() { 2 } else { 20 }));
-        let Some(list) = get("/api/session?limit=40") else { continue };
+        let Some(list) = listed() else { continue };
         let Some(sessions) = list["data"].as_array() else { continue };
         let send = |id: &str, cwd: Option<&str>, event: Event| (tower.event)(AgentEvent { schema: SCHEMA.into(), agent: agent(id, cwd), event, via: None });
         // not the ones the tower runs itself: their driver reports for them
@@ -181,9 +192,11 @@ fn watch(tower: Tower) {
             if busy > idle {
                 for request in get(&format!("/api/session/{id}/permission")).and_then(|l| l["data"].as_array().cloned()).unwrap_or_default() {
                     let Some(request_id) = request["id"].as_str() else { continue };
-                    if !asked.lock().unwrap().take(request_id) {
+                    let mut asked_now = asked.lock().unwrap();
+                    if asked_now.done(request_id) || !asked_now.take(request_id) {
                         continue;
                     }
+                    drop(asked_now);
                     let (session, cwd, asked) = (id.to_string(), cwd.map(String::from), asked.clone());
                     std::thread::spawn(move || put_to_him(session, request, cwd, asked));
                 }

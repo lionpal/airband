@@ -51,11 +51,28 @@ pub(super) fn new_lines(transcript: &str, session: &str, note: &str, first: Firs
         return None;
     }
     let path = super::super::claude_accounts::dir().join(format!("{session}.{note}"));
-    let mut kept: Value = airband_core::kept::load(&path).ok().flatten().filter(Value::is_object).unwrap_or_else(|| serde_json::json!({}));
+    // a note that cannot be read is set aside and started again; one that cannot even be moved is left as it is,
+    // and this transcript is not read until it can be
+    let mut kept = match airband_core::kept::load::<serde_json::Map<String, Value>>(&path) {
+        Ok(found) => Value::Object(found.unwrap_or_default()),
+        Err(why) if path.exists() => {
+            eprintln!("airband: {why}");
+            return None;
+        }
+        Err(why) => {
+            eprintln!("airband: {why}");
+            serde_json::json!({})
+        }
+    };
+    let keep = |kept: &Value| {
+        if let Err(e) = airband_core::kept::save(&path, kept) {
+            eprintln!("airband: {} could not be written ({e})", path.display());
+        }
+    };
     let Ok(file) = std::fs::File::open(transcript) else {
         if first == FirstLook::FromEnd && !std::path::Path::new(transcript).exists() && kept.get("at").is_none() {
             kept["at"] = 0.into();
-            let _ = airband_core::kept::save(&path, &kept);
+            keep(&kept);
         }
         return Some(kept);
     };
@@ -69,7 +86,7 @@ pub(super) fn new_lines(transcript: &str, session: &str, note: &str, first: Firs
     let reached = whole_lines(file, at, |line| each(line, &mut kept)).unwrap_or(at);
     if kept["at"].as_u64() != Some(reached) || reached > at {
         kept["at"] = reached.into();
-        let _ = airband_core::kept::save(&path, &kept);
+        keep(&kept);
     }
     Some(kept)
 }
@@ -221,7 +238,8 @@ pub(super) fn told_in(piece: &str) -> Vec<super::super::Told> {
         .collect()
 }
 
-/// The files a session has lately read or changed and the commands it has run, newest first, as written.
+/// The files a session has lately read or changed and the commands it has run, newest first, as its tool's row
+/// says each of its tools names what it touches (`touches`).
 pub(crate) fn touched(agent: &Agent) -> Vec<String> {
     tail_of(agent, 256 * 1024).map(|tail| touched_in(&tail)).unwrap_or_default()
 }
@@ -249,8 +267,9 @@ pub(super) fn tool_uses(tail: &str) -> Vec<(Option<u64>, String, Value)> {
 
 pub(super) fn touched_in(tail: &str) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
-    for (_, _, input) in tool_uses(tail).iter().rev() {
-        let what = ["file_path", "notebook_path", "path", "command"].iter().find_map(|k| input[*k].as_str()).map(|t| t.lines().next().unwrap_or("").trim().chars().take(160).collect::<String>());
+    for (_, name, input) in tool_uses(tail).iter().rev() {
+        // what each of its tools touches is the row's to say: one it says nothing of touches nothing
+        let what = super::super::hooks::fill(&super::super::hooks::tool_use(HARNESS, name)["touches"], input).map(|t| airband_core::prose::clip(t.trim(), 160));
         if let Some(what) = what.filter(|w| !w.is_empty() && !found.contains(w)) {
             found.push(what);
         }
@@ -278,8 +297,7 @@ pub(super) fn engine_in(tail: &str) -> Option<(String, Option<String>)> {
 /// row does not have is shown as it is written. Nothing for what the row lists as no model at all: the value
 /// Claude Code writes on a line it made itself.
 pub(super) fn model_name(id: &str) -> Option<String> {
-    let rows = airband_core::catalog::built();
-    let row = rows.tools.iter().find(|t| t.id == HARNESS)?;
+    let row = super::super::tool_row(HARNESS)?;
     if row.with.get("not_models").and_then(Value::as_array).is_some_and(|none| none.iter().any(|n| n.as_str() == Some(id))) {
         return None;
     }

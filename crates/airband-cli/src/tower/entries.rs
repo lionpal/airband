@@ -14,10 +14,10 @@ pub(super) struct Item {
     /// chatter along the way.
     pub(super) asked: Option<String>,
 }
-/// One line of the chat log. For an agent's message, `aloud` says where it stands with being read out.
 /// What a message of his is shown as coming from. Only a label: whether a message is his is `Entry::his`.
 pub(super) const HIM: &str = "you";
 
+/// One line of the chat log. For an agent's message, `aloud` says where it stands with being read out.
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub(super) struct Entry {
     pub(super) seq: u64,
@@ -102,6 +102,10 @@ pub(super) enum Held {
     Cancelled,
 }
 impl Entry {
+    /// Something this agent said that was worth his attention (not a passing note).
+    pub(super) fn worth_from(&self, agent_id: &str) -> bool {
+        self.agent.as_deref() == Some(agent_id) && self.kind != Some(Kind::Fyi)
+    }
     /// The line in a few words: its summary, else the opening of what it says.
     pub(super) fn line(&self) -> String {
         self.short.clone().unwrap_or_else(|| opening(&self.said_whole()))
@@ -341,6 +345,6 @@ impl Inner {
     }
     /// The last thing an agent said that was worth his attention.
     pub(super) fn last_said(&self, agent_id: &str) -> Option<&Entry> {
-        self.log.iter().rev().find(|e| e.agent.as_deref() == Some(agent_id) && e.kind != Some(Kind::Fyi))
+        self.log.iter().rev().find(|e| e.worth_from(agent_id))
     }
 }

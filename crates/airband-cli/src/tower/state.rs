@@ -83,6 +83,12 @@ pub(super) struct Team {
     #[serde(default)]
     pub(super) named: bool,
 }
+impl Team {
+    /// Its folder, when it has one that is still there.
+    pub(super) fn live_folder(&self) -> Option<String> {
+        self.folder.clone().filter(|f| std::path::Path::new(f).is_dir())
+    }
+}
 #[derive(Serialize, Deserialize, Default)]
 pub(crate) struct Saved {
     pub(super) sessions: Vec<Session>,
@@ -127,12 +133,12 @@ impl Inner {
         }
         // a permission request nobody is waiting on any more: its line stops offering an answer
         let over: Vec<String> = self.permits.iter().filter(|(_, p)| !p.live()).map(|(id, _)| id.clone()).collect();
-        for id in over {
-            self.close_permit(&id, permit::Ended::Gone);
+        for id in &over {
+            self.close_permit(id, permit::Ended::Gone);
         }
         // a radio not heard from in a day has nothing worth keeping
         self.calls.retain(|_, c| c.seen.is_some_and(|t| t.elapsed() < Duration::from_secs(86_400)));
-        !dead.is_empty()
+        !dead.is_empty() || !over.is_empty()
     }
     /// What an agent is doing.
     ///
@@ -232,6 +238,13 @@ mod tests {
         inner.worked = vec![(back.clone(), vec!["codex".into()], 9)];
         assert_eq!(inner.recent().iter().map(|r| (r.name.as_str(), r.team, r.at)).collect::<Vec<_>>(), [("back office", false, 9), ("shop", true, 0)]);
         let _ = std::fs::remove_dir_all(&here);
+    }
+
+    #[test]
+    fn two_recent_folders_that_would_be_called_alike_are_both_places_to_start_in() {
+        let inner = Inner { worked: vec![("/a/x/shop".into(), vec!["codex".into()], 9), ("/b/y/shop".into(), vec!["codex".into()], 7)], ..Inner::default() };
+        let folders: Vec<String> = inner.launchable().into_iter().map(|p| p.folder).collect();
+        assert_eq!(folders, ["/a/x/shop", "/b/y/shop"]);
     }
 
     #[test]
@@ -845,5 +858,41 @@ mod tests {
         assert_eq!(inner.teams.iter().map(|(id, t)| (id.as_str(), t.name.as_str(), t.named)).collect::<Vec<_>>(), [("/x/shop", "garden", true)]);
         assert_eq!(inner.sessions[0].callsign.text(), "garden one");
         assert_eq!(inner.log[0].team, "/x/shop");
+    }
+
+    #[test]
+    fn a_start_keeps_the_name_the_tower_gave_a_configured_team_to_stay_distinct() {
+        let listed: BTreeMap<String, String> = [("shop".to_string(), "/x/shop".to_string())].into();
+        let mut inner = Inner { here: "Laptop".into(), ..Inner::default() };
+        inner.configure_teams(&listed);
+        assert!(inner.taken_elsewhere(&[Callsign { project: "shop".into(), number: "one".into(), named: false }]));
+        assert_eq!(inner.team_name("/x/shop"), "laptop shop");
+        // the next start knows nothing of the other computer yet: the name it was given stays
+        let mut next = Inner { here: "Laptop".into(), teams: inner.teams.clone(), ..Inner::default() };
+        next.configure_teams(&listed);
+        assert_eq!(next.team_name("/x/shop"), "laptop shop");
+    }
+
+    #[test]
+    fn a_renamed_teams_agents_never_take_a_callsign_another_agent_has() {
+        let mut inner = Inner::default();
+        let shop = inner.folder_team("/x/shop").unwrap();
+        let garden = inner.folder_team("/x/garden").unwrap();
+        let mut a = kept_session("a", Some("/x/shop"), "shop");
+        a.team = shop.clone();
+        // one in another team still called by a name the renamed team now takes
+        let mut b = kept_session("b", Some("/x/garden"), "orchard");
+        b.team = garden;
+        inner.sessions = vec![a, b];
+        inner.rename_team(&shop, "orchard").unwrap();
+        assert_eq!(names(&inner), ["orchard two", "orchard one"]);
+    }
+
+    #[test]
+    fn an_agent_started_under_a_name_no_team_can_have_goes_in_its_folders_team() {
+        let mut inner = Inner::default();
+        let mut a = agent("a", "/x/shop", None);
+        a.name = Some("a name far longer than any team may have".into());
+        assert_eq!(inner.check_in(&a).map(|c| c.text()).as_deref(), Some("shop one"));
     }
 }

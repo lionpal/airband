@@ -375,20 +375,30 @@ impl Inner {
 /// is left waiting for his first word, on the radio at once so he can see it and speak to it.
 /// `model` and `effort` are what he asked for it to be set to, as its tool takes them.
 pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, model: Option<String>, effort: Option<String>, task: &str) -> Result<String, String> {
+    let harness = app.cfg.launchers.get(launcher).map(|l| l.harness.clone()).ok_or_else(|| format!("no launcher called {launcher} is configured"))?;
+    // nothing is started that no team could hold: it would run with nobody able to speak to it
+    {
+        let inner = app.read();
+        if inner.team_at(cwd).is_none() && inner.name_for_folder(cwd).is_none() {
+            return Err("That folder has no name a team could have.".into());
+        }
+    }
     let mut kept = Kept { id: new_id(), cwd: cwd.to_string(), launcher: launcher.to_string(), model, effort, session: None };
     let started = spawn(app, &kept, true).await?;
     kept.session = started.session;
-    {
+    let taken = {
         let mut inner = app.change();
         learn(app, &mut inner, launcher, started.offers);
         inner.held.push(kept.clone());
-        if task.is_empty() {
-            let harness = app.cfg.launchers.get(launcher).map(|l| l.harness.clone()).unwrap_or_default();
-            inner.check_in(&Agent { id: kept.id.clone(), harness, cwd: Some(cwd.to_string()), name: None, title: None, pid: None, deliver: Some(Deliver::Held), meta: Default::default() });
-            if let Some(s) = inner.session(&kept.id) {
-                s.waiting = true;
-            }
+        let taken = task.is_empty().then(|| inner.check_in(&Agent { id: kept.id.clone(), harness, cwd: Some(cwd.to_string()), name: None, title: None, pid: None, deliver: Some(Deliver::Held), meta: Default::default() }));
+        if let Some(s) = inner.session(&kept.id) {
+            s.waiting = true;
         }
+        taken
+    };
+    if taken == Some(None) {
+        end(app, &kept.id).await;
+        return Err("It has no team airband can put it in.".into());
     }
     if task.is_empty() {
         app.kick.notify_one();
@@ -461,6 +471,8 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
     if !session.waiting {
         return Err("It is in the middle of something. Take it over when it has stopped.".into());
     }
+    // ending it signs it off: written down first is the team it goes back to, by whoever put it there
+    app.change().put(id, &session.team, session.moved.unwrap_or(Mover::Tower));
     // ask it to end, and wait for it to be gone: two processes must never run one session
     terminate(pid);
     for _ in 0..50 {
@@ -476,26 +488,34 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
     // ending it signed it off; it reports in again from the new process, under the same id
     let started = spawn(app, &kept, false).await?;
     kept.session = started.session.or(kept.session);
-    let mut inner = app.change();
-    learn(app, &mut inner, &kept.launcher, started.offers);
-    inner.held.retain(|k| k.id != id);
-    inner.held.push(kept);
-    // it is on the radio from now, before it has reported in: held, and reachable
-    let mut agent = session.agent.clone();
-    agent.deliver = Some(Deliver::Held);
-    agent.pid = None;
-    if inner.check_in(&agent).is_none() {
-        return Err("It has no team airband can put it in.".into());
+    let taken = {
+        let mut inner = app.change();
+        learn(app, &mut inner, &kept.launcher, started.offers);
+        inner.held.retain(|k| k.id != id);
+        inner.held.push(kept);
+        // it is on the radio from now, before it has reported in: held, and reachable
+        let mut agent = session.agent.clone();
+        agent.deliver = Some(Deliver::Held);
+        agent.pid = None;
+        let taken = inner.check_in(&agent).is_some();
+        if taken {
+            if !inner.keep_name(id, session.callsign.clone()) {
+                log(format!("{} was taken while it moved, so it keeps the name it came back with", session.callsign.text()));
+            }
+            if let Some(s) = inner.session(id) {
+                s.agent.deliver = Some(Deliver::Held);
+                s.agent.pid = None;
+                s.waiting = true;
+            }
+            inner.tell();
+        }
+        taken
+    };
+    if !taken {
+        // the session goes on in the holder just started: let it go, so nothing runs that nobody can speak to
+        end(app, id).await;
+        return Err("It has no team airband can put it in, so it was stopped.".into());
     }
-    if !inner.keep_name(id, session.callsign.clone()) {
-        log(format!("{} was taken while it moved, so it keeps the name it came back with", session.callsign.text()));
-    }
-    if let Some(s) = inner.session(id) {
-        s.agent.deliver = Some(Deliver::Held);
-        s.agent.pid = None;
-        s.waiting = true;
-    }
-    inner.tell();
     log(format!("took over {}", session.callsign.text()));
     Ok(())
 }

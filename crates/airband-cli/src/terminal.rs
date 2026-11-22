@@ -16,6 +16,26 @@ struct Terminal {
     window: Duration,
 }
 
+/// What a radio in a terminal does with sound: nothing. No sound is played or recorded, no model is run on
+/// this side, and no words are shown as they are heard. The same for every terminal host.
+macro_rules! no_sound {
+    () => {
+        fn play(&self, _: u32, _: Vec<u8>, _: bool) {}
+        fn record_start(&self, _: u32) -> bool {
+            false
+        }
+        fn record_read(&self) -> Vec<u8> {
+            Vec::new()
+        }
+        fn record_stop(&self) {}
+        fn hearing(&self, _: String) {}
+        fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
+        fn run_model(&self, _: String, _: String, _: airband_radio::ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
+            None
+        }
+    };
+}
+
 impl RadioHost for Terminal {
     fn told(&self, text: String) {
         println!("{text}");
@@ -29,21 +49,9 @@ impl RadioHost for Terminal {
         self.listening.store(false, Ordering::SeqCst);
         heard.filter(|l| !l.trim().is_empty())
     }
-    fn play(&self, _: u32, _: Vec<u8>, _: bool) {}
-    fn record_start(&self, _rate: u32) -> bool {
-        false
-    }
-    fn record_read(&self) -> Vec<u8> {
-        Vec::new()
-    }
-    fn record_stop(&self) {}
     fn outbox(&self, _: Vec<Outgoing>, _: Option<String>) {}
-    fn hearing(&self, _text: String) {}
     // a terminal prints what is said and takes a typed line as what he said
-    fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
-    fn run_model(&self, _: String, _: String, _: airband_radio::ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
-        None
-    }
+    no_sound!();
     fn unplaced(&self, message: airband_radio::Outgoing, elsewhere: Option<String>, ask: Vec<String>) {
         match elsewhere {
             Some(callsign) => println!("Not sent: “{}” is for {callsign}, on another computer.", message.text),
@@ -61,7 +69,7 @@ impl RadioHost for Terminal {
 
 pub(crate) fn run(cfg: &Config, args: &[String]) -> Result<(), String> {
     let flag = |name: &str| crate::option(args, name);
-    let link = link_or_here(cfg, args);
+    let link = link_from(cfg, args);
     let route = match Pairing::parse(&link)? {
         Pairing::Relay { relay, .. } => format!("through the relay at {relay}"),
         Pairing::Near { at, .. } => format!("directly to {}, encrypted", at.join(" or ")),
@@ -102,24 +110,12 @@ impl RadioHost for Silent {
     fn listen(&self) -> Option<String> {
         None
     }
-    fn play(&self, _: u32, _: Vec<u8>, _: bool) {}
-    fn record_start(&self, _: u32) -> bool {
-        false
-    }
-    fn record_read(&self) -> Vec<u8> {
-        Vec::new()
-    }
-    fn record_stop(&self) {}
     fn status(&self, _: RadioStatus) {}
+    no_sound!();
     fn outbox(&self, _: Vec<Outgoing>, note: Option<String>) {
         if let Some(n) = note.filter(|n| !n.is_empty()) {
             println!("{n}");
         }
-    }
-    fn hearing(&self, _text: String) {}
-    fn words(&self, _: String, _: Vec<u32>, _: Vec<u32>) {}
-    fn run_model(&self, _: String, _: String, _: airband_radio::ChoiceJob, _: Vec<u8>) -> Option<Vec<u8>> {
-        None
     }
     fn unplaced(&self, message: airband_radio::Outgoing, elsewhere: Option<String>, ask: Vec<String>) {
         match elsewhere {
@@ -151,6 +147,11 @@ struct Named {
     parts: airband_core::routing::Callsign,
 }
 
+/// The agents on the radio now, as the feed's roster has them.
+fn roster(radio: &Radio) -> Result<Vec<Named>, String> {
+    Ok(radio.feed(None, None, u64::MAX, 0).map_err(|e| e.to_string())?.agents.iter().map(|a| Named { id: a.id.clone(), team: a.team.clone(), shown: a.callsign.clone(), parts: a.parts() }).collect())
+}
+
 /// The id of the team called exactly `named`, from the agents in it. Names are distinct on one computer.
 fn team_named(roster: &[Named], named: &str) -> Result<String, String> {
     roster.iter().find(|a| a.parts.project == named).map(|a| a.team.clone()).ok_or(format!("No team called {named} has an agent here."))
@@ -176,7 +177,7 @@ pub(crate) fn feed(cfg: &Config, args: &[String]) -> Result<(), String> {
     let (team, agent) = match (flag("--team"), flag("--agent")) {
         (None, None) => (None, None),
         (team, agent) => {
-            let roster: Vec<Named> = radio.feed(None, None, u64::MAX, 0).map_err(|e| e.to_string())?.agents.iter().map(|a| Named { id: a.id.clone(), team: a.team.clone(), shown: a.callsign.clone(), parts: a.parts() }).collect();
+            let roster = roster(&radio)?;
             (team.map(|named| team_named(&roster, &named)).transpose()?, agent.map(|named| agent_named(&roster, &named)).transpose()?)
         }
     };
@@ -210,7 +211,9 @@ pub(crate) fn launch(cfg: &Config, args: &[String]) -> Result<(), String> {
         return Err("say which team: airband launch <team> [--tool <id>] [--model <name>] [--effort <name>] [task]".into());
     };
     let radio = Radio::start(link_from(cfg, args), String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
-    println!("{}", radio.launch(project.clone(), flags.remove("tool"), flags.remove("model"), flags.remove("effort"), task.join(" ")).map_err(|e| e.to_string())?);
+    // the tower starts it in a team by the team's id: the name he typed only finds it
+    let team = team_named(&roster(&radio)?, project)?;
+    println!("{}", radio.launch(team, flags.remove("tool"), flags.remove("model"), flags.remove("effort"), task.join(" ")).map_err(|e| e.to_string())?);
     Ok(())
 }
 

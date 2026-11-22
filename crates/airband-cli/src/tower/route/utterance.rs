@@ -82,7 +82,7 @@ pub(in crate::tower) async fn on_utterance(app: &Arc<App>, radio: &str, text: &s
         };
     }
     if to.targets.is_empty() {
-        return if to.names.is_empty() { say("No agents are running.".into()) } else { ask(format!("Who is that for? {}.", to.names.join(", "))) };
+        return if to.names.is_empty() { say("No agents are running.".into()) } else { ask(format!("Who is that for? {}.", either(&to.names))) };
     }
     // The line in the chat takes the id the radio gave what he said, when it is not in use: the radio can then
     // tell that the message it is still showing as on its way has arrived, and swap one for the other without a gap.
@@ -124,22 +124,32 @@ async fn leave(app: &Arc<App>, text: &str, said: &airband_core::radio::Utterance
 /// A new agent: the answer to "Which project?" asked about an idea just now, or one asked for from a radio's own
 /// screen, which names its team by id and needs no reading. `None` when this is not about a new agent.
 async fn new_agent(app: &Arc<App>, radio: &str, text: &str, said: &airband_core::radio::Utterance, files: &str, projects: &[Place]) -> Option<Reply> {
-    // Words that answer the question by its id take the idea, and a model says with which project; when they
-    // name none, the idea is let go. Words that answer nothing leave it held.
+    // Words of his own that answer the question by its id take the idea, and a model says with which project;
+    // when they name none, the idea is let go. Words that answer nothing, or that came with a choice of his own
+    // (a control, agents he picked), leave it held. So does a model that could not say: he is told, and can
+    // answer again.
     let held_idea = {
         let mut inner = app.passing();
         let call = inner.call(radio);
         match (&call.unplaced_idea, &said.answers) {
-            (Some((question, _)), Some(answers)) if question == answers => call.unplaced_idea.take().map(|(_, idea)| idea),
+            (Some((question, _)), Some(answers)) if question == answers && said.act.is_none() && said.to.is_empty() => call.unplaced_idea.take(),
             _ => None,
         }
     };
-    if let Some(idea) = held_idea
-        && said.act.is_none() && said.to.is_empty()
-        && let Some(place) = named_project(app, &idea.task, text, projects).await {
-            log(format!("← radio: \"{text}\" → launch in {}", place.name));
-            return Some(launch(app, &place, &idea).await);
+    if let Some((question, idea)) = held_idea {
+        match named_project(app, &idea.task, text, projects).await {
+            Ok(Some(place)) => {
+                log(format!("← radio: \"{text}\" → launch in {}", place.name));
+                return Some(launch(app, &place, &idea).await);
+            }
+            Ok(None) => {}
+            Err(why) => {
+                log(format!("which project he named could not be read: {why}"));
+                app.passing().call(radio).unplaced_idea = Some((question.clone(), idea));
+                return Some(Reply { say: "That could not be read just now, so the idea is still waiting. Say the project again.".into(), listen: true, question: Some(question), ..Reply::default() });
+            }
         }
+    }
     let Some(Act::Launch(new)) = &said.act else { return None };
     // the team he picked, by its id, and the folder it works in
     let Some(place) = app.read().team_place(&new.team) else {
@@ -154,8 +164,8 @@ async fn new_agent(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
 /// when that settles it some other way (another computer, a new agent, a question back).
 async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core::radio::Utterance, control: Option<Control>, files: String, projects: &[Place]) -> Result<Addressed, Reply> {
     let (parsed, mut named, roster, names, pending, held) = {
+        app.reap();
         let mut inner = app.passing();
-        inner.reap();
         // a control carries no words; what it shows in the chat is not for anyone to read
         let parsed = if control.is_some() { airband_core::routing::Parsed { to: Vec::new(), rest: String::new() } } else { parse_utterance(text, &inner.callsigns()) };
         // the agents he picked on his screen, by id; else the ones his tags name
@@ -170,7 +180,7 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
         // only words that answer "Who is that for?" by its id take what it holds
         let call = inner.call(radio);
         let held = match (&call.asked, &said.answers) {
-            (Some((question, _, _)), Some(answers)) if question == answers => call.asked.take().map(|(_, t, f)| (t, f)),
+            (Some((question, _, _)), Some(answers)) if question == answers => call.asked.take(),
             _ => None,
         };
         (parsed, named, inner.roster(), names, inner.unheard().count(), held)
@@ -178,14 +188,24 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
     let (mut rest, mut files) = (parsed.rest, files);
     // "Who is that for?" was just asked. A tag and nothing else answers it; so do words of his that a model reads
     // as naming someone. Either way what goes out is what he said the first time.
-    if let (Some((words, their_files)), None) = (&held, control) {
+    if let (Some((question, words, their_files)), None) = (&held, control) {
         if rest.is_empty() && !named.is_empty() {
             (rest, files) = (words.clone(), their_files.clone());
-        } else if named.is_empty() && !rest.is_empty()
-            && let Some(meant) = named_agents(app, words, &rest, said.scope.as_deref()).await {
-                named = meant;
-                (rest, files) = (words.clone(), their_files.clone());
+        } else if named.is_empty() && !rest.is_empty() {
+            match named_agents(app, words, &rest, said.scope.as_deref()).await {
+                Ok(Some(meant)) => {
+                    named = meant;
+                    (rest, files) = (words.clone(), their_files.clone());
+                }
+                Ok(None) => {}
+                // nothing could say whether these words answer it: what he said first is kept, and he is asked again
+                Err(why) => {
+                    log(format!("who he meant could not be read: {why}"));
+                    app.passing().call(radio).asked = Some((question.clone(), words.clone(), their_files.clone()));
+                    return Err(Reply { say: "That could not be read just now, so what you said first is still waiting. Say who it is for again.".into(), listen: true, question: Some(question.clone()), ..Reply::default() });
+                }
             }
+        }
     }
     // work out who it is for only when there is something to deliver
     let targets: Vec<Session> = if !named.is_empty() {
@@ -195,7 +215,7 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
     } else if control.is_some() {
         // "say more" and "repeat" are about whoever he last heard
         let inner = app.read();
-        inner.calls.get(radio).and_then(|c| c.focus.clone()).and_then(|f| inner.find(&f).cloned()).or((inner.sessions.len() == 1).then(|| inner.sessions[0].clone())).into_iter().collect()
+        inner.focused(radio).cloned().or((inner.sessions.len() == 1).then(|| inner.sessions[0].clone())).into_iter().collect()
     } else {
         match route(app, radio, &rest, said.re.as_deref(), said.scope.as_deref(), &said.others).await {
             Routed::Sure(t) => t,
@@ -214,7 +234,7 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
                 app.passing().call(radio).asked = Some((question.clone(), rest.clone(), files.clone()));
                 let names: Vec<String> = options.iter().map(|s| s.callsign.text()).collect();
                 log(format!("← radio: \"{text}\" → unsure; asking between {}", names.join(", ")));
-                return Err(Reply { ask: options.iter().map(|s| s.agent.id.clone()).collect(), question: Some(question), ..ask(format!("Who is that for? {}.", names.join(", or "))) });
+                return Err(Reply { ask: options.iter().map(|s| s.agent.id.clone()).collect(), question: Some(question), ..ask(format!("Who is that for? {}.", either(&names))) });
             }
         }
     };
@@ -240,7 +260,13 @@ async fn controlled(app: &Arc<App>, radio: &str, control: Control, to: &Addresse
         c @ (Control::More | Control::Repeat) => {
             let last = to.targets.first().and_then(|s| s.last_heard.clone().map(|l| (s.clone(), l))).and_then(|(s, id)| app.read().log.iter().find(|e| e.id == id).map(|e| (s, id, e.line())));
             let Some((s, last, said)) = last else { return say("Nothing to repeat yet.".into()) };
-            let body = if c == Control::Repeat { said } else { detail_of(app, &last).await.unwrap_or_default() };
+            let body = match c {
+                Control::Repeat => said,
+                _ => match detail_of(app, &last).await {
+                    Some(more) => more,
+                    None => return say("That message is no longer here.".into()),
+                },
+            };
             app.passing().call(radio).focus = Some(s.agent.id.clone());
             ask(format!("{}. {body}", s.callsign.spoken()))
         }
@@ -311,7 +337,7 @@ fn answering(app: &App, re: Option<&str>) -> impl Fn(&str) -> String {
         let at = inner.log.iter().position(|e| e.id == id)?;
         let asked = &inner.log[at];
         let agent = asked.agent.clone()?;
-        let since = inner.log[at + 1..].iter().any(|e| e.agent.as_deref() == Some(agent.as_str()) && e.kind != Some(super::Kind::Fyi) || e.to_agents.contains(&agent));
+        let since = inner.log[at + 1..].iter().any(|e| e.worth_from(&agent) || e.to_agents.contains(&agent));
         since.then(|| (agent, asked.line()))
     });
     move |agent: &str| answers.as_ref().filter(|(a, _)| a == agent).map(|(_, q)| format!("This answers what you asked earlier (as he was shown it): \"{q}\"\n\n")).unwrap_or_default()
@@ -368,5 +394,54 @@ mod tests {
         let to = Addressed { rest: String::new(), files: String::new(), named: Vec::new(), targets: vec![s], roster: String::new(), names: Vec::new(), pending: 0 };
         let reply = controlled(&app, "radio", Control::Repeat, &to).await;
         assert!(reply.say.ends_with("The deploy is done."), "{}", reply.say);
+    }
+
+    #[tokio::test]
+    async fn an_agent_found_gone_while_he_speaks_is_let_go_for_good_and_the_radios_told() {
+        let app = crate::tower::http::tests::app("reaped");
+        {
+            let mut inner = app.change();
+            let a = Agent { id: "a".into(), harness: "test".into(), cwd: Some("/x/shop".into()), name: None, title: None, pid: Some(i32::MAX as u32), deliver: None, meta: Default::default() };
+            inner.check_in(&a).unwrap();
+        }
+        assert_eq!(app.store.load(10).unwrap().0.sessions.len(), 1);
+        let _ = addressed(&app, "radio", "hello", &airband_core::radio::Utterance { text: "hello".into(), ..Default::default() }, None, String::new(), &[]).await;
+        assert!(app.read().sessions.is_empty());
+        assert!(app.store.load(10).unwrap().0.sessions.is_empty(), "written down as gone");
+    }
+
+    fn answering(text: &str, question: &str) -> airband_core::radio::Utterance {
+        airband_core::radio::Utterance { text: text.into(), answers: Some(question.into()), ..Default::default() }
+    }
+
+    #[tokio::test]
+    async fn an_idea_waiting_for_its_project_is_kept_when_no_model_can_read_his_answer() {
+        // no model is set here, so asking one fails
+        let app = crate::tower::http::tests::app("idea-kept");
+        let idea = Idea { task: "add a cart".into(), ..Idea::default() };
+        app.passing().call("radio").unplaced_idea = Some(("q1".into(), idea.clone()));
+        let places = [Place { name: "shop".into(), folder: "/w/shop".into() }, Place { name: "garden".into(), folder: "/w/garden".into() }];
+        let reply = new_agent(&app, "radio", "the shop", &answering("the shop", "q1"), "", &places).await;
+        let reply = reply.expect("he is told");
+        assert_eq!(reply.question.as_deref(), Some("q1"), "{}", reply.say);
+        assert_eq!(app.passing().call("radio").unplaced_idea.clone(), Some(("q1".to_string(), idea)));
+    }
+
+    #[tokio::test]
+    async fn an_idea_waiting_for_its_project_is_not_taken_by_words_that_pick_an_agent() {
+        let app = crate::tower::http::tests::app("idea-picked");
+        app.passing().call("radio").unplaced_idea = Some(("q1".into(), Idea { task: "add a cart".into(), ..Idea::default() }));
+        let said = airband_core::radio::Utterance { to: vec!["a".into()], ..answering("hello", "q1") };
+        assert!(new_agent(&app, "radio", "hello", &said, "", &[]).await.is_none());
+        assert!(app.passing().call("radio").unplaced_idea.is_some());
+    }
+
+    #[tokio::test]
+    async fn his_first_words_are_kept_when_no_model_can_read_who_he_says_they_are_for() {
+        let app = crate::tower::http::tests::app("asked-kept");
+        app.passing().call("radio").asked = Some(("q1".into(), "ship it".into(), "\n[file]".into()));
+        let Err(reply) = addressed(&app, "radio", "the first one", &answering("the first one", "q1"), None, String::new(), &[]).await else { panic!("it is not sent anywhere") };
+        assert_eq!(reply.question.as_deref(), Some("q1"), "{}", reply.say);
+        assert_eq!(app.passing().call("radio").asked.clone(), Some(("q1".to_string(), "ship it".to_string(), "\n[file]".to_string())));
     }
 }

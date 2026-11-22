@@ -46,9 +46,9 @@ pub(super) fn take(app: &Arc<App>, ev: AgentEvent) -> Result<(), String> {
 }
 
 /// The same for an event a watcher inside the tower saw: written down first, as one that came over HTTP is.
-pub(super) fn record_and_take(app: &Arc<App>, ev: AgentEvent) -> bool {
+pub(super) fn record_and_take(app: &Arc<App>, ev: AgentEvent) -> Result<(), String> {
     app.store.event(&serde_json::to_value(&ev).unwrap_or_default());
-    take(app, ev).is_ok()
+    take(app, ev)
 }
 
 pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
@@ -82,7 +82,7 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
             inner.no_longer_waiting(&id);
         }
         Event::Activity { text } => {
-            let text: String = text.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(80).collect();
+            let text: String = airband_core::prose::clip(&text.split_whitespace().collect::<Vec<_>>().join(" "), 80);
             let s = inner.session(&id).unwrap();
             // it is doing something, so it is working, whatever it last said
             s.waiting = false;
@@ -91,7 +91,7 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
             return Ok(());
         }
         Event::Model { name, effort } => {
-            let short = |t: String| -> Option<String> { Some(t.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(32).collect::<String>()).filter(|t| !t.is_empty()) };
+            let short = |t: String| -> Option<String> { Some(airband_core::prose::clip(&t.split_whitespace().collect::<Vec<_>>().join(" "), 32)).filter(|t| !t.is_empty()) };
             let s = inner.session(&id).unwrap();
             (s.model, s.effort) = (short(name), effort.and_then(short));
             return Ok(());
@@ -139,7 +139,7 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
             s.doing = None;
             s.subagents = 0;
             if let Some(why) = why.map(|w| w.trim().to_string()).filter(|w| !w.is_empty()) {
-                log(format!("{callsign}: its turn failed: {}", why.chars().take(200).collect::<String>()));
+                log(format!("{callsign}: its turn failed: {}", airband_core::prose::clip(&why, 200)));
                 enqueue(&mut inner, &id, true, why, Some(Kind::NeedsYou), Vec::new(), Some(Note::TurnFailed));
             }
         }
@@ -166,11 +166,15 @@ fn pictures_of(ev: &AgentEvent) -> Vec<airband_core::radio::Picture> {
 /// is locked. It goes in ahead of this event, so his words come before the answer to them.
 fn typed_at_keyboard(app: &App, ev: &AgentEvent) -> Option<(Vec<crate::adapters::Told>, Vec<Vec<airband_core::radio::Picture>>, u64)> {
     let known = app.read().find(&ev.agent.id).map(|s| (s.agent.clone(), s.told_upto));
-    known.filter(|_| matches!(ev.event, Event::Working | Event::Said { .. })).map(|(agent, upto)| crate::adapters::told(&agent, upto)).map(|(told, upto)| {
-        // pictures he pasted in with them, kept before anything is locked
-        let with = pictures::pasted(&told);
-        (told, with, upto)
-    })
+    known.filter(|_| matches!(ev.event, Event::Working | Event::Said { .. })).map(|(agent, upto)| typed_since(&agent, upto))
+}
+
+/// What he typed at an agent's own keyboard after `upto`, with the pictures he pasted in with it (shrunk and
+/// kept here, before anything is locked), and how far that reaches. Blocks.
+pub(super) fn typed_since(agent: &Agent, upto: u64) -> (Vec<crate::adapters::Told>, Vec<Vec<airband_core::radio::Picture>>, u64) {
+    let (told, reached) = crate::adapters::told(agent, upto);
+    let with = pictures::pasted(&told);
+    (told, with, reached)
 }
 
 /// An agent said something: it goes in the log, and in the queue of things he has not heard.

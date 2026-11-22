@@ -43,8 +43,8 @@ pub(crate) fn relay(mut cfg: Config, args: &[String]) -> Result<(), String> {
 ///   airband model test                 one real call to what is set
 ///
 /// A key is never given on the command line, where the shell and other programs can see it: it comes from an
-/// environment variable, or is one already kept for that provider (`airband keys`).
-/// What reads each agent's message and decides what is worth showing, and who his words are for.
+/// environment variable, or is one already kept for that provider (`airband keys`). What reads decides what
+/// of each agent's message is worth showing, and who his words are for.
 pub(crate) fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
     use crate::providers::{self, Use};
     let (job, cmd, what, without) = (providers::Job::Summary, "model", "Model", "You get every message in full, and with several agents you are asked who yours is for.");

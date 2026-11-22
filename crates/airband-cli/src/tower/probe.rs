@@ -16,9 +16,12 @@ pub(crate) fn try_model(cfg: &Config) -> Result<String, String> {
     let rt = runtime()?;
     // a model on this computer is fetched the first time: wait through that, and say so
     local::listen_after(cfg.port);
-    local::wait_for_it(true);
-    if judge::local_model(&cfg.summarizer).is_some() {
+    if let Some((model, server)) = judge::local_model(&cfg.summarizer) {
         println!("  Fetching the model and starting it. The first time this is a few gigabytes and takes a while.");
+        if let Err(why) = local::ensure(&model, &server, true) {
+            local::stop();
+            return Err(why);
+        }
     }
     println!("  Asking it something…");
     let answered = rt.block_on(judge::ask_model(cfg, judge::READY.into())).map(|_| "It answers.".into());

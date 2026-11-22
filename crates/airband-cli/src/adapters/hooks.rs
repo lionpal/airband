@@ -34,7 +34,7 @@ pub(crate) fn from_agent(agent: Option<Agent>, events: Vec<Event>) -> Vec<AgentE
 /// what it is doing (`doing`), what it asks leave for (`asks`), whether it is bookkeeping, and its part
 /// (`role`: subagent, question, files, artifact). Null when the row does not list it.
 pub(crate) fn tool_use(harness: &str, tool: &str) -> Value {
-    airband_core::catalog::built().tools.iter().find(|t| t.id == harness).map(|t| t.with["tools"][tool].clone()).unwrap_or(Value::Null)
+    super::tool_row(harness).map(|t| t.with["tools"][tool].clone()).unwrap_or(Value::Null)
 }
 
 /// A command a tool asks leave to run, as he is asked it: in its row's words for its `shell` tool, else in
@@ -70,8 +70,7 @@ const OURS: &str = "--put-there-by-airband";
 
 /// The tools a row gives one of these parts, by their own names.
 pub(crate) fn with_role(harness: &str, roles: &[&str]) -> Vec<String> {
-    let rows = airband_core::catalog::built();
-    let tools = rows.tools.iter().find(|t| t.id == harness).and_then(|t| t.with["tools"].as_object().cloned()).unwrap_or_default();
+    let tools = super::tool_row(harness).and_then(|t| t.with["tools"].as_object().cloned()).unwrap_or_default();
     tools.into_iter().filter(|(_, v)| v["role"].as_str().is_some_and(|r| roles.contains(&r))).map(|(k, _)| k).collect()
 }
 
@@ -131,7 +130,9 @@ impl File {
     fn read(&self) -> Result<Value, String> {
         match std::fs::read_to_string(&self.path) {
             Ok(t) => serde_json::from_str(&t).map_err(|e| format!("{} is not valid JSON; fix it first ({e})", self.path.display())),
-            Err(_) => Ok(json!({})),
+            // only a file that is not there is an empty one: one that cannot be read is never written over
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
+            Err(e) => Err(format!("{} cannot be read ({e}), so nothing was changed", self.path.display())),
         }
     }
     /// Whole or not at all, so the tool never reads half of one, and with the permissions the file had: it is

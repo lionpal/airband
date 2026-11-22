@@ -255,7 +255,7 @@ fn on_update(update: &Value, said: &mut String, me: &Agent) {
                 *said = format!("{}\n\n", said.trim_end());
             }
             if let Some(title) = update["title"].as_str().filter(|t| !t.trim().is_empty()) {
-                post(me, Event::Activity { text: title.chars().take(80).collect() });
+                post(me, Event::Activity { text: airband_core::prose::clip(title, 80) });
             }
         }
         _ => {}

@@ -128,6 +128,11 @@ pub(super) async fn utterance(State(app): State<Arc<App>>, Extension(RadioId(rad
             Receipt::Begun => {
                 inner.answering.insert(u.id.clone());
             }
+            // the radio keeps it and sends it again: answered now, it might be answered twice
+            Receipt::Unknown(why) => {
+                log(format!("utterance {} from {radio} by {via}: whether it was answered could not be read ({why})", u.id));
+                return (StatusCode::SERVICE_UNAVAILABLE, Json(refused("This computer could not check its records just now. It is sent again in a moment."))).into_response();
+            }
         }
     }
     // answered in the order it came from this radio: several can arrive in one moment (what the relay kept
@@ -157,7 +162,7 @@ pub(super) async fn utterance(State(app): State<Arc<App>>, Extension(RadioId(rad
         // one line for everything he says: its id (the same on the phone and at the relay), how it came, what
         // became of it and how long that took
         let took = began.elapsed();
-        log(format!("utterance {} from {radio} by {via}: answered in {:.1} s{}{}", u.id, took.as_secs_f32(), if reply.say.is_empty() { String::new() } else { format!(" (\"{}\")", reply.say.chars().take(80).collect::<String>()) }, if took > SLOW { ", which is slow" } else { "" }));
+        log(format!("utterance {} from {radio} by {via}: answered in {:.1} s{}{}", u.id, took.as_secs_f32(), if reply.say.is_empty() { String::new() } else { format!(" (\"{}\")", airband_core::prose::clip(&reply.say, 80)) }, if took > SLOW { ", which is slow" } else { "" }));
         // the line is written before the answer can be read back, so it is there whenever the answer is
         app.store.finish_receipt(&u.id, &reply);
         let mut inner = app.passing();

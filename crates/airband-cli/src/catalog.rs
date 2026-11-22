@@ -14,11 +14,16 @@ pub(crate) fn load() {
     *SAID.lock().unwrap() = airband_core::catalog::load_kept(&config::dir(), &crate::providers::speaks);
 }
 
+/// What loading the kept copy had to say, taken: for a command that fetches nothing.
+pub(crate) fn said() -> Vec<String> {
+    std::mem::take(&mut *SAID.lock().unwrap())
+}
+
 /// Fetch the published copy and, if it is airband's and newer, use it and keep it. Quietly does nothing
 /// when there is no network. Blocks for a few seconds at most. True when it is now the one in use, with what
 /// is worth a line in a log (rows this build cannot use, a copy that was refused).
 pub(crate) fn refresh() -> (bool, Vec<String>) {
-    let mut lines = std::mem::take(&mut *SAID.lock().unwrap());
+    let mut lines = said();
     let (changed, more) = airband_core::catalog::refresh(&config::dir(), &crate::providers::speaks);
     lines.extend(more);
     (changed, lines)
