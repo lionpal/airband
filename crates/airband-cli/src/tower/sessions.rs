@@ -71,18 +71,20 @@ impl Inner {
         if let Some((team, _)) = self.placed.get(&agent.id).filter(|(team, _)| self.teams.contains_key(team)) {
             return Some(team.clone());
         }
-        match (&agent.name, &agent.cwd) {
-            (Some(name), _) => {
-                let team = self.team_he_named(name).ok()?;
-                self.put(&agent.id, &team, Mover::Tower);
-                Some(team)
+        if let Some(name) = &agent.name {
+            match self.team_he_named(name) {
+                Ok(team) => {
+                    self.put(&agent.id, &team, Mover::Tower);
+                    return Some(team);
+                }
+                // a name no team can have does not turn it away: it goes in its folder's team, as one started with no name does
+                Err(why) => log(format!("an agent of {} was started under the team name \"{name}\", which cannot be used: {why}", agent.harness)),
             }
-            (None, Some(cwd)) => self.folder_team(cwd),
-            (None, None) => None,
         }
+        self.folder_team(agent.cwd.as_deref()?)
     }
     /// Write down which team an agent was put in, by whom. Only the latest few hundred are remembered.
-    fn put(&mut self, id: &str, team: &str, by: Mover) {
+    pub(super) fn put(&mut self, id: &str, team: &str, by: Mover) {
         self.placed.insert(id.to_string(), (team.to_string(), by));
         while self.placed.len() > 400 {
             let Some(first) = self.placed.keys().next().cloned() else { break };
@@ -168,7 +170,7 @@ impl Inner {
         self.sessions.iter().filter(|s| Some(s.agent.id.as_str()) != except).map(|s| s.callsign.clone()).chain(self.elsewhere.iter().cloned()).collect()
     }
     /// Can the agent `except` (by id) be called this: no other agent here or on his other computers is?
-    fn callsign_free(&self, callsign: &Callsign, except: Option<&str>) -> bool {
+    pub(super) fn callsign_free(&self, callsign: &Callsign, except: Option<&str>) -> bool {
         !self.taken_callsigns(except).contains(callsign)
     }
     /// The next free numbered callsign in the team called `team_name`: free among the callsigns in use (but

@@ -161,8 +161,12 @@ impl Inner {
             return;
         }
         t.name = to.to_string();
-        let ids: Vec<(String, Callsign)> = self.sessions.iter().filter(|s| s.team == team).map(|s| (s.agent.id.clone(), Callsign { project: to.to_string(), ..s.callsign.clone() })).collect();
-        for (id, callsign) in ids {
+        // each keeps its number or the name he gave it under the new name when nobody else has that, else the next free
+        let ids: Vec<String> = self.sessions.iter().filter(|s| s.team == team).map(|s| s.agent.id.clone()).collect();
+        for id in ids {
+            let Some(was) = self.find(&id).map(|s| s.callsign.clone()) else { continue };
+            let same = Callsign { project: to.to_string(), ..was };
+            let callsign = if self.callsign_free(&same, Some(&id)) { same } else { self.next_free(to, Some(&id), &[]) };
             self.rename(&id, callsign);
         }
         let lines: Vec<String> = self.log.iter().filter(|e| e.team == team).map(|e| e.id.clone()).collect();
@@ -176,25 +180,21 @@ impl Inner {
         self.settle_teams(old, named);
         self.configure_teams(listed);
     }
-    /// The teams the configuration lists, by name with their folders: each is his team in that folder, called
-    /// that unless he has renamed it since. One whose name cannot be a team's, or that another team already has,
-    /// is left out and said in the log.
+    /// The teams the configuration lists, by name with their folders: each is his team in that folder. The name
+    /// is given when the team is made; a team the tower already keeps keeps the name it has, whether he gave it
+    /// or the tower chose it to stay distinct from his other computers' teams. One whose name cannot be a team's,
+    /// or that another team already has, is left out and said in the log.
     pub(super) fn configure_teams(&mut self, listed: &BTreeMap<String, String>) {
         for (name, folder) in listed {
             let id = real_folder(folder);
-            let name = match self.chosen_team(name, Some(&id)) {
-                Ok(name) => name,
-                Err(why) => {
-                    log(format!("the configured team \"{name}\" is left out: {why}"));
-                    continue;
-                }
-            };
-            match self.teams.get_mut(&id) {
-                Some(team) if team.named => {}
-                Some(team) => team.name = name,
-                None => {
+            if self.teams.contains_key(&id) {
+                continue;
+            }
+            match self.chosen_team(name, Some(&id)) {
+                Ok(name) => {
                     self.new_folder_team(folder, name, false);
                 }
+                Err(why) => log(format!("the configured team \"{name}\" is left out: {why}")),
             }
         }
     }
