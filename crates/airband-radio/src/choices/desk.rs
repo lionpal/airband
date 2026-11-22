@@ -87,36 +87,41 @@ impl Desk {
                 && let Err(why) = keep(host, &provider, key) {
                     return done(Err(why));
                 }
-            let (radios, everyone) = {
+            let wanted = ReadsWanted { id: provider.clone(), offer: offer.clone(), set: set.clone(), his: true };
+            let phone_key = host.secret(provider.clone()).filter(|k| !k.is_empty());
+            let (online, everyone) = {
                 let state = self.shared.state.lock().unwrap();
-                let online = state.computers.iter().filter(|s| s.online).map(|s| (state.computer_name(&s.id()), s.id(), s.radio.clone())).collect::<Vec<_>>();
-                (online, state.computers.len())
+                (state.computers.iter().filter(|s| s.online).map(|s| (s.id(), s.radio.clone())).collect::<Vec<_>>(), state.computers.iter().map(|s| s.id()).collect::<Vec<_>>())
             };
-            // no computer to ask: it waits for one
-            if radios.is_empty() {
-                return done(chooser.change(|s| s.reads = Some(Waiting { id: provider, offer, set, his: true, taken: Vec::new(), refused: Vec::new() })));
+            if !online.is_empty() {
+                chooser.work(job, &id, "Asking your computer to switch", false);
+                host.changed();
             }
-            chooser.work(job, &id, "Asking your computer to switch", false);
-            host.changed();
-            let wanted = SetReads { kind: provider.clone(), offer: offer.clone(), key: the_key(), set: set.clone() };
-            let answers = switch_all(&radios, &wanted);
-            // every computer that answered said no: nothing changed anywhere
-            if answers.taken.is_empty() {
-                return done(Err(answers.told().expect("asked at least one, and none took it")));
+            // every computer it can reach is asked at once, each with what it needs: a key only where it has none
+            let per = fan_out(online, |radio| match wanted.body_for(phone_key.as_deref(), radio.reads_offered().as_ref()) {
+                Ok(body) => Reach::of(radio.set_reads(&body)),
+                Err(why) => Reach::Skipped(why),
+            });
+            // every computer it reached said no: nothing changed anywhere, and he is told why
+            if !per.is_empty() && per.values().all(|r| r.why_not().is_some()) {
+                let state = self.shared.state.lock().unwrap();
+                let why: Vec<String> = per.iter().map(|(c, r)| if per.len() == 1 { r.why_not().unwrap_or_default().to_string() } else { format!("{}: {}", state.computer_name(c), r.why_not().unwrap_or_default()) }).collect();
+                return done(Err(told(why.join(" "))));
             }
             // what is offered and in use is the main computer's: the one he chose, or the only one
             let main = { let state = self.shared.state.lock().unwrap(); state.main().map(|s| s.radio.clone()) };
             let offered = main.and_then(|radio| radio.reads_offered());
-            let (taken, refused) = (answers.taken.iter().map(|(_, id)| id.clone()).collect::<Vec<_>>(), answers.refused.iter().map(|(_, id, _)| id.clone()).collect::<Vec<_>>());
-            let kept = chooser.change(|s| {
-                // computers not reached now take it when they are; those that said no are not asked again
-                s.reads = (taken.len() + refused.len() < everyone).then(|| Waiting { id: provider.clone(), offer: offer.clone(), set: set.clone(), his: true, taken: taken.clone(), refused: refused.clone() });
+            // each computer's answer is kept: one that said no is shown with why and not asked again, one not
+            // reached is sent it when it is, and the ones that took it keep it
+            return done(chooser.change(|s| {
+                let mut intent = Intent::after(s.reads.as_ref(), wanted.clone());
+                per.iter().for_each(|(c, r)| intent.record(c, r));
+                // with no computer paired yet it waits for the first
+                s.reads = (everyone.is_empty() || !intent.done_by_all(&everyone)).then_some(intent);
                 if offered.is_some() {
                     s.offered = offered;
                 }
-            });
-            // some switched and some did not: he is told which, and the ones that switched stay switched
-            return done(kept.and(answers.told().map_or(Ok(()), Err)));
+            }));
         }
         let pick = match choice.place {
             ChoicePlace::Service => {
@@ -230,40 +235,6 @@ impl Desk {
 
 }
 
-/// What the computers asked to read with something answered: those that switched, by name and id, and those
-/// that did not, with why.
-pub(crate) struct Switched {
-    pub(crate) taken: Vec<(String, String)>,
-    pub(crate) refused: Vec<(String, String, RadioError)>,
-}
-impl Switched {
-    /// What he is told: nothing when every computer switched; otherwise which did and which did not, and why.
-    pub(crate) fn told(&self) -> Option<RadioError> {
-        let no: Vec<String> = self.refused.iter().map(|(name, _, e)| format!("{name} did not: {e}")).collect();
-        match (self.taken.as_slice(), self.refused.as_slice()) {
-            (_, []) => None,
-            ([], [(_, _, e)]) => Some(told(e.to_string())),
-            (taken, _) => {
-                let yes = (!taken.is_empty()).then(|| format!("{} switched. ", taken.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")));
-                Some(told(format!("{}{}", yes.unwrap_or_default(), no.join(". "))))
-            }
-        }
-    }
-}
-
-/// Ask each computer, by name, id and radio, to read with `wanted`. Every one is asked, whatever the ones before
-/// it said.
-pub(crate) fn switch_all(radios: &[(String, String, Arc<Radio>)], wanted: &SetReads) -> Switched {
-    let mut out = Switched { taken: Vec::new(), refused: Vec::new() };
-    for (name, station, radio) in radios {
-        match radio.set_reads(wanted) {
-            Ok(()) => out.taken.push((name.clone(), station.clone())),
-            Err(e) => out.refused.push((name.clone(), station.clone(), e)),
-        }
-    }
-    out
-}
-
 /// A computer can be reached. What waits to write his summaries is sent to it, and it is asked what it can
 /// read with and what it reads with now. Blocks: called on a thread of its own.
 pub(crate) fn computer_reached(shared: &Shared, radio: &Radio) {
@@ -273,26 +244,22 @@ pub(crate) fn computer_reached(shared: &Shared, radio: &Radio) {
         let me = state.computers.iter().find(|s| std::ptr::eq(&*s.radio, radio)).map(|s| s.id());
         (me, state.computers.iter().map(|s| s.id()).collect::<Vec<_>>())
     };
-    if let (Some(waiting), Some(me)) = (chooser.saved().reads, me)
-        && !waiting.answered(&me) {
-        let wanted = SetReads { kind: waiting.id.clone(), offer: waiting.offer.clone(), key: shared.host.secret(waiting.id.clone()).unwrap_or_default(), set: waiting.set.clone() };
+    if let (Some(intent), Some(me)) = (chooser.saved().reads, me)
+        && intent.owed(&me) {
+        let phone_key = shared.host.secret(intent.wanted.id.clone()).filter(|k| !k.is_empty());
+        let reach = match intent.wanted.body_for(phone_key.as_deref(), radio.reads_offered().as_ref()) {
+            Ok(body) => Reach::of(radio.set_reads(&body)),
+            Err(why) => Reach::Skipped(why),
+        };
         // what changes is the choice that was sent: one he made meanwhile is left as it is
-        let went = radio.set_reads(&wanted);
         let kept = chooser.change(|s| {
-            let Some(now) = s.reads.as_mut().filter(|w| w.same(&waiting)) else { return };
-            match &went {
-                Ok(()) => now.taken.push(me.clone()),
-                // this computer would not take it: it is not asked again, and he is told why. The others it
-                // still goes to
-                Err(RadioError::Told { .. } | RadioError::Refused) => now.refused.push(me.clone()),
-                // not reached after all: it goes on waiting
-                Err(_) => {}
-            }
-            if s.reads.as_ref().is_some_and(|w| everyone.iter().all(|id| w.answered(id))) {
+            let Some(now) = s.reads.as_mut().filter(|i| i.rev == intent.rev) else { return };
+            now.record(&me, &reach);
+            if now.done_by_all(&everyone) {
                 s.reads = None;
             }
         });
-        if let Err(RadioError::Told { reason }) = went.and(kept) {
+        if let Err(RadioError::Told { reason }) = kept {
             shared.host.note(reason);
         }
     }

@@ -102,6 +102,38 @@ pub struct DeskView {
     pub uploads: Vec<DeskUpload>,
     /// Something he said that could not be placed: who is it for? Shown until he picks one or lets it go.
     pub asking: Option<DeskAsk>,
+    /// What his computers are to be told and not all have yet, each with the computers still without it.
+    pub intents: Vec<DeskIntent>,
+}
+/// Which thing his computers are to be told.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum IntentKind {
+    /// What writes his summaries.
+    Reads,
+    /// Where this device can be woken.
+    Push,
+    /// The coding tools he uses.
+    Tools,
+}
+/// One thing his computers are to be told, and the computers that do not have it yet.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct DeskIntent {
+    pub kind: IntentKind,
+    pub computers: Vec<DeskReachLine>,
+}
+/// One computer that does not have it yet, by id and name, and why.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct DeskReachLine {
+    pub computer: String,
+    pub name: String,
+    pub state: DeskDelivery,
+}
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum DeskDelivery {
+    /// It is sent when that computer is reached.
+    Waiting,
+    /// That computer said no, or could not take it: why, in words for him.
+    Refused { reason: String },
 }
 /// His words, waiting to be told who they are for.
 #[derive(Debug, Clone, uniffi::Record)]

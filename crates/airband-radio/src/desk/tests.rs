@@ -428,28 +428,28 @@ fn kept_reads(dir: &std::path::Path) -> serde_json::Value {
 #[test]
 fn a_summary_choice_made_offline_waits_for_every_computer() {
     let dir = temp_dir("reads");
-    std::fs::write(dir.join("choices.json"), r#"{"reads":{"id":"anthropic","offer":"haiku","his":true}}"#).unwrap();
-    let state = State { computers: vec![station("mini", tower_answering(r#"{"reads":"Haiku"}"#), &[], vec![]), station("laptop", 9, &[], vec![])], ..State::default() };
+    std::fs::write(dir.join("choices.json"), r#"{"reads":{"rev":1,"wanted":{"id":"anthropic","offer":"haiku","his":true}}}"#).unwrap();
+    let state = State { computers: vec![station("mini", tower_answering(r#"{"reads":"Haiku","offers":[{"provider":"anthropic","offer":"haiku","label":"Haiku","key":true,"has_key":true}]}"#), &[], vec![]), station("laptop", 9, &[], vec![])], ..State::default() };
     let mini = state.computers[0].radio.clone();
     let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
     let shared = Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open(dir.to_str().unwrap(), HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None };
     crate::choices::computer_reached(&shared, &mini);
     // the first computer has it, and it still waits for the other
-    assert_eq!(kept_reads(&dir)["taken"], serde_json::json!([shared.state.lock().unwrap().computers[0].id()]));
+    let ids: Vec<String> = shared.state.lock().unwrap().computers.iter().map(Computer::id).collect();
+    let per = kept_reads(&dir)["per"].clone();
+    assert_eq!((per[&ids[0]]["state"].clone(), per.get(&ids[1]).cloned()), (serde_json::json!("done"), None), "{per}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
-fn when_one_computer_refuses_a_summary_choice_the_ones_after_it_are_still_asked() {
+fn when_one_computer_refuses_the_others_are_still_asked() {
     let laptop = station("laptop", tower_saying(409, r#"{"refusal":"told","reason":"That service is not offered here."}"#), &[], vec![]);
     let mini = station("mini", tower_answering(r#"{"reads":"Haiku"}"#), &[], vec![]);
-    let radios = [("laptop".to_string(), laptop.id(), laptop.radio.clone()), ("mini".to_string(), mini.id(), mini.radio.clone())];
     let wanted = SetReads { kind: "anthropic".into(), offer: "haiku".into(), key: String::new(), set: Default::default() };
-    let answers = crate::choices::switch_all(&radios, &wanted);
-    assert_eq!(answers.taken, [("mini".to_string(), mini.id())]);
-    let e = answers.told().unwrap();
-    assert!(matches!(&e, RadioError::Told { reason } if reason == "mini switched. laptop did not: That service is not offered here."), "{e:?}");
-    assert!(crate::choices::switch_all(&radios[1..], &wanted).told().is_none());
+    let targets = vec![(laptop.id(), laptop.radio.clone()), (mini.id(), mini.radio.clone())];
+    let per = super::fan_out(targets, |radio| super::Reach::of(radio.set_reads(&wanted)));
+    assert_eq!(per[&mini.id()], super::Reach::Done(()));
+    assert_eq!(per[&laptop.id()], super::Reach::Refused("That service is not offered here.".into()));
 }
 
 /// A desk with these computers, keeping its choices in `dir`, where his summary service is offered with its
@@ -464,7 +464,7 @@ fn desk_choosing(dir: &std::path::Path, computers: Vec<Computer>, reads: serde_j
 #[test]
 fn a_summary_choice_some_computers_took_is_remembered_as_taken_there() {
     let dir = temp_dir("partly");
-    let mini = station("mini", tower_answering(r#"{"reads":"Haiku"}"#), &[], vec![]);
+    let mini = station("mini", tower_answering(r#"{"reads":"Haiku","offers":[{"provider":"anthropic","offer":"haiku","label":"Haiku","key":true,"has_key":true}]}"#), &[], vec![]);
     let laptop = station("laptop", tower_saying(409, r#"{"refusal":"told","reason":"Enter your API key."}"#), &[], vec![]);
     let away = station("away", 9, &[], vec![]);
     let ids = [mini.id(), laptop.id()];
@@ -472,11 +472,16 @@ fn a_summary_choice_some_computers_took_is_remembered_as_taken_there() {
     desk.shared.state.lock().unwrap().computers[2].online = false;
     desk.shared.state.lock().unwrap().read.main = Some(ids[0].clone());
     let id = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "anthropic").map(|c| c.id).unwrap();
-    let e = desk.choose_for(ChoiceJob::Reads, id, None, HashMap::new(), false).unwrap_err();
-    assert!(matches!(&e, RadioError::Told { reason } if reason == "mini switched. laptop did not: Enter your API key."), "{e:?}");
+    let chose = desk.choose_for(ChoiceJob::Reads, id, None, HashMap::new(), false);
+    assert!(chose.is_ok(), "{chose:?}");
     // mini has it, laptop said no and is not asked again, and it still waits for the one away
-    let reads = kept_reads(&dir);
-    assert_eq!((reads["taken"].clone(), reads["refused"].clone()), (serde_json::json!([ids[0]]), serde_json::json!([ids[1]])));
+    let per = kept_reads(&dir)["per"].clone();
+    assert_eq!(per[&ids[0]], serde_json::json!({ "state": "done" }), "{per}");
+    assert_eq!(per[&ids[1]], serde_json::json!({ "state": "refused", "reason": crate::choices::NO_KEY }), "{per}");
+    // and he sees laptop's no, by its name, with why
+    let view = desk.view(None, None);
+    let lines: Vec<(String, DeskDelivery)> = view.intents.iter().filter(|i| i.kind == IntentKind::Reads).flat_map(|i| i.computers.iter().map(|c| (c.name.clone(), c.state.clone()))).collect();
+    assert_eq!(lines, [("laptop".to_string(), DeskDelivery::Refused { reason: crate::choices::NO_KEY.into() }), ("away".to_string(), DeskDelivery::Waiting)]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -486,12 +491,12 @@ fn a_computer_that_refuses_a_waiting_summary_choice_does_not_cancel_it_for_the_o
     let laptop = station("laptop", tower_saying(409, r#"{"refusal":"told","reason":"Enter your API key."}"#), &[], vec![]);
     let mini = station("mini", 9, &[], vec![]);
     let (laptop_radio, mini_id) = (laptop.radio.clone(), mini.id());
-    let desk = desk_choosing(&dir, vec![laptop, mini], serde_json::json!({ "id": "anthropic", "offer": "haiku", "his": true }));
+    let desk = desk_choosing(&dir, vec![laptop, mini], serde_json::json!({ "rev": 1, "wanted": { "id": "anthropic", "offer": "haiku", "his": true } }));
     crate::choices::computer_reached(&desk.shared, &laptop_radio);
     // still waiting for mini
     let reads = kept_reads(&dir);
-    assert_eq!(reads["id"], "anthropic", "{reads}");
-    assert!(!reads["refused"].as_array().unwrap().iter().any(|c| *c == serde_json::json!(mini_id)));
+    assert_eq!(reads["wanted"]["id"], "anthropic", "{reads}");
+    assert!(reads["per"].get(&mini_id).is_none(), "{reads}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 #[test]
@@ -499,7 +504,7 @@ fn a_summary_service_whose_key_his_computer_keeps_is_chosen_with_no_key_on_the_p
     let dir = temp_dir("kept-there");
     let offered = serde_json::json!({ "offered": { "offers": [{ "provider": "anthropic", "offer": "haiku", "label": "Haiku", "key": true, "has_key": true, "key_name": "API key", "preferred": true }] } });
     std::fs::write(dir.join("choices.json"), offered.to_string()).unwrap();
-    let state = State { computers: vec![station("mini", tower_answering(r#"{"reads":"Haiku"}"#), &[], vec![])], ..State::default() };
+    let state = State { computers: vec![station("mini", tower_answering(r#"{"reads":"Haiku","offers":[{"provider":"anthropic","offer":"haiku","label":"Haiku","key":true,"has_key":true}]}"#), &[], vec![])], ..State::default() };
     let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
     let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser: crate::choices::Chooser::open(dir.to_str().unwrap(), HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: String::new() };
     let id = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "anthropic").map(|c| c.id).unwrap();
@@ -876,6 +881,7 @@ fn an_account_on_two_computers_is_never_taken_for_one_by_what_it_is_called() {
 }
 
 mod fake;
+mod intents;
 mod kept_files;
 mod lifetimes;
 mod scenarios;

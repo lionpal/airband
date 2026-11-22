@@ -9,8 +9,7 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, station: String, ep
     let mut told_taken: Option<Vec<airband_core::routing::Callsign>> = None;
     loop {
         // a computer that has not been told where this device can be woken is told as soon as it is reached
-        tell_push(&shared, &radio, &station, epoch);
-        tell_tools(&shared, &radio, &station, epoch);
+        tell_owed(&shared, &radio, &station, epoch);
         // the tower is told whether the chat is in front of him: only then does having it count as seeing it
         radio.set_away(!shared.host.watching());
         // the first answer must come at once: it is what says the tower is there and who is on it

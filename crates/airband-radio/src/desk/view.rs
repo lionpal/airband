@@ -151,6 +151,7 @@ impl Desk {
             main_computer: state.main().map(Computer::id),
             choose_main: state.computers.len() > 1 && state.main().is_none(),
             uploads: state.uploads.iter().map(|u| u.shown.clone()).collect(),
+            intents: self.intents_view(&state),
             asking: state.asking.as_ref().map(|asking| {
                 // the tower's guesses first, in its order; then everyone else, whoever spoke last first
                 let mut rest: Vec<&ChatAgent> = agents.iter().copied().filter(|a| !asking.guesses.contains(&a.id)).collect();

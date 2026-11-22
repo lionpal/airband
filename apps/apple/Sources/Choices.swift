@@ -240,6 +240,8 @@ struct ChoicePicker: View {
 
     private var all: [Choice] { model.choices[job] ?? [] }
     private var working: Bool { all.contains { if case .working = $0.state { return true } else { return false } } }
+    /// The computers that said no to what writes his summaries, each with why.
+    private var refused: [DeskReachLine] { model.view.intents.first { $0.kind == .reads }?.computers ?? [] }
 
     var body: some View {
         VStack(spacing: 10) {
@@ -303,6 +305,11 @@ struct ChoicePicker: View {
         } else if c.chosen {
             if case .failed(let why) = c.state { Text(why).font(.system(size: 13)).foregroundStyle(.red) }
             if case .waiting = c.state, mode == .settings { Text("It will be set up when your computer is paired.").font(.system(size: 13)).foregroundStyle(Palette.quiet) }
+            if job == .reads {
+                ForEach(refused, id: \.computer) { line in
+                    if case .refused(let reason) = line.state { Text("\(line.name): \(reason)").font(.system(size: 13)).foregroundStyle(.red) }
+                }
+            }
             if !c.voices.isEmpty {
                 VoiceGrid(choices: c.voices, chosen: c.voice) { voice in model.chooseVoice(voice.name) { wrong = $0 } }
             }
