@@ -42,8 +42,10 @@ struct FeedView: View {
         .foregroundStyle(Palette.ink)
         .sheet(isPresented: $showSetup) { SetupView().environmentObject(model) }
         .fullScreenCover(isPresented: $onboarding) { OnboardingView().environmentObject(model) }
-        // several computers and no main one chosen: he is asked once, before anything can be sent
-        .confirmationDialog("Choose your main computer", isPresented: Binding(get: { model.view.chooseMain && !onboarding && !showScan }, set: { _ in }), titleVisibility: .visible) {
+        // several computers and no main one chosen: he is asked once, before anything can be sent. Not before
+        // the computers have said what they are called: a question put up with no names in it has nothing to
+        // choose, and is not filled in afterwards.
+        .confirmationDialog("Choose your main computer", isPresented: Binding(get: { model.view.chooseMain && model.computers.count > 1 && !onboarding && !showScan }, set: { _ in }), titleVisibility: .visible) {
             ForEach(model.computers, id: \.self) { name in Button(name) { model.setMainComputer(name) } }
         } message: {
             Text(RadioModel.mainComputerNote + " You can change it in Settings.")

@@ -91,7 +91,7 @@ struct AgentsMenu: View {
                     .dropDestination(for: String.self) { ids, _ in drop(ids, on: room.name) } isTargeted: { over = $0 ? room.name : (over == room.name ? nil : over) }
                     .padding(.top, 4)
                     ForEach(room.members, id: \.id) { agent in
-                        row(dot: agent.state, title: titled(agent, in: room), detail: nil, strong: false, on: model.only == agent.id, inset: 22, colour: room.colour, badge: agent.badge, lead: agent.model, engine: under(agent), doing: agent.doing) {
+                        row(dot: agent.state, title: titled(agent, in: room), detail: nil, strong: false, on: model.only == agent.id, inset: 22, reserve: 50, colour: room.colour, badge: agent.badge, lead: agent.model, engine: under(agent), doing: agent.doing) {
                             let was = model.only == agent.id
                             model.look(agent: was ? nil : agent.id)
                         }
@@ -169,7 +169,7 @@ struct AgentsMenu: View {
         }
     }
 
-    private func row(dot: AgentState?, title: String, detail: String?, strong: Bool, on: Bool, inset: CGFloat, colour: UInt8? = nil, badge: String? = nil, lead: String = "", engine: String = "", doing: String? = nil, pick: @escaping () -> Void) -> some View {
+    private func row(dot: AgentState?, title: String, detail: String?, strong: Bool, on: Bool, inset: CGFloat, reserve: CGFloat = 0, colour: UInt8? = nil, badge: String? = nil, lead: String = "", engine: String = "", doing: String? = nil, pick: @escaping () -> Void) -> some View {
         Button {
             pick()
             model.replyingTo = nil
@@ -202,7 +202,8 @@ struct AgentsMenu: View {
                 if let detail { Text(detail).font(.system(size: 13)).foregroundStyle(Palette.quiet).lineLimit(1).truncationMode(.tail) }
                 if on { Image(systemName: "checkmark").font(.system(size: 14, weight: .bold)).foregroundStyle(Palette.signal) }
             }
-            .padding(.leading, 14 + inset).padding(.trailing, 14)
+            // `reserve`: room kept at the end for marks laid over the row, so the name stops short of them
+            .padding(.leading, 14 + inset).padding(.trailing, 14 + reserve)
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             .background(on ? Palette.card : .clear, in: RoundedRectangle(cornerRadius: 14))
             .contentShape(RoundedRectangle(cornerRadius: 14))

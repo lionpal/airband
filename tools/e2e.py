@@ -26,7 +26,7 @@ for d in (os.path.join(home, ".airband"), got, *(os.path.join(projects, p) for p
 OWN, RADIO = "e2e-own-token", "e2e-radio-token"
 # the model that reads everything: Claude Code as a command, or with --gemini a Gemini key given in the
 # environment (GEMINI_API_KEY)
-MODEL = {"kind": "command", "offer": "own", "argv": ["env", f"HOME={REAL_HOME}", "claude", "-p", "--model", "haiku", "--no-session-persistence", "--strict-mcp-config",
+MODEL = {"kind": "command", "offer": "own", "argv": ["env", f"HOME={REAL_HOME}", "claude", "-p", "--model", "haiku", "--no-session-persistence", "--strict-mcp-config", "--setting-sources", "project",
                                      "--system-prompt", "You rewrite messages. Reply with the JSON asked for and nothing else.", "--tools", ""]}
 if "--gemini" in sys.argv:
     MODEL = {"kind": "gemini", "offer": "flash-lite", "key": os.environ["GEMINI_API_KEY"]}
@@ -547,7 +547,8 @@ Send it as written, or do you want changes?""")
                   open(os.path.join(proj, ".claude", "settings.json"), "w"))
         done = []
         def run_claude():
-            r = subprocess.run(["claude", "-p", "--model", "haiku", "--permission-mode", "default",
+            # only this project's settings: his own hooks, which report to his real tower, are not run
+            r = subprocess.run(["claude", "-p", "--model", "haiku", "--permission-mode", "default", "--setting-sources", "project",
                                 "Use the Bash tool to run exactly this command and nothing else: touch made-by-claude.txt   Then reply with the single word done."],
                                cwd=proj, capture_output=True, text=True, timeout=180)
             done.append(r.stdout.strip()[-200:])
