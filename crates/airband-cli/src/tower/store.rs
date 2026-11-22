@@ -85,63 +85,100 @@ impl Store {
         }
     }
 
-    /// Everything needed to carry on after a restart: the saved state and the newest messages, oldest first.
-    /// Agents check in again by themselves, so state this build cannot read starts with nobody on the radio.
+    /// Everything needed to carry on after a restart: the kept tables and the newest messages, oldest first.
+    /// Each table is read on its own, so one this build cannot read is set aside alone. Agents check in again
+    /// by themselves, so a table of them that cannot be read starts with nobody on the radio.
     pub(super) fn load(&self, keep: usize) -> Result<(Saved, Vec<Entry>), String> {
         let db = self.db.lock().unwrap();
-        let saved: Saved = Self::kept(&db, "tower")?;
-        let mut entries = Vec::new();
-        if let Some(mut q) = Self::warn("reading messages", db.prepare("select seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his from messages order by seq desc limit ?1")) {
-            let rows = q.query_map(params![keep as i64], |r| {
-                Ok(Entry {
-                    seq: r.get::<_, i64>(0)? as u64,
-                    id: r.get(1)?,
-                    at: r.get::<_, i64>(2)? as u64,
-                    from: r.get(3)?,
-                    team: r.get(4)?,
-                    to: serde_json::from_str(&r.get::<_, String>(5)?).unwrap_or_default(),
-                    kind: r.get::<_, Option<String>>(6)?.and_then(|k| serde_json::from_value(Value::String(k)).ok()),
-                    short: r.get(7)?,
-                    full: r.get(8)?,
-                    detail: r.get(9)?,
-                    options: r.get::<_, Option<String>>(10)?.and_then(|o| serde_json::from_str(&o).ok()).unwrap_or_default(),
-                    recommended: r.get::<_, Option<i64>>(11)?.map(|n| n as u32),
-                    pictures: r.get::<_, Option<String>>(12)?.and_then(|p| serde_json::from_str(&p).ok()).unwrap_or_default(),
-                    agent: r.get(13)?,
-                    his: r.get::<_, Option<bool>>(25)?.unwrap_or(false),
-                    to_agents: r.get::<_, Option<String>>(14)?.and_then(|p| serde_json::from_str(&p).ok()).unwrap_or_default(),
-                    rev: r.get::<_, Option<i64>>(15)?.unwrap_or(0) as u64,
-                    read: r.get(16)?,
-                    own_session: r.get::<_, Option<i64>>(20)?.unwrap_or(0) != 0,
-                    background: false,
-                    held: held(r)?,
-                    seen: r.get::<_, Option<i64>>(18)?.map(|t| t as u64),
-                    permit: None,
-                    // a request kept before what it asked was written down is still known as one, so a late
-                    // answer to it is never passed on as words
-                    leave: match r.get::<_, Option<String>>(23)?.and_then(|t| serde_json::from_str(&t).ok()) {
-                        Some(request) => Some(request),
-                        None => (r.get::<_, Option<i64>>(19)? == Some(1)).then_some(super::permit::Request { what: None, at_keyboard: true }),
-                    },
-                    aloud: r.get::<_, Option<String>>(21)?.and_then(|a| serde_json::from_str(&a).ok()).unwrap_or_default(),
-                    notice: r.get::<_, Option<i64>>(22)? == Some(1),
-                    note: r.get::<_, Option<String>>(24)?.and_then(|n| serde_json::from_value(Value::String(n)).ok()),
-                })
-            });
-            if let Some(rows) = Self::warn("reading messages", rows) {
-                entries = rows.flatten().collect();
-                entries.reverse();
-                // in the order they were said: something he typed at a keyboard is added after the fact, with the
-                // time he typed it
-                entries.sort_by_key(|e: &Entry| (e.at, e.seq));
+        let saved = if Self::any_kept(&db)? {
+            Saved {
+                sessions: Self::kept(&db, "sessions")?,
+                teams: Self::kept(&db, "teams")?,
+                held: Self::kept(&db, "held")?,
+                menus: Self::kept(&db, "menus")?,
+                tools: Self::kept(&db, "tools")?,
+                placed: Self::kept(&db, "placed")?,
+                ..Saved::default()
             }
-        }
-        Ok((saved, entries))
+        } else {
+            // kept by a tower from before each table had its own key: read once, written as tables from then on
+            Self::kept(&db, "tower")?
+        };
+        Ok((saved, Self::messages(&db, keep)))
     }
 
-    pub(super) fn save_state(&self, saved: &Saved) {
-        let db = self.db.lock().unwrap();
-        Self::warn("saving state", db.execute("insert into state (key, value) values ('tower', ?1) on conflict (key) do update set value = excluded.value", params![serde_json::to_string(saved).unwrap()]));
+    /// Whether any table is kept under its own key.
+    fn any_kept(db: &Connection) -> Result<bool, String> {
+        let keys = KEPT.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(", ");
+        db.query_row(&format!("select count(*) from state where key in ({keys})"), [], |r| r.get::<_, i64>(0)).map(|n| n > 0).map_err(|e| format!("the database could not be read ({e})"))
+    }
+
+    /// The newest `keep` messages, oldest first. A row this build cannot read, or a column of one that does not
+    /// read as what it should be, is said in the log with the message's number, never passed over in silence.
+    fn messages(db: &Connection, keep: usize) -> Vec<Entry> {
+        let Some(mut q) = Self::warn("reading messages", db.prepare("select seq, id, at, sender, grp, recipients, kind, short, full, detail, options, recommended, pictures, agent, to_agents, rev, read, waiting, seen, leave, own_session, aloud, notice, request, note, his from messages order by seq desc limit ?1")) else { return Vec::new() };
+        let rows = q.query_map(params![keep as i64], |r| {
+            let seq = r.get::<_, i64>(0)? as u64;
+            let column = |n: usize| r.get::<_, Option<String>>(n);
+            Ok(Entry {
+                seq,
+                id: r.get(1)?,
+                at: r.get::<_, i64>(2)? as u64,
+                from: r.get(3)?,
+                team: r.get(4)?,
+                to: read_json(seq, "recipients", column(5)?).unwrap_or_default(),
+                kind: read_word(seq, "kind", column(6)?),
+                short: r.get(7)?,
+                full: r.get(8)?,
+                detail: r.get(9)?,
+                options: read_json(seq, "options", column(10)?).unwrap_or_default(),
+                recommended: r.get::<_, Option<i64>>(11)?.map(|n| n as u32),
+                pictures: read_json(seq, "pictures", column(12)?).unwrap_or_default(),
+                agent: r.get(13)?,
+                his: r.get::<_, Option<bool>>(25)?.unwrap_or(false),
+                to_agents: read_json(seq, "to_agents", column(14)?).unwrap_or_default(),
+                rev: r.get::<_, Option<i64>>(15)?.unwrap_or(0) as u64,
+                read: r.get(16)?,
+                own_session: r.get::<_, Option<i64>>(20)?.unwrap_or(0) != 0,
+                background: false,
+                held: read_word(seq, "waiting", column(17)?),
+                seen: r.get::<_, Option<i64>>(18)?.map(|t| t as u64),
+                permit: None,
+                // a request kept before what it asked was written down is still known as one, so a late
+                // answer to it is never passed on as words
+                leave: match read_json(seq, "request", column(23)?) {
+                    Some(request) => Some(request),
+                    None => (r.get::<_, Option<i64>>(19)? == Some(1)).then_some(super::permit::Request { what: None, at_keyboard: true }),
+                },
+                aloud: read_json(seq, "aloud", column(21)?).unwrap_or_default(),
+                notice: r.get::<_, Option<i64>>(22)? == Some(1),
+                note: read_word(seq, "note", column(24)?),
+            })
+        });
+        let Some(rows) = Self::warn("reading messages", rows) else { return Vec::new() };
+        let mut entries = Vec::new();
+        for row in rows {
+            match row {
+                Ok(e) => entries.push(e),
+                Err(e) => log(format!("database: a message could not be read and is left out ({e})")),
+            }
+        }
+        entries.reverse();
+        // in the order they were said: something he typed at a keyboard is added after the fact, with the
+        // time he typed it
+        entries.sort_by_key(|e: &Entry| (e.at, e.seq));
+        entries
+    }
+
+    /// Write what changed in the state: each kept table under its own key, and the messages, in one go.
+    pub(super) fn write(&self, batch: &Batch) {
+        let mut db = self.db.lock().unwrap();
+        let Some(tx) = Self::warn("saving state", db.transaction()) else { return };
+        for (key, text) in &batch.tables {
+            Self::warn("saving state", tx.execute("insert into state (key, value) values (?1, ?2) on conflict (key) do update set value = excluded.value", params![key, text]));
+        }
+        Self::put(&tx, &batch.messages);
+        Self::warn("saving state", tx.commit());
     }
 
     /// Where each paired radio can be woken with a notification, by the radio's name. Kept apart from the rest
@@ -155,11 +192,12 @@ impl Store {
     }
 
     /// Write new messages, and messages whose short or fuller version has just been made.
+    #[cfg(test)]
     pub(super) fn put_messages(&self, entries: &[Entry]) {
-        if entries.is_empty() {
-            return;
-        }
-        let db = self.db.lock().unwrap();
+        Self::put(&self.db.lock().unwrap(), entries);
+    }
+
+    fn put(db: &Connection, entries: &[Entry]) {
         for e in entries {
             let kind = e.kind.as_ref().and_then(word);
             Self::warn(
@@ -217,18 +255,32 @@ impl Store {
             Err(e) => return Receipt::Unknown(e.to_string()),
         };
         match found {
-            Some(Some(reply)) => Receipt::Done(serde_json::from_str(&reply).unwrap_or_default()),
+            Some(Some(reply)) => match serde_json::from_str(&reply) {
+                Ok(reply) => Receipt::Done(reply),
+                // answered, but the answer cannot be read: it is never answered a second time
+                Err(e) => Receipt::Done(Reply { say: format!("This was already answered; the answer could not be read ({e})."), listen: false, done: true, ..Reply::default() }),
+            },
             // A receipt with no answer: the tower stopped part way. If the words had already reached their
-            // agents, say so and deliver nothing again; a message arriving twice can be acted on twice.
-            Some(None) if !Self::delivered(&db, id).is_empty() => {
-                let reply = Reply { say: format!("Sent to {}.", list(&Self::delivered(&db, id))), listen: false, done: true, ..Reply::default() };
-                Self::warn("closing a receipt", db.execute("update receipts set reply = ?2 where id = ?1", params![id, serde_json::to_string(&reply).unwrap()]));
-                Receipt::Done(reply)
-            }
-            _ => {
-                Self::warn("taking a receipt", db.execute("insert into receipts (id, at) values (?1, ?2) on conflict (id) do update set at = excluded.at", params![id, now_ms() as i64]));
-                Receipt::Begun
-            }
+            // agents, say so and deliver nothing again; a message arriving twice can be acted on twice. If who
+            // they reached cannot be read, nothing is done now: doing it again could deliver them twice.
+            Some(None) => match Self::delivered(&db, id) {
+                Err(e) => Receipt::Unknown(e),
+                Ok(reached) if !reached.is_empty() => {
+                    let reply = Reply { say: format!("Sent to {}.", list(&reached)), listen: false, done: true, ..Reply::default() };
+                    Self::warn("closing a receipt", db.execute("update receipts set reply = ?2 where id = ?1", params![id, serde_json::to_string(&reply).unwrap()]));
+                    Receipt::Done(reply)
+                }
+                Ok(_) => Self::take(&db, id),
+            },
+            None => Self::take(&db, id),
+        }
+    }
+
+    /// An utterance id taken: from now on it is this tower's to answer.
+    fn take(db: &Connection, id: &str) -> Receipt {
+        match db.execute("insert into receipts (id, at) values (?1, ?2) on conflict (id) do update set at = excluded.at", params![id, now_ms() as i64]) {
+            Ok(_) => Receipt::Begun,
+            Err(e) => Receipt::Unknown(e.to_string()),
         }
     }
 
@@ -243,10 +295,17 @@ impl Store {
         Self::warn("recording a delivery", db.execute("insert into deliveries (at, message, callsign, ok, error, utterance) values (?1, ?2, ?3, ?4, ?5, ?6)", params![now_ms() as i64, message, callsign, outcome.is_ok() as i64, outcome.as_ref().err(), utterance]));
     }
 
-    /// Who an utterance has already reached.
-    fn delivered(db: &Connection, utterance: &str) -> Vec<String> {
-        let Ok(mut q) = db.prepare("select callsign from deliveries where utterance = ?1 and ok = 1 order by n") else { return Vec::new() };
-        q.query_map(params![utterance], |r| r.get::<_, String>(0)).map(|rows| rows.flatten().collect()).unwrap_or_default()
+    /// Who an utterance has already reached, or why that cannot be read.
+    fn delivered(db: &Connection, utterance: &str) -> Result<Vec<String>, String> {
+        let mut q = db.prepare("select callsign from deliveries where utterance = ?1 and ok = 1 order by n").map_err(|e| e.to_string())?;
+        let rows = q.query_map(params![utterance], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())
+    }
+
+    /// The database held, as another writer would hold it: for tests of what does not wait on it.
+    #[cfg(test)]
+    pub(super) fn hold(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.db.lock().unwrap()
     }
 
     /// Counts, for `airband status`.
@@ -257,9 +316,15 @@ impl Store {
     }
 }
 
-/// Where a line stands, as the `waiting` column keeps it.
-fn held(r: &rusqlite::Row) -> rusqlite::Result<Option<Held>> {
-    Ok(r.get::<_, Option<String>>(17)?.and_then(|t| serde_json::from_value(Value::String(t)).ok()))
+/// A column kept as JSON, read as what it should be; one that does not read is said in the log.
+fn read_json<T: serde::de::DeserializeOwned>(seq: u64, column: &str, text: Option<String>) -> Option<T> {
+    let text = text?;
+    serde_json::from_str(&text).map_err(|e| log(format!("database: message {seq}: its {column} could not be read ({e})"))).ok()
+}
+/// A column kept as one word of a typed set, read as that type; one this build does not know is said in the log.
+fn read_word<T: serde::de::DeserializeOwned>(seq: u64, column: &str, text: Option<String>) -> Option<T> {
+    let text = text?;
+    serde_json::from_value(Value::String(text)).map_err(|e| log(format!("database: message {seq}: its {column} could not be read ({e})"))).ok()
 }
 pub(super) use airband_core::encode::word;
 
@@ -326,6 +391,39 @@ mod tests {
         assert_eq!(s.push_targets().unwrap().len(), 0);
         let aside: String = s.db.lock().unwrap().query_row("select value from state where key = 'push.unreadable'", [], |r| r.get(0)).unwrap();
         assert_eq!(aside, "not json");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_kept_table_that_cannot_be_read_is_set_aside_alone() {
+        let (s, path) = store("one-table");
+        s.write(&Batch { tables: vec![("sessions", "[]".into()), ("teams", "not json".into()), ("tools", r#"["codex"]"#.into())], messages: Vec::new() });
+        let (saved, _) = s.load(10).unwrap();
+        assert!(saved.teams.is_empty(), "the unreadable table starts empty");
+        assert_eq!(saved.tools, ["codex"], "the others are read");
+        let aside: String = s.db.lock().unwrap().query_row("select value from state where key = 'teams.unreadable'", [], |r| r.get(0)).unwrap();
+        assert_eq!(aside, "not json");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_receipt_whose_deliveries_cannot_be_read_is_not_taken_again() {
+        let (s, path) = store("receipt-unknown");
+        assert!(matches!(s.begin_receipt("u4"), Receipt::Begun));
+        // the tower stopped part way, and who the words reached cannot be read now
+        s.db.lock().unwrap().execute("drop table deliveries", []).unwrap();
+        assert!(matches!(s.begin_receipt("u4"), Receipt::Unknown(_)), "never taken as not yet delivered");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_message_row_that_cannot_be_read_is_left_out_and_the_rest_are_read() {
+        let (s, path) = store("bad-row");
+        s.put_messages(&[Entry { seq: 1, id: "a".into(), ..Entry::default() }, Entry { seq: 2, id: "b".into(), ..Entry::default() }]);
+        s.db.lock().unwrap().execute("update messages set at = 'not a number' where seq = 1", []).unwrap();
+        s.db.lock().unwrap().execute("update messages set options = 'not json' where seq = 2", []).unwrap();
+        let (_, kept) = s.load(10).unwrap();
+        assert_eq!(kept.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["b"]);
         let _ = std::fs::remove_file(path);
     }
 

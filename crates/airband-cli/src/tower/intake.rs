@@ -7,12 +7,12 @@ use airband_core::radio::Note;
 /// came over HTTP and for one a watcher inside the tower saw. Call it where a runtime can be reached.
 pub(super) fn take(app: &Arc<App>, ev: AgentEvent) -> Result<(), String> {
     // a report its reporter sent again (it did not hear the tower take it in time) is the same report
-    if !app.passing().events_taken.first_time(&ev.id) {
+    if !app.change().events_taken.first_time(&ev.id) {
         return Ok(());
     }
     // what a turn said is taken once, whichever of its tool's ways of saying it came first
     if let Event::Said { turn: Some(turn), .. } = &ev.event {
-        let mut inner = app.passing();
+        let mut inner = app.change();
         if let Some(s) = inner.session(&ev.agent.id).filter(|s| s.turn.as_ref() == Some(turn)) {
             // that turn is over, whatever was heard of it since by the slower way
             s.waiting = true;

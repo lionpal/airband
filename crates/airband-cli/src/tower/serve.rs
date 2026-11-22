@@ -24,8 +24,32 @@ pub(crate) fn run(cfg: Config) -> Result<(), String> {
         drain_spool(&app);
         relay_link::start(app.clone(), router.clone(), tokio::runtime::Handle::current());
         tokio::spawn(tidy(app.clone()));
-        serve(app, router, port).await
+        let writer = app.clone();
+        tokio::select! {
+            served = serve(app, router, port) => served,
+            _ = told_to_stop() => {
+                // what changed in the last moment is written before the tower goes
+                writer.flush();
+                log("stopping");
+                // as the signal would have: nothing else waits to be finished
+                std::process::exit(0)
+            }
+        }
     })
+}
+
+/// When the system asks the tower to stop (launchd and systemd send SIGTERM; a terminal, an interrupt).
+async fn told_to_stop() {
+    #[cfg(unix)]
+    {
+        let Ok(mut term) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) else { return std::future::pending().await };
+        tokio::select! {
+            _ = term.recv() => {}
+            _ = tokio::signal::ctrl_c() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 /// Keys a run without the keychain had to seal in a file go into the keychain when this one can use it.
@@ -82,7 +106,7 @@ fn start_local_model(cfg: &Config) {
 
 /// The tower's state as it was kept, settled for this run, and written again if settling changed it.
 fn open(cfg: Config) -> Result<Arc<App>, String> {
-    let store = Store::open(&config::dir().join("airband.db"))?;
+    let store = Arc::new(Store::open(&config::dir().join("airband.db"))?);
     let (saved, entries) = store.load(LOG_KEEP)?;
     let (seq, rev) = store.last_counts()?;
     let mut inner = Inner { sessions: saved.sessions, teams: saved.teams, here: config::station(&cfg), held: saved.held, menus: saved.menus, tools: saved.tools, placed: saved.placed, seq, rev, log: entries, ..Inner::default() };
@@ -100,13 +124,11 @@ fn open(cfg: Config) -> Result<Arc<App>, String> {
     attachments::prune();
     inner.settle_reading();
     let push = push::Wake::load(&store)?;
-    let app = Arc::new(App { push, cfg, store, inner: Mutex::new(inner), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default() });
+    let saver = saver::Saver::start(store.clone());
+    let app = Arc::new(App { push, cfg, store, saver, inner: Mutex::new(inner), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default() });
     // what was changed while starting (a credential masked in a kept message) is written now, not at the next
     // thing an agent says
-    {
-        let inner = app.read();
-        app.save(&inner);
-    }
+    drop(app.change());
     Ok(app)
 }
 
@@ -165,7 +187,7 @@ fn read_worked_folders(app: &Arc<App>) {
     std::thread::spawn(move || loop {
         // their records are read off the lock
         let worked = crate::adapters::worked_all();
-        app.passing().worked = worked;
+        app.change().worked = worked;
         std::thread::sleep(Duration::from_secs(60));
     });
 }

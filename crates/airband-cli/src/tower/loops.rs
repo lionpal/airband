@@ -27,24 +27,20 @@ pub(super) async fn activity_loop(app: Arc<App>) {
         .await
         .unwrap_or_default();
         let mut inner = app.change();
-        let mut learned = !typed.is_empty();
         for ((told, pictures, upto), id, _) in typed {
             inner.told(&id, told, pictures, upto);
         }
         for (seen, id) in found {
-            // looked at every couple of seconds: what it is doing is not kept, what it runs on is
-            let Some(s) = inner.unkept().session(&id) else { continue };
+            // looked at every couple of seconds: what it is doing is not kept, what it runs on is (written only
+            // when it changed: see `Inner::changes`)
+            let Some(s) = inner.session(&id) else { continue };
             if let Some(doing) = seen.doing.filter(|_| !s.waiting) {
                 s.doing = Some(doing);
             }
             // what it runs on changes rarely (he switched model or effort part way): kept when it does
             if seen.model.is_some() && (s.model != seen.model || s.effort != seen.effort) {
                 (s.model, s.effort) = (seen.model, seen.effort);
-                learned = true;
             }
-        }
-        if learned {
-            inner.keep();
         }
     }
 }

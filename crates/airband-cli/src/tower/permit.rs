@@ -89,7 +89,7 @@ pub(super) async fn state(app: &Arc<App>, id: &str, wait: u64) -> PermissionStat
     let until = Instant::now() + Duration::from_secs(wait.min(25));
     loop {
         {
-            let mut inner = app.passing();
+            let mut inner = app.change();
             let Some(permit) = inner.permits.get_mut(id) else { return PermissionState { id: id.into(), state: agent::Leave::Gone, ..PermissionState::default() } };
             permit.polled = Instant::now();
             if let Some((allow, message)) = permit.decided.clone() {

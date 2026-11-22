@@ -10,7 +10,7 @@ pub(super) async fn pump_loop(app: Arc<App>) {
 
 pub(super) async fn pump(app: &Arc<App>) {
     let todo: Vec<Item> = {
-        let mut inner = app.passing();
+        let mut inner = app.change();
         if inner.free_radio().is_none() {
             return;
         }
@@ -46,7 +46,7 @@ pub(super) async fn pump(app: &Arc<App>) {
     let Some(radio) = inner.free_radio() else { return };
     let Some(next) = ready.iter().min_by_key(|e| (e.kind != Some(Kind::NeedsYou), e.at)) else {
         // a reminder is a matter of the call, which is not kept
-        return remind(app, inner.unkept(), &radio);
+        return remind(app, &mut inner, &radio);
     };
     let callsign = inner.sender_name(next);
     let say = next.line();

@@ -16,7 +16,7 @@ serde.workspace = true
 serde_json.workspace = true
 ureq.workspace = true
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "time", "sync", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "time", "sync", "io-util", "signal"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
 if-addrs = "0.13"
 getrandom = "0.3"

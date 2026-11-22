@@ -11,7 +11,8 @@
 //!
 //! Where things are:
 //! - this file: the pieces every module shares; `serve` starts the tower up and runs its background loops
-//! - `state`: what the tower remembers, all of it in one place (`Inner`), and what is asked of the whole
+//! - `state`: what the tower remembers, all of it in one place (`Inner`), the tables of it that are kept, and
+//!   what is asked of the whole
 //! - `sessions`: the agents on the radio, what each is called and which team it is in
 //! - `teams`: his teams by id, how each is named, made, renamed and settled at the start, and the places a new
 //!   agent can be started in
@@ -30,7 +31,8 @@
 //! - `http`: the routes
 //! - `permit`: permission an agent's tool asks for, put to him and answered from the phone
 //! - `pictures` and `attachments`: copies of the pictures agents look at, and the files he sends
-//! - `store`: the database: the chat log, the raw event record, receipts, delivery attempts
+//! - `store`: the database: the chat log, the raw event record, receipts, delivery attempts, the kept tables
+//! - `saver`: the one writer of the state to the database, off the lock
 //! - `relay_link`: the outbound connection to the relay, one per paired radio
 //! - `push`: waking his phone with a sealed notification when a message deserves it and he is not looking
 //! - `accounts`, `local`, `links`, `access`, `loops`, `probe`, `status`: a tool's accounts, a model run on this
@@ -58,6 +60,7 @@ mod relay_link;
 mod route;
 mod sessions;
 mod state;
+mod saver;
 mod store;
 mod teams;
 mod access;
@@ -126,7 +129,9 @@ type Line = tokio::sync::mpsc::UnboundedSender<std::pin::Pin<Box<dyn std::future
 
 pub(crate) struct App {
     pub(crate) cfg: Config,
-    store: Store,
+    store: Arc<Store>,
+    /// Writes what changes in the state, off the lock.
+    saver: saver::Saver,
     inner: Mutex<Inner>,
     kick: Notify,
     /// What each radio has said and the tower has yet to answer, in the order it came: one is finished before

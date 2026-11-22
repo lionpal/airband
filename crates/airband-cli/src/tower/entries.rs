@@ -266,7 +266,8 @@ impl Inner {
             from: sender.map(|s| s.callsign.shown()).unwrap_or_else(|| e.from.clone()),
             badge,
             to_agents: e.to_agents.clone(),
-            group: self.team_name(&self.line_team(e)),
+            // a line whose team has gone has no team name to show
+            group: self.team_name(&self.line_team(e)).unwrap_or_default().to_string(),
             team: self.line_team(e),
             to,
             kind: e.kind,

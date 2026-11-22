@@ -24,8 +24,8 @@ fn recent_folder(folder: String, name: String, team: bool, tools: Vec<String>, a
 
 impl Inner {
     /// What the team with this id is called. Empty for an id that is no team of his.
-    pub(super) fn team_name(&self, id: &str) -> String {
-        self.teams.get(id).map(|t| t.name.to_string()).unwrap_or_default()
+    pub(super) fn team_name(&self, id: &str) -> Option<&str> {
+        self.teams.get(id).map(|t| t.name.as_str())
     }
     /// The id of the team that works in this folder, if one does.
     pub(super) fn team_at(&self, folder: &str) -> Option<String> {
