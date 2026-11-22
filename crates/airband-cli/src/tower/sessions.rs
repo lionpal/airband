@@ -70,13 +70,14 @@ impl Inner {
     }
     /// Can this agent be put in a team? A team is called by the name the agent was started under, or by its
     /// folder's own name. One with neither is turned away and its tool told why: no name is made up for it.
-    pub(super) fn placeable(agent: &Agent) -> bool {
-        agent.name.as_deref().or(agent.cwd.as_deref()).and_then(airband_core::routing::team_name).is_some()
+    pub(super) fn placeable(&self, agent: &Agent) -> bool {
+        self.find(&agent.id).is_some() || agent.name.as_deref().or(agent.cwd.as_deref()).and_then(airband_core::routing::team_name).is_some()
     }
     /// An agent reported in. A new one is given a callsign; a known one has what it reported about itself
     /// brought up to date, and takes the name he gave its session if that is new. Returns its callsign.
     pub(super) fn check_in(&mut self, agent: &Agent) -> Callsign {
-        let named = agent.name.clone().or(agent.cwd.clone()).unwrap_or_default();
+        // what it reports now; for one already here that says neither this time, what it said before
+        let named = agent.name.clone().or(agent.cwd.clone()).or_else(|| self.find(&agent.id).and_then(|s| s.agent.name.clone().or(s.agent.cwd.clone()))).unwrap_or_default();
         // the name he gave the session, when it is new to the tower or has changed
         let wanted = agent.title.as_deref().filter(|t| self.find(&agent.id).is_none_or(|s| s.agent.title.as_deref() != Some(*t))).and_then(|t| Callsign::titled(&named, t)).map(|mut want| {
             // one that was moved to another team is renamed there, not back in its folder's

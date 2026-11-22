@@ -41,7 +41,7 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
     if !inner.following() && !inner.connected() {
         return nobody;
     }
-    if !Inner::placeable(&ask.agent) {
+    if !inner.placeable(&ask.agent) {
         return nobody;
     }
     inner.check_in(&ask.agent);

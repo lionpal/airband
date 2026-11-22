@@ -530,7 +530,7 @@ pub(super) async fn on_utterance(app: &Arc<App>, radio: &str, text: &str, said: 
     // work out who it is for only when there is something to deliver
     let mut targets: Vec<Session> = if !named.is_empty() {
         named.clone()
-    } else if parsed.rest.is_empty() && !matches!(control, Some(Control::More | Control::Repeat)) {
+    } else if parsed.rest.is_empty() && files.is_empty() && !matches!(control, Some(Control::More | Control::Repeat)) {
         Vec::new()
     } else if control.is_some() {
         // "say more" and "repeat" are about whoever he last heard

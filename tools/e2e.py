@@ -230,7 +230,7 @@ try:
         import base64
         check("the picture can be fetched, as a JPEG", code == 200 and base64.b64decode(part["data"])[:2] == b"\xff\xd8")
     a = message(f, "payouts schedule")
-    check("a link the agent wrote is kept beside the short text", a and a.get("links") == ["https://claude.ai/artifact/abc123"], a and a.get("links"))
+    check("a link the agent wrote is kept beside the short text", a and [l["address"] for l in a.get("links", [])] == ["https://claude.ai/artifact/abc123"], a and a.get("links"))
     check("the tower offers the quick messages, his own last", [x["label"] for x in f["quick"]][-1] == "Make no mistakes" and len(f["quick"]) == 7)
 
     print("What a working agent is doing")
@@ -339,7 +339,7 @@ try:
         import base64
         check("the picture can be fetched, as a JPEG", code == 200 and base64.b64decode(part["data"])[:2] == b"\xff\xd8")
     a = message(f, "payouts schedule")
-    check("a link the agent wrote is kept beside the short text", a and a.get("links") == ["https://claude.ai/artifact/abc123"], a and a.get("links"))
+    check("a link the agent wrote is kept beside the short text", a and [l["address"] for l in a.get("links", [])] == ["https://claude.ai/artifact/abc123"], a and a.get("links"))
     check("the tower offers the quick messages, his own last", [x["label"] for x in f["quick"]][-1] == "Make no mistakes" and len(f["quick"]) == 7)
 
     print("What a working agent is doing")
