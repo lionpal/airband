@@ -138,8 +138,13 @@ impl Keys {
         self.cipher(dir).decrypt(Nonce::from_slice(nonce), Payload { msg: body, aad: &self.bound(dir) }).map_err(|_| "not sealed with this pairing's key".to_string())
     }
 
-    /// This channel's address at a relay, with what follows it (`""`, `/pull`, `/reply/<id>`, `/push`): the one
-    /// place the relay's routes are put together, for the tower and the radio alike.
+    /// This channel's address at a relay for one of its routes: the one place the relay's addresses are put
+    /// together, for the tower and the radio alike.
+    pub fn to(&self, relay: &str, route: Route) -> String {
+        format!("{}{}", relay.trim_end_matches('/'), route.on(&self.channel))
+    }
+    /// The same, with the route's tail as text (`""`, `/pull`, `/reply/<id>`, `/push`). Kept for callers not yet
+    /// on [`Keys::to`].
     pub fn at(&self, relay: &str, route: &str) -> String {
         format!("{}/v1/channels/{}{route}", relay.trim_end_matches('/'), self.channel)
     }
@@ -260,6 +265,52 @@ impl PushRequest {
     }
 }
 
+/// The relay's routes for one channel: each written once, as the relay serves it ([`Route::PATTERN`]s) and as a
+/// tower or a radio reaches it ([`Route::on`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Route<'a> {
+    /// `PUT` opens the channel (its tower), `DELETE` closes it.
+    Channel,
+    /// `GET`: the tower waits here for what its radios sent.
+    Pull,
+    /// `POST`: the tower's answer to one request.
+    Reply(&'a str),
+    /// `POST`: a radio's request, answered when the tower answers.
+    Call,
+    /// `POST`: a radio's request kept until the tower comes for it.
+    Queue,
+    /// `POST`: the tower asks for the phone to be woken.
+    Push,
+}
+
+impl Route<'_> {
+    /// Every route as the relay's router writes it, with `{channel}` and `{id}` where they go.
+    pub const PATTERNS: [(&'static str, Route<'static>); 6] = [
+        ("/v1/channels/{channel}", Route::Channel),
+        ("/v1/channels/{channel}/pull", Route::Pull),
+        ("/v1/channels/{channel}/reply/{id}", Route::Reply("{id}")),
+        ("/v1/channels/{channel}/call", Route::Call),
+        ("/v1/channels/{channel}/queue", Route::Queue),
+        ("/v1/channels/{channel}/push", Route::Push),
+    ];
+    /// The route's pattern for the relay's router.
+    pub fn pattern(self) -> &'static str {
+        Route::PATTERNS.iter().find(|(_, r)| std::mem::discriminant(r) == std::mem::discriminant(&self)).map(|(p, _)| *p).unwrap_or_default()
+    }
+    /// Its path for this channel.
+    pub fn on(self, channel: &str) -> String {
+        let tail = match self {
+            Route::Channel => String::new(),
+            Route::Pull => "/pull".into(),
+            Route::Reply(id) => format!("/reply/{}", url::form_urlencoded::byte_serialize(id.as_bytes()).collect::<String>()),
+            Route::Call => "/call".into(),
+            Route::Queue => "/queue".into(),
+            Route::Push => "/push".into(),
+        };
+        format!("/v1/channels/{channel}{tail}")
+    }
+}
+
 /// The relay's answer to a [`PushRequest`]. The HTTP status says the same in a number: 200 sent, 410 the address
 /// is no longer good, 429 too many, 503 this relay has no such push service, 502 the service refused or failed.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -284,6 +335,18 @@ pub fn fresh(call_ms: u64, now_ms: u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_relay_route_is_reached_where_the_relay_serves_it() {
+        let keys = Keys::derive(&new_secret()).unwrap();
+        for (pattern, route) in Route::PATTERNS {
+            let reached = keys.to("https://relay.test/", route);
+            let served = pattern.replace("{channel}", &keys.channel).replace("{id}", "%7Bid%7D");
+            assert_eq!(reached, format!("https://relay.test{served}"));
+            assert_eq!(route.pattern(), pattern);
+        }
+        assert!(keys.to("r", Route::Reply("a/b")).ends_with("/reply/a%2Fb"), "an id is one segment");
+    }
 
     #[test]
     fn both_ends_derive_the_same_and_only_the_right_key_opens() {

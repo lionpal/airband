@@ -1,8 +1,8 @@
 //! What the relay holds in memory: each channel it knows, and the relay itself with who may do what on them.
 use super::*;
 
-/// How long a tower's pull is held open.
-pub(super) const HOLD: Duration = Duration::from_secs(25);
+/// How long a tower's pull is held open: the one hold every waiting request has.
+pub(super) const HOLD: Duration = airband_core::HOLD;
 
 /// A tower that has not pulled for this long is offline: radios are told at once instead of waiting.
 pub(super) const AIRBAND_GONE: Duration = Duration::from_secs(45);

@@ -30,3 +30,8 @@ pub mod relay;
 pub mod routing;
 pub mod token;
 pub mod tools;
+
+/// How long a request that waits for something new is held open before it is answered with nothing, wherever
+/// one is: a tower's pull at the relay, a radio's wait at its tower. One number, so a proxy's idle limit has one
+/// thing to be longer than.
+pub const HOLD: std::time::Duration = std::time::Duration::from_secs(25);

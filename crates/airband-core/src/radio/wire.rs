@@ -142,7 +142,7 @@ pub struct FeedQuery {
 
 impl FeedQuery {
     /// The longest a request for the feed is held open, in seconds.
-    pub const WAIT_MOST: u32 = 25;
+    pub const WAIT_MOST: u32 = crate::HOLD.as_secs() as u32;
     /// How long the tower holds the request open: what was asked, no more than [`FeedQuery::WAIT_MOST`].
     pub fn wait_for(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.wait.min(Self::WAIT_MOST).into())
