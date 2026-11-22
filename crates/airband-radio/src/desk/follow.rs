@@ -4,7 +4,7 @@ use super::*;
 /// Keeps one computer's part of the chat current. One request is always open with its tower.
 /// `station` is the computer's id, and `epoch` the connection `radio` is: when the computer has another, this
 /// one stops.
-pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, station: String, epoch: u64) {
+pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, station: StationId, epoch: u64) {
     let mut first = true;
     let mut told_taken: Option<Vec<airband_core::routing::Callsign>> = None;
     loop {

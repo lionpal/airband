@@ -26,7 +26,7 @@ impl Desk {
         }
         let shared = self.shared.clone();
         thread::spawn(move || {
-            let connections: Vec<(String, u64, Arc<Radio>)> = shared.state.lock().unwrap().computers.iter().map(|s| (s.id(), s.epoch, s.radio.clone())).collect();
+            let connections: Vec<(StationId, u64, Arc<Radio>)> = shared.state.lock().unwrap().computers.iter().map(|s| (s.id(), s.epoch, s.radio.clone())).collect();
             for (station, epoch, radio) in &connections {
                 tell_push(&shared, radio, station, *epoch);
             }
@@ -49,20 +49,20 @@ impl Desk {
 
 /// Everything one computer is still owed of what every computer is to be told, sent now: for each computer
 /// as it is reached, and again on each round while one is not taken.
-pub(super) fn tell_owed(shared: &Arc<Shared>, radio: &Arc<Radio>, station: &str, epoch: u64) {
+pub(super) fn tell_owed(shared: &Arc<Shared>, radio: &Arc<Radio>, station: &StationId, epoch: u64) {
     tell_push(shared, radio, station, epoch);
     tell_tools(shared, radio, station, epoch);
 }
 
 /// What `slot` wants, when that computer is still owed it on this connection: its rev and what is wanted.
-fn owed<T: Clone>(shared: &Shared, station: &str, epoch: u64, slot: fn(&Intents) -> &Option<Intent<T>>) -> Option<(u64, T)> {
+fn owed<T: Clone>(shared: &Shared, station: &StationId, epoch: u64, slot: fn(&Intents) -> &Option<Intent<T>>) -> Option<(u64, T)> {
     let mut state = shared.state.lock().unwrap();
     state.live(station, epoch)?;
     slot(&state.intents.now).as_ref().filter(|i| i.owed(station)).map(|i| (i.rev, i.wanted.clone()))
 }
 
 /// Keep what that computer did with `rev` of what `slot` wants. An answer to an older one changes nothing.
-fn settle<T, R>(shared: &Shared, station: &str, rev: u64, slot: fn(&mut Intents) -> &mut Option<Intent<T>>, reach: &Reach<R>) {
+fn settle<T, R>(shared: &Shared, station: &StationId, rev: u64, slot: fn(&mut Intents) -> &mut Option<Intent<T>>, reach: &Reach<R>) {
     let lost = {
         let mut state = shared.state.lock().unwrap();
         state.intents.change(|i| if let Some(now) = slot(i).as_mut().filter(|n| n.rev == rev) { now.record(station, reach) }).1
@@ -73,7 +73,7 @@ fn settle<T, R>(shared: &Shared, station: &str, rev: u64, slot: fn(&mut Intents)
 }
 
 /// Tell one computer where this device can be woken, if it has not taken it yet.
-pub(super) fn tell_push(shared: &Arc<Shared>, radio: &Arc<Radio>, station: &str, epoch: u64) {
+pub(super) fn tell_push(shared: &Arc<Shared>, radio: &Arc<Radio>, station: &StationId, epoch: u64) {
     let Some((rev, target)) = owed(shared, station, epoch, |i| &i.push) else { return };
     let reach = Reach::of(radio.push_target(target.provider, &target.token));
     settle(shared, station, rev, |i| &mut i.push, &reach);
@@ -81,7 +81,7 @@ pub(super) fn tell_push(shared: &Arc<Shared>, radio: &Arc<Radio>, station: &str,
 
 /// Tell one computer which coding tools he uses, if it has not taken them yet: a new agent he asks for without
 /// naming a tool is started with the one he uses most.
-pub(super) fn tell_tools(shared: &Arc<Shared>, radio: &Arc<Radio>, station: &str, epoch: u64) {
+pub(super) fn tell_tools(shared: &Arc<Shared>, radio: &Arc<Radio>, station: &StationId, epoch: u64) {
     let tools = shared.chooser.tools();
     let lost = {
         let mut state = shared.state.lock().unwrap();

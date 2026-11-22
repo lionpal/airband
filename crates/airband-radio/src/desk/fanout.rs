@@ -36,7 +36,7 @@ impl<T> Reach<T> {
 
 /// Ask each computer, by id, with `op`, all at once: every one is asked, whatever the others answer. Blocks
 /// until each has answered or failed.
-pub(crate) fn fan_out<T: Send>(targets: Vec<(String, Arc<Radio>)>, op: impl Fn(&Radio) -> Reach<T> + Sync) -> BTreeMap<String, Reach<T>> {
+pub(crate) fn fan_out<T: Send>(targets: Vec<(StationId, Arc<Radio>)>, op: impl Fn(&Radio) -> Reach<T> + Sync) -> BTreeMap<StationId, Reach<T>> {
     let op = &op;
     thread::scope(|scope| {
         let asked: Vec<_> = targets.into_iter().map(|(id, radio)| (id, scope.spawn(move || op(&radio)))).collect();

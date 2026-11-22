@@ -4,7 +4,7 @@ use super::*;
 pub(super) struct Upload {
     pub(super) shown: DeskUpload,
     /// Which computer it is going to, by its id: what he sends next goes there too.
-    pub(super) station: String,
+    pub(super) station: StationId,
     /// He took it off, or it is being sent somewhere else instead: stop sending.
     pub(super) dropped: Arc<AtomicBool>,
     /// The file on the device and what to call it, kept so it can be sent to another computer if his words turn
@@ -71,14 +71,14 @@ pub(super) fn settled(state: &mut State) -> Option<AfterFiles> {
 }
 /// His words are for a computer other than the one his files went to: each file is sent there afresh (the tray
 /// shows how each one does), and the words go when the last has got there or failed.
-pub(super) fn move_files(shared: &Arc<Shared>, state: &mut State, from: &str, to: &str, words: AfterFiles) -> bool {
+pub(super) fn move_files(shared: &Arc<Shared>, state: &mut State, from: &StationId, to: &StationId, words: AfterFiles) -> bool {
     let (Some(to_radio), Some(from_radio)) = (state.computer(to).map(|s| s.radio.clone()), state.computer(from).map(|s| s.radio.clone())) else { return false };
     let mut moved = Vec::new();
     for u in state.uploads.iter_mut() {
         u.dropped.store(true, Ordering::SeqCst);
         u.dropped = Arc::new(AtomicBool::new(false));
         moved.push((u.shown.id.clone(), u.file_path.clone(), u.name.clone(), u.dropped.clone()));
-        u.station = to.to_string();
+        u.station = to.clone();
         u.shown.sent = 0;
         u.shown.state = UploadState::Sending;
     }
@@ -91,7 +91,7 @@ pub(super) fn move_files(shared: &Arc<Shared>, state: &mut State, from: &str, to
 }
 /// Where the files he attached are, among his computers now: everything attached to one message goes to one
 /// computer, the first file's.
-pub(super) fn files_at(state: &State) -> Option<String> {
+pub(super) fn files_at(state: &State) -> Option<StationId> {
     state.uploads.first().filter(|u| state.computer(&u.station).is_some()).map(|u| u.station.clone())
 }
 #[uniffi::export]

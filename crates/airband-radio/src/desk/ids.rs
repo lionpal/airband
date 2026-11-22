@@ -10,10 +10,10 @@ fn station_key(link: &str) -> Option<String> {
 }
 /// What a computer is known by in the rooms of his screen: its relay channel, or for a plain direct pairing,
 /// a hash of its link (the link holds a token, and a room's id is kept on disk).
-pub(crate) fn station_id(link: &str) -> String {
-    station_key(link).unwrap_or_else(|| airband_core::relay::token_hash(link))
+pub(crate) fn station_id(link: &str) -> StationId {
+    StationId::new(station_key(link).unwrap_or_else(|| airband_core::relay::token_hash(link)))
 }
 /// A room on his screen: one team on one computer, as one id. Only ever compared whole.
-pub(crate) fn room_id(station: &str, team: &str) -> String {
+pub(crate) fn room_id(station: &StationId, team: &str) -> String {
     if team.is_empty() { String::new() } else { format!("{station}/{team}") }
 }
