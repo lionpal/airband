@@ -11,11 +11,15 @@ pub(super) struct ReadMarks {
     /// When this device began keeping count: what an agent said before then is not counted against him.
     pub(super) since: u64,
     pub(super) upto: HashMap<String, u64>,
+    /// His main computer, by name, once he has chosen one: where his words go when nothing says which
+    /// computer they are for. It works out who they are for and passes them on.
+    #[serde(default)]
+    pub(super) main: Option<String>,
 }
 impl ReadMarks {
     pub(super) fn load(dir: &str) -> Self {
         let kept = if dir.is_empty() { None } else { airband_core::kept::load(&std::path::Path::new(dir).join("read.json")) };
-        kept.unwrap_or_else(|| ReadMarks { since: airband_core::clock::now_ms(), upto: HashMap::new() })
+        kept.unwrap_or_else(|| ReadMarks { since: airband_core::clock::now_ms(), upto: HashMap::new(), main: None })
     }
     pub(super) fn keep(&self, dir: &str) {
         if !dir.is_empty() {
@@ -28,6 +32,17 @@ impl ReadMarks {
 }
 #[uniffi::export]
 impl Desk {
+    /// Make one of his computers the main one: where his words go when nothing says which computer they are
+    /// for. Kept on the device.
+    pub fn set_main_computer(&self, computer: String) {
+        {
+            let mut state = self.shared.state.lock().unwrap();
+            state.read.main = Some(computer);
+            state.read.keep(&self.data_dir);
+        }
+        self.shared.host.changed();
+    }
+
     /// What to show. `room` narrows the feed to one team, `agent` to one callsign; with neither, everything.
     pub fn view(&self, room: Option<String>, agent: Option<String>) -> DeskView {
         let mut state = self.shared.state.lock().unwrap();
@@ -121,6 +136,8 @@ impl Desk {
                 .flat_map(|s| s.sending.iter().filter(|o| !s.messages.iter().any(|m| m.id == o.id)).cloned().chain(s.landing.iter().filter(|(o, at)| at.elapsed() < Duration::from_secs(15) && !s.messages.iter().any(|m| m.id == o.id)).map(|(o, _)| o.clone())))
                 .collect(),
             stations: state.stations.iter().map(|s| s.name.clone()).collect(),
+            main_computer: state.main().map(|i| state.stations[i].name.clone()),
+            choose_main: state.stations.len() > 1 && state.main().is_none(),
             reads: state.stations.iter().map(|s| s.reads.clone()).find(|r| !r.is_empty()).unwrap_or_default(),
             uploads: state.uploads.iter().map(|u| u.shown.clone()).collect(),
             asking: state.asking.as_ref().map(|asking| {

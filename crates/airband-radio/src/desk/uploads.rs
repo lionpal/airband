@@ -62,7 +62,7 @@ impl Desk {
                 return id;
             }
             // everything attached to one message goes to one computer: the first file's
-            let station = state.uploads.first().map(|u| u.station).unwrap_or_else(|| pick_station(&state, "", re.as_deref(), room.as_deref(), agent.as_deref()));
+            let Some(station) = state.uploads.first().map(|u| u.station).or_else(|| pick_station(&state, "", re.as_deref(), room.as_deref(), agent.as_deref())) else { return id };
             state.uploads.push(Upload { shown: DeskUpload { id: id.clone(), name: name.clone(), sent: 0, total, state: UploadState::Sending }, station, dropped: dropped.clone(), file_path: file_path.clone(), name: name.clone() });
             state.stations[station].radio.clone()
         };

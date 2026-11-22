@@ -45,7 +45,13 @@ struct SetupView: View {
                     Text("Off, you see the short version of what each agent wrote and can open any one. On, you see all of it. What is read aloud is the short version either way.")
                 }
                 if !model.view.stations.filter({ !$0.isEmpty }).isEmpty {
-                    Section("Computers") {
+                    Section {
+                        if model.computers.count > 1 {
+                            Picker("Main computer", selection: Binding(get: { model.view.mainComputer ?? "" }, set: { model.setMainComputer($0) })) {
+                                if model.view.mainComputer == nil { Text("Not chosen").tag("") }
+                                ForEach(model.computers, id: \.self) { name in Text(name).tag(name) }
+                            }
+                        }
                         ForEach(model.computers, id: \.self) { name in
                             Picker(selection: Binding(get: { model.icon(of: name) }, set: { model.setIcon($0, of: name) })) {
                                 ForEach(RadioModel.computerSymbols, id: \.self) { symbol in Image(systemName: symbol).tag(symbol) }
@@ -53,6 +59,10 @@ struct SetupView: View {
                                 Label(name, systemImage: model.icon(of: name))
                             }
                         }
+                    } header: {
+                        Text("Computers")
+                    } footer: {
+                        if model.computers.count > 1 { Text(RadioModel.mainComputerNote) }
                     }
                 }
                 if model.paired {

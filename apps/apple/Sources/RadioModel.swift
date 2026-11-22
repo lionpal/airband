@@ -284,6 +284,12 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     static let computerSymbols = ["laptopcomputer", "macmini", "desktopcomputer", "macstudio", "macpro.gen3", "server.rack", "pc"]
 
     func icon(of computer: String) -> String { computerIcons[computer] ?? "desktopcomputer" }
+    /// What the main computer is for, in the words used wherever he chooses it.
+    static let mainComputerNote = "When it isn\u{2019}t clear which computer your words are for, they go to your main computer. It works out who they are for and passes them on."
+    func setMainComputer(_ computer: String) {
+        guard !computer.isEmpty else { return }
+        desk.setMainComputer(computer: computer)
+    }
     func setIcon(_ symbol: String, of computer: String) {
         computerIcons[computer] = symbol
         UserDefaults.standard.set(String(data: (try? JSONEncoder().encode(computerIcons)) ?? Data("{}".utf8), encoding: .utf8), forKey: "airband.computers.icons")

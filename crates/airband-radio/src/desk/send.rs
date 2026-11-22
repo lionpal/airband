@@ -123,8 +123,8 @@ impl Desk {
             }
             state.discard = false;
             // any computer that is there can do the listening; where the words go is worked out when he sends them
-            let pick = state.uploads.first().map(|u| u.station).unwrap_or_else(|| pick_station(&state, "", re.as_deref(), room.as_deref(), agent.as_deref()));
-            let pick = if state.stations[pick].online { pick } else { state.stations.iter().position(|s| s.online).unwrap_or(pick) };
+            let pick = state.uploads.first().map(|u| u.station).or_else(|| pick_station(&state, "", re.as_deref(), room.as_deref(), agent.as_deref()));
+            let Some(pick) = pick.filter(|i| state.stations[*i].online).or_else(|| state.stations.iter().position(|s| s.online)).or(pick) else { return };
             state.stations[pick].radio.clone()
         };
         let shared = self.shared.clone();
@@ -197,7 +197,8 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
         }
         // looking at one agent, with nobody tagged and no message picked: it is for that agent
         let aimed = matches!((&agent, tagged, &re), (Some(_), false, None));
-        let wanted = pick_station(&state, &text, re.as_deref(), room.as_deref(), agent.as_deref());
+        // with several computers and no main one chosen the app asks him first, and nothing is sent until then
+        let Some(wanted) = pick_station(&state, &text, re.as_deref(), room.as_deref(), agent.as_deref()) else { return };
         // Files he attached are already on one computer. Words with no address go there with them. Words he
         // addressed (a tag, a message he picked, the agent he is looking at) go where they are addressed, and
         // if that is another computer the files are sent there first: the words wait for them.
@@ -276,10 +277,10 @@ fn others(state: &State, pick: usize, room: Option<&str>) -> String {
     if list.is_empty() { String::new() } else { serde_json::to_string(&list).unwrap_or_default() }
 }
 /// Which computer a message of his goes to.
-pub(super) fn pick_station(state: &State, text: &str, re: Option<&str>, room: Option<&str>, agent: Option<&str>) -> usize {
+pub(super) fn pick_station(state: &State, text: &str, re: Option<&str>, room: Option<&str>, agent: Option<&str>) -> Option<usize> {
     // the computer that has the message he is answering
     if let Some(i) = re.and_then(|id| state.owner(id)) {
-        return i;
+        return Some(i);
     }
     // the computer that has whoever he tagged: read the tags the way the tower will
     if text.starts_with('@') {
@@ -288,26 +289,20 @@ pub(super) fn pick_station(state: &State, text: &str, re: Option<&str>, room: Op
             !parse_utterance(text, &live).to.is_empty()
         });
         if let Some(i) = named {
-            return i;
+            return Some(i);
         }
     }
     if let Some(i) = agent.and_then(|c| state.stations.iter().position(|s| s.agents.iter().any(|a| a.callsign == c))) {
-        return i;
+        return Some(i);
     }
-    // Nothing says. Go by what is on his screen: the computer of the latest thing in the room he is looking at
-    // (or anywhere), whether an agent said it or he did. A reply follows what was just said; a second message
-    // of his follows his first. The tower there is told who else he can see, and passes it on if it is for them.
-    let here = |s: &Station, m: &ChatMessage| match room {
-        None => true,
-        Some(r) if m.his => m.to.iter().any(|c| s.agents.iter().any(|a| a.callsign == *c && a.group == r)),
-        Some(r) => m.group == r,
-    };
-    let last = state.stations.iter().enumerate().filter_map(|(i, s)| s.messages.iter().rev().find(|m| !m.fyi && here(s, m)).map(|m| (m.at, i))).max();
-    if let Some((_, i)) = last {
-        return i;
+    // the room he is looking at, when only one computer has agents in it
+    if let Some(r) = room {
+        let mut with = state.stations.iter().enumerate().filter(|(_, s)| s.agents.iter().any(|a| a.group == r)).map(|(i, _)| i);
+        if let (Some(only), None) = (with.next(), with.next()) {
+            return Some(only);
+        }
     }
-    if let Some(i) = room.and_then(|r| state.stations.iter().position(|s| s.agents.iter().any(|a| a.group == r))) {
-        return i;
-    }
-    0
+    // Nothing says: his main computer, which works out who it is for and passes it on. With several computers
+    // and none chosen there is no answer, and he is asked to choose (`DeskView::choose_main`).
+    state.main()
 }

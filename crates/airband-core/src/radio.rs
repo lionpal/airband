@@ -40,6 +40,10 @@ pub enum Kind {
     /// nothing was asked of him. It needs a nudge, not an answer ("poke").
     #[serde(rename = "stalled")]
     Stalled,
+    /// No model read it, so nothing says what it is. Shown as the agent wrote it and marked so; he is told of
+    /// it as he is of a report, since nothing says it is routine.
+    #[serde(rename = "unjudged")]
+    Unjudged,
     /// A kind a newer tower uses that this build does not know. Shown like a report: never dropped, and never
     /// a reason to refuse the rest of what came with it.
     #[serde(other, rename = "unknown")]
@@ -596,9 +600,10 @@ pub struct Notice {
     pub permission: bool,
 }
 
-/// What deserves a notification: a message that needs him, or a report. Never chatter, a stall, or his own words.
+/// What deserves a notification: a message that needs him, a report, or one no model read. Never chatter, a
+/// stall, or his own words.
 pub fn deserves_notice(kind: Option<Kind>) -> bool {
-    matches!(kind, Some(Kind::NeedsYou | Kind::Report))
+    matches!(kind, Some(Kind::NeedsYou | Kind::Report | Kind::Unjudged))
 }
 
 /// How many bytes of a picture go in one part.

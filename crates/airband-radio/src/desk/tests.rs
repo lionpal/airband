@@ -26,7 +26,7 @@ impl RadioHost for Quiet {
 }
 
 fn msg(id: &str, seq: u64, from: &str, group: &str, needs: bool) -> ChatMessage {
-    ChatMessage { seq, id: id.into(), at: seq, his: from == "you", from: from.into(), group: group.into(), to: Vec::new(), needs_you: needs, fyi: false, stalled: false, text: id.into(), long: false, queued: false, seen: 0, options: Vec::new(), recommended: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: Some(from.into()), station: String::new(), open: needs, badge: String::new(), colour: 0, read: None, own_session: false, not_read: String::new() }
+    ChatMessage { seq, id: id.into(), at: seq, his: from == "you", from: from.into(), group: group.into(), to: Vec::new(), needs_you: needs, fyi: false, unjudged: String::new(), stalled: false, text: id.into(), long: false, queued: false, seen: 0, options: Vec::new(), recommended: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: Some(from.into()), station: String::new(), open: needs, badge: String::new(), colour: 0, read: None, own_session: false, not_read: String::new() }
 }
 fn station(name: &str, port: u16, agents: &[(&str, &str)], messages: Vec<ChatMessage>) -> Station {
     let link = format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A{port}&token=t");
@@ -265,19 +265,21 @@ fn a_notification_is_opened_by_the_pairing_that_sealed_it_and_no_other() {
 
 #[test]
 fn a_message_goes_to_the_computer_that_has_who_it_is_for() {
-    let state = two();
+    let mut state = two();
     // the message he is answering
-    assert_eq!(pick_station(&state, "yes", Some("q2"), None, None), 1);
+    assert_eq!(pick_station(&state, "yes", Some("q2"), None, None), Some(1));
     // a tag, in every form the tower accepts
-    assert_eq!(pick_station(&state, "@ff1 stop", None, None, None), 1);
-    assert_eq!(pick_station(&state, "@ffone stop", None, None, None), 1);
-    assert_eq!(pick_station(&state, "@shop2 go", None, None, None), 0);
-    assert_eq!(pick_station(&state, "@backoffice ship it", None, None, None), 0);
+    assert_eq!(pick_station(&state, "@ff1 stop", None, None, None), Some(1));
+    assert_eq!(pick_station(&state, "@ffone stop", None, None, None), Some(1));
+    assert_eq!(pick_station(&state, "@shop2 go", None, None, None), Some(0));
+    assert_eq!(pick_station(&state, "@backoffice ship it", None, None, None), Some(0));
     // the room or the agent he is looking at
-    assert_eq!(pick_station(&state, "go", None, Some("ff"), None), 1);
-    assert_eq!(pick_station(&state, "go", None, None, Some("backoffice login fix")), 0);
-    // nothing says: whoever spoke last
-    assert_eq!(pick_station(&state, "go", None, None, None), 1);
+    assert_eq!(pick_station(&state, "go", None, Some("ff"), None), Some(1));
+    assert_eq!(pick_station(&state, "go", None, None, Some("backoffice login fix")), Some(0));
+    // nothing says, and he has not chosen a main computer: there is no answer, and he is asked
+    assert_eq!(pick_station(&state, "go", None, None, None), None);
+    state.read.main = Some(state.stations[1].name.clone());
+    assert_eq!(pick_station(&state, "go", None, None, None), Some(1));
 }
 
 #[test]

@@ -148,7 +148,7 @@ impl Inner {
     pub(super) fn settle_reading(&mut self) {
         let live: HashSet<String> = self.sessions.iter().map(|s| s.agent.id.clone()).collect();
         let recent = now_ms().saturating_sub(STILL_NEWS.as_millis() as u64);
-        let unheard: Vec<(String, bool, bool, bool)> = self.unheard().map(|e| (e.id.clone(), e.agent.as_ref().is_some_and(|a| live.contains(a)), e.kind == Some(Kind::Report), e.at >= recent)).collect();
+        let unheard: Vec<(String, bool, bool, bool)> = self.unheard().map(|e| (e.id.clone(), e.agent.as_ref().is_some_and(|a| live.contains(a)), matches!(e.kind, Some(Kind::Report | Kind::Unjudged)), e.at >= recent)).collect();
         for (id, live, report, recent) in unheard {
             self.set_aloud(&id, match (live, report, recent) {
                 (true, _, _) | (false, true, true) => Aloud::Waiting,

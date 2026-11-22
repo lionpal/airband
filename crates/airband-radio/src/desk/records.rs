@@ -84,6 +84,11 @@ pub struct DeskView {
     pub sending: Vec<Outgoing>,
     /// What each paired computer is called.
     pub stations: Vec<String>,
+    /// His main computer, by name: the only one, or the one he chose. Nothing while he has several and has
+    /// not chosen.
+    pub main_computer: Option<String>,
+    /// He has several computers and has not said which is the main one: ask him before anything is sent.
+    pub choose_main: bool,
     /// What reads the agents' messages and makes the short of them, by name: on the first computer that says.
     /// Empty when none does.
     pub reads: String,

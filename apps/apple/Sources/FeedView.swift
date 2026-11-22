@@ -42,6 +42,12 @@ struct FeedView: View {
         .foregroundStyle(Palette.ink)
         .sheet(isPresented: $showSetup) { SetupView().environmentObject(model) }
         .fullScreenCover(isPresented: $onboarding) { OnboardingView().environmentObject(model) }
+        // several computers and no main one chosen: he is asked once, before anything can be sent
+        .confirmationDialog("Choose your main computer", isPresented: Binding(get: { model.view.chooseMain && !onboarding && !showScan }, set: { _ in }), titleVisibility: .visible) {
+            ForEach(model.computers, id: \.self) { name in Button(name) { model.setMainComputer(name) } }
+        } message: {
+            Text(RadioModel.mainComputerNote + " You can change it in Settings.")
+        }
         .fullScreenCover(isPresented: $showScan) { ScanSheet().environmentObject(model) }
         .sheet(isPresented: $showNewAgent) { NewAgentSheet().environmentObject(model) }
         .sheet(isPresented: $showAgents) { AgentsMenu(openSetup: { showAgents = false; showSetup = true }).environmentObject(model).presentationDetents([.medium, .large]) }

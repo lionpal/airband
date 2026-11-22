@@ -515,11 +515,11 @@ pub(super) async fn prepare(cfg: &Config, item: &Item) -> Judged {
         }
         other => {
             // No model answered. Nothing is guessed from the words: he gets the message as the agent wrote it,
-            // marked as a report unless its harness said what it is.
+            // marked as read by no model unless its harness said what it is.
             if let Err(e) = other {
                 log(format!("no summary, giving him the message as written: {e}"));
             }
-            Judged { kind: item.kind.unwrap_or(Kind::Report), say: spoken(&item.full), options: Vec::new(), recommended: None, read: None, background: false, own_session: false }
+            Judged { kind: item.kind.unwrap_or(Kind::Unjudged), say: spoken(&item.full), options: Vec::new(), recommended: None, read: None, background: false, own_session: false }
         }
     }
 }

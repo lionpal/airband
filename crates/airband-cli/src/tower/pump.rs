@@ -51,7 +51,7 @@ pub(super) async fn pump(app: &Arc<App>) {
     };
     let callsign = name(&inner, next);
     let say = next.short.clone().unwrap_or_default();
-    let kind = next.kind.unwrap_or(Kind::Report);
+    let kind = next.kind.unwrap_or(Kind::Unjudged);
     log(format!("→ {radio}: {callsign} ({kind:?}): {say}"));
     let spoken_line = format!("{}. {say}", cap(&callsign));
     let waiting = inner.unheard().count() as u32 - 1;

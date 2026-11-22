@@ -15,6 +15,11 @@ private struct Speaker: View {
                 Text(m.station.isEmpty ? m.from : "\(m.from) · \(m.station)").font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.quiet)
                 // it was to be read to him while he was listening, and was not: a small mark. Why is one
                 // long press away, in the line's menu.
+                // no model read it: it is as the agent wrote it, and a small mark says so
+                if !m.unjudged.isEmpty {
+                    Image(systemName: "text.badge.xmark").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.dim)
+                        .accessibilityLabel(m.unjudged)
+                }
                 if !m.notRead.isEmpty {
                     Image(systemName: "speaker.slash.fill").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.dim)
                         .accessibilityLabel(m.notRead)
@@ -80,8 +85,8 @@ private struct LineMenu: View {
     let m: ChatMessage
 
     var body: some View {
-        if !m.notRead.isEmpty {
-            Section(m.notRead) { copy }
+        if !m.unjudged.isEmpty || !m.notRead.isEmpty {
+            Section([m.unjudged, m.notRead].filter { !$0.isEmpty }.joined(separator: " ")) { copy }
         } else {
             copy
         }

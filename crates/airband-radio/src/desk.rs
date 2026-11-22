@@ -148,6 +148,14 @@ impl State {
     fn colour(&self, group: &str) -> u8 {
         self.stations.iter().find_map(|s| s.colours.get(group).copied()).unwrap_or(0)
     }
+    /// His main computer: the only one, or the one he chose, while it is still paired.
+    fn main(&self) -> Option<usize> {
+        match self.stations.len() {
+            0 => None,
+            1 => Some(0),
+            _ => self.read.main.as_ref().and_then(|name| self.stations.iter().position(|s| s.name == *name)),
+        }
+    }
     fn owner(&self, message: &str) -> Option<usize> {
         self.stations.iter().position(|s| s.messages.iter().any(|m| m.id == message))
     }
