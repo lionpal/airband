@@ -75,8 +75,9 @@ fn sha8(s: &str) -> String {
 fn claude_json_path() -> PathBuf {
     claude_config_dir().map(|d| d.join(".claude.json")).unwrap_or_else(|| config::home().join(".claude.json"))
 }
-fn user() -> String {
-    super::env("USER").unwrap_or_else(|| "user".into())
+/// The account the keychain item is kept under: this computer's login name, as the system has it.
+fn user() -> Result<String, String> {
+    config::account().map(|a| a.login).filter(|l| !l.is_empty()).ok_or_else(|| "This computer's account has no login name.".to_string())
 }
 pub(super) fn dir() -> PathBuf {
     config::dir().join("claude-code")
@@ -113,12 +114,8 @@ fn locked<T>(work: impl FnOnce() -> T) -> T {
 /// HOME pointed anywhere else `security` finds no keychain and waits for ever on a dialog.
 fn security() -> Command {
     let mut c = Command::new("security");
-    #[cfg(unix)]
-    unsafe {
-        let pw = libc::getpwuid(libc::getuid());
-        if !pw.is_null() && !(*pw).pw_dir.is_null() {
-            c.env("HOME", std::ffi::CStr::from_ptr((*pw).pw_dir).to_string_lossy().to_string());
-        }
+    if let Some(a) = config::account().filter(|a| !a.home.is_empty()) {
+        c.env("HOME", a.home);
     }
     c.stdin(Stdio::null());
     c
@@ -209,7 +206,7 @@ fn resolve(query: &str) -> Res<String> {
 // ── the live login ──
 
 fn live_blob() -> Res<Map<String, Value>> {
-    let s = key_read(&live_service(), &user())?.ok_or_else(|| format!("{} is not signed in on this computer.", tool()))?;
+    let s = key_read(&live_service(), &user()?)?.ok_or_else(|| format!("{} is not signed in on this computer.", tool()))?;
     match serde_json::from_str::<Value>(&s).map_err(|e| format!("{}'s login cannot be read: {e}", tool()))? {
         Value::Object(m) => Ok(m),
         _ => Err(format!("{}'s login is not in the form expected.", tool())),
@@ -429,7 +426,7 @@ pub fn switch(id: &str) -> Res<std::thread::JoinHandle<()>> {
         // swap the claude.ai login inside the live item, keeping the MCP logins beside it
         let mut blob = live_blob().unwrap_or_default();
         blob.insert("claudeAiOauth".into(), incoming);
-        key_write(&live_service(), &user(), &Value::Object(blob).to_string())?;
+        key_write(&live_service(), &user()?, &Value::Object(blob).to_string())?;
         let acct = entry.get("oauthAccount").cloned().unwrap_or(json!({ "emailAddress": target }));
         set_oauth_account(&acct)?;
         // a later switch ends this one's hold, or the two would fight over the name
@@ -468,14 +465,16 @@ pub fn add() -> Res<String> {
         if !status?.success() {
             return Err("The sign-in did not finish.".into());
         }
-        let blob: Value = serde_json::from_str(&key_read(&service, &user())?.ok_or("The sign-in saved no login.")?).map_err(|e| e.to_string())?;
+        let blob: Value = serde_json::from_str(&key_read(&service, &user()?)?.ok_or("The sign-in saved no login.")?).map_err(|e| e.to_string())?;
         let oauth = blob.get("claudeAiOauth").cloned().ok_or("The sign-in saved no login for an account.")?;
         let acct = read_json(&tmp.join(".claude.json"))?.get("oauthAccount").cloned().ok_or("The sign-in saved no account record.")?;
         let email = email_of(&acct).ok_or("The account record has no email.")?;
         locked(|| keep(&email, &oauth, &acct))?;
         Ok(email)
     })();
-    key_delete(&service, &user());
+    if let Ok(user) = user() {
+        key_delete(&service, &user);
+    }
     let _ = std::fs::remove_dir_all(&tmp);
     result
 }

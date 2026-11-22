@@ -183,21 +183,29 @@ fn default_port() -> u16 {
 /// What his agents are told his name is, until he gives another in `airband setup`: the name this computer's
 /// own account has for him.
 fn default_name() -> String {
-    #[cfg(unix)]
-    {
-        // the account's full name when it has one, and its login name when it has none
-        let text = |p: *const libc::c_char| if p.is_null() { String::new() } else { unsafe { std::ffi::CStr::from_ptr(p) }.to_string_lossy().split(',').next().unwrap_or_default().trim().to_string() };
-        let pw = unsafe { libc::getpwuid(libc::getuid()) };
-        if pw.is_null() {
-            return String::new();
-        }
-        let (full, login) = unsafe { (text((*pw).pw_gecos), text((*pw).pw_name)) };
-        if full.is_empty() { login } else { full }
+    // the account's full name when it has one, and its login name when it has none
+    account().map(|a| if a.full.is_empty() { a.login } else { a.full }).unwrap_or_default()
+}
+/// This computer's account that airband runs as, as the system has it (not as the environment says, which a
+/// test or a tool may have changed).
+pub(crate) struct Account {
+    pub(crate) login: String,
+    pub(crate) full: String,
+    pub(crate) home: String,
+}
+#[cfg(unix)]
+pub(crate) fn account() -> Option<Account> {
+    let text = |p: *const libc::c_char| if p.is_null() { String::new() } else { unsafe { std::ffi::CStr::from_ptr(p) }.to_string_lossy().into_owned() };
+    let pw = unsafe { libc::getpwuid(libc::getuid()) };
+    if pw.is_null() {
+        return None;
     }
-    #[cfg(not(unix))]
-    {
-        std::env::var("USERNAME").unwrap_or_default()
-    }
+    let (login, gecos, home) = unsafe { (text((*pw).pw_name), text((*pw).pw_gecos), text((*pw).pw_dir)) };
+    Some(Account { login, full: gecos.split(',').next().unwrap_or_default().trim().to_string(), home })
+}
+#[cfg(not(unix))]
+pub(crate) fn account() -> Option<Account> {
+    None
 }
 pub use airband_core::relay::random_hex;
 fn default_permission_wait() -> u64 {
