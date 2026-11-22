@@ -247,7 +247,7 @@ async fn revive(app: &Arc<App>, kept: &Kept) -> Result<(), String> {
 pub(super) async fn tell(app: &Arc<App>, id: &str, text: &str, lines: &[String]) -> Result<(), String> {
     let receipt = deliver::receipt();
     told_under(app, id, text, &receipt).await?;
-    app.passing().receipts.insert(receipt, lines.to_vec());
+    app.change().receipts.insert(receipt, lines.to_vec());
     Ok(())
 }
 async fn told_under(app: &Arc<App>, id: &str, text: &str, receipt: &str) -> Result<(), String> {
@@ -273,7 +273,7 @@ async fn told_under(app: &Arc<App>, id: &str, text: &str, receipt: &str) -> Resu
 /// did not take back, goes to it now as one turn, in the order he said it.
 pub(super) async fn flush(app: &Arc<App>, id: &str) {
     let waiting: Vec<(String, String)> = {
-        let mut inner = app.passing();
+        let mut inner = app.change();
         let Some(s) = inner.session(id).filter(|s| s.waiting && !s.queue.is_empty()) else { return };
         s.waiting = false;
         let waiting = std::mem::take(&mut s.queue);

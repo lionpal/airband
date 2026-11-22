@@ -183,6 +183,6 @@ mod tests {
         let inner = app.read();
         let line = inner.log.last().unwrap();
         assert_eq!(line.team, real_folder(&folder));
-        assert_eq!(inner.team_name(&line.team), "shop");
+        assert_eq!(inner.team_name(&line.team), Some("shop"));
     }
 }

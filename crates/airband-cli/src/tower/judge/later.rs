@@ -11,7 +11,7 @@ const JUDGE_AT_ONCE: usize = 3;
 /// every radio following the feed is sent it. Nothing is left unjudged because a radio was away when it came in.
 pub(in crate::tower) fn judge_later(app: &Arc<App>, entries: Vec<Entry>) {
     let entries: Vec<Entry> = {
-        let mut inner = app.passing();
+        let mut inner = app.change();
         entries.into_iter().filter(|e| inner.judging.insert(e.id.clone())).collect()
     };
     if entries.is_empty() {

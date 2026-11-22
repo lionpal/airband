@@ -29,7 +29,7 @@ pub(super) async fn feed(State(app): State<Arc<App>>, Extension(RadioId(radio)):
     // needs a notification on that radio. One that says the chat is not in front of him is following it
     // without showing it, and is told nothing by that.
     if let Some(since) = since {
-        let mut inner = app.passing();
+        let mut inner = app.change();
         // never past what exists: a count from another tower's chat says nothing about this one's
         let has = since.min(inner.rev);
         let call = inner.call(&radio);
@@ -39,7 +39,7 @@ pub(super) async fn feed(State(app): State<Arc<App>>, Extension(RadioId(radio)):
     }
     // while a request for the whole chat is open, what agents say is read by it
     let _reading = (team.is_none() && agent.is_none()).then(|| {
-        app.passing().readers += 1;
+        app.change().readers += 1;
         Reading(app.clone())
     });
     let limit = limit.unwrap_or(if since.is_some() { 200 } else { 50 }).clamp(1, 200);

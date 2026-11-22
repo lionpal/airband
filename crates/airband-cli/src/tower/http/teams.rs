@@ -106,7 +106,9 @@ pub(super) async fn project(State(app): State<Arc<App>>, Sent(new): Sent<at::Pro
         match inner.team_at(&at) {
             // a folder that has a team: another agent joins it
             Some(team) => {
-                name = inner.team_name(&team);
+                if let Some(called) = inner.team_name(&team) {
+                    name = called.to_string();
+                }
                 team
             }
             None => match inner.chosen_team(&name, None) {

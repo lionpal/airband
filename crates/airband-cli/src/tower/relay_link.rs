@@ -255,7 +255,7 @@ impl Serve {
                 // Nobody is waiting on this answer. Something he said that came too late is told to his
                 // radio, in its feed, under the id it was said with: he was told it would get here.
                 if let Some(id) = &said {
-                    self.app.passing().settle(&self.name, id, airband_core::radio::Outcome::Rejected { why: airband_core::radio::Rejected::TooOld });
+                    self.app.change().settle(&self.name, id, airband_core::radio::Outcome::Rejected { why: airband_core::radio::Rejected::TooOld });
                 }
                 self.refused(&call, "the relay, kept while the tower was away", Refusal::BadAsk { reason: "only something he said, sent in the last week, is taken late".into() })
             }

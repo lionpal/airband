@@ -25,7 +25,7 @@ pub(super) async fn deliver(app: &Arc<App>, how: &Deliver, agent_id: &str, conte
                 let receipt = receipt();
                 text.push_str(&format!("{}\n", json!({ "type": "user", "uuid": receipt, "message": { "role": "user", "content": content } })));
                 inbox_write(path, text.as_bytes()).await?;
-                app.passing().receipts.insert(receipt, lines.to_vec());
+                app.change().receipts.insert(receipt, lines.to_vec());
                 Ok(())
             }
             Deliver::Command { argv } => {

@@ -116,7 +116,10 @@ impl Inner {
             log(format!("an agent of {} was not taken in: no team can be found or made for it", agent.harness));
             return None;
         };
-        let team_name = self.team_name(&team);
+        let Some(team_name) = self.team_name(&team).map(String::from) else {
+            log(format!("an agent of {} was not taken in: its team was not there", agent.harness));
+            return None;
+        };
         // the name he gave the session, when it is new to the tower or has changed
         let wanted = agent.title.as_deref().filter(|t| self.find(&agent.id).is_none_or(|s| s.agent.title.as_deref() != Some(*t))).and_then(|t| titled(&team_name, agent, t));
         if let Some(want) = &wanted {

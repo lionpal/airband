@@ -140,7 +140,7 @@ async fn presence_said(State(app): State<Arc<App>>, req: Request, next: Next) ->
     if req.uri().path().starts_with(airband_core::radio::PATH)
         && let Some(said) = req.headers().get(PRESENCE_HEADER).and_then(|v| v.to_str().ok()).and_then(|v| serde_json::from_str::<airband_core::radio::Presence>(v).ok())
         && let Some(RadioId(radio)) = req.extensions().get::<RadioId>() {
-            app.passing().radio_says(radio, said);
+            app.change().radio_says(radio, said);
         }
     next.run(req).await
 }
@@ -197,10 +197,11 @@ pub(super) mod tests {
     pub(in crate::tower) fn app(name: &str) -> Arc<App> {
         let path = std::env::temp_dir().join(format!("airband-http-{name}-{}.db", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        let store = Store::open(&path).unwrap();
+        let store = Arc::new(Store::open(&path).unwrap());
         let cfg: Config = serde_json::from_str(r#"{"token":"own","radio_token":"radio"}"#).unwrap();
         let push = push::Wake::load(&store).unwrap();
-        Arc::new(App { push, cfg, store, inner: Mutex::new(Inner::default()), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default() })
+        let saver = saver::Saver::start(store.clone());
+        Arc::new(App { push, cfg, store, saver, inner: Mutex::new(Inner::default()), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default() })
     }
 
     fn presence(radio: Option<RadioId>, header: Option<&str>) -> Request {

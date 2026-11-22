@@ -48,7 +48,7 @@ pub(super) async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, p
         (None, [only]) => only.clone(),
         (None, _) => {
             let question = config::random_hex(8);
-            app.passing().call(radio).unplaced_idea = Some((question.clone(), idea));
+            app.change().call(radio).unplaced_idea = Some((question.clone(), idea));
             log(format!("← radio: \"{text}\" → a new agent, project not clear"));
             return Reply { say: which_project(projects), listen: true, question: Some(question), ..Reply::default() };
         }
