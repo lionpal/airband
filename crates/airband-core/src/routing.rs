@@ -1,4 +1,9 @@
-//! Callsigns, and working out what an utterance means and who it is for.
+//! Callsigns: what an agent is called on the radio, read and written. Team names are in `team`, typed tags in `tags`.
+
+mod tags;
+mod team;
+pub use tags::*;
+pub use team::*;
 
 const WORDS: [&str; 13] = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
 
@@ -12,38 +17,6 @@ pub struct Callsign {
     /// where the callsign is made; never worked out from how it reads.
     #[serde(default)]
     pub named: bool,
-}
-
-/// The most characters a team's name may have: it is part of what its agents are called, and is said aloud.
-pub(crate) const TEAM_NAME_MOST: usize = 24;
-
-/// A name he chose for a team (a new one, or a rename), as it is kept: [`team_name`], and short. The one check
-/// every place he names a team goes through.
-pub fn chosen_team_name(text: &str) -> Result<String, &'static str> {
-    team_name(text).filter(|n| n.chars().count() <= TEAM_NAME_MOST).ok_or("A team\u{2019}s name is letters and numbers, 24 at most.")
-}
-
-/// A name he gave a team, written the way a callsign writes it. Only written so: no part of it is taken for a
-/// path ("shop/front" is "shop front"). None when it has no letters or numbers.
-pub fn team_name(text: &str) -> Option<String> {
-    Some(norm(text)).filter(|name| !name.is_empty())
-}
-
-/// The names a team in this folder could take, plainest first: the folder's own name, then its parent's name
-/// in front of it, and so on up the path ("shop", "work shop", "a work shop"). Each comes from the path's own
-/// parts, as the system reads them. The tower takes the first that no other team of his has.
-pub fn team_names(folder: &str) -> Vec<String> {
-    let parts: Vec<String> = std::path::Path::new(folder.trim()).components().filter_map(|c| match c {
-        std::path::Component::Normal(part) => Some(norm(&part.to_string_lossy())),
-        _ => None,
-    }).filter(|part| !part.is_empty()).collect();
-    (1..=parts.len()).map(|n| parts[parts.len() - n..].join(" ")).collect()
-}
-
-/// A team's name with this computer's name in front: for a team whose folder's name a team on another of his
-/// computers already has ("laptop shop").
-pub fn team_on(computer: &str, team: &str) -> String {
-    norm(&format!("{computer} {team}"))
 }
 
 /// Two callsigns are the same when they read the same: no two agents are called alike, however each came by
@@ -128,30 +101,6 @@ impl Callsign {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Control {
-    /// "say more": the fuller version of what was last said
-    More,
-    Repeat,
-    /// who is waiting, who is working
-    Status,
-    /// no reply; move on
-    Skip,
-    /// stop sending transmissions until told to go ahead
-    Hold,
-    Resume,
-    /// set going again every agent that has stopped without finishing
-    Poke,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct Parsed {
-    /// Indexes into the callsigns given: everyone this was addressed to. Empty when nobody was named.
-    pub to: Vec<usize>,
-    /// The words meant for the agents, in his own wording.
-    pub rest: String,
-}
 
 fn norm(t: &str) -> String {
     let lowered = t.to_lowercase().replace(['’', '\''], "");
@@ -169,46 +118,6 @@ fn number_word(w: &str) -> String {
 fn digits(number: &str) -> String {
     figure(number).map(|n| n.to_string()).unwrap_or_else(|| number.to_string())
 }
-/// The tag for every agent: `@all`.
-const EVERYONE: &str = "all";
-
-/// Who a typed tag means: `@all`, a whole group (`@shop`), or one agent (`@shop2`, `@shop-two`).
-fn tagged(tag: &str, live: &[Callsign]) -> Option<Vec<usize>> {
-    let k = key(tag);
-    if k == EVERYONE {
-        return Some((0..live.len()).collect());
-    }
-    let hits: Vec<usize> = live
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| {
-            let project = c.project.replace(' ', "");
-            let number = c.number.replace(' ', "");
-            k == project || k == format!("{project}{number}") || k == format!("{project}{}", digits(&c.number)) || (c.named && k == number)
-        })
-        .map(|(i, _)| i)
-        .collect();
-    (!hits.is_empty()).then_some(hits)
-}
-
-/// What he typed that needs no reading: who the tags at the front name.
-///
-/// Tags: any number of leading ones, `@shop2 @backoffice leave it`, `@shop stop` (the whole group), `@all`.
-/// A control is never text: a radio's button sends it as what it is ([`crate::radio::Act`]).
-///
-/// Nothing else is read here. Who his own words are for ("shop two, leave it", "everyone, stop") is for a
-/// model to say, with the roster in front of it; his words reach the agent as he said them.
-pub fn parse_utterance(text: &str, live: &[Callsign]) -> Parsed {
-    let words: Vec<&str> = text.split_whitespace().collect();
-    let mut to: Vec<usize> = Vec::new();
-    let mut taken = 0;
-    while let Some(hit) = words.get(taken).filter(|w| w.starts_with('@')).and_then(|w| tagged(w, live)) {
-        hit.into_iter().for_each(|i| if !to.contains(&i) { to.push(i) });
-        taken += 1;
-    }
-    Parsed { to, rest: words[taken..].join(" ") }
-}
-
 /// The word a tower numbers an agent with: "one", "two", and figures past twelve.
 pub(crate) fn number_name(n: usize) -> String {
     WORDS.get(n).map(|w| w.to_string()).unwrap_or_else(|| n.to_string())
