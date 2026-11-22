@@ -93,8 +93,8 @@ impl Radio {
         let wake = Arc::new(Wake::default());
         let session = Arc::new(Session::default());
         {
-            let (link, host, stop, busy, calling, senses) = (link.clone(), host.clone(), stop.clone(), busy.clone(), calling.clone(), senses.clone());
-            thread::spawn(move || work(call::Working { jobs: rx, link, host, stop, busy, calling, senses }));
+            let (link, session, host, stop, busy, calling, senses) = (link.clone(), session.clone(), host.clone(), stop.clone(), busy.clone(), calling.clone(), senses.clone());
+            thread::spawn(move || work(call::Working { jobs: rx, link, session, host, stop, busy, calling, senses }));
         }
         {
             let (tx, stop, link, calling, host, wake, senses) = (tx.clone(), stop.clone(), link.clone(), calling.clone(), host.clone(), wake.clone(), senses.clone());
@@ -376,6 +376,14 @@ impl Radio {
         for id in ids {
             self.link.tell("/heard", &Heard { id });
         }
+    }
+
+    /// He wants to say something unprompted (a button, Siri, a shortcut, a line typed in the terminal host):
+    /// open the microphone when free. `re` is the id of the message he means to answer, when he picked one;
+    /// without it the tower works out who it is for. `scope` is the team whose room he is looking at, which
+    /// narrows that; nothing for all agents.
+    pub fn talk(&self, re: Option<String>, scope: Option<String>) {
+        let _ = self.jobs.lock().unwrap().send(Job::Talk(re, scope));
     }
 
     /// Stop for good. A transmission already being spoken finishes.

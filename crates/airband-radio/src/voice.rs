@@ -15,8 +15,13 @@ pub(crate) enum Said {
     Nothing(String),
 }
 
-/// Say `text` with the voice he chose on this device, leaving off as soon as `stop` says so, and saying how it
-/// went: only what made a sound counts as heard.
+/// Say `text` with the voice he chose on this device.
+pub(crate) fn say(host: &dyn RadioHost, mouth: &crate::mouth::Mouth, text: &str) {
+    say_until(host, mouth, text, &|| false);
+}
+
+/// The same, leaving off as soon as `stop` says so, and saying how it went: only what made a sound counts as
+/// heard.
 pub(crate) fn say_until(host: &dyn RadioHost, mouth: &crate::mouth::Mouth, text: &str, stop: &dyn Fn() -> bool) -> Said {
     if text.trim().is_empty() || stop() {
         return Said::Aloud;

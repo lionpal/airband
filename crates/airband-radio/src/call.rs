@@ -2,8 +2,13 @@
 //! a time. The host only speaks and listens; the order of everything is decided here.
 use super::*;
 
+/// How many times in a row the radio reopens the microphone because the tower asked a follow-up.
+pub(crate) const MAX_ROUNDS: usize = 4;
+
 pub(crate) enum Job {
     Transmission(Transmission),
+    /// He wants to speak: the message he is answering, if he picked one, and the room he is looking at.
+    Talk(Option<String>, Option<String>),
     /// He opened the microphone himself: listen until he closes it, and hand over what he said. Nothing is sent
     /// from here; where it goes is the caller's to work out.
     Dictate(Box<dyn FnOnce(Listened) + Send>),
@@ -81,6 +86,7 @@ pub(crate) fn poll(with: Polling) {
 pub(crate) struct Working {
     pub(crate) jobs: Receiver<Job>,
     pub(crate) link: Arc<Link>,
+    pub(crate) session: Arc<Session>,
     pub(crate) host: Arc<dyn RadioHost>,
     pub(crate) stop: Arc<AtomicBool>,
     pub(crate) busy: Arc<AtomicBool>,
@@ -89,7 +95,7 @@ pub(crate) struct Working {
 }
 
 pub(crate) fn work(with: Working) {
-    let Working { jobs, link, host, stop, busy, calling, senses } = with;
+    let Working { jobs, link, session, host, stop, busy, calling, senses } = with;
     let ears = ears::Ears::new(senses.clone());
     {
         // the pass for the listening service is fetched before he first needs it, and again now and then, so
@@ -131,6 +137,10 @@ pub(crate) fn work(with: Working) {
                 // middle of saying something to someone else.
                 link.tell("/ready", &serde_json::json!({}));
             }
+            Job::Talk(re, scope) => {
+                let _here = still_here(&link, &calling);
+                converse(&link, &session, &*host, &ears, &senses.mouth, re, scope)
+            }
             Job::Dictate(done) => {
                 let _here = still_here(&link, &calling);
                 host.status(RadioStatus::Listening);
@@ -169,3 +179,29 @@ fn still_here(link: &Arc<Link>, calling: &Arc<AtomicBool>) -> impl Drop {
     Until(over)
 }
 
+/// Open the microphone; send what he says; speak the tower's answer; listen again if the tower asks.
+pub(crate) fn converse(link: &Arc<Link>, session: &Session, host: &dyn RadioHost, ears: &ears::Ears, mouth: &mouth::Mouth, mut re: Option<String>, scope: Option<String>) {
+    for _ in 0..MAX_ROUNDS {
+        host.status(RadioStatus::Listening);
+        let Listened::Said(text) = ears.hear(host, false) else { return };
+        host.status(RadioStatus::Sending);
+        let reply = match session.say(link, &text, re.take(), scope.clone(), None) {
+            Ok(Some(reply)) => reply,
+            // his computer has it and has not said what came of it yet: that is in the chat when it does
+            Ok(None) => return,
+            Err(e) => {
+                // said aloud, with what went wrong
+                host.status(RadioStatus::Speaking { agent: None, callsign: None });
+                voice::say(host, mouth, &format!("That was not sent: {}.", e.told()));
+                return;
+            }
+        };
+        if !reply.say.is_empty() {
+            host.status(RadioStatus::Speaking { agent: None, callsign: None });
+            voice::say(host, mouth, &reply.say);
+        }
+        if !reply.listen {
+            return;
+        }
+    }
+}
