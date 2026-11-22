@@ -340,14 +340,14 @@ extension Choice {
 struct VoiceGrid: View {
     @EnvironmentObject var model: RadioModel
     let choices: [VoiceChoice]
-    /// The `name` of the one chosen; nothing chosen yet shows the first.
+    /// The `name` of the one chosen, or the row's usual one until he picks; the core says which.
     let chosen: String
     let pick: (VoiceChoice) -> Void
 
     var body: some View {
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
             ForEach(choices, id: \.name) { choice in
-                let on = chosen == choice.name || (chosen.isEmpty && choice.name == choices.first?.name)
+                let on = chosen == choice.name
                 HStack(spacing: 9) {
                     if !choice.preview.isEmpty {
                         Button { model.preview(choice) } label: {

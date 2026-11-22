@@ -117,7 +117,7 @@ mod tests {
     use airband_core::providers::Job;
 
     fn row(engine: &str, with: serde_json::Value) -> Model {
-        Model { kind: "tiny".into(), name: "Tiny".into(), job: Job::Ears, engine: engine.into(), version: "1".into(), base: "https://airband.dev/models/tiny".into(), files: Vec::new(), voices: Vec::new(), credit: String::new(), with: serde_json::from_value(with).unwrap() }
+        Model { kind: "tiny".into(), name: "Tiny".into(), job: Job::Ears, engine: engine.into(), version: "1".into(), base: "https://airband.dev/models/tiny".into(), files: Vec::new(), voices: Vec::new(), usual_voice: String::new(), credit: String::new(), with: serde_json::from_value(with).unwrap() }
     }
 
     #[test]

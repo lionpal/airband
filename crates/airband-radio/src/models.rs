@@ -197,7 +197,7 @@ mod tests {
 
     /// A model like one in the catalogue, with two small files.
     fn small(version: &str) -> Model {
-        Model { kind: "tiny".into(), name: "Tiny".into(), job: Job::Voice, engine: "ptts".into(), version: version.into(), base: "https://airband.dev/models/tiny".into(), files: vec![("a.bin".into(), 3, "0".repeat(64)), ("voices/b.bin".into(), 2, "0".repeat(64))], voices: Vec::new(), credit: String::new(), with: Default::default() }
+        Model { kind: "tiny".into(), name: "Tiny".into(), job: Job::Voice, engine: "ptts".into(), version: version.into(), base: "https://airband.dev/models/tiny".into(), files: vec![("a.bin".into(), 3, "0".repeat(64)), ("voices/b.bin".into(), 2, "0".repeat(64))], voices: Vec::new(), usual_voice: String::new(), credit: String::new(), with: Default::default() }
     }
     fn put(folder: &Path) {
         std::fs::create_dir_all(folder.join("voices")).unwrap();

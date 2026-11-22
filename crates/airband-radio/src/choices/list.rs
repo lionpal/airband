@@ -124,8 +124,8 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
             keys_at: String::new(),
             asks: Vec::new(),
             voices: m.voices.iter().map(|(name, about)| VoiceChoice { name: name.clone(), label: name.clone(), about: about.clone(), preview: format!("{}/previews/{name}.m4a", m.base) }).collect(),
-            // with none named, its usual voice: the first the row lists
-            voice: pick.as_ref().filter(|p| chosen && !p.voice.is_empty()).map(|p| p.voice.clone()).unwrap_or_else(|| m.voices.first().map(|v| v.0.clone()).unwrap_or_default()),
+            // with none named, the voice the row names as its usual one
+            voice: pick.as_ref().filter(|p| chosen && !p.voice.is_empty()).map(|p| p.voice.clone()).unwrap_or_else(|| m.usual_voice.clone()),
             credit: m.credit.clone(),
             note: if chosen { facts.note.clone() } else { String::new() },
         });
@@ -135,7 +135,8 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
         let has_key = (facts.has_key)(&s.kind);
         let state = working(&service_id(&s.kind, &s.offer)).or(failed(chosen)).unwrap_or(if s.key && !has_key { ChoiceState::NeedsKey } else { ChoiceState::Ready });
         let voice = pick.as_ref().filter(|_| chosen).and_then(|p| p.set.get("voice").cloned()).unwrap_or_default();
-        let usual = s.voices.first().map(|v| v.name.clone()).unwrap_or_default();
+        // with none named, the usual answer the row gives for its voice
+        let usual = s.asks.iter().find(|a| a.field == "voice").map(|a| a.usual.clone()).unwrap_or_default();
         out.push(of_service(s, chosen, has_key, if voice.is_empty() { usual } else { voice }, state));
     }
     out

@@ -124,6 +124,9 @@ pub struct PhoneModel {
     /// a few words on how it sounds.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub voices: Vec<(String, String)>,
+    /// For a voice model: the name of the voice used until he picks one. One of `voices`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub usual_voice: String,
     /// Who made it and under what licence, for the screen that offers it.
     #[serde(default)]
     pub credit: String,
@@ -209,6 +212,19 @@ pub fn built_in(expires: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_voice_row_names_a_usual_voice_it_has() {
+        for m in built().models.iter().filter(|m| m.job == Job::Voice) {
+            assert!(m.voices.iter().any(|(name, _)| *name == m.usual_voice), "{} names no usual voice of its own", m.kind);
+        }
+        for p in &built().providers {
+            for o in p.offers.iter().filter(|o| !o.voices.is_empty()) {
+                let usual = o.asks.iter().find(|a| a.field == "voice").map(|a| a.usual.clone()).unwrap_or_default();
+                assert!(o.voices.iter().any(|v| v.id == usual), "{} {} names no usual voice of its own", p.id, o.id);
+            }
+        }
+    }
 
     /// The built-in document with a change made to it, weighed as a copy offered to this build.
     fn offered(edit: &dyn Fn(&mut Value)) -> Result<(Option<Catalog>, Taken), String> {
