@@ -1,5 +1,6 @@
 //! The commands that change how this computer's tower is set up, and say how it is: `relay`, `model`, `lan`,
 //! `pair`, `unpair`, `quick`, `status`.
+#![expect(clippy::disallowed_methods, reason = "lists, opens or removes files, or closes a channel, directly: to move to airband_io (audit 6)")]
 use crate::config::{self, Config};
 use serde::Serialize;
 use airband_core::pairing::Pairing;

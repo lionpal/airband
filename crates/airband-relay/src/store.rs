@@ -8,9 +8,11 @@
 //! DynamoDB is chosen by setting AIRBAND_RELAY_DYNAMO to a prefix. Three tables, which must already exist
 //! (infra/cdk.mjs makes them; the relay's role needs no right to make or change a table):
 //!
-//!   <prefix>-channels   key `channel`. One item per channel: pull_hash, radio_hash.
+//!   <prefix>-channels   key `channel`. One item per channel: pull_hash, radio_hash; a closed one is `closed` and
+//!                       nothing else, so its name is never opened again.
 //!   <prefix>-held       key `channel` + `k`; time to live on `expires`. Per channel:
-//!                         k = "n"              how many are kept (`held`), changed only inside a transaction
+//!                         k = "n"              how many are kept (`held`), changed only inside a transaction;
+//!                                              its `expires` is put forward by each one kept
 //!                         k = "m#<ms>#<id>"    one per kept message, small, sorted as they arrived
 //!                         k = "i#<id>"         the sealed message itself, and `at`, the key of its place in line
 //!   <prefix>-waitlist   key `email`.
@@ -59,6 +61,35 @@ pub(crate) struct Saved {
 /// How long a kept message waits for its tower, in seconds, in every store.
 const HELD_FOR_SECS: u64 = airband_core::relay::HELD_FOR_MS / 1000;
 
+/// When a message kept at `at` (seconds since 1970) is past its time.
+fn expires(at: u64) -> u64 {
+    at + HELD_FOR_SECS
+}
+/// Is a message that expires at `expires` still within its time at `now`: the one rule every store keeps.
+fn in_time(expires: u64, now: u64) -> bool {
+    expires > now
+}
+
+/// What a store has on record for a channel a tower asked to open.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Added {
+    /// Open, with what is on record: the tower's own, or the one that opened it first.
+    Open(Saved),
+    /// Its tower closed it. A channel's name comes from its pairing, so only a new pairing opens one again.
+    Closed,
+}
+
+/// What came of keeping a message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Held {
+    /// Kept, now or before.
+    Kept,
+    /// The channel already has as many as it may.
+    Full,
+    /// The channel was closed: nothing is kept for it.
+    Closed,
+}
+
 /// Every job the relay asks of the place it keeps its records. Each store does all of them its own way, in its
 /// own file; nothing outside a store knows which one is in use.
 #[async_trait::async_trait]
@@ -69,17 +100,19 @@ pub(crate) trait ChannelStore: Send + Sync {
     async fn load(&self) -> Result<HashMap<String, Saved>, String>;
     /// Put an address on the waiting list. Returns only once it is kept; an address already there is left as it is.
     async fn join_waitlist(&self, email: &str) -> Result<(), String>;
-    /// Forget a channel its tower has closed, and everything kept for it.
+    /// Close a channel: it and everything kept for it are forgotten, and it is remembered as closed, so a tower
+    /// still running with that pairing cannot open it again.
     async fn remove(&self, channel: &str) -> Result<(), String>;
-    /// Remember a new channel, with its radio's token hash. Returns only once it is durable. A channel already
-    /// there is left as it is.
-    async fn add(&self, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<(), String>;
+    /// Remember a new channel, with its radio's token hash. Returns only once it is durable, with what is on
+    /// record: a channel already there is left as it is and its record given back, so two towers opening one
+    /// name at once (or on two relays) agree on whose it is.
+    async fn add(&self, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<Added, String>;
 
     // Sealed requests kept for a tower that is away, to hand over in the order they came once it is back. The
     // relay cannot read them. Each has an id of the radio's choosing, so one sent twice is kept once.
 
-    /// Keep one. False when the channel already has as many as it may; true when it is kept, now or before.
-    async fn hold(&self, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<bool, String>;
+    /// Keep one. An id kept before and past its time is kept again, as new.
+    async fn hold(&self, channel: &str, id: &str, sealed: &[u8], most: usize) -> Result<Held, String>;
     /// The oldest one kept for a channel, if any.
     async fn held_next(&self, channel: &str) -> Result<Option<(String, Vec<u8>)>, String>;
     /// The tower has taken one: it is kept no longer.
@@ -124,23 +157,26 @@ mod tests {
         let channel = airband_core::encode::random_hex(16);
         let c = channel.as_str();
         // each id kept once, no more than the channel may have, handed over oldest first
-        assert_eq!(store.hold(c, "aaaaaaaa", b"one", 2).await, Ok(true));
-        assert_eq!(store.hold(c, "aaaaaaaa", b"one", 2).await, Ok(true));
-        assert_eq!(store.hold(c, "bbbbbbbb", b"two", 2).await, Ok(true));
-        assert_eq!(store.hold(c, "cccccccc", b"three", 2).await, Ok(false));
+        assert_eq!(store.hold(c, "aaaaaaaa", b"one", 2).await, Ok(Held::Kept));
+        assert_eq!(store.hold(c, "aaaaaaaa", b"one", 2).await, Ok(Held::Kept));
+        assert_eq!(store.hold(c, "bbbbbbbb", b"two", 2).await, Ok(Held::Kept));
+        assert_eq!(store.hold(c, "cccccccc", b"three", 2).await, Ok(Held::Full));
         assert_eq!(store.held_next(c).await, Ok(Some(("aaaaaaaa".into(), b"one".to_vec()))));
         store.held_done(c, "aaaaaaaa").await.unwrap();
         store.held_done(c, "aaaaaaaa").await.unwrap(); // twice is once
         assert_eq!(store.held_next(c).await, Ok(Some(("bbbbbbbb".into(), b"two".to_vec()))));
-        // a channel's record: made once, read back
-        store.add(c, "pull", "radio").await.unwrap();
-        store.add(c, "someone else's", "x").await.unwrap();
-        assert_eq!(store.load().await.unwrap()[c], Saved { pull_hash: "pull".into(), radio_hash: "radio".into() });
-        // closed: the record and everything kept for it are gone, and a channel of that name starts empty
+        // a channel's record: made once, read back, and what is on record is what a second tower is told
+        let first = Saved { pull_hash: "pull".into(), radio_hash: "radio".into() };
+        assert_eq!(store.add(c, "pull", "radio").await, Ok(Added::Open(first.clone())));
+        assert_eq!(store.add(c, "someone else's", "x").await, Ok(Added::Open(first.clone())));
+        assert_eq!(store.load().await.unwrap()[c], first);
+        // closed: the record and everything kept for it are gone, and the name is never opened or kept for again
         store.remove(c).await.unwrap();
         assert!(!store.load().await.unwrap().contains_key(c));
         assert_eq!(store.held_next(c).await, Ok(None));
-        assert_eq!(store.hold(c, "dddddddd", b"four", 1).await, Ok(true));
+        assert_eq!(store.add(c, "pull", "radio").await, Ok(Added::Closed));
+        assert_eq!(store.hold(c, "dddddddd", b"four", 1).await, Ok(Held::Closed));
+        assert!(!store.load().await.unwrap().contains_key(c));
         store.remove(c).await.unwrap();
         assert_eq!(store.held_next(c).await, Ok(None));
     }
@@ -176,12 +212,12 @@ mod tests {
     async fn a_list_of_kept_messages_that_cannot_be_read_is_set_aside_and_the_channel_goes_on() {
         let dir = std::env::temp_dir().join(format!("airband-relay-badlist-{}", airband_core::encode::random_hex(6)));
         let store = folder(dir.clone());
-        assert_eq!(store.hold("c", "aaaaaaaa", b"one", 5).await, Ok(true));
+        assert_eq!(store.hold("c", "aaaaaaaa", b"one", 5).await, Ok(Held::Kept));
         let held = folder::held_dir(&dir, "c");
         std::fs::write(held.join("list.json"), b"{not json").unwrap();
         // not refused for ever: what was kept cannot be had, so the channel starts again with nothing kept
         assert_eq!(store.held_next("c").await, Ok(None));
-        assert_eq!(store.hold("c", "bbbbbbbb", b"two", 5).await, Ok(true));
+        assert_eq!(store.hold("c", "bbbbbbbb", b"two", 5).await, Ok(Held::Kept));
         assert_eq!(store.held_next("c").await, Ok(Some(("bbbbbbbb".into(), b"two".to_vec()))));
         // and what could not be read is still there, beside it
         assert!(std::fs::read_dir(&held).unwrap().flatten().any(|f| f.file_name().to_string_lossy().starts_with("list.json.unreadable")));
@@ -192,17 +228,17 @@ mod tests {
     async fn a_folder_keeps_each_id_once_in_order_by_its_list_and_no_more_than_a_channel_may_have() {
         let dir = std::env::temp_dir().join(format!("airband-relay-held-{}", airband_core::encode::random_hex(6)));
         let store = folder(dir.clone());
-        assert_eq!(store.hold("c", "a-1", b"one", 2).await, Ok(true));
+        assert_eq!(store.hold("c", "a-1", b"one", 2).await, Ok(Held::Kept));
         // the same id again is kept once; an id with a dash in it is still found by its record
-        assert_eq!(store.hold("c", "a-1", b"one", 2).await, Ok(true));
-        assert_eq!(store.hold("c", "b", b"two", 2).await, Ok(true));
-        assert_eq!(store.hold("c", "c", b"three", 2).await, Ok(false));
+        assert_eq!(store.hold("c", "a-1", b"one", 2).await, Ok(Held::Kept));
+        assert_eq!(store.hold("c", "b", b"two", 2).await, Ok(Held::Kept));
+        assert_eq!(store.hold("c", "c", b"three", 2).await, Ok(Held::Full));
         // a stray file in the folder (a write that never finished) is not something kept
         std::fs::write(folder::held_dir(&dir, "c").join(".tmp-half"), b"x").unwrap();
         assert_eq!(store.held_next("c").await, Ok(Some(("a-1".into(), b"one".to_vec()))));
         store.held_done("c", "a-1").await.unwrap();
         assert_eq!(store.held_next("c").await, Ok(Some(("b".into(), b"two".to_vec()))));
-        assert_eq!(store.hold("c", "c", b"three", 2).await, Ok(true));
+        assert_eq!(store.hold("c", "c", b"three", 2).await, Ok(Held::Kept));
         store.held_done("c", "b").await.unwrap();
         store.held_done("c", "c").await.unwrap();
         assert_eq!(store.held_next("c").await, Ok(None));
@@ -213,8 +249,8 @@ mod tests {
     async fn a_lost_body_or_an_old_message_never_stops_a_channel_and_an_unreadable_waitlist_is_kept() {
         let dir = std::env::temp_dir().join(format!("airband-relay-lost-{}", airband_core::encode::random_hex(6)));
         let store = folder(dir.clone());
-        assert_eq!(store.hold("c", "a", b"one", 5).await, Ok(true));
-        assert_eq!(store.hold("c", "b", b"two", 5).await, Ok(true));
+        assert_eq!(store.hold("c", "a", b"one", 5).await, Ok(Held::Kept));
+        assert_eq!(store.hold("c", "b", b"two", 5).await, Ok(Held::Kept));
         // the first one's body is gone: the next pull goes on to the second, and the list forgets the first
         let held = folder::held_dir(&dir, "c");
         let first = folder::held_list(&held).unwrap().items[0].seq;
@@ -226,7 +262,7 @@ mod tests {
         list.items[0].at = 1;
         folder::held_keep(&held, &list).unwrap();
         assert_eq!(store.held_next("c").await, Ok(None));
-        assert_eq!(store.hold("c", "d", b"four", 1).await, Ok(true));
+        assert_eq!(store.hold("c", "d", b"four", 1).await, Ok(Held::Kept));
         // the waiting list: one that cannot be read is an error and stays as it was
         store.join_waitlist("a@example.com").await.unwrap();
         let waitlist = dir.join("waitlist.txt");
@@ -243,8 +279,8 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join(format!("airband-relay-tidy-{}", airband_core::encode::random_hex(6)));
         let store = folder(dir.clone());
-        assert_eq!(store.hold("c", "aaaaaaaa01", b"one", 10).await, Ok(true));
-        assert_eq!(store.hold("c", "aaaaaaaa02", b"two", 10).await, Ok(true));
+        assert_eq!(store.hold("c", "aaaaaaaa01", b"one", 10).await, Ok(Held::Kept));
+        assert_eq!(store.hold("c", "aaaaaaaa02", b"two", 10).await, Ok(Held::Kept));
         let held = folder::held_dir(&dir, "c");
         let first = folder::held_list(&held).unwrap().items[0].seq;
         std::fs::remove_file(held.join(first.to_string())).unwrap();
@@ -252,6 +288,43 @@ mod tests {
         let got = store.held_next("c").await;
         std::fs::set_permissions(&held, std::fs::Permissions::from_mode(0o700)).unwrap();
         assert_eq!(got, Ok(Some(("aaaaaaaa02".to_string(), b"two".to_vec()))));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn an_id_sent_again_after_its_time_is_kept_again_and_one_bad_channel_does_not_stop_the_clearing() {
+        let dir = std::env::temp_dir().join(format!("airband-relay-again-{}", airband_core::encode::random_hex(6)));
+        let store = folder(dir.clone());
+        assert_eq!(store.hold("c", "aaaaaaaa", b"old", 5).await, Ok(Held::Kept));
+        let held = folder::held_dir(&dir, "c");
+        let mut list = folder::held_list(&held).unwrap();
+        list.items[0].at = 1;
+        folder::held_keep(&held, &list).unwrap();
+        // past its time: sent again, it is kept as new and handed over
+        assert_eq!(store.hold("c", "aaaaaaaa", b"new", 5).await, Ok(Held::Kept));
+        assert_eq!(store.held_next("c").await, Ok(Some(("aaaaaaaa".into(), b"new".to_vec()))));
+        assert_eq!(folder::held_list(&held).unwrap().items.len(), 1);
+        // a channel whose list cannot be read is counted, and the next one is still cleared
+        assert_eq!(store.hold("d", "bbbbbbbb", b"x", 5).await, Ok(Held::Kept));
+        let other = folder::held_dir(&dir, "d");
+        let mut list = folder::held_list(&other).unwrap();
+        list.items[0].at = 1;
+        folder::held_keep(&other, &list).unwrap();
+        std::fs::create_dir_all(folder::held_dir(&dir, "b").join("list.json")).unwrap(); // a folder where a list goes
+        assert!(store.held_purge().await.is_err());
+        assert!(folder::held_list(&other).unwrap().items.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn the_bodies_a_set_aside_list_named_go_with_it() {
+        let dir = std::env::temp_dir().join(format!("airband-relay-aside-{}", airband_core::encode::random_hex(6)));
+        let store = folder(dir.clone());
+        assert_eq!(store.hold("c", "aaaaaaaa", b"one", 5).await, Ok(Held::Kept));
+        let held = folder::held_dir(&dir, "c");
+        std::fs::write(held.join("list.json"), "{ half").unwrap();
+        assert!(folder::held_list(&held).unwrap().items.is_empty());
+        assert!(!held.join("1").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -264,7 +337,7 @@ mod tests {
             let store = store.clone();
             std::thread::spawn(move || futures_lite_block(store.add(&format!("c{i}"), "p", "r")))
         }).collect();
-        opens.into_iter().for_each(|t| t.join().unwrap().unwrap());
+        opens.into_iter().for_each(|t| { t.join().unwrap().unwrap(); });
         assert_eq!(store.load().await.map(|c| c.len()), Ok(16));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -310,23 +383,23 @@ mod tests {
         // the same id five times at once is kept once
         let once = || store.hold(channel, "aaaaaaaa", b"first", 10);
         let all = tokio::join!(once(), once(), once(), once(), once());
-        assert_eq!(all, (Ok(true), Ok(true), Ok(true), Ok(true), Ok(true)));
+        assert_eq!(all, (Ok(Held::Kept), Ok(Held::Kept), Ok(Held::Kept), Ok(Held::Kept), Ok(Held::Kept)));
         assert_eq!((d.line(channel).await.unwrap().len(), count().await), (1, 1));
         // no more than the channel may have, and a refusal changes nothing
-        assert_eq!(store.hold(channel, "bbbbbbbb", b"second", 2).await, Ok(true));
-        assert_eq!(store.hold(channel, "cccccccc", b"third", 2).await, Ok(false));
-        assert_eq!(store.hold(channel, "aaaaaaaa", b"first", 2).await, Ok(true)); // one already kept is still kept
+        assert_eq!(store.hold(channel, "bbbbbbbb", b"second", 2).await, Ok(Held::Kept));
+        assert_eq!(store.hold(channel, "cccccccc", b"third", 2).await, Ok(Held::Full));
+        assert_eq!(store.hold(channel, "aaaaaaaa", b"first", 2).await, Ok(Held::Kept)); // one already kept is still kept
         assert_eq!((d.line(channel).await.unwrap().len(), count().await), (2, 2));
         // handed over oldest first; taking one makes room
         assert_eq!(store.held_next(channel).await, Ok(Some(("aaaaaaaa".into(), b"first".to_vec()))));
         store.held_done(channel, "aaaaaaaa").await.unwrap();
         store.held_done(channel, "aaaaaaaa").await.unwrap(); // twice is once
         assert_eq!(count().await, 1);
-        assert_eq!(store.hold(channel, "cccccccc", b"third", 2).await, Ok(true));
+        assert_eq!(store.hold(channel, "cccccccc", b"third", 2).await, Ok(Held::Kept));
         // a count that ran high (DynamoDB removed old ones by itself) is counted again when the channel looks full
         set("n".into(), "held", 9).await;
-        assert_eq!(store.hold(channel, "dddddddd", b"fourth", 3).await, Ok(true));
-        assert_eq!(store.hold(channel, "eeeeeeee", b"fifth", 3).await, Ok(false));
+        assert_eq!(store.hold(channel, "dddddddd", b"fourth", 3).await, Ok(Held::Kept));
+        assert_eq!(store.hold(channel, "eeeeeeee", b"fifth", 3).await, Ok(Held::Full));
         assert_eq!(count().await, 3);
         // one past its time is passed over, though DynamoDB has not removed it yet
         set(d.line(channel).await.unwrap()[0].0.clone(), "expires", 1).await;

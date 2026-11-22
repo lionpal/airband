@@ -5,6 +5,7 @@
 //! frames row names, when that program is here.
 //!
 //! A radio can write only here, only under names the tower makes safe, and only so much.
+#![expect(clippy::disallowed_methods, reason = "lists, opens or removes files, or closes a channel, directly: to move to airband_io (audit 6)")]
 use super::*;
 use airband_core::radio::AttachmentPart;
 use std::io::{Seek, SeekFrom, Write};

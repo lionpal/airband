@@ -125,6 +125,7 @@ dependencies = [
  "airband-io",
  "async-trait",
  "axum",
+ "http-body",
  "reqwest",
  "ring",
  "rustls",

@@ -14,6 +14,7 @@
 //!
 //! Only where Claude Code keeps its login in the keychain; elsewhere it keeps it differently, and that is not
 //! written yet.
+#![expect(clippy::disallowed_methods, reason = "lists, opens or removes files, or closes a channel, directly: to move to airband_io (audit 6)")]
 mod live;
 mod saved;
 mod service;

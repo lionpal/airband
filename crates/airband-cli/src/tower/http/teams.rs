@@ -1,4 +1,5 @@
 //! Teams and folders: moving an agent, naming a team, walking the computer's folders, starting a team.
+#![expect(clippy::disallowed_methods, reason = "lists, opens or removes files, or closes a channel, directly: to move to airband_io (audit 6)")]
 use super::*;
 
 /// He moved an agent to another team.

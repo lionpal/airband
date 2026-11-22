@@ -1,5 +1,6 @@
 //! The sessions Claude Code keeps a record of: which are open now, where their transcripts are, and the folders
 //! it has worked in.
+#![expect(clippy::disallowed_methods, reason = "lists, opens or removes files, or closes a channel, directly: to move to airband_io (audit 6)")]
 use super::*;
 
 /// Is the process a session's record names still that session? Its number alone could have been given to
