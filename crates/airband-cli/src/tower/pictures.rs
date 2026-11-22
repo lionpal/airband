@@ -73,8 +73,13 @@ pub(super) fn in_markdown(text: &str, cwd: Option<&str>) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     for named in airband_core::prose::images(text) {
         // only a file that is here is one: a picture on the web is not looked for
+        // a path from its own folder needs that folder: with none known, only a whole path is one
         let path = PathBuf::from(&named);
-        let path = if path.is_absolute() { path } else { Path::new(cwd.unwrap_or(".")).join(path) };
+        let path = match cwd {
+            _ if path.is_absolute() => path,
+            Some(cwd) => Path::new(cwd).join(path),
+            None => continue,
+        };
         if path.is_file() && !out.contains(&path) {
             out.push(path);
         }
@@ -143,6 +148,9 @@ mod tests {
         assert_eq!(in_markdown(&format!("![]({abs}) and again ![]({abs})"), Some(&cwd)), vec![dir.join("chart.png")]);
         // words that name a file, a file that is not there, and a picture on the web
         assert!(in_markdown(&format!("See `chart.png`, also ({abs}). ![gone](missing.png) ![web](https://example.com/a.png)"), Some(&cwd)).is_empty());
+        // with no folder known for the agent, a path from its folder is not looked for anywhere else; a whole one is
+        assert!(in_markdown("![the chart](chart.png)", None).is_empty());
+        assert_eq!(in_markdown(&format!("![]({abs})"), None), vec![dir.join("chart.png")]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
     #[test]
