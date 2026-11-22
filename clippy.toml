@@ -1,0 +1,15 @@
+# Files and the network are reached through airband-io, so a damaged file is handled one way and core never
+# touches either. A module that must still reach them directly says so at its top with the reason.
+disallowed-methods = [
+  { path = "std::fs::write", reason = "write through airband_io::files (atomic, kept policy)" },
+  { path = "std::fs::read", reason = "read through airband_io" },
+  { path = "std::fs::read_to_string", reason = "read through airband_io" },
+  { path = "std::fs::rename", reason = "move files through airband_io" },
+  { path = "std::fs::remove_file", reason = "remove files through airband_io" },
+  { path = "std::fs::create_dir_all", reason = "make folders through airband_io" },
+  { path = "ureq::Agent::get", reason = "reach the network through airband_io::http" },
+  { path = "ureq::Agent::post", reason = "reach the network through airband_io::http" },
+]
+disallowed-macros = [
+  { path = "serde_json::json", reason = "wire and file bodies are typed; build them from their types" },
+]

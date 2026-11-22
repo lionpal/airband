@@ -1,5 +1,6 @@
 //! The live login: the keychain item Claude Code keeps it in (JSON, with the claude.ai login under
 //! the key its row names beside the MCP logins), the account record in its account file, and which account it is.
+#![allow(clippy::disallowed_methods, reason = "reads and writes the tool's own account file")]
 use super::{login_key, saved, service, tool, Here, Res};
 use serde_json::{Map, Value};
 use std::path::Path;

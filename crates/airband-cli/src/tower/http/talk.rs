@@ -149,7 +149,7 @@ pub(super) async fn utterance(State(app): State<Arc<App>>, Extension(RadioId(rad
         tx
     }).clone();
     let app_ = app.clone();
-    let _ = line.send(Box::pin(async move {
+    let queued = line.send(Box::pin(async move {
         let app = app_;
         let began = Instant::now();
         // files with no words are still something sent
@@ -171,5 +171,9 @@ pub(super) async fn utterance(State(app): State<Arc<App>>, Extension(RadioId(rad
         inner.answering.remove(&u.id);
         inner.settle(&radio, &u.id, Outcome::Answered { reply });
     }));
+    // a line whose worker has gone takes nothing: he is told to send it again, never told it was taken
+    if queued.is_err() {
+        return Err(No(Refusal::NotNow { reason: "This computer could not take that just now. It is sent again in a moment.".into() }));
+    }
     Ok(Json(Outcome::Taken))
 }

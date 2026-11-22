@@ -8,6 +8,7 @@
 //! Each model is a row of the catalogue (`catalog/models/`, see `airband_core::catalog`): what job it does,
 //! what to show, what to fetch, where it goes and what its engine is told about it. Where he chooses
 //! (`choices.rs`) lists them beside the services; a host names none itself.
+#![allow(clippy::disallowed_methods, reason = "downloads and keeps on-device models")]
 use super::*;
 use crate::engines::HostDevice;
 use std::path::{Path, PathBuf};
@@ -179,7 +180,7 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model) -> Result<(), RadioError
         // a sign-in page, a connection that closed early, a file changed at the source: none of them is the model
         let got: String = airband_core::encode::hex(&sha2::Digest::finalize(hash));
         if got != *sha {
-            let _ = std::fs::remove_file(&part);
+            std::fs::remove_file(&part).ok();
             GOT.store(before, Ordering::SeqCst);
             return Err(told("What came down was not the model. Check the connection and try again."));
         }
@@ -189,7 +190,7 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model) -> Result<(), RadioError
     // until this moment.
     std::fs::write(folder.join(WHOLE), "").map_err(|_| told("Could not write the model to this device."))?;
     for other in std::fs::read_dir(home(&dir, m)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| *p != folder) {
-        let _ = if other.is_dir() { std::fs::remove_dir_all(&other) } else { std::fs::remove_file(&other) };
+        if other.is_dir() { std::fs::remove_dir_all(&other) } else { std::fs::remove_file(&other) }.ok();
     }
     Ok(())
 }

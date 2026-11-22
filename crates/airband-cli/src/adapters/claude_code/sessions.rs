@@ -1,5 +1,6 @@
 //! The sessions Claude Code keeps a record of: which are open now, where their transcripts are, and the folders
 //! it has worked in.
+#![allow(clippy::disallowed_methods, reason = "reads the tool's own session files")]
 use super::*;
 
 /// Is the process a session's record names still that session? Its number alone could have been given to

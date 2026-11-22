@@ -1,6 +1,7 @@
 //! How the command line and the adapters reach the tower on this machine ([`TowerHere`]): posting an event (kept
 //! in a folder while the tower is away, and handed over when it is back), and asking him for leave on a tool's
 //! behalf and waiting for his answer.
+#![allow(clippy::disallowed_methods, reason = "the spool of reports kept while the tower is away, and each report's own request")]
 use super::*;
 
 /// The tower on this computer, asked with its own token. Every status comes back as an answer, for the caller
@@ -127,7 +128,7 @@ pub(crate) fn ask_him_while(request: &PermissionAsk, still: Option<&dyn Fn() -> 
     }
     // he did not answer, or it was answered elsewhere: take the question back, so the feed does not offer an
     // answer that no longer does anything
-    let _ = here.delete(&format!("{BASE}/{}", asked.id)).call();
+    here.delete(&format!("{BASE}/{}", asked.id)).call().ok();
     Answer::Unanswered
 }
 
@@ -208,7 +209,7 @@ fn drain(dir: &std::path::Path, take: impl Fn(AgentEvent) -> Result<(), String>)
             && let Err(why) = take(event) {
                 eprintln!("airband: a kept report was refused: {why}");
             }
-        let _ = std::fs::remove_file(&path);
+        std::fs::remove_file(&path).ok();
     }
 }
 

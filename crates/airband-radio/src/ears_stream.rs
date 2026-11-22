@@ -21,9 +21,9 @@ pub(crate) type Socket = WebSocket<MaybeTlsStream<TcpStream>>;
 pub(crate) fn dial(host: &str, req: tungstenite::handshake::client::Request) -> Result<Socket, ()> {
     let address = (host, 443).to_socket_addrs().map_err(|_| ())?.next().ok_or(())?;
     let tcp = TcpStream::connect_timeout(&address, Duration::from_secs(6)).map_err(|_| ())?;
-    let _ = tcp.set_nodelay(true);
-    let _ = tcp.set_read_timeout(Some(Duration::from_secs(6)));
-    let _ = tcp.set_write_timeout(Some(Duration::from_secs(6)));
+    tcp.set_nodelay(true).ok();
+    tcp.set_read_timeout(Some(Duration::from_secs(6))).ok();
+    tcp.set_write_timeout(Some(Duration::from_secs(6))).ok();
     // the same TLS as every other request this library makes, with the same roots
     let roots = rustls::RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
     let tls = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider())).with_safe_default_protocol_versions().map_err(|_| ())?.with_root_certificates(roots).with_no_client_auth();
@@ -34,7 +34,7 @@ pub(crate) fn dial(host: &str, req: tungstenite::handshake::client::Request) -> 
 /// From here on a read waits only a moment, so audio keeps going out while answers are looked for.
 pub(crate) fn read_briefly(socket: &Socket) {
     if let MaybeTlsStream::Rustls(stream) = socket.get_ref() {
-        let _ = stream.get_ref().set_read_timeout(Some(Duration::from_millis(12)));
+        stream.get_ref().set_read_timeout(Some(Duration::from_millis(12))).ok();
     }
 }
 
@@ -143,7 +143,7 @@ fn connect(wire: &'static Wire, pass: &Arc<dyn Fn() -> Option<Pass> + Send + Syn
     let (pass, request) = (pass.clone(), request.to_string());
     thread::spawn(move || {
         // with no pass to be had there is nothing to connect with
-        let _ = tx.send(pass().ok_or(()).and_then(|grant| (wire.connect)(&grant, &request)));
+        tx.send(pass().ok_or(()).and_then(|grant| (wire.connect)(&grant, &request))).ok();
     });
     rx
 }
@@ -256,7 +256,7 @@ impl Stream<'_> {
                 self.tell(&now);
             }
         }
-        let _ = s.close(None);
+        s.close(None).ok();
         Ok(())
     }
 }

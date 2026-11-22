@@ -1,4 +1,5 @@
 //! `airband install` / `uninstall`: putting the tower in place and starting it at login.
+#![allow(clippy::disallowed_methods, reason = "installing writes the program and its service file")]
 use crate::config;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -84,7 +85,7 @@ fn start_at_login(exe: &std::path::Path) -> Result<(), String> {
     fs::create_dir_all(plist_path().parent().unwrap()).map_err(|e| e.to_string())?;
     fs::write(plist_path(), plist).map_err(|e| e.to_string())?;
     let uid = unsafe { libc::getuid() };
-    let _ = Command::new("launchctl").args(["bootout", &format!("gui/{uid}/{LABEL}")]).output();
+    Command::new("launchctl").args(["bootout", &format!("gui/{uid}/{LABEL}")]).output().ok();
     // stopping the old one takes a moment, and starting before it has gone fails ("Input/output error"): this left
     // the tower down for some minutes once. Try again until it takes.
     let start = || Command::new("launchctl").args(["bootstrap", &format!("gui/{uid}"), &plist_path().display().to_string()]).output().map_err(|e| e.to_string());
@@ -114,8 +115,8 @@ pub(crate) fn uninstall() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let uid = unsafe { libc::getuid() };
-        let _ = std::process::Command::new("launchctl").args(["bootout", &format!("gui/{uid}/{LABEL}")]).output();
-        let _ = fs::remove_file(plist_path());
+        std::process::Command::new("launchctl").args(["bootout", &format!("gui/{uid}/{LABEL}")]).output().ok();
+        fs::remove_file(plist_path()).ok();
     }
     println!("airband is stopped and will not start at login. Your coding tools no longer report to it.");
     Ok(())

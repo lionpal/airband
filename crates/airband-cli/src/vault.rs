@@ -19,6 +19,7 @@
 //! the keychain is not (a shell over SSH cannot use the login keychain), or agents started there would go
 //! unseen. A command run where the keys cannot be read still works for what needs no key; the tower itself
 //! will not start without them.
+#![allow(clippy::disallowed_methods, reason = "the vault's own files beside the keychain")]
 use serde_json::{Map, Value};
 
 /// What a secret's place in the file holds while the secret is in the keychain.
@@ -128,8 +129,10 @@ mod mac {
 
     /// Take airband's item out of the keychain.
     pub(crate) fn forget() {
-        if at_home() {
-            let _ = delete_generic_password(SERVICE, ACCOUNT);
+        if at_home()
+            && let Err(e) = delete_generic_password(SERVICE, ACCOUNT)
+        {
+            eprintln!("airband: its keys could not be taken out of the keychain: {e}");
         }
     }
 
@@ -249,8 +252,8 @@ mod file {
     }
 
     pub(crate) fn forget() {
-        let _ = std::fs::remove_file(sealed_at());
-        let _ = std::fs::remove_file(salt_at());
+        std::fs::remove_file(sealed_at()).ok();
+        std::fs::remove_file(salt_at()).ok();
     }
     #[cfg(test)]
     pub(crate) mod tests_folder {

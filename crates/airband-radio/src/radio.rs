@@ -25,7 +25,7 @@ impl Wake {
     /// meanwhile.
     pub(crate) fn wait_since(&self, was: u64, at_most: Duration) {
         let turn = self.turn.lock().unwrap();
-        let _ = self.rung.wait_timeout_while(turn, at_most, |now| *now == was);
+        self.rung.wait_timeout_while(turn, at_most, |now| *now == was).ok();
     }
 }
 
@@ -199,7 +199,7 @@ impl Radio {
     /// He opened the microphone himself: listen until the host closes it and hand over what he said. Nothing
     /// is sent; the caller decides where it goes.
     pub(crate) fn dictate(&self, done: Box<dyn FnOnce(Listened) + Send>) {
-        let _ = self.jobs.lock().unwrap().send(Job::Dictate(done));
+        self.jobs.lock().unwrap().send(Job::Dictate(done)).ok();
     }
 
     /// Put something in the outbox to go to the tower. What it takes with it is said by `carry`: his own next
@@ -407,7 +407,7 @@ impl Radio {
     /// without it the tower works out who it is for. `scope` is the team whose room he is looking at, which
     /// narrows that; nothing for all agents.
     pub fn talk(&self, re: Option<String>, scope: Option<String>) {
-        let _ = self.jobs.lock().unwrap().send(Job::Talk(re, scope));
+        self.jobs.lock().unwrap().send(Job::Talk(re, scope)).ok();
     }
 
     /// Stop for good. A transmission already being spoken finishes.
@@ -524,7 +524,7 @@ impl Radio {
                         let Some(from) = starts.get(next.fetch_add(1, Ordering::SeqCst)).copied() else { break };
                         match part_at(from).and_then(|part| send(&part).map(|_| part.data.len() as u64 * 3 / 4)) {
                             Ok(bytes) => {
-                                let _ = tx.send(bytes);
+                                tx.send(bytes).ok();
                             }
                             Err(e) => *failed.lock().unwrap() = Some(e),
                         }

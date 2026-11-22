@@ -4,6 +4,7 @@
 //! Each way of sending a recording is an interface: a function here and a line of [`UPLOADS`]. A service that
 //! speaks OpenAI's transcription interface (`POST {url}/audio/transcriptions`) is a row of the catalogue and
 //! no code. There is one such interface today.
+#![allow(clippy::disallowed_methods, reason = "sends audio to a listening service")]
 use airband_core::providers::{By, Interface, Job, Offer, Provider, Use};
 use serde_json::Value;
 use std::time::Duration;

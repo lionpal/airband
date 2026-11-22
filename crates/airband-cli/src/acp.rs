@@ -16,6 +16,7 @@
 //! (`hold::State::Ready`), and the model and effort he asked for are set from them before the agent is said
 //! to be there.
 #![cfg(unix)]
+#![allow(clippy::disallowed_macros, reason = "speaks another tool's JSON-RPC protocol")]
 use crate::adapters;
 use crate::hold::{Held, Msg, Tell};
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event};
@@ -274,7 +275,7 @@ fn ask_leave(held: &Held, params: Value, request: Value, me: Agent) {
         } } });
         if let Some(to) = to_program.lock().unwrap().as_mut() {
             use std::io::Write;
-            let _ = writeln!(to, "{answer}").and_then(|()| to.flush());
+            writeln!(to, "{answer}").and_then(|()| to.flush()).ok();
         }
     });
 }

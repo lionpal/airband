@@ -2,6 +2,7 @@
 //! the names to expect go in the first message, audio goes up as base64 in JSON, and finished and unfinished
 //! stretches come back as JSON. Where the service is, where its pass is asked for and how the key is presented
 //! are its row's to say (`stream`, `pass`, `auth`).
+#![allow(clippy::disallowed_macros, reason = "a listening service's own messages")]
 use super::*;
 use crate::ears_stream::{Socket, Wire, dial, read_briefly};
 use serde_json::json;

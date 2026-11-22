@@ -29,6 +29,9 @@
 //!   airband catalog ...          the catalogue built into this program: export, sign, check, stamp
 //!   airband triage | progress    try what reads messages by hand, on standard input
 //!   airband --version            which version this is
+#![warn(clippy::let_underscore_must_use)]
+// test code may touch files and build JSON by hand to stand in for the outside
+#![cfg_attr(test, allow(clippy::disallowed_methods, clippy::disallowed_macros, clippy::let_underscore_must_use))]
 #[cfg(unix)]
 mod acp;
 mod adapters;

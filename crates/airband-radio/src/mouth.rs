@@ -58,7 +58,7 @@ impl Mouth {
         if let Some(Own::Model { held, .. }) = &own {
             let held = held.clone();
             thread::spawn(move || {
-                let _ = held.with(|_| ());
+                held.with(|_| ()).ok();
             });
         }
         let was = std::mem::replace(&mut *self.using.lock().unwrap_or_else(|e| e.into_inner()), own);

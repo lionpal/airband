@@ -1,5 +1,6 @@
 //! The first half of the dispatcher: how much of his attention a message deserves, and what to tell him of it.
 //! Also the fuller version, for "say more". The model is the one chosen to read (`models`).
+#![allow(clippy::disallowed_macros, reason = "model request shapes")]
 use super::*;
 use crate::providers::{By, Interface, Job, Offer};
 use super::edges::models::Model;

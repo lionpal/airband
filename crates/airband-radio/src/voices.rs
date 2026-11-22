@@ -5,6 +5,7 @@
 //! [`Voicing`] that names it, and a line of [`VOICES`]. A provider's row names the interface it speaks
 //! (`by.interface`) and tells it what it needs (`by.with`). A service that speaks OpenAI's speech interface
 //! is a row and no code; one with a route of its own is one file here and its row.
+#![allow(clippy::disallowed_methods, reason = "asks a voice service")]
 use airband_core::providers::{By, Interface, Job, Offer, Provider, Use};
 
 mod generate_content;

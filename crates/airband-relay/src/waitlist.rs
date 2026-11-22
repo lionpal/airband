@@ -69,9 +69,16 @@ pub(super) async fn waitlist_preflight(headers: HeaderMap) -> Response {
 /// is never logged and is never shown on a page.
 /// What it does not do: prove the address belongs to whoever typed it. Nothing is sent to it yet; when something
 /// is, the first message must ask for confirmation.
+/// What the sign-up form is answered.
+#[derive(serde::Serialize)]
+struct Answer {
+    ok: bool,
+    message: String,
+}
+
 pub(super) async fn waitlist(State(relay): State<Arc<Relay>>, headers: HeaderMap, body: Bytes) -> Response {
     let cors = from_site(&headers);
-    let answer = |code: StatusCode, why: &str| (code, cors.clone(), axum::Json(serde_json::json!({ "ok": code == StatusCode::OK, "message": why }))).into_response();
+    let answer = |code: StatusCode, why: &str| (code, cors.clone(), axum::Json(Answer { ok: code == StatusCode::OK, message: why.to_string() })).into_response();
     let origin = header(&headers, "origin").unwrap_or("");
     if !SITES.contains(&origin) {
         return answer(StatusCode::FORBIDDEN, "Sign up on airband.dev.");

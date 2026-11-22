@@ -30,6 +30,9 @@
 //!   POST   /v1/waitlist                 the homepage's sign-up: {"email": "…"} (airband.dev only, by CORS)
 //!   OPTIONS /v1/waitlist                the browser's question before that sign-up (CORS)
 //!   GET    /healthz
+#![warn(clippy::let_underscore_must_use)]
+// test code may touch files and build JSON by hand to stand in for the outside
+#![cfg_attr(test, allow(clippy::disallowed_methods, clippy::disallowed_macros, clippy::let_underscore_must_use))]
 use airband_core::relay::{ADMISSION_HEADER, ID_HEADER, ORDERED_HEADER, RADIO_HASH_HEADER, REQUEST_HEADER};
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, State};
@@ -130,5 +133,5 @@ async fn main() {
     let host = var("HOST").unwrap_or_else(|| "0.0.0.0".into());
     let listener = tokio::net::TcpListener::bind((host.as_str(), port)).await.expect("cannot listen");
     println!("airband-relay on port {port}");
-    axum::serve(listener, app).with_graceful_shutdown(async { let _ = tokio::signal::ctrl_c().await; }).await.expect("the relay stopped");
+    axum::serve(listener, app).with_graceful_shutdown(async { tokio::signal::ctrl_c().await.ok(); }).await.expect("the relay stopped");
 }

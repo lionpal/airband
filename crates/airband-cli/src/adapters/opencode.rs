@@ -11,6 +11,8 @@
 //! - Its requests for leave are listed by the same server (`GET …/permission`) and answered there
 //!   (`POST …/permission/<id>/reply`). Each is put to him, and his answer is the one that is sent: once, or
 //!   refused with his reason. One nobody answered from a phone stays where it was, on OpenCode's own screen.
+#![allow(clippy::disallowed_methods, reason = "reaches the tool's own server and files")]
+#![allow(clippy::disallowed_macros, reason = "the tool's own request bodies")]
 use super::Tower;
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk};
 use serde_json::{Value, json};

@@ -15,11 +15,23 @@ The only things read by rule are what a radio's own buttons send (a word behind 
 callsigns that name an agent, and the shape of a credential.
 
 ```
- agents ──▶ adapters ──airband.agent/1──▶ ┌────────────┐ ◀──airband.radio/1──▶ radio core ──▶ hosts ──▶ you
+ agents ──▶ adapters ──airband.agent/1──▶ ┌────────────┐ ◀──airband.radio/4──▶ radio core ──▶ hosts ──▶ you
  (any harness, any model, any job)        │ the tower  │      (sealed: straight, or        (phone, terminal,
  agents ◀── delivery kinds ◀───────────── │ dispatcher │       through the relay)           car, desktop)
                                           └────────────┘
 ```
+
+## How the rules are kept
+
+The compiler keeps some of them, so they cannot drift:
+- `clippy.toml` refuses raw file calls (`std::fs::write`, `read`, `read_to_string`, `rename`, `remove_file`,
+  `create_dir_all`), the HTTP client's `get` and `post`, and hand-built JSON (`serde_json::json!`). Files and the
+  network go through `airband-io`; our own bodies are typed. A module that is an edge by nature (another tool's
+  files or protocol, a service's request body, a download, the relay's folder store) says so at its top with
+  `#![allow(..., reason = "...")]`, and that list is the whole of the exceptions. Tests may do either.
+- `clippy::let_underscore_must_use` is on in every crate: a result is used or let go with `.ok()` in plain sight,
+  never dropped with `let _ =`.
+- CI fails if `airband-core` depends on an HTTP client or touches files.
 
 ## What each part owns
 

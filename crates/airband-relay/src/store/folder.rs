@@ -1,5 +1,6 @@
 //! The relay's records kept in a folder on its own disk: `channels.json`, `waitlist.txt`, and under `held/`
 //! one folder per channel with its kept messages and their list. For a relay run on a machine with a disk.
+#![allow(clippy::disallowed_methods, reason = "the folder store is files by design")]
 use super::*;
 use std::path::Path;
 

@@ -6,23 +6,23 @@
 //!
 //! A key is kept once, with the provider it is for (`Config::keys`): one key per provider, found by that
 //! provider (`Config::key_of`). The settings file writes a use of it as the key's name.
+#![allow(clippy::disallowed_methods, reason = "setup writes the first settings file")]
 use crate::config::{self, Config};
 use crate::providers::{self, Job, Provider, Use};
-use serde_json::json;
 use std::io::{BufRead, IsTerminal, Write};
 
 fn line(ask: &str) -> String {
     print!("{ask}");
-    let _ = std::io::stdout().flush();
+    std::io::stdout().flush().ok();
     let mut s = String::new();
-    let _ = std::io::stdin().lock().read_line(&mut s);
+    std::io::stdin().lock().read_line(&mut s).ok();
     s.trim().to_string()
 }
 
 /// A line he types that is not shown: a key.
 fn secret(ask: &str) -> String {
     print!("{ask}");
-    let _ = std::io::stdout().flush();
+    std::io::stdout().flush().ok();
     #[cfg(unix)]
     let was = unsafe {
         let mut t: libc::termios = std::mem::zeroed();
@@ -34,7 +34,7 @@ fn secret(ask: &str) -> String {
         })
     };
     let mut s = String::new();
-    let _ = std::io::stdin().lock().read_line(&mut s);
+    std::io::stdin().lock().read_line(&mut s).ok();
     #[cfg(unix)]
     if let Some(was) = was {
         unsafe { libc::tcsetattr(0, libc::TCSANOW, &was) };
@@ -95,7 +95,7 @@ fn choose(cfg: &mut Config, title: &str, about: &str, none: &str) {
                     let said = line(&format!("  {} [{}]: ", a.question, a.usual));
                     // what he leaves as usual is not written down, so it follows the row if the row changes
                     if !said.is_empty() && said != a.usual {
-                        u.set.insert(a.field.clone(), json!(said));
+                        u.set.insert(a.field.clone(), serde_json::Value::String(said.to_string()));
                     }
                 }
                 u

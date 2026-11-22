@@ -1,6 +1,7 @@
 //! Who an untagged reply is for, or that it asks for a new agent. What is certain without reading comes first (the
 //! message he tapped). After that a model reads his words: against what each agent has been saying, and against the
 //! projects, models and efforts a new agent could be started with.
+#![allow(clippy::disallowed_macros, reason = "the model's answer shapes")]
 use super::*;
 
 /// The room as the model is shown it: who has spoken since he last did, who he last spoke with, and the rest.

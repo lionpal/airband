@@ -1,5 +1,6 @@
 //! A coding tool's accounts: listing them for every tool that has them, switching, and `airband accounts`; and
 //! who an account is, read the way its tool's row says.
+#![allow(clippy::disallowed_methods, reason = "asks the tower over the network from outside it, as a tool's own hook does")]
 use airband_core::radio::wire;
 use super::*;
 use airband_core::identity::{AccountIdentity, IdSource, Place, Under};
@@ -166,7 +167,7 @@ pub(crate) fn accounts_command(cfg: &config::Config, args: &[String]) -> Result<
             match by_tower(here.post(<wire::at::UseAccount as wire::Endpoint>::PATH).config().http_status_as_error(false).build().send_json(airband_core::radio::UseAccount { harness: harness.to_string(), id: id.to_string() })) {
                 ByTower::Said(now) => show(&now?),
                 ByTower::NotRunning => {
-                    let _ = use_account(harness, id)?.join();
+                    use_account(harness, id)?.join().ok();
                     show(&accounts());
                 }
             }

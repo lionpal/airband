@@ -1,5 +1,6 @@
 //! OpenAI's speech endpoint, which several services and most local voice servers speak. A service that does
 //! is a row and no code.
+#![allow(clippy::disallowed_macros, reason = "a voice service's own request body")]
 use super::{Made, Synth, Voicing};
 use airband_core::providers::{By, Interface, Job, Provider, Use};
 use serde_json::json;

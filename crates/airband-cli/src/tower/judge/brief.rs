@@ -1,4 +1,5 @@
 //! The folder a command-line reader is run in, with its brief.
+#![allow(clippy::disallowed_methods, reason = "the brief of a long message is kept as a file")]
 use super::*;
 
 /// What a coding tool is told when it is used only to rewrite a message: one line, and no tools. Kept in a

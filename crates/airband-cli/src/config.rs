@@ -1,4 +1,5 @@
 //! ~/.airband: the config (port, token, who to call him, which model summarises), state and log.
+#![allow(clippy::disallowed_methods, reason = "the settings file and its folder are read and written here only")]
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;

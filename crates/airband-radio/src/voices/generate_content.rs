@@ -2,6 +2,7 @@
 //! back a piece at a time as server-sent events. The row says where it is reached (`url`, which names his
 //! model in braces), how the key is presented (`auth`), how the words are to be said (`style`) and the rate of
 //! what comes back (`rate`).
+#![allow(clippy::disallowed_macros, reason = "a voice service's own request body")]
 use super::{Made, Reach, Synth, Voicing};
 use airband_core::encode::unbase64;
 use airband_core::providers::{By, Interface, Job, Provider, Use};

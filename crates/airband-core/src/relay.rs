@@ -33,12 +33,6 @@ pub const MAX_MESSAGE: usize = 256 * 1024;
 /// What sealing adds to a message: its nonce and its tag.
 const SEALING: usize = 12 + 16;
 
-/// What the radio is told when an answer is larger than a relay passes ([`MAX_MESSAGE`]): the one wording, for
-/// an answer too large to seal and one too large to read whole alike.
-pub fn too_big_for_relay() -> String {
-    format!("The answer is larger than a relay passes ({} KB), so it was not sent.", MAX_MESSAGE / 1024)
-}
-
 /// The hash of the radio's own key, on a tower's opening of a channel: which radio the channel is for.
 pub const RADIO_HASH_HEADER: &str = "x-airband-radio-hash";
 /// The relay's admission key, when the relay asks for one.
@@ -171,14 +165,15 @@ impl Keys {
     }
     /// An answer sealed for the radio, to go through a relay: no larger than [`MAX_MESSAGE`]. One that would be
     /// is not cut short or left for the relay to turn away (the radio would wait and hear nothing); the radio is
-    /// answered 413, saying so, under the same id.
+    /// answered with the typed too-big refusal, under the same id.
     pub fn seal_answer_for_relay(&self, answer: &Answer) -> Vec<u8> {
         let plain = serde_json::to_vec(answer).unwrap_or_default();
         if plain.len() + SEALING <= MAX_MESSAGE {
             return self.seal(Direction::ToRadio, &plain);
         }
-        let told = serde_json::json!({ "error": too_big_for_relay() });
-        self.seal_answer(&Answer { id: answer.id.clone(), status: 413, body: told })
+        let no = crate::radio::wire::Refusal::TooBig;
+        let body = serde_json::to_value(&no).unwrap_or_default();
+        self.seal_answer(&Answer { id: answer.id.clone(), status: no.status(), body })
     }
     /// The tower's answer to one request, by the request's id. Nothing for bytes this pairing's key does
     /// not open, and nothing for an answer to some other request: only the tower can make one, and only
@@ -320,7 +315,7 @@ mod tests {
         assert!(large.len() <= MAX_MESSAGE);
         let told = k.open_answer(&large, "abc").unwrap();
         assert_eq!(told.status, 413);
-        assert!(told.body["error"].is_string());
+        assert!(matches!(serde_json::from_value(told.body).unwrap(), crate::radio::wire::Refusal::TooBig));
         // right at the edge: what fits is sent as it is
         let edge = MAX_MESSAGE - SEALING - serde_json::to_vec(&answer(0)).unwrap().len();
         let at_edge = k.seal_answer_for_relay(&answer(edge));

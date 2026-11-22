@@ -9,6 +9,7 @@
 //!
 //! One server, for one model, for as long as that model is what reads. It holds the model in memory the whole
 //! time: about as much as the model's download.
+#![allow(clippy::disallowed_methods, reason = "downloads and runs the local model program")]
 use super::*;
 use std::path::PathBuf;
 use std::process::{Child, Command};
@@ -21,7 +22,7 @@ static PORT: OnceLock<u16> = OnceLock::new();
 static RUNNING: Mutex<Option<(String, Child)>> = Mutex::new(None);
 
 pub(crate) fn listen_after(tower_port: u16) {
-    let _ = PORT.set(tower_port.saturating_add(10));
+    PORT.set(tower_port.saturating_add(10)).ok();
 }
 
 fn port() -> u16 {
@@ -65,7 +66,7 @@ fn fetch(server: &airband_core::catalog::Server) -> Result<PathBuf, String> {
     let packed = dir().join(&archive.file);
     std::fs::write(&packed, &bytes).map_err(|e| e.to_string())?;
     let unpacked = Command::new("tar").arg("-xzf").arg(&packed).arg("-C").arg(dir()).status().map_err(|e| format!("could not unpack it: {e}"))?;
-    let _ = std::fs::remove_file(&packed);
+    std::fs::remove_file(&packed).ok();
     if !unpacked.success() || !program.is_file() {
         return Err("the program that runs the model could not be unpacked".into());
     }
@@ -96,7 +97,7 @@ fn end_the_last_one() {
         terminate(pid);
         std::thread::sleep(Duration::from_millis(600));
     }
-    let _ = std::fs::remove_file(note);
+    std::fs::remove_file(note).ok();
 }
 
 /// Ask the server's keeper to end it, and wait until it has: asked, not killed, so the keeper can pass it on.
@@ -104,7 +105,7 @@ fn end(keeper: &mut Child) {
     terminate(keeper.id());
     #[cfg(not(unix))]
     let _ = keeper.kill();
-    let _ = keeper.wait();
+    keeper.wait().ok();
 }
 
 /// Stop the server, when something else reads from now on.
@@ -112,7 +113,7 @@ pub(crate) fn stop() {
     if let Some((_, mut child)) = RUNNING.lock().unwrap().take() {
         end(&mut child);
     }
-    let _ = std::fs::remove_file(dir().join("server.pid"));
+    std::fs::remove_file(dir().join("server.pid")).ok();
 }
 
 /// How long a caller waits for a model run on this computer to be ready.
@@ -158,7 +159,10 @@ pub(crate) fn ensure(model: &str, server: &str, patience: Patience) -> Result<St
                 .map_err(|e| format!("the program that runs the model did not start: {e}"))?;
             // with the moment it started; one whose start cannot be read is not noted, and so is never ended later
             if let Some(began) = started(child.id()) {
-                let _ = std::fs::write(dir().join("server.pid"), format!("{}\n{began}\n", child.id()));
+                // a note that cannot be kept means a later start cannot end this one: said, and the model still runs
+                if let Err(e) = std::fs::write(dir().join("server.pid"), format!("{}\n{began}\n", child.id())) {
+                    super::log(format!("the model program's note could not be kept: {e}"));
+                }
             }
             *running = Some((model.to_string(), child));
         }

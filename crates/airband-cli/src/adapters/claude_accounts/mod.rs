@@ -14,6 +14,7 @@
 //!
 //! Only where Claude Code keeps its login in the keychain; elsewhere it keeps it differently, and that is not
 //! written yet.
+#![allow(clippy::disallowed_methods, reason = "the account store's lock file and folder")]
 mod live;
 mod saved;
 mod service;
@@ -109,7 +110,7 @@ pub(super) fn dir() -> PathBuf {
 /// One thing at a time across every airband process on this computer: a saved login must never be refreshed
 /// twice at once, or switched while it is being refreshed.
 fn locked<T>(here: &Here, work: impl FnOnce() -> T) -> T {
-    let _ = std::fs::create_dir_all(&here.dir);
+    std::fs::create_dir_all(&here.dir).ok();
     let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(here.dir.join("accounts.lock")).ok();
     #[cfg(unix)]
     if let Some(f) = &file {
@@ -285,8 +286,10 @@ fn switch_in(here: &Here, id: &str) -> Res<std::thread::JoinHandle<()>> {
                 if SWITCHES.load(std::sync::atomic::Ordering::SeqCst) != mine {
                     return;
                 }
-                if live::oauth_account(&file).as_ref().and_then(|a| a.get("emailAddress")).and_then(|e| e.as_str()) != Some(target.as_str()) {
-                    let _ = live::set_oauth_account(&file, &acct);
+                if live::oauth_account(&file).as_ref().and_then(|a| a.get("emailAddress")).and_then(|e| e.as_str()) != Some(target.as_str())
+                    && let Err(e) = live::set_oauth_account(&file, &acct)
+                {
+                    eprintln!("airband: the account file could not be set back to the account chosen: {e}");
                 }
             }
         }))
@@ -342,7 +345,7 @@ pub(crate) fn add() -> Res<String> {
     if let Ok(user) = here.user() {
         here.vault.delete(&service, user);
     }
-    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::remove_dir_all(&tmp).ok();
     result
 }
 

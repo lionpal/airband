@@ -3,6 +3,7 @@
 //! the audio. The service answers with `speech.hypothesis` (what it has so far, revised as he goes on) and
 //! `speech.phrase` (a finished stretch). Where the service is, where its pass is asked for and how the key is
 //! presented are its row's to say (`stream`, `pass`, `auth`).
+#![allow(clippy::disallowed_macros, reason = "a listening service's own messages")]
 use super::*;
 use crate::ears_stream::{Socket, Wire, dial, read_briefly};
 use serde_json::json;

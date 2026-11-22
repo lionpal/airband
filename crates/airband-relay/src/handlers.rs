@@ -84,7 +84,7 @@ pub(super) async fn pull(State(relay): State<Arc<Relay>>, Path(channel): Path<St
             return StatusCode::NO_CONTENT.into_response();
         }
         // wake at least every few seconds so last_pull stays current while the tower waits
-        let _ = tokio::time::timeout(left.min(Duration::from_secs(5)), wake.notified()).await;
+        tokio::time::timeout(left.min(Duration::from_secs(5)), wake.notified()).await.ok();
     }
 }
 
@@ -128,7 +128,7 @@ pub(super) async fn reply(State(relay): State<Arc<Relay>>, Path((channel, id)): 
     match relay.with_tower(&channel, &headers, |ch| ch.waiting.remove(&id)) {
         Err(no) => *no,
         Ok(Some(radio)) => {
-            let _ = radio.send(sealed);
+            radio.send(sealed).ok();
             StatusCode::NO_CONTENT.into_response()
         }
         Ok(None) => say(StatusCode::GONE, "the radio stopped waiting for that answer"),

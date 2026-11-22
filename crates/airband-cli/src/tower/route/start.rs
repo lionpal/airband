@@ -1,4 +1,5 @@
 //! Starting a new agent he asked for: where an idea goes when he named no place, and his answer to which.
+#![allow(clippy::disallowed_macros, reason = "the model's answer shape")]
 use super::*;
 
 /// A model's answer that picks one place from a numbered list, or none.

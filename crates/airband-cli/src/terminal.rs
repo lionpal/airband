@@ -89,10 +89,10 @@ pub(crate) fn run(cfg: &Config, args: &[String]) -> Result<(), String> {
     for line in std::io::stdin().lock().lines() {
         let Ok(line) = line else { break };
         if listening.load(Ordering::SeqCst) {
-            let _ = tx.send(line);
+            tx.send(line).ok();
         } else if !line.trim().is_empty() {
             // nobody asked: this line is him starting a conversation
-            let _ = tx.send(line);
+            tx.send(line).ok();
             radio.talk(None, None);
         }
     }

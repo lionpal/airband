@@ -5,6 +5,7 @@
 //! frames row names, when that program is here.
 //!
 //! A radio can write only here, only under names the tower makes safe, and only so much.
+#![allow(clippy::disallowed_methods, reason = "his attachments are written part by part into their folder")]
 use super::*;
 use airband_core::radio::AttachmentPart;
 use std::io::{Seek, SeekFrom, Write};
@@ -78,7 +79,7 @@ fn take_in(root: &Path, part: AttachmentPart) -> Result<u64, String> {
     let bytes = airband_core::encode::unbase64(&part.data).ok_or("that part could not be read")?;
     let mut file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&path).map_err(|e| e.to_string())?;
     if part.from + bytes.len() as u64 > MOST || part.total > MOST {
-        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::remove_dir_all(&dir).ok();
         return Err("that file is too large".into());
     }
     let (next, whole) = {
@@ -105,7 +106,7 @@ fn take_in(root: &Path, part: AttachmentPart) -> Result<u64, String> {
                 have = have.max(*to);
             }
             if have >= total {
-                let _ = std::fs::remove_file(&note);
+                std::fs::remove_file(&note).ok();
             } else {
                 std::fs::write(&note, serde_json::to_string(&got).unwrap_or_default()).map_err(|e| e.to_string())?;
             }
@@ -114,12 +115,12 @@ fn take_in(root: &Path, part: AttachmentPart) -> Result<u64, String> {
     };
     if whole && !dir.join(".ready").exists() && !dir.join(".whole").exists() {
         // the file is named where it is first whole: what is read back is this name, never whatever the folder lists first
-        let _ = std::fs::write(dir.join(".whole"), path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default());
+        std::fs::write(dir.join(".whole"), path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()).map_err(|e| e.to_string())?;
         log(format!("he attached {} ({} KB)", path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(), next / 1024));
         if what(&path) == What::Video {
             frames(&path);
         } else {
-            let _ = std::fs::write(dir.join(".ready"), "");
+            std::fs::write(dir.join(".ready"), "").map_err(|e| e.to_string())?;
         }
     }
     Ok(next)
@@ -131,8 +132,7 @@ fn frames(video: &Path) {
     let (video, dir) = (video.to_path_buf(), video.parent().map(Path::to_path_buf).unwrap_or_default());
     std::thread::spawn(move || {
         let out = dir.join("frames");
-        let _ = std::fs::create_dir_all(&out);
-        let ran = airband_core::catalog::frames().ok_or(()).and_then(|f| {
+        let ran = std::fs::create_dir_all(&out).map_err(|_| ()).and_then(|_| airband_core::catalog::frames().ok_or(())).and_then(|f| {
             std::process::Command::new(&f.program)
                 .args(f.run(&video.display().to_string(), FRAMES, &out.display().to_string()))
                 .stdin(std::process::Stdio::null())
@@ -140,9 +140,12 @@ fn frames(video: &Path) {
                 .map_err(|_| ())
         });
         if !matches!(&ran, Ok(o) if o.status.success()) {
-            let _ = std::fs::remove_dir_all(&out);
+            std::fs::remove_dir_all(&out).ok();
         }
-        let _ = std::fs::write(dir.join(".ready"), "");
+        // without its mark the file is never offered to an agent, so a mark that cannot be made is said
+        if let Err(e) = std::fs::write(dir.join(".ready"), "") {
+            log(format!("the video {} could not be marked ready: {e}", video.display()));
+        }
     });
 }
 

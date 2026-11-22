@@ -25,7 +25,7 @@ impl Saver {
                     match job {
                         Job::Write(batch) => store.write(&batch),
                         Job::Flush(done) => {
-                            let _ = done.send(());
+                            done.send(()).ok();
                         }
                     }
                 }
@@ -49,7 +49,7 @@ impl Saver {
     pub(super) fn flush(&self) {
         let (done, wait) = mpsc::sync_channel(1);
         if self.jobs.send(Job::Flush(done)).is_ok() {
-            let _ = wait.recv();
+            wait.recv().ok();
         }
     }
 }

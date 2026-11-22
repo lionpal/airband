@@ -2,7 +2,6 @@
 //! `pair`, `unpair`, `quick`, `status`.
 use crate::config::{self, Config};
 use serde::Serialize;
-use serde_json::json;
 use airband_core::pairing::Pairing;
 
 /// `airband relay <url> [--admission <key>]` / `airband relay off`
@@ -90,7 +89,7 @@ pub(crate) fn model(mut cfg: Config, args: &[String]) -> Result<(), String> {
             }
             for a in &o.asks {
                 if let Some(said) = crate::option(args, &format!("--{}", a.field)) {
-                    u.set.insert(a.field.clone(), json!(said));
+                    u.set.insert(a.field.clone(), serde_json::Value::String(said.to_string()));
                 }
             }
             u
@@ -173,7 +172,7 @@ pub(crate) fn unpair(mut cfg: Config, name: Option<&str>) -> Result<(), String> 
     // tell the relay the channel is finished with, so it does not keep it on record for ever. If the relay
     // cannot be reached the radio is cut off all the same: the tower no longer answers on that channel.
     if let (Some(relay), Ok(keys)) = (&cfg.relay, airband_core::relay::Keys::derive(&gone.secret)) {
-        let _ = airband_io::http::agent(std::time::Duration::from_secs(8)).delete(keys.at(relay, "")).header("authorization", keys.as_tower()).call();
+        airband_io::http::agent(std::time::Duration::from_secs(8)).delete(keys.at(relay, "")).header("authorization", keys.as_tower()).call().ok();
     }
     println!("\"{name}\" is cut off. airband stops answering it within ten seconds.");
     Ok(())

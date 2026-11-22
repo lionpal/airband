@@ -63,7 +63,7 @@ fn write(path: &Path, bytes: &[u8], leave: Leave) -> std::io::Result<()> {
     });
     let written = written.and_then(|_| std::fs::rename(&part, path));
     if written.is_err() {
-        let _ = std::fs::remove_file(&part);
+        std::fs::remove_file(&part).ok();
     }
     written
 }
@@ -93,7 +93,7 @@ pub fn prune_older(dir: &Path, age: std::time::Duration) {
     for entry in entries.flatten() {
         let Ok(meta) = entry.metadata() else { continue };
         if meta.modified().ok().and_then(|t| t.elapsed().ok()).is_some_and(|a| a > age) {
-            let _ = if meta.is_dir() { std::fs::remove_dir_all(entry.path()) } else { std::fs::remove_file(entry.path()) };
+            if meta.is_dir() { std::fs::remove_dir_all(entry.path()) } else { std::fs::remove_file(entry.path()) }.ok();
         }
     }
 }

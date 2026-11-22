@@ -26,6 +26,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --release
       - run: cargo test --workspace
+      - name: Lints, with every rule in clippy.toml
+        if: matrix.os == 'macos-latest'
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Core reaches neither files nor the network
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          if cargo tree -p airband-core -e normal --prefix none | grep -qiE '^(ureq|reqwest|hyper) '; then echo "airband-core depends on an HTTP client"; exit 1; fi
+          if grep -rnE 'std::fs|use std::fs|\bfs::' crates/airband-core/src; then echo "airband-core touches files"; exit 1; fi
   e2e:
     name: End to end (relay, held agents)
     runs-on: ubuntu-latest

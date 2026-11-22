@@ -1,6 +1,7 @@
 //! Reaching the tower: straight to it, or sealed through a relay. Everything above this module makes
 //! requests of the radio protocol, each one an [`Endpoint`] of core's, and does not know which way they
 //! travel. A new transport is a new [`Route`].
+#![allow(clippy::disallowed_methods, reason = "the phone's own connection to its computers")]
 use super::*;
 
 mod errors;
@@ -327,7 +328,7 @@ impl Link {
                 let address = format!("{url}{path}");
                 let res = match method {
                     Method::Get => headers.iter().fold(self.agent.get(&address), |r, (k, v)| r.header(*k, *v)).call(),
-                    Method::Post => headers.iter().fold(self.agent.post(&address), |r, (k, v)| r.header(*k, *v)).send_json(body.unwrap_or_else(|| serde_json::json!({}))),
+                    Method::Post => headers.iter().fold(self.agent.post(&address), |r, (k, v)| r.header(*k, *v)).send_json(body.unwrap_or_else(|| serde_json::Value::Object(Default::default()))),
                     Method::Delete => headers.iter().fold(self.agent.delete(&address), |r, (k, v)| r.header(*k, *v)).call(),
                 };
                 let got = match res {

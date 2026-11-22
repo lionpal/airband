@@ -7,6 +7,9 @@
 //! - [`radio`], `airband.radio/4`: how a phone, car or desktop app hears transmissions and sends replies.
 //! - [`relay`], `airband.relay/1`: how a radio reaches a tower that is behind a home router, through a relay
 //!   that can read none of it. [`pairing`] is the link that sets a radio up for either route.
+#![warn(clippy::let_underscore_must_use)]
+// test code may touch files and build JSON by hand to stand in for the outside
+#![cfg_attr(test, allow(clippy::disallowed_methods, clippy::disallowed_macros, clippy::let_underscore_must_use))]
 #[cfg(feature = "ffi")]
 uniffi::setup_scaffolding!();
 

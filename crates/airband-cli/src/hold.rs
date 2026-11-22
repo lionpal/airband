@@ -19,7 +19,8 @@
 //! To "how are you" it answers where it has got to ([`State`]): still starting, ready, or failed and why, with
 //! the last of what the program printed as an error. The tower tells him an agent is there only once it is.
 #![cfg(unix)]
-use serde_json::{Value, json};
+#![allow(clippy::disallowed_methods, reason = "the holder's socket and its program's folder")]
+use serde_json::Value;
 use std::io::{BufRead, Read, Write};
 use std::os::unix::net::UnixListener;
 use std::process::{ChildStdin, Command, Stdio};
@@ -37,26 +38,31 @@ pub(crate) enum Tell {
     End,
 }
 
+/// One line from the tower to a holder, as it is written on the socket: typed both ways.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(tag = "line", rename_all = "kebab-case")]
+enum ToHolder {
+    Say { text: String, receipt: String },
+    Stop,
+    End,
+    /// Where it has got to: answered with a [`State`].
+    Status,
+}
+
 impl Tell {
     pub(crate) fn line(&self) -> String {
-        match self {
-            Tell::Say(text, receipt) => json!({ "say": text, "receipt": receipt }),
-            Tell::Stop => json!({ "stop": true }),
-            Tell::End => json!({ "end": true }),
-        }
-        .to_string()
-    }
-    fn read(line: &Value) -> Option<Tell> {
-        match (line["say"].as_str(), line.get("stop"), line.get("end")) {
-            (Some(text), _, _) => Some(Tell::Say(text.to_string(), line["receipt"].as_str().unwrap_or_default().to_string())),
-            (None, Some(_), _) => Some(Tell::Stop),
-            (None, None, Some(_)) => Some(Tell::End),
-            _ => None,
-        }
+        let line = match self {
+            Tell::Say(text, receipt) => ToHolder::Say { text: text.clone(), receipt: receipt.clone() },
+            Tell::Stop => ToHolder::Stop,
+            Tell::End => ToHolder::End,
+        };
+        serde_json::to_string(&line).expect("a line to a holder writes as JSON")
     }
 }
 /// The line that asks a holder where it has got to. The answer is a [`State`].
-pub(crate) const STATUS: &str = r#"{"status":true}"#;
+pub(crate) fn status_line() -> String {
+    serde_json::to_string(&ToHolder::Status).expect("a line to a holder writes as JSON")
+}
 
 /// Where a holder has got to with its program.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -99,7 +105,7 @@ pub(crate) struct Held {
 impl Held {
     pub(crate) fn write(&self, line: &str) {
         if let Some(to) = self.to_program.lock().unwrap().as_mut() {
-            let _ = writeln!(to, "{line}").and_then(|()| to.flush());
+            writeln!(to, "{line}").and_then(|()| to.flush()).ok();
         }
     }
     pub(crate) fn close_input(&self) {
@@ -226,7 +232,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         *state.lock().unwrap() = State::Failed { why: why.clone() };
         std::thread::sleep(Duration::from_secs(15));
     }
-    let _ = std::fs::remove_file(&sock);
+    std::fs::remove_file(&sock).ok();
     end_group();
     outcome
 }
@@ -235,11 +241,12 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
 /// The socket the tower talks to it through, open to this user only: asked how it stands, it says; told
 /// something for the agent, it passes it on.
 fn listen(sock: &str, state: Arc<Mutex<State>>, tx: mpsc::Sender<Msg>) -> Result<(), String> {
-    let _ = std::fs::remove_file(sock);
+    std::fs::remove_file(sock).ok();
     let listener = UnixListener::bind(sock).map_err(|e| format!("cannot open {sock}: {e}"))?;
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(sock, std::fs::Permissions::from_mode(0o600));
+        // only he may talk to the agent: a socket others could reach is not opened at all
+        std::fs::set_permissions(sock, std::fs::Permissions::from_mode(0o600)).map_err(|e| format!("cannot make {sock} private: {e}"))?;
     }
     std::thread::spawn(move || {
         for conn in listener.incoming() {
@@ -248,12 +255,17 @@ fn listen(sock: &str, state: Arc<Mutex<State>>, tx: mpsc::Sender<Msg>) -> Result
             if conn.read_to_string(&mut said).is_err() {
                 continue;
             }
-            for line in said.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()) {
-                if line.get("status").is_some() {
-                    let _ = writeln!(conn, "{}", serde_json::to_string(&*state.lock().unwrap()).unwrap());
-                } else if let Some(tell) = Tell::read(&line) {
-                    let _ = tx.send(Msg::Tell(tell));
-                }
+            for line in said.lines().filter_map(|l| serde_json::from_str::<ToHolder>(l).ok()) {
+                let tell = match line {
+                    ToHolder::Status => {
+                        writeln!(conn, "{}", serde_json::to_string(&*state.lock().unwrap()).unwrap()).ok();
+                        continue;
+                    }
+                    ToHolder::Say { text, receipt } => Tell::Say(text, receipt),
+                    ToHolder::Stop => Tell::Stop,
+                    ToHolder::End => Tell::End,
+                };
+                tx.send(Msg::Tell(tell)).ok();
             }
         }
     });
@@ -266,10 +278,10 @@ fn pass_output(child: &mut std::process::Child, tx: mpsc::Sender<Msg>, wanted: b
         std::thread::spawn(move || {
             for line in std::io::BufReader::new(out).split(b'\n').map_while(Result::ok) {
                 if wanted {
-                    let _ = tx.send(Msg::Out(String::from_utf8_lossy(&line).into_owned()));
+                    tx.send(Msg::Out(String::from_utf8_lossy(&line).into_owned())).ok();
                 }
             }
-            let _ = tx.send(Msg::Gone);
+            tx.send(Msg::Gone).ok();
         });
     }
 }
@@ -300,8 +312,8 @@ fn end(child: &mut std::process::Child) {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill().ok();
+    child.wait().ok();
 }
 
 /// Whatever the program started and left behind (a package runner's child, a server of the tool's own) goes

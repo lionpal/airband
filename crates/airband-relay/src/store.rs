@@ -30,6 +30,7 @@
 //!   DB_HOST, DB_PORT (5432 when not set), DB_USER, DB_PASS, DB_NAME (airband)
 //!   DB_CA    a PEM file of certificate authorities to trust for the connection (for Amazon RDS, its global bundle)
 //!   DB_SSL   `off` for a plain local database
+#![allow(clippy::disallowed_methods, reason = "picks the store and its folder")]
 use std::collections::HashMap;
 use std::path::PathBuf;
 #[cfg(test)]

@@ -374,7 +374,7 @@ pub(crate) fn hook(name: Option<&str>) -> Result<(), String> {
         return Ok(());
     }
     let mut input = String::new();
-    let _ = std::io::stdin().read_to_string(&mut input);
+    std::io::stdin().read_to_string(&mut input).ok();
     let notification: Value = serde_json::from_str(&input).unwrap_or_default();
     // the harness is about to ask for permission at the keyboard: ask him on the radio first
     if let Some(request) = adapter.permission(&notification) {

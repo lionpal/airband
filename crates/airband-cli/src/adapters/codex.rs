@@ -18,6 +18,7 @@
 //!
 //! One thing he has to do himself, once: Codex runs a hook only after he has looked at it and trusted it
 //! (`/hooks` inside Codex), and again whenever it changes. `airband install` writes the hooks and says so.
+#![allow(clippy::disallowed_macros, reason = "speaks the tool's own app-server protocol")]
 use super::env;
 use super::hooks::{On, on, text};
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk};
@@ -235,7 +236,7 @@ fn put_to_him(agent: Agent, asking: std::sync::Arc<std::sync::Mutex<super::Askin
         let request = request?;
         key = request_key(&request, &thread);
         let Some(ask) = leave_of(agent.clone(), &request) else { return Some(super::Answer::Unanswered) };
-        let _ = server.socket.get_ref().set_read_timeout(Some(std::time::Duration::from_millis(200)));
+        server.socket.get_ref().set_read_timeout(Some(std::time::Duration::from_millis(200))).ok();
         let (server, settled) = (RefCell::new(server), Cell::new(false));
         // read what the server has said since: it says so when the request was answered somewhere else
         let still = || {

@@ -2,6 +2,7 @@
 //! and `airband catalog` puts out what is built in, for publishing. See `airband_core::catalog`. Reading a
 //! kept copy and fetching a new one are the phone core's (`airband_io::catalog::load_kept`, `refresh`),
 //! the same code the app runs.
+#![allow(clippy::disallowed_methods, reason = "the command that fetches and writes the catalogue")]
 use crate::config;
 use airband_core::catalog;
 use std::sync::Mutex;

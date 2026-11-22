@@ -68,7 +68,7 @@ impl Vault for Keychain {
         }
     }
     fn delete(&self, service: &str, account: &str) {
-        let _ = security().args(["delete-generic-password", "-a", account, "-s", service]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        security().args(["delete-generic-password", "-a", account, "-s", service]).stdout(Stdio::null()).stderr(Stdio::null()).status().ok();
     }
 }
 

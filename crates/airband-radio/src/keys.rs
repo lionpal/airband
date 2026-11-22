@@ -2,6 +2,7 @@
 //! the provider's row names (`airband_core::providers::Check`): one that costs nothing and that a wrong key
 //! fails. What came of it is read from the status alone, by the row's lists, and said to him in the words
 //! here. Nothing the service writes back is read, and a key that did not pass is not kept anywhere.
+#![allow(clippy::disallowed_methods, reason = "tries a key against its service")]
 use airband_core::providers::{Check, KeyCheck, Method, Provider};
 use std::collections::BTreeMap;
 use std::time::Duration;

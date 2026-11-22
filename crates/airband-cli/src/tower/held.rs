@@ -12,6 +12,7 @@
 //! and its input open and listens on a socket. The tower writes there. So an agent goes on working while the
 //! tower is restarted or updated; the tower that starts finds the socket again. Every one is also remembered,
 //! so one whose holder has gone (the computer was restarted) is carried on from where its session was.
+#![allow(clippy::disallowed_methods, reason = "the held agents' socket folder")]
 use super::*;
 #[cfg(unix)]
 use tokio::io::AsyncReadExt;
@@ -107,7 +108,7 @@ async fn say(id: &str, line: &[u8]) -> Result<String, String> {
 /// Where a held agent's holder has got to.
 #[cfg(unix)]
 async fn status(id: &str) -> Result<crate::hold::State, String> {
-    let answer = say(id, format!("{}\n", crate::hold::STATUS).as_bytes()).await?;
+    let answer = say(id, format!("{}\n", crate::hold::status_line()).as_bytes()).await?;
     serde_json::from_str(answer.trim()).map_err(|e| format!("its holder's answer does not read: {e}"))
 }
 
@@ -140,7 +141,7 @@ async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Started, Stri
     if let Some(dir) = sock.parent() {
         use std::os::unix::fs::PermissionsExt;
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| format!("cannot make {} private: {e}", dir.display()))?;
     }
     let mut holder = std::process::Command::new(me);
     holder.arg("hold").arg("--sock").arg(&sock).arg("--cwd").arg(&kept.cwd).arg("--id").arg(&kept.id).arg("--harness").arg(&launcher.harness);
@@ -203,11 +204,11 @@ async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Started, Stri
             Ok(())
         });
     }
-    let _ = std::fs::remove_file(&sock);
+    std::fs::remove_file(&sock).ok();
     let mut child = holder.spawn().map_err(|e| format!("its holder did not start: {e}"))?;
     // it is not waited for as a child would be: collect it when it ends, so it does not linger as a dead entry
     std::thread::spawn(move || {
-        let _ = child.wait();
+        child.wait().ok();
     });
     let called = program.first().cloned().unwrap_or_default();
     let until = Instant::now() + STARTS_WITHIN;
@@ -224,7 +225,7 @@ async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Started, Stri
         tokio::time::sleep(Duration::from_millis(150)).await;
     }
     // not there in time: it is not left to turn up later as an agent nobody was told about
-    let _ = say(&kept.id, format!("{}\n", crate::hold::Tell::End.line()).as_bytes()).await;
+    say(&kept.id, format!("{}\n", crate::hold::Tell::End.line()).as_bytes()).await.ok();
     Err(format!("{called} had not started after {} seconds", STARTS_WITHIN.as_secs()))
 }
 #[cfg(not(unix))]

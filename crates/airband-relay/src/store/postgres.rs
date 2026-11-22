@@ -1,4 +1,5 @@
 //! The relay's records kept in Postgres: the same jobs the folder and DynamoDB stores do, in its tables.
+#![allow(clippy::disallowed_methods, reason = "reads the database's certificate file")]
 use super::*;
 use std::sync::Arc;
 use tokio_postgres::{Client, Config, NoTls};

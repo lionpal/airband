@@ -10,6 +10,7 @@
 //!   APNS_TEAM_ID   the developer team it belongs to
 //!   APNS_TOPIC     the app's bundle id
 //!   APNS_HOST      where to send (default https://api.push.apple.com; a development build needs the sandbox)
+#![allow(clippy::disallowed_macros, reason = "Apple's own token and notification shapes")]
 use airband_core::relay::PushService;
 use airband_core::encode::base64_url;
 use ring::rand::SystemRandom;
