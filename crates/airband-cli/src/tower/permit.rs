@@ -41,6 +41,9 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
     if !inner.following() && !inner.connected() {
         return nobody;
     }
+    if !Inner::placeable(&ask.agent) {
+        return nobody;
+    }
     inner.check_in(&ask.agent);
     let agent_id = ask.agent.id.clone();
     let session = {

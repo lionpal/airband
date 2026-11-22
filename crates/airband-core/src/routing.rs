@@ -14,11 +14,11 @@ pub struct Callsign {
     pub named: bool,
 }
 
-/// The team a folder or a name he gave stands for: its last part, as a callsign writes it. None when there is
-/// nothing in it a team could be called.
+/// The team a folder or a name he gave stands for: the folder's own name, as the system reads the path, the
+/// way a callsign writes it. None when there is nothing in it a team could be called (the top of a disk).
 pub fn team_name(text: &str) -> Option<String> {
-    let base = text.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next().unwrap_or("");
-    Some(norm(base)).filter(|name| !name.is_empty())
+    let base = std::path::Path::new(text.trim()).file_name()?.to_string_lossy().into_owned();
+    Some(norm(&base)).filter(|name| !name.is_empty())
 }
 
 /// Two callsigns are the same when they read the same: no two agents are called alike, however each came by
@@ -67,9 +67,10 @@ impl Callsign {
         Some(if self.named && !live.contains(&named) { named } else { Callsign::next_for(&project, live) })
     }
     /// The next free callsign for a session in this folder: the folder's name plus the lowest unused number.
-    /// A folder with no name of its own (the top of a disk) is in the team called "session".
+    /// What has no name a team could be called by (the top of a disk) is turned away where agents report in
+    /// (`Inner::placeable` in the tower), so it never comes here.
     pub fn next_for(cwd: &str, live: &[Callsign]) -> Callsign {
-        let project = team_name(cwd).unwrap_or_else(|| "session".into());
+        let project = team_name(cwd).unwrap_or_default();
         let mut n = 1;
         loop {
             let number = WORDS.get(n).map(|w| w.to_string()).unwrap_or_else(|| n.to_string());
@@ -271,7 +272,7 @@ mod tests {
     #[test]
     fn next_callsign() {
         assert_eq!(Callsign::next_for("/x/shop", &live()).text(), "shop three");
-        assert_eq!(Callsign::next_for("C:\\work\\My-App\\", &live()).text(), "my app one");
+        assert_eq!(Callsign::next_for("/work/My-App/", &live()).text(), "my app one");
         assert_eq!(live()[0].spoken(), "Shop one");
     }
 

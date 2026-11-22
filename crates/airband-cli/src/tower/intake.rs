@@ -38,6 +38,9 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
         held::forget(&mut inner, &id);
         return Ok(());
     }
+    if !Inner::placeable(&ev.agent) {
+        return Err("airband cannot place an agent that has no name and no folder with a name. Start it in a project\u{2019}s folder, or report it with --name.".into());
+    }
     let callsign = inner.check_in(&ev.agent).text();
     match ev.event {
         Event::Working => {
