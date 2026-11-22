@@ -818,3 +818,5 @@ fn an_account_on_two_computers_is_never_taken_for_one_by_what_it_is_called() {
     assert!(laptop.limits.is_empty());
     assert_eq!(laptop.problem.as_deref(), Some("Could not read it."));
 }
+
+mod scenarios;

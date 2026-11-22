@@ -559,4 +559,18 @@ mod tests {
         assert_eq!(news(&same, &|_| false).len(), 1);
     }
 
+
+    // N20: rows are read one at a time, tool rows too: one this build cannot read is left out and said, and the
+    // rest of the copy is kept.
+    #[test]
+    fn n20_one_tool_row_this_build_cannot_read_leaves_out_only_that_row() {
+        let mut doc: Value = serde_json::from_str(BUILT_IN).unwrap();
+        let tools = doc["tools"].as_array().unwrap().len();
+        assert!(tools > 0);
+        doc["tools"].as_array_mut().unwrap().push(serde_json::json!({ "id": "from-a-later-build", "name": 7 }));
+        let read = read(&doc.to_string());
+        let c = read.as_ref().expect("one unreadable tool row refused the whole catalogue");
+        assert_eq!(c.tools.len(), tools);
+        assert!(c.left_out.iter().any(|l| l.contains("from-a-later-build")), "{:?}", c.left_out);
+    }
 }

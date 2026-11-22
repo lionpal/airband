@@ -270,3 +270,22 @@ fn a_switch_away_from_an_account_known_only_by_its_refresh_token_goes_ahead() {
     let kept: Value = serde_json::from_str(&b.here.vault.read("saved", "a@x").unwrap().unwrap()).unwrap();
     assert_eq!(kept["claudeAiOauth"]["accessToken"], "a-new");
 }
+
+// N39: a switch happens whole or not at all. When the account record cannot be written, the login is left as
+// it was and he is told it did not switch.
+#[cfg(unix)]
+#[test]
+fn n39_a_switch_whose_account_record_cannot_be_written_leaves_the_login_as_it_was() {
+    use std::os::unix::fs::PermissionsExt;
+    let b = bench(Service { tokens: HashMap::from([("a-access".into(), "a@x".into()), ("b-access".into(), "b@x".into())]), ..Default::default() });
+    put_live(&b, login("a-access", "r-a2", true));
+    put_saved(&b, "b@x", login("b-access", "r-b", true));
+    // the folder the account record is in takes no new files, so the record cannot be replaced
+    let folder = b.here.account_file.parent().unwrap().to_path_buf();
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let switched = switch_in(&b.here, "b@x");
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let live: Value = serde_json::from_str(&b.here.vault.read("live", "me").unwrap().unwrap()).unwrap();
+    assert!(matches!(&switched, Err(e) if e.starts_with("Did not switch")), "{:?}", switched.as_ref().err());
+    assert_eq!(live["claudeAiOauth"]["accessToken"], "a-access", "the login was swapped and the record was not");
+}

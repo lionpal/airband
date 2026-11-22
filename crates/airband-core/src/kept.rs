@@ -308,4 +308,23 @@ mod tests {
         assert_eq!(mode(&theirs), 0o640);
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+
+    // N21: a file that is a link into somewhere else (his dotfiles) stays that link: what is written lands in
+    // the file it leads to.
+    #[cfg(unix)]
+    #[test]
+    fn n21_a_linked_file_stays_linked_and_what_is_written_goes_where_it_leads() {
+        let dir = folder();
+        let real = dir.join("dotfiles-settings.json");
+        let link = dir.join("settings.json");
+        std::fs::write(&real, "{}").unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        write_atomic(&link, b"{\"a\":1}").unwrap();
+        let still_linked = std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink();
+        let landed = std::fs::read_to_string(&real).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(still_linked, "the link was replaced by a file of its own");
+        assert_eq!(landed, "{\"a\":1}");
+    }
 }

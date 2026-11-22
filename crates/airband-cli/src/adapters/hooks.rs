@@ -304,4 +304,24 @@ mod tests {
         assert_eq!(asking("no-such-tool", "Frobnicate", &input, None), "Frobnicate {\"path\":\"/w/shop/cart.rs\"}");
         assert_eq!(asking("no-such-tool", "Frobnicate", &input, Some("tidy the cart".into())), "tidy the cart");
     }
+
+
+    // N41: a hooks file that is there and cannot be read is not taken as no file: installing says so and
+    // leaves his file as it was.
+    #[cfg(unix)]
+    #[test]
+    fn n41_a_hooks_file_that_cannot_be_read_is_never_written_over() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("airband-hooks-{}", crate::config::random_hex(6)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = file(&dir);
+        std::fs::write(&f.path, r#"{"model":"his own"}"#).unwrap();
+        std::fs::set_permissions(&f.path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let installed = f.install(Path::new("/x/airband"));
+        std::fs::set_permissions(&f.path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let now = std::fs::read_to_string(&f.path).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(installed.is_err(), "installing went ahead over a file it could not read");
+        assert_eq!(now, r#"{"model":"his own"}"#);
+    }
 }
