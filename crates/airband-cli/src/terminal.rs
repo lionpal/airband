@@ -183,7 +183,7 @@ pub(crate) fn feed(cfg: &Config, args: &[String]) -> Result<(), String> {
     };
     let mut after = 0;
     loop {
-        let f = radio.feed(team.clone(), agent.clone(), after, if once { 0 } else { 25 }).map_err(|e| e.to_string())?;
+        let f = radio.feed(team.clone(), agent.clone(), after, if once { 0 } else { airband_core::radio::wire::FeedQuery::WAIT_MOST }).map_err(|e| e.to_string())?;
         if after == 0 {
             let who: Vec<String> = f.agents.iter().map(|a| format!("{}{}", a.callsign, if a.waiting { " (waiting)" } else { "" })).collect();
             println!("Your agents: {}", if who.is_empty() { "nobody".into() } else { who.join(", ") });
@@ -232,7 +232,7 @@ pub(crate) fn send(cfg: &Config, args: &[String]) -> Result<(), String> {
         {
             let radio = radio.clone();
             std::thread::spawn(move || loop {
-                if radio.follow(25).is_err() {
+                if radio.follow(airband_core::radio::wire::FeedQuery::WAIT_MOST).is_err() {
                     std::thread::sleep(Duration::from_secs(1));
                 }
             });

@@ -88,7 +88,7 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
 
 /// Where a request stands. Held open for up to `wait` seconds while there is no answer.
 pub(super) async fn state(app: &Arc<App>, id: &str, wait: u64) -> PermissionState {
-    let until = Instant::now() + Duration::from_secs(wait.min(25));
+    let until = Instant::now() + Duration::from_secs(wait.min(airband_core::radio::wire::FeedQuery::WAIT_MOST as u64));
     loop {
         {
             let mut inner = app.change();

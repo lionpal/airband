@@ -28,6 +28,9 @@ pub(super) enum Receipt {
     Unknown(String),
 }
 
+/// A value kept under its key in the state table, in place of what was there.
+const KEEP_UNDER: &str = "insert into state (key, value) values (?1, ?2) on conflict (key) do update set value = excluded.value";
+
 impl Store {
     pub(super) fn open(path: &std::path::Path) -> Result<Store, String> {
         let db = Connection::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
@@ -79,7 +82,7 @@ impl Store {
             Some(Ok(value)) => Ok(value),
             Some(Err(e)) => {
                 log(format!("database: what was kept as '{key}' could not be read ({e}); kept as '{key}.unreadable', starting without it"));
-                Self::warn("setting state aside", db.execute("insert into state (key, value) values (?1, ?2) on conflict (key) do update set value = excluded.value", params![format!("{key}.unreadable"), text]));
+                Self::warn("setting state aside", db.execute(KEEP_UNDER, params![format!("{key}.unreadable"), text]));
                 Ok(T::default())
             }
         }
@@ -177,7 +180,7 @@ impl Store {
         let mut db = self.db.lock().unwrap();
         let tx = db.transaction()?;
         for (key, text) in &batch.tables {
-            tx.execute("insert into state (key, value) values (?1, ?2) on conflict (key) do update set value = excluded.value", params![key, text])?;
+            tx.execute(KEEP_UNDER, params![key, text])?;
         }
         for e in &batch.messages {
             Self::put_one(&tx, e)?;
@@ -192,7 +195,7 @@ impl Store {
     }
     pub(super) fn save_push_targets(&self, targets: &BTreeMap<String, Vec<airband_core::radio::PushTarget>>) {
         let db = self.db.lock().unwrap();
-        Self::warn("saving where phones can be woken", db.execute("insert into state (key, value) values ('push', ?1) on conflict (key) do update set value = excluded.value", params![serde_json::to_string(targets).unwrap()]));
+        Self::warn("saving where phones can be woken", db.execute(KEEP_UNDER, params!["push", serde_json::to_string(targets).unwrap()]));
     }
 
     /// Write new messages, and messages whose short or fuller version has just been made.

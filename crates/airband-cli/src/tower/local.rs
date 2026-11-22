@@ -75,6 +75,11 @@ fn fetch(server: &airband_core::catalog::Server) -> Result<PathBuf, String> {
     Ok(program)
 }
 
+/// Whether the model's program has ended. One that cannot be asked is taken as still running: it is asked again.
+fn ended(child: &mut Child) -> bool {
+    child.try_wait().is_ok_and(|done| done.is_some())
+}
+
 fn healthy() -> bool {
     let agent = airband_io::http::agent(Duration::from_secs(2));
     address().is_ok_and(|at| agent.get(format!("{at}/health")).call().is_ok_and(|r| r.status().as_u16() == 200))
@@ -133,7 +138,7 @@ pub(crate) fn ensure(model: &str, server: &str, patience: Patience) -> Result<St
     let port = port()?;
     {
         let mut running = RUNNING.lock().unwrap();
-        let alive = running.as_mut().is_some_and(|(has, child)| has == model && child.try_wait().is_ok_and(|ended| ended.is_none()));
+        let alive = running.as_mut().is_some_and(|(has, child)| has == model && !ended(child));
         if !alive {
             if let Some((_, mut old)) = running.take() {
                 end(&mut old);
@@ -173,7 +178,7 @@ pub(crate) fn ensure(model: &str, server: &str, patience: Patience) -> Result<St
         if healthy() {
             return Ok(format!("{at}/v1"));
         }
-        if RUNNING.lock().unwrap().as_mut().is_some_and(|(_, child)| child.try_wait().is_ok_and(|ended| ended.is_some())) {
+        if RUNNING.lock().unwrap().as_mut().is_some_and(|(_, child)| ended(child)) {
             return Err(format!("the program that runs the model stopped. Its log is {}", dir().join("server.log").display()));
         }
         if Instant::now() >= until {

@@ -150,8 +150,9 @@ impl Config {
 }
 
 /// The places in the settings that use a key.
-const USERS: [&str; 1] = ["summarizer"];
-const BY_NAME: &str = "key:";
+pub(crate) const USERS: [&str; 1] = ["summarizer"];
+/// What a use of a kept key is written as, before the key's name.
+pub(crate) const BY_NAME: &str = "key:";
 
 /// In the settings as they are written: each use of a kept key becomes the key's name.
 fn name_keys(doc: &mut serde_json::Value) {
@@ -259,7 +260,7 @@ pub(crate) fn stamp_of(path: &Path) -> Option<std::time::SystemTime> {
 /// the keys also writes the file, so a file that has not changed means keys that have not.
 fn kept() -> Result<serde_json::Map<String, serde_json::Value>, String> {
     static LAST: std::sync::Mutex<Option<(std::time::SystemTime, serde_json::Map<String, serde_json::Value>)>> = std::sync::Mutex::new(None);
-    let stamp = fs::metadata(dir().join("config.json")).and_then(|m| m.modified()).ok();
+    let stamp = stamp_of(&file());
     let mut last = LAST.lock().unwrap();
     if let (Some(stamp), Some((at, map))) = (stamp, last.as_ref())
         && *at == stamp {
@@ -304,7 +305,7 @@ fn render(cfg: &Config) -> Result<String, String> {
     if let Some(why) = &cfg.keyless {
         return Err(format!("the settings cannot be changed from here: {why}"));
     }
-    let path = dir().join("config.json");
+    let path = file();
     // a file that is there and cannot be read is never taken as one without keys: that would write over it
     let existing = airband_io::files::read_text(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?.unwrap_or_default();
     let mut doc = serde_json::to_value(cfg).unwrap();
@@ -332,7 +333,7 @@ pub(crate) fn save(cfg: &Config) -> Result<(), String> {
 /// [`save`], for one that already holds the file.
 pub(crate) fn save_held(cfg: &Config, _: &crate::lock::Held) -> Result<(), String> {
     let text = render(cfg)?;
-    write_private(&dir().join("config.json"), &text).map_err(|e| format!("cannot write ~/.airband/config.json: {e}"))
+    write_private(&file(), &text).map_err(|e| format!("cannot write ~/.airband/config.json: {e}"))
 }
 
 /// What is in the settings file: `None` when there is no file yet. A file that is there and cannot be read or
@@ -348,7 +349,7 @@ fn existing(path: &std::path::Path) -> Result<Option<(String, Config)>, String> 
 
 /// Read the config, creating it (with a fresh token) on first use.
 pub(crate) fn load() -> Config {
-    let path = dir().join("config.json");
+    let path = file();
     airband_io::files::make_folder(&dir()).expect("cannot create ~/.airband");
     // read and, when it is new or out of date, written while no other airband process is changing it
     let _held = hold().unwrap_or_else(|why| {
