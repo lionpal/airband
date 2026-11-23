@@ -22,17 +22,42 @@ pub(super) struct Idea {
 pub(super) enum Pick {
     /// From the phone: the tool's own id for it.
     Id(String),
-    /// From his words: one on the list the routing model was shown, by the number it answered: its name, the
-    /// one launcher that offers it, and that launcher's own id for it. Another launcher's choice of the same
-    /// name is another entry on that list, never this one.
-    Listed { name: String, launcher: LauncherId, id: String },
+    /// From his words: the model or effort the routing model heard, as offered, whichever launcher offers it.
+    /// Which launcher starts the agent is settled after, by rule (`starter`), never by where it was listed.
+    Heard(Heard),
     /// From his words: something on no list, as he said it. Only an agent that lists its own settings can be
     /// asked for it, and that agent is told exactly this.
     Said(String),
 }
 
-/// The one of `choices` he asked for: by the tool's own id, or by the name on the list he was offered, compared
-/// whole. Something on no list goes as he said it only to an agent that lists its own settings (`agent_says`).
+/// What the routing model heard him name: each listed name it answered with, and every launcher that offers
+/// one of them, with that launcher's own id for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Heard {
+    pub(super) names: Vec<String>,
+    pub(super) offered: Vec<Offered>,
+}
+
+/// One launcher's offer of a choice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Offered {
+    pub(super) launcher: LauncherId,
+    pub(super) choice: airband_core::tools::Choice,
+}
+
+impl Heard {
+    /// This launcher's offers of what was heard.
+    fn of<'a>(&'a self, launcher: &'a LauncherId) -> impl Iterator<Item = &'a Offered> + 'a {
+        self.offered.iter().filter(move |o| o.launcher == *launcher)
+    }
+    /// How it is said to him.
+    fn said(&self) -> String {
+        either(&self.names)
+    }
+}
+
+/// The one of `choices` he asked for: by the tool's own id, or by this launcher's own offer of what was heard.
+/// Something on no list goes as he said it only to an agent that lists its own settings (`agent_says`).
 /// Anything else is his word back, for telling him it is not there.
 fn chosen(asked: Option<&Pick>, launcher: &LauncherId, choices: &[airband_core::tools::Choice], agent_says: bool) -> Result<Option<airband_core::tools::Choice>, String> {
     let found = |is: &dyn Fn(&airband_core::tools::Choice) -> bool| choices.iter().find(|c| is(c)).cloned();
@@ -40,41 +65,85 @@ fn chosen(asked: Option<&Pick>, launcher: &LauncherId, choices: &[airband_core::
         None => Ok(None),
         Some(Pick::Id(id)) => found(&|c| c.id == *id).map(Some).ok_or_else(|| id.clone()),
         // the id this launcher gave it: one another launcher offers under the same name is not this one's
-        Some(Pick::Listed { name, launcher: offered, id }) => (offered == launcher).then(|| found(&|c| c.id == *id)).flatten().map(Some).ok_or_else(|| name.clone()),
+        Some(Pick::Heard(heard)) => match heard.of(launcher).collect::<Vec<_>>().as_slice() {
+            [one] => found(&|c| c.id == one.choice.id).map(Some).ok_or_else(|| heard.said()),
+            _ => Err(heard.said()),
+        },
         Some(Pick::Said(said)) if agent_says => Ok(Some(airband_core::tools::Choice { id: said.clone(), name: said.clone() })),
         Some(Pick::Said(said)) => Err(said.clone()),
     }
 }
 
-/// The launcher a listed pick (a model or an effort from the list the routing model was shown) is for.
-fn listed_launcher(pick: Option<&Pick>) -> Option<&LauncherId> {
+/// What was heard, of a pick from his words.
+fn heard(pick: Option<&Pick>) -> Option<&Heard> {
     match pick {
-        Some(Pick::Listed { launcher, .. }) => Some(launcher),
+        Some(Pick::Heard(heard)) => Some(heard),
         _ => None,
     }
 }
 
-/// The launcher that starts the agent. A listed choice he picked is one launcher's, and that launcher starts it;
-/// a tool he named that it does not start, or a model and an effort of two launchers, is refused in words. With
-/// no listed choice: the launcher for the tool he named, else the usual one (`held::launcher_for`).
+/// Which launcher starts an agent on something he named, of those that offer it.
+#[derive(Debug, PartialEq, Eq)]
+enum Starts {
+    This(LauncherId),
+    /// None offers it.
+    Nobody,
+    /// Several do and none is his usual: he is asked which.
+    Which(Vec<LauncherId>),
+}
+
+/// The rule, the same with a tool named or none: his usual launcher (for that tool, or at all) when it offers
+/// it; else the one launcher that does; else he is asked. Where a launcher stands in any list decides nothing.
+fn which_launcher(usual: Option<&LauncherId>, offering: &[LauncherId]) -> Starts {
+    if let Some(usual) = usual.filter(|u| offering.contains(u)) {
+        return Starts::This(usual.clone());
+    }
+    match offering {
+        [] => Starts::Nobody,
+        [one] => Starts::This(one.clone()),
+        several => Starts::Which(several.to_vec()),
+    }
+}
+
+/// The launcher that starts the agent. With nothing heard from his words to start it on: the launcher for the
+/// tool he named, else the usual one (`held::launcher_for`). With a model or an effort heard: of the launchers
+/// that offer all of it (only the named tool's, when he named one), by `which_launcher`. None offering it, or
+/// several and none usual, is said to him in words and nothing starts.
 fn starter(app: &App, idea: &Idea) -> Result<(String, config::Launcher), String> {
-    let (model, effort) = (listed_launcher(idea.model.as_ref()), listed_launcher(idea.effort.as_ref()));
-    let picked = match (model, effort) {
-        (Some(m), Some(e)) if m != e => return Err("That model and that effort are offered by two ways of starting an agent. Ask for one of them.".into()),
-        (m, e) => m.or(e),
-    };
-    let Some(picked) = picked else {
-        return held::launcher_for(app, idea.tool.as_deref()).ok_or_else(|| match &idea.tool {
+    let wanted: Vec<&Heard> = [idea.model.as_ref(), idea.effort.as_ref()].into_iter().filter_map(heard).collect();
+    let usual = held::launcher_for(app, idea.tool.as_deref());
+    if wanted.is_empty() {
+        return usual.ok_or_else(|| match &idea.tool {
             Some(tool) => format!("This computer is not set up to start {tool} agents."),
             None => "Which coding agent should start it? Name one, or choose yours in Settings, under Coding agents.".to_string(),
         });
-    };
-    let cfg = app.cfg();
-    let Some(launcher) = cfg.launchers.get(picked.as_str()) else { return Err("The way of starting that agent is no longer set up here.".into()) };
-    match &idea.tool {
-        Some(tool) if *tool != launcher.harness => Err(format!("That is not offered for {tool} agents.")),
-        _ => Ok((picked.to_string(), launcher.clone())),
     }
+    let what = wanted.iter().map(|h| h.said()).collect::<Vec<_>>().join(" at ");
+    let cfg = app.cfg();
+    let offering: Vec<LauncherId> = cfg
+        .launchers
+        .iter()
+        .filter(|(_, l)| idea.tool.as_ref().is_none_or(|tool| l.harness == *tool))
+        .map(|(name, _)| LauncherId::new(name.as_str()))
+        .filter(|id| wanted.iter().all(|h| h.of(id).next().is_some()))
+        .collect();
+    let usual = usual.map(|(name, _)| LauncherId::new(name));
+    let picked = match which_launcher(usual.as_ref(), &offering) {
+        Starts::This(picked) => picked,
+        Starts::Nobody => {
+            return Err(match &idea.tool {
+                Some(tool) => format!("{tool} agents cannot be started on {what}."),
+                None => format!("Nothing here starts an agent on {what}."),
+            });
+        }
+        Starts::Which(several) => return Err(format!("Which should start it on {what}: {}?", either(&several))),
+    };
+    // two of what was heard offered by this one launcher: he is asked which he meant
+    if let Some(h) = wanted.iter().find(|h| h.of(&picked).nth(1).is_some()) {
+        return Err(format!("Which one: {}?", either(&h.of(&picked).map(|o| o.choice.name.as_str()).collect::<Vec<_>>())));
+    }
+    let Some(launcher) = cfg.launchers.get(picked.as_str()) else { return Err("The way of starting that agent is no longer set up here.".into()) };
+    Ok((picked.to_string(), launcher.clone()))
 }
 
 /// Start a new agent in `place`. `Ok` once it has started, with what to tell him; `Err` with why nothing started.
@@ -201,17 +270,21 @@ mod tests {
     use super::*;
     use airband_core::tools::Choice;
 
+    /// What the routing model heard: one name, offered by each of these launchers under its own id.
+    fn heard(name: &str, by: &[(&LauncherId, &str)]) -> Pick {
+        Pick::Heard(Heard { names: vec![name.into()], offered: by.iter().map(|(l, id)| Offered { launcher: (*l).clone(), choice: Choice { id: id.to_string(), name: name.into() } }).collect() })
+    }
+
     #[test]
-    fn a_model_is_taken_by_its_id_or_this_launchers_own_id_for_the_listed_one_and_never_by_a_near_word() {
+    fn a_model_is_taken_by_its_id_or_this_launchers_own_id_for_the_heard_one_and_never_by_a_near_word() {
         let models = vec![Choice { id: "gpt-6.2-sol".into(), name: "6.2 Sol".into() }, Choice { id: "gpt-6-luna".into(), name: "6 Luna".into() }];
         let (here, other) = (LauncherId::new("codex"), LauncherId::new("held-codex"));
         let id = |r: Result<Option<Choice>, String>| r.map(|c| c.map(|c| c.id));
-        let listed = |name: &str, launcher: &LauncherId, id: &str| Pick::Listed { name: name.into(), launcher: launcher.clone(), id: id.into() };
         assert_eq!(id(chosen(Some(&Pick::Id("gpt-6-luna".into())), &here, &models, false)), Ok(Some("gpt-6-luna".into())));
-        // a listed one is this launcher's by the id this launcher gave it
-        assert_eq!(id(chosen(Some(&listed("6.2 Sol", &here, "gpt-6.2-sol")), &here, &models, false)), Ok(Some("gpt-6.2-sol".into())));
+        // what was heard is this launcher's by the id this launcher gave it
+        assert_eq!(id(chosen(Some(&heard("6.2 Sol", &[(&other, "sol-2"), (&here, "gpt-6.2-sol")])), &here, &models, false)), Ok(Some("gpt-6.2-sol".into())));
         // one only another launcher offers under that name is not this launcher's, however its name reads
-        assert_eq!(id(chosen(Some(&listed("6.2 Sol", &other, "gpt-6.2-sol")), &here, &models, false)), Err("6.2 Sol".into()));
+        assert_eq!(id(chosen(Some(&heard("6.2 Sol", &[(&other, "gpt-6.2-sol")])), &here, &models, false)), Err("6.2 Sol".into()));
         // nothing loosened: a name used as an id, or a word on no list, is not it
         assert_eq!(id(chosen(Some(&Pick::Id("6 Luna".into())), &here, &models, false)), Err("6 Luna".into()));
         assert_eq!(id(chosen(Some(&Pick::Said("luna".into())), &here, &models, false)), Err("luna".into()));
@@ -220,6 +293,51 @@ mod tests {
         assert_eq!(id(chosen(None, &here, &models, false)), Ok(None));
     }
 
+    #[test]
+    fn the_launcher_is_his_usual_when_it_offers_it_else_the_only_one_else_he_is_asked_and_no_order_decides() {
+        let (a, b, c) = (LauncherId::new("a"), LauncherId::new("b"), LauncherId::new("c"));
+        // his usual, wherever it stands among those that offer it
+        assert_eq!(which_launcher(Some(&b), &[a.clone(), b.clone()]), Starts::This(b.clone()));
+        assert_eq!(which_launcher(Some(&b), &[b.clone(), a.clone()]), Starts::This(b.clone()));
+        // his usual does not offer it: the one that does
+        assert_eq!(which_launcher(Some(&c), &[a.clone()]), Starts::This(a.clone()));
+        assert_eq!(which_launcher(None, &[a.clone()]), Starts::This(a.clone()));
+        // several, and none is his usual: he is asked, never given the first
+        assert_eq!(which_launcher(Some(&c), &[a.clone(), b.clone()]), Starts::Which(vec![a.clone(), b.clone()]));
+        assert_eq!(which_launcher(None, &[b.clone(), a.clone()]), Starts::Which(vec![b.clone(), a.clone()]));
+        assert_eq!(which_launcher(Some(&c), &[]), Starts::Nobody);
+    }
+
+    #[test]
+    fn a_model_he_names_is_started_by_the_tool_he_named_else_his_usual_else_the_only_one_else_he_is_asked() {
+        let app = with_launchers("starter", "a", serde_json::json!({
+            "a": { "harness": "tool-one", "argv": ["true"], "models": { "Sol": "sol-a" } },
+            "b": { "harness": "tool-two", "argv": ["true"], "models": { "Sol": "sol-b", "Luna": "luna-b" }, "efforts": ["high"] },
+            "c": { "harness": "tool-three", "argv": ["true"], "models": { "Luna": "luna-c", "Nova": "nova-c" } },
+            "d": { "harness": "tool-four", "argv": ["true"], "models": { "Nova": "nova-d" } },
+        }));
+        let (a, b, c, d) = (LauncherId::new("a"), LauncherId::new("b"), LauncherId::new("c"), LauncherId::new("d"));
+        let started = |idea: Idea| starter(&app, &idea).map(|(name, _)| name);
+        let sol = |by: &[(&LauncherId, &str)]| Some(heard("Sol", by));
+        // (a) the tool he named, when it offers it, though his usual offers it too
+        assert_eq!(started(Idea { tool: Some("tool-two".into()), model: sol(&[(&a, "sol-a"), (&b, "sol-b")]), ..Idea::default() }), Ok("b".into()));
+        // (a) the tool he named does not offer it: refused in words, nothing swapped
+        assert_eq!(started(Idea { tool: Some("tool-one".into()), model: Some(heard("Luna", &[(&b, "luna-b"), (&c, "luna-c")])), ..Idea::default() }), Err("tool-one agents cannot be started on Luna.".into()));
+        // (b) no tool named: his usual, whichever way round the offers came
+        assert_eq!(started(Idea { model: sol(&[(&a, "sol-a"), (&b, "sol-b")]), ..Idea::default() }), Ok("a".into()));
+        assert_eq!(started(Idea { model: sol(&[(&b, "sol-b"), (&a, "sol-a")]), ..Idea::default() }), Ok("a".into()));
+        // (c) his usual does not offer it and one launcher does
+        assert_eq!(started(Idea { model: Some(heard("Sol", &[(&b, "sol-b")])), ..Idea::default() }), Ok("b".into()));
+        // a model and an effort: only a launcher that offers both
+        assert_eq!(started(Idea { model: Some(heard("Luna", &[(&b, "luna-b"), (&c, "luna-c")])), effort: Some(heard("high", &[(&b, "high")])), ..Idea::default() }), Ok("b".into()));
+        assert_eq!(started(Idea { model: sol(&[(&a, "sol-a")]), effort: Some(heard("high", &[(&b, "high")])), ..Idea::default() }), Err("Nothing here starts an agent on Sol at high.".into()));
+        // (d) several offer it and none is his usual: he is asked which, by name, either way round
+        assert_eq!(started(Idea { model: Some(heard("Nova", &[(&c, "nova-c"), (&d, "nova-d")])), ..Idea::default() }), Err("Which should start it on Nova: c or d?".into()));
+        assert_eq!(started(Idea { model: Some(heard("Nova", &[(&d, "nova-d"), (&c, "nova-c")])), ..Idea::default() }), Err("Which should start it on Nova: c or d?".into()));
+        // nothing heard: the tool he named, else the usual
+        assert_eq!(started(Idea { tool: Some("tool-two".into()), ..Idea::default() }), Ok("b".into()));
+        assert_eq!(started(Idea { model: Some(Pick::Said("luna".into())), ..Idea::default() }), Ok("a".into()));
+    }
 
     #[test]
     fn a_task_started_in_a_folder_with_no_team_yet_is_written_under_that_folders_team() {
@@ -238,27 +356,6 @@ mod tests {
 
     fn with_launchers(name: &str, usual: &str, launchers: serde_json::Value) -> Arc<App> {
         crate::tower::http::tests::app_with(name, serde_json::json!({ "launcher": usual, "launchers": launchers }))
-    }
-
-    #[test]
-    fn the_launcher_of_the_choice_he_picked_starts_the_agent_and_a_tool_it_does_not_start_is_refused() {
-        let app = with_launchers("starter", "a", serde_json::json!({
-            "a": { "harness": "tool-one", "argv": ["true"], "models": { "Sol": "sol-a" } },
-            "b": { "harness": "tool-two", "argv": ["true"], "models": { "Sol": "sol-b" }, "efforts": ["high"] },
-        }));
-        let (a, b) = (LauncherId::new("a"), LauncherId::new("b"));
-        let model = |launcher: &LauncherId| Some(Pick::Listed { name: "Sol".into(), launcher: launcher.clone(), id: "sol".into() });
-        let started = |idea: Idea| starter(&app, &idea).map(|(name, _)| name);
-        // no tool named: the picked choice's launcher, not the usual one
-        assert_eq!(started(Idea { model: model(&b), ..Idea::default() }), Ok("b".into()));
-        assert_eq!(started(Idea { tool: Some("tool-two".into()), model: model(&b), ..Idea::default() }), Ok("b".into()));
-        // a tool he named that the picked choice's launcher does not start: refused, nothing swapped
-        assert!(started(Idea { tool: Some("tool-one".into()), model: model(&b), ..Idea::default() }).is_err());
-        // a model of one launcher and an effort of another: refused
-        assert!(started(Idea { model: model(&a), effort: Some(Pick::Listed { name: "high".into(), launcher: b.clone(), id: "high".into() }), ..Idea::default() }).is_err());
-        // nothing listed picked: the tool he named, else the usual
-        assert_eq!(started(Idea { tool: Some("tool-two".into()), ..Idea::default() }), Ok("b".into()));
-        assert_eq!(started(Idea { model: Some(Pick::Said("luna".into())), ..Idea::default() }), Ok("a".into()));
     }
 
     #[cfg(unix)]
