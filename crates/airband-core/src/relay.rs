@@ -338,7 +338,7 @@ impl Keys {
     /// Where a tower on his own network takes this channel's sealed requests straight, with no relay between
     /// (`base` is the address its feed lists): [`routes::SEALED`] for this channel.
     pub fn straight(&self, base: &str) -> String {
-        format!("{}{}", base.trim_end_matches('/'), routes::SEALED.replace("{channel}", &self.channel))
+        format!("{}{}", base.trim_end_matches('/'), crate::template::filled(routes::SEALED, &[("channel", &self.channel)]))
     }
     /// What a tower shows the relay it is this channel's tower with (`Authorization`).
     pub fn as_tower(&self) -> String {
