@@ -55,18 +55,18 @@ impl Pairing {
         format!("{}&{}", self.link(), query(&[("name", computer)]))
     }
     /// What a phone may call the computer a link pairs with before it has ever reached it: the name the link
-    /// carries, or else the host the link reaches it at. Nothing for a link through a relay that names none.
+    /// carries (`name`), or for a link to the one address of a tower on the same machine, that address's host.
+    /// Nothing for a link that names none and reaches it through a relay or at several addresses: none of
+    /// those is its name, and the first of them is no more so than the others.
     pub fn computer_in(link: &str) -> Option<String> {
         let query = link.trim().strip_prefix("airband://pair?")?;
         if let Some((_, name)) = url::form_urlencoded::parse(query.as_bytes()).find(|(k, v)| k == "name" && !v.is_empty()) {
             return Some(name.into_owned());
         }
-        let at = match Pairing::parse(link).ok()? {
-            Pairing::Direct { url, .. } => url,
-            Pairing::Near { at, .. } => at.into_iter().next()?,
-            Pairing::Relay { .. } => return None,
-        };
-        Some(crate::links::site(&at)).filter(|host| !host.is_empty())
+        match Pairing::parse(link).ok()? {
+            Pairing::Direct { url, .. } => Some(crate::links::site(&url)).filter(|host| !host.is_empty()),
+            Pairing::Near { .. } | Pairing::Relay { .. } => None,
+        }
     }
     pub fn link(&self) -> String {
         match self {
@@ -97,6 +97,10 @@ mod tests {
         assert_eq!(Pairing::computer_in(&relay.link()), None);
         let direct = Pairing::Direct { url: "http://studio.local:7373".into(), token: "t".into() };
         assert_eq!(Pairing::computer_in(&direct.link()).as_deref(), Some("studio.local"));
+        // A-10: several addresses and no name: none of them is its name
+        let near = Pairing::Near { at: vec!["http://192.168.1.20:7373".into(), "http://studio.tail.ts.net:7373".into()], secret: "cd".repeat(32) };
+        assert_eq!(Pairing::computer_in(&near.link()), None);
+        assert_eq!(Pairing::computer_in(&near.link_named("Studio Mac")).as_deref(), Some("Studio Mac"));
     }
     #[test]
     fn refuses_what_is_not_a_pairing() {
