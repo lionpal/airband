@@ -6,8 +6,8 @@ use std::io::Read;
 
 /// `airband report`: the adapter for everything else. Any script can put an agent on the radio:
 ///
-///   airband report --id build-7 --harness codex --cwd . --terminal tmux --pane %3 said "Tests pass. Ship it?"
-///   echo "long message" | airband report --id build-7 --harness codex said -
+///   airband report --id build-7 --harness my-tool --cwd . --terminal tmux --pane %3 said "Tests pass. Ship it?"
+///   echo "long message" | airband report --id build-7 --harness my-tool said -
 ///   airband report --id build-7 --harness codex show chart.png      (a picture for him, shown with what it says next)
 ///   airband report --id build-7 --harness codex permission "run the production migration"   (waits for his yes or no)
 ///   airband report --id build-7 --harness codex made https://example.com/preview/7 "Checkout preview"   (a card for it)
@@ -105,7 +105,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         // something it made that lives at a web address, shown with the next thing it says: `made <address> [title]`
         Some("made") => Event::Made { address: rest.get(1).filter(|a| airband_core::links::web(a).is_some()).ok_or("give the web address of what was made")?.clone(), title: rest.get(2).cloned(), kind: None },
         Some("doing") => Event::Activity { text: body()? },
-        // what it runs on: `model "Opus 4.7" high`; the effort is left off where the harness has none
+        // what it runs on: `model "<its name>" high`; the effort is left off where the harness has none
         Some("model") => Event::Model { name: rest.get(1).ok_or("give the model's name")?.clone(), effort: rest.get(2).cloned() },
         Some("signoff") => Event::Signoff,
         _ => return Err("expected one of: checkin, working, doing <text>, model <name> [effort], said <text>, asked <text>, notice <text>, show <picture file>, picture <picture file>, made <address> [title], signoff".into()),

@@ -49,6 +49,11 @@ mod tower;
 mod vault;
 mod setup;
 
+/// What a Debug form shows of text that is his (his words, a task, an email): its length, never the text.
+pub(crate) fn unshown(text: &str) -> String {
+    format!("<{} characters>", text.chars().count())
+}
+
 /// A command's words, read by [`words`].
 pub(crate) struct Words {
     /// Each flag it was given, without its dashes, with the value after it.
@@ -97,6 +102,11 @@ pub(crate) fn words(command: &str, args: &[String], takes: &[&str], switches: &[
 
 #[cfg(test)]
 mod words_tests {
+    #[test]
+    fn a_debug_form_of_his_text_says_its_length_only() {
+        assert_eq!(super::unshown("buy milk"), "<8 characters>");
+    }
+
     #[test]
     fn a_mistyped_flag_is_refused_and_never_passed_over() {
         let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();

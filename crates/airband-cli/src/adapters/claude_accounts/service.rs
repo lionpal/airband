@@ -1,4 +1,4 @@
-//! What Anthropic's account service is asked: whose a token is, how much of an account is used, and a new
+//! What the tool's maker's account service is asked: whose a token is, how much of an account is used, and a new
 //! access token for a saved login. Every answer is read by its status and its own fields; one that cannot be
 //! read is said to be so, never taken for an empty one.
 #![expect(clippy::disallowed_macros, reason = "the account service's own request bodies, and the tool's own records (oauthAccount, its login), field for field as the tool writes them")]

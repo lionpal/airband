@@ -2,12 +2,19 @@
 use super::*;
 
 /// Words he said that the tower could not place, with their files, held until he says who they are for.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub(super) struct Asked {
     /// The question asked him back ("Who is that for?"); only an answer to it takes these words.
     pub(super) question: airband_core::ids::QuestionId,
     pub(super) words: String,
     pub(super) files: String,
+}
+
+/// His words and his files' names are never in a Debug form: their lengths only.
+impl std::fmt::Debug for Asked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Asked").field("question", &self.question).field("words", &crate::unshown(&self.words)).field("files", &crate::unshown(&self.files)).finish()
+    }
 }
 
 /// An idea for a new agent held until he says which project it is for.
@@ -197,6 +204,16 @@ impl Inner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn his_words_and_tasks_and_keyboard_lines_are_never_in_a_debug_form() {
+        let asked = Asked { question: airband_core::ids::QuestionId::new("q"), words: "buy the umbrella".into(), files: "holiday.mov".into() };
+        let idea = Idea { task: "buy the umbrella".into(), ..Idea::default() };
+        let told = crate::adapters::Told { id: "t".into(), at: 0, text: "buy the umbrella".into(), images: Vec::new(), his: true };
+        for shown in [format!("{asked:?}"), format!("{idea:?}"), format!("{told:?}")] {
+            assert!(!shown.contains("umbrella") && !shown.contains("holiday"), "{shown}");
+        }
+    }
     use airband_core::ids::QuestionId;
 
     #[test]

@@ -149,7 +149,7 @@ pub(crate) struct Tower {
 }
 
 /// Something he said to an agent directly, at its keyboard.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Told {
     /// The harness's own id for it: the same words are never taken twice.
     pub(crate) id: String,
@@ -169,7 +169,7 @@ pub(crate) struct Told {
 pub(crate) struct Glance {
     /// What it is doing right now, in a few words.
     pub(crate) doing: Option<String>,
-    /// The model it runs on, as a person would say it: "Opus 4.7".
+    /// The model it runs on, as a person would say it, as its tool names it.
     pub(crate) model: Option<String>,
     /// How hard it is set to think: "high".
     pub(crate) effort: Option<String>,
@@ -349,6 +349,13 @@ pub(crate) fn names() -> Vec<&'static str> {
 /// constructor for it; anything more is set on what it returns.
 pub(crate) fn agent_with(id: impl Into<String>, harness: impl Into<String>) -> Agent {
     Agent { id: id.into(), harness: harness.into(), cwd: None, name: None, title: None, pid: None, deliver: None, meta: Default::default() }
+}
+
+/// His words are never in a Debug form: their length only.
+impl std::fmt::Debug for Told {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Told").field("id", &self.id).field("at", &self.at).field("text", &crate::unshown(&self.text)).field("images", &self.images.len()).field("his", &self.his).finish()
+    }
 }
 
 /// A variable this process was started with, empty taken as unset. A test never reads the real environment:

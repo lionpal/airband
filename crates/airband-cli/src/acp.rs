@@ -1,8 +1,8 @@
 //! The driver for a coding agent that speaks the Agent Client Protocol, inside its holder (`hold.rs`).
 //!
 //! The Agent Client Protocol (agentclientprotocol.com) is how an editor drives a coding agent it started:
-//! JSON-RPC over the agent's standard input and output. Many agents speak it, some themselves (OpenCode) and
-//! some through an adapter (Codex, Claude Code). So this one driver stands for all of them, and a tool that
+//! JSON-RPC over the agent's standard input and output. Many agents speak it, some themselves and some
+//! through an adapter. So this one driver stands for all of them, and a tool that
 //! speaks it is a row: `held: { by: acp, program: […] }` (`catalog/tools/`).
 //!
 //! Each thing he says becomes a prompt, which the agent takes as a turn of his own; what he says while it
@@ -26,7 +26,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 
 /// How long the agent is given to answer one of the requests that open a session. A program fetched on first
-/// use (`npx`) takes a while.
+/// use takes a while.
 const OPENING: Duration = Duration::from_secs(120);
 
 /// What he asked a new agent to be set to, in his own words for it: a name the agent lists, or its id.

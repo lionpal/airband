@@ -101,7 +101,7 @@ fn ended(child: &mut Child) -> bool {
 
 fn healthy() -> bool {
     let client = airband_io::http::Client::new(Duration::from_secs(2));
-    address().is_ok_and(|at| client.send(airband_io::http::Ask::get(format!("{at}/health"))).is_ok_and(|r| r.status().as_u16() == 200))
+    address().is_ok_and(|at| crate::adapters::taken(client.send(airband_io::http::Ask::get(format!("{at}/health")))).is_some())
 }
 
 

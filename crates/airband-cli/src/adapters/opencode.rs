@@ -49,8 +49,7 @@ fn auth(password: &str) -> String {
 }
 fn get(path: &str) -> Option<Value> {
     let (url, password) = service()?;
-    let mut res = client().send(Ask::get(format!("{url}{path}")).header("authorization", auth(&password))).ok()?;
-    (res.status().as_u16() == 200).then(|| res.body_mut().read_json::<Value>().ok()).flatten()
+    super::taken(client().send(Ask::get(format!("{url}{path}")).header("authorization", auth(&password))))?.body_mut().read_json::<Value>().ok()
 }
 
 fn post(path: &str, body: Value) -> Option<u16> {

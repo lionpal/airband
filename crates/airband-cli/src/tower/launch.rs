@@ -7,14 +7,21 @@ use super::*;
 
 /// A new agent he asked for: where, on what, and to do what. The place is nothing until it is known; the model
 /// and effort are as he named them (`chosen`), or nothing for the tool's own defaults.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Clone, Default, PartialEq)]
 pub(super) struct Idea {
-    /// The harness he asked for by name ("a codex agent"), when he did and a launcher starts it.
+    /// The harness he asked for by name ("a <tool> agent"), when he did and a launcher starts it.
     pub(super) tool: Option<String>,
     pub(super) project: Option<Place>,
     pub(super) model: Option<Pick>,
     pub(super) effort: Option<Pick>,
     pub(super) task: String,
+}
+
+/// The task is his words: never in a Debug form, its length only.
+impl std::fmt::Debug for Idea {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Idea").field("tool", &self.tool).field("project", &self.project).field("model", &self.model).field("effort", &self.effort).field("task", &crate::unshown(&self.task)).finish()
+    }
 }
 
 /// A model or an effort he asked for, as it came to the tower.

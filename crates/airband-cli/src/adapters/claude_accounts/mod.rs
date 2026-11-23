@@ -1,6 +1,6 @@
 //! Claude Code's accounts: the logins this computer has saved, which one every session is using, how much of
 //! each one's allowance is left, and switching between them. Nothing here leaves the computer except requests
-//! to Anthropic's own servers, and no token is ever printed, logged or sent to a radio.
+//! to the tool's maker's own servers (its row names them), and no token is ever printed, logged or sent to a radio.
 //!
 //! The live login is a keychain item (`live`). Every running session reads it again within 30 seconds and
 //! before a request, which is why a switch reaches sessions that are already running. `oauthAccount` in Claude
@@ -272,7 +272,7 @@ fn switch_in(here: &Here, id: &str) -> Res<std::thread::JoinHandle<()>> {
             }
             blob = again;
         }
-        // swap the claude.ai login inside the live item, keeping the MCP logins beside it
+        // swap the maker's own login inside the live item, keeping the other logins beside it
         let before = blob.clone().map(|b| Value::Object(b).to_string());
         let mut blob = blob.unwrap_or_default();
         blob.insert(login_key(), incoming);

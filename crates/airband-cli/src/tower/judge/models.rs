@@ -7,7 +7,7 @@ use super::*;
 pub(crate) const READY: &str = "Reply with the one word: ready";
 
 /// One question to a model behind an API key, off the async threads. `read` finds the answer in what came back.
-/// One call to a service that speaks OpenAI's chat interface. `auth` is the header its key goes in and the
+/// One call to a service that speaks the common chat-completions interface. `auth` is the header its key goes in and the
 /// value there, as its row says; a service with no key (one on his own computer) is sent none.
 pub(super) async fn ask_api(url: String, auth: Option<(String, String)>, body: Value, check: Option<airband_core::providers::Check>) -> Result<String, Trouble> {
     tokio::task::spawn_blocking(move || {
@@ -69,7 +69,7 @@ pub(crate) struct Reader {
 
 /// Every interface the tower reads through. A new one is a function here and a line of this table.
 pub(crate) const READERS: &[Reader] = &[
-    // OpenAI's Chat Completions, which nearly every model service and every local model server accepts.
+    // The common chat-completions interface, which nearly every model service and every local model server accepts.
     // `cold` sends `temperature: 0`, which most services take and some refuse. `shaped`: the service can be
     // held to a JSON schema, so what comes back always parses.
     Reader { is: Interface { name: "chat", can: &[], told: &[] }, runs: false, ask: |m, by, prompt, shape| Box::pin(chat(m, by, prompt, shape)) },
