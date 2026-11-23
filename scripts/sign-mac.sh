@@ -5,23 +5,36 @@
 #
 #   scripts/sign-mac.sh [path to the binary]     default: target/release/airband
 #
-# The certificate is the one named in AIRBAND_SIGN, else the one named in ~/.airband/signing, else the first
-# "Developer ID Application" or
-# "Apple Distribution" one in the keychain. Does nothing, and says so, when there is none.
+# The certificate is the one named in AIRBAND_SIGN, else the one named in ~/.airband/signing, else the one
+# "Developer ID Application" certificate in the keychain, else the one "Apple Distribution" certificate. With
+# several of a kind and none named it stops and lists them: which to sign with is his choice, not the first
+# one found. Does nothing, and says so, when there is none.
 set -e
 cd "$(dirname "$0")/.."
 bin="${1:-target/release/airband}"
-who="$AIRBAND_SIGN"
-# this computer's own choice, when it has several: one line, the certificate's name
+who="${AIRBAND_SIGN:-}"
+# this computer's own choice, when it has several: the file holds the certificate's name, one line
 if [ -z "$who" ] && [ -f "$HOME/.airband/signing" ]; then
-  who=$(head -1 "$HOME/.airband/signing")
+  [ "$(grep -c . "$HOME/.airband/signing")" -le 1 ] || { echo "$HOME/.airband/signing names more than one certificate; leave one line" >&2; exit 1; }
+  who=$(cat "$HOME/.airband/signing")
 fi
-if [ -z "$who" ]; then
-  who=$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' | head -1)
-fi
-if [ -z "$who" ]; then
-  who=$(security find-identity -v -p codesigning | sed -n 's/.*"\(Apple Distribution: [^"]*\)".*/\1/p' | head -1)
-fi
+# the keychain's signing identities, read by field: "  1) <40 hex> "<name>"": the hash, then the quoted name
+identities() {
+  security find-identity -v -p codesigning | awk -v kind="$1" '
+    $2 ~ /^[0-9A-F]{40}$/ {
+      name = $0; sub(/^[^"]*"/, "", name); sub(/"[^"]*$/, "", name)
+      if (index(name, kind) == 1) print name
+    }'
+}
+for kind in "Developer ID Application:" "Apple Distribution:"; do
+  [ -z "$who" ] || break
+  found=$(identities "$kind")
+  case "$(printf '%s' "$found" | grep -c .)" in
+    0) ;;
+    1) who=$found ;;
+    *) printf 'More than one "%s" certificate here; name the one to sign with in AIRBAND_SIGN or ~/.airband/signing:\n%s\n' "$kind" "$found" >&2; exit 1 ;;
+  esac
+done
 if [ -z "$who" ]; then
   echo "No signing certificate here: the binary is left as it is, and its keys stay in the settings file."
   exit 0

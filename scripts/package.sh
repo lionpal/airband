@@ -10,8 +10,7 @@
 # when GitHub has no macOS runner to give (`rustup target add x86_64-apple-darwin` first).
 set -eu
 cd "$(dirname "$0")/.."
-version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
-[ -n "$version" ] || { echo "no version in Cargo.toml" >&2; exit 1; }
+version=$(scripts/version.sh)
 [ $# -gt 0 ] || { echo "usage: scripts/package.sh <target> [<target>…]" >&2; exit 1; }
 # a Mac binary built on a new macOS still runs on an older one
 export MACOSX_DEPLOYMENT_TARGET=11.0
@@ -36,11 +35,15 @@ for target in "$@"; do
   case "$target" in
     *-apple-darwin)
       scripts/sign-mac.sh "target/$target/release/airband"
-      if [ -n "${ASC_KEY_ID:-}" ] && codesign -dvv "target/$target/release/airband" 2>&1 | grep -q "Authority=Developer ID Application"; then
+      # who signed it: the first Authority field codesign gives is the certificate that signed (the chain follows)
+      signer=$(codesign -d --verbose=2 "target/$target/release/airband" 2>&1 | awk -F= '$1 == "Authority" { print $2; exit }')
+      case "$signer" in "Developer ID Application:"*) developer_id=yes ;; *) developer_id=no ;; esac
+      if [ -n "${ASC_KEY_ID:-}" ] && [ "$developer_id" = yes ]; then
         sent=$(mktemp -d)
         ditto -c -k "target/$target/release/airband" "$sent/airband.zip"
-        xcrun notarytool submit "$sent/airband.zip" --key "$ASC_KEY_PATH" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" --wait | tee "$sent/notary.log"
-        grep -q "status: Accepted" "$sent/notary.log" || { echo "Apple's notary service did not accept the $target binary" >&2; exit 1; }
+        xcrun notarytool submit "$sent/airband.zip" --key "$ASC_KEY_PATH" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" --wait --output-format json > "$sent/notary.json"
+        cat "$sent/notary.json"
+        [ "$(plutil -extract status raw -o - "$sent/notary.json")" = Accepted ] || { echo "Apple's notary service did not accept the $target binary" >&2; exit 1; }
         rm -rf "$sent"
       fi ;;
   esac
