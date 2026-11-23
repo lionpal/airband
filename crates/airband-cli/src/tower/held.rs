@@ -561,7 +561,7 @@ mod tests {
         let mut inner = Inner::default();
         let kept = |id: &str| Kept { id: id.into(), cwd: "/w".into(), launcher: "l".into(), model: None, effort: None, session: None };
         inner.held = vec![kept("on"), kept("off")];
-        let on = Agent { id: "on".into(), harness: "test".into(), cwd: Some("/w/shop".into()), name: None, title: None, pid: None, deliver: None, meta: Default::default() };
+        let on = airband_core::agent::Agent { cwd: Some("/w/shop".into()), ..crate::adapters::agent_with("on", "test") };
         inner.check_in(&on).expect("taken in");
         inner.drop_held_off_the_radio();
         assert_eq!(inner.held.iter().map(|k| k.id.as_str()).collect::<Vec<_>>(), ["on"]);

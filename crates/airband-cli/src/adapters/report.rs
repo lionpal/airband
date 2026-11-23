@@ -1,7 +1,7 @@
 //! `airband report`: the adapter for everything that has no adapter of its own. Any script can put an agent on
 //! the radio with it.
 use super::{Posted, post};
-use airband_core::agent::{Agent, AgentEvent, Deliver, Event, SCHEMA};
+use airband_core::agent::{AgentEvent, Deliver, Event, SCHEMA};
 use std::io::Read;
 
 /// `airband report`: the adapter for everything else. Any script can put an agent on the radio:
@@ -15,7 +15,7 @@ use std::io::Read;
 ///
 /// `--meta key=value` (repeatable) records anything else about the agent: its model, a branch, a ticket.
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
-    let mut agent = Agent { id: String::new(), harness: String::new(), cwd: std::env::current_dir().ok().map(|p| p.display().to_string()), name: None, title: None, pid: None, deliver: None, meta: Default::default() };
+    let mut agent = airband_core::agent::Agent { cwd: std::env::current_dir().ok().map(|p| p.display().to_string()), ..crate::adapters::agent_with(String::new(), String::new()) };
     let mut rest = Vec::new();
     let (mut terminal, mut pane) = (None, None);
     let mut it = args.iter();

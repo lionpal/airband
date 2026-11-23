@@ -279,7 +279,7 @@ fn look(h: &dyn Harness, tower: &Tower, told: &mut std::collections::HashMap<Str
         }
     }
     for id in listed.iter().filter(|id| !open.iter().any(|o| o.agent.id == **id)) {
-        let gone = Agent { id: id.clone(), harness: h.name().into(), cwd: None, name: None, title: None, pid: None, deliver: None, meta: Default::default() };
+        let gone = crate::adapters::agent_with(id.clone(), h.name());
         if (tower.event)(AgentEvent::new(gone, airband_core::agent::Event::Signoff)) {
             told.remove(id);
         }
@@ -343,6 +343,12 @@ pub(crate) fn puts_away(name: &str) -> bool {
 
 pub(crate) fn names() -> Vec<&'static str> {
     HARNESSES.iter().map(|h| h.name()).collect()
+}
+
+/// An agent known by its id and its tool alone: no folder, name, process, way in or notes yet. The one
+/// constructor for it; anything more is set on what it returns.
+pub(crate) fn agent_with(id: impl Into<String>, harness: impl Into<String>) -> Agent {
+    Agent { id: id.into(), harness: harness.into(), cwd: None, name: None, title: None, pid: None, deliver: None, meta: Default::default() }
 }
 
 /// A variable this process was started with, empty taken as unset. A test never reads the real environment:
@@ -462,7 +468,7 @@ mod finding {
         }
         fn open(&self) -> Option<Vec<Open>> {
             let open = self.0.lock().unwrap().clone()?;
-            Some(open.into_iter().map(|id| Open { agent: Agent { id: id.into(), harness: "lists".into(), cwd: Some("/x/shop".into()), name: None, title: None, pid: None, deliver: None, meta: Default::default() }, idle: true }).collect())
+            Some(open.into_iter().map(|id| Open { agent: airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with(id, "lists") }, idle: true }).collect())
         }
     }
 

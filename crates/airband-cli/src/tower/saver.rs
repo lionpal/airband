@@ -126,7 +126,7 @@ mod tests {
     use super::*;
 
     fn agent(id: &str) -> Agent {
-        Agent { id: id.into(), harness: "test".into(), cwd: Some("/x/shop".into()), name: None, title: None, pid: None, deliver: None, meta: Default::default() }
+        airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with(id, "test") }
     }
 
     #[test]

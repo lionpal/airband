@@ -213,7 +213,7 @@ mod tests {
     }
     fn tower() -> Inner {
         let mut inner = Inner::default();
-        let _ = inner.check_in(&Agent { id: "a".into(), harness: "test".into(), cwd: Some("/x/shop".into()), name: None, title: None, pid: None, deliver: None, meta: Default::default() });
+        let _ = inner.check_in(&airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a", "test") });
         inner
     }
 

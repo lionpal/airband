@@ -259,7 +259,7 @@ mod taken_tests {
     #[tokio::test]
     async fn a_report_refused_is_not_taken_and_is_taken_when_sent_again() {
         let app = crate::tower::http::tests::app("refused-report");
-        let agent = airband_core::agent::Agent { id: "a".into(), harness: "test".into(), cwd: Some("/x/shop".into()), name: None, title: None, pid: None, deliver: None, meta: Default::default() };
+        let agent = airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a", "test") };
         let mut ev: airband_core::agent::AgentEvent = serde_json::from_value(serde_json::json!({ "schema": "airband.agent/0", "id": "e1", "agent": agent, "event": { "type": "checkin" } })).unwrap();
         assert!(super::take(&app, ev.clone()).is_err());
         ev.schema = airband_core::agent::SCHEMA.into();

@@ -79,7 +79,7 @@ fn no_such(noun: &str, what: &str, said: &str, has: Option<&Setting>) -> String 
 pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>, asked: Asked) -> Result<(), String> {
     let mut opening = Opening { held, early: VecDeque::new() };
     let (session, made) = opening.open(session, mode)?;
-    let me = Agent { id: held.id.clone(), harness: held.harness.clone(), cwd: Some(held.cwd.clone()), name: None, title: None, pid: None, deliver: Some(Deliver::Held), meta: Default::default() };
+    let me = airband_core::agent::Agent { cwd: Some(held.cwd.clone()), deliver: Some(Deliver::Held), ..crate::adapters::agent_with(held.id.clone(), held.harness.clone()) };
     // What it can be set to, as it opens. Then what he asked for.
     let offered = offers(&made["configOptions"]);
     let settings = opening.set_asked(&session, made["configOptions"].clone(), &asked)?;
@@ -332,7 +332,7 @@ mod tests {
         assert_eq!(option(&params, false).as_deref(), Some("no"));
         // an agent that offers no "this once" is not allowed for always in its place
         assert_eq!(option(&json!({ "options": [{ "optionId": "always", "kind": "allow_always" }] }), true), None);
-        let me = Agent { id: "a".into(), harness: "codex".into(), cwd: None, name: None, title: None, pid: None, deliver: Some(Deliver::Held), meta: Default::default() };
+        let me = airband_core::agent::Agent { deliver: Some(Deliver::Held), ..crate::adapters::agent_with("a", "codex") };
         let ask = leave(&params, me.clone()).unwrap();
         assert_eq!(ask.what, "run echo hi");
         let command = json!({ "toolCall": { "title": "echo hi", "kind": "execute", "rawInput": { "command": ["bash", "-lc", "echo hi"] } } });
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn a_request_with_neither_a_command_nor_a_title_is_not_put_to_him_under_made_up_words() {
-        let me = Agent { id: "a".into(), harness: "codex".into(), cwd: None, name: None, title: None, pid: None, deliver: Some(Deliver::Held), meta: Default::default() };
+        let me = airband_core::agent::Agent { deliver: Some(Deliver::Held), ..crate::adapters::agent_with("a", "codex") };
         assert!(leave(&json!({ "toolCall": { "rawInput": {} } }), me).is_none());
     }
 }

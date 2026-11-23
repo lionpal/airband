@@ -3,7 +3,7 @@ use super::*;
 const ON_CALL: airband_core::radio::Presence = airband_core::radio::Presence { on_call: true, showing_chat: false };
 
 fn agent(id: &str, cwd: &str, title: Option<&str>) -> Agent {
-    Agent { id: id.into(), harness: "test".into(), cwd: Some(cwd.into()), name: None, title: title.map(String::from), pid: None, deliver: None, meta: Default::default() }
+    airband_core::agent::Agent { cwd: Some(cwd.into()), title: title.map(String::from), ..crate::adapters::agent_with(id, "test") }
 }
 /// An agent reports in, and is taken in.
 fn joins(inner: &mut Inner, agent: &Agent) -> Callsign {
@@ -191,7 +191,7 @@ fn a_configured_team_with_no_agents_is_one_team_and_can_be_renamed() {
 #[test]
 fn kept_agents_from_two_folders_in_one_team_go_back_to_their_own_folders_teams() {
     // as kept before teams went by folder: one name, two folders
-    let session = |id: &str, cwd: &str, number: &str| Session { agent: agent(id, cwd, None), callsign: Callsign { project: "shop".into(), number: number.into(), named: false }, team: TeamId::default(), waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false, hooked: false, turn: None };
+    let session = |id: &str, cwd: &str, number: &str| Session::new(agent(id, cwd, None), Callsign { project: "shop".into(), number: number.into(), named: false }, TeamId::default());
     let old: BTreeMap<String, String> = [("shop".to_string(), "/a/work/shop".to_string()), ("garden".to_string(), "/g".to_string())].into();
     let mut inner = Inner { sessions: vec![session("a", "/a/work/shop", "one"), session("b", "/b/work/shop", "two")], ..Inner::default() };
     // a line kept under a team's name, and one he said to several teams
@@ -590,7 +590,7 @@ fn a_radio_that_only_reads_and_types_keeps_who_it_was_talking_to() {
 }
 
 fn kept_session(id: &str, cwd: Option<&str>, project: &str) -> Session {
-    Session { agent: Agent { cwd: cwd.map(String::from), ..agent(id, "", None) }, callsign: Callsign { project: project.into(), number: "one".into(), named: false }, team: TeamId::default(), waiting: false, last_heard: None, pictures: Vec::new(), subagents: 0, doing: None, model: None, effort: None, moved: None, reports: 0, told_upto: 0, queue: Vec::new(), listed: false, hooked: false, turn: None }
+    Session::new(Agent { cwd: cwd.map(String::from), ..agent(id, "", None) }, Callsign { project: project.into(), number: "one".into(), named: false }, TeamId::default())
 }
 
 #[test]

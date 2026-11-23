@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn a_kept_report_the_tower_refuses_never_holds_up_the_ones_after_it() {
         let dir = std::env::temp_dir().join(format!("airband-spool-{}", config::random_hex(4)));
-        let event = |id: &str| AgentEvent::new(airband_core::agent::Agent { id: id.into(), harness: "test".into(), cwd: None, name: None, title: None, pid: None, deliver: None, meta: Default::default() }, airband_core::agent::Event::Checkin);
+        let event = |id: &str| AgentEvent::new(crate::adapters::agent_with(id, "test"), airband_core::agent::Event::Checkin);
         assert_eq!(spool(&dir, &event("refused")), Posted::Kept);
         assert_eq!(spool(&dir, &event("taken")), Posted::Kept);
         let took = std::sync::Mutex::new(Vec::new());
@@ -254,7 +254,7 @@ mod tests {
     #[test]
     fn an_event_the_tower_did_not_take_is_kept_and_said_to_be() {
         let dir = std::env::temp_dir().join(format!("airband-spool-{}", config::random_hex(4)));
-        let event = AgentEvent::new(airband_core::agent::Agent { id: "a".into(), harness: "test".into(), cwd: None, name: None, title: None, pid: None, deliver: None, meta: Default::default() }, airband_core::agent::Event::Checkin);
+        let event = AgentEvent::new(crate::adapters::agent_with("a", "test"), airband_core::agent::Event::Checkin);
         assert_eq!(spool(&dir, &event), Posted::Kept);
         assert_eq!(airband_io::files::entries(&dir).unwrap().len(), 1);
         airband_io::files::remove_folder(&dir).ok();
