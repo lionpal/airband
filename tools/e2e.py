@@ -51,12 +51,14 @@ json.dump({
                            "efforts": ["low", "medium", "high"], "with_model": ["--model", "{model}"], "with_effort": ["--effort", "{effort}"]}}, "launcher": "test",
     "quick": [{"label": "Make no mistakes", "text": "Make no mistakes."}],
 }, open(os.path.join(home, ".airband", "config.json"), "w"))
-# Accounts are tried against made-up logins: two keychain items under names of this run's own (deleted at the
-# end) and a stand-in for Anthropic's servers. No real login is read or changed.
+# Accounts are tried against made-up logins: two keychain items under names of this run's own, in a keychain
+# file of this run's own in its temporary folder (made here with a random password, deleted at the end; never
+# his login keychain), and a stand-in for the account service. No real login is read or changed.
 RUN = os.urandom(4).hex()
 LIVE_ITEM, VAULT_ITEMS, STAND_IN = f"airband-e2e-live-{RUN}", f"airband-e2e-vault-{RUN}", 7392
+KEYCHAIN = os.path.join(work, "e2e.keychain-db")
 env = dict(os.environ, HOME=home, AIRBAND_TRACE="1", AIRBAND_STAND_IN_ACCOUNTS=f"http://127.0.0.1:{STAND_IN}", AIRBAND_STAND_IN_TOKENS=f"http://127.0.0.1:{STAND_IN}/token",
-           AIRBAND_STAND_IN_LIVE_ITEM=LIVE_ITEM, AIRBAND_STAND_IN_VAULT_ITEM=VAULT_ITEMS)
+           AIRBAND_STAND_IN_LIVE_ITEM=LIVE_ITEM, AIRBAND_STAND_IN_VAULT_ITEM=VAULT_ITEMS, AIRBAND_STAND_IN_KEYCHAIN=KEYCHAIN)
 env.pop("CLAUDE_CONFIG_DIR", None)
 
 results = []
@@ -124,8 +126,25 @@ def message(f, who, has=""):
 def roster(f):
     return {a["callsign"]: a for a in named(f)["roster"]}
 
-def keychain(*args, **more):
-    return subprocess.run(["security", *args], capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL, **more)
+def security(*args):
+    return subprocess.run(["security", *args], capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL)
+def keychain(*args):
+    """One item command, on this run's own keychain file and no other."""
+    return security(*args, KEYCHAIN)
+def keychain_made():
+    """This run's keychain: a file in its temporary folder, under a random password, unlocked for the run. Making
+    one puts it in his list of keychains; that list is put back as it was at once, so nothing looks in it but this
+    run, which names it."""
+    listed = security("list-keychains", "-d", "user")
+    if listed.returncode != 0:
+        return False
+    # one path a line, each in quotes
+    was = [line.strip().strip('"') for line in listed.stdout.splitlines() if line.strip()]
+    password = os.urandom(16).hex()
+    made = security("create-keychain", "-p", password, KEYCHAIN)
+    security("list-keychains", "-d", "user", "-s", *was)
+    # no locking after a while: unlocked for as long as the run lasts
+    return made.returncode == 0 and security("unlock-keychain", "-p", password, KEYCHAIN).returncode == 0 and security("set-keychain-settings", KEYCHAIN).returncode == 0
 def accounts_check():
     """Two made-up accounts: a@ and b@. Listing, allowances, a login that has to be refreshed, and switching."""
     import getpass
@@ -161,6 +180,9 @@ def accounts_check():
         return (r.stdout + r.stderr).strip()
     def live_now():
         return json.loads(keychain("find-generic-password", "-a", user, "-s", LIVE_ITEM, "-w").stdout)
+    if not keychain_made():
+        server.shutdown()
+        return skip(["the accounts checks"], "a keychain of this run's own could not be made")
     try:
         # a@ is signed in with a login that has already run out (its saved copy will need refreshing), then b@
         who["t-a-1"] = "a@example.com"
@@ -190,9 +212,8 @@ def accounts_check():
               "no accounts" in wire.reason(http("POST", "/v1/radio/accounts/use", {"harness": "codex", "id": "x"})[1]))
     finally:
         server.shutdown()
-        keychain("delete-generic-password", "-a", user, "-s", LIVE_ITEM)
-        for email in ("a@example.com", "b@example.com"):
-            keychain("delete-generic-password", "-a", email, "-s", VAULT_ITEMS)
+        # the whole keychain goes, and every item in it with it
+        security("delete-keychain", KEYCHAIN)
 
 tower = subprocess.Popen([BIN, "run"], env=env, stdout=open(os.path.join(work, "tower.log"), "w"), stderr=subprocess.STDOUT)
 try:
