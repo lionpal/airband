@@ -52,7 +52,7 @@ The compiler keeps some of them, so they cannot drift:
 | The radio | `crates/airband-radio` | The whole client side. `desk`: every paired computer as one, what is waiting and done, where his messages go, who has the floor on a call. Under it, per computer: reaching the tower (`link`), the call loop (`call`), sending over bad connections (`outbox`), what is kept on the device (`store`), sound in and out (`voice`, `ears`) | Draw, make sound or capture it |
 | Hosts | `apps/apple`, `crates/airband-cli/src/terminal.rs` | Drawing the view the desk gives, playing and capturing audio, keeping pairing links and a speech key of his own safe | Decide order, routing, retries, or what counts as waiting or done |
 | The relay | `crates/airband-relay` | Passing sealed bytes between a radio and its tower; remembering which channels exist; handing a sealed notification to a push service; the homepage's waiting list | Hold a pairing key or read a message |
-| Deployment | `infra/`, `.github/workflows/` | Running the relay: one small server in us-east-2 with DynamoDB behind it (`AirbandRelayUs` in `infra/cdk.mjs`, what runs on the server in `infra/host/`), deployed by `deploy-relay.yml` on a push that changes what the relay is built from, as cargo says (`scripts/relay-sources.py`) | |
+| Deployment | `infra/`, `.github/workflows/` | Running the relay: one small server in us-east-2 with DynamoDB behind it (`AirbandRelayUs` in `infra/cdk.mjs`, what runs on the server in `infra/host/`), deployed by `deploy-relay.yml` on a push when what changed since the last deploy that answered (the `relay-deployed` tag, moved only by a deploy) touches what the relay is built from, as cargo says (`scripts/relay-sources.py`) | |
 
 ## Where a new thing goes
 

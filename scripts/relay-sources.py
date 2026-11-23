@@ -3,6 +3,9 @@
 
     scripts/relay-sources.py                  the files and folders in this repository the relay is built from
     scripts/relay-sources.py --changed A B    "true" if a file changed between commits A and B is one of them
+    scripts/relay-sources.py --since-deployed D H
+                                              "true" if what changed from the deployed commit D to H is one of
+                                              them, the infrastructure (infra/) or the deploy workflow
     scripts/relay-sources.py --self-test      checks the list holds what the relay is known to be built from
 
 Nothing is listed by hand. The relay is built once (`cargo build -p airband-relay`), and the list is what that
@@ -83,11 +86,55 @@ def touches(changed, made_from):
     return any(c == m or c.startswith(m.rstrip("/") + "/") for c in changed for m in made_from)
 
 
+# besides what the relay is built from, a deploy also ships these
+DEPLOYED_WITH = ["infra", ".github/workflows/deploy-relay.yml"]
+
+
+def changed_between(a, b, cwd=ROOT):
+    # -z: names exactly as git has them, one per NUL, whatever characters they hold
+    out = subprocess.run(["git", "diff", "-z", "--name-only", a, b], cwd=cwd, check=True, capture_output=True).stdout
+    return [n.decode() for n in out.split(b"\0") if n]
+
+
+def needs_deploy(deployed, head, made_from, cwd=ROOT):
+    """Whether head ships something the deployed commit does not: the difference from the last deploy, not this
+    push's, so a change whose own run was dropped or failed is still in it."""
+    return touches(changed_between(deployed, head, cwd), made_from + DEPLOYED_WITH)
+
+
+def deploy_self_test():
+    """needs_deploy against a throwaway repository: a relay change then a docs change, with the deploy recorded
+    before both, still deploys (the run for the relay change having been dropped)."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as repo:
+        def git(*a):
+            return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+        def commit(path, text):
+            os.makedirs(os.path.join(repo, os.path.dirname(path)), exist_ok=True)
+            with open(os.path.join(repo, path), "w", encoding="utf-8") as f:
+                f.write(text)
+            git("add", "-A")
+            git("commit", "-q", "-m", path)
+            return git("rev-parse", "HEAD")
+        git("init", "-q")
+        deployed = commit("crates/airband-relay/src/main.rs", "a")
+        commit("crates/airband-relay/src/main.rs", "b")
+        docs = commit("docs/state.md", "c")
+        made_from = ["crates/airband-relay/src"]
+        assert needs_deploy(deployed, docs, made_from, repo), "a relay change behind a docs push is skipped"
+        assert not needs_deploy(docs, docs, made_from, repo), "nothing changed, yet it deploys"
+        later = commit("docs/protocols.md", "d")
+        assert not needs_deploy(docs, later, made_from, repo), "a docs change alone deploys"
+        infra = commit("infra/cdk.mjs", "e")
+        assert needs_deploy(later, infra, made_from, repo), "an infrastructure change is skipped"
+
+
 def main(args):
     made_from = sources()
     if args[:1] == ["--changed"]:
-        changed = subprocess.run(["git", "diff", "--name-only", args[1], args[2]], cwd=ROOT, check=True, capture_output=True, text=True).stdout.split()
-        print("true" if touches(changed, made_from) else "false")
+        print("true" if touches(changed_between(args[1], args[2]), made_from) else "false")
+    elif args[:1] == ["--since-deployed"]:
+        print("true" if needs_deploy(args[1], args[2], made_from) else "false")
     elif args[:1] == ["--self-test"]:
         # files the relay is known to be built from, each a way a hand list went wrong before
         for known in ["crates/airband-relay/src/handlers.rs", "crates/airband-core/src/relay/push.rs", "crates/airband-core/src/relay/routes.rs", "crates/airband-io/src/http.rs", "catalog/rev", "Cargo.lock"]:
@@ -95,6 +142,7 @@ def main(args):
         for unrelated in ["docs/state.md", "apps/apple/Sources/RadioModel.swift", "crates/airband-radio/src/desk.rs", "crates/airband-cli/src/main.rs"]:
             assert not touches([unrelated], made_from), f"{unrelated} is counted"
         assert not touches([], made_from)
+        deploy_self_test()
         print(f"ok: {len(made_from)} paths")
     else:
         print("\n".join(made_from))
