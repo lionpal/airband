@@ -29,6 +29,8 @@ pub(crate) enum LinkError {
     Trouble(u16),
     /// His computer took something he said and would not act on it, for the reason it gave.
     Rejected(airband_core::radio::Rejected),
+    /// The relay says this pairing was ended: nothing reaches that computer this way until he pairs again.
+    Ended,
 }
 
 /// What he is told when his computer speaks another version of the radio protocol. No capital, no full stop.
@@ -59,7 +61,21 @@ impl LinkError {
             LinkError::Relay(_) | LinkError::HoldRefused(_) | LinkError::Unreadable(_) => Retry::Later,
             // the computer is in trouble of its own, which may pass; anything else it refuses, it refuses for good
             LinkError::Trouble(500..=599) | LinkError::Refused(Refusal::NotNow { .. }) => Retry::Later,
-            LinkError::Refused(_) | LinkError::Trouble(_) | LinkError::Rejected(_) => Retry::Never,
+            LinkError::Refused(_) | LinkError::Trouble(_) | LinkError::Rejected(_) | LinkError::Ended => Retry::Never,
+        }
+    }
+    /// What the relay's status says to a radio on one of its two routes, read in this one place: Ok when it
+    /// passed the request on (a call answered, a message kept), else what it said.
+    pub(crate) fn relay_said(route: airband_core::relay::Route, status: u16) -> Result<(), LinkError> {
+        use airband_core::relay::Route;
+        match (route, status) {
+            (Route::Call, 200) | (Route::Queue, 202) => Ok(()),
+            (_, 410) => Err(LinkError::Ended),
+            (Route::Call, 409) => Err(LinkError::Behind),
+            (Route::Call, 503) => Err(LinkError::Away),
+            (Route::Call, 504) => Err(LinkError::TowerSilent),
+            (Route::Queue, status) => Err(LinkError::HoldRefused(status)),
+            (_, status) => Err(LinkError::Relay(status)),
         }
     }
     /// What a status other than 200 from his computer comes to: the refusal its body carries, read by its tag
@@ -106,6 +122,7 @@ impl LinkError {
             LinkError::Trouble(status) => format!("your computer refused it ({status})"),
             LinkError::Rejected(airband_core::radio::Rejected::TooOld) => "your computer got it more than a week after you said it, and did nothing with it".into(),
             LinkError::Rejected(airband_core::radio::Rejected::Unknown) => "your computer would not take it".into(),
+            LinkError::Ended => "the relay says this pairing was ended; pair this phone again".into(),
         }
     }
 }
@@ -119,5 +136,20 @@ mod tests {
         let e: RadioError = LinkError::Relay(413).into();
         assert!(matches!(&e, RadioError::Told { reason } if reason == "It is more than the relay carries in one message."), "{e:?}");
         assert!(matches!(RadioError::from(LinkError::Away), RadioError::Offline));
+    }
+
+    #[test]
+    fn the_relay_is_read_by_route_and_a_pairing_it_ended_is_told_as_that() {
+        use airband_core::relay::Route;
+        assert_eq!(LinkError::relay_said(Route::Call, 200), Ok(()));
+        assert_eq!(LinkError::relay_said(Route::Queue, 202), Ok(()));
+        assert_eq!(LinkError::relay_said(Route::Call, 503), Err(LinkError::Away));
+        assert_eq!(LinkError::relay_said(Route::Queue, 507), Err(LinkError::HoldRefused(507)));
+        // the relay's 410 on either route is a pairing that was ended: he is told to pair again (audit 8)
+        for route in [Route::Call, Route::Queue] {
+            assert_eq!(LinkError::relay_said(route, 410), Err(LinkError::Ended));
+        }
+        assert_eq!(LinkError::Ended.retry(), Retry::Never);
+        assert!(LinkError::Ended.said().contains("pair this phone again"));
     }
 }

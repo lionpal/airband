@@ -158,11 +158,6 @@ impl Keys {
     pub fn to(&self, relay: &str, route: Route) -> String {
         format!("{}{}", relay.trim_end_matches('/'), route.on(&self.channel))
     }
-    /// The same, with the route's tail as text (`""`, `/pull`, `/reply/<id>`, `/push`). Kept for callers not yet
-    /// on [`Keys::to`].
-    pub fn at(&self, relay: &str, route: &str) -> String {
-        format!("{}/v1/channels/{}{route}", relay.trim_end_matches('/'), self.channel)
-    }
     /// What a tower shows the relay it is this channel's tower with (`Authorization`).
     pub fn as_tower(&self) -> String {
         format!("Bearer {}", self.pull_token)
