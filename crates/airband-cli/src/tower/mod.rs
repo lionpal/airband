@@ -189,7 +189,18 @@ fn clock() -> String {
     format!("{:02}:{:02}:{:02}Z", s / 3600 % 24, s / 60 % 60, s % 60)
 }
 fn log(msg: impl AsRef<str>) {
+    #[cfg(test)]
+    logged::LINES.with(|l| l.borrow_mut().push(msg.as_ref().to_string()));
     println!("{} {}", clock(), msg.as_ref());
+}
+
+/// What a test thread wrote to the tower's log, for a test to see that something is never written there.
+#[cfg(test)]
+pub(crate) mod logged {
+    thread_local!(pub(super) static LINES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) });
+    pub(crate) fn take() -> Vec<String> {
+        LINES.with(|l| std::mem::take(&mut *l.borrow_mut()))
+    }
 }
 
 /// Whether a process on this computer is running ([`edges::procs::Procs::alive`]).

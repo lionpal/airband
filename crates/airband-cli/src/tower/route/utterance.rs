@@ -71,7 +71,8 @@ pub(in crate::tower) async fn on_utterance(app: &Arc<App>, radio: &str, text: &s
         to.rest = "Keep going.".into();
         shown = None;
     }
-    log(format!("← radio: \"{text}\" → {} {:?} \"{}\"", if to.targets.is_empty() { "nobody".into() } else { list(&to.targets.iter().map(|s| s.callsign.text()).collect::<Vec<_>>()) }, control, to.rest));
+    // his words by their length only: what he says is never written in the log
+    log(format!("← radio: {} characters → {} {:?} ({} characters passed on)", text.chars().count(), if to.targets.is_empty() { "nobody".into() } else { list(&to.targets.iter().map(|s| s.callsign.text()).collect::<Vec<_>>()) }, control, to.rest.chars().count()));
     if let Some(control) = control {
         return controlled(app, radio, control, &to).await;
     }
@@ -136,7 +137,7 @@ async fn new_agent(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
     if let Some(Unplaced { question, idea }) = held_idea {
         match named_project(app, &idea.task, text, projects).await {
             Ok(Some(place)) => {
-                log(format!("← radio: \"{text}\" → launch in {}", place.name));
+                log(format!("← radio: {} characters → launch in {}", text.chars().count(), place.name));
                 // the idea is let go only once an agent has started with it: a launch that refuses leaves it
                 // waiting, and he can answer again
                 return Some(match launch(app, &place, &idea).await {
@@ -432,6 +433,22 @@ mod tests {
         assert!(app.read().sessions.is_empty());
         app.flush();
         assert!(app.store.load(10).unwrap().0.sessions.is_empty(), "written down as gone");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn his_words_are_never_written_in_the_log() {
+        let app = crate::tower::http::tests::app("words-unlogged");
+        {
+            let mut inner = app.change();
+            let a = airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a", "test") };
+            inner.check_in(&a).unwrap();
+        }
+        crate::tower::logged::take();
+        let words = "please ship the secret plan";
+        let _ = on_utterance(&app, "radio", words, &airband_core::radio::Utterance { text: words.into(), id: "u1".into(), ..Default::default() }).await;
+        let lines = crate::tower::logged::take();
+        assert!(!lines.is_empty(), "the utterance is logged, by its length");
+        assert!(lines.iter().all(|l| !l.contains("secret plan")), "{lines:?}");
     }
 
     fn answering(text: &str, question: &str) -> airband_core::radio::Utterance {
