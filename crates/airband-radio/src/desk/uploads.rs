@@ -40,7 +40,7 @@ pub(super) fn send_file(shared: Arc<Shared>, radio: Arc<Radio>, id: String, file
             if let Some(u) = state.uploads.iter_mut().find(|u| u.shown.id == id && Arc::ptr_eq(&u.dropped, &dropped)) {
                 let arrived = matches!(outcome, Ok(crate::radio::UploadEnd::Arrived));
                 u.shown.state = if arrived { UploadState::Ready } else { UploadState::Failed };
-                // why it did not get there stays with it, for him to see (audit 9, B-39)
+                // why it did not get there stays with it, for him to see
                 u.shown.why = outcome.as_ref().err().map(RadioError::said);
                 if arrived {
                     radio.arm(id.clone());

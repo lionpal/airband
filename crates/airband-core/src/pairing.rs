@@ -97,7 +97,7 @@ mod tests {
         assert_eq!(Pairing::computer_in(&relay.link()), None);
         let direct = Pairing::Direct { url: "http://studio.local:7373".into(), token: "t".into() };
         assert_eq!(Pairing::computer_in(&direct.link()).as_deref(), Some("studio.local"));
-        // A-10: several addresses and no name: none of them is its name
+        // several addresses and no name: none of them is its name
         let near = Pairing::Near { at: vec!["http://192.168.1.20:7373".into(), "http://studio.tail.ts.net:7373".into()], secret: "cd".repeat(32) };
         assert_eq!(Pairing::computer_in(&near.link()), None);
         assert_eq!(Pairing::computer_in(&near.link_named("Studio Mac")).as_deref(), Some("Studio Mac"));

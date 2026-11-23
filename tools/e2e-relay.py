@@ -150,7 +150,8 @@ try:
 
     print("With the computer away")
     tower.terminate(); tower.wait(10)
-    time.sleep(47)  # the relay calls a tower gone when it has not been heard from for 45 seconds
+    # no wait: the relay calls a tower gone once no pull of its is held open and none is coming back (its held
+    # pull's connection went with it; or, where nothing tells the relay that, once a call waited its whole 40 s)
     said = send("the second thing")
     check("he is told his computer is away and that it will get it", "Your computer is away" in said, said)
     send("the third thing")

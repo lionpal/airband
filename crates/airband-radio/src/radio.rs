@@ -219,7 +219,7 @@ impl Radio {
         let waiting = self.store.change(|s| {
             if let Some(i) = s.outbox.iter().position(|o| o.id == id && o.failed.is_some()) {
                 let was = s.outbox.remove(i);
-                s.outbox.push(Outgoing { at: now_ms(), tries: 0, last_tried: 0, trail: Vec::new(), failed: None, stage: Stage::Trying, ..was });
+                s.outbox.push(Outgoing { at: now_ms(), tries: 0, last_tried: 0, trail: Vec::new(), failed: None, stage: Stage::Trying, taken_at: None, ..was });
             }
             s.outbox.clone()
         });

@@ -60,7 +60,7 @@ pub(crate) fn rate_of(given: Option<u64>) -> Result<u32, String> {
     }
 }
 /// The rate a row gives: a rate written as anything but a number (`"24000"`) is told as written, not as one
-/// that is missing (audit 9, B-34).
+/// that is missing.
 fn rate_in(given: Option<&serde_json::Value>) -> Result<u32, String> {
     match given {
         Some(v) if v.as_u64().is_none() => Err(format!("{v} is not a rate a voice can be played at. It is a number like 24000.")),
@@ -179,7 +179,7 @@ mod tests {
         // a rate that is not one is said, not replaced with a guess
         let odd = Use { kind: "local".into(), offer: "voice-server".into(), key: String::new(), set: [("rate".to_string(), serde_json::json!("fast"))].into_iter().collect() };
         assert!(synth(&odd).is_err_and(|why| why.contains("rate")));
-        // a rate the row writes as text is told as written, not as missing (audit 9, B-34)
+        // a rate the row writes as text is told as written, not as missing
         assert_eq!(rate_in(Some(&serde_json::json!("24000"))), Err("\"24000\" is not a rate a voice can be played at. It is a number like 24000.".into()));
         assert_eq!(rate_in(Some(&serde_json::json!(24000))), Ok(24000));
         assert!(rate_in(None).is_err_and(|why| why.contains("does not say")));

@@ -33,7 +33,7 @@ pub(super) async fn named_project(app: &Arc<App>, idea: &str, said: &str, projec
         name = app.cfg().name,
         list = projects.iter().enumerate().map(|(i, p)| format!("{}. {}", i + 1, p.name)).collect::<Vec<_>>().join("\n"),
     );
-    let picked: Picked = judge::ask_json(&app.settings, "which project he named", prompt, Some(picked_shape())).await?;
+    let picked: Picked = judge::ask_json(&app.settings, prompt, Some(picked_shape())).await?;
     Ok(judge::listed(picked.project, projects).cloned())
 }
 
@@ -48,7 +48,7 @@ pub(super) async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, p
         (None, []) => return say("There is no project to start it in yet. Run an agent in one first.".into(), false),
         (None, [only]) => only.clone(),
         (None, _) => {
-            let question = airband_core::ids::QuestionId::new(config::random_hex(8));
+            let question = new_question();
             app.change().call(radio).hold_unplaced(Unplaced { question: question.clone(), idea });
             log(format!("← radio: {} characters → a new agent, project not clear", text.chars().count()));
             return Reply { say: which_project(projects), listen: true, question: Some(question.clone()), ..Reply::default() };
@@ -56,13 +56,13 @@ pub(super) async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, p
     };
     // several could start it and none is his usual: he is asked which, and the idea waits for his answer
     if let Err(launch::Unsettled::Which { what, among }) = launch::starter(app, &idea, None) {
-        let question = airband_core::ids::QuestionId::new(config::random_hex(8));
+        let question = new_question();
         let say = launch::Unsettled::Which { what, among: among.clone() }.words();
         app.change().call(radio).hold_unstarted(Unstarted { question: question.clone(), asked: say.clone(), place, idea, among });
         log(format!("← radio: {} characters → a new agent, which launcher not clear", text.chars().count()));
         return Reply { say, listen: true, question: Some(question), ..Reply::default() };
     }
-    log(format!("← radio: {} characters → launch in {}", text.chars().count(), place.name));
+    log(format!("← radio: {} characters → launch", text.chars().count()));
     launch(app, &place, &idea).await.unwrap_or_else(|refused| refused)
 }
 
@@ -80,7 +80,7 @@ pub(super) async fn named_launcher(app: &Arc<App>, asked: &str, said: &str, amon
         name = app.cfg().name,
         list = among.iter().enumerate().map(|(i, (_, n))| format!("{}. {n}", i + 1)).collect::<Vec<_>>().join("\n"),
     );
-    let picked: Picked = judge::ask_json(&app.settings, "which launcher he named", prompt, Some(picked_shape())).await?;
+    let picked: Picked = judge::ask_json(&app.settings, prompt, Some(picked_shape())).await?;
     Ok(judge::listed(picked.project, among).map(|(id, _)| id.clone()))
 }
 

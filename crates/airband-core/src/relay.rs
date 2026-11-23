@@ -58,18 +58,18 @@ pub const PULL_HEADER: &str = "x-airband-pull";
 /// The version a tower speaks: pulls that say what they got ([`GOT_HEADER`]), which tower is pulling
 /// ([`TOWER_HEADER`]) and which kept message it is still answering for ([`ANSWERING_HEADER`]).
 pub const PULL_VERSION: &str = "3";
-/// Every version of the pull a relay takes. 2 says what it got and nothing more: a kept message it was handed
-/// waits for its answer however long that takes, and two towers on one pairing are not told apart.
-pub const PULL_VERSIONS: std::ops::RangeInclusive<u32> = 2..=3;
+/// Every version of the pull a relay takes: this one alone.
+pub const PULL_VERSIONS: std::ops::RangeInclusive<u32> = 3..=3;
 /// On a pull: the id of the request the tower's previous pull was handed and the tower read whole. A tower pulls
 /// one at a time, so a request handed over that the next pull does not name never reached it (the connection died
 /// on the way, or it could not be read), and the relay hands it over again. Nothing else tells the relay a request
 /// arrived. Said until a pull is taken ([`Pulling::taken`]): one that fails before the relay looks at it has told
 /// it nothing.
 pub const GOT_HEADER: &str = "x-airband-got";
-/// On a pull (3): which tower is pulling, a random id it makes each time it starts. Two towers with one pairing
-/// (its settings copied to another computer) would each take the other's pull's place for ever; the relay refuses
-/// the one that is not pulling now (409, [`PullRefused::AnotherTower`]).
+/// On a pull: which tower is pulling, a random id made once on each computer and kept there (a copy of the
+/// tower's files on another machine makes one of its own). Two towers with one pairing (its settings copied to
+/// another computer) would each take the other's pull's place for ever; the relay refuses the one that is not
+/// pulling now (409, [`PullRefused::AnotherTower`]).
 pub const TOWER_HEADER: &str = "x-airband-tower";
 /// On a pull (3): the kept message ([`KEPT_HEADER`]) the tower is still answering for. The relay hands nothing
 /// else kept until that answer comes ([`KEPT_HEADER`] on the reply). A pull that does not name it says the tower
@@ -186,17 +186,7 @@ pub struct Handing {
     n: u64,
 }
 
-impl Default for Pulling {
-    fn default() -> Pulling {
-        Pulling::new()
-    }
-}
-
 impl Pulling {
-    /// A tower that has just started: a new id, nothing got, nothing being answered.
-    pub fn new() -> Pulling {
-        Pulling::of_tower(random_hex(8))
-    }
     /// A tower that has just started under the id it keeps (made once on that computer and kept): a pull it made
     /// before a restart, or under another spelling of the relay's address, is then its own, never another
     /// computer's.
@@ -505,12 +495,10 @@ mod tests {
     }
     #[test]
     fn a_pull_says_what_it_got_until_the_relay_takes_one_and_what_it_answers_until_the_answer_ends() {
-        let mut p = Pulling::new();
+        let mut p = Pulling::of_tower("0123456789abcdef");
         let said = |p: &Pulling, h: &str| p.headers().into_iter().find(|(k, _)| *k == h).map(|(_, v)| v);
         assert_eq!(said(&p, PULL_HEADER).as_deref(), Some(PULL_VERSION));
-        assert!(said(&p, TOWER_HEADER).is_some_and(|t| t.len() == 16) && said(&p, GOT_HEADER).is_none());
-        // two towers that start with one pairing are told apart
-        assert_ne!(said(&p, TOWER_HEADER), said(&Pulling::new(), TOWER_HEADER));
+        assert!(said(&p, TOWER_HEADER).as_deref() == Some("0123456789abcdef") && said(&p, GOT_HEADER).is_none());
         let k1 = p.handed("k1", true).unwrap();
         // a pull that fails tells the relay nothing: the next one says it again
         assert_eq!((said(&p, GOT_HEADER).as_deref(), said(&p, ANSWERING_HEADER).as_deref()), (Some("k1"), Some("k1")));
@@ -521,7 +509,7 @@ mod tests {
         assert_eq!((said(&p, GOT_HEADER).as_deref(), said(&p, ANSWERING_HEADER).as_deref()), (Some("r1"), Some("k1")));
         assert!(p.answered(&k1), "the handing the pulls named is let go");
         assert_eq!(said(&p, ANSWERING_HEADER), None);
-        // B-5: opened again while the work on k2 runs, it is still answered for; handed again meanwhile, the
+        // opened again while the work on k2 runs, it is still answered for; handed again meanwhile, the
         // first handing's work ending does not end the second's
         let k2 = p.handed("k2", true).unwrap();
         p.reopened();
@@ -535,8 +523,8 @@ mod tests {
     #[test]
     fn a_pull_in_a_version_the_relay_does_not_take_says_which_side_is_older() {
         assert_eq!(PullRefused::version(Some(PULL_VERSION)), Ok(*PULL_VERSIONS.end()));
-        assert_eq!(PullRefused::version(Some("2")), Ok(2));
         let older = |side| Err(PullRefused::OtherVersion { older: side });
+        assert_eq!(PullRefused::version(Some("2")), older(Side::Tower));
         assert_eq!(PullRefused::version(None), older(Side::Tower));
         assert_eq!(PullRefused::version(Some("1")), older(Side::Tower));
         assert_eq!(PullRefused::version(Some("two")), older(Side::Tower));
@@ -549,7 +537,7 @@ mod tests {
     }
     #[test]
     fn a_request_with_no_schema_or_a_method_this_build_does_not_know_is_opened_to_be_answered_as_another_version() {
-        // B-29: such a request failed to open and was dropped as one its key does not open
+        // such a request failed to open and was dropped as one its key does not open
         let k = Keys::derive(&new_secret()).unwrap();
         let sealed = |json: &str| k.seal(Direction::ToTower, json.as_bytes());
         // no schema: it opens, saying the empty one, which the tower answers as another version

@@ -72,14 +72,15 @@ pub(super) async fn project(State(app): State<Arc<App>>, Sent(new): Sent<at::Pro
     let name = TeamName::new(&new.name).map_err(no)?;
     let folder = project_folder(&new).map_err(no)?;
     // a tool he named that this computer cannot start is refused before anything is made
-    let launcher = held::launcher_for(&app, new.tool.as_deref());
-    if new.tool.is_some() && launcher.is_none() {
+    let starts = launch::starter(&app, &Idea { tool: new.tool.clone(), ..Idea::default() }, None);
+    if new.tool.is_some() && matches!(starts, Err(launch::Unsettled::Say(_))) {
         return Err(no("This computer cannot start that tool."));
     }
     let at = folder.display().to_string();
     let (id, name) = project_team(&app, &at, name).map_err(no)?;
-    // its first agent, with nothing to do yet, when the tower runs agents itself: the team is then there to see
-    if !launcher.is_some_and(|(_, l)| l.held.is_some()) {
+    // its first agent, with nothing to do yet, when the tower runs agents itself: the team is then there to see.
+    // Which starts one, when that is not settled, is asked when he says what it should do.
+    if !starts.is_ok_and(|(_, l)| l.held.is_some()) {
         return Ok(Json(airband_core::radio::ProjectMade { say: format!("{name} is ready. Say launch {name}, then what it should do."), team: name, id: id.into() }));
     }
     let place = Place { name: name.clone(), folder: at };
@@ -112,7 +113,8 @@ fn project_team(app: &App, at: &str, name: TeamName) -> Result<(TeamId, String),
     // the name came from his radio, so he chose it, even where it is the one the folder would give, and it
     // stays his
     let chosen = inner.chosen_team(name.as_str(), None)?;
-    log(format!("a radio made the team {chosen}, in {at}"));
     let called = chosen.to_string();
-    Ok((inner.new_folder_team(at, chosen, true), called))
+    let team = inner.new_folder_team(at, chosen, true);
+    log(format!("a radio made the team {}", team_tag(&team)));
+    Ok((team, called))
 }

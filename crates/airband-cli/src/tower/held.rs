@@ -43,20 +43,6 @@ pub(super) fn holds(inner: &Inner, session: &str) -> bool {
     inner.held.iter().any(|k| k.session.as_deref() == Some(session))
 }
 
-/// The launcher a new agent is started with. For a tool he named, that tool's. With none named: the launcher he
-/// set as usual in this computer's settings, and when he set none, the launcher of the coding tool he uses
-/// most, as his phone said. Nothing when neither says: he is asked, and nothing is started on a guess.
-pub(super) fn launcher_for(app: &App, tool: Option<&str>) -> Option<(String, config::Launcher)> {
-    let found = |tool: Option<&str>| app.cfg().launcher_for(tool).map(|(name, l)| (name.clone(), l.clone()));
-    match tool {
-        Some(tool) => found(Some(tool)),
-        None => found(None).or_else(|| {
-            let most = app.read().tools.first().cloned();
-            most.and_then(|tool| found(Some(&tool)))
-        }),
-    }
-}
-
 /// What a new agent of this launcher can be started on. A program started with arguments takes what its row
 /// lists. One that speaks the Agent Client Protocol says for itself each time a session of its opens, and what
 /// it last said is what is offered: nothing, until the first of its agents has been started here.
@@ -341,7 +327,7 @@ pub(super) async fn stop(app: &Arc<App>, id: &str) -> Result<(), String> {
     tell_holder(&kept, crate::hold::Tell::Stop).await.map_err(|_| "Its process has gone.".to_string())?;
     #[cfg(not(unix))]
     let _ = kept;
-    log(format!("stopped {}", session.callsign.text()));
+    log(format!("stopped {}", short_id(&session.agent.id)));
     // a harness may or may not report a stopped turn as finished: either way it is waiting from now
     {
         let mut inner = app.change();
@@ -352,8 +338,8 @@ pub(super) async fn stop(app: &Arc<App>, id: &str) -> Result<(), String> {
         }
     }
     app.kick.notify_one();
-    // let it settle before it is given more
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    // its holder has written the stop to it (it said `taken`), and writes what comes next behind it: the program
+    // reads the stop first, so what he said meanwhile can go at once
     flush(app, id).await;
     Ok(())
 }
@@ -502,12 +488,11 @@ pub(super) fn forget(inner: &mut Inner, id: &str) {
 }
 
 /// The launcher that carries on an agent of `harness` the tower holds: of the launchers of that harness that
-/// hold their agents, by the one rule (`launch::which_launcher`): the tool's usual launcher when it is one of
-/// them, else the only one, else he is asked.
+/// hold their agents, by the one rule (`launch::which_launcher`): his usual launcher when it is one of them,
+/// else the only one, else he is asked.
 fn holder_for(cfg: &config::Config, harness: &str) -> launch::Starts {
     let holding: Vec<LauncherId> = cfg.launchers.iter().filter(|(_, l)| l.harness == harness && l.held.is_some()).map(|(name, _)| LauncherId::new(name.as_str())).collect();
-    let usual = cfg.launcher_for(Some(harness)).map(|(name, _)| LauncherId::new(name.as_str()));
-    launch::which_launcher(usual.as_ref(), &holding)
+    launch::which_launcher(cfg.launcher.as_ref(), &holding)
 }
 
 /// Take over an agent he started in a terminal of his own: end that process and carry the same session on in
@@ -567,7 +552,7 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
         let taken = inner.check_in(&agent).is_some();
         if taken {
             if !inner.keep_name(id, session.callsign.clone()) {
-                log(format!("{} was taken while it moved, so it keeps the name it came back with", session.callsign.text()));
+                log(format!("{} was taken while it moved, so it keeps the name it came back with", short_id(id)));
             }
             if let Some(s) = inner.session(id) {
                 s.agent.deliver = Some(Deliver::Held);
@@ -583,7 +568,7 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
         end(app, id).await;
         return Err("It has no team airband can put it in, so it was stopped.".into());
     }
-    log(format!("took over {}", session.callsign.text()));
+    log(format!("took over {}", short_id(id)));
     Ok(())
 }
 

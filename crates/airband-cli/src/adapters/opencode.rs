@@ -121,11 +121,16 @@ fn put_to_him(session: String, request: Value, cwd: Option<String>, asked: Arc<M
 }
 
 /// The sessions on the radio, of those the server lists: not the ones put away (a one-off run, a summary
-/// being made), nor the ones quiet for hours.
+/// being made), nor the ones quiet for hours, nor one that does not say when it was last worked in (no time is
+/// made up for it).
 fn current(sessions: &[Value], now: u64) -> Vec<&Value> {
     let put_away = |s: &Value| s["time"]["archived"].as_u64().is_some_and(|at| at > 0) || s["time"]["archived"] == true;
-    sessions.iter().filter(|s| s["id"].is_string() && !put_away(s) && now.saturating_sub(s["time"]["updated"].as_u64().unwrap_or(0)) <= QUIET).collect()
+    sessions.iter().filter(|s| s["id"].is_string() && !put_away(s) && s["time"]["updated"].as_u64().is_some_and(|updated| now.saturating_sub(updated) <= QUIET)).collect()
 }
+
+/// When a session was last busy and last idle, by OpenCode's own clock: nothing for one it does not say, which
+/// counts as earlier than any time it does say (`None < Some(_)`), never as a time made up for it.
+type Clocks = (Option<u64>, Option<u64>);
 
 /// The sessions open now, as the server lists them. Nothing when OpenCode is not running.
 fn open() -> Option<Vec<super::Open>> {
@@ -148,12 +153,12 @@ fn worked_of(list: &Value) -> Vec<super::Worked> {
 /// said before the tower started); later, its work if that was just said. One new since the first look whose turn
 /// is already over (it began and ended between two looks) is marked as never having been idle, so the next look
 /// says what it answered.
-fn first_seen(first: bool, working: bool, busy: u64, idle: u64) -> (u64, u64) {
+fn first_seen(first: bool, working: bool, busy: Option<u64>, idle: Option<u64>) -> Clocks {
     if first {
         return (busy, idle);
     }
-    let over = busy > 0 && idle >= busy;
-    (if working || over { busy } else { 0 }, if over { 0 } else { idle })
+    let over = busy.is_some() && idle >= busy;
+    (if working || over { busy } else { None }, if over { None } else { idle })
 }
 
 /// Watch OpenCode's server for as long as the tower runs: what its sessions are doing, what they say and
@@ -162,7 +167,7 @@ fn first_seen(first: bool, working: bool, busy: u64, idle: u64) -> (u64, u64) {
 fn watch(tower: Tower) {
     // each session seen: when it was last busy and last idle, by OpenCode's own clock, as far as the tower has
     // been told. Something the tower did not take is not marked, and is told again on the next look.
-    let mut seen: HashMap<String, (u64, u64)> = HashMap::new();
+    let mut seen: HashMap<String, Clocks> = HashMap::new();
     let asked: Arc<Mutex<super::Asking>> = Default::default();
     let mut first = true;
     loop {
@@ -176,7 +181,7 @@ fn watch(tower: Tower) {
         let here: Vec<&Value> = current(sessions, airband_core::clock::now_ms()).into_iter().filter(|s| s["id"].as_str().is_some_and(|id| !(tower.holds)(id))).collect();
         for s in &here {
             let (Some(id), time) = (s["id"].as_str(), &s["time"]) else { continue };
-            let (busy, idle) = (time["busy"].as_u64().unwrap_or(0), time["idle"].as_u64().unwrap_or(0));
+            let (busy, idle): Clocks = (time["busy"].as_u64(), time["idle"].as_u64());
             let cwd = s["location"]["directory"].as_str();
             match seen.get(id).copied() {
                 None => {
@@ -276,14 +281,17 @@ mod tests {
     #[test]
     fn a_session_that_began_and_ended_between_two_looks_has_its_answer_said() {
         // on the first look, nothing already there is said again
-        assert_eq!(first_seen(true, false, 5, 9), (5, 9));
+        assert_eq!(first_seen(true, false, Some(5), Some(9)), (Some(5), Some(9)));
         // later, one already over is marked so the next look finds its turn newly ended
-        let (told_busy, told_idle) = first_seen(false, false, 5, 9);
-        assert!(9 > told_idle && 9 >= 5 && told_busy == 5);
+        let (told_busy, told_idle) = first_seen(false, false, Some(5), Some(9));
+        assert!(Some(9) > told_idle && told_busy == Some(5));
         // one that is working was just said to be
-        assert_eq!(first_seen(false, true, 9, 5), (9, 5));
-        // one that has never worked is not said to have answered
-        assert_eq!(first_seen(false, false, 0, 3), (0, 3));
+        assert_eq!(first_seen(false, true, Some(9), Some(5)), (Some(9), Some(5)));
+        // one that has never worked (its clock does not say) is not said to have answered
+        assert_eq!(first_seen(false, false, None, Some(3)), (None, Some(3)));
+        // a session that does not say when it was last worked in is not current
+        let listed = [json!({"id":"a","time":{}}), json!({"id":"b","time":{"updated":10}})];
+        assert_eq!(current(&listed, 10).iter().map(|s| s["id"].as_str()).collect::<Vec<_>>(), [Some("b")]);
     }
 
     #[test]

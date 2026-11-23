@@ -72,7 +72,7 @@ pub(in crate::tower) async fn on_utterance(app: &Arc<App>, radio: &str, text: &s
         shown = None;
     }
     // his words by their length only: what he says is never written in the log
-    log(format!("← radio: {} characters → {} {:?} ({} characters passed on)", text.chars().count(), if to.targets.is_empty() { "nobody".into() } else { list(&to.targets.iter().map(|s| s.callsign.text()).collect::<Vec<_>>()) }, control, to.rest.chars().count()));
+    log(format!("← radio: {} characters → {} {:?} ({} characters passed on)", text.chars().count(), if to.targets.is_empty() { "nobody".into() } else { list(&to.targets.iter().map(|s| short_id(&s.agent.id).to_string()).collect::<Vec<_>>()) }, control, to.rest.chars().count()));
     if let Some(control) = control {
         return controlled(app, radio, control, &to).await;
     }
@@ -137,7 +137,7 @@ async fn new_agent(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
     if let Some(Unplaced { question, idea }) = held_idea {
         match named_project(app, &idea.task, text, projects).await {
             Ok(Some(place)) => {
-                log(format!("← radio: {} characters → launch in {}", text.chars().count(), place.name));
+                log(format!("← radio: {} characters → launch", text.chars().count()));
                 // the idea is let go only once an agent has started with it: a launch that refuses leaves it
                 // waiting, and he can answer again
                 return Some(match launch(app, &place, &idea).await {
@@ -160,7 +160,11 @@ async fn new_agent(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
     if let Some(Unstarted { question, asked, place, idea, among }) = unstarted {
         match named_launcher(app, &asked, text, &among).await {
             Ok(Some(chosen)) => {
-                log(format!("← radio: {} characters → launch in {} by {chosen}", text.chars().count(), place.name));
+                log(format!("← radio: {} characters → launch by {chosen}", text.chars().count()));
+                // what he chose is his usual from now on, kept in this computer's settings: he is asked once
+                if let Err(why) = app.settings.change(|cfg| cfg.launcher = Some(chosen.clone())) {
+                    log(format!("his usual launcher could not be kept: {why}"));
+                }
                 return Some(match launch::launch_by(app, &place, &idea, Some(&chosen)).await {
                     Ok(reply) => {
                         app.change().call(radio).resolve_unstarted(&question);
@@ -242,7 +246,7 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
         match route(app, radio, &rest, said.re.as_deref(), said.scope.as_deref(), &said.others, projects).await {
             Routed::Sure(t) => t,
             Routed::Elsewhere(other) => {
-                log(format!("← radio: {} characters → {}, on another computer", text.chars().count(), other.callsign));
+                log(format!("← radio: {} characters → {}, on another computer", text.chars().count(), short_id(&other.id)));
                 return Err(Reply { elsewhere: Some(other.id), ..Reply::default() });
             }
             Routed::New(mut idea) => {
@@ -252,10 +256,10 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
             Routed::Ask(options) if options.is_empty() => return Err(say("No agents are running.".into())),
             Routed::Ask(options) => {
                 // held with its files, so they go along when he says who it was for
-                let question = airband_core::ids::QuestionId::new(config::random_hex(8));
+                let question = new_question();
                 app.change().call(radio).ask(Asked { question: question.clone(), words: rest.clone(), files: files.clone() });
                 let names: Vec<String> = options.iter().map(|s| s.callsign.text()).collect();
-                log(format!("← radio: {} characters → unsure; asking between {}", text.chars().count(), names.join(", ")));
+                log(format!("← radio: {} characters → unsure; asking between {}", text.chars().count(), options.iter().map(|s| short_id(&s.agent.id)).collect::<Vec<_>>().join(", ")));
                 return Err(Reply { ask: options.iter().map(|s| s.agent.id.clone()).collect(), question: Some(question.clone()), ..ask(format!("Who is that for? {}.", either(&names))) });
             }
         }

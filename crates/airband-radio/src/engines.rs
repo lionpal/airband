@@ -190,7 +190,7 @@ mod tests {
         assert_eq!(serde_json::from_slice::<serde_json::Value>(&asked[1].3).unwrap(), serde_json::json!({ "text": "Hello.", "voice": "Zoey" }));
         // a host that cannot says so, and nothing is made up in its place
         assert_eq!(held.run(|m| m.hear(&|_, _, _, _| None, vec![0, 0])), Err(Fault::Run("this device could not run it".into())));
-        // said once, naming the model (audit 5, B-18)
+        // said once, naming the model
         assert_eq!(Fault::Run("this device could not run it".into()).told("Tiny"), "Tiny did not run on this phone: this device could not run it.");
     }
 }

@@ -161,27 +161,28 @@ pub(super) async fn command(model: &Summarizer, by: &By, prompt: String, shape: 
     let brief = folder.join("brief.md").display().to_string();
     let asked: Vec<(String, String)> = model.offer(Job::Summary).map(|(_, o)| o.asks.iter().map(|a| (a.field.clone(), model.get(Job::Summary, &a.field))).collect()).unwrap_or_default();
     let values: Vec<(&str, &str)> = std::iter::once(("brief", brief.as_str())).chain(asked.iter().map(|(n, v)| (n.as_str(), v.as_str()))).collect();
-    let mut argv: Vec<String> = argv.iter().map(|a| airband_core::template::filled(a, &values)).collect();
-    // `{with_shape}` stands where the row's `with_shape` arguments go when the answer must take a shape: one
-    // of them holds `{shape}`, a file with that shape. A call that wants no shape has none of them.
-    if let Some(at) = argv.iter().position(|a| a == "{with_shape}") {
+    use airband_core::template::has_place;
+    // The row's arguments are read for places before anything is filled in, and filled once: what he set never
+    // counts as a place. `{with_shape}` stands where the row's `with_shape` arguments go when the answer must
+    // take a shape: one of them holds `{shape}`, a file with that shape. A call that wants no shape has none
+    // of them.
+    let mut argv = argv;
+    if let Some(at) = argv.iter().position(|a| has_place(a, "with_shape")) {
         argv.splice(at..=at, if shape.is_some() { by.list("with_shape") } else { Vec::new() });
     }
-    if let Some(at) = argv.iter().position(|a| a.contains("{shape}")) {
-        match &shape {
-            Some(shape) => {
-                let file = folder.join(format!("shape-{}.json", config::random_hex(6)));
-                airband_io::files::write_atomic(&file, shape.to_string()).map_err(|e| program_failed(e.to_string()))?;
-                argv[at] = argv[at].replace("{shape}", &file.display().to_string());
-                shape_file = Some(file);
-            }
-            None => {
-                argv.remove(at);
-            }
+    match &shape {
+        Some(shape) if argv.iter().any(|a| has_place(a, "shape")) => {
+            let file = folder.join(format!("shape-{}.json", config::random_hex(6)));
+            airband_io::files::write_atomic(&file, shape.to_string()).map_err(|e| program_failed(e.to_string()))?;
+            shape_file = Some(file);
         }
+        _ => argv.retain(|a| !has_place(a, "shape")),
     }
+    let shape_at = shape_file.as_ref().map(|f| f.display().to_string()).unwrap_or_default();
+    let values: Vec<(&str, &str)> = values.into_iter().chain(std::iter::once(("shape", shape_at.as_str()))).collect();
+    let argv: Vec<String> = argv.iter().map(|a| airband_core::template::filled(a, &values)).collect();
     let (program, args) = argv.split_first().ok_or_else(|| Failed(Trouble::NotSet, "the command that reads is empty".into()))?;
-    // on Windows a command like `claude` is a .cmd shim, which only the shell can start
+    // on Windows a coding tool's command is often a .cmd shim, which only the shell can start
     let mut cmd = if cfg!(windows) {
         let mut c = tokio::process::Command::new("cmd");
         c.arg("/C").arg(program);

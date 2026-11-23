@@ -27,8 +27,31 @@ const ITEM_NOT_FOUND: i32 = 44;
 /// The keychain file the end-to-end suites make for a run of their own (`AIRBAND_STAND_IN_KEYCHAIN`), in place of
 /// his login keychain: read only by a build with the `stand-ins` feature. Nothing for the airband he installs,
 /// which always uses his login keychain.
+#[cfg(not(test))]
 fn stand_in_keychain() -> Option<String> {
     super::super::stand_in("AIRBAND_STAND_IN_KEYCHAIN")
+}
+
+/// The keychain file every `security` call names. Under test, the one the test made for itself
+/// ([`tests_keychain::set`]), and a test that names none is stopped before `security` runs: no test ever reads or
+/// writes his login keychain.
+fn keychain_file() -> Option<String> {
+    #[cfg(test)]
+    return Some(tests_keychain::get().expect("a test keeps logins in a keychain file of its own (claude_accounts::vault::tests_keychain::set)"));
+    #[cfg(not(test))]
+    stand_in_keychain()
+}
+
+/// The keychain file a test keeps logins in, named for its own thread.
+#[cfg(test)]
+pub(crate) mod tests_keychain {
+    thread_local!(static FILE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) });
+    pub(crate) fn set(file: String) {
+        FILE.with(|f| *f.borrow_mut() = Some(file));
+    }
+    pub(crate) fn get() -> Option<String> {
+        FILE.with(|f| f.borrow().clone())
+    }
 }
 
 fn security() -> Command {
@@ -43,7 +66,7 @@ fn security() -> Command {
 
 impl Vault for Keychain {
     fn read(&self, service: &str, account: &str) -> Res<Option<String>> {
-        let out = security().args(["find-generic-password", "-a", account, "-s", service, "-w"]).args(stand_in_keychain()).stderr(Stdio::piped()).output().map_err(|e| e.to_string())?;
+        let out = security().args(["find-generic-password", "-a", account, "-s", service, "-w"]).args(keychain_file()).stderr(Stdio::piped()).output().map_err(|e| e.to_string())?;
         if !out.status.success() {
             // `security` exits with ITEM_NOT_FOUND when there is no such item (errSecItemNotFound)
             return if out.status.code() == Some(ITEM_NOT_FOUND) { Ok(None) } else { Err(format!("the keychain would not give {service} ({})", out.status)) };
@@ -58,7 +81,7 @@ impl Vault for Keychain {
         Ok(Some(s))
     }
     fn write(&self, service: &str, account: &str, data: &str) -> Res<()> {
-        let line = add_line(service, account, data, stand_in_keychain().as_deref())?;
+        let line = add_line(service, account, data, keychain_file().as_deref())?;
         // On standard input, so the login is never in the process list. `security -i` takes a line of about 4 KB
         // at most. A longer one could only go as an argument, where any program on this computer can read it
         // while the command runs, so it is not handed over at all.
@@ -79,7 +102,7 @@ impl Vault for Keychain {
         }
     }
     fn delete(&self, service: &str, account: &str) -> Res<()> {
-        let status = security().args(["delete-generic-password", "-a", account, "-s", service]).args(stand_in_keychain()).stdout(Stdio::null()).stderr(Stdio::null()).status().map_err(|e| format!("could not ask the keychain: {e}"))?;
+        let status = security().args(["delete-generic-password", "-a", account, "-s", service]).args(keychain_file()).stdout(Stdio::null()).stderr(Stdio::null()).status().map_err(|e| format!("could not ask the keychain: {e}"))?;
         // `security` ends with 44 for an item that is not there
         match status.code() {
             Some(0 | ITEM_NOT_FOUND) => Ok(()),
@@ -134,5 +157,22 @@ mod line_tests {
         let line = super::add_line("svc", "me@example.com", "{}", Some("/tmp/run.keychain")).unwrap();
         assert!(line.ends_with(" \"/tmp/run.keychain\"\n"), "{line}");
         assert!(super::add_line("svc", "me@example.com", "{}", Some("/tmp/a\" -X \"00")).is_err());
+    }
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "a keychain file of its own")]
+    fn a_test_that_names_no_keychain_of_its_own_never_reaches_his() {
+        let _ = Keychain.read("airband", "him");
+    }
+
+    #[test]
+    fn a_test_names_the_keychain_file_it_made() {
+        tests_keychain::set("/nowhere/airband-test.keychain-db".into());
+        assert_eq!(keychain_file().as_deref(), Some("/nowhere/airband-test.keychain-db"));
     }
 }

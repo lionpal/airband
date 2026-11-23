@@ -12,7 +12,7 @@ pub(super) fn plain(name: &str) -> bool {
 /// and on a document about to be published (`airband catalog check`).
 pub fn check(c: &Catalog) -> Result<(), String> {
     if c.providers.is_empty() {
-        return Err("the catalogue has no providers in it".into());
+        return Err("the catalog has no providers in it".into());
     }
     for p in &c.providers {
         if !plain(&p.id) || crate::providers::Use::reserved(&p.id) {

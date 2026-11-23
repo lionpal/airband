@@ -65,8 +65,9 @@ fn words_waiting_for_files_go_once_no_file_is_still_on_its_way() {
     assert!(state.after_files.is_none());
 }
 
-// (audit 9, B-7) A message his computer took and keeps answering "taken" for ends once it is as old as the outbox
-// keeps anything, he is told, and it no longer holds up what he says after it.
+// A message his computer took half an hour ago and keeps answering "taken" for ends, he is told, and it no longer
+// holds up what he says after it. One he wrote hours ago that his computer has only now taken (the relay kept it
+// while the computer slept) is given its half hour from now.
 #[test]
 fn a_message_his_computer_only_ever_says_it_has_ends_and_he_is_told() {
     let tower = Arc::new(FakeTower::default());
@@ -74,22 +75,26 @@ fn a_message_his_computer_only_ever_says_it_has_ends_and_he_is_told() {
     let desk = desk_with(vec![(link(1), tower.clone())]);
     desk.set_links(vec![link(1)]);
     let radio = radio_of(&desk, &link(1));
-    radio.queue_as(Outgoing { at: now_ms() - crate::store::OUTBOX_EXPIRY_MS - 1000, stage: Stage::Taken, ..Outgoing::of("old".into()) }, Carry::Nothing);
-    radio.queue_as(Outgoing::of("new".into()), Carry::Nothing);
+    let long_ago = now_ms() - crate::store::OUTBOX_EXPIRY_MS - 1000;
+    radio.queue_as(Outgoing { at: now_ms(), stage: Stage::Taken, taken_at: Some(long_ago), ..Outgoing::of("old".into()) }, Carry::Nothing);
+    radio.queue_as(Outgoing { at: long_ago, stage: Stage::Left, ..Outgoing::of("slept".into()) }, Carry::Nothing);
+    let find = |text: &str| radio.unsent().into_iter().find(|o| o.text == text);
     let mut ended = None;
     for _ in 0..300 {
-        ended = radio.unsent().into_iter().find(|o| o.text == "old").and_then(|o| o.failed);
-        if ended.is_some() && tower.asked_on::<at::Utterance>() > 0 {
+        ended = find("old").and_then(|o| o.failed);
+        if ended.is_some() && find("slept").is_some_and(|o| o.stage == Stage::Taken) {
             break;
         }
         thread::sleep(Duration::from_millis(10));
     }
     desk.stop();
-    assert_eq!(ended.as_deref(), Some("Your computer took it and in half an hour did not say what came of it."));
-    assert!(tower.asked_on::<at::Utterance>() >= 1, "what he said after it was held up");
+    assert_eq!(ended.as_deref(), Some(crate::outbox::NEVER_SETTLED));
+    let slept = find("slept").expect("still waiting for what came of it");
+    assert_eq!((slept.stage, slept.failed), (Stage::Taken, None), "taken just now, so not given up on");
+    assert!(slept.taken_at.is_some_and(|t| t > long_ago));
 }
 
-// (audit 8, radio.rs:384) A picture whose parts stop moving forward before the last is only part of one: none
+// A picture whose parts stop moving forward before the last is only part of one: none
 // of it is kept, and he is told.
 #[test]
 fn a_picture_that_stops_coming_part_way_is_not_kept_as_the_whole() {
@@ -105,7 +110,7 @@ fn a_picture_that_stops_coming_part_way_is_not_kept_as_the_whole() {
     assert!(!radio.store.pictures().join(format!("{id}.jpg")).exists(), "part of a picture was kept as the whole");
 }
 
-// (audit 9, B-39) A file that did not get there says why, for the tray to show.
+// A file that did not get there says why, for the tray to show.
 #[test]
 fn a_file_that_did_not_get_there_keeps_why() {
     let tower = Arc::new(FakeTower::default());
@@ -128,7 +133,7 @@ fn a_file_that_did_not_get_there_keeps_why() {
     assert_eq!(shown.and_then(|u| u.why).as_deref(), Some("It is more than your computer takes in one message."));
 }
 
-// (audit 9, B-36) Something said aloud that the tower took and then refuses for good ends with the refusal at
+// Something said aloud that the tower took and then refuses for good ends with the refusal at
 // once: it is not asked about for a minute and a half and then given up on in silence.
 #[test]
 fn a_spoken_message_refused_after_it_was_taken_ends_with_the_refusal() {
@@ -144,7 +149,7 @@ fn a_spoken_message_refused_after_it_was_taken_ends_with_the_refusal() {
     assert!(began.elapsed() < Duration::from_secs(10), "it kept asking after a refusal for good");
 }
 
-// (audit 9, B-38) The trail names each request by its endpoint: the id of a picture or a message is never in it.
+// The trail names each request by its endpoint: the id of a picture or a message is never in it.
 #[test]
 fn the_trail_never_holds_the_id_a_request_names() {
     let tower = Arc::new(FakeTower::default());

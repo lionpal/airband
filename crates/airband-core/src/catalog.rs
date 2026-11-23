@@ -215,7 +215,7 @@ static CURRENT: RwLock<Option<Arc<Catalog>>> = RwLock::new(None);
 
 fn built_shared() -> &'static Arc<Catalog> {
     static BUILT: std::sync::OnceLock<Arc<Catalog>> = std::sync::OnceLock::new();
-    BUILT.get_or_init(|| Arc::new(read(BUILT_IN).expect("the catalogue built into this program does not read")))
+    BUILT.get_or_init(|| Arc::new(read(BUILT_IN).expect("the catalog built into this program does not read")))
 }
 
 /// The catalogue compiled into this program.
@@ -234,7 +234,7 @@ pub fn current() -> Arc<Catalog> {
 /// The document built into this program, as it would be published. `expires` is when a copy of it stops
 /// being taken, in seconds since 1970.
 pub fn built_in(expires: u64) -> String {
-    let mut doc: Value = serde_json::from_str(BUILT_IN).expect("the catalogue built into this program does not read");
+    let mut doc: Value = serde_json::from_str(BUILT_IN).expect("the catalog built into this program does not read");
     doc["expires"] = expires.into();
     doc.to_string()
 }
@@ -585,7 +585,7 @@ mod tests {
         // one that speaks everything, and a copy with nothing odd in it: nothing to say
         assert!(news(&Taken { newer: true, ..Default::default() }, &|_| true).is_empty());
         // a copy that was not taken says only what is worth knowing about that
-        let same = Taken { note: Some("a catalogue with the same rev (5) has different rows; the one in hand is kept".into()), ..Default::default() };
+        let same = Taken { note: Some("a catalog with the same rev (5) has different rows; the one in hand is kept".into()), ..Default::default() };
         assert_eq!(news(&same, &|_| false).len(), 1);
     }
 
@@ -599,7 +599,7 @@ mod tests {
         assert!(tools > 0);
         doc["tools"].as_array_mut().unwrap().push(serde_json::json!({ "id": "from-a-later-build", "name": 7 }));
         let read = read(&doc.to_string());
-        let c = read.as_ref().expect("one unreadable tool row refused the whole catalogue");
+        let c = read.as_ref().expect("one unreadable tool row refused the whole catalog");
         assert_eq!(c.tools.len(), tools);
         assert!(c.left_out.iter().any(|l| l.contains("from-a-later-build")), "{:?}", c.left_out);
     }

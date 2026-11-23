@@ -144,9 +144,17 @@ fn reply(s: impl Into<String>, listen: bool) -> Reply {
     Reply { say: s.into(), listen, ..Reply::default() }
 }
 
-/// The first eight characters of an id, for the log.
+/// The first eight characters of an id, for the log. An agent is logged by this, never by its callsign, which
+/// carries its team's name.
 fn short_id(id: &str) -> &str {
     id.get(..8).unwrap_or(id)
+}
+
+/// A team as the log names it. Its id is its folder's path and its name is usually the folder's, so neither is
+/// ever logged: a short digest of the id, the same each time, tells its lines apart.
+fn team_tag(team: &TeamId) -> String {
+    use sha2::{Digest, Sha256};
+    airband_core::encode::hex(&Sha256::digest(team.as_str().as_bytes())[..4])
 }
 
 /// One radio's line: what it said is worked on in the order it was put here.
@@ -160,6 +168,9 @@ pub(crate) struct App {
     saver: saver::Saver,
     inner: Mutex<Inner>,
     kick: Notify,
+    /// Counts every change to the state, once it is let go: what a request held open waits on to look again,
+    /// in place of looking every few hundred milliseconds. A waiter looks only, never changes, while it waits.
+    changed: tokio::sync::watch::Sender<u64>,
     /// What each radio has said and the tower has yet to answer, in the order it came: one is finished before
     /// the next of the same radio is begun, so an agent gets what he said in the order he said it.
     said: Mutex<HashMap<String, Line>>,

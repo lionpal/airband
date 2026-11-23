@@ -546,7 +546,7 @@ mod tests {
     fn said_aloud_a_bare_address_is_a_link_and_marks_are_gone() {
         assert_eq!(said("**Done.** See `scripts/check.mjs` and https://example.com/z\n- one"), "Done. See scripts/check.mjs and a link. one.");
         assert_eq!(said("rewrite and/or drop [the doc](https://x.y/z)"), "rewrite and/or drop the doc.");
-        // A-10: bare by how it was written, never by its words reading like where it leads
+        // bare by how it was written, never by its words reading like where it leads
         assert_eq!(said("see <https://x.y/z>"), "see a link.");
         assert_eq!(said("see [https://x.y/z](https://x.y/z)"), "see https://x.y/z.");
         assert_eq!(opening("One. Two? Three. Four."), "One. Two?");

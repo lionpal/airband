@@ -38,6 +38,7 @@ impl Drop for Changing<'_> {
         if self.tell {
             self.app.kick.notify_one();
         }
+        self.app.changed.send_modify(|n| *n = n.wrapping_add(1));
     }
 }
 
@@ -78,6 +79,11 @@ impl App {
         if inner.reap() {
             inner.tell();
         }
+    }
+    /// What a request held open waits on: woken by any change to the state made after this is called, so
+    /// nothing changed between a look and the wait is missed.
+    pub(super) fn watch_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changed.subscribe()
     }
     /// Wait until every change made so far is written to the database.
     pub(super) fn flush(&self) {

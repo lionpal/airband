@@ -22,7 +22,7 @@ pub(crate) fn check(check: &Check, key: &str, settings: &BTreeMap<String, String
     // an address that names a setting he has not filled in cannot be asked
     let url = match check.address(settings) {
         // one that does not name a place to reach (a setting that made it no address) is his setting to fix,
-        // not a connection that failed (audit 8, keys.rs:35)
+        // not a connection that failed
         Ok(url) if airband_core::links::web(&url).is_none() => return KeyCheck::BadSetting { why: format!("“{url}” is not an address. Check the settings for this service.") },
         Ok(url) => url,
         Err(bad_setting) => return bad_setting,

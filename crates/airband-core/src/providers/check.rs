@@ -99,7 +99,7 @@ pub fn fill(template: &str, setting: &dyn Fn(&str) -> String) -> Result<String, 
     for (i, piece) in crate::template::pieces(template).enumerate() {
         match piece {
             Piece::Text(text) => out.push_str(text),
-            Piece::Unclosed(_) => return Err("An address in the catalogue is not well formed.".into()),
+            Piece::Unclosed(_) => return Err("An address in the catalog is not well formed.".into()),
             Piece::Place(field) => {
                 let value = setting(field).trim().to_string();
                 if i == 0 {

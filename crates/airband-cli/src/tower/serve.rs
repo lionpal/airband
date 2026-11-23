@@ -91,7 +91,7 @@ fn keep_catalogue_fresh() {
         let (changed, lines) = crate::catalog::refresh();
         lines.into_iter().for_each(log);
         if changed {
-            log(format!("catalogue: now rev {}", airband_core::catalog::current().rev));
+            log(format!("catalog: now rev {}", airband_core::catalog::current().rev));
         }
         std::thread::sleep(Duration::from_secs(12 * 3600));
     });
@@ -133,7 +133,7 @@ fn open(cfg: Config) -> Result<Arc<App>, String> {
     let push = push::Wake::load(&store, &cfg.pairings)?;
     let saver = saver::Saver::start(store.clone());
     SAVER.set(saver.flusher()).ok();
-    let app = Arc::new(App { push, settings: Settings::new(cfg), store, saver, inner: Mutex::new(inner), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default(), reviving: Default::default(), procs: Arc::new(edges::procs::SystemProcs), deliverer: None, listening: Default::default() });
+    let app = Arc::new(App { push, settings: Settings::new(cfg), store, saver, inner: Mutex::new(inner), kick: Notify::new(), changed: tokio::sync::watch::channel(0).0, said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default(), reviving: Default::default(), procs: Arc::new(edges::procs::SystemProcs), deliverer: None, listening: Default::default() });
     // what was changed while starting (a credential masked in a kept message) is written now, not at the next
     // thing an agent says
     drop(app.change());

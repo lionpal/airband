@@ -92,7 +92,6 @@ fn not_fetched(status: u16) -> String {
 mod tests {
     #[test]
     fn a_download_that_fails_is_told_by_what_it_answered() {
-        // (audit 9, B-35)
         assert_eq!(super::not_fetched(404), "The download is not there.");
         assert!(super::not_fetched(503).contains("trouble (503)"));
         assert!(super::not_fetched(429).contains("too often"));

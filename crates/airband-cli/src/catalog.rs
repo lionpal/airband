@@ -98,7 +98,7 @@ pub(crate) fn command(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         _ => {
-            println!("The catalogue in use is rev {}: {} providers, {} models for the phone.\n{USAGE}", catalog::current().rev, catalog::current().providers.len(), catalog::current().models.len());
+            println!("The catalog in use is rev {}: {} providers, {} models for the phone.\n{USAGE}", catalog::current().rev, catalog::current().providers.len(), catalog::current().models.len());
             Ok(())
         }
     }

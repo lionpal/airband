@@ -23,6 +23,8 @@ pub(super) async fn open(State(relay): State<Arc<Relay>>, Path(channel): Path<St
             return not_taken(why);
         }
         ch.reopened(answering(&headers));
+        // opened, a tower pulls next
+        ch.pulls_again = true;
         return StatusCode::NO_CONTENT.into_response();
     }
     if let Some(want) = &relay.admission {
@@ -78,10 +80,9 @@ fn call_refused(why: CallRefused) -> Response {
     (StatusCode::from_u16(why.status()).unwrap_or(StatusCode::CONFLICT), axum::Json(why)).into_response()
 }
 
-/// The kept message a tower says it is still answering for, if it speaks a pull that says so (3 and up): `None`
-/// for one that does not say.
-fn answering(headers: &HeaderMap) -> Option<Option<&str>> {
-    PullRefused::version(header(headers, PULL_HEADER)).is_ok_and(|v| v >= 3).then(|| header(headers, ANSWERING_HEADER))
+/// The kept message a tower says it is still answering for, if any.
+fn answering(headers: &HeaderMap) -> Option<&str> {
+    header(headers, ANSWERING_HEADER)
 }
 
 /// A pull refused, saying why ([`PullRefused`]).
@@ -121,17 +122,17 @@ pub(super) async fn pull(State(relay): State<Arc<Relay>>, Path(channel): Path<St
             };
             if mine.is_none() {
                 // a tower that never says what it got would have everything handed to it again
-                let version = match PullRefused::version(header(&headers, PULL_HEADER)) {
-                    Ok(v) => v,
-                    Err(why) => return not_taken(why),
-                };
+                if let Err(why) = PullRefused::version(header(&headers, PULL_HEADER)) {
+                    return not_taken(why);
+                }
                 let tower = header(&headers, TOWER_HEADER).map(str::to_string);
                 // another computer with the same pairing is pulling now: this one is refused, and takes nothing
                 if let Err(why) = ch.contend(tower.as_deref()) {
                     return not_taken(why);
                 }
-                let answering = (version >= 3).then(|| header(&headers, ANSWERING_HEADER));
-                let me = ch.pulled(state::Said { got: header(&headers, GOT_HEADER), answering });
+                let me = ch.pulled(state::Said { got: header(&headers, GOT_HEADER), answering: answering(&headers) });
+                // held open now; whether it comes back is said when it is answered
+                ch.pulls_again = false;
                 ch.live = Some((tower, me));
                 _live = Some(Live { relay: relay.clone(), channel: channel.clone(), pull: me });
                 mine = Some(me);
@@ -141,11 +142,11 @@ pub(super) async fn pull(State(relay): State<Arc<Relay>>, Path(channel): Path<St
             if ch.pulls != me {
                 return StatusCode::NO_CONTENT.into_response();
             }
-            ch.last_pull = Some(Instant::now());
             // a radio that gave up leaves its request behind; skip those
             while let Some((id, sealed)) = ch.queue.pop_front() {
                 if ch.waiting.contains_key(&id) {
                     ch.handed.push((id.clone(), sealed.clone()));
+                    ch.pulls_again = true;
                     return ([(REQUEST_HEADER, id)], sealed).into_response();
                 }
             }
@@ -163,6 +164,7 @@ pub(super) async fn pull(State(relay): State<Arc<Relay>>, Path(channel): Path<St
                         return StatusCode::NO_CONTENT.into_response();
                     };
                     ch.holding = Some((id.to_string(), state::Got::Handed));
+                    ch.pulls_again = true;
                     return ([(REQUEST_HEADER, id.to_string()), (airband_core::relay::KEPT_HEADER, "1".to_string())], sealed).into_response();
                 }
                 Ok(None) => {
@@ -175,10 +177,13 @@ pub(super) async fn pull(State(relay): State<Arc<Relay>>, Path(channel): Path<St
         }
         let left = until.saturating_duration_since(Instant::now());
         if left.is_zero() {
+            // answered: the tower pulls again at once
+            if let Some(ch) = relay.channels.lock().unwrap().get_mut(&channel).filter(|ch| Some(ch.pulls) == mine) {
+                ch.pulls_again = true;
+            }
             return StatusCode::NO_CONTENT.into_response();
         }
-        // wake at least every few seconds so last_pull stays current while the tower waits
-        tokio::time::timeout(left.min(Duration::from_secs(5)), wake.notified()).await.ok();
+        tokio::time::timeout(left, wake.notified()).await.ok();
     }
 }
 
@@ -295,14 +300,24 @@ pub(super) async fn carry(relay: &Arc<Relay>, channel: &str, headers: &HeaderMap
         ch.waiting.insert(id.clone(), tx);
         ch.queue.push_back((id.clone(), sealed));
         ch.wake.notify_one();
-        rx
+        (rx, ch.pulls)
     };
+    let (answer, pulls_then) = answer;
     // nothing of a request nobody waits for stays in memory: when the wait ends, or when the radio hangs up and
     // this is dropped, it goes, so one the tower never answers cannot fill the channel's share
     let _waiting = Waiting { relay: relay.clone(), channel: channel.to_string(), id };
     match tokio::time::timeout(ANSWER_WAIT, answer).await {
         Ok(Ok(sealed)) => sealed.into_response(),
-        _ => call_refused(CallRefused::TowerSilent),
+        Ok(Err(_)) => call_refused(CallRefused::TowerSilent),
+        // the whole wait, and no pull came: the tower that was to pull again never did, and is not there. The
+        // radio is told so, and leaves what he said with the relay
+        Err(_) => match relay.channels.lock().unwrap().get_mut(channel).filter(|ch| ch.live.is_none() && ch.pulls == pulls_then) {
+            Some(ch) => {
+                ch.pulls_again = false;
+                call_refused(CallRefused::Away)
+            }
+            None => call_refused(CallRefused::TowerSilent),
+        },
     }
 }
 
@@ -490,7 +505,7 @@ mod tests {
 
     /// What a tower's pull carries: its token, the pull it speaks, and what its previous pull got.
     fn pulling(keys: &Keys, got: Option<&str>) -> HeaderMap {
-        pulling_as(keys, "2", None, got, None)
+        pulling_as(keys, airband_core::relay::PULL_VERSION, None, got, None)
     }
     /// The same, from a tower that speaks `version`, is `tower` and is answering for `answering`.
     fn pulling_as(keys: &Keys, version: &str, tower: Option<&str>, got: Option<&str>, answering: Option<&str>) -> HeaderMap {
@@ -576,7 +591,7 @@ mod tests {
         // never got: handed again at once, with no clock deciding it
         assert_eq!(pull_now(None).await.1.as_deref(), Some("aaaaaaaa01"));
         // got: the tower is answering for it, and the next pull waits rather than be handed it twice
-        relay.channels.lock().unwrap().get_mut(&keys.channel).unwrap().pulled(state::Said { got: Some("aaaaaaaa01"), answering: None });
+        relay.channels.lock().unwrap().get_mut(&keys.channel).unwrap().pulled(state::Said { got: Some("aaaaaaaa01"), answering: Some("aaaaaaaa01") });
         assert_eq!(relay.channels.lock().unwrap()[&keys.channel].holding, Some(("aaaaaaaa01".into(), state::Got::Got)));
         assert_eq!(relay.channels.lock().unwrap()[&keys.channel].kept_due(), None);
         // a tower that starts over opens its channel again: then it is handed again
@@ -594,7 +609,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_tower_that_opens_again_while_it_still_answers_a_kept_message_is_not_handed_it_again() {
-        // B-5: opening again cleared what the tower was answering for, so the relay handed it over a second time
+        // opening again cleared what the tower was answering for, so the relay handed it over a second time
         let (relay, folder) = relay_in_a_folder(None);
         let keys = Keys::derive(&airband_core::relay::new_secret()).unwrap();
         assert_eq!(open_as(&relay, &keys, "").await, 201);
@@ -613,7 +628,7 @@ mod tests {
 
     #[tokio::test]
     async fn another_tower_opening_the_channel_does_not_kick_the_pull_of_one_still_there() {
-        // B-31: an opening from anyone with the pull token let the pulling tower's pull go and cleared what it held
+        // an opening from anyone with the pull token let the pulling tower's pull go and cleared what it held
         let (relay, folder) = relay_in_a_folder(None);
         let keys = Keys::derive(&airband_core::relay::new_secret()).unwrap();
         assert_eq!(open_as(&relay, &keys, "").await, 201);
@@ -639,7 +654,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_tower_that_started_again_under_a_new_id_is_not_told_another_computer_holds_its_pairing() {
-        // B-11: the pull of the tower before it, still held open (a proxy keeps its connection), had it told
+        // the pull of the tower before it, still held open (a proxy keeps its connection), had it told
         // "another computer is serving this pairing"
         let (relay, folder) = relay_in_a_folder(None);
         let keys = Keys::derive(&airband_core::relay::new_secret()).unwrap();
@@ -671,18 +686,18 @@ mod tests {
         };
         let read = |(status, body): (u16, String)| (status, CallRefused::of(Route::Call, status, body.as_bytes()));
         assert_eq!(read(text(ask(false).await).await), (503, Err(Some(CallRefused::Away))));
-        relay.channels.lock().unwrap().get_mut(&keys.channel).unwrap().last_pull = Some(Instant::now());
+        relay.channels.lock().unwrap().get_mut(&keys.channel).unwrap().pulls_again = true;
         assert_eq!(read(text(ask(true).await).await), (409, Err(Some(CallRefused::Behind))));
         let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[tokio::test]
     async fn a_radio_that_hangs_up_leaves_nothing_behind_and_its_answer_is_not_taken_as_delivered() {
-        // R-N3: only carry's own timeout cleaned up, so requests the tower never answered filled the channel
+        // only carry's own timeout cleaned up, so requests the tower never answered filled the channel
         let (relay, folder) = relay_in_a_folder(None);
         let keys = Keys::derive(&airband_core::relay::new_secret()).unwrap();
         assert_eq!(open_as(&relay, &keys, "").await, 201);
-        relay.channels.lock().unwrap().get_mut(&keys.channel).unwrap().last_pull = Some(Instant::now());
+        relay.channels.lock().unwrap().get_mut(&keys.channel).unwrap().pulls_again = true;
         let auth = token(&keys.radio_token);
         let radio = with(&[(auth.0, &auth.1)]);
         let calling = tokio::spawn(call(State(relay.clone()), Path(keys.channel.clone()), radio, Bytes::from_static(b"sealed")));
@@ -754,13 +769,6 @@ mod tests {
         assert_eq!(reply(State(relay.clone()), Path((keys.channel.clone(), "aaaaaaaa01".into())), kept, Bytes::new()).await.status().as_u16(), 204);
         assert_eq!(relay.channels.lock().unwrap()[&keys.channel].holding, None);
         assert_eq!(relay.store.held_next(&keys.channel).await, Ok(None));
-        // a tower in version 2 does not say what it answers: one it got waits for its answer, as before
-        assert_eq!(leave(&relay, &keys.channel, &keys.radio_token, "aaaaaaaa02").await.0, 202);
-        assert_eq!(text_with_id(pull(State(relay.clone()), Path(keys.channel.clone()), pulling(&keys, None))).await.1.as_deref(), Some("aaaaaaaa02"));
-        let old = tokio::spawn(pull(State(relay.clone()), Path(keys.channel.clone()), pulling(&keys, Some("aaaaaaaa02"))));
-        pulls_reach(&relay, &keys, 5).await;
-        assert_eq!(relay.channels.lock().unwrap()[&keys.channel].holding, Some(("aaaaaaaa02".into(), state::Got::Got)));
-        old.abort();
         let _ = std::fs::remove_dir_all(&folder);
     }
 

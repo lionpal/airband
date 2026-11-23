@@ -104,7 +104,7 @@ impl Inner {
                     return Some(team);
                 }
                 // a name no team can have does not turn it away: it goes in its folder's team, as one started with no name does
-                Err(why) => log(format!("an agent of {} was started under the team name \"{name}\", which cannot be used: {why}", agent.harness)),
+                Err(_) => log(format!("{} of {} was started under a team name that cannot be used", short_id(&agent.id), agent.harness)),
             }
         }
         self.folder_team(agent.cwd.as_deref()?)
@@ -153,7 +153,7 @@ impl Inner {
             let callsign = wanted.clone().filter(|c| self.callsign_free(c, Some(&agent.id))).unwrap_or_else(|| {
                 self.next_free(&team_name, None, &[])
             });
-            log(format!("{} checked in ({}, {})", callsign.text(), agent.harness, agent.cwd.as_deref().unwrap_or("no folder")));
+            log(format!("{} checked in ({}, team {})", short_id(&agent.id), agent.harness, team_tag(&team)));
             self.sessions.push(Session::new(agent.clone(), callsign, team.clone()));
             // one that was moved to another team before it went away is back there, by whoever put it there
             if let Some(by) = self.placed.get(&AgentId::new(agent.id.as_str())).filter(|p| p.team == team).map(|p| p.by)
@@ -238,7 +238,7 @@ impl Inner {
         if s.callsign == to {
             return;
         }
-        log(format!("{} is now {}", s.callsign.text(), to.text()));
+        log(format!("{} has a new name", short_id(id)));
         s.callsign = to;
         let touched: Vec<String> = self.log.iter().filter(|e| e.agent.as_deref() == Some(id) || e.to_agents.iter().any(|a| a == id)).map(|e| e.id.clone()).collect();
         for entry in touched {

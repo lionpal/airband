@@ -174,7 +174,6 @@ mod tests {
 
     #[test]
     fn what_was_wanted_while_the_file_could_not_be_read_is_what_is_wanted() {
-        // (audit 8, M4)
         let target = |t: &str| PushTarget { provider: airband_core::relay::PushService::Apns, token: t.into() };
         let mut found = Intents { push: Some(Intent { rev: 5, wanted: target("old"), per: BTreeMap::new() }), tools: Some(Intent { rev: 2, wanted: vec!["codex".into()], per: BTreeMap::from([(StationId::new("a"), Delivery::Done)]) }) };
         let since = Intents { push: Some(Intent::after(None, target("new"))), tools: Some(Intent { rev: 1, wanted: vec!["codex".into()], per: BTreeMap::from([(StationId::new("b"), Delivery::Done)]) }) };
@@ -191,11 +190,11 @@ mod tests {
         let mut i = Intent::after(None, ());
         i.record::<()>(&a, &Reach::Done(()));
         i.record::<()>(&b, &Reach::Refused("No.".into()));
-        // (audit 7, P-N3) a computer since unpaired that took it does not make it taken
+        // a computer since unpaired that took it does not make it taken
         assert_eq!(i.standing(std::slice::from_ref(&b)), Standing::Refused(vec!["No.".into()]));
         assert_eq!(i.standing(&[a.clone(), b.clone()]), Standing::Taken);
         assert_eq!(i.standing(&[]), Standing::Waiting);
-        // (audit 7, P-N8) one that could not be sent it for want of a key shows why, and is tried again
+        // one that could not be sent it for want of a key shows why, and is tried again
         i.record::<()>(&b, &Reach::Skipped(crate::choices::Withheld::NoKey));
         assert!(i.owed(&b));
         assert_eq!(i.standing(std::slice::from_ref(&b)), Standing::Refused(vec![crate::choices::Withheld::NoKey.said()]));

@@ -24,7 +24,7 @@ use serde_json::{Map, Value};
 /// What a secret's place in the file holds while the secret is in the keychain.
 pub(crate) const MARK: &str = "in-keychain";
 #[cfg(target_os = "macos")]
-const SERVICE: &str = "dev.airband.tower";
+const SERVICE: &str = crate::platform::MAC_NAME;
 #[cfg(target_os = "macos")]
 const ACCOUNT: &str = "keys";
 
@@ -174,7 +174,7 @@ mod file {
 
     /// What this machine calls itself to its own system, the same from one start to the next and different on
     /// every other machine. Empty where the system has none to give: nothing is sealed then (`cipher`).
-    fn machine() -> String {
+    pub(super) fn machine() -> String {
         static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
         ID.get_or_init(|| {
             #[cfg(target_os = "macos")]
@@ -273,6 +273,13 @@ mod file {
 
 #[cfg(test)]
 pub(crate) use file::tests_folder;
+
+/// A digest of this machine's own id ([`file::machine`]): the same on this machine every time, different on
+/// every other, and never the id itself, which keeps the sealed keys and so is never written down.
+pub(crate) fn machine_digest() -> String {
+    use sha2::{Digest, Sha256};
+    airband_core::encode::hex(&Sha256::digest(format!("airband tower|{}", file::machine()).as_bytes())[..16])
+}
 
 /// Can this program use the keychain without anyone being asked? A signed build on a Mac. Never a test's.
 #[cfg(target_os = "macos")]

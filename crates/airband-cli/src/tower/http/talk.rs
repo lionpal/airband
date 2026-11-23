@@ -18,25 +18,29 @@ pub(super) async fn next(State(app): State<Arc<App>>, RadioId(radio): RadioId, A
         let call = inner.call(&radio);
         if let (Some(have), Some(lost)) = (q.have.as_ref(), call.handed.clone())
             && *have != lost.id && call.outbox.is_none() && !call.ready {
-                log(format!("{radio} never got what it was handed ({}); handing it over again", lost.callsign));
+                log(format!("{radio} never got line {} it was handed; handing it over again", lost.id));
                 call.outbox = Some(lost);
             }
     }
+    // watched from before the pump is woken, so what it hands this radio is never missed
+    let mut changes = app.watch_changes();
     app.kick.notify_one();
     // tokio's clock, so the hold can be run with time paused
     let until = tokio::time::Instant::now() + HOLD;
-    while tokio::time::Instant::now() < until {
-        {
+    loop {
+        if app.read().calls.get(&radio).is_some_and(|c| c.outbox.is_some()) {
             let mut inner = app.change();
-        let call = inner.call(&radio);
+            let call = inner.call(&radio);
             if let Some(t) = call.outbox.take() {
                 call.handed = Some(t.clone());
                 return Ok(Json(Some(t)));
             }
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        // woken when the state changes, and only then looked at again
+        if tokio::time::timeout_at(until, changes.changed()).await.is_err() {
+            return Ok(Json(None));
+        }
     }
-    Ok(Json(None))
 }
 
 /// A radio was handed something to read out and no sound came of it. It goes back in the queue, the reason is

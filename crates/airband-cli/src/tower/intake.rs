@@ -108,15 +108,17 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
     }
     if ev.event == Event::Signoff {
         if let Some(s) = inner.find(&id) {
-            log(format!("{} signed off", s.callsign.text()));
+            log(format!("{} signed off", short_id(&s.agent.id)));
         }
         inner.remove(&id);
         held::forget(&mut inner, &id);
         return Ok(());
     }
-    let Some(callsign) = inner.check_in(&ev.agent).map(|c| c.text()) else {
+    if inner.check_in(&ev.agent).is_none() {
         return Err("airband cannot place an agent that has no name it can give a team and no folder with a name. Start it in a project\u{2019}s folder, or report it with --name.".into());
-    };
+    }
+    // the log names an agent by its id, never by its callsign, which carries its team's name
+    let logged = short_id(&id).to_string();
     match ev.event {
         Event::Working => {
             let s = inner.session(&id).unwrap();
@@ -151,7 +153,7 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
             s.subagents = 0;
             let with = pictures::for_message(std::mem::take(&mut s.pictures), kept);
             if !with.is_empty() {
-                log(format!("{callsign}: {} with what it says next", if with.len() == 1 { "1 picture".to_string() } else { format!("{} pictures", with.len()) }));
+                log(format!("{logged}: {} with what it says next", if with.len() == 1 { "1 picture".to_string() } else { format!("{} pictures", with.len()) }));
             }
             enqueue(&mut inner, &id, false, text, kind, with, None);
         }
@@ -166,7 +168,7 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
             s.pictures.drain(..extra);
         }
         Event::Made { address, title, kind } => {
-            log(format!("{callsign}: its tool made something, shown with what it says next"));
+            log(format!("{logged}: its tool made something, shown with what it says next"));
             inner.links.made(&id, &address, title, kind);
         }
         Event::Subagent { done, .. } => {
@@ -183,7 +185,7 @@ pub(super) fn on_event(app: &App, ev: AgentEvent) -> Result<(), String> {
             s.subagents = 0;
             if let Some(why) = why.map(|w| w.trim().to_string()).filter(|w| !w.is_empty()) {
                 // the tool's words can quote his: the log has their length only
-                log(format!("{callsign}: its turn failed ({} characters said why)", why.chars().count()));
+                log(format!("{logged}: its turn failed ({} characters said why)", why.chars().count()));
                 enqueue(&mut inner, &id, true, why, Some(Kind::NeedsYou), Vec::new(), Some(Note::TurnFailed));
             }
         }
@@ -230,7 +232,7 @@ pub(super) fn enqueue(inner: &mut Inner, agent_id: &str, notice: bool, full: Str
     let Some(session) = inner.find(agent_id).cloned() else { return };
     // only the latest thing each agent said is worth hearing
     inner.supersede(agent_id, notice);
-    log(format!("{}: {} queued ({} characters)", session.callsign.text(), if notice { "notice" } else { "message" }, full.chars().count()));
+    log(format!("{}: {} queued ({} characters)", short_id(agent_id), if notice { "notice" } else { "message" }, full.chars().count()));
     let id = config::random_hex(8);
     // a notice from the harness is read to him as it is: it has its line from the start and no model reads it
     let short = notice.then(|| spoken(&note.map_or_else(|| full.clone(), |n| n.said(&full))));

@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn a_file_is_copied_described_followed_and_made_private_here() {
-        // A-13: each of these was reached past this module
+        // each of these was reached past this module
         let dir = folder();
         let (a, b) = (dir.join("a"), dir.join("b"));
         write_atomic(&a, "hello").unwrap();

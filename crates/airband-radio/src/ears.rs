@@ -492,7 +492,7 @@ mod tests {
         *ears.chosen.passes.pass.lock().unwrap() = Some((pass(Some(now_ms() + 60_000)), a.clone()));
         assert!(ears.kept(&a).is_some());
         assert!(ears.kept(&b).is_none());
-        // past the moment the pass itself says it ends it is not used, however recently it was had (audit 9, B-32)
+        // past the moment the pass itself says it ends it is not used, however recently it was had
         *ears.chosen.passes.pass.lock().unwrap() = Some((pass(Some(now_ms() - 1)), a.clone()));
         assert!(ears.kept(&a).is_none());
         *ears.chosen.passes.pass.lock().unwrap() = Some((pass(None), a.clone()));

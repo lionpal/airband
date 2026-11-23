@@ -125,7 +125,7 @@ impl Inner {
             };
             match to {
                 Some(to) => renamed |= self.set_team_name(&id, &to),
-                None => log(format!("the team {name} has the name of a team on another computer, and no other name is free for it: rename one of them")),
+                None => log(format!("the team {} has the name of a team on another computer, and no other name is free for it: rename one of them", team_tag(&id))),
             }
         }
         let clashing: Vec<String> = self.sessions.iter().filter(|s| s.callsign.numbered() && there.contains(&s.callsign)).map(|s| s.agent.id.clone()).collect();
@@ -139,9 +139,9 @@ impl Inner {
     /// He renamed a team, by its id. Only what it is called changes: its agents, its folder and its colour stay
     /// with it. Returns the name it now has.
     pub(super) fn rename_team(&mut self, team: &TeamId, to: &str) -> Result<TeamName, String> {
-        let Some(was) = self.teams.get(team).map(|t| t.name.clone()) else {
+        if !self.teams.contains_key(team) {
             return Err("That team is not on this computer any more.".into());
-        };
+        }
         // whether another team has the name is asked once, as it is given
         let to = TeamName::new(to)?;
         if !self.set_team_name(team, &to) {
@@ -150,7 +150,7 @@ impl Inner {
         if let Some(t) = self.teams.get_mut(team) {
             t.named = true;
         }
-        log(format!("the team {was} is now {to}"));
+        log(format!("the team {} has a new name", team_tag(team)));
         Ok(to)
     }
     /// A team is called something else: its agents take the new name, the numbers and the names he gave them
@@ -160,7 +160,7 @@ impl Inner {
     /// share one whichever way the name came. Returns whether it was given.
     fn set_team_name(&mut self, team: &TeamId, to: &TeamName) -> bool {
         if !self.name_free(to.as_str(), Some(team)) {
-            log(format!("the team {team} was not called {to}: another team of yours has that name"));
+            log(format!("the team {} was not renamed: another team of yours has that name", team_tag(team)));
             return false;
         }
         let Some(t) = self.teams.get_mut(team) else { return false };
@@ -202,7 +202,7 @@ impl Inner {
                 Ok(name) => {
                     self.new_folder_team(folder, name, false);
                 }
-                Err(why) => log(format!("the configured team \"{name}\" is left out: {why}")),
+                Err(_) => log(format!("a configured team ({}) is left out: its name cannot be used", team_tag(&id))),
             }
         }
     }
@@ -217,7 +217,7 @@ impl Inner {
             let id = TeamId::new(self.disk.real(&folder));
             let is_named = named.contains(&name);
             let Ok(name) = TeamName::new(&name) else {
-                log(format!("a kept team called {name} is not read: a team cannot have that name"));
+                log(format!("a kept team ({}) is not read: a team cannot have its name", team_tag(&id)));
                 continue;
             };
             match self.teams.get_mut(&id) {
@@ -237,10 +237,10 @@ impl Inner {
                     }
                     Err(_) => match self.name_for_folder(&folder) {
                         Some(free) => {
-                            log(format!("a kept team called {name} is now {free}: another team has its name"));
+                            log(format!("a kept team ({}) is renamed: another team has its name", team_tag(&id)));
                             self.new_folder_team(&folder, free, false);
                         }
-                        None => log(format!("a kept team called {name} is not read: another team has its name, and its folder gives no other")),
+                        None => log(format!("a kept team ({}) is not read: another team has its name, and its folder gives no other", team_tag(&id))),
                     },
                 },
             }
@@ -256,7 +256,7 @@ impl Inner {
                     }
                 }
                 None => {
-                    log(format!("a kept agent called {name} is let go: it has no team and no folder to give it one"));
+                    log(format!("a kept agent ({}) is let go: it has no team and no folder to give it one", short_id(&id)));
                     self.sessions.retain(|s| s.agent.id != id);
                 }
             }
@@ -311,8 +311,8 @@ impl Inner {
             .map(|(id, _)| id.clone())
             .collect();
         for id in &unused {
-            if let Some(t) = self.teams.remove(id) {
-                log(format!("the team {} is let go: nothing is in it and its folder is gone", t.name));
+            if self.teams.remove(id).is_some() {
+                log(format!("the team {} is let go: nothing is in it and its folder is gone", team_tag(id)));
             }
         }
         !unused.is_empty()

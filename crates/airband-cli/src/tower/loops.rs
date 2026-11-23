@@ -88,7 +88,7 @@ pub(super) async fn progress_loop(app: Arc<App>) {
             if inner.log.iter().any(|e| e.agent.as_deref() == Some(agent.id.as_str()) && e.at > since) {
                 continue;
             }
-            log(format!("{}: a note on the way ({} steps)", s.callsign.text(), steps.len()));
+            log(format!("{}: a note on the way ({} steps)", short_id(&s.agent.id), steps.len()));
             inner.record(Entry { short: Some(note.clone()), ..Entry::said(config::random_hex(8), &s, Some(Kind::Fyi), note) });
             inner.tell();
         }

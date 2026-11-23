@@ -653,7 +653,7 @@ mod tests {
         link.keeps_at_relay(true);
         assert_eq!(ways(&link)[0], Way::Relay);
         // the relay says the computer is away while it keeps earlier words: these are left behind those, never
-        // sent straight ahead of them (audit 7, P-N1)
+        // sent straight ahead of them
         let relay = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let at = format!("http://{}", relay.local_addr().unwrap());
         std::thread::spawn(move || {
@@ -662,7 +662,9 @@ mod tests {
                 let mut conn = conn;
                 let mut buf = [0u8; 4096];
                 let _ = conn.read(&mut buf);
-                let _ = conn.write_all(b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+                let body = serde_json::to_vec(&airband_core::relay::CallRefused::Away).unwrap();
+                let _ = conn.write_all(format!("HTTP/1.1 503 Service Unavailable\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n", body.len()).as_bytes());
+                let _ = conn.write_all(&body);
             }
         });
         let away = Link::new(Pairing::Relay { relay: at, secret: "ab".repeat(32) }, "test", Trail::open(None)).unwrap();

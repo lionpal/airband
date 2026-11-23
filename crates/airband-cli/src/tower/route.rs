@@ -12,6 +12,11 @@ use start::*;
 use understand::*;
 pub(super) use utterance::on_utterance;
 
+/// A new question put to him, under an id of its own: his answer comes back naming it.
+fn new_question() -> airband_core::ids::QuestionId {
+    airband_core::ids::QuestionId::new(config::random_hex(8))
+}
+
 /// Names as said in English, all of them: "a, b and c".
 pub(super) fn list<S: AsRef<str>>(names: &[S]) -> String {
     joined(names, "and")
