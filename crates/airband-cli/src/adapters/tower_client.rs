@@ -15,7 +15,14 @@ pub(crate) struct TowerHere {
 
 impl TowerHere {
     pub(crate) fn here(cfg: &config::Config, timeout: std::time::Duration) -> TowerHere {
-        TowerHere { agent: airband_io::http::agent(timeout), base: format!("http://127.0.0.1:{}", cfg.port), auth: format!("Bearer {}", cfg.token) }
+        TowerHere::at(cfg.port, &cfg.token, timeout)
+    }
+    /// The same, from the port and token alone (`config::reach`), with no keys opened.
+    pub(crate) fn reached(reach: &config::Reach, timeout: std::time::Duration) -> TowerHere {
+        TowerHere::at(reach.port, &reach.token, timeout)
+    }
+    fn at(port: u16, token: &str, timeout: std::time::Duration) -> TowerHere {
+        TowerHere { agent: airband_io::http::agent(timeout), base: format!("http://127.0.0.1:{port}"), auth: format!("Bearer {token}") }
     }
     // Each says which version of the radio protocol it speaks: the radio's routes are refused without it, and
     // the agent's routes do not read it.
@@ -107,8 +114,8 @@ pub(crate) fn ask_him(request: &PermissionAsk) -> Option<(bool, String)> {
 /// `still` is asked every few seconds whether the tool is still waiting, and when it is not the question is
 /// taken back.
 pub(crate) fn ask_him_while(request: &PermissionAsk, still: Option<&dyn Fn() -> bool>) -> Answer {
-    let Some(cfg) = config::read() else { return Answer::Nobody };
-    let here = TowerHere::here(&cfg, Duration::from_secs(40));
+    let Ok(Some(reach)) = config::reach() else { return Answer::Nobody };
+    let here = TowerHere::reached(&reach, Duration::from_secs(40));
     let Ok(Said::Took(asked)) = here.call::<at::Permission>(None, &Nothing {}, Some(request)) else { return Answer::Nobody };
     if asked.state != airband_core::agent::Leave::Pending {
         return Answer::Nobody;
@@ -183,8 +190,8 @@ fn spool(dir: &std::path::Path, event: &AgentEvent) -> Posted {
 }
 
 fn send(event: &AgentEvent) -> Sent {
-    let Some(cfg) = config::read() else { return Sent::NoAnswer };
-    match TowerHere::here(&cfg, Duration::from_millis(1500)).call::<at::Events>(None, &Nothing {}, Some(event)) {
+    let Ok(Some(reach)) = config::reach() else { return Sent::NoAnswer };
+    match TowerHere::reached(&reach, Duration::from_millis(1500)).call::<at::Events>(None, &Nothing {}, Some(event)) {
         Ok(Said::Took(_)) => Sent::Taken,
         // it read the event and said no, saying why; one it cannot take now is kept for later
         Ok(Said::No(no)) if (400..500).contains(&no.status()) => Sent::Refused(no.reason().map_or_else(|| format!("it answered {}", no.status()), String::from)),

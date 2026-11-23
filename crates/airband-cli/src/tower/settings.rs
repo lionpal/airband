@@ -47,23 +47,23 @@ impl Settings {
         }
         let mut now = self.now.write().unwrap();
         if now.stamp != stamp {
-            match config::read_from(&file) {
-                Some(cfg) if cfg.keyless.is_none() => {
+            match config::read_from(&file).and_then(|cfg| cfg.ok_or_else(|| "it is not there".to_string())) {
+                Ok(cfg) if cfg.keyless.is_none() => {
                     now.cfg = Arc::new(cfg);
                     now.unread = None;
                 }
-                Some(cfg) => {
+                Ok(cfg) => {
                     let why = cfg.keyless.unwrap_or_default();
                     if now.unread.as_deref() != Some(why.as_str()) {
                         log(format!("the settings changed, and their keys could not be read: going on with the ones before ({why})"));
                     }
                     now.unread = Some(why);
                 }
-                None => {
-                    if now.unread.is_none() {
-                        log("the settings changed, and the file could not be read: going on with the ones before");
+                Err(why) => {
+                    if now.unread.as_deref() != Some(why.as_str()) {
+                        log(format!("the settings changed, and the file could not be read: going on with the ones before ({why})"));
                     }
-                    now.unread = Some("the settings file could not be read".into());
+                    now.unread = Some(why);
                 }
             }
             // tried for this version of the file: it is tried again when it changes again
@@ -148,7 +148,7 @@ mod tests {
         let file = dir.join("config.json");
         let start = r#"{"token":"own","radio_token":"radio","pairings":[]}"#;
         write(&file, start, 60);
-        let settings = reading(config::read_from(&file).unwrap(), &file);
+        let settings = reading(config::read_from(&file).unwrap().unwrap(), &file);
         assert!(settings.current().pairings.is_empty());
         // `airband pair`, from another process
         write(&file, r#"{"token":"own","radio_token":"radio","pairings":[{"name":"phone","secret":"00"}]}"#, 30);

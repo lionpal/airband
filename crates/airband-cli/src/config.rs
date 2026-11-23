@@ -272,8 +272,26 @@ pub(crate) mod tests_home {
 pub(crate) use airband_io::files::write_private;
 
 /// The config as it is on disk now, or None if there is none yet.
-pub(crate) fn read() -> Option<Config> {
-    read_from(&file())
+/// How a hook or a report reaches the tower here: its port and its own token, read from the file alone. The keys
+/// are not opened for this (every hook would otherwise read the keychain to send one event).
+pub(crate) struct Reach {
+    pub(crate) port: u16,
+    pub(crate) token: String,
+}
+
+/// The tower's port and token as the settings file has them. None when there is no file or it holds no token.
+pub(crate) fn reach() -> Result<Option<Reach>, String> {
+    #[derive(Deserialize)]
+    struct Plain {
+        #[serde(default = "default_port")]
+        port: u16,
+        #[serde(default)]
+        token: String,
+    }
+    let path = file();
+    let Some(text) = airband_io::files::read_text(&path).map_err(|e| format!("{} cannot be read: {e}", path.display()))? else { return Ok(None) };
+    let plain: Plain = serde_json::from_str(&text).map_err(|e| format!("{} cannot be read: {e}", path.display()))?;
+    Ok((!plain.token.is_empty()).then_some(Reach { port: plain.port, token: plain.token }))
 }
 
 /// Where the settings are kept.
@@ -281,9 +299,12 @@ pub(crate) fn file() -> PathBuf {
     dir().join("config.json")
 }
 
-/// The settings in this file, or None when it cannot be read.
-pub(crate) fn read_from(path: &Path) -> Option<Config> {
-    parse(&airband_io::files::read_text(path).ok()??, path).ok()
+/// The settings in this file: None when there is none, and why when it cannot be read.
+pub(crate) fn read_from(path: &Path) -> Result<Option<Config>, String> {
+    match airband_io::files::read_text(path).map_err(|e| e.to_string())? {
+        None => Ok(None),
+        Some(text) => parse(&text, path).map(Some),
+    }
 }
 
 /// When this file was last changed, or None when there is none.
@@ -444,6 +465,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_hook_reaches_the_tower_by_port_and_token_alone_and_a_file_it_cannot_read_says_why() {
+        let home = std::env::temp_dir().join(format!("airband-reach-{}", random_hex(4)));
+        tests_home::set(home.clone());
+        assert!(reach().unwrap().is_none(), "no file: nothing to reach");
+        std::fs::create_dir_all(dir()).unwrap();
+        // the keys' places hold marks the vault would have to open; reaching the tower never asks it
+        std::fs::write(file(), serde_json::json!({ "port": 7400, "token": "own", "radio_token": crate::vault::MARK }).to_string()).unwrap();
+        let r = reach().unwrap().unwrap();
+        assert_eq!((r.port, r.token.as_str()), (7400, "own"));
+        std::fs::write(file(), "not json").unwrap();
+        assert!(reach().is_err());
+        assert!(read_from(&file()).is_err(), "why it cannot be read is said, never taken as no file");
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn the_settings_debug_shows_no_token_key_or_pairing_secret() {
         let cfg: Config = serde_json::from_value(serde_json::json!({ "token": "TOKEN-ONE", "radio_token": "TOKEN-TWO", "pairings": [{ "name": "phone", "secret": "SECRET-THREE" }] })).unwrap();
         let shown = format!("{cfg:?} {:?}", StoredKey { provider: "gemini".into(), secret: "SECRET-FOUR".into() });
@@ -466,7 +503,7 @@ mod tests {
         })
         .unwrap();
         // read by one command, then a pairing made by another before the first one writes
-        let stale = read_from(&path).unwrap();
+        let stale = read_from(&path).unwrap().unwrap();
         change_at(&path, |c| {
             c.pairings.push(PairedRadio { name: "pad".into(), secret: "s2".into() });
             Ok(())
@@ -477,7 +514,7 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        let now = read_from(&path).unwrap();
+        let now = read_from(&path).unwrap().unwrap();
         assert_eq!(now.pairings.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["phone", "pad"], "the pairing made in between is kept");
         assert_eq!(now.lan, !stale.lan);
         // a change that refuses writes nothing
