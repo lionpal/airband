@@ -194,14 +194,6 @@ fn log(msg: impl AsRef<str>) {
     println!("{} {}", clock(), msg.as_ref());
 }
 
-/// What a test thread wrote to the tower's log, for a test to see that something is never written there.
-#[cfg(test)]
-pub(crate) mod logged {
-    thread_local!(pub(super) static LINES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) });
-    pub(crate) fn take() -> Vec<String> {
-        LINES.with(|l| std::mem::take(&mut *l.borrow_mut()))
-    }
-}
 
 /// Whether a process on this computer is running ([`edges::procs::Procs::alive`]).
 fn alive(pid: u32) -> bool {
@@ -213,4 +205,13 @@ fn alive(pid: u32) -> bool {
 fn terminate(pid: u32) {
     use edges::procs::Procs;
     edges::procs::SystemProcs.terminate(pid)
+}
+
+/// What a test thread wrote to the tower's log, for a test to see that something is never written there.
+#[cfg(test)]
+pub(crate) mod logged {
+    thread_local!(pub(super) static LINES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) });
+    pub(crate) fn take() -> Vec<String> {
+        LINES.with(|l| std::mem::take(&mut *l.borrow_mut()))
+    }
 }

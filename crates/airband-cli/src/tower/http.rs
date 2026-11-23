@@ -24,9 +24,9 @@ use settings::*;
 use talk::*;
 use teams::*;
 
-/// Which radio is asking: the name of its pairing, exactly as the pairing has it. A request the relay link or
-/// the near listener opened carries it from the pairing whose key opened it; one on the plain direct route says
-/// it in its header. Every place that keeps something per radio (settled answers, presence, push addresses)
+/// Which radio is asking: its pairing's relay channel (the id its secret gives), never its display name. A
+/// request the relay link or the near listener opened carries it from the pairing whose key opened it; one on
+/// the plain direct route says it in its header. Every place that keeps something per radio (settled answers, presence, push addresses)
 /// goes by this one value.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RadioId(pub String);

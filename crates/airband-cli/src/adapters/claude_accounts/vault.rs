@@ -38,8 +38,8 @@ impl Vault for Keychain {
     fn read(&self, service: &str, account: &str) -> Res<Option<String>> {
         let out = security().args(["find-generic-password", "-a", account, "-s", service, "-w"]).stderr(Stdio::piped()).output().map_err(|e| e.to_string())?;
         if !out.status.success() {
-            // `security` exits with 44 when there is no such item (errSecItemNotFound)
-            return if out.status.code() == Some(44) { Ok(None) } else { Err(format!("the keychain would not give {service} ({})", out.status)) };
+            // `security` exits with ITEM_NOT_FOUND when there is no such item (errSecItemNotFound)
+            return if out.status.code() == Some(ITEM_NOT_FOUND) { Ok(None) } else { Err(format!("the keychain would not give {service} ({})", out.status)) };
         }
         let s = String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string();
         // `security -w` prints anything that is not plain text as hex
