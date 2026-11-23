@@ -115,6 +115,9 @@ pub struct DeskView {
     pub quick: Vec<QuickMessage>,
     /// His messages still on their way.
     pub sending: Vec<DeskOutgoing>,
+    /// What he said aloud that did not get to be a message on its way, oldest first: shown where his message
+    /// would be, to play, try again or discard.
+    pub takes: Vec<DeskTake>,
     /// Each paired computer, in the order they were paired.
     pub stations: Vec<DeskComputer>,
     /// Each team's place in the host's list of team colours, the same on every computer. A host keeps a copy
@@ -291,6 +294,20 @@ pub struct DeskOutgoing {
     /// While it is still being tried and has been for a while: how the tries are going, in sentences ("Trying.
     /// The relay says your computer is not connected. 3 tries.").
     pub trying: Option<String>,
+    /// He said it aloud and its recording is kept: once it has failed, it can be played ([`Desk::take_sound`]).
+    pub recording: bool,
+}
+
+/// Something he said aloud that is not on its way: it was not heard, or it was heard and could not be sent.
+/// Its recording is kept until it goes or he lets it go.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct DeskTake {
+    /// What [`Desk::take_sound`], [`Desk::take_again`] and [`Desk::discard_take`] are given.
+    pub id: String,
+    /// What came of it, in a line: "Not heard. The line to the listening service dropped."
+    pub line: String,
+    /// It is being heard again now: it can be played, and nothing else until that is done.
+    pub busy: bool,
 }
 
 impl From<&crate::Outgoing> for DeskOutgoing {
@@ -298,6 +315,6 @@ impl From<&crate::Outgoing> for DeskOutgoing {
         // how the tries go is worth showing only once they have gone on for ten seconds and said something
         let trying = (o.failed.is_none() && !o.trail.is_empty() && o.last_tried >= o.at + 10_000)
             .then(|| format!("Trying. {}{}", o.trail.join(" "), if o.tries > 1 { format!(" {} tries.", o.tries) } else { String::new() }));
-        DeskOutgoing { id: o.id.clone(), shown: o.shown(), stage: o.stage, failed: o.failed.clone(), trying }
+        DeskOutgoing { id: o.id.clone(), shown: o.shown(), stage: o.stage, failed: o.failed.clone(), trying, recording: false }
     }
 }

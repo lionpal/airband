@@ -22,6 +22,7 @@ mod rules;
 mod send;
 mod talk;
 mod station_host;
+mod takes;
 mod tell;
 #[cfg(test)]
 mod tests;
@@ -380,7 +381,14 @@ impl Desk {
         // a file of his that could not be read is told once, as the app opens
         let damaged = [state.read.opened.take(), state.colours.opened.take(), state.intents.opened.take(), chooser.opened.lock().unwrap_or_else(|e| e.into_inner()).take()];
         damaged.into_iter().flatten().for_each(|told| host.note(told));
-        let senses: Arc<Senses> = Arc::default();
+        // what he said and has not gone yet, kept from before: what was left partway is shown again
+        let (takes, damaged) = crate::takes::Takes::open(&data_dir);
+        if let Some(told) = damaged {
+            host.note(told);
+        }
+        let tell = host.clone();
+        takes.told_by(Arc::new(move |text| tell.note(text)));
+        let senses: Arc<Senses> = Arc::new(Senses { takes, ..Senses::default() });
         // what he chose to listen and speak with is in use from the start
         chooser.apply(&*host, &senses);
         let desk = Arc::new(Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), moved: Condvar::new(), host, chooser, senses, key_test: crate::keys::check, dial: None }), data_dir });

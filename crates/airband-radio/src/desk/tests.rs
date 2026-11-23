@@ -1098,3 +1098,39 @@ fn the_core_says_whom_he_can_stop_where_an_agent_can_move_and_which_answers_woul
     desk.look(Some(ff), None);
     assert!(desk.view().stoppable.is_empty());
 }
+
+#[test]
+fn words_said_aloud_go_once_under_their_recordings_id_and_trying_again_never_sends_them_twice() {
+    use crate::takes::{Aim, Stage, Takes};
+    use crate::ears::Got;
+    let dir = crate::takes::tests::Folder::new();
+    let (takes, _) = Takes::open(&dir.path());
+    let state = State { computers: vec![station("mini", 1, &[("shop two", "shop")], Vec::new())], ..State::default() };
+    let radio = state.computers[0].radio.clone();
+    let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
+    let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), moved: Condvar::new(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::new(Senses { takes, ..Senses::default() }), key_test: crate::keys::pretend, dial: None }), data_dir: String::new() };
+    let takes = &desk.shared.senses.takes;
+    let stage = |id: &str| takes.all().into_iter().find(|t| t.id == id).map(|t| t.stage);
+    // heard, and sent like anything he types: under the recording's id
+    let rec = takes.begin(Aim::default());
+    let id = rec.id.clone();
+    let Listened::Said { text, take } = takes.ended(rec, Got::Words(Some("ship it".into()))) else { panic!() };
+    deliver(&desk.shared, text, None, None, None, None, take);
+    assert_eq!(radio.unsent().iter().map(|o| (o.id.clone(), o.text.clone())).collect::<Vec<_>>(), [(id.clone(), "ship it".to_string())]);
+    assert_eq!(stage(&id), Some(Stage::Sent { text: "ship it".into() }));
+    // on its way, it shows as his message, with its recording; there is nothing else to show for it
+    let view = desk.view();
+    assert!(view.sending.iter().any(|o| o.id == id && o.recording) && view.takes.is_empty());
+    // trying it again does nothing: the outbox has it
+    desk.take_again(id.clone());
+    assert_eq!(radio.unsent().len(), 1);
+    // given up on and sent again by the outbox: the same words, the same id, and no listening
+    radio.store.change(|s| s.outbox[0].failed = Some("no".into()));
+    desk.send_again(id.clone());
+    assert_eq!(radio.unsent().iter().filter(|o| o.id == id).count(), 1);
+    assert_eq!(stage(&id), Some(Stage::Sent { text: "ship it".into() }));
+    // let go: the recording goes with it
+    radio.store.change(|s| s.outbox[0].failed = Some("no".into()));
+    desk.discard_unsent(id.clone());
+    assert_eq!(stage(&id), None);
+}

@@ -258,6 +258,7 @@ struct Unsent: View {
             if let failed = o.failed {
                 Text("Not sent. " + failed).font(.system(size: 13)).foregroundStyle(Palette.ask).multilineTextAlignment(.trailing)
                 HStack(spacing: 18) {
+                    if o.recording { PlayTake(id: o.id) }
                     Button("Delete") { model.discardUnsent(o) }.foregroundStyle(Palette.quiet)
                     Button("Send again") { model.sendAgain(o) }.foregroundStyle(Palette.ink)
                 }
@@ -274,3 +275,50 @@ struct Unsent: View {
     }
 }
 
+
+/// Something he said aloud that was not heard, or was heard and not sent: where his message would be, one line
+/// from the core, and what he can do with it. The recording is kept until it goes or he lets it go.
+struct TakeBanner: View {
+    @EnvironmentObject var model: RadioModel
+    let take: DeskTake
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 5) {
+            Text(take.line).font(.system(size: 13)).foregroundStyle(Palette.ask).multilineTextAlignment(.trailing)
+            HStack(spacing: 18) {
+                PlayTake(id: take.id)
+                if TakeActions(take).canAct {
+                    Button("Discard") { model.discardTake(take.id) }.foregroundStyle(Palette.quiet)
+                    Button("Try again") { model.takeAgain(take.id) }.foregroundStyle(Palette.ink)
+                }
+            }
+            .font(.system(size: 14, weight: .semibold)).buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 9)
+        .background(Palette.ink.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(take.line)
+    }
+}
+
+/// What a banner offers: while it is being heard again it can only be played.
+struct TakeActions {
+    let canAct: Bool
+    init(_ take: DeskTake) { canAct = !take.busy }
+}
+
+/// Play the recording of something he said; tapped again, stop.
+struct PlayTake: View {
+    @EnvironmentObject var model: RadioModel
+    let id: String
+
+    var body: some View {
+        let playing = model.playingTake == id
+        Button { model.playTake(id) } label: {
+            Image(systemName: playing ? "stop.fill" : "play.fill").font(.system(size: 13, weight: .bold))
+        }
+        .foregroundStyle(Palette.ink)
+        .accessibilityLabel(playing ? "Stop" : "Play")
+    }
+}

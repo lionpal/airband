@@ -12,6 +12,7 @@
 //! - `voice`: outbound, words said aloud by the voice he chose on this device
 //! - `ears`: inbound, his speech to text, by the model or the service he chose on this device
 //! - `outbox`: delivering typed messages over a bad connection
+//! - `takes`: what he says, recorded from its first sample to its last and kept until his computer has it
 //! - `store`: what is kept on the device; `kept`: a file of ours kept, and what happens when it is damaged
 //! - `shared`: what the app and its notification extension both read, in the folder they share
 //! - `session`: what his next words take with them (files he attached, the question they answer)
@@ -59,6 +60,7 @@ mod senses;
 mod session;
 mod shared;
 mod store;
+mod takes;
 mod voice;
 mod voices;
 
@@ -71,6 +73,7 @@ pub use models::VoiceChoice;
 pub use mouth::VoiceSample;
 pub use services::{CodingTool, ServiceAsk, coding_tools};
 pub use shared::*;
+pub use takes::takes_folder;
 pub use engines::HostDevice;
 use link::*;
 use outbox::*;
@@ -91,13 +94,15 @@ pub fn prose(text: String) -> Vec<prose::ProseBlock> {
     prose::blocks(&text)
 }
 
-/// What he chose to listen and speak with on this device itself, and the models loaded for it. A desk has
-/// one, and every radio of the desk's uses it; nothing of it is kept in the process at large.
+/// What he chose to listen and speak with on this device itself, and the models loaded for it; and what he
+/// said, kept until his computer has it. A desk has one, and every radio of the desk's uses it; nothing of it
+/// is kept in the process at large.
 #[derive(Default)]
 pub(crate) struct Senses {
     pub(crate) mouth: mouth::Mouth,
     pub(crate) ears: ears::Chosen,
     pub(crate) passes: ears::Passes,
+    pub(crate) takes: takes::Takes,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -165,11 +170,16 @@ pub trait RadioHost: Send + Sync {
 
 /// What came of opening the microphone.
 pub(crate) enum Listened {
-    Said(String),
-    /// He said nothing, or took it back.
+    /// His words, and the take they were heard from: its id is the id the message made of them goes under.
+    /// Nothing for a line typed in a terminal, which has no recording.
+    Said { text: String, take: Option<String> },
+    /// He said nothing.
     Nothing,
-    /// There is nothing to listen with: no service, or it could not be reached.
+    /// There is nothing to listen with: nothing is chosen, what he chose cannot be used, or the microphone
+    /// would not open. Nothing was recorded.
     Cannot,
+    /// What listened did not hear it. The take keeps the whole recording, and the chat shows it to him.
+    Unheard { take: String },
 }
 
 /// A message he typed that is on its way, as it is kept on the device and sent. A host sees it as a

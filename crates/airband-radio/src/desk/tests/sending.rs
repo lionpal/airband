@@ -58,7 +58,7 @@ fn words_waiting_for_files_go_once_no_file_is_still_on_its_way() {
     let mut state = State::default();
     let upload = |state: UploadState| Upload { shown: DeskUpload { id: "f1".into(), name: "a.jpg".into(), sent: 0, total: 1, state, why: None }, station: StationId::new("s"), dropped: Arc::default(), file_path: String::new(), name: "a.jpg".into() };
     state.uploads.push(upload(UploadState::Sending));
-    state.after_files = Some(AfterFiles { text: "look".into(), label: None, re: None, room: None, agent: None });
+    state.after_files = Some(AfterFiles { text: "look".into(), label: None, re: None, room: None, agent: None, said: None });
     assert!(settled(&mut state).is_none(), "the words went before the file got there");
     state.uploads[0].shown.state = UploadState::Failed;
     assert_eq!(settled(&mut state).map(|w| w.text).as_deref(), Some("look"));

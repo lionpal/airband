@@ -61,10 +61,12 @@ pub(super) struct AfterFiles {
     pub(super) re: Option<String>,
     pub(super) room: Option<String>,
     pub(super) agent: Option<String>,
+    /// Words he said aloud: the take they were heard from.
+    pub(super) said: Option<String>,
 }
 impl AfterFiles {
     fn go(self, shared: &Arc<Shared>) {
-        deliver(shared, self.text, self.label, self.re, self.room, self.agent);
+        deliver(shared, self.text, self.label, self.re, self.room, self.agent, self.said);
     }
 }
 /// The words waiting for his files, taken, once none of the files is still on its way: each has got there,
@@ -85,7 +87,10 @@ pub(super) fn move_files(shared: &Arc<Shared>, state: &mut State, from: &Station
         u.shown.sent = 0;
         u.shown.state = UploadState::Sending;
     }
-    state.after_files = Some(words);
+    // words that were waiting already wait no more: said aloud, they wait in the chat to be sent again
+    if let Some(take) = state.after_files.replace(words).and_then(|was| was.said) {
+        shared.senses.takes.unsent(&take);
+    }
     for (id, file_path, name, dropped) in moved {
         from_radio.disarm(id.clone());
         send_file(shared.clone(), to_radio.clone(), id, file_path, name, dropped);

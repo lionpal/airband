@@ -135,8 +135,8 @@ impl Radio {
         }
         store.prune_pictures();
         {
-            let (link, session, store, host, stop, wake) = (link.clone(), session.clone(), store.clone(), host.clone(), stop.clone(), wake.clone());
-            thread::spawn(move || deliver_outbox(link, session, store, host, stop, wake));
+            let (link, session, store, host, stop, wake, senses) = (link.clone(), session.clone(), store.clone(), host.clone(), stop.clone(), wake.clone(), senses.clone());
+            thread::spawn(move || deliver_outbox(link, session, store, host, stop, wake, senses));
         }
         Ok(Arc::new(Radio { jobs: Mutex::new(tx), stop, calling, link, session, store, host, wake, senses, roster: std::sync::atomic::AtomicU64::new(0), reading: std::sync::atomic::AtomicU64::new(0) }))
     }
@@ -184,8 +184,8 @@ impl Radio {
 
     /// He opened the microphone himself: listen until the host closes it and hand over what he said. Nothing
     /// is sent; the caller decides where it goes.
-    pub(crate) fn dictate(&self, done: Box<dyn FnOnce(Listened) + Send>) {
-        self.jobs.lock().unwrap().send(Job::Dictate(done)).ok();
+    pub(crate) fn dictate(&self, aim: crate::takes::Aim, done: Box<dyn FnOnce(Listened) + Send>) {
+        self.jobs.lock().unwrap().send(Job::Dictate(aim, done)).ok();
     }
 
     /// Put something in the outbox to go to the tower. What it takes with it is said by `carry`: his own next
@@ -307,7 +307,7 @@ impl Radio {
                 self.session.asked(reply);
                 self.link.answered(&told.id, reply);
             }
-            settle(&self.store, &*self.host, &told.id, told.outcome.clone());
+            settle(&self.store, &*self.host, &self.senses.takes, &told.id, told.outcome.clone());
         }
         if !feed.answers.is_empty() {
             self.wake.ring();

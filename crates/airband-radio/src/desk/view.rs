@@ -172,7 +172,8 @@ impl Desk {
                 unread_from.values().sum::<u32>() - team.and_then(|t| unread_in.get(t.as_str()).copied()).unwrap_or(0)
             },
             quick,
-            sending: sending(&state),
+            sending: sending(&state, &self.shared.senses.takes),
+            takes: takes_shown(&state, &self.shared.senses.takes),
             stations: state.computers.iter().map(|s| DeskComputer { id: s.id().to_string(), name: state.computer_name(&s.id()) }).collect(),
             main_computer: state.main().map(|s| s.id().to_string()),
             choose_main: state.computers.len() > 1 && state.main().is_none(),
@@ -241,7 +242,7 @@ fn rooms(state: &State, agents: &[&ChatAgent], all: &[ChatMessage], unread_from:
 /// Words sent to several computers at once (a tag on agents of each) are one line under one id: shown once,
 /// and not at all once the chat has them from one of those computers, unless a copy was given up on, which
 /// is shown so he can send it again or let it go.
-fn sending(state: &State) -> Vec<DeskOutgoing> {
+fn sending(state: &State, takes: &crate::takes::Takes) -> Vec<DeskOutgoing> {
     let in_chat = |id: &str| state.computers.iter().any(|s| s.messages.iter().any(|m| m.id == id));
     let mut shown: Vec<Outgoing> = Vec::new();
     let waiting = state.computers.iter().flat_map(|s| s.radio.unsent().into_iter().chain(s.landing.iter().filter(|(_, at)| at.elapsed() < super::LANDING).map(|(o, _)| o.clone())));
@@ -253,7 +254,30 @@ fn sending(state: &State) -> Vec<DeskOutgoing> {
             None => shown.push(o),
         }
     }
-    shown.iter().map(DeskOutgoing::from).collect()
+    shown.iter().map(|o| DeskOutgoing { recording: takes.kept(&o.id), ..DeskOutgoing::from(o) }).collect()
+}
+
+/// What he said aloud that is not on its way, each in a line: not heard, being heard again, or heard and not
+/// sent. Words in an outbox are shown by it ([`sending`]); words whose outbox is gone (that computer was
+/// unpaired) are not sent.
+fn takes_shown(state: &State, takes: &crate::takes::Takes) -> Vec<DeskTake> {
+    use crate::takes::Stage;
+    const NOT_SENT: &str = "Not sent.";
+    let waiting = |id: &str| state.computers.iter().any(|s| s.radio.unsent().iter().any(|o| o.id == id));
+    takes
+        .all()
+        .into_iter()
+        .filter_map(|t| {
+            let line = match &t.stage {
+                Stage::Unheard { why } => format!("Not heard. {}", why.told()),
+                Stage::Hearing { .. } => "Listening again.".into(),
+                Stage::Unsent { .. } => NOT_SENT.into(),
+                Stage::Sent { .. } if !waiting(&t.id) => NOT_SENT.into(),
+                Stage::Recording | Stage::Heard { .. } | Stage::Sent { .. } => return None,
+            };
+            Some(DeskTake { busy: matches!(t.stage, Stage::Hearing { .. }), id: t.id, line })
+        })
+        .collect()
 }
 
 /// What he is told of the computers that cannot be talked to: each that refuses this phone by what it said,
