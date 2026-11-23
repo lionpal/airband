@@ -81,9 +81,13 @@ pub(super) struct Saved {
     pub(super) voice: Option<Pick>,
     #[serde(default)]
     pub(super) reads: Option<Intent<ReadsWanted>>,
-    /// The coding tools he uses, by id, the one he uses most first.
+    /// The coding tools he uses, by id, in the order he added them. The order decides nothing.
     #[serde(default)]
     pub(super) tools: Vec<String>,
+    /// The coding tool whose sign-in writes his summaries while no computer has said what it reads with, by
+    /// id: the one he picked, or the only one of his that can. Nothing while he has not said among several.
+    #[serde(default)]
+    pub(super) summary_tool: Option<String>,
     /// What his computer last said can read for it, and which does. Nothing until a computer has said.
     #[serde(default)]
     pub(super) offered: Option<ReadsOffered>,
@@ -120,7 +124,7 @@ impl Touched {
         self.ears |= before.ears != after.ears;
         self.voice |= before.voice != after.voice;
         self.reads |= before.reads != after.reads;
-        self.tools |= before.tools != after.tools;
+        self.tools |= before.tools != after.tools || before.summary_tool != after.summary_tool;
         self.offered |= before.offered != after.offered;
         self.kept_there |= before.kept_there != after.kept_there;
     }
@@ -141,6 +145,7 @@ impl crate::kept::Rejoin for Saved {
         }
         if t.tools {
             self.tools = since.tools;
+            self.summary_tool = since.summary_tool;
         }
         if t.offered {
             self.offered = since.offered;
@@ -181,18 +186,61 @@ impl Saved {
         }
     }
 
-    /// The coding tools he uses are these. While no computer has said what it reads with and he has not
-    /// picked for himself, what waits to write his summaries is the sign-in of the one he uses most.
+    /// The coding tools he uses are these. The one whose sign-in writes his summaries stays while he still uses
+    /// it; otherwise it is the only one of his that can, and with several he is asked
+    /// ([`Saved::summary_tool_wanted`]). Nothing is taken for his by the order of the list.
     pub(super) fn use_tools(&mut self, tools: Vec<String>) {
         self.tools = tools;
-        if self.offered.is_none() && self.reads.as_ref().is_none_or(|w| !w.wanted.his) {
-            let most = self.tools.first().cloned().unwrap_or_default();
+        let can = self.summary_tools();
+        if self.summary_tool.as_ref().is_none_or(|t| !can.contains(t)) {
+            self.summary_tool = match can.as_slice() {
+                [only] => Some(only.clone()),
+                _ => None,
+            };
+        }
+        self.follow_summary_tool();
+    }
+
+    /// He picked the coding tool whose sign-in writes his summaries. False when it is not one of his that can.
+    pub(super) fn summaries_by(&mut self, tool: String) -> bool {
+        if !self.summary_tools().contains(&tool) {
+            return false;
+        }
+        self.summary_tool = Some(tool);
+        self.follow_summary_tool();
+        true
+    }
+
+    /// His coding tools whose sign-in can write summaries, by id.
+    pub(super) fn summary_tools(&self) -> Vec<String> {
+        self.tools.iter().filter(|t| tool_reads(t).is_some()).cloned().collect()
+    }
+
+    /// He is to say whose sign-in writes his summaries: several of his tools can, he has picked none, and
+    /// nothing else decides it (no computer has said, he did not pick a service himself).
+    pub(super) fn summary_tool_wanted(&self) -> bool {
+        self.follows_tool() && self.summary_tool.is_none() && self.summary_tools().len() > 1
+    }
+
+    /// While no computer has said what it reads with and he has not picked for himself, what waits to write his
+    /// summaries follows the coding tool's sign-in.
+    fn follows_tool(&self) -> bool {
+        self.offered.is_none() && self.reads.as_ref().is_none_or(|w| !w.wanted.his)
+    }
+
+    /// What waits to write his summaries, from the coding tool chosen for them: its sign-in, or nothing.
+    fn follow_summary_tool(&mut self) {
+        if self.follows_tool() {
             let before = self.reads.take();
-            // the offer its row marks as the one to use for that sign-in (the catalogue has one at most: its
-            // checks refuse a second); none marked is nothing chosen
-            self.reads = crate::services::services(Job::Summary).into_iter().find(|s| !most.is_empty() && s.login == most && !s.more).map(|s| Intent::after(before.as_ref(), ReadsWanted { id: s.kind, offer: s.offer, set: BTreeMap::new(), his: false }));
+            self.reads = self.summary_tool.as_deref().and_then(tool_reads).map(|s| Intent::after(before.as_ref(), ReadsWanted { id: s.kind, offer: s.offer, set: BTreeMap::new(), his: false }));
         }
     }
+}
+
+/// The offer a coding tool's sign-in writes summaries with: the one its row marks as the one to use for it (the
+/// catalogue has one at most: its checks refuse a second). None marked is none.
+fn tool_reads(tool: &str) -> Option<crate::services::Service> {
+    crate::services::services(Job::Summary).into_iter().find(|s| !tool.is_empty() && s.login == tool && !s.more)
 }
 
 #[cfg(test)]
@@ -201,7 +249,7 @@ mod tests {
     use crate::kept::Rejoin;
 
     fn offered(has_key: bool) -> ReadsOffered {
-        ReadsOffered { offers: vec![airband_core::radio::ReadsOffer { provider: "anthropic".into(), offer: "haiku".into(), key: true, has_key, ..Default::default() }], ..ReadsOffered::default() }
+        ReadsOffered { offers: vec![airband_core::radio::ReadsOffer { provider: "fixture-reader".into(), offer: "fixture-offer".into(), key: true, has_key, ..Default::default() }], ..ReadsOffered::default() }
     }
 
     #[test]
@@ -209,11 +257,11 @@ mod tests {
         let (main, other, gone) = (StationId::new("main"), StationId::new("other"), StationId::new("gone"));
         let mut s = Saved::default();
         s.heard_from(&main, &offered(true));
-        assert!(!s.key_wanted(&[main.clone(), other.clone()], "anthropic"), "one not heard from yet is not taken to have none");
+        assert!(!s.key_wanted(&[main.clone(), other.clone()], "fixture-reader"), "one not heard from yet is not taken to have none");
         s.heard_from(&other, &offered(false));
-        assert!(s.key_wanted(&[main.clone(), other.clone()], "anthropic"));
+        assert!(s.key_wanted(&[main.clone(), other.clone()], "fixture-reader"));
         s.heard_from(&gone, &offered(false));
-        assert!(!s.key_wanted(std::slice::from_ref(&main), "anthropic"), "a computer since unpaired counts for nothing");
+        assert!(!s.key_wanted(std::slice::from_ref(&main), "fixture-reader"), "a computer since unpaired counts for nothing");
     }
 
     #[test]

@@ -93,16 +93,15 @@ pub(crate) fn live(wire: &'static Wire, pass: PassFor, host: &dyn RadioHost, rat
     // The pass is asked for and the connection opened on a thread of their own, while the microphone is already
     // being read here: he does not wait for either before he can talk.
     let opening = connect(wire, &pass, &request);
-    let mut stream = Stream { wire, pass, host, waiting: VecDeque::from(header.clone()), header_unsent: header.len(), header, request, opening, socket: None, kept: Vec::new(), ended: false, shown: String::new() };
+    let mut stream = Stream { wire, pass, host, waiting: VecDeque::from(header.clone()), header_unsent: header.len(), header, request, opening, socket: None, kept: Vec::new(), ended: false, shown: String::new(), sent: 0, rate };
     listen(&mut stream, wire, host, rate, manual)
 }
 
 /// The listening itself, on a stream made ready.
 fn listen(stream: &mut Stream, wire: &'static Wire, host: &dyn RadioHost, rate: u32, manual: bool) -> Result<Option<String>, Unheard> {
     let mut end = Endpointer::new(rate);
-    // a microphone he left open is closed for him after this long: what he said is kept and goes as said
-    let began = Instant::now();
-    const LEFT_OPEN: Duration = Duration::from_secs(240);
+    // a microphone he left open is closed for him once the take is as long as one is ([`crate::takes::Tape`]):
+    // what he said is kept and goes as said
     loop {
         let bytes = host.record_read();
         if bytes.is_empty() {
@@ -138,9 +137,6 @@ fn listen(stream: &mut Stream, wire: &'static Wire, host: &dyn RadioHost, rate: 
             Heard::Finished => break,
             Heard::Silence => return Ok(None),
             _ => {}
-        }
-        if manual && began.elapsed() > LEFT_OPEN {
-            break;
         }
     }
     if !manual && !end.speaking {
@@ -183,6 +179,10 @@ struct Stream<'a> {
     /// The service ended its turn.
     ended: bool,
     shown: String,
+    /// Bytes of sound sent on this connection: how long the service may take to finish all of it is bounded
+    /// by how long it is.
+    sent: u64,
+    rate: u32,
 }
 
 impl Stream<'_> {
@@ -194,6 +194,7 @@ impl Stream<'_> {
         let unsent = std::mem::take(&mut self.waiting).into_iter().skip(self.header_unsent);
         self.waiting = self.header.iter().cloned().chain(unsent).collect();
         self.header_unsent = self.header.len();
+        self.sent = 0;
     }
 
     /// Send what waits, one piece at a time: a piece leaves the list only once it has gone, so what a failed
@@ -202,6 +203,9 @@ impl Stream<'_> {
         let Some(s) = self.socket.as_mut() else { return Ok(()) };
         while let Some(chunk) = self.waiting.front() {
             s.send((self.wire.audio)(&self.request, chunk)).map_err(|_| ())?;
+            if self.header_unsent == 0 {
+                self.sent += chunk.len() as u64;
+            }
             self.waiting.pop_front();
             self.header_unsent = self.header_unsent.saturating_sub(1);
         }
@@ -310,11 +314,15 @@ impl Stream<'_> {
         let dropped = |_| Unheard::Dropped;
         for chunk in self.waiting.drain(..) {
             s.send((self.wire.audio)(&self.request, &chunk)).map_err(dropped)?;
+            self.sent += chunk.len() as u64;
         }
         // a turn it ended while he was still talking is not the end that is waited for now
         self.ended = false;
         s.send((self.wire.end)(&self.request)).map_err(dropped)?;
-        let until = Instant::now() + Duration::from_secs(5);
+        // The service's own end of its turn is what is waited for, or the line going. A service that says
+        // neither is given at most as long as the sound it was sent, and never less than a few seconds, to
+        // finish all of it.
+        let until = Instant::now() + Duration::from_millis((self.sent * 1000 / (u64::from(self.rate) * 2)).max(5000));
         while !self.ended && Instant::now() < until {
             if let Some(now) = drain(self.wire, &mut s, &mut self.kept, &mut self.ended).map_err(|()| Unheard::Dropped)? {
                 self.tell(&now);
@@ -400,7 +408,7 @@ mod tests {
     fn only_the_final_words_for_the_whole_recording_are_what_he_said() {
         let tape = Tape::of(&[], false);
         let pass: PassFor = Arc::new(|| Err(String::new()));
-        let mut stream = Stream { wire: &NOWHERE, pass, host: &tape, waiting: VecDeque::new(), header: Vec::new(), header_unsent: 0, request: String::new(), opening: channel().1, socket: None, kept: vec!["ship it".into()], ended: false, shown: String::new() };
+        let mut stream = Stream { wire: &NOWHERE, pass, host: &tape, waiting: VecDeque::new(), header: Vec::new(), header_unsent: 0, request: String::new(), opening: channel().1, socket: None, kept: vec!["ship it".into()], ended: false, shown: String::new(), sent: 0, rate: 16000 };
         // words it had not finished are shown and never kept
         stream.tell("and deploy");
         assert_eq!(stream.kept, ["ship it"]);
@@ -420,8 +428,8 @@ mod tests {
     #[test]
     fn a_service_that_gives_no_pass_is_told_by_its_own_reason_on_this_listening_alone() {
         let tape = Tape::of(&[0u8; 32000], true);
-        let refused = live(&NOWHERE, Arc::new(|| Err("Scribe: that key is not valid.".to_string())), &tape, 16000, Vec::new(), true);
-        assert_eq!(refused, Err(Unheard::Service { why: "Scribe: that key is not valid.".into() }));
+        let refused = live(&NOWHERE, Arc::new(|| Err("Fixture service: that key is not valid.".to_string())), &tape, 16000, Vec::new(), true);
+        assert_eq!(refused, Err(Unheard::Service { why: "Fixture service: that key is not valid.".into() }));
         // the next listening, whose pass was had and whose line failed, is not told the last one's reason
         let grant = Pass { dialect: String::new(), token: String::new(), set: Default::default(), phrases: Vec::new(), by: serde_json::from_value(serde_json::json!({ "interface": "x" })).unwrap(), until: None };
         let tape = Tape::of(&[0u8; 32000], true);
@@ -434,7 +442,7 @@ mod tests {
         let tape = Tape::of(&[], false);
         let pass: PassFor = Arc::new(|| Err(String::new()));
         let (h, a, b) = (vec![0u8], vec![1u8], vec![2u8]);
-        let mut stream = Stream { wire: &NOWHERE, pass, host: &tape, waiting: VecDeque::from([h.clone(), a.clone(), b.clone()]), header: vec![h.clone()], header_unsent: 1, request: String::new(), opening: channel().1, socket: None, kept: Vec::new(), ended: false, shown: String::new() };
+        let mut stream = Stream { wire: &NOWHERE, pass, host: &tape, waiting: VecDeque::from([h.clone(), a.clone(), b.clone()]), header: vec![h.clone()], header_unsent: 1, request: String::new(), opening: channel().1, socket: None, kept: Vec::new(), ended: false, shown: String::new(), sent: 0, rate: 16000 };
         // the header and the first piece went before the connection failed
         stream.waiting.pop_front();
         stream.header_unsent = 0;

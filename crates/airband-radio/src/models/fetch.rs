@@ -6,8 +6,8 @@
 //! What moves the bytes is the host's, when it has a transfer of its own that goes on while the app is in the
 //! background or closed ([`Transfers`]); else this core's own connections. Either way the core decides what is
 //! fetched and where it goes, and checks every piece and every file; the host only moves bytes.
-#![expect(clippy::disallowed_methods, reason = "writes a model to this device a piece at a time as it downloads: airband_io writes files whole")]
 use super::*;
+use airband_io::files;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64};
@@ -37,8 +37,10 @@ pub trait Transfers: Send + Sync {
     /// (`Range: bytes=from-(until-1)`). The file is put at `to` only once the transfer has ended, whole as it
     /// came. As it goes, tell [`Desk::transfer_moved`] how many bytes have come; at the end, tell
     /// [`Desk::transfer_ended`] with the status the server answered. `id` names it in both. Starting an `id`
-    /// that is already under way leaves that one going and starts nothing more.
+    /// that has a transfer already, under way or ended and not yet told, leaves that one and starts nothing more.
     fn start(&self, id: String, url: String, from: u64, until: u64, to: String);
+    /// Stop the transfer `id`, if there is one, and put nothing at its `to`. Nothing more is told of it.
+    fn stop(&self, id: String);
 }
 
 /// What is heard about a piece under way.
@@ -47,8 +49,10 @@ enum Event {
     Moved { id: String, bytes: u64 },
     /// The host's transfer ended: with the status the server answered, or none when it got no answer.
     Ended { id: String, status: Option<u16> },
-    /// This core's connection fetched it, or why not, in words for him.
-    Own { id: String, went: Result<(), String> },
+    /// This core's connection fetched it, or why not.
+    Own { id: String, went: Result<(), FetchFailed> },
+    /// He stopped the fetch.
+    Stop,
 }
 
 fn heard(event: Event) {
@@ -72,6 +76,11 @@ impl Desk {
     /// place when there is one.
     pub fn transfer_ended(&self, id: String, status: Option<u16>) {
         heard(Event::Ended { id, status });
+    }
+    /// He stopped the model being downloaded: the fetch ends now, keeping what has come, and another can start.
+    /// What is here is gone on from next time.
+    pub fn stop_model_fetch(&self) {
+        heard(Event::Stop);
     }
 }
 
@@ -110,19 +119,20 @@ struct Building {
     whole: bool,
 }
 
-fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
-    let mut name = path.as_os_str().to_owned();
-    name.push(suffix);
-    PathBuf::from(name)
-}
 fn part_of(path: &Path) -> PathBuf {
-    with_suffix(path, ".part")
+    files::beside(path, ".part")
 }
+/// What a piece is called beside its file: by where it starts.
+const PIECE_TAIL: &str = ".from-";
 fn piece_at(path: &Path, from: u64) -> PathBuf {
-    with_suffix(path, &format!(".from-{from}"))
+    files::beside(path, &format!("{PIECE_TAIL}{from}"))
 }
 fn len_of(path: &Path) -> Option<u64> {
-    std::fs::metadata(path).ok().filter(|f| f.is_file()).map(|f| f.len())
+    files::metadata(path).ok().filter(|f| f.is_file()).map(|f| f.len())
+}
+/// The name of a file, as text.
+fn name_of(path: &Path) -> String {
+    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
 /// The ranges still wanted of a file of `size` bytes of which `joined` are here: up to the next boundary of
@@ -139,17 +149,56 @@ fn ranges(joined: u64, size: u64) -> Vec<(u64, u64)> {
     out
 }
 
-/// Why a fetch stopped, in words for him.
-const STOPPED: &str = "The download stopped part way. Try again.";
-const UNREACHED: &str = "Could not reach the download. Check the connection and try again.";
-const NOT_WRITTEN: &str = "Could not write the model to this device.";
-const NOT_RESUMED: &str = "The download could not go on from where it stopped. Try again.";
+/// Why a fetch did not end with the model here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FetchFailed {
+    /// The connection stopped part way.
+    Stopped,
+    /// He stopped it.
+    Cancelled,
+    /// The download could not be reached.
+    Unreached,
+    /// This device would not take the bytes.
+    NotWritten,
+    /// This device ran out of room.
+    NoRoom,
+    /// The server sent the whole file where a part was asked for.
+    NotResumed,
+    /// What came down is not the model: its hash is not the row's.
+    NotTheModel,
+    /// The server answered with this, and not the file.
+    Status(u16),
+}
+
+impl FetchFailed {
+    /// In words for him.
+    pub(crate) fn said(self) -> String {
+        match self {
+            FetchFailed::Stopped => "The download stopped part way. Try again.".into(),
+            FetchFailed::Cancelled => "The download was stopped. What came is kept for next time.".into(),
+            FetchFailed::Unreached => "Could not reach the download. Check the connection and try again.".into(),
+            FetchFailed::NotWritten => "Could not write the model to this device.".into(),
+            FetchFailed::NoRoom => "This device ran out of room for the model.".into(),
+            FetchFailed::NotResumed => "The download could not go on from where it stopped. Try again.".into(),
+            FetchFailed::NotTheModel => "What came down was not the model. Check the connection and try again.".into(),
+            FetchFailed::Status(404 | 410) => "The download is not there.".into(),
+            FetchFailed::Status(429) => "The download was being asked for too often. Try again in a while.".into(),
+            FetchFailed::Status(status @ 500..=599) => format!("The place the download comes from ran into trouble ({status}). Try again later."),
+            FetchFailed::Status(status) => format!("The download could not be fetched ({status})."),
+        }
+    }
+}
+
+impl From<FetchFailed> for RadioError {
+    fn from(why: FetchFailed) -> RadioError {
+        crate::choices::told(why.said())
+    }
+}
 
 /// Fetch a model, with the host's transfers when there are some, else over this core's own connections.
-/// Blocks until it is all here: call it off the main thread. What is here already, whole files and pieces, is
-/// kept, so one that was cut short goes on from there.
-pub(crate) fn fetch_local_model(dir: String, m: &Model, host: Option<Arc<dyn Transfers>>) -> Result<(), RadioError> {
-    let told = crate::choices::told;
+/// Blocks until it is all here, or he stops it ([`Desk::stop_model_fetch`]): call it off the main thread. What
+/// is here already, whole files and pieces, is kept, so one that was cut short goes on from there.
+pub(crate) fn fetch_local_model(dir: String, m: &Model, host: Option<Arc<dyn Transfers>>) -> Result<(), FetchFailed> {
     let _one = FETCHING.lock().unwrap_or_else(|e| e.into_inner());
     let folder = version_folder(&dir, m);
     OF.store(m.files.iter().map(|f| f.1).sum(), Ordering::SeqCst);
@@ -163,19 +212,18 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model, host: Option<Arc<dyn Tra
         let whole = len_of(&path) == Some(*size);
         let mut joined = 0;
         if !whole {
-            std::fs::create_dir_all(path.parent().unwrap_or(&folder)).map_err(|_| told("Could not make room for the model on this device."))?;
+            files::make_folder(path.parent().unwrap_or(&folder)).map_err(|_| FetchFailed::NotWritten)?;
             joined = len_of(&part_of(&path)).unwrap_or(0);
             if joined > *size {
-                std::fs::remove_file(part_of(&path)).ok();
+                files::remove(&part_of(&path)).ok();
                 joined = 0;
             }
             let plan = ranges(joined, *size);
             // a piece left by an earlier try that is not one of these is of no use
-            let stem = format!("{}.from-", path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
-            for e in std::fs::read_dir(path.parent().unwrap_or(&folder)).into_iter().flatten().flatten() {
-                let name = e.file_name().to_string_lossy().into_owned();
-                if name.strip_prefix(&stem).is_some_and(|from| !plan.iter().any(|(a, _)| a.to_string() == from)) {
-                    std::fs::remove_file(e.path()).ok();
+            let stem = format!("{}{PIECE_TAIL}", name_of(&path));
+            for e in files::entries(path.parent().unwrap_or(&folder)).unwrap_or_default() {
+                if name_of(&e).strip_prefix(&stem).is_some_and(|from| !plan.iter().any(|(a, _)| a.to_string() == from)) {
+                    files::remove(&e).ok();
                 }
             }
             for (from, until) in plan {
@@ -188,7 +236,7 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model, host: Option<Arc<dyn Tra
                     // only whole pieces in place, so part of one is nothing to go on from
                     Some(n) if n < p.len() && host.is_none() => wanted.push(p),
                     Some(_) => {
-                        std::fs::remove_file(&p.to).ok();
+                        files::remove(&p.to).ok();
                         wanted.push(p);
                     }
                     None => wanted.push(p),
@@ -202,14 +250,22 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model, host: Option<Arc<dyn Tra
     };
     let (tx, rx) = mpsc::channel::<Event>();
     let stop = AtomicBool::new(false);
+    // told from here on: a stop he asks for, and what the host says of its transfers
+    *LISTENER.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx.clone());
     let outcome = std::thread::scope(|scope| {
         match &host {
             Some(host) => {
-                *LISTENER.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx.clone());
-                // every piece at once: the system goes on with all of them while the app is not running
-                for p in &wanted {
-                    host.start(p.id.clone(), p.url.clone(), p.from, p.until, p.to.display().to_string());
-                }
+                // every piece at once: the system goes on with all of them while the app is not running. One
+                // whose transfer ended whole before this was listening is here already: taken, not asked again
+                wanted.retain(|p| {
+                    let here = len_of(&p.to) == Some(p.len());
+                    if here {
+                        ready.insert((p.file, p.from), p.clone());
+                    } else {
+                        host.start(p.id.clone(), p.url.clone(), p.from, p.until, p.to.display().to_string());
+                    }
+                    !here
+                });
             }
             None => {
                 let queue = Arc::new(Mutex::new(wanted.iter().cloned().collect::<VecDeque<Piece>>()));
@@ -238,8 +294,9 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model, host: Option<Arc<dyn Tra
             if files.iter().all(|f| f.whole) {
                 break Ok(());
             }
-            let Ok(event) = rx.recv() else { break Err(STOPPED.to_string()) };
+            let Ok(event) = rx.recv() else { break Err(FetchFailed::Stopped) };
             let (id, ended) = match event {
+                Event::Stop => break Err(FetchFailed::Cancelled),
                 Event::Moved { id, bytes } => {
                     if waiting.contains_key(&id) {
                         moving.insert(id, bytes);
@@ -256,13 +313,13 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model, host: Option<Arc<dyn Tra
             let Some(p) = waiting.remove(&id) else { continue };
             moving.remove(&id);
             // whatever moved it, a piece is taken only when it is all there
-            match ended.and_then(|()| if len_of(&p.to) == Some(p.len()) { Ok(()) } else { Err(STOPPED.to_string()) }) {
+            match ended.and_then(|()| if len_of(&p.to) == Some(p.len()) { Ok(()) } else { Err(FetchFailed::Stopped) }) {
                 Ok(()) => {
                     ready.insert((p.file, p.from), p);
                 }
                 Err(why) => {
                     if host.is_some() {
-                        std::fs::remove_file(&p.to).ok();
+                        files::remove(&p.to).ok();
                     }
                     break Err(why);
                 }
@@ -270,121 +327,137 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model, host: Option<Arc<dyn Tra
         };
         stop.store(true, Ordering::SeqCst);
         *LISTENER.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        // the host's transfers still under way are stopped: nothing comes of them after this
+        if let (Err(_), Some(host)) = (&went, &host) {
+            waiting.keys().for_each(|id| host.stop(id.clone()));
+        }
         went
     });
-    outcome.map_err(crate::choices::told)?;
+    outcome?;
     // This version is whole: say so, and only now let go of the one that was here before it, which was in use
-    // until this moment.
-    std::fs::write(folder.join(WHOLE), "").map_err(|_| told(NOT_WRITTEN))?;
-    for other in std::fs::read_dir(home(&dir, m)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| *p != folder) {
-        if other.is_dir() { std::fs::remove_dir_all(&other) } else { std::fs::remove_file(&other) }.ok();
+    // until this moment, and of any piece left over from fetching this one.
+    files::write_atomic(&folder.join(WHOLE), "").map_err(|_| FetchFailed::NotWritten)?;
+    for other in files::entries(&home(&dir, m)).unwrap_or_default().into_iter().filter(|p| *p != folder) {
+        if other.is_dir() { files::remove_folder(&other) } else { files::remove(&other) }.ok();
     }
+    sweep_pieces(&folder);
     Ok(())
+}
+
+/// Every piece left in a folder that is whole, and the folders under it: a transfer that ended after its piece
+/// was no longer wanted leaves one.
+fn sweep_pieces(folder: &Path) {
+    for e in files::entries(folder).unwrap_or_default() {
+        if e.is_dir() {
+            sweep_pieces(&e);
+        } else if name_of(&e).contains(PIECE_TAIL) {
+            files::remove(&e).ok();
+        }
+    }
 }
 
 /// What the host's word on a transfer that ended means for its piece of a file of `size` bytes: the server sent
 /// the range asked for, or the whole file when that was what was asked. Its length is checked after.
-fn host_said(status: Option<u16>, p: &Piece, size: u64) -> Result<(), String> {
+fn host_said(status: Option<u16>, p: &Piece, size: u64) -> Result<(), FetchFailed> {
     match status {
-        None => Err(STOPPED.into()),
+        None => Err(FetchFailed::Stopped),
         Some(206) => Ok(()),
         Some(200) if p.from == 0 && p.until == size => Ok(()),
-        Some(200) => Err(NOT_RESUMED.into()),
-        Some(other) => Err(not_fetched(other)),
+        Some(200) => Err(FetchFailed::NotResumed),
+        Some(other) => Err(FetchFailed::Status(other)),
     }
 }
 
 /// Join to each file the pieces that come next in it, in order; a file whose bytes are all joined is checked
 /// against its hash, over the whole of it, and only then takes its name.
-fn join(files: &mut [Building], ready: &mut BTreeMap<(usize, u64), Piece>) -> Result<(), String> {
+fn join(files: &mut [Building], ready: &mut BTreeMap<(usize, u64), Piece>) -> Result<(), FetchFailed> {
     for (i, f) in files.iter_mut().enumerate().filter(|(_, f)| !f.whole) {
         let part = part_of(&f.path);
         while let Some(p) = ready.remove(&(i, f.joined)) {
-            let mut from = std::fs::File::open(&p.to).map_err(|_| NOT_WRITTEN.to_string())?;
-            let mut into = std::fs::OpenOptions::new().create(true).append(true).open(&part).map_err(|_| NOT_WRITTEN.to_string())?;
-            let copied = std::io::copy(&mut from, &mut into).map_err(|_| "This device ran out of room for the model.".to_string())?;
-            into.sync_all().ok();
+            let copied = append(&p.to, &part)?;
             if copied != p.len() {
-                return Err(NOT_WRITTEN.into());
+                return Err(FetchFailed::NotWritten);
             }
             f.joined += copied;
-            std::fs::remove_file(&p.to).ok();
+            files::remove(&p.to).ok();
         }
         if f.joined == f.size {
             // a sign-in page, a connection that closed early, a file changed at the source: none of them is
             // the model
             if hash_of(&part).as_deref() != Some(f.sha.as_str()) {
-                std::fs::remove_file(&part).ok();
+                files::remove(&part).ok();
                 f.joined = 0;
-                return Err("What came down was not the model. Check the connection and try again.".into());
+                return Err(FetchFailed::NotTheModel);
             }
-            std::fs::rename(&part, &f.path).map_err(|_| NOT_WRITTEN.to_string())?;
+            files::move_to(&part, &f.path).map_err(|_| FetchFailed::NotWritten)?;
             f.whole = true;
         }
     }
     Ok(())
 }
 
-/// The SHA-256 of a file, in hex.
+/// Add a piece to the end of the file it is part of. Returns how many bytes went.
+#[expect(clippy::disallowed_methods, reason = "adds a piece of a model to the end of what has come of it: airband_io writes files whole")]
+fn append(piece: &Path, to: &Path) -> Result<u64, FetchFailed> {
+    let mut from = std::fs::File::open(piece).map_err(|_| FetchFailed::NotWritten)?;
+    let mut into = std::fs::OpenOptions::new().create(true).append(true).open(to).map_err(|_| FetchFailed::NotWritten)?;
+    let copied = std::io::copy(&mut from, &mut into).map_err(|_| FetchFailed::NoRoom)?;
+    into.sync_all().ok();
+    Ok(copied)
+}
+
+/// The SHA-256 of a file, in hex, read a part at a time.
 fn hash_of(path: &Path) -> Option<String> {
-    let mut file = std::fs::File::open(path).ok()?;
+    const AT_ONCE: u64 = 1 << 20;
     let mut hash = <sha2::Sha256 as sha2::Digest>::new();
-    let mut buf = vec![0u8; 1 << 20];
+    let mut at = 0;
     loop {
-        let n = file.read(&mut buf).ok()?;
-        if n == 0 {
+        let part = files::read_part(path, at, AT_ONCE).ok()?;
+        if part.is_empty() {
             break;
         }
-        sha2::Digest::update(&mut hash, &buf[..n]);
+        sha2::Digest::update(&mut hash, &part);
+        at += part.len() as u64;
     }
     Some(airband_core::encode::hex(&sha2::Digest::finalize(hash)))
 }
 
 /// Fetch one piece over this core's own connection, going on from what of it is here already. Ok when the
 /// server sent what was asked for to the end.
-fn fetch_own(client: &crate::net::Client, p: &Piece, size: u64, tx: &mpsc::Sender<Event>, stop: &AtomicBool) -> Result<(), String> {
+#[expect(clippy::disallowed_methods, reason = "writes a piece of a model as it downloads, a little at a time: airband_io writes files whole")]
+fn fetch_own(client: &crate::net::Client, p: &Piece, size: u64, tx: &mpsc::Sender<Event>, stop: &AtomicBool) -> Result<(), FetchFailed> {
     let have = len_of(&p.to).unwrap_or(0);
     if have >= p.len() {
         return Ok(());
     }
     let start = p.from + have;
-    let mut res = client.send(crate::net::Ask::get(&p.url).header("range", format!("bytes={start}-{}", p.until - 1))).map_err(|_| UNREACHED.to_string())?;
+    let mut res = client.send(crate::net::Ask::get(&p.url).header("range", format!("bytes={start}-{}", p.until - 1))).map_err(|_| FetchFailed::Unreached)?;
     match res.status().as_u16() {
         206 => {}
         // a server that sends the whole file for a range is taken at its word only when the whole file was asked for
         200 if start == 0 && p.until == size => {}
-        200 => return Err(NOT_RESUMED.into()),
-        other => return Err(not_fetched(other)),
+        200 => return Err(FetchFailed::NotResumed),
+        other => return Err(FetchFailed::Status(other)),
     }
-    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&p.to).map_err(|_| NOT_WRITTEN.to_string())?;
+    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&p.to).map_err(|_| FetchFailed::NotWritten)?;
     let mut body = res.body_mut().as_reader();
     let mut buf = vec![0u8; 256 * 1024];
     let mut got = have;
     while got < p.len() {
         if stop.load(Ordering::SeqCst) {
-            return Err(STOPPED.into());
+            return Err(FetchFailed::Stopped);
         }
-        let n = body.read(&mut buf).map_err(|_| STOPPED.to_string())?;
+        let n = body.read(&mut buf).map_err(|_| FetchFailed::Stopped)?;
         if n == 0 {
             break;
         }
         // never more than was asked for, whatever came
         let n = n.min((p.len() - got) as usize);
-        file.write_all(&buf[..n]).map_err(|_| "This device ran out of room for the model.".to_string())?;
+        file.write_all(&buf[..n]).map_err(|_| FetchFailed::NoRoom)?;
         got += n as u64;
         tx.send(Event::Moved { id: p.id.clone(), bytes: got }).ok();
     }
-    if got == p.len() { Ok(()) } else { Err(STOPPED.into()) }
-}
-
-/// What he is told when the download answered with something other than the file, by what it answered.
-fn not_fetched(status: u16) -> String {
-    match status {
-        404 | 410 => "The download is not there.".into(),
-        429 => "The download was being asked for too often. Try again in a while.".into(),
-        500..=599 => format!("The place the download comes from ran into trouble ({status}). Try again later."),
-        _ => format!("The download could not be fetched ({status})."),
-    }
+    if got == p.len() { Ok(()) } else { Err(FetchFailed::Stopped) }
 }
 
 #[cfg(test)]

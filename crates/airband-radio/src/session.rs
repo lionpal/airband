@@ -62,18 +62,27 @@ impl Session {
         self.question.lock().unwrap().take()
     }
 
-    /// Something he said aloud, sent now and waited for ([`Link::say_and_wait`]). It takes the files he
-    /// attached and answers the question he was asked; if it never got there, both are his again.
-    pub(crate) fn say(&self, link: &Link, text: &str, re: Option<String>, scope: Option<String>, act: Option<Act>) -> Result<Option<Reply>, LinkError> {
-        let attachments = self.take_armed();
-        let answers = self.take_question();
-        let out = Outgoing { answers: answers.clone(), ..Outgoing::new(random_hex(12), text.to_string(), re, scope, None, attachments.clone(), Vec::new()).with_act(act.as_ref()) };
-        let u = out.utterance();
-        let got = link.say_and_wait(&u);
-        match &got {
-            Ok(Some(reply)) => self.asked(reply),
-            Ok(None) => {}
-            Err(_) => self.put_back(attachments, answers),
+    /// Something he said, under `id`, ready to go: it takes the files he attached and answers the question he
+    /// was asked. One id for one thing he said, everywhere it is tried: the tower acts on it once.
+    pub(crate) fn outgoing(&self, id: String, text: &str, re: Option<String>, scope: Option<String>, act: Option<Act>) -> Outgoing {
+        Outgoing { answers: self.take_question(), ..Outgoing::new(id, text.to_string(), re, scope, None, self.take_armed(), Vec::new()).with_act(act.as_ref()) }
+    }
+
+    /// It is sent now and waited for ([`Link::say_and_wait`]). A question the answer asks is remembered.
+    pub(crate) fn send(&self, link: &Link, out: &Outgoing) -> Result<Sent, LinkError> {
+        let got = link.say_and_wait(&out.utterance());
+        if let Ok(Sent::Answered(reply)) = &got {
+            self.asked(reply);
+        }
+        got
+    }
+
+    /// Something he said, sent now and waited for. If it never got there, its files and question are his again.
+    pub(crate) fn say(&self, link: &Link, text: &str, re: Option<String>, scope: Option<String>, act: Option<Act>) -> Result<Sent, LinkError> {
+        let out = self.outgoing(random_hex(12), text, re, scope, act);
+        let got = self.send(link, &out);
+        if got.is_err() {
+            self.put_back(out.attachments, out.answers);
         }
         got
     }

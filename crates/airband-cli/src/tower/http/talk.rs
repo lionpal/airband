@@ -18,7 +18,7 @@ pub(super) async fn next(State(app): State<Arc<App>>, RadioId(radio): RadioId, A
         let call = inner.call(&radio);
         if let (Some(have), Some(lost)) = (q.have.as_ref(), call.handed.clone())
             && *have != lost.id && call.outbox.is_none() && !call.ready {
-                log(format!("{radio} never got line {} it was handed; handing it over again", lost.id));
+                log(format!("{} never got line {} it was handed; handing it over again", radio_tag(&radio), lost.id));
                 call.outbox = Some(lost);
             }
     }
@@ -48,9 +48,9 @@ pub(super) async fn next(State(app): State<Arc<App>>, RadioId(radio): RadioId, A
 pub(super) async fn unheard(State(app): State<Arc<App>>, RadioId(radio): RadioId, Sent(u): Sent<at::Unheard>) -> Answer<at::Unheard> {
     let mut inner = app.change();
     let id = u.id.as_str();
-    let who = inner.log.iter().find(|e| e.id == id).map(|e| inner.sender_name(e)).unwrap_or_else(|| "a line it no longer has".to_string());
-    // a speech service's words for why can echo what it was given: the log has their length only
-    log(format!("{radio} could not read {who} aloud ({} characters said why); it stays queued (line {id}), and nothing more goes to that radio for a minute", u.why.chars().count()));
+    // a speech service's words for why can echo what it was given: the log has their length only. The line is
+    // named by its id, never by who said it
+    log(format!("{} could not read line {id} aloud ({} characters said why); it stays queued, and nothing more goes to that radio for a minute", radio_tag(&radio), u.why.chars().count()));
     if inner.log.iter().any(|e| e.id == id && matches!(&e.aloud, Aloud::Handed { radio: r, .. } if *r == radio)) {
         inner.set_aloud(id, Aloud::Waiting);
     }
@@ -126,20 +126,20 @@ pub(super) async fn utterance(State(app): State<Arc<App>>, RadioId(radio): Radio
     // with that lock let go, so the database never holds up the rest of the tower; one that turns out to be
     // answered already, or cannot be read, lets the id go again.
     if !app.change().answering.insert(u.id.clone()) {
-        log(format!("utterance {} from {radio} by {via}: asked after, still being answered", u.id));
+        log(format!("utterance {} from {} by {via}: asked after, still being answered", u.id, radio_tag(&radio)));
         return Ok(Json(Outcome::Taken));
     }
     match app.store.begin_receipt(&u.id) {
         Receipt::Begun => {}
         Receipt::Done(reply) => {
             app.change().answering.remove(&u.id);
-            log(format!("utterance {} from {radio} by {via}: already answered, the same answer given again", u.id));
+            log(format!("utterance {} from {} by {via}: already answered, the same answer given again", u.id, radio_tag(&radio)));
             return Ok(Json(Outcome::Answered { reply }));
         }
         // the radio keeps it and sends it again: answered now, it might be answered twice
         Receipt::Unknown(why) => {
             app.change().answering.remove(&u.id);
-            log(format!("utterance {} from {radio} by {via}: whether it was answered could not be read ({why})", u.id));
+            log(format!("utterance {} from {} by {via}: whether it was answered could not be read ({why})", u.id, radio_tag(&radio)));
             return Err(No(Refusal::NotNow { reason: "This computer could not check its records just now. It is sent again in a moment.".into() }));
         }
     }
@@ -170,7 +170,7 @@ pub(super) async fn utterance(State(app): State<Arc<App>>, RadioId(radio): Radio
         // one line for everything he says: its id (the same on the phone and at the relay), how it came, what
         // became of it and how long that took
         let took = began.elapsed();
-        log(format!("utterance {} from {radio} by {via}: answered in {:.1} s{}{}", u.id, took.as_secs_f32(), if reply.say.is_empty() { String::new() } else { format!(" ({} characters said back)", reply.say.chars().count()) }, if took > SLOW { ", which is slow" } else { "" }));
+        log(format!("utterance {} from {} by {via}: answered in {:.1} s{}{}", u.id, radio_tag(&radio), took.as_secs_f32(), if reply.say.is_empty() { String::new() } else { format!(" ({} characters said back)", reply.say.chars().count()) }, if took > SLOW { ", which is slow" } else { "" }));
         // The answer is handed to the saver after the lines that came of it, and written with them in one go,
         // so it is never on record while they are not. The id stays among those being answered until it is
         // written: the same words sent again meanwhile are told they are taken, never answered a second time.

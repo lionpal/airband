@@ -26,7 +26,7 @@ impl TowerHere {
         TowerHere::at(reach.port, &reach.token, timeout)
     }
     fn at(port: u16, token: &str, timeout: std::time::Duration) -> TowerHere {
-        TowerHere { client: airband_io::http::Client::new(timeout), base: format!("http://127.0.0.1:{port}"), auth: format!("Bearer {token}") }
+        TowerHere { client: airband_io::http::Client::new(timeout), base: format!("http://127.0.0.1:{port}"), auth: airband_core::token::as_bearer(token) }
     }
     // Each says which version of the radio protocol it speaks: the radio's routes are refused without it, and
     // the agent's routes do not read it.

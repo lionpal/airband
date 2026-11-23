@@ -237,12 +237,31 @@ impl Desk {
         self.shared.chooser.at_work().map(|w| ChoiceState::Working { label: w.2, fraction: w.3 })
     }
 
-    /// The coding tools he uses, by id, the one he uses most first.
+    /// The coding tools he uses, by id.
     pub fn tools(&self) -> Vec<String> {
         self.shared.chooser.tools()
     }
 
-    /// He uses these coding tools, the one he uses most first. What can write his summaries follows from them.
+    /// Whose sign-in writes his summaries, among his coding tools: the one chosen, the ones he can pick from,
+    /// and whether he is to be asked now (several can and none is chosen).
+    pub fn summary_tool(&self) -> SummaryTool {
+        let saved = self.shared.chooser.saved();
+        SummaryTool { chosen: saved.summary_tool.clone(), can: saved.summary_tools(), ask: saved.summary_tool_wanted() }
+    }
+
+    /// He picked the coding tool whose sign-in writes his summaries. Nothing changes for one that is not his or
+    /// cannot.
+    pub fn set_summary_tool(&self, tool: String) {
+        let mut took = false;
+        if let Err(e) = self.shared.chooser.change(|s| took = s.summaries_by(tool)) {
+            self.shared.host.note(e.to_string());
+        }
+        if took {
+            self.shared.host.changed();
+        }
+    }
+
+    /// He uses these coding tools. What can write his summaries follows from them.
     /// Ids the catalogue does not have are left out; with none left, nothing changes, so one always stays.
     pub fn set_tools(&self, tools: Vec<String>) {
         let known: Vec<String> = tools.into_iter().filter(|t| airband_core::catalog::current().tools.iter().any(|k| k.id == *t)).collect();
@@ -353,4 +372,15 @@ pub(crate) fn tell_reads(shared: &Shared, station: &StationId, epoch: u64, ask_o
         shared.host.note(e.said());
     }
     shared.host.changed();
+}
+
+/// Whose sign-in writes his summaries, among his coding tools ([`Desk::summary_tool`]).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SummaryTool {
+    /// The coding tool chosen, by id.
+    pub chosen: Option<String>,
+    /// His coding tools whose sign-in can, by id.
+    pub can: Vec<String>,
+    /// He is to be asked which, now.
+    pub ask: bool,
 }

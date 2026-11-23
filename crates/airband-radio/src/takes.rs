@@ -13,8 +13,8 @@
 //! ```
 //!
 //! Words that are in an outbox are the outbox's to send again: listening never runs twice for them. A take left
-//! partway when the app closed is found when it opens again ([`Takes::open`]) and shown once more. At most
-//! [`KEEP`] is kept; past that the oldest goes, and he is told when its words had not gone.
+//! partway when the app closed is found when it opens again ([`Takes::open`]) and shown once more. Nothing is
+//! deleted to make room: past [`KEEP`] he is told, and what to let go of is his to say.
 //!
 //! The sound leaves the phone only for the listening service he chose. It is never written to a log, and is kept
 //! in a folder of the app's own ([`takes_folder`]) that the host protects and leaves out of backups.
@@ -24,14 +24,21 @@ use std::collections::VecDeque;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// How much of what he said the phone keeps at most: this many takes, and this much sound in all (about half
-/// an hour). A take is at most four minutes, so the next one always has room.
+/// How much of what he said the phone keeps before he is told it is piling up: this many takes, or this much
+/// sound in all (about half an hour). Nothing past it is deleted: every take kept is words his computer has not
+/// taken yet. A take is at most [`LONGEST`], which [`Tape`] holds every listening to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Keep {
     pub(crate) takes: usize,
     pub(crate) bytes: u64,
 }
 pub(crate) const KEEP: Keep = Keep { takes: 20, bytes: 64 * 1024 * 1024 };
+/// The longest one take is, in bytes of sound: four minutes. The microphone is closed for him there, and what
+/// he said goes as said.
+pub(crate) const LONGEST: u64 = crate::ears::RATE as u64 * 2 * 240;
+/// How much sound is written between flushes to the disk: about a second. A piece written and not yet flushed
+/// is still the system's to write if the app is killed.
+const FLUSH_EVERY: u64 = crate::ears::RATE as u64 * 2;
 
 /// The folder the sound of what he says is kept in, under the app's own folder: the host makes it its
 /// strongest protection that still lets a take be written while the phone is locked (on a call), and leaves it
@@ -240,24 +247,17 @@ impl Takes {
         self.folder.is_some() && self.get(id).is_some()
     }
 
-    /// He has started talking: a new take, its sound written from the first sample. To make room the oldest
-    /// takes go first, those whose words are in an outbox before the rest; he is told of any whose words had not.
+    /// He has started talking: a new take, its sound written from the first sample. Nothing is deleted for it:
+    /// when this is the take that goes past [`KEEP`], he is told how many are waiting.
     pub(crate) fn begin(&self, aim: Aim) -> Recorder {
         let id = random_hex(12);
-        let gone = self.change(|l| {
-            let gone = make_room(l);
+        let full = self.change(|l| {
+            let was = over(l);
             l.takes.push(Take { id: id.clone(), at: now_ms(), aim, stage: Stage::Recording, spoke: false, bytes: 0 });
-            gone
+            (!was && over(l)).then_some(l.takes.len())
         });
-        for t in &gone {
-            if let Some(path) = self.path(&t.id) {
-                airband_io::files::remove(&path).ok();
-            }
-        }
-        match gone.iter().filter(|t| !matches!(t.stage, Stage::Sent { .. })).count() {
-            0 => {}
-            1 => self.say("Your oldest recording that was not sent was deleted to make room.".into()),
-            n => self.say(format!("Your {n} oldest recordings that were not sent were deleted to make room.")),
+        if let Some(n) = full {
+            self.say(format!("Your phone is keeping {n} recordings your computer does not have yet. Let go of the ones you don't need in the chat."));
         }
         // the record first, then its file: a file is never without one
         let file = self.path(&id).map(|p| airband_io::files::appending(&p));
@@ -269,7 +269,7 @@ impl Takes {
             }
             None => None,
         };
-        Recorder { id, file, end: Endpointer::new(crate::ears::RATE), spoke: false, finished: false, ended: false, bytes: 0 }
+        Recorder { id, file, end: Endpointer::new(crate::ears::RATE), spoke: false, finished: false, ended: false, bytes: 0, unflushed: 0 }
     }
 
     /// The microphone has closed on a take, and this is what the listening made of it.
@@ -291,15 +291,15 @@ impl Takes {
             }
             Got::Words(_) if spoke => {
                 self.stage(id, |t| t.stage = Stage::Unheard { why: Unheard::NoWords });
-                Listened::Unheard { take: id.into() }
+                Listened::Unheard { take: id.into(), why: Unheard::NoWords }
             }
             Got::Words(_) => {
                 self.delete(id);
                 Listened::Nothing
             }
             Got::Failed(why) => {
-                self.stage(id, |t| t.stage = Stage::Unheard { why });
-                Listened::Unheard { take: id.into() }
+                self.stage(id, |t| t.stage = Stage::Unheard { why: why.clone() });
+                Listened::Unheard { take: id.into(), why }
             }
         }
     }
@@ -329,7 +329,7 @@ impl Takes {
         self.delete(id);
     }
     /// Gone for good: the sound first, then the record, so a record may outlive its sound and never the
-    /// other way round.
+    /// other way round. (Made the other way: the record first, then its sound, [`Takes::begin`].)
     fn delete(&self, id: &str) {
         if self.get(id).is_none() {
             return;
@@ -390,21 +390,13 @@ impl Takes {
 
     /// The microphone, with each piece of it read written to this take as well.
     pub(crate) fn tape<'a>(&'a self, host: &'a dyn RadioHost, aim: Aim) -> Tape<'a> {
-        Tape { host, rec: Mutex::new(self.begin(aim)), takes: self }
+        Tape { host, rec: Mutex::new(self.begin(aim)), takes: self, stopped: AtomicBool::new(false) }
     }
 }
 
-/// The oldest takes, taken off until a new one fits in [`KEEP`]: those whose words are in an outbox first. One
-/// still recording or being heard is never taken.
-fn make_room(l: &mut List) -> Vec<Take> {
-    let mut gone = Vec::new();
-    while l.takes.len() >= KEEP.takes || l.takes.iter().map(|t| t.bytes).sum::<u64>() >= KEEP.bytes {
-        let sent = l.takes.iter().position(|t| matches!(t.stage, Stage::Sent { .. }));
-        let idle = || l.takes.iter().position(|t| !matches!(t.stage, Stage::Recording | Stage::Hearing { .. }));
-        let Some(i) = sent.or_else(idle) else { break };
-        gone.push(l.takes.remove(i));
-    }
-    gone
+/// Are more kept than [`KEEP`]?
+fn over(l: &List) -> bool {
+    l.takes.len() > KEEP.takes || l.takes.iter().map(|t| t.bytes).sum::<u64>() > KEEP.bytes
 }
 
 /// What was left partway when the app last closed: a take still recording or being heard is unheard, one heard
@@ -444,9 +436,11 @@ pub(crate) struct Recorder {
     spoke: bool,
     /// He talked and stopped, or never started: what a reply opened for him (not by his own tap) ends on.
     finished: bool,
-    /// The host stopped the microphone.
+    /// The host stopped the microphone, or the take reached [`LONGEST`].
     ended: bool,
     bytes: u64,
+    /// Bytes written since the file was last flushed to the disk.
+    unflushed: u64,
 }
 
 impl Recorder {
@@ -459,15 +453,29 @@ impl Recorder {
         }
         self.spoke |= self.end.speaking;
         self.bytes += bytes.len() as u64;
+        self.unflushed += bytes.len() as u64;
         let file = self.file.as_mut()?;
-        match file.write_all(bytes).and_then(|()| file.sync_data()) {
-            Ok(()) => None,
+        let flush = self.unflushed >= FLUSH_EVERY;
+        match file.write_all(bytes).and_then(|()| if flush { file.sync_data() } else { Ok(()) }) {
+            Ok(()) => {
+                if flush {
+                    self.unflushed = 0;
+                }
+                None
+            }
             Err(e) => {
                 // told once: the rest of this take is not kept
                 self.file = None;
                 Some(crate::kept::not_kept(&e.to_string()))
             }
         }
+    }
+    /// What is written and not yet flushed goes to the disk: the take has ended.
+    fn flush(&mut self) {
+        if let Some(file) = self.file.as_mut() {
+            file.sync_data().ok();
+        }
+        self.unflushed = 0;
     }
 }
 
@@ -477,6 +485,8 @@ pub(crate) struct Tape<'a> {
     host: &'a dyn RadioHost,
     rec: Mutex<Recorder>,
     takes: &'a Takes,
+    /// The host's microphone was stopped: once, by whichever came first, his end or the listening's.
+    stopped: AtomicBool,
 }
 
 impl Tape<'_> {
@@ -494,12 +504,20 @@ impl Tape<'_> {
         }
     }
     pub(crate) fn done(self) -> Recorder {
-        self.rec.into_inner().unwrap_or_else(|e| e.into_inner())
+        let mut rec = self.rec.into_inner().unwrap_or_else(|e| e.into_inner());
+        rec.flush();
+        rec
     }
 }
 
 impl RadioHost for Tape<'_> {
     fn record_read(&self) -> Vec<u8> {
+        // the microphone was closed, or the take is as long as one is: nothing more is read, and whatever
+        // listens takes that as the end
+        if self.stopped.load(Ordering::SeqCst) || self.rec.lock().unwrap_or_else(|e| e.into_inner()).bytes >= LONGEST {
+            self.rec.lock().unwrap_or_else(|e| e.into_inner()).ended = true;
+            return Vec::new();
+        }
         let bytes = self.host.record_read();
         let told = {
             let mut rec = self.rec.lock().unwrap_or_else(|e| e.into_inner());
@@ -519,7 +537,9 @@ impl RadioHost for Tape<'_> {
         self.host.record_start(rate)
     }
     fn record_stop(&self) {
-        self.host.record_stop();
+        if !self.stopped.swap(true, Ordering::SeqCst) {
+            self.host.record_stop();
+        }
     }
     fn speak(&self, text: String) {
         self.host.speak(text);
@@ -553,16 +573,19 @@ impl RadioHost for Tape<'_> {
     }
 }
 
-/// A recording played in place of the microphone, as fast as it is read: for hearing a take again. A second
-/// at a time, so a live service is sent the whole of a long one without any of it waiting to be dropped.
+/// A recording played in place of the microphone, for hearing a take again: a second at a time. `paced`, for a
+/// live service: no faster than it was spoken, as the service was made to be given it, so it keeps up and ends
+/// its turn on the whole of it. Otherwise as fast as it is read.
 pub(crate) struct Replay<'a> {
     host: &'a dyn RadioHost,
     left: Mutex<VecDeque<Vec<u8>>>,
+    /// When the first second was given, for a paced one, and how many have been.
+    paced: Option<Mutex<(Option<std::time::Instant>, u32)>>,
 }
 
 impl<'a> Replay<'a> {
-    pub(crate) fn of(host: &'a dyn RadioHost, pcm: &[u8]) -> Replay<'a> {
-        Replay { host, left: Mutex::new(pcm.chunks(crate::ears::RATE as usize * 2).map(<[u8]>::to_vec).collect()) }
+    pub(crate) fn of(host: &'a dyn RadioHost, pcm: &[u8], paced: bool) -> Replay<'a> {
+        Replay { host, left: Mutex::new(pcm.chunks(crate::ears::RATE as usize * 2).map(<[u8]>::to_vec).collect()), paced: paced.then(|| Mutex::new((None, 0))) }
     }
 }
 
@@ -571,6 +594,13 @@ impl RadioHost for Replay<'_> {
         true
     }
     fn record_read(&self) -> Vec<u8> {
+        if let Some(paced) = &self.paced {
+            let mut paced = paced.lock().unwrap_or_else(|e| e.into_inner());
+            let began = *paced.0.get_or_insert_with(std::time::Instant::now);
+            // the next second is due once as much time has gone by as has been given
+            thread::sleep((began + Duration::from_secs(paced.1.into())).saturating_duration_since(std::time::Instant::now()));
+            paced.1 += 1;
+        }
         self.left.lock().unwrap_or_else(|e| e.into_inner()).pop_front().unwrap_or_default()
     }
     fn record_stop(&self) {}

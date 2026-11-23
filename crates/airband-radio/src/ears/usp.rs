@@ -44,7 +44,7 @@ fn connect(grant: &Pass, request: &str) -> Result<Socket, ()> {
     let (url, host) = grant.stream()?;
     let url = super::with_query(&url, &[("language", grant.get(crate::models::field::LANGUAGE)), ("format", "simple"), ("profanity", "raw")]);
     let mut req = url.into_client_request().map_err(|_| ())?;
-    req.headers_mut().insert("Authorization", format!("Bearer {}", grant.token).parse().map_err(|_| ())?);
+    req.headers_mut().insert("Authorization", airband_core::token::as_bearer(&grant.token).parse().map_err(|_| ())?);
     req.headers_mut().insert("X-ConnectionId", random_hex(16).parse().map_err(|_| ())?);
     let mut socket = dial(&host, req)?;
     let config = json!({ "context": { "system": { "name": "airband", "version": env!("CARGO_PKG_VERSION") }, "os": { "platform": std::env::consts::OS, "name": "airband", "version": "1" }, "audio": { "source": { "connectivity": "Unknown", "manufacturer": "Unknown", "model": "Unknown", "type": "Microphones" } } } });

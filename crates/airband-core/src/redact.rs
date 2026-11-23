@@ -131,8 +131,8 @@ mod tests {
     fn nothing_that_holds_a_secret_or_his_words_writes_them_in_its_debug_form() {
         use crate::agent::{Deliver, SocketLine, SocketRole, SocketTurn};
         let shown = [
-            format!("{:?}", crate::providers::Use { kind: "openai".into(), key: "sk-live-1".into(), set: [("url".to_string(), serde_json::Value::String("sk-live-2".into()))].into(), ..Default::default() }),
-            format!("{:?}", crate::radio::SetReads { kind: "openai".into(), offer: "o".into(), key: "sk-live-1".into(), set: [("x".to_string(), "sk-live-2".to_string())].into() }),
+            format!("{:?}", crate::providers::Use { kind: "fixture-provider".into(), key: "sk-live-1".into(), set: [("url".to_string(), serde_json::Value::String("sk-live-2".into()))].into(), ..Default::default() }),
+            format!("{:?}", crate::radio::SetReads { kind: "fixture-provider".into(), offer: "o".into(), key: "sk-live-1".into(), set: [("x".to_string(), "sk-live-2".to_string())].into() }),
             format!("{:?}", crate::pairing::Pairing::Relay { relay: "https://r".into(), secret: "sk-live-1".into() }),
             format!("{:?}", crate::pairing::Pairing::Direct { url: "http://h".into(), token: "sk-live-1".into() }),
             format!("{:?}", crate::pairing::Pairing::Near { at: vec!["http://h".into()], secret: "sk-live-1".into() }),

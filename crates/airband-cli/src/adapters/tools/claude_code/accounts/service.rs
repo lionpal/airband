@@ -16,7 +16,7 @@ fn http() -> airband_io::http::Client {
 /// One question to the account service with a login's token: its status and its answer's text.
 fn ask(here: &Here, path: &str, token: &str) -> Result<(u16, String), String> {
     let mut res = http()
-        .send(Ask::get(format!("{}{path}", here.api)).header("authorization", format!("Bearer {token}")).header(super::row("beta_header"), super::row("oauth_beta")))
+        .send(Ask::get(format!("{}{path}", here.api)).header("authorization", airband_core::token::as_bearer(token)).header(super::row("beta_header"), super::row("oauth_beta")))
         .map_err(|_| format!("Could not reach {} to check it.", maker()))?;
     let status = res.status().as_u16();
     let text = res.body_mut().read_to_string().map_err(|_| format!("{}'s answer could not be read.", maker()))?;

@@ -23,34 +23,37 @@ extension RadioModel {
     }
 
     /// Play a recording; tapped again, stop it.
+    /// Played through `Voice`, which holds the audio session: never while the microphone is open.
     func playTake(_ id: String) {
         if playingTake == id {
-            takePlayer?.stop()
-            playingTake = nil
+            voice.stopClip()
             return
         }
-        takePlayer?.stop()
+        voice.stopClip()
         playingTake = id
         ask("That recording could not be played.", { self.desk.takeSound(id: id) }) { data, wrong in
             guard self.playingTake == id else { return }
-            guard let data = data ?? nil, let player = try? AVAudioPlayer(data: data) else {
+            guard let data = data ?? nil else {
                 self.playingTake = nil
                 self.problem = wrong ?? "That recording could not be played."
                 return
             }
-            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
-            try? AVAudioSession.sharedInstance().setActive(true)
-            self.takePlayer = player
-            self.takeEnd.ended = { [weak self] in if self?.playingTake == id { self?.playingTake = nil } }
-            player.delegate = self.takeEnd
-            player.play()
+            switch self.voice.playClip(data, ended: { [weak self] in if self?.playingTake == id { self?.playingTake = nil } }) {
+            case nil: break
+            case .micOpen:
+                self.playingTake = nil
+                self.problem = "Close the microphone to play your recording."
+            case .unreadable:
+                self.playingTake = nil
+                self.problem = "That recording could not be played."
+            }
         }
     }
 
     func takeAgain(_ id: String) { desk.takeAgain(id: id) }
 
     func discardTake(_ id: String) {
-        if playingTake == id { takePlayer?.stop(); playingTake = nil }
+        if playingTake == id { voice.stopClip() }
         desk.discardTake(id: id)
     }
 }

@@ -239,9 +239,9 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// Pair exactly these links. What went wrong, in words for him, or nothing.
     @discardableResult
     private func connect(_ wanted: [String]) -> String? {
-        links = desk.setLinks(links: wanted)
-        var wrong: String?
-        if links.count < wanted.count { wrong = "One pairing link is not valid and was skipped." }
+        let paired = desk.setLinks(links: wanted)
+        links = paired.links
+        var wrong: String? = paired.unread
         if linksRead && !Keychain.keepLinks(links) { wrong = "Couldn\u{2019}t save your pairings on this phone." }
         if let wrong { problem = wrong }
         refresh()
@@ -320,8 +320,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// The banners up now, by the agent each is for (`RadioModel+Banners.swift`).
     var banners: [String: Activity<NeedsYouAttributes>] = [:]
 
-    /// The coding tools he uses, by id, the one he uses most first. The core keeps them: what can write his
-    /// summaries follows from them.
+    /// The coding tools he uses, by id. The core keeps them: what can write his summaries follows from them.
     var tools: [String] {
         get { desk.tools() }
         set {
@@ -329,6 +328,13 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
             desk.setTools(tools: newValue)
             refresh()
         }
+    }
+    /// Whose sign-in writes his summaries, among his coding tools, and whether he is to be asked which.
+    var summaryTool: SummaryTool { desk.summaryTool() }
+    func setSummaryTool(_ id: String) {
+        objectWillChange.send()
+        desk.setSummaryTool(tool: id)
+        refresh()
     }
 
 
@@ -350,10 +356,6 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     @Published var previewing: String?
     /// The recording of something he said that is playing, by its id (`RadioModel+Takes.swift`).
     @Published var playingTake: String?
-    var takePlayer: AVAudioPlayer?
-    let takeEnd = PlayerEnd()
-    var previewPlayer: AVAudioPlayer?
-    let previewEnd = PlayerEnd()
 
     /// The engines this app runs models with itself, by the name a model's row in the catalogue gives. The
     /// core offers a model for one of these only on a system its row allows, and asks for it by this name.

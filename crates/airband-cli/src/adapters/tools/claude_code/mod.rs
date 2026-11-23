@@ -25,9 +25,15 @@ fn session_name(hook: &Value) -> Option<String> {
     // Claude Code keeps one small file per running session, by process
     let renamed = row_env("pid_env")
         .and_then(|pid| record(&claude_home(), &pid))
-        .filter(|s| s["nameSource"].as_str() == Some("user") && s["sessionId"].as_str() == hook["session_id"].as_str())
-        .and_then(|s| s["name"].as_str().map(str::trim).filter(|n| !n.is_empty()).map(String::from));
+        .filter(|s| s["sessionId"].as_str() == hook["session_id"].as_str())
+        .and_then(|s| named_by_him(&s));
     renamed.or_else(|| remote_control_name(hook["transcript_path"].as_str()?, hook["session_id"].as_str()?))
+}
+
+/// The name in a session's record when he gave it; one Claude Code made up by itself is not used. The one place
+/// a record's name is read.
+fn named_by_him(record: &Value) -> Option<String> {
+    (record["nameSource"].as_str() == Some("user")).then(|| record["name"].as_str().map(str::trim).filter(|n| !n.is_empty()).map(String::from)).flatten()
 }
 
 /// Who a notification is about: the session, where it works, how to reach it, and the name he gave it.

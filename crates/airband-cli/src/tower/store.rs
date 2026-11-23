@@ -41,7 +41,7 @@ impl Store {
     /// alone. Each that is not there yet is made so when it is; the database makes them on its first write.
     #[cfg(unix)]
     fn private(path: &std::path::Path) -> Result<(), String> {
-        for file in [path.to_path_buf(), Store::beside(path, "-wal"), Store::beside(path, "-shm")] {
+        for file in [path.to_path_buf(), airband_io::files::beside(path, "-wal"), airband_io::files::beside(path, "-shm")] {
             match airband_io::files::set_mode(&file, 0o600) {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 other => other.map_err(|e| format!("cannot make {} private: {e}", file.display()))?,
@@ -53,12 +53,6 @@ impl Store {
     #[cfg(not(unix))]
     fn private(_: &std::path::Path) -> Result<(), String> {
         Ok(())
-    }
-    #[cfg(unix)]
-    fn beside(path: &std::path::Path, tail: &str) -> std::path::PathBuf {
-        let mut name = path.as_os_str().to_owned();
-        name.push(tail);
-        std::path::PathBuf::from(name)
     }
     pub(super) fn open(path: &std::path::Path) -> Result<Store, String> {
         let db = Connection::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
@@ -190,8 +184,7 @@ impl Store {
             }
         }
         for (id, reply) in &batch.receipts {
-            let reply = serde_json::to_string(reply).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-            tx.execute("update receipts set reply = ?2 where id = ?1", params![id, reply])?;
+            Self::set_reply(&tx, id, reply)?;
         }
         tx.commit()
     }
@@ -278,7 +271,7 @@ impl Store {
                 Err(e) => Receipt::Unknown(e),
                 Ok(reached) if !reached.is_empty() => {
                     let reply = Reply { say: format!("Sent to {}.", list(&reached)), listen: false, done: true, ..Reply::default() };
-                    Self::warn("closing a receipt", db.execute("update receipts set reply = ?2 where id = ?1", params![id, serde_json::to_string(&reply).unwrap()]));
+                    Self::warn("closing a receipt", Self::set_reply(&db, id, &reply));
                     Receipt::Done(reply)
                 }
                 Ok(_) => Self::take(&db, id),
@@ -288,6 +281,12 @@ impl Store {
     }
 
     /// An utterance id taken: from now on it is this tower's to answer.
+    /// What came of an utterance, written to its receipt: the one place a receipt is closed.
+    fn set_reply(db: &Connection, id: &str, reply: &Reply) -> rusqlite::Result<usize> {
+        let reply = serde_json::to_string(reply).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        db.execute("update receipts set reply = ?2 where id = ?1", params![id, reply])
+    }
+
     fn take(db: &Connection, id: &str) -> Receipt {
         match db.execute("insert into receipts (id, at) values (?1, ?2) on conflict (id) do update set at = excluded.at", params![id, now_ms() as i64]) {
             Ok(_) => Receipt::Begun,
@@ -370,12 +369,12 @@ mod tests {
         s.put_messages(&[Entry { seq: 1, id: "a".into(), ..Entry::default() }]);
         Store::private(&path).unwrap();
         for tail in ["", "-wal", "-shm"] {
-            let file = Store::beside(&path, tail);
+            let file = airband_io::files::beside(&path, tail);
             if let Ok(meta) = std::fs::metadata(&file) {
                 assert_eq!(meta.permissions().mode() & 0o777, 0o600, "{}", file.display());
             }
         }
-        assert!(Store::beside(&path, "-wal").exists());
+        assert!(airband_io::files::beside(&path, "-wal").exists());
     }
 
     fn store(name: &str) -> (Store, std::path::PathBuf) {

@@ -171,7 +171,7 @@ impl Chooser {
         Chooser { dir: dir.into(), keeper, device, saved, working: Mutex::new(None), opened: Mutex::new(opened), transfers: Mutex::new(None) }
     }
 
-    /// The coding tools he uses, by id, the one he uses most first.
+    /// The coding tools he uses, by id.
     pub(crate) fn tools(&self) -> Vec<String> {
         self.saved().tools
     }
@@ -469,23 +469,45 @@ mod tests {
     }
 
     #[test]
-    fn before_any_computer_summaries_follow_the_coding_tool_until_he_picks() {
+    fn before_any_computer_summaries_follow_the_coding_tool_he_names_for_them() {
         // the offer each sign-in's row marks as the one to use
         let logins: Vec<Service> = crate::services::services(Job::Summary).into_iter().filter(|s| !s.login.is_empty() && !s.more).collect();
         let (one, two) = (logins[0].clone(), logins.iter().find(|s| s.login != logins[0].login).expect("two tools with a sign-in that reads").clone());
         let mut saved = Saved::default();
+        // one tool: its sign-in, with nothing to ask
         saved.use_tools(vec![one.login.clone()]);
         assert_eq!(saved.reads.as_ref().map(|w| (w.wanted.id.as_str(), w.wanted.his)), Some((one.kind.as_str(), false)));
+        assert_eq!(saved.summary_tool.as_deref(), Some(one.login.as_str()));
+        assert!(!saved.summary_tool_wanted());
         // the other tool's sign-in is not offered to him, and his own is the one shown as chosen
         let all = list(ChoiceJob::Reads, &saved, &facts(HERE, NO_KEYS));
         assert!(chosen(&all) == vec![service_id(&one.kind, &one.offer).as_str()] && all.iter().all(|c| c.provider != two.kind));
-        // he changes the tool: it follows
+        // a second tool, put first: the order of the list decides nothing, and the first stays
         saved.use_tools(vec![two.login.clone(), one.login.clone()]);
-        assert_eq!(saved.reads.as_ref().map(|w| w.wanted.id.as_str()), Some(two.kind.as_str()));
-        // he picks for himself: a change of tool leaves that alone
-        saved.reads = Some(crate::desk::Intent::after(None, ReadsWanted { id: "anthropic".into(), offer: "haiku".into(), set: BTreeMap::new(), his: true }));
+        assert_eq!(saved.reads.as_ref().map(|w| w.wanted.id.as_str()), Some(one.kind.as_str()));
+        // he takes away the one that writes them: the only other one that can is the one
+        saved.use_tools(vec![two.login.clone()]);
+        assert_eq!(saved.summary_tool.as_deref(), Some(two.login.as_str()));
+        // with several that can and none named (the one named was taken away, and more than one is left), he is
+        // asked, and nothing is moved for him
+        let logins: Vec<String> = logins.iter().map(|s| s.login.clone()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+        if logins.len() > 2 {
+            saved.use_tools(logins.clone());
+            saved.use_tools(logins.iter().filter(|l| **l != two.login).cloned().collect());
+        } else {
+            saved = Saved::default();
+            saved.use_tools(logins.clone());
+        }
+        assert!(saved.summary_tool_wanted() && saved.summary_tool.is_none() && saved.reads.is_none(), "{:?}", saved.reads);
+        // he says which
+        assert!(!saved.summaries_by("not-his".into()));
+        assert!(saved.summaries_by(one.login.clone()));
+        assert_eq!(saved.reads.as_ref().map(|w| w.wanted.id.as_str()), Some(one.kind.as_str()));
+        assert!(!saved.summary_tool_wanted());
+        // he picks a service for himself: a change of tool leaves that alone
+        saved.reads = Some(crate::desk::Intent::after(None, ReadsWanted { id: "fixture-provider".into(), offer: "fixture-offer".into(), set: BTreeMap::new(), his: true }));
         saved.use_tools(vec![one.login.clone()]);
-        assert_eq!(saved.reads.as_ref().map(|w| w.wanted.id.as_str()), Some("anthropic"));
+        assert_eq!(saved.reads.as_ref().map(|w| w.wanted.id.as_str()), Some("fixture-provider"));
         // and once a computer has said what it reads with, nothing is made to wait by a change of tool
         let mut said = Saved { offered: Some(ReadsOffered::default()), ..Saved::default() };
         said.use_tools(vec![one.login]);
@@ -542,15 +564,16 @@ mod tests {
     fn a_service_that_takes_a_key_is_never_tried_without_one() {
         let dir = std::env::temp_dir().join(format!("airband-choices-nokey-{}", random_hex(4)));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("choices.json"), r#"{"ears":{"place":"service","id":"elevenlabs","offer":"scribe"}}"#).unwrap();
+        // a row that listens and takes a key
+        let (p, o) = airband_core::providers::in_order(Job::Ears).into_iter().find(|(p, _)| p.key).expect("a row that listens with a key");
+        std::fs::write(dir.join("choices.json"), serde_json::json!({ "ears": { "place": "service", "id": p.id, "offer": o.id } }).to_string()).unwrap();
         let host = Arc::new(Host::default());
         let desk = Desk::alone(&dir.display().to_string(), host.clone());
         desk.shared.chooser.apply(&*host, &desk.shared.senses);
         let why = desk.shared.senses.ears.cannot();
         let _ = std::fs::remove_dir_all(dir);
         // he is told to enter the key, by its name
-        let key_name = airband_core::providers::provider("elevenlabs").map(|p| p.key_name.clone()).unwrap();
-        assert_eq!(why, Some(format!("Enter your {key_name} in Settings, under Listening.")));
+        assert_eq!(why, Some(crate::senses::Cannot::NoKey { sense: crate::senses::Sense::Listening, key_name: p.key_name.clone() }.told()));
     }
 
     #[test]
@@ -572,7 +595,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("airband-choices-{}", random_hex(4)));
         let at = dir.display().to_string();
         let chooser = Chooser::open(&at, phone());
-        chooser.change(|s| s.voice = Some(Pick { place: ChoicePlace::Service, id: "gemini".into(), offer: "flash-lite-tts".into(), set: BTreeMap::from([("voice".to_string(), "Leda".to_string())]), voice: String::new() })).unwrap();
+        chooser.change(|s| s.voice = Some(Pick { place: ChoicePlace::Service, id: "fixture-voice-service".into(), offer: "fixture-offer".into(), set: BTreeMap::from([("voice".to_string(), "fixture-voice".to_string())]), voice: String::new() })).unwrap();
         let again = Chooser::open(&at, phone());
         assert_eq!(again.saved(), chooser.saved());
         // and no key is in it

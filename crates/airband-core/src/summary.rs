@@ -4,7 +4,7 @@
 //! message can be; the last names every field of the answer and the shape it is read in. Both are the
 //! computer's own and fixed, so nothing he writes can break how the answer is read. Between them is how to
 //! write what he is told: that part is his. Until he changes it, it is [`USUAL`]; he edits it on his phone and
-//! every computer is sent his text; Reset gives him [`USUAL`] back.
+//! every computer is sent his text, whatever it says; only Reset gives him [`USUAL`] back.
 
 /// How to write what he is told, as it stands until he changes it.
 pub const USUAL: &str = "Then what to tell him, in plain spoken English. He will not read much: he glances. One short sentence, \
@@ -61,14 +61,27 @@ impl Refused {
     pub fn said(self) -> String {
         match self {
             Refused::Empty => "There's nothing to save. Reset brings back the usual text.".into(),
-            Refused::TooLong => format!("That's too long. Keep it under {MOST} characters."),
+            Refused::TooLong => format!("That's too long. Keep it under {} characters.", thousands(MOST)),
         }
     }
 }
 
-/// His text as it is to be kept: nothing when it is the usual text (so a later change to the usual reaches
-/// him), else his own words, trimmed at the ends. Err when it cannot be used.
-pub fn checked(text: &str) -> Result<Option<String>, Refused> {
+/// A count as en-US writes it: `8,000`.
+fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, d) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(d);
+    }
+    out
+}
+
+/// His text as it is to be kept: his own words, trimmed at the ends, whatever they are. Text that happens to
+/// read as the usual one is still his: only Reset means the usual text. Err when it cannot be used.
+pub fn checked(text: &str) -> Result<String, Refused> {
     let text = text.trim();
     if text.is_empty() {
         return Err(Refused::Empty);
@@ -76,7 +89,7 @@ pub fn checked(text: &str) -> Result<Option<String>, Refused> {
     if text.chars().count() > MOST {
         return Err(Refused::TooLong);
     }
-    Ok((text != USUAL).then(|| text.to_string()))
+    Ok(text.to_string())
 }
 
 /// How to write what he is told: his text when he has one, else the usual.
@@ -89,12 +102,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn his_text_is_kept_trimmed_and_the_usual_or_nothing_is_not_his() {
-        assert_eq!(checked("  Call me sir.\n"), Ok(Some("Call me sir.".into())));
-        assert_eq!(checked(USUAL), Ok(None));
-        assert_eq!(checked(&format!("\n{USUAL}  ")), Ok(None));
+    fn his_text_is_kept_trimmed_whatever_it_says_and_nothing_is_refused() {
+        assert_eq!(checked("  Call me sir.\n"), Ok("Call me sir.".into()));
+        // the usual text saved as it is: his, kept as he saved it
+        assert_eq!(checked(&format!("\n{USUAL}  ")), Ok(USUAL.to_string()));
         assert_eq!(checked(" \n "), Err(Refused::Empty));
-        assert_eq!(checked(&"a".repeat(MOST)), Ok(Some("a".repeat(MOST))));
+        assert_eq!(checked(&"a".repeat(MOST)), Ok("a".repeat(MOST)));
+        assert_eq!(thousands(8000), "8,000");
+        assert_eq!(thousands(999), "999");
+        assert_eq!(thousands(1_234_567), "1,234,567");
         assert_eq!(checked(&"é".repeat(MOST + 1)), Err(Refused::TooLong));
         assert!(USUAL.chars().count() < MOST / 2);
         assert_eq!(how(None), USUAL);

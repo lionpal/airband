@@ -20,6 +20,9 @@ use crate::takes::{Aim, Unheard};
 
 pub(crate) const RATE: u32 = 16000;
 
+/// Said after why he was not heard: nothing of it is lost.
+pub(crate) const KEPT: &str = "Your recording is in the chat to try again.";
+
 mod bidi;
 mod chunks;
 mod usp;
@@ -330,8 +333,18 @@ impl Ears {
         if matches!(got, Got::Failed(_)) {
             tape.rest(manual);
         }
-        host.record_stop();
-        self.chosen.takes.ended(tape.done(), got)
+        tape.record_stop();
+        let heard = self.chosen.takes.ended(tape.done(), got);
+        self.tell_unheard(host, &heard);
+        heard
+    }
+
+    /// What listened did not hear him: he is told why, once, with the tone the host makes for anything that
+    /// went wrong. The recording waits in the chat.
+    fn tell_unheard(&self, host: &dyn RadioHost, heard: &Listened) {
+        if let Listened::Unheard { why, .. } = heard {
+            host.told(format!("{} {KEPT}", why.told()));
+        }
     }
 
     /// Hear again a take that was not heard, from its recording, by what he has chosen now. What came of it is
@@ -352,10 +365,23 @@ impl Ears {
         };
         let Some(pcm) = takes.replay(id) else {
             host.told("This phone could not read that recording. Unlock it and try again.".into());
-            return Listened::Unheard { take: id.into() };
+            return Listened::Cannot;
         };
-        let got = self.by(&crate::takes::Replay::of(host, &pcm), mic, true);
-        takes.heard_again(id, got)
+        // A live service is given the recording as fast as it was spoken, as it was given him, and is waited
+        // for to end its turn. One that also takes a whole recording is given it whole: no waiting at all.
+        let upload = match self.chosen.ears.using() {
+            Some(Own::Service(with)) if crate::hears::by_upload(&with) => Some(with),
+            _ => None,
+        };
+        let (mic, paced) = match (mic, upload) {
+            (Mic::Live { .. }, Some(with)) => (Mic::OwnUpload { phrases: self.chosen.ears.phrases.lock().unwrap_or_else(|e| e.into_inner()).clone(), with }, false),
+            (mic @ Mic::Live { .. }, None) => (mic, true),
+            (other, _) => (other, false),
+        };
+        let got = self.by(&crate::takes::Replay::of(host, &pcm, paced), mic, true);
+        let heard = takes.heard_again(id, got);
+        self.tell_unheard(host, &heard);
+        heard
     }
 
     /// What one way of hearing made of the microphone `host` gives: the words, or why there are none. Whether
@@ -374,6 +400,8 @@ impl Ears {
             Mic::OwnUpload { with, phrases } => match record(host, manual) {
                 None => Got::Words(None),
                 Some(pcm) => {
+                    // he has finished: the microphone closes now, with its tone, and not after the upload
+                    host.record_stop();
                     host.status(RadioStatus::Sending);
                     match crate::hears::transcribe(&with, &crate::hears::wav(RATE, &pcm), &phrases) {
                         Ok(text) => Got::Words(Some(text)),
@@ -486,6 +514,8 @@ fn by_model(host: &dyn RadioHost, held: &crate::engines::Held, manual: bool) -> 
         })
     });
     let Some(pcm) = clip else { return Ok(None) };
+    // he has finished: the microphone closes now, with its tone, and not after the last reading
+    host.record_stop();
     host.status(RadioStatus::Sending);
     read(bytes(&pcm)).map(|text| Some(text.trim().to_string()).filter(|t| !t.is_empty()))
 }
@@ -497,8 +527,10 @@ mod kept_tests;
 mod tests {
     use super::*;
 
+    /// A service of the catalogue's that listens live, with this key.
     fn scribe(key: &str) -> Use {
-        crate::services::service_of("elevenlabs", "scribe", key, std::collections::HashMap::new())
+        let (p, o) = airband_core::providers::in_order(Job::Ears).into_iter().find(|(_, o)| live(o).is_some()).expect("a row that listens live");
+        crate::services::service_of(&p.id, &o.id, key, std::collections::HashMap::new())
     }
 
     #[test]

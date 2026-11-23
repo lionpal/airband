@@ -196,7 +196,7 @@ impl Serve {
             return self.refused(call, via, Refusal::NotAllowed);
         }
         let body = if call.body.is_null() { Body::empty() } else { Body::from(serde_json::to_vec(&call.body).unwrap_or_default()) };
-        let mut req = Request::builder().method(call.method.as_str()).uri(&call.path).header("authorization", format!("Bearer {}", self.app.cfg().radio_token)).header(VIA_HEADER, via).header(airband_core::radio::SCHEMA_HEADER, &call.schema).extension(super::super::http::RadioId(self.keys.channel.clone())).header("content-type", "application/json");
+        let mut req = Request::builder().method(call.method.as_str()).uri(&call.path).header("authorization", airband_core::token::as_bearer(&self.app.cfg().radio_token)).header(VIA_HEADER, via).header(airband_core::radio::SCHEMA_HEADER, &call.schema).extension(super::super::http::RadioId(self.keys.channel.clone())).header("content-type", "application/json");
         if now {
             req = req.header(PRESENCE_HEADER, serde_json::to_string(&call.presence).unwrap_or_default());
         }

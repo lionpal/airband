@@ -407,9 +407,10 @@ impl Desk {
     }
     /// The computers he is paired with, as the links `airband pair` printed, one each. Replaces whatever set
     /// was there: a computer that stays is left as it is, connection and all; one no longer listed is let go;
-    /// a new one is connected. Returns the links that were taken: one that is not a pairing link is left out.
-    /// What was last seen from each is on screen at once, before any connection.
-    pub fn set_links(&self, links: Vec<String>) -> Vec<String> {
+    /// a new one is connected. Returns the links that were taken, and what he is told of any that could not be:
+    /// one that is not a pairing link this build reads is left out. What was last seen from each is on screen at
+    /// once, before any connection.
+    pub fn set_links(&self, links: Vec<String>) -> PairedLinks {
         let mut wanted: Vec<String> = Vec::new();
         links.into_iter().for_each(|l| if !wanted.contains(&l) { wanted.push(l) });
         let (calling, new): (bool, Vec<(String, u64)>) = {
@@ -420,10 +421,17 @@ impl Desk {
         };
         // each new computer is connected outside the lock: what it last showed is read from this device
         let mut made: Vec<Computer> = Vec::new();
+        let mut unread = 0;
         for (link, epoch) in new {
             // a link that does not say what its computer is called is not a pairing link: left out
-            let Ok(named) = airband_core::pairing::Pairing::computer(&link) else { continue };
-            let Ok(radio) = self.connect(&link, None) else { continue };
+            let Ok(named) = airband_core::pairing::Pairing::computer(&link) else {
+                unread += 1;
+                continue;
+            };
+            let Ok(radio) = self.connect(&link, None) else {
+                unread += 1;
+                continue;
+            };
             radio.set_call_mode(calling);
             // what it last said it is called, kept on the phone; until it has said, what its link calls it
             let (kept, kept_model) = { let saved = radio.store.saved.lock().unwrap(); (saved.computer.clone(), saved.model.clone()) };
@@ -490,7 +498,7 @@ impl Desk {
             thread::spawn(move || follow(shared, radio, id, epoch));
         }
         self.shared.host.changed();
-        taken
+        PairedLinks { links: taken, unread: unread_links(unread) }
     }
     /// The app is in front of him again. A request that was open when it went to the background is dead and
     /// would not be noticed for most of a minute, so a computer that has not answered lately is asked afresh,
@@ -597,5 +605,23 @@ impl Desk {
     /// once under one id.
     fn senders_of(&self, id: &str) -> Vec<Arc<Radio>> {
         self.shared.state.lock().unwrap().computers.iter().filter(|s| s.radio.unsent().iter().any(|o| o.id == id)).map(|s| s.radio.clone()).collect()
+    }
+}
+
+/// What came of pairing a set of links ([`Desk::set_links`]).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PairedLinks {
+    /// The links taken: the ones to keep.
+    pub links: Vec<String>,
+    /// What he is told of the links that could not be used, counted right; nothing when every one could.
+    pub unread: Option<String>,
+}
+
+/// What he is told of `n` pairing links this build could not use: each of those computers is to be paired again.
+fn unread_links(n: usize) -> Option<String> {
+    match n {
+        0 => None,
+        1 => Some("A pairing link on this phone can't be used. Pair that computer again from the computer.".into()),
+        n => Some(format!("{n} pairing links on this phone can't be used. Pair each of those computers again from the computer.")),
     }
 }
