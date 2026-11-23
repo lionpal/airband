@@ -10,7 +10,7 @@ mod chosen;
 mod later;
 mod models;
 use brief::*;
-pub(in crate::tower) use later::{JUDGE_NOW, judge_entry, judge_later};
+pub(in crate::tower) use later::{JUDGE_NOW, judge_later, judge_marked};
 pub(in crate::tower) use chosen::*;
 pub(crate) use models::*;
 
@@ -357,7 +357,7 @@ pub(super) async fn detail_by(app: &Arc<App>, model: &dyn Model, id: &str) -> Op
     if let Some(d) = entry.detail {
         return Some(d);
     }
-    let item = Item { id: entry.id.clone(), notice: false, full: entry.full.clone(), kind: entry.kind, say: entry.short.clone(), asked: None };
+    let item = Item { notice: false, full: entry.full.clone(), kind: entry.kind, say: entry.short.clone(), asked: None };
     let name = app.cfg().name.clone();
     match detail(model, &name, &item).await {
         Ok(d) => {
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn the_answer_the_model_recommended_stays_marked_when_an_answer_before_it_is_dropped() {
-        let item = Item { id: "e".into(), notice: false, full: "Which?".into(), kind: Some(Kind::NeedsYou), say: None, asked: None };
+        let item = Item { notice: false, full: "Which?".into(), kind: Some(Kind::NeedsYou), say: None, asked: None };
         let answer = Answer { kind: Kind::NeedsYou, say: "Which one?".into(), options: vec!["".into(), "Ship it".into(), "Wait".into()], recommended: Some(2), read: None, background: false, own_session: false, as_written: false };
         let j = judged(&item, answer);
         assert_eq!(j.options, vec!["Ship it".to_string(), "Wait".to_string()]);

@@ -4,7 +4,6 @@ use super::*;
 /// What the judge is given to read: one thing an agent said, as it stands in the log.
 #[derive(Clone)]
 pub(super) struct Item {
-    pub(super) id: String,
     /// It needs him at the keyboard; a spoken reply cannot help.
     pub(super) notice: bool,
     pub(super) full: String,
@@ -179,7 +178,7 @@ pub(super) const LOG_KEEP: usize = 1000;
 impl Inner {
     /// What the judge reads of a line.
     pub(super) fn item(&self, e: &Entry) -> Item {
-        Item { asked: e.agent.as_deref().and_then(|a| self.last_instruction(a)), id: e.id.clone(), notice: e.notice, full: e.said_whole(), kind: e.kind, say: e.short.clone() }
+        Item { asked: e.agent.as_deref().and_then(|a| self.last_instruction(a)), notice: e.notice, full: e.said_whole(), kind: e.kind, say: e.short.clone() }
     }
     /// The agent has taken in what was delivered under `receipt`: the lines that delivery carried are marked read.
     pub(super) fn took(&mut self, receipt: &str, at: u64) {

@@ -83,17 +83,8 @@ pub(super) async fn feed(State(app): State<Arc<App>>, RadioId(radio): RadioId, A
             unjudged.sort_by_key(|e| (!latest.contains(&e.id), std::cmp::Reverse(e.seq)));
             let later = unjudged.split_off(unjudged.len().min(JUDGE_NOW));
             judge_later(&app, later);
-            let mut tasks = tokio::task::JoinSet::new();
-            for e in unjudged {
-                let app = app.clone();
-                tasks.spawn(async move { (e.id.clone(), judge_entry(&app, e).await) });
-            }
-            let done = tasks.join_all().await;
-            let mut inner = app.change();
-            for (id, j) in done {
-                inner.fill(&id, &j);
-                push::consider(&app, &mut inner, &id);
-            }
+            // marked as being judged, like every other judging: two readers of the feed pay for a line once
+            judge_marked(&app, unjudged.into_iter().map(|e| e.id).collect(), JUDGE_NOW).await;
         }
         let inner = app.read();
         // if the only changes since this answer was started are to the lines in it (their short versions were
