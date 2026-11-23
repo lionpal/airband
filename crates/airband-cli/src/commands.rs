@@ -6,7 +6,8 @@ use airband_core::pairing::Pairing;
 
 /// `airband relay <url> [--admission <key>]` / `airband relay off`
 pub(crate) fn relay(cfg: Config, args: &[String]) -> Result<(), String> {
-    match args.first().map(String::as_str) {
+    let read = crate::words("relay", args, &["--admission"], &[])?;
+    match read.rest.first().map(String::as_str) {
         None => println!("{}", cfg.relay.as_deref().map(|r| format!("Your phone reaches this computer through {r}.")).unwrap_or("No relay: your phone reaches this computer at its own addresses, on the same network or over a private network.".into())),
         Some("off") => {
             config::change(|now| {
@@ -30,7 +31,7 @@ pub(crate) fn relay(cfg: Config, args: &[String]) -> Result<(), String> {
             }
             config::change(|now| {
                 now.relay = Some(url.trim_end_matches('/').to_string());
-                now.relay_admission = crate::option(args, "--admission");
+                now.relay_admission = read.flag("admission").map(String::from);
                 Ok(())
             })?;
             println!("Relay set to {url}. If airband is running it picks this up within ten seconds. Next: airband pair");
@@ -76,22 +77,27 @@ pub(crate) fn model(cfg: Config, args: &[String]) -> Result<(), String> {
             // which of its offers: the one named after it, or the only one it has for this job. With several
             // and none named, he is asked which.
             let ways: Vec<_> = providers::in_order(job).into_iter().filter(|(q, _)| q.id == p.id).map(|(_, o)| o).collect();
-            let named = args.get(1).filter(|a| !a.starts_with("--"));
-            let o = match (named, ways.as_slice()) {
+            // every flag this provider's offers ask for, and the key's: any other is refused, never passed over
+            let fields: Vec<String> = ways.iter().flat_map(|o| o.asks.iter().map(|a| format!("--{}", a.field))).chain(["--key-env".to_string()]).collect();
+            let read = crate::words(cmd, args, &fields.iter().map(String::as_str).collect::<Vec<_>>(), &[])?;
+            if read.rest.len() > 2 || !read.after.is_empty() {
+                return Err(format!("airband {cmd} takes a provider, one of its ways, and flags; not \"{}\"", read.rest.get(2).or(read.after.first()).cloned().unwrap_or_default()));
+            }
+            let o = match (read.rest.get(1), ways.as_slice()) {
                 (Some(name), _) => ways.iter().find(|o| o.id == **name).ok_or_else(|| format!("{} has nothing called \"{name}\" for this: {}", p.name, ways.iter().map(|o| o.id.as_str()).collect::<Vec<_>>().join(", ")))?,
                 (None, [only]) => only,
                 (None, _) => return Err(format!("{} does this more than one way. Say which:  airband {cmd} {id} <{}>", p.name, ways.iter().map(|o| o.id.as_str()).collect::<Vec<_>>().join(" | "))),
             };
             let mut u = Use::of(&p.id, &o.id);
             if p.key {
-                u.key = match crate::option(args, "--key-env") {
-                    Some(var) => std::env::var(&var).ok().filter(|k| !k.is_empty()).ok_or_else(|| format!("{var} is not set"))?,
+                u.key = match read.flag("key-env") {
+                    Some(var) => std::env::var(var).ok().filter(|k| !k.is_empty()).ok_or_else(|| format!("{var} is not set"))?,
                     // one he already gave for this provider will do
                     None => cfg.key_of(&p.id).ok_or_else(|| format!("{} needs a key: --key-env <VARIABLE>, or give one first with  airband keys add {id}", p.name))?,
                 };
             }
             for a in &o.asks {
-                if let Some(said) = crate::option(args, &format!("--{}", a.field)) {
+                if let Some(said) = read.flag(&a.field) {
                     u.set.insert(a.field.clone(), serde_json::Value::String(said.to_string()));
                 }
             }

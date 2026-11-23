@@ -54,11 +54,22 @@ impl std::ops::Deref for Reading<'_> {
 impl App {
     /// Look at the tower's state.
     pub(super) fn read(&self) -> Reading<'_> {
-        Reading(self.inner.lock().unwrap())
+        Reading(self.hold())
     }
     /// Change the tower's state: what changed in it is written once the hold is let go.
     pub(super) fn change(&self) -> Changing<'_> {
-        Changing { app: self, inner: self.inner.lock().unwrap(), tell: false }
+        Changing { app: self, inner: self.hold(), tell: false }
+    }
+    /// The state, held. A holder that panicked part way through a change stops the whole tower (the failure
+    /// hook, `serve::stop_whole_on_failure`), which is started again whole; in a test, or while that hook is
+    /// finishing, the state is taken as it was left, never made to panic every holder after it. What he said
+    /// whose answer the writer has written since is let go as being answered.
+    fn hold(&self) -> std::sync::MutexGuard<'_, Inner> {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        for id in self.saver.written() {
+            inner.answering.remove(&id);
+        }
+        inner
     }
     /// Let go of the agents that have gone and the requests for leave nobody waits on: written down, and the
     /// radios told, when there were any.

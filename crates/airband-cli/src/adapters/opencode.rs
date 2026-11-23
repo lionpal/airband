@@ -145,8 +145,21 @@ fn worked() -> Vec<super::Worked> {
     get("/api/session?limit=200").map(|list| worked_of(&list)).unwrap_or_default()
 }
 fn worked_of(list: &Value) -> Vec<super::Worked> {
-    let found = list["data"].as_array().into_iter().flatten().filter_map(|s| Some(super::Worked { folder: s["location"]["directory"].as_str().filter(|d| !d.is_empty())?.to_string(), at: s["time"]["updated"].as_u64().unwrap_or(0) }));
+    // one that does not say when it was last worked in is left out, never given a time made up for it
+    let found = list["data"].as_array().into_iter().flatten().filter_map(|s| Some(super::Worked { folder: s["location"]["directory"].as_str().filter(|d| !d.is_empty())?.to_string(), at: s["time"]["updated"].as_u64()? }));
     super::newest(found)
+}
+
+/// What a session is marked as told when it is first seen, by its own clocks: on the first look, everything (it was
+/// said before the tower started); later, its work if that was just said. One new since the first look whose turn
+/// is already over (it began and ended between two looks) is marked as never having been idle, so the next look
+/// says what it answered.
+fn first_seen(first: bool, working: bool, busy: u64, idle: u64) -> (u64, u64) {
+    if first {
+        return (busy, idle);
+    }
+    let over = busy > 0 && idle >= busy;
+    (if working || over { busy } else { 0 }, if over { 0 } else { idle })
 }
 
 /// Watch OpenCode's server for as long as the tower runs: what its sessions are doing, what they say and
@@ -176,7 +189,7 @@ fn watch(tower: Tower) {
                     // what was already there when the tower started has been said already: nothing of it is
                     // said again
                     let working = !first && busy > idle && send(id, cwd, Event::Working);
-                    seen.insert(id.to_string(), (if first || working { busy } else { 0 }, idle));
+                    seen.insert(id.to_string(), first_seen(first, working, busy, idle));
                 }
                 Some((was_busy, was_idle)) => {
                     let (mut told_busy, mut told_idle) = (was_busy, was_idle);
@@ -265,6 +278,26 @@ impl super::Harness for OpenCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_session_that_began_and_ended_between_two_looks_has_its_answer_said() {
+        // on the first look, nothing already there is said again
+        assert_eq!(first_seen(true, false, 5, 9), (5, 9));
+        // later, one already over is marked so the next look finds its turn newly ended
+        let (told_busy, told_idle) = first_seen(false, false, 5, 9);
+        assert!(9 > told_idle && 9 >= 5 && told_busy == 5);
+        // one that is working was just said to be
+        assert_eq!(first_seen(false, true, 9, 5), (9, 5));
+        // one that has never worked is not said to have answered
+        assert_eq!(first_seen(false, false, 0, 3), (0, 3));
+    }
+
+    #[test]
+    fn a_folder_that_does_not_say_when_it_was_worked_in_is_left_out() {
+        let list: Value = serde_json::from_str(r#"{"data":[{"location":{"directory":"/w/a"},"time":{}},{"location":{"directory":"/w/b"},"time":{"updated":7}}]}"#).unwrap();
+        let worked = worked_of(&list);
+        assert_eq!(worked.iter().map(|w| (w.folder.as_str(), w.at)).collect::<Vec<_>>(), [("/w/b", 7)]);
+    }
     use serde_json::json;
 
     #[test]

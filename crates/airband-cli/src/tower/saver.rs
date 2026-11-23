@@ -15,6 +15,9 @@ enum Job {
 
 pub(crate) struct Saver {
     jobs: mpsc::Sender<Job>,
+    /// The ids of what he said whose answers are now written, for the state to let go of as being answered (see
+    /// [`Saver::written`]). Held only to add to it or empty it.
+    written: Arc<Mutex<Vec<String>>>,
 }
 
 /// Asks the writer to finish, and waits at most so long: the writer may be what failed.
@@ -35,6 +38,8 @@ impl Saver {
     /// Start writing to `store`, on a thread of its own.
     pub(super) fn start(store: Arc<Store>) -> Saver {
         let (jobs, taken) = mpsc::channel::<Job>();
+        let written: Arc<Mutex<Vec<String>>> = Default::default();
+        let answered = written.clone();
         std::thread::Builder::new()
             .name("airband-saver".into())
             .spawn(move || {
@@ -44,6 +49,9 @@ impl Saver {
                 let mut told = false;
                 let mut attempt = |batch: Batch, unwritten: &mut Option<Batch>| match store.write(&batch) {
                     Ok(()) => {
+                        if !batch.receipts.is_empty() {
+                            answered.lock().unwrap_or_else(|e| e.into_inner()).extend(batch.receipts.iter().map(|(id, _)| id.clone()));
+                        }
                         if told {
                             log("database: what could not be written before is written now");
                         }
@@ -93,7 +101,14 @@ impl Saver {
                 }
             })
             .expect("a thread to write the tower's state");
-        Saver { jobs }
+        Saver { jobs, written }
+    }
+
+    /// The ids of what he said whose answers have been written since this was last asked: one whose answer the
+    /// writer could not write at first, and wrote later, is let go then, so the same words sent again are given
+    /// that answer, never told for good that they are still being answered.
+    pub(super) fn written(&self) -> Vec<String> {
+        std::mem::take(&mut *self.written.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
     /// Hand over what is to be written. Called while the state is held, so batches are written in the order
@@ -171,6 +186,25 @@ mod tests {
         // nothing else changes: the one change that failed is still written
         assert!(app.saver.flush());
         assert_eq!(app.store.load(10).unwrap().0.sessions.len(), 1, "the change it refused is written once it can be");
+    }
+
+    #[tokio::test]
+    async fn an_answer_written_only_after_a_failed_flush_is_let_go_as_being_answered_once_written() {
+        let app = crate::tower::http::tests::app("saver-answering");
+        drop(app.change());
+        app.flush();
+        app.store.hold().execute_batch("PRAGMA query_only = ON").unwrap();
+        {
+            let mut inner = app.change();
+            inner.answering.insert("u1".into());
+            inner.answered.push(("u1".into(), Reply::default()));
+        }
+        assert!(!app.saver.flush(), "not written yet");
+        assert!(app.read().answering.contains("u1"), "kept as being answered while it is not written");
+        app.store.hold().execute_batch("PRAGMA query_only = OFF").unwrap();
+        // written by the saver's own retry, with nobody in the utterance's task waiting on it
+        assert!(app.saver.flush());
+        assert!(!app.change().answering.contains("u1"), "written: no longer being answered, so a resend is given the answer");
     }
 
     #[tokio::test]

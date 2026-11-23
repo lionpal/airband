@@ -412,7 +412,8 @@ pub(crate) fn hook(name: Option<&str>) -> Result<(), String> {
     std::io::stdin().read_to_string(&mut input).ok();
     let notification: Value = serde_json::from_str(&input).unwrap_or_default();
     // the harness is about to ask for permission at the keyboard: ask him on the radio first
-    if let Some(request) = adapter.permission(&notification) {
+    if let Some(mut request) = adapter.permission(&notification) {
+        as_held(&mut request.agent);
         if let Some((allow, reason)) = ask_him(&request) {
             println!("{}", adapter.permission_answer(&request, allow, &reason));
         }
@@ -420,16 +421,55 @@ pub(crate) fn hook(name: Option<&str>) -> Result<(), String> {
         return Ok(());
     }
     for mut event in adapter.events(&notification) {
-        // An agent the tower runs whose program was not started under the id the tower gave it is known by
-        // that id all the same, whatever its harness calls the session: its holder says so (`hold.rs`). True
-        // of any harness, so it is said here and not in each adapter.
-        if let Some(id) = env("AIRBAND_HELD_ID") {
-            event.agent.id = id;
-            event.agent.deliver = Some(airband_core::agent::Deliver::Held);
-        }
+        as_held(&mut event.agent);
         post(&event);
     }
     Ok(())
+}
+
+/// Set by a holder on the program it runs (`tower/held.rs`): this agent is one the tower holds.
+const HELD: &str = "AIRBAND_HELD";
+/// Set by a holder whose program was not started under the id the tower gave it: that id.
+const HELD_ID: &str = "AIRBAND_HELD_ID";
+
+/// Whether this hook runs inside an agent the tower holds. Decided here, once, for every harness.
+pub(crate) fn held() -> bool {
+    env(HELD).is_some() || env(HELD_ID).is_some()
+}
+
+/// An agent the tower holds, as it is reported: reached through the input its holder keeps and no other way,
+/// with no title of the harness's making (a session carried on in a new process comes with one he never gave
+/// it), and known by the id the tower gave it whatever its harness calls the session. True of any harness, so
+/// it is said here and not in each adapter.
+fn as_held(agent: &mut Agent) {
+    if !held() {
+        return;
+    }
+    agent.deliver = Some(airband_core::agent::Deliver::Held);
+    agent.title = None;
+    if let Some(id) = env(HELD_ID) {
+        agent.id = id;
+    }
+}
+
+#[cfg(test)]
+mod held_tests {
+    use super::*;
+
+    #[test]
+    fn an_agent_the_tower_holds_is_reported_as_held_whatever_its_harness_said() {
+        test_env::clear();
+        let mut agent = Agent { title: Some("made up by the tool".into()), deliver: Some(airband_core::agent::Deliver::Harness { name: "t".into(), session: "s".into() }), ..agent_with("s", "t") };
+        as_held(&mut agent);
+        assert_eq!((agent.id.as_str(), agent.title.as_deref()), ("s", Some("made up by the tool")), "not held: left as the harness said");
+        assert!(matches!(agent.deliver, Some(airband_core::agent::Deliver::Harness { .. })));
+        test_env::set(HELD, "1");
+        test_env::set(HELD_ID, "given");
+        as_held(&mut agent);
+        assert_eq!((agent.id.as_str(), agent.title.as_deref()), ("given", None));
+        assert!(matches!(agent.deliver, Some(airband_core::agent::Deliver::Held)));
+        test_env::clear();
+    }
 }
 
 #[cfg(test)]

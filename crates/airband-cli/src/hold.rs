@@ -27,6 +27,12 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 
+/// Why the holder could not read a line the tower told it, said by where and of what kind, never by the
+/// parser's own words: those quote what was in the line, which can be his words, and this reason is logged.
+fn unreadable(e: &serde_json::Error) -> String {
+    format!("its holder could not read what it was told ({:?}, at column {})", e.classify(), e.column())
+}
+
 /// What the tower says to a holder.
 pub(crate) enum Tell {
     /// His words, as the agent's next turn, and the id this delivery of them goes under.
@@ -203,7 +209,7 @@ impl By {
 /// Run a coding tool's program held for the tower (`airband hold --sock … --by … -- program args`), driving it
 /// as `--by` says until it ends.
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
-    let crate::Words { flags: named, rest: stray, after: argv } = crate::words("hold", args, &["--sock", "--cwd", "--id", "--harness", "--by", "--line", "--stop", "--session", "--mode", "--model", "--effort"])?;
+    let crate::Words { flags: named, rest: stray, after: argv, .. } = crate::words("hold", args, &["--sock", "--cwd", "--id", "--harness", "--by", "--line", "--stop", "--session", "--mode", "--model", "--effort"], &[])?;
     if let Some(word) = stray.first() {
         return Err(format!("airband hold does not take \"{word}\""));
     }
@@ -292,7 +298,7 @@ fn listen(sock: &str, state: Arc<Mutex<State>>, tx: mpsc::Sender<Msg>) -> Result
                     Ok(ToHolder::Stop) => Tell::Stop,
                     Ok(ToHolder::End) => Tell::End,
                     Err(e) => {
-                        writeln!(conn, "{}", Answer::Refused { why: format!("its holder could not read what it was told: {e}") }.line()).ok();
+                        writeln!(conn, "{}", Answer::Refused { why: unreadable(&e) }.line()).ok();
                         continue;
                     }
                 };
@@ -381,6 +387,14 @@ mod by_tests {
         let lines = airband_core::tools::Held::Lines { fresh: Vec::new(), resume: Vec::new(), line: "{text}".into(), stop: None };
         assert_eq!(By::read(By::of(&lines).word()), Some(By::Lines));
         assert_eq!(By::read("lines "), None);
+    }
+
+    #[test]
+    fn a_line_the_holder_cannot_read_is_refused_without_quoting_it() {
+        let e = serde_json::from_str::<ToHolder>(r#"{"line":"buy the blue umbrella"}"#).map(|_| ()).unwrap_err();
+        assert!(e.to_string().contains("umbrella"), "the parser's own words quote the line");
+        let why = unreadable(&e);
+        assert!(!why.contains("umbrella") && why.contains("could not read"), "{why}");
     }
 }
 

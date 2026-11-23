@@ -40,7 +40,7 @@ fn row(what: &str) -> String {
 }
 /// The arguments that start a sign-in, as the row lists them; nothing when it lists none, never the tool run bare.
 pub(super) fn sign_in_args() -> Option<Vec<String>> {
-    super::tool_row(HARNESS).and_then(|t| t.with.get("sign_in")).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
+    super::tool_row(HARNESS).and_then(|t| t.with.get("sign_in")).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect::<Vec<_>>()).filter(|a| !a.is_empty())
 }
 
 /// Where in the tool's login item, and in a saved copy of it, the account's login is kept: its row says.
@@ -165,7 +165,7 @@ fn saved_token(here: &Here, email: &str, may_refresh: bool) -> Res<String> {
         return Err(format!("Not checked: {} did not say which account is in use, so this login was not refreshed in case it is that one.", maker()));
     }
     let n = service::refresh(here, o)?;
-    let new_token = n["accessToken"].as_str().unwrap_or_default().to_string();
+    let new_token = n["accessToken"].as_str().filter(|t| !t.is_empty()).ok_or(ADD_AGAIN)?.to_string();
     // the account record it was saved with, or the real one fetched now with its own token
     let acct = entry.get("oauthAccount").filter(|a| a["accountUuid"].is_string()).cloned().or_else(|| service::profile(here, &new_token).map(|(_, a)| a)).ok_or(ADD_AGAIN)?;
     saved::keep(here, email, &n, &acct)?;

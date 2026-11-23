@@ -137,7 +137,13 @@ impl Default for Pulling {
 impl Pulling {
     /// A tower that has just started: a new id, nothing got, nothing being answered.
     pub fn new() -> Pulling {
-        Pulling { tower: random_hex(8), got: None, answering: None }
+        Pulling::of_tower(random_hex(8))
+    }
+    /// A tower that has just started under the id it keeps (made once on that computer and kept): a pull it made
+    /// before a restart, or under another spelling of the relay's address, is then its own, never another
+    /// computer's.
+    pub fn of_tower(tower: impl Into<String>) -> Pulling {
+        Pulling { tower: tower.into(), got: None, answering: None }
     }
     /// The headers for the next pull: its version and tower, what the last pull got, and the kept message being
     /// answered for.

@@ -37,12 +37,11 @@ fn agent_of(hook: &Value) -> Option<Agent> {
         harness: HARNESS.into(),
         cwd: text(hook, "cwd"),
         name: env("AIRBAND_NAME"),
-        // one the tower holds keeps the name it has: a session carried on in a new process comes with a name of
-        // the harness's own making, which is not one he gave it
-        title: if env("AIRBAND_HELD").is_some() { None } else { session_name(hook) },
+        // one the tower holds keeps the name it has (`super::as_held`)
+        title: session_name(hook),
         pid: row_env("pid_env").and_then(|p| p.parse().ok()),
-        // one the tower started and holds is reached through the input it holds, and no other way
-        deliver: if env("AIRBAND_HELD").is_some() { Some(Deliver::Held) } else { row_env("inbox_env").and_then(|s| s.strip_prefix(super::row_says(HARNESS, "inbox_scheme").as_str()).map(|path| Deliver::Socket { path: path.to_string(), token: row_env("inbox_token_env") })) },
+        // one the tower started and holds is reached through the input it holds, and no other way (`super::as_held`)
+        deliver: row_env("inbox_env").and_then(|s| s.strip_prefix(super::row_says(HARNESS, "inbox_scheme").as_str()).map(|path| Deliver::Socket { path: path.to_string(), token: row_env("inbox_token_env") })),
         // where its transcript is, so the tower can ask what it is doing without a hook on every step
         meta: text(hook, "transcript_path").map(|t| serde_json::Map::from_iter([("transcript".to_string(), Value::String(t))])).unwrap_or_default(),
     })
@@ -82,16 +81,25 @@ fn is_subagent(hook: &Value) -> bool {
 
 /// The files Claude Code's own tool for handing him a file was given: its `files` field, a list of paths.
 /// Whether one is a picture is found out from the file itself, when the tower makes its copy.
+/// A path relative to no folder (the hook said none) is left out, and said: it is never looked for in whatever
+/// folder this hook happens to run in.
 fn files_sent(hook: &Value) -> Vec<String> {
-    let cwd = hook["cwd"].as_str();
+    let cwd = hook["cwd"].as_str().filter(|c| !c.is_empty());
     hook["tool_input"]["files"]
         .as_array()
         .into_iter()
         .flatten()
         .filter_map(Value::as_str)
-        .map(|s| {
+        .filter_map(|s| {
             let path = std::path::Path::new(s);
-            if path.is_absolute() { path.to_path_buf() } else { std::path::Path::new(cwd.unwrap_or(".")).join(path) }
+            match (path.is_absolute(), cwd) {
+                (true, _) => Some(path.to_path_buf()),
+                (false, Some(cwd)) => Some(std::path::Path::new(cwd).join(path)),
+                (false, None) => {
+                    eprintln!("airband: a file it handed over is named from its folder, and the hook did not say which folder that is; it was left out");
+                    None
+                }
+            }
         })
         .filter(|path| path.is_file())
         .map(|path| path.display().to_string())
@@ -140,7 +148,7 @@ fn made_artifact(hook: &Value) -> Option<Event> {
 /// Is this a script calling `claude -p`? Those have nobody waiting on them, unless he asked to hear them or the
 /// tower runs it.
 fn headless() -> bool {
-    row_env("entry_env") == Some(super::row_says(HARNESS, "headless_entry")) && super::stand_in("AIRBAND_INCLUDE_HEADLESS").is_none() && env("AIRBAND_HELD").is_none()
+    row_env("entry_env") == Some(super::row_says(HARNESS, "headless_entry")) && super::stand_in("AIRBAND_INCLUDE_HEADLESS").is_none() && !super::held()
 }
 
 /// A session id that can name a file: nothing in it may leave the folder.
@@ -220,6 +228,31 @@ impl super::Harness for ClaudeCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_remote_control_name_is_counted_in_characters_not_bytes() {
+        let line = |name: &str| format!(r#"{{"type":"system","subtype":"local_command","commandRun":{{"command":"remote-control","args":"{name}"}}}}"#);
+        let wide = "é".repeat(40);
+        assert_eq!(remote_control_line(line(&wide).as_bytes()), Some(wide.clone()), "40 characters is 80 bytes");
+        assert_eq!(remote_control_line(line(&"é".repeat(61)).as_bytes()), None);
+    }
+
+    #[test]
+    fn a_relative_file_with_no_folder_is_left_out_never_looked_for_here() {
+        let dir = std::env::temp_dir().join(format!("airband-sent-{}", crate::config::random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.png"), b"x").unwrap();
+        let hook = |cwd: Option<&str>| {
+            let mut h: Value = serde_json::from_str(r#"{"tool_input":{"files":["a.png"]}}"#).unwrap();
+            if let Some(cwd) = cwd {
+                h["cwd"] = Value::String(cwd.into());
+            }
+            h
+        };
+        assert_eq!(files_sent(&hook(Some(dir.to_str().unwrap()))), [dir.join("a.png").display().to_string()]);
+        assert!(files_sent(&hook(None)).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     use serde_json::json;
 
     #[test]

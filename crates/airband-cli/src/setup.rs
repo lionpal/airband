@@ -219,10 +219,7 @@ pub(crate) fn keys(args: &[String]) -> Result<(), String> {
         Some("carry") => match crate::vault::carry() {
             Ok(true) => println!("The keys are out of the keychain and kept in an encrypted file. Install the new copy of airband now: it puts them back in the keychain."),
             Ok(false) => println!("There is nothing in the keychain to move."),
-            Err(why) => {
-                airband_io::files::write_atomic(&crate::vault::carry_asked(), "").map_err(|e| e.to_string())?;
-                println!("The keychain cannot be read from here ({why}).\nairband moves the keys the next time it starts:  airband install");
-            }
+            Err(why) => println!("{}", crate::vault::after_failed_carry(&why)?),
         },
         Some(other) => return Err(format!("airband keys takes add, remove or carry, not \"{other}\"")),
     }

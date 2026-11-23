@@ -7,6 +7,10 @@
 //! - `receipts`: every utterance id the tower has taken, with the answer it gave. A retry of the same id gets the
 //!   same answer and is never delivered twice, across restarts.
 //! - `deliveries`: each attempt to hand his words to an agent, and how it went.
+//! - `replays`: the id of every sealed request a radio sent the tower, with when, for as long as one counts as
+//!   fresh: a copy played back is dropped, after a restart too.
+//! - `tower`: the id this computer pulls from the relay under, made once: its own pull from before a restart is
+//!   never taken for another computer's.
 //! - `state`: who is on the radio, his teams, the agents the tower holds, and (apart) where each phone can be
 //!   woken. Small, rewritten on change.
 //!
@@ -66,7 +70,9 @@ impl Store {
              create table if not exists events (n integer primary key autoincrement, at integer not null, agent text not null, harness text not null, event text not null, agent_doc text);
              create table if not exists receipts (id text primary key, at integer not null, reply text);
              create table if not exists deliveries (n integer primary key autoincrement, at integer not null, message text not null, callsign text not null, ok integer not null, error text, utterance text);
-             create table if not exists state (key text primary key, value text not null);",
+             create table if not exists state (key text primary key, value text not null);
+             create table if not exists replays (id text primary key, at integer not null);
+             create table if not exists tower (one integer primary key check (one = 1), id text not null);",
         )
         .map_err(|e| format!("cannot prepare {}: {e}", path.display()))?;
         // columns added since the table was first made: what a request for leave asked and where it stands,
@@ -318,6 +324,22 @@ impl Store {
         }
     }
 
+    /// Is this the first time a sealed request of this id has come? Ids are kept for `keep_ms` after they came,
+    /// across restarts, so a recorded request played back after the tower started again is still dropped. An
+    /// error says it could not be checked: the request is not run, since it could be a second time.
+    pub(super) fn first_time(&self, id: &str, now: u64, keep_ms: u64) -> Result<bool, String> {
+        let db = self.db.lock().unwrap();
+        db.execute("delete from replays where at < ?1", params![now.saturating_sub(keep_ms) as i64]).map_err(|e| e.to_string())?;
+        db.execute("insert into replays (id, at) values (?1, ?2) on conflict (id) do nothing", params![id, now as i64]).map(|n| n == 1).map_err(|e| e.to_string())
+    }
+
+    /// The id this computer pulls from the relay under: made the first time it is asked for, and kept.
+    pub(super) fn tower_id(&self) -> Result<String, String> {
+        let db = self.db.lock().unwrap();
+        db.execute("insert into tower (one, id) values (1, ?1) on conflict (one) do nothing", params![airband_core::encode::random_hex(8)]).map_err(|e| e.to_string())?;
+        db.query_row("select id from tower where one = 1", [], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())
+    }
+
     /// `utterance` is the id the radio gave what he said, when it gave one.
     pub(super) fn delivery(&self, message: &str, utterance: Option<&str>, callsign: &str, outcome: &Result<(), String>) {
         let db = self.db.lock().unwrap();
@@ -423,6 +445,28 @@ mod tests {
         // a line saved again under its team's id is kept under it
         s.put_messages(&[Entry { seq: 1, id: "a".into(), team: Some(TeamId::new("/w/garden")), ..Entry::default() }]);
         assert_eq!(s.load(10).unwrap().1[0].team, Some(TeamId::new("/w/garden")));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_replayed_request_is_dropped_after_a_restart_too_and_let_go_once_it_is_stale() {
+        let (s, path) = store("replays");
+        assert_eq!(s.first_time("r1", 1_000, 100), Ok(true));
+        assert_eq!(s.first_time("r1", 1_050, 100), Ok(false));
+        drop(s);
+        let s = Store::open(&path).unwrap();
+        assert_eq!(s.first_time("r1", 1_060, 100), Ok(false), "the tower started again and still knows it");
+        assert_eq!(s.first_time("r1", 1_200, 100), Ok(true), "too old to count as fresh: forgotten");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn the_tower_pulls_under_one_id_kept_across_restarts() {
+        let (s, path) = store("tower-id");
+        let id = s.tower_id().unwrap();
+        assert_eq!(s.tower_id().unwrap(), id);
+        drop(s);
+        assert_eq!(Store::open(&path).unwrap().tower_id().unwrap(), id);
         let _ = std::fs::remove_file(path);
     }
 

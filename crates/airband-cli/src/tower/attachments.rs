@@ -82,49 +82,48 @@ fn take_in(root: &Path, part: AttachmentPart) -> Result<u64, String> {
     let mut file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&path).map_err(|e| e.to_string())?;
     if end > MOST || part.total > MOST {
         if let Err(e) = airband_io::files::remove_folder(&dir) {
-            log(format!("a file too large to take could not be cleared away ({e}): {}", dir.display()));
+            log(format!("a file too large to take could not be cleared away ({e})"));
         }
         return Err("that file is too large".into());
     }
-    let (next, whole) = {
-        // The radio says how long the file is, and its parts come in any order, several at once. Each is
-        // written where it belongs, and what has come is kept beside the file until all of it has.
-        {
-            let total = part.total;
-            if end > total {
-                return Err("a part runs past the end of the file".into());
-            }
-            file.seek(SeekFrom::Start(part.from)).map_err(|e| e.to_string())?;
-            file.write_all(&bytes).map_err(|e| e.to_string())?;
-            let _guard = GOT.lock().unwrap();
-            // a part sent again after the file was whole: it is whole still, and what came is not counted afresh
-            // from a note that went when it was
-            if dir.join(".whole").exists() {
-                return Ok(total);
-            }
-            let note = dir.join(".got");
-            let mut got: Vec<(u64, u64)> = airband_io::files::read_text(&note).ok().flatten().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-            got.push((part.from, part.from + bytes.len() as u64));
-            got.sort();
-            // how far it is whole from the start
-            let mut have = 0u64;
-            for (from, to) in &got {
-                if *from > have {
-                    break;
-                }
-                have = have.max(*to);
-            }
-            if have >= total {
-                airband_io::files::remove(&note).ok();
-            } else {
-                airband_io::files::write_atomic(&note, serde_json::to_string(&got).unwrap_or_default()).map_err(|e| e.to_string())?;
-            }
-            (have, have >= total)
+    // The radio says how long the file is, and its parts come in any order, several at once. Each is written where
+    // it belongs, and what has come is kept beside the file until all of it has. Whether it is whole, and its mark
+    // saying so, are settled under one hold, so a part sent again meanwhile never writes a partial record back.
+    if end > part.total {
+        return Err("a part runs past the end of the file".into());
+    }
+    file.seek(SeekFrom::Start(part.from)).map_err(|e| e.to_string())?;
+    file.write_all(&bytes).map_err(|e| e.to_string())?;
+    let (next, first_whole) = {
+        let _guard = GOT.lock().unwrap_or_else(|e| e.into_inner());
+        // a part sent again after the file was whole: it is whole still, and what came is not counted afresh
+        // from a note that went when it was
+        if dir.join(".whole").exists() {
+            return Ok(part.total);
         }
+        let note = dir.join(".got");
+        let mut got: Vec<(u64, u64)> = airband_io::files::read_text(&note).ok().flatten().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+        got.push((part.from, end));
+        got.sort();
+        // how far it is whole from the start
+        let mut have = 0u64;
+        for (from, to) in &got {
+            if *from > have {
+                break;
+            }
+            have = have.max(*to);
+        }
+        if have >= part.total {
+            // the file is named where it is first whole: what is read back is this name, never whatever the folder
+            // lists first
+            airband_io::files::write_atomic(&dir.join(".whole"), path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()).map_err(|e| e.to_string())?;
+            airband_io::files::remove(&note).ok();
+        } else {
+            airband_io::files::write_atomic(&note, serde_json::to_string(&got).unwrap_or_default()).map_err(|e| e.to_string())?;
+        }
+        (have, have >= part.total)
     };
-    if whole && !dir.join(".ready").exists() && !dir.join(".whole").exists() {
-        // the file is named where it is first whole: what is read back is this name, never whatever the folder lists first
-        airband_io::files::write_atomic(&dir.join(".whole"), path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()).map_err(|e| e.to_string())?;
+    if first_whole {
         // its name is his: the log has its size only
         log(format!("he attached a file of {} KB", next / 1024));
         if what(&path) == What::Video {
@@ -136,36 +135,65 @@ fn take_in(root: &Path, part: AttachmentPart) -> Result<u64, String> {
     Ok(next)
 }
 
+/// The videos whose frames are being pulled out now, by folder: each is told when its program has ended, so a
+/// message that carries one waits for exactly that, never a guess at how long it takes.
+static MAKING: std::sync::Mutex<Vec<(PathBuf, tokio::sync::watch::Receiver<bool>)>> = std::sync::Mutex::new(Vec::new());
+
 /// Pull a frame a second out of a video, beside it, so an agent has something it can look at, with the program
-/// the frames row names. Without it the video is still there and the agent is told to pull frames itself.
-fn frames(video: &Path) {
+/// the frames row names. Without it the video is still there and the agent is told to pull frames itself. Its
+/// folder is in [`MAKING`] until the program has ended and `.ready` says so.
+fn frames(video: &Path) -> tokio::sync::watch::Receiver<bool> {
     let (video, dir) = (video.to_path_buf(), video.parent().map(Path::to_path_buf).unwrap_or_default());
+    let (done, waiting) = tokio::sync::watch::channel(false);
+    MAKING.lock().unwrap_or_else(|e| e.into_inner()).push((dir.clone(), waiting.clone()));
     std::thread::spawn(move || {
         let out = dir.join("frames");
         // each program its rows name is tried in turn; the first that runs and succeeds is the one that did it
-        let ran = airband_io::files::make_folder(&out).map_err(|_| ()).and_then(|_| {
-            airband_core::catalog::frames_programs()
-                .iter()
-                .find_map(|f| {
-                    std::process::Command::new(&f.program)
-                        .args(f.run(&video.display().to_string(), FRAMES, &out.display().to_string()))
-                        .stdin(std::process::Stdio::null())
-                        .output()
-                        .ok()
-                        .filter(|o| o.status.success())
-                })
-                .ok_or(())
-        });
-        if !matches!(&ran, Ok(o) if o.status.success())
-            && let Err(e) = airband_io::files::remove_folder(&out)
-        {
-            log(format!("the frames of a video that could not be read could not be cleared away ({e}): {}", out.display()));
+        let ran = airband_io::files::make_folder(&out).is_ok()
+            && airband_core::catalog::frames_programs().iter().any(|f| {
+                std::process::Command::new(&f.program)
+                    .args(f.run(&video.display().to_string(), FRAMES, &out.display().to_string()))
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .is_ok_and(|s| s.success())
+            });
+        if !ran && let Err(e) = airband_io::files::remove_folder(&out) {
+            // its name is his: never in the log
+            log(format!("the frames of a video that could not be read could not be cleared away ({e})"));
         }
-        // without its mark the file is never offered to an agent, so a mark that cannot be made is said
+        // without its mark the file is never offered to an agent after a restart, so a mark that cannot be made is
+        // said; those waiting now are told all the same, since the program has ended
         if let Err(e) = airband_io::files::write_atomic(&dir.join(".ready"), "") {
-            log(format!("the video {} could not be marked ready: {e}", video.display()));
+            log(format!("a video he attached could not be marked ready ({e})"));
         }
+        MAKING.lock().unwrap_or_else(|e| e.into_inner()).retain(|(d, _)| *d != dir);
+        done.send(true).ok();
     });
+    waiting
+}
+
+/// Wait until the frames of the video in `dir` are all there: at once when it is marked ready; else until the
+/// program making them ends; else (the tower stopped while they were being made) they are made again, and waited
+/// for. Never a folder half written.
+async fn frames_done(dir: &Path, video: &Path) {
+    let waiting = {
+        let making = MAKING.lock().unwrap_or_else(|e| e.into_inner());
+        if dir.join(".ready").exists() {
+            return;
+        }
+        making.iter().find(|(d, _)| d == dir).map(|(_, w)| w.clone())
+    };
+    let mut waiting = match waiting {
+        Some(w) => w,
+        None => {
+            airband_io::files::remove_folder(&dir.join("frames")).ok();
+            frames(video)
+        }
+    };
+    // its sender dropping is its program having ended too
+    waiting.wait_for(|done| *done).await.ok();
 }
 
 pub(super) struct Attached {
@@ -175,23 +203,28 @@ pub(super) struct Attached {
     pub(super) frames: Vec<PathBuf>,
 }
 
-/// The file behind an id, once all of it has arrived. Waits a little for a video's frames.
+/// The file behind an id, once all of it has arrived. A video's frames are waited for until all are there.
 pub(super) async fn find(id: &str) -> Option<Attached> {
+    find_in(&root(), id).await
+}
+
+/// [`find`], in the attachments folder `root`.
+async fn find_in(root: &Path, id: &str) -> Option<Attached> {
     if !hex(id) {
         return None;
     }
-    let dir = root().join(id);
-    for _ in 0..80 {
-        if dir.join(".ready").exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
+    let dir = root.join(id);
     let name = airband_io::files::read_text(&dir.join(".whole")).ok().flatten().filter(|n| !n.is_empty())?;
     let path = Some(dir.join(safe(&name))).filter(|p| p.is_file())?;
-    // no folder of frames is no frames; one that cannot be read is said, and the file is offered without them
+    if what(&path) == What::Video {
+        frames_done(&dir, &path).await;
+    }
+    // no folder of frames is no frames; one that cannot be read is said (never his file's name), and the file is
+    // offered without them
     let mut frames: Vec<PathBuf> = airband_io::files::entries(&dir.join("frames")).unwrap_or_else(|e| {
-        log(format!("the frames beside {} could not be read: {e}", path.display()));
+        if e.kind() != std::io::ErrorKind::NotFound {
+            log(format!("the frames beside a video he attached could not be read ({e})"));
+        }
         Vec::new()
     });
     frames.sort();
@@ -269,6 +302,46 @@ mod tests {
         // its answer was lost, and the radio sends the first part again
         assert_eq!(take_in(&root, part(0, b"abc")).unwrap(), 6);
         assert!(!root.join(&id).join(".got").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A video whose frames are still being made is offered only once its program has ended, with every frame,
+    /// and nothing of his file's name is written in the log on the way.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_videos_frames_are_waited_for_until_their_program_has_ended() {
+        let root = std::env::temp_dir().join(format!("airband-frames-{}", config::random_hex(4)));
+        let id = "cd".repeat(8);
+        let dir = root.join(&id);
+        std::fs::create_dir_all(dir.join("frames")).unwrap();
+        std::fs::write(dir.join("secret-holiday.mp4"), b"\0\0\0\x18ftypmp42\0\0\0\0mp42isom").unwrap();
+        std::fs::write(dir.join(".whole"), "secret-holiday.mp4").unwrap();
+        // its program is still running: one frame written so far
+        let (done, waiting) = tokio::sync::watch::channel(false);
+        MAKING.lock().unwrap().push((dir.clone(), waiting));
+        std::fs::write(dir.join("frames").join("f001.jpg"), b"x").unwrap();
+        let (found_root, found_id) = (root.clone(), id.clone());
+        let found = tokio::spawn(async move { find_in(&found_root, &found_id).await });
+        // until it waits on the program
+        while done.receiver_count() < 2 {
+            tokio::task::yield_now().await;
+        }
+        assert!(!found.is_finished(), "offered while its frames were still being made");
+        std::fs::write(dir.join("frames").join("f002.jpg"), b"x").unwrap();
+        std::fs::write(dir.join(".ready"), "").unwrap();
+        MAKING.lock().unwrap().retain(|(d, _)| *d != dir);
+        done.send(true).ok();
+        let a = found.await.unwrap().unwrap();
+        assert_eq!(a.frames.len(), 2, "every frame, never part of them");
+        assert!(!crate::tower::logged::take().iter().any(|l| l.contains("secret-holiday")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn a_file_not_yet_whole_is_not_found_and_nothing_is_waited_for() {
+        let root = std::env::temp_dir().join(format!("airband-notyet-{}", config::random_hex(4)));
+        let part = AttachmentPart { id: "ef".repeat(8), name: "a.txt".into(), from: 0, total: 6, data: airband_core::encode::base64(b"abc") };
+        assert_eq!(take_in(&root, part), Ok(3));
+        assert!(find_in(&root, &"ef".repeat(8)).await.is_none());
         let _ = std::fs::remove_dir_all(&root);
     }
 

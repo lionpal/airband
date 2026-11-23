@@ -190,7 +190,7 @@ fn clock() -> String {
 }
 fn log(msg: impl AsRef<str>) {
     #[cfg(test)]
-    logged::LINES.with(|l| l.borrow_mut().push(msg.as_ref().to_string()));
+    logged::push(msg.as_ref());
     println!("{} {}", clock(), msg.as_ref());
 }
 
@@ -201,17 +201,28 @@ fn alive(pid: u32) -> bool {
     edges::procs::SystemProcs.alive(pid)
 }
 
-/// Ask a process to end: asked, not killed ([`edges::procs::Procs::terminate`]).
-fn terminate(pid: u32) {
-    use edges::procs::Procs;
-    edges::procs::SystemProcs.terminate(pid)
-}
 
-/// What a test thread wrote to the tower's log, for a test to see that something is never written there.
+/// What was written to the tower's log by any thread (a tokio worker, a blocking task, a link's own thread), for
+/// a test to see that something is, or is never, written there. Kept for the whole run and never emptied, so one
+/// test taking its lines never takes another's.
 #[cfg(test)]
 pub(crate) mod logged {
-    thread_local!(pub(super) static LINES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) });
+    static LINES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    thread_local!(static READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) });
+    pub(super) fn push(line: &str) {
+        LINES.lock().unwrap_or_else(|e| e.into_inner()).push(line.to_string());
+    }
+    /// Every line written, by any thread, since this thread last took them (since the run began, the first time).
     pub(crate) fn take() -> Vec<String> {
-        LINES.with(|l| std::mem::take(&mut *l.borrow_mut()))
+        let lines = LINES.lock().unwrap_or_else(|e| e.into_inner());
+        let from = READ.with(|r| r.replace(lines.len()));
+        lines[from.min(lines.len())..].to_vec()
+    }
+
+    #[test]
+    fn a_line_written_on_another_thread_is_seen() {
+        take();
+        std::thread::spawn(|| super::log("written off the test thread: k1-off-thread")).join().unwrap();
+        assert!(take().iter().any(|l| l == "written off the test thread: k1-off-thread"));
     }
 }

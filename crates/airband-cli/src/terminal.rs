@@ -68,16 +68,16 @@ impl RadioHost for Terminal {
 }
 
 pub(crate) fn run(cfg: &Config, args: &[String]) -> Result<(), String> {
-    let flag = |name: &str| crate::option(args, name);
-    let link = link_from(cfg, args);
+    let read = crate::words("radio", args, &["--link", "--window"], &[])?;
+    let link = link_from(cfg, read.flag("link"));
     let route = match Pairing::parse(&link)? {
         Pairing::Relay { relay, .. } => format!("through the relay at {relay}"),
         Pairing::Near { at, .. } => format!("directly to {}, encrypted", at.join(" or ")),
         Pairing::Direct { url, .. } => format!("directly to {url}"),
     };
-    // a window he typed that is not a number is said, never taken as the usual one
-    let window = match flag("--window") {
-        Some(s) => s.parse().map_err(|_| format!("--window takes a number of lines, not {s}"))?,
+    // how long a typed reply is waited for; one he typed that is not a number is said, never taken as the usual one
+    let window = match read.flag("window") {
+        Some(s) => s.parse().map_err(|_| format!("--window takes a number of seconds, not {s}"))?,
         None => 20,
     };
     let (tx, rx) = channel();
@@ -87,8 +87,9 @@ pub(crate) fn run(cfg: &Config, args: &[String]) -> Result<(), String> {
         listening: listening.clone(),
         window: Duration::from_secs(window),
     });
-    println!("Connected, {route}. Type a line to talk; start it with an agent's name to pick who gets it.");
+    // said once it is started, never before: the radio has reached nothing yet, and says when it cannot
     let radio = Radio::start(link, String::new(), host).map_err(|e| e.to_string())?;
+    println!("{}", started_line(&route));
     radio.set_call_mode(true);
     for line in std::io::stdin().lock().lines() {
         let Ok(line) = line else { break };
@@ -129,19 +130,19 @@ impl RadioHost for Silent {
     }
 }
 
-fn link_from(cfg: &Config, args: &[String]) -> String {
-    // a link he gives needs none of the kept keys
-    let linked = args.iter().any(|a| a == "--link");
-    if let (false, Err(why)) = (linked, cfg.keys_read()) {
-        eprintln!("airband: {why}");
-        std::process::exit(2);
-    }
-    link_or_here(cfg, args)
+/// What he is told once the terminal's radio has started: which way it goes, never that it has reached anything.
+fn started_line(route: &str) -> String {
+    format!("Started, {route}. Type a line to talk; start it with an agent's name to pick who gets it.")
 }
 
 /// The pairing link he gave with `--link`, or with none, straight to the tower on this machine.
-fn link_or_here(cfg: &Config, args: &[String]) -> String {
-    crate::option(args, "--link").unwrap_or_else(|| Pairing::Direct { url: format!("http://127.0.0.1:{}", cfg.port), token: cfg.radio_token.clone() }.link())
+fn link_from(cfg: &Config, link: Option<&str>) -> String {
+    // a link he gives needs none of the kept keys
+    if let (None, Err(why)) = (link, cfg.keys_read()) {
+        eprintln!("airband: {why}");
+        std::process::exit(2);
+    }
+    link.map(String::from).unwrap_or_else(|| Pairing::Direct { url: format!("http://127.0.0.1:{}", cfg.port), token: cfg.radio_token.clone() }.link())
 }
 
 /// An agent as the feed's roster has it, for finding by name: its id, its team's id, and its callsign as shown
@@ -184,21 +185,22 @@ fn agent_named(roster: &[Named], named: &str) -> Result<String, String> {
 /// `airband feed [--team <team> | --agent "<callsign>"] [--once]`: the chat, in a terminal. Each message is the
 /// short version.
 pub(crate) fn feed(cfg: &Config, args: &[String]) -> Result<(), String> {
-    let radio = Radio::start(link_from(cfg, args), String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
-    let once = args.iter().any(|a| a == "--once");
-    let flag = |name: &str| crate::option(args, name);
+    let read = crate::words("feed", args, &["--team", "--agent", "--link"], &["--once"])?;
+    let radio = Radio::start(link_from(cfg, read.flag("link")), String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
+    let once = read.is_on("once");
     // the team and the agent he named, by their ids: the feed goes by ids, and a name is only shown
-    let (team, agent) = match (flag("--team"), flag("--agent")) {
+    let (team, agent) = match (read.flag("team"), read.flag("agent")) {
         (None, None) => (None, None),
         (team, agent) => {
             let roster = roster(&radio)?;
-            (team.map(|named| team_named(&roster, &named)).transpose()?, agent.map(|named| agent_named(&roster, &named)).transpose()?)
+            (team.map(|named| team_named(&roster, named)).transpose()?, agent.map(|named| agent_named(&roster, named)).transpose()?)
         }
     };
-    let mut after = 0;
+    let (mut after, mut first) = (0, true);
     loop {
         let f = radio.feed(team.clone(), agent.clone(), after, if once { 0 } else { airband_core::radio::wire::FeedQuery::WAIT_MOST }).map_err(|e| e.to_string())?;
-        if after == 0 {
+        // who is on the radio is said with the first answer only, never again with each long wait that follows
+        if std::mem::take(&mut first) {
             let who: Vec<String> = f.agents.iter().map(|a| format!("{}{}", a.callsign, if a.waiting { " (waiting)" } else { "" })).collect();
             println!("Your agents: {}", if who.is_empty() { "nobody".into() } else { who.join(", ") });
         }
@@ -220,11 +222,11 @@ pub(crate) fn feed(cfg: &Config, args: &[String]) -> Result<(), String> {
 /// `airband launch <team> [--tool <id>] [--model <name>] [--effort <name>] [task…]`: start a new agent in one of
 /// his teams. The flags are this command's own; the task is everything else, in his words.
 pub(crate) fn launch(cfg: &Config, args: &[String]) -> Result<(), String> {
-    let crate::Words { mut flags, rest, .. } = crate::words("launch", args, &["--tool", "--model", "--effort", "--link"])?;
+    let crate::Words { mut flags, rest, .. } = crate::words("launch", args, &["--tool", "--model", "--effort", "--link"], &[])?;
     let Some((project, task)) = rest.split_first() else {
         return Err("say which team: airband launch <team> [--tool <id>] [--model <name>] [--effort <name>] [task]".into());
     };
-    let radio = Radio::start(link_from(cfg, args), String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
+    let radio = Radio::start(link_from(cfg, flags.get("link").map(String::as_str)), String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
     // the tower starts it in a team by the team's id: the name he typed only finds it
     let team = team_named(&roster(&radio)?, project)?;
     println!("{}", radio.launch(team, flags.remove("tool"), flags.remove("model"), flags.remove("effort"), task.join(" ")).map_err(|e| e.to_string())?);
@@ -233,15 +235,16 @@ pub(crate) fn launch(cfg: &Config, args: &[String]) -> Result<(), String> {
 
 /// `airband send "@shop2 leave them"`: say something from the terminal.
 pub(crate) fn send(cfg: &Config, args: &[String]) -> Result<(), String> {
-    let words: Vec<&str> = args.iter().take_while(|a| *a != "--link").map(String::as_str).collect();
+    // his words, and after a lone `--` words of his that start with dashes
+    let read = crate::words("send", args, &["--link"], &["--keep-trying"])?;
+    let words: Vec<&str> = read.rest.iter().chain(&read.after).map(String::as_str).collect();
     if words.is_empty() {
         return Err("say what to send: airband send \"@shop2 leave them\"  (@group and @all work too)".into());
     }
-    let words: Vec<&str> = words.into_iter().filter(|w| *w != "--keep-trying").collect();
-    if args.iter().any(|a| a == "--keep-trying") {
+    if read.is_on("keep-trying") {
         // what the phone app does: hand it over and let the radio get it through whenever it can
         let dir = crate::config::dir().join("radio");
-        let radio = Radio::start(link_from(cfg, args), dir.display().to_string(), Arc::new(Silent)).map_err(|e| e.to_string())?;
+        let radio = Radio::start(link_from(cfg, read.flag("link")), dir.display().to_string(), Arc::new(Silent)).map_err(|e| e.to_string())?;
         // the tower says what came of it in the feed, which the radio follows as the app does
         {
             let radio = radio.clone();
@@ -266,7 +269,7 @@ pub(crate) fn send(cfg: &Config, args: &[String]) -> Result<(), String> {
             }
         }
     }
-    let radio = Radio::start(link_from(cfg, args), String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
+    let radio = Radio::start(link_from(cfg, read.flag("link")), String::new(), Arc::new(Silent)).map_err(|e| e.to_string())?;
     println!("{}", radio.send(words.join(" "), None).map_err(|e| e.to_string())?);
     Ok(())
 }
@@ -278,6 +281,12 @@ mod tests {
     fn named(id: &str, team: &str, project: &str, number: &str) -> Named {
         let parts = airband_core::routing::Callsign { project: project.into(), number: number.into(), named: false };
         Named { id: id.into(), team: team.into(), shown: parts.shown(), parts }
+    }
+
+    #[test]
+    fn the_terminal_never_says_it_is_connected_before_anything_was_reached() {
+        let said = started_line("through the relay at r");
+        assert!(!said.contains("Connected") && said.starts_with("Started"));
     }
 
     #[test]

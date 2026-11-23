@@ -64,7 +64,7 @@ pub(super) fn offers(inner: &Inner, name: &str, launcher: &config::Launcher) -> 
 }
 
 /// An agent that is there: what its tool calls its session, and what it said a session can be set to.
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(unix), expect(dead_code, reason = "made only from what a holder says on its socket, and holders run on unix only"))]
 struct Started {
     session: Option<String>,
     offers: airband_core::tools::Offers,
