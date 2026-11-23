@@ -227,11 +227,29 @@ fn new_token() -> String {
     random_hex(24)
 }
 
+/// His home folder. A test never gets his real one: it gets a folder of its own under the system's temporary
+/// one, or the one it put in place (`tests_home::set`).
 pub(crate) fn home() -> PathBuf {
+    #[cfg(test)]
+    return tests_home::get();
+    #[cfg(not(test))]
     std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).expect("no home directory (HOME or USERPROFILE)")
 }
 pub(crate) fn dir() -> PathBuf {
     home().join(".airband")
+}
+
+#[cfg(test)]
+pub(crate) mod tests_home {
+    use std::path::PathBuf;
+    thread_local!(static HOME: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) });
+    /// Give this test thread a home of its own.
+    pub(crate) fn set(home: PathBuf) {
+        HOME.with(|h| *h.borrow_mut() = Some(home));
+    }
+    pub(crate) fn get() -> PathBuf {
+        HOME.with(|h| h.borrow().clone()).unwrap_or_else(|| std::env::temp_dir().join(format!("airband-test-home-{}", std::process::id())))
+    }
 }
 
 pub(crate) use airband_io::files::write_private;

@@ -92,7 +92,7 @@ fn transmit(app: &Arc<App>, inner: &mut Inner, radio: &str, t: Transmission) {
 /// then every hour.
 fn remind_after(times_offered: u32) -> Duration {
     // for trying reminders without waiting ten minutes
-    if let Some(secs) = std::env::var("AIRBAND_REMIND_SECONDS").ok().and_then(|s| s.parse().ok()) {
+    if let Some(secs) = crate::adapters::stand_in("AIRBAND_REMIND_SECONDS").and_then(|s| s.parse().ok()) {
         return Duration::from_secs(secs);
     }
     Duration::from_secs(match times_offered {

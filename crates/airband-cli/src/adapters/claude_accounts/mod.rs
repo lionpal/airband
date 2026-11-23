@@ -84,9 +84,7 @@ fn login_item(moved: Option<&std::path::Path>) -> String {
 /// A stand-in the end-to-end suites put in place of the account service and the keychain items. Only a build made
 /// with the `stand-ins` feature reads these: the airband he installs never does, so nothing set in his shell can
 /// send his logins anywhere else.
-fn stand_in(key: &str) -> Option<String> {
-    if cfg!(feature = "stand-ins") { super::env(key) } else { None }
-}
+use super::stand_in;
 
 impl Here {
     fn this_computer() -> Here {

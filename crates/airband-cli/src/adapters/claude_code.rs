@@ -139,7 +139,7 @@ fn made_artifact(hook: &Value) -> Option<Event> {
 /// Is this a script calling `claude -p`? Those have nobody waiting on them, unless he asked to hear them or the
 /// tower runs it.
 fn headless() -> bool {
-    row_env("entry_env") == Some(super::row_says(HARNESS, "headless_entry")) && env("AIRBAND_INCLUDE_HEADLESS").is_none() && env("AIRBAND_HELD").is_none()
+    row_env("entry_env") == Some(super::row_says(HARNESS, "headless_entry")) && super::stand_in("AIRBAND_INCLUDE_HEADLESS").is_none() && env("AIRBAND_HELD").is_none()
 }
 
 /// A session id that can name a file: nothing in it may leave the folder.
@@ -229,6 +229,30 @@ mod tests {
         assert_eq!(super::super::home_given(HARNESS, None), crate::config::home().join(".claude"));
         // every tool by the same rule, from its own row
         assert_eq!(super::super::home_given("opencode", None), crate::config::home().join(".local/state"));
+    }
+
+    /// A hook is read with the environment and home the test gives it, never this process's: run from inside one of
+    /// his sessions (or under `claude -p`), nothing of that session's is read.
+    #[test]
+    fn a_hook_reads_only_the_environment_and_home_it_is_given() {
+        crate::adapters::test_env::clear();
+        let home = std::env::temp_dir().join(format!("airband-home-{}", crate::config::random_hex(6)));
+        crate::config::tests_home::set(home.clone());
+        assert_eq!(claude_home(), home.join(".claude"));
+        let hook = json!({ "session_id": "s1", "cwd": "/x/shop", "hook_event_name": "Stop", "last_assistant_message": "Done." });
+        let plain = agent_of(&hook).unwrap();
+        assert_eq!((plain.pid, plain.name.as_deref(), plain.deliver.as_ref()), (None, None, None));
+        // a session record under the given home names the session; nothing is read from his own
+        std::fs::create_dir_all(home.join(".claude/sessions")).unwrap();
+        std::fs::write(home.join(".claude/sessions/77.json"), json!({ "sessionId": "s1", "name": "shop", "nameSource": "user" }).to_string()).unwrap();
+        crate::adapters::test_env::set(&super::super::row_says(HARNESS, "pid_env"), "77");
+        assert_eq!(agent_of(&hook).unwrap().title.as_deref(), Some("shop"));
+        // a one-off run, by what the test says, reports nothing
+        crate::adapters::test_env::set(&super::super::row_says(HARNESS, "entry_env"), &super::super::row_says(HARNESS, "headless_entry"));
+        assert!(events(&hook).is_empty());
+        crate::adapters::test_env::clear();
+        assert_eq!(events(&hook).len(), 1);
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]

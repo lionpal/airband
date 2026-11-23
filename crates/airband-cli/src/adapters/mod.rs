@@ -345,8 +345,37 @@ pub(crate) fn names() -> Vec<&'static str> {
     HARNESSES.iter().map(|h| h.name()).collect()
 }
 
+/// A variable this process was started with, empty taken as unset. A test never reads the real environment:
+/// it sees only what it put in its own (`test_env::set`), so a test run inside one of his sessions reads nothing
+/// of that session's.
 pub(crate) fn env(k: &str) -> Option<String> {
+    #[cfg(test)]
+    return test_env::get(k);
+    #[cfg(not(test))]
     std::env::var(k).ok().filter(|v| !v.is_empty())
+}
+
+/// A switch only the end-to-end suites set (a stand-in address, a shorter wait, a trace): read only by a build
+/// made with the `stand-ins` feature, and by tests. The airband he installs never reads one.
+pub(crate) fn stand_in(k: &str) -> Option<String> {
+    if cfg!(feature = "stand-ins") || cfg!(test) { env(k) } else { None }
+}
+
+#[cfg(test)]
+pub(crate) mod test_env {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+    thread_local!(static VARS: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new()));
+    /// Set a variable in this test thread's own environment.
+    pub(crate) fn set(k: &str, v: &str) {
+        VARS.with(|m| m.borrow_mut().insert(k.into(), v.into()));
+    }
+    pub(crate) fn get(k: &str) -> Option<String> {
+        VARS.with(|m| m.borrow().get(k).cloned()).filter(|v| !v.is_empty())
+    }
+    pub(crate) fn clear() {
+        VARS.with(|m| m.borrow_mut().clear());
+    }
 }
 
 /// The folder a coding tool was told to keep its own files in instead of its usual one, by the variable its row

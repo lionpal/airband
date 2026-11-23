@@ -37,7 +37,7 @@ pub(super) fn json_of<T: serde::de::DeserializeOwned>(out: &str) -> Option<T> {
 /// Ask the model and read its answer as JSON of one shape. `what` names the question for the trace: with
 /// `AIRBAND_TRACE` set, what was asked and what came back are logged. Err says why there is no answer.
 pub(super) async fn ask_json<T: serde::de::DeserializeOwned>(model: &dyn Model, what: &str, prompt: String, shape: Option<Value>) -> Result<T, String> {
-    let traced = std::env::var_os("AIRBAND_TRACE").is_some().then(|| prompt.clone());
+    let traced = crate::adapters::stand_in("AIRBAND_TRACE").is_some().then(|| prompt.clone());
     let answer = model.ask(prompt, shape).await;
     if let Some(prompt) = traced {
         log(format!("{what} asked:\n{prompt}\nand was told: {answer:?}"));
