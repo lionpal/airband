@@ -35,7 +35,8 @@ pub struct Frames {
 impl Frames {
     /// The words to run it with, for this video, this many frames, into this folder.
     pub fn run(&self, video: &str, frames: usize, out: &str) -> Vec<String> {
-        self.args.iter().map(|w| w.replace("{video}", video).replace("{frames}", &frames.to_string()).replace("{out}", out)).collect()
+        let frames = frames.to_string();
+        self.args.iter().map(|w| crate::template::filled(w, &[("video", video), ("frames", &frames), ("out", out)])).collect()
     }
 }
 
