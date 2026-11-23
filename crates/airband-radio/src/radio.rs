@@ -261,7 +261,7 @@ impl Radio {
         self.link.trail()
     }
     /// How many of each kind of thing the tower is told in passing did not get there, since the app started.
-    pub(crate) fn lost(&self) -> Vec<(String, u32)> {
+    pub(crate) fn lost(&self) -> Vec<(&'static str, u32)> {
         self.link.lost()
     }
     /// How this computer was last reached, or not, each way: through the relay, and at its own address.

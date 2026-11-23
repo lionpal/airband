@@ -338,8 +338,3 @@ pub struct Feed {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub answers: Vec<Settled>,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct More {
-    pub text: String,
-}

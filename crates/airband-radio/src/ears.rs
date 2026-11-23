@@ -327,7 +327,8 @@ impl Ears {
                                 heard_well();
                                 said(Some(text))
                             }
-                            Err(why) => fail(host, format!("The listening service you chose did not take that: {why}")),
+                            // the service's reason names it already
+                            Err(why) => fail(host, why),
                         }
                     }
                 }

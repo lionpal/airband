@@ -191,12 +191,14 @@ impl Mouth {
             host.play(rate, held, true);
             // a voice that broke off partway was not heard whole: it is not counted as heard
             if let Err(why) = made {
-                return fail(format!("The voice you chose stopped partway: {why}"));
+                return fail(format!("The voice you chose stopped partway. {why}"));
             }
             *self.failed.lock().unwrap_or_else(|e| e.into_inner()) = None;
             return Ok(());
         }
         fail(match made {
+            // a service's reason names it already; a model's is said as the voice not speaking
+            Err(why) if matches!(self.using(), Some(Own::Service(_))) => why,
             Err(why) => format!("The voice you chose did not speak: {why}"),
             Ok(_) => NO_SOUND.into(),
         })

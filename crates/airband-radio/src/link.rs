@@ -86,7 +86,7 @@ pub(crate) struct Link {
     kept_at_relay: std::sync::atomic::AtomicBool,
     /// What the tower was told that nobody waits to hear the answer to (he heard this, he saw that), and
     /// that did not get there: how many of each, since the app started.
-    lost: Mutex<std::collections::BTreeMap<String, u32>>,
+    lost: Mutex<std::collections::BTreeMap<&'static str, u32>>,
     /// Things he said aloud whose outcome someone here is waiting for, by id, and the outcome once the feed
     /// has told it.
     awaited: Mutex<std::collections::HashMap<String, Option<Reply>>>,
@@ -222,12 +222,12 @@ impl Link {
     /// lost; one that did not get there is counted by its route, so the diagnostics say how often that happens.
     pub(crate) fn tell<E: Endpoint<Query = Nothing>>(&self, body: &E::Body) {
         if self.call::<E>(None, &Nothing {}, body).is_err() {
-            *self.lost.lock().unwrap().entry(E::PATH.rsplit('/').next().unwrap_or_default().to_string()).or_default() += 1;
+            *self.lost.lock().unwrap().entry(E::PATH).or_default() += 1;
         }
     }
-    /// How many of each kind of thing told that way did not get there, since the app started.
-    pub(crate) fn lost(&self) -> Vec<(String, u32)> {
-        self.lost.lock().unwrap().iter().map(|(what, n)| (what.clone(), *n)).collect()
+    /// How many of each kind of thing told that way did not get there, since the app started, by its route.
+    pub(crate) fn lost(&self) -> Vec<(&'static str, u32)> {
+        self.lost.lock().unwrap().iter().map(|(what, n)| (*what, *n)).collect()
     }
 
     /// The feed told what came of something he said. Whoever is waiting for it here is given it.
@@ -595,7 +595,7 @@ mod tests {
         let _ = link.utterance_once(&said("0123456789ab", "ship it"));
         link.remark("something worth a line".into());
         link.tell::<at::Heard>(&Heard { id: "m1".into() });
-        assert_eq!(link.lost(), [("heard".to_string(), 1)]);
+        assert_eq!(link.lost(), [(<at::Heard as Endpoint>::PATH, 1)]);
         let had = link.trail();
         assert!(had.len() == 3 && had[1].ends_with("something worth a line"), "{had:?}");
         drop(link);
