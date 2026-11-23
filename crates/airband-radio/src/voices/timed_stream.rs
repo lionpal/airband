@@ -29,7 +29,7 @@ impl Synth for Timed {
         &self.reach.service
     }
     fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8]), mark: &mut dyn FnMut(u32, u32)) -> Result<(), String> {
-        let res = self.reach.sent(self.reach.post(Duration::from_secs(60)).send_json(json!({ "text": text, "model_id": self.model })))?;
+        let res = self.reach.sent(Duration::from_secs(60), self.reach.post().json(&json!({ "text": text, "model_id": self.model })))?;
         // where in the text the service has got to, and whether the character before was a gap between words
         let (mut at, mut gap) = (0u32, true);
         for line in BufReader::new(res.into_body().into_reader()).lines() {

@@ -11,9 +11,9 @@
 //! - Its requests for leave are listed by the same server (`GET …/permission`) and answered there
 //!   (`POST …/permission/<id>/reply`). Each is put to him, and his answer is the one that is sent: once, or
 //!   refused with his reason. One nobody answered from a phone stays where it was, on OpenCode's own screen.
-#![expect(clippy::disallowed_methods, reason = "reaches the tool's own server")]
 #![expect(clippy::disallowed_macros, reason = "the tool's own request bodies")]
 use super::Tower;
+use airband_io::http::Ask;
 use airband_core::agent::{Agent, AgentEvent, Deliver, Event, PermissionAsk};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -36,8 +36,8 @@ fn service() -> Option<(String, String)> {
     Some((v["url"].as_str()?.trim_end_matches('/').to_string(), v["password"].as_str()?.to_string()))
 }
 
-fn client() -> ureq::Agent {
-    airband_io::http::agent(Duration::from_secs(4))
+fn client() -> airband_io::http::Client {
+    airband_io::http::Client::new(Duration::from_secs(4))
 }
 
 /// The sessions the server lists that may be on the radio: the newest few.
@@ -49,13 +49,13 @@ fn auth(password: &str) -> String {
 }
 fn get(path: &str) -> Option<Value> {
     let (url, password) = service()?;
-    let mut res = client().get(format!("{url}{path}")).header("authorization", auth(&password)).call().ok()?;
+    let mut res = client().send(Ask::get(format!("{url}{path}")).header("authorization", auth(&password))).ok()?;
     (res.status().as_u16() == 200).then(|| res.body_mut().read_json::<Value>().ok()).flatten()
 }
 
 fn post(path: &str, body: Value) -> Option<u16> {
     let (url, password) = service()?;
-    client().post(format!("{url}{path}")).header("authorization", auth(&password)).send_json(body).ok().map(|res| res.status().as_u16())
+    client().send(Ask::post(format!("{url}{path}")).header("authorization", auth(&password)).json(&body)).ok().map(|res| res.status().as_u16())
 }
 
 fn agent(id: &str, cwd: Option<&str>) -> Agent {
@@ -229,7 +229,7 @@ fn deliver(session: &str, words: &str) -> Result<(), String> {
 /// Put a session away in OpenCode (its own "archive"): it keeps what was done and stops listing it as current.
 fn put_away(session: &str) -> Result<(), String> {
     let (url, password) = service().ok_or_else(|| format!("{} is not running on this computer.", tool()))?;
-    match client().patch(format!("{url}/api/session/{session}")).header("authorization", auth(&password)).send_json(json!({ "archived": true })) {
+    match client().send(Ask::patch(format!("{url}/api/session/{session}")).header("authorization", auth(&password)).json(&json!({ "archived": true }))) {
         Ok(res) if (200..300).contains(&res.status().as_u16()) => Ok(()),
         Ok(res) => Err(format!("{} did not put it away ({}).", tool(), res.status().as_u16())),
         Err(_) => Err(format!("{} could not be reached.", tool())),

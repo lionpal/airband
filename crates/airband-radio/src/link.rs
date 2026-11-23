@@ -1,7 +1,6 @@
 //! Reaching the tower: straight to it, or sealed through a relay. Everything above this module makes
 //! requests of the radio protocol, each one an [`Endpoint`] of core's, and does not know which way they
 //! travel. A new transport is a new [`Route`].
-#![expect(clippy::disallowed_methods, reason = "the phone's own connection to its computers")]
 use super::*;
 
 mod errors;
@@ -13,6 +12,7 @@ pub(crate) use trail::*;
 pub(crate) const POLL_TIMEOUT: Duration = Duration::from_secs(50);
 
 use airband_core::radio::wire::{self, Endpoint, Nothing, Refusal, at};
+use crate::net::Ask;
 
 /// The way to the tower: straight there, or sealed through a relay. Nothing above this knows which.
 pub(crate) enum Route {
@@ -71,9 +71,9 @@ struct Direct {
 
 pub(crate) struct Link {
     route: Route,
-    agent: ureq::Agent,
+    agent: crate::net::Client,
     /// For the tower's own addresses: quick to give up when it is not there.
-    near: ureq::Agent,
+    near: crate::net::Client,
     direct: Mutex<Direct>,
     /// Every try that failed, every try at sending something he said, and the first that worked after one
     /// that did not: the last few hundred, for him to copy when something is wrong. Kept in a file of the
@@ -94,9 +94,9 @@ pub(crate) struct Link {
 }
 
 /// What a failed send came to: nothing answered, or it took too long.
-fn unsent(e: &ureq::Error, way: Way) -> LinkError {
+fn unsent(e: &crate::net::Error, way: Way) -> LinkError {
     match e {
-        ureq::Error::Timeout(_) => LinkError::TimedOut(way),
+        crate::net::Error::Timeout(_) => LinkError::TimedOut(way),
         _ => LinkError::Unreachable(way),
     }
 }
@@ -111,7 +111,7 @@ impl Link {
     /// in a call by it. Through a relay the tower knows a radio by its pairing and this is not sent.
     /// `trail` is the computer's record of how requests went ([`Trail`]), the same for each of its links.
     pub(crate) fn new(pairing: Pairing, radio: &str, trail: Arc<Trail>) -> Result<Self, String> {
-        let agent = crate::net::agent(POLL_TIMEOUT);
+        let agent = crate::net::Client::new(POLL_TIMEOUT);
         let mut at = Vec::new();
         let route = match pairing {
             Pairing::Near { at: given, secret } => {
@@ -121,7 +121,7 @@ impl Link {
             Pairing::Direct { url, token } => Route::Direct { url, auth: format!("Bearer {token}"), radio: radio.to_string() },
             Pairing::Relay { relay, secret } => Route::Relay { relay, keys: Keys::derive(&secret)? },
         };
-        Ok(Link { route, agent, near: crate::net::agent_quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct { addrs: at, ..Direct::default() }), trail, presence: Mutex::default(), kept_at_relay: Default::default(), lost: Mutex::default(), awaited: Mutex::default(), told: std::sync::Condvar::new() })
+        Ok(Link { route, agent, near: crate::net::Client::quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct { addrs: at, ..Direct::default() }), trail, presence: Mutex::default(), kept_at_relay: Default::default(), lost: Mutex::default(), awaited: Mutex::default(), told: std::sync::Condvar::new() })
     }
 
     /// Reach the tower through `transport` and nothing else.
@@ -270,7 +270,7 @@ impl Link {
             let began = std::time::Instant::now();
             let call = self.sealed_call(method, path, body.clone().unwrap_or(Value::Null));
             let sealed = keys.seal_call(&call);
-            let got = match self.near.post(format!("{addr}/v1/sealed/{}", keys.channel)).header("content-type", "application/octet-stream").send(&sealed[..]) {
+            let got = match self.near.send(Ask::post(format!("{addr}/v1/sealed/{}", keys.channel)).bytes("application/octet-stream", sealed)) {
                 Err(e) => Err(unsent(&e, Way::Near)),
                 // only the tower can make an answer this key opens: anything else at that address is not it
                 Ok(mut res) => match (res.status().as_u16() == 200).then(|| res.body_mut().read_to_vec().ok()).flatten().and_then(|bytes| keys.open_answer(&bytes, &call.id)) {
@@ -323,11 +323,12 @@ impl Link {
                 let presence = serde_json::to_string(&self.presence()).unwrap();
                 let headers = [("authorization", auth.as_str()), (airband_core::radio::RADIO_HEADER, radio.as_str()), (airband_core::radio::PRESENCE_HEADER, &presence), (airband_core::radio::SCHEMA_HEADER, airband_core::radio::SCHEMA)];
                 let address = format!("{url}{path}");
-                let res = match method {
-                    Method::Get => headers.iter().fold(self.agent.get(&address), |r, (k, v)| r.header(*k, *v)).call(),
-                    Method::Post => headers.iter().fold(self.agent.post(&address), |r, (k, v)| r.header(*k, *v)).send_json(body.unwrap_or_else(|| serde_json::Value::Object(Default::default()))),
-                    Method::Delete => headers.iter().fold(self.agent.delete(&address), |r, (k, v)| r.header(*k, *v)).call(),
+                let ask = Ask::to(method.into(), address).headers(headers);
+                let ask = match method {
+                    Method::Post => ask.json(&body.unwrap_or_else(|| serde_json::Value::Object(Default::default()))),
+                    Method::Get | Method::Delete => ask,
                 };
+                let res = self.agent.send(ask);
                 let got = match res {
                     Err(e) => Err(unsent(&e, Way::Paired)),
                     Ok(mut res) => {
@@ -362,11 +363,11 @@ impl Link {
                 let call = self.sealed_call(method, path, body.clone().unwrap_or(Value::Null));
                 let sealed = keys.seal_call(&call);
                 // the token shows the relay this is the channel's own radio: it takes nothing on the channel from anyone else
-                let mut req = self.agent.post(keys.at(relay, "/call")).header("authorization", keys.as_radio()).header("content-type", "application/octet-stream");
+                let mut req = Ask::post(keys.at(relay, "/call")).header("authorization", keys.as_radio());
                 if ordered {
                     req = req.header(airband_core::relay::ORDERED_HEADER, "1");
                 }
-                let got = match req.send(&sealed[..]) {
+                let got = match self.agent.send(req.bytes("application/octet-stream", sealed)) {
                     Err(e) => Err(unsent(&e, Way::Relay)),
                     // anything but 200 is the relay speaking (tower offline, timed out, unknown channel), not the tower
                     Ok(mut res) => match res.status().as_u16() {
@@ -416,7 +417,7 @@ impl Link {
         let began = std::time::Instant::now();
         let path = at::Utterance::PATH;
         let sealed = keys.seal_call(&self.sealed_call(Method::Post, path, serde_json::to_value(u).unwrap()));
-        let kept = match self.agent.post(keys.at(relay, "/queue")).header("authorization", keys.as_radio()).header("content-type", "application/octet-stream").header(airband_core::relay::ID_HEADER, id).send(&sealed[..]) {
+        let kept = match self.agent.send(Ask::post(keys.at(relay, "/queue")).header("authorization", keys.as_radio()).header(airband_core::relay::ID_HEADER, id).bytes("application/octet-stream", sealed)) {
             Err(e) => Err(unsent(&e, Way::Kept)),
             Ok(res) if res.status().as_u16() == 202 => Ok(202),
             Ok(res) => Err(LinkError::HoldRefused(res.status().as_u16())),

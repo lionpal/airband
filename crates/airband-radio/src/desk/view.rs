@@ -54,7 +54,7 @@ impl Desk {
     pub fn set_main_computer(&self, computer: String) {
         let lost = {
             let mut state = self.shared.state.lock().unwrap();
-            state.read.main = Some(StationId::from(computer));
+            state.read.main = Some(StationId::new(computer));
             state.read.keep()
         };
         if let Some(lost) = lost {

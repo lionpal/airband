@@ -361,7 +361,7 @@ impl Radio {
     /// each message cut to a line or two. Waits up to `wait_seconds` (25 at most) for something new. Blocks:
     /// call it off the main thread.
     pub fn feed(&self, team: Option<String>, agent: Option<String>, after: u64, wait_seconds: u32) -> Result<ChatFeed, RadioError> {
-        let ask = wire::FeedQuery { team: team.map(Into::into), agent: agent.map(Into::into), after, wait: wait_seconds, ..Default::default() };
+        let ask = wire::FeedQuery { team: team.map(airband_core::ids::TeamId::new), agent: agent.map(airband_core::ids::AgentId::new), after, wait: wait_seconds, ..Default::default() };
         let feed = self.link.call::<at::Feed>(None, &ask, &Nothing {})?;
         self.link.set_direct(feed.direct.clone());
         Ok(chat_feed(feed))
@@ -378,7 +378,7 @@ impl Radio {
     /// one-line answer.
     pub fn launch(&self, team: String, tool: Option<String>, model: Option<String>, effort: Option<String>, task: String) -> Result<String, RadioError> {
         let shown = "New agent".to_string();
-        Ok(self.session.say(&self.link, &shown, None, None, Some(Act::Launch(airband_core::radio::Launch { team: team.into(), tool, model, effort, task })))?.map(|reply| reply.say).unwrap_or_default())
+        Ok(self.session.say(&self.link, &shown, None, None, Some(Act::Launch(airband_core::radio::Launch { team: airband_core::ids::TeamId::new(team), tool, model, effort, task })))?.map(|reply| reply.say).unwrap_or_default())
     }
 
     /// A picture, as a JPEG file on the device: fetched from the tower the first time and kept, so it is there

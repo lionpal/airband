@@ -1,6 +1,5 @@
 //! Asking the model that reads for the tower: by its service, a command, or a server on this computer. Which
 //! one is chosen, and what came of the last time, is `chosen`'s.
-#![expect(clippy::disallowed_methods, reason = "each reader's own request to its service")]
 #![expect(clippy::disallowed_macros, reason = "each reader service's own request bodies")]
 use super::*;
 
@@ -12,13 +11,10 @@ pub(crate) const READY: &str = "Reply with the one word: ready";
 /// value there, as its row says; a service with no key (one on his own computer) is sent none.
 pub(super) async fn ask_api(url: String, auth: Option<(String, String)>, body: Value, check: Option<airband_core::providers::Check>) -> Result<String, Trouble> {
     tokio::task::spawn_blocking(move || {
-        let mut req = airband_io::http::agent(Duration::from_secs(60)).post(&url);
-        if let Some((header, value)) = auth {
-            req = req.header(header, value);
-        }
+        let req = airband_io::http::Ask::post(&url).headers(auth).json(&body);
         // What a service writes back when it refuses is never passed on or written down: some quote part of
         // the key they were sent. The status says enough.
-        let mut res = req.send_json(&body).map_err(|_| Trouble::Unreachable)?;
+        let mut res = airband_io::http::Client::new(Duration::from_secs(60)).send(req).map_err(|_| Trouble::Unreachable)?;
         let status = res.status().as_u16();
         if status != 200 {
             return Err(Trouble::of_status(status, check.as_ref()));

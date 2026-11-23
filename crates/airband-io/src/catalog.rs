@@ -25,8 +25,7 @@ pub trait Fetch {
 pub struct Published;
 impl Fetch for Published {
     fn get(&self, address: &str) -> Result<Vec<u8>, NotFetched> {
-        let agent = crate::http::agent(Duration::from_secs(6));
-        let mut res = agent.get(address).call().map_err(|_| NotFetched::Unreachable)?;
+        let mut res = crate::http::Client::new(Duration::from_secs(6)).send(crate::http::Ask::get(address)).map_err(|_| NotFetched::Unreachable)?;
         match res.status().as_u16() {
             200 => res.body_mut().read_to_vec().map_err(|_| NotFetched::Unreachable),
             status => Err(NotFetched::Status(status)),

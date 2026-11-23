@@ -93,7 +93,7 @@ impl Inner {
         if let Some(s) = self.find(&agent.id) {
             return Some(s.team.clone());
         }
-        if let Some(Placed { team, .. }) = self.placed.get(&agent.id).filter(|p| self.teams.contains_key(&p.team)) {
+        if let Some(Placed { team, .. }) = self.placed.get(&AgentId::new(agent.id.as_str())).filter(|p| self.teams.contains_key(&p.team)) {
             return Some(team.clone());
         }
         if let Some(name) = &agent.name {
@@ -155,7 +155,7 @@ impl Inner {
             log(format!("{} checked in ({}, {})", callsign.text(), agent.harness, agent.cwd.as_deref().unwrap_or("no folder")));
             self.sessions.push(Session::new(agent.clone(), callsign, team.clone()));
             // one that was moved to another team before it went away is back there, by whoever put it there
-            if let Some(by) = self.placed.get(&agent.id).filter(|p| p.team == team).map(|p| p.by)
+            if let Some(by) = self.placed.get(&AgentId::new(agent.id.as_str())).filter(|p| p.team == team).map(|p| p.by)
                 && let Some(s) = self.session(&agent.id) {
                     s.moved = Some(by);
                 }

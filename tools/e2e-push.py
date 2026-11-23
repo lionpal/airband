@@ -56,7 +56,7 @@ class Relay(BaseHTTPRequestHandler):
             return self.reply(404)
         pushes.append({"auth": self.headers.get("authorization"), "raw": body, **json.loads(body)})
         code = answer_with[0]
-        self.reply(code, json.dumps({"sent": True} if code == 200 else {"sent": False, "gone": True, "why": "gone", "reason": "the phone's address is no longer good"}).encode())
+        self.reply(code, json.dumps({"sent": True} if code == 200 else {"sent": False, "why": "gone"}).encode())
 server = ThreadingHTTPServer(("127.0.0.1", RELAY), Relay)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 

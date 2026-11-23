@@ -98,7 +98,7 @@ pub struct Moved {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TeamPick {
-    Team { id: String },
+    Team { id: crate::ids::TeamId },
     New { name: String },
 }
 

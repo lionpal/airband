@@ -35,7 +35,7 @@ impl Synth for SpeechServer {
     }
     fn speak(&self, text: &str, sink: &mut dyn FnMut(&[u8]), _mark: &mut dyn FnMut(u32, u32)) -> Result<(), String> {
         let body = json!({ "model": self.model, "voice": self.voice, "input": text, "response_format": "pcm" });
-        let res = self.reach.sent(self.reach.post(Duration::from_secs(30)).send_json(&body))?;
+        let res = self.reach.sent(Duration::from_secs(30), self.reach.post().json(&body))?;
         super::pump(res.into_body().into_reader(), sink)
     }
 }

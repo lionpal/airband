@@ -9,7 +9,6 @@
 //!
 //! One server, for one model, for as long as that model is what reads. It holds the model in memory the whole
 //! time: about as much as the model's download.
-#![expect(clippy::disallowed_methods, reason = "fetches the local model program over the network")]
 use super::*;
 use std::path::PathBuf;
 use std::process::{Child, Command};
@@ -57,8 +56,11 @@ fn fetch(server: &airband_core::catalog::Server) -> Result<PathBuf, String> {
     airband_io::files::make_folder(&dir()).map_err(|e| e.to_string())?;
     let url = format!("{}/{}", server.base, archive.file);
     log(format!("local model: fetching the program that runs it ({})", archive.file));
-    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_connect(Some(Duration::from_secs(15))).timeout_recv_response(Some(Duration::from_secs(30))).build().into();
-    let mut res = agent.get(&url).call().map_err(|e| format!("the program that runs the model could not be fetched: {e}"))?;
+    let client = airband_io::http::Client::download(Duration::from_secs(15), Duration::from_secs(30));
+    let mut res = client.send(airband_io::http::Ask::get(&url)).map_err(|e| format!("the program that runs the model could not be fetched: {e}"))?;
+    if res.status().as_u16() != 200 {
+        return Err(format!("the program that runs the model could not be fetched (status {})", res.status().as_u16()));
+    }
     let mut bytes = Vec::new();
     std::io::Read::read_to_end(&mut res.body_mut().as_reader(), &mut bytes).map_err(|e| format!("the download stopped part way: {e}"))?;
     let got: String = airband_core::encode::hex(&<sha2::Sha256 as sha2::Digest>::digest(&bytes));
@@ -81,8 +83,8 @@ fn ended(child: &mut Child) -> bool {
 }
 
 fn healthy() -> bool {
-    let agent = airband_io::http::agent(Duration::from_secs(2));
-    address().is_ok_and(|at| agent.get(format!("{at}/health")).call().is_ok_and(|r| r.status().as_u16() == 200))
+    let client = airband_io::http::Client::new(Duration::from_secs(2));
+    address().is_ok_and(|at| client.send(airband_io::http::Ask::get(format!("{at}/health"))).is_ok_and(|r| r.status().as_u16() == 200))
 }
 
 
@@ -146,7 +148,7 @@ pub(crate) fn ensure(model: &str, server: &str, patience: Patience) -> Result<St
             end_the_last_one();
             let program = fetch(server)?;
             log(format!("local model: starting {model} (the model is fetched the first time)"));
-            let out = std::fs::File::create(dir().join("server.log")).map_err(|e| e.to_string())?;
+            let out = airband_io::files::for_writing(&dir().join("server.log")).map_err(|e| e.to_string())?;
             // The server is started under a small shell that ends it when this tower is gone, however the tower
             // went: a model left running by itself would hold gigabytes of memory for nobody. The same shell
             // ends it when it is told to stop.

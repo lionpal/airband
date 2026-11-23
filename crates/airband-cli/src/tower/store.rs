@@ -380,12 +380,12 @@ mod tests {
     fn whether_a_line_is_his_is_kept_as_itself_and_never_read_from_the_sender() {
         let (s, path) = store("his");
         // an agent that calls itself what his lines are labelled, and a line of his
-        s.put_messages(&[Entry { seq: 1, id: "a".into(), from: HIM.into(), team: Some("/w/shop".into()), ..Entry::default() }, Entry { seq: 2, id: "b".into(), from: HIM.into(), his: true, ..Entry::default() }]);
+        s.put_messages(&[Entry { seq: 1, id: "a".into(), from: HIM.into(), team: Some(TeamId::new("/w/shop")), ..Entry::default() }, Entry { seq: 2, id: "b".into(), from: HIM.into(), his: true, ..Entry::default() }]);
         let (_, kept) = s.load(10).unwrap();
         assert_eq!(kept.iter().map(|e| (e.id.as_str(), e.his)).collect::<Vec<_>>(), [("a", false), ("b", true)]);
         // a line saved again under its team's id is kept under it
-        s.put_messages(&[Entry { seq: 1, id: "a".into(), team: Some("/w/garden".into()), ..Entry::default() }]);
-        assert_eq!(s.load(10).unwrap().1[0].team, Some("/w/garden".into()));
+        s.put_messages(&[Entry { seq: 1, id: "a".into(), team: Some(TeamId::new("/w/garden")), ..Entry::default() }]);
+        assert_eq!(s.load(10).unwrap().1[0].team, Some(TeamId::new("/w/garden")));
         let _ = std::fs::remove_file(path);
     }
 

@@ -192,7 +192,7 @@ mod tests {
         launched(&app, &Place { name: "shop".into(), folder: folder.clone() }, "", "fix the cart", None);
         let inner = app.read();
         let line = inner.log.last().unwrap();
-        assert_eq!(line.team, Some(edges::folders::Folders::real(&edges::folders::Disk, &folder).into()));
+        assert_eq!(line.team, Some(TeamId::new(edges::folders::Folders::real(&edges::folders::Disk, &folder))));
         assert_eq!(line.team.as_ref().and_then(|t| inner.team_name(t)), Some("shop"));
     }
 

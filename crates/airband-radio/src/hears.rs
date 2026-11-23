@@ -4,7 +4,6 @@
 //! Each way of sending a recording is an interface: a function here and a line of [`UPLOADS`]. A service that
 //! speaks the common transcription interface (`POST {url}/audio/transcriptions`) is a row of the catalogue and
 //! no code. There is one such interface today.
-#![expect(clippy::disallowed_methods, reason = "sends audio to a listening service")]
 use airband_core::providers::{By, Interface, Job, Offer, Provider, Use};
 use serde_json::Value;
 use std::time::Duration;
@@ -74,7 +73,6 @@ pub fn transcribe(with: &Use, wav: &[u8], phrases: &[String]) -> Result<String, 
 /// The common transcription interface: one multipart form with the file and the model.
 fn transcriptions(with: &Use, provider: &Provider, by: &By, wav: &[u8], phrases: &[String]) -> Result<String, String> {
     let set = |field: &str| with.get(Job::Ears, field);
-    let agent = crate::net::agent(Duration::from_secs(60));
     let edge = format!("airband{}", airband_core::encode::random_hex(12));
     let mut body = Vec::with_capacity(wav.len() + 600);
     let mut field = |name: &str, value: &str| body.extend_from_slice(format!("--{edge}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes());
@@ -87,14 +85,14 @@ fn transcriptions(with: &Use, provider: &Provider, by: &By, wav: &[u8], phrases:
     body.extend_from_slice(format!("--{edge}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"said.wav\"\r\nContent-Type: audio/wav\r\n\r\n").as_bytes());
     body.extend_from_slice(wav);
     body.extend_from_slice(format!("\r\n--{edge}--\r\n").as_bytes());
-    let mut req = agent.post(format!("{}/audio/transcriptions", set(crate::models::field::URL).trim_end_matches('/'))).header("content-type", format!("multipart/form-data; boundary={edge}"));
+    let mut req = crate::net::Ask::post(format!("{}/audio/transcriptions", set(crate::models::field::URL).trim_end_matches('/')));
     // how this service takes a key is its row's to say; one sent no key needs nothing said
     if let Some((header, value)) = by.key_header(&with.key).map_err(|_| "This version of airband was not told how that service takes its key.")? {
-        req = req.header(header.as_str(), value.as_str());
+        req = req.header(header, value);
     }
     // what went wrong is worded once, for every service, by the service's own row and name
     let service = airband_core::providers::Answering::of(provider);
-    let v: Value = airband_io::http::sent(&service, req.send(&body[..]))?.body_mut().read_json().map_err(|_| service.no_answer())?;
+    let v: Value = airband_io::http::sent(&service, crate::net::Client::new(Duration::from_secs(60)).send(req.bytes(&format!("multipart/form-data; boundary={edge}"), body)))?.body_mut().read_json().map_err(|_| service.no_answer())?;
     // an answer with no text in it is no answer, not silence
     v["text"].as_str().map(|t| t.trim().to_string()).ok_or_else(|| service.no_answer())
 }

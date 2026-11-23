@@ -174,6 +174,11 @@ pub fn make_folder(dir: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)
 }
 
+/// A file for another program to write to as it goes (a server's log), made empty.
+pub fn for_writing(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::File::create(path)
+}
+
 /// Make a folder only its owner can open (it holds sockets, tokens or keys), and the folders it is in. One that
 /// is there is made private too.
 pub fn private_folder(dir: &Path) -> std::io::Result<()> {

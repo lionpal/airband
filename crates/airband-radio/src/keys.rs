@@ -2,7 +2,6 @@
 //! the provider's row names (`airband_core::providers::Check`): one that costs nothing and that a wrong key
 //! fails. What came of it is read from the status alone, by the row's lists, and said to him in the words
 //! here. Nothing the service writes back is read, and a key that did not pass is not kept anywhere.
-#![expect(clippy::disallowed_methods, reason = "tries a key against its service")]
 use airband_core::providers::{Check, KeyCheck, Method, Provider};
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -25,13 +24,12 @@ pub(crate) fn check(check: &Check, key: &str, settings: &BTreeMap<String, String
         Ok(url) => url,
         Err(bad_setting) => return bad_setting,
     };
-    let agent = crate::net::agent(Duration::from_secs(20));
-    let with = |name: &str, value: &str| (name.to_string(), value.to_string());
-    let headers: Vec<(String, String)> = std::iter::once(with(&check.auth.header, &check.auth.value(key))).chain(check.headers.iter().map(|(k, v)| with(k, v))).collect();
-    let answered = match check.method {
-        Method::Post => headers.iter().fold(agent.post(&url), |r, (k, v)| r.header(k.as_str(), v.as_str())).send_empty(),
-        Method::Get => headers.iter().fold(agent.get(&url), |r, (k, v)| r.header(k.as_str(), v.as_str())).call(),
+    let verb = match check.method {
+        Method::Post => crate::net::Verb::Post,
+        Method::Get => crate::net::Verb::Get,
     };
+    let ask = crate::net::Ask::to(verb, url).header(check.auth.header.as_str(), check.auth.value(key)).headers(check.headers.iter());
+    let answered = crate::net::Client::new(Duration::from_secs(20)).send(ask);
     match answered {
         Ok(res) => check.read(res.status().as_u16()),
         Err(_) => KeyCheck::Unreachable,

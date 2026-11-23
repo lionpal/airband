@@ -8,7 +8,7 @@
 //! Each model is a row of the catalogue (`catalog/models/`, see `airband_core::catalog`): what job it does,
 //! what to show, what to fetch, where it goes and what its engine is told about it. Where he chooses
 //! (`choices.rs`) lists them beside the services; a host names none itself.
-#![expect(clippy::disallowed_methods, reason = "downloads and keeps on-device models")]
+#![expect(clippy::disallowed_methods, reason = "writes a model to this device a part at a time as it downloads: airband_io writes files whole")]
 use super::*;
 use crate::engines::HostDevice;
 use std::path::{Path, PathBuf};
@@ -56,8 +56,11 @@ pub(crate) mod field {
     /// A live listening row: where a pass for the stream is asked for.
     pub(crate) const PASS: &str = "pass";
     /// A model row for the device's own voice: how its weights are packed, its language, and what runs it.
+    #[cfg(feature = "phonon")]
     pub(crate) const QUANT: &str = "quant";
+    #[cfg(feature = "phonon")]
     pub(crate) const LANG: &str = "lang";
+    #[cfg(feature = "phonon")]
     pub(crate) const DEVICE: &str = "device";
 }
 
@@ -160,7 +163,7 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model) -> Result<(), RadioError
     OF.store(m.files.iter().map(|f| f.1).sum(), Ordering::SeqCst);
     // no limit on the whole of it (a model is tens or hundreds of megabytes on whatever connection he has),
     // only on a stall
-    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_connect(Some(Duration::from_secs(15))).timeout_recv_response(Some(Duration::from_secs(30))).build().into();
+    let client = crate::net::Client::download(Duration::from_secs(15), Duration::from_secs(30));
     for (to, size, sha) in &m.files {
         let path = folder.join(to);
         if std::fs::metadata(&path).is_ok_and(|f| f.len() == *size) {
@@ -169,7 +172,7 @@ pub(crate) fn fetch_local_model(dir: String, m: &Model) -> Result<(), RadioError
         }
         std::fs::create_dir_all(path.parent().unwrap_or(&folder)).map_err(|_| told("Could not make room for the model on this device."))?;
         let part = path.with_extension("part");
-        let mut res = agent.get(format!("{}/{to}", m.base)).call().map_err(|_| told("Could not reach the download. Check the connection and try again."))?;
+        let mut res = client.send(crate::net::Ask::get(format!("{}/{to}", m.base))).map_err(|_| told("Could not reach the download. Check the connection and try again."))?;
         if res.status().as_u16() != 200 {
             return Err(told("The download is not there."));
         }

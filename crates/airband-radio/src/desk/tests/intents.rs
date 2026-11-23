@@ -136,8 +136,8 @@ fn what_each_computer_was_told_is_still_known_after_the_app_opens_again() {
         let mut kept = super::super::intents::KeptIntents::open(dir.to_str().unwrap());
         let (changed, lost) = kept.change(|i| {
             let changed = i.want_push(target.clone());
-            i.push.as_mut().unwrap().record(&StationId::from("studio"), &Reach::<()>::Done(()));
-            i.push.as_mut().unwrap().record(&StationId::from("laptop"), &Reach::<()>::Refused("No.".into()));
+            i.push.as_mut().unwrap().record(&StationId::new("studio"), &Reach::<()>::Done(()));
+            i.push.as_mut().unwrap().record(&StationId::new("laptop"), &Reach::<()>::Refused("No.".into()));
             changed
         });
         assert!(changed && lost.is_none());
@@ -148,8 +148,8 @@ fn what_each_computer_was_told_is_still_known_after_the_app_opens_again() {
     let (changed, _) = again.change(|i| i.want_push(target.clone()));
     let _ = std::fs::remove_dir_all(&dir);
     assert!(!changed);
-    assert!(!push.owed(&StationId::from("studio")) && !push.owed(&StationId::from("laptop")) && push.owed(&StationId::from("mini")));
-    assert_eq!(push.per["laptop"], Delivery::Refused { reason: "No.".into() });
+    assert!(!push.owed(&StationId::new("studio")) && !push.owed(&StationId::new("laptop")) && push.owed(&StationId::new("mini")));
+    assert_eq!(push.per[&StationId::new("laptop")], Delivery::Refused { reason: "No.".into() });
 }
 
 #[test]

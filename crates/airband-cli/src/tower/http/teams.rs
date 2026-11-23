@@ -97,10 +97,7 @@ fn project_folder(new: &airband_core::radio::NewProject) -> Result<std::path::Pa
     let one_part = matches!(called.components().collect::<Vec<_>>().as_slice(), [std::path::Component::Normal(_)]);
     let last = called.file_name().filter(|n| one_part && !n.to_string_lossy().starts_with('.')).ok_or("That is not a name for a folder.")?;
     let made = folder_at(&new.folder)?.join(last);
-    if let Err(e) = std::fs::create_dir(&made)
-        && !made.is_dir() {
-            return Err(format!("That folder could not be made: {e}"));
-        }
+    airband_io::files::make_folder(&made).map_err(|e| format!("That folder could not be made: {e}"))?;
     Ok(made)
 }
 

@@ -54,9 +54,6 @@ impl PushRequest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PushAnswer {
     pub sent: bool,
-    /// The phone no longer takes notifications at that address: the tower forgets it.
-    #[serde(default)]
-    pub gone: bool,
     /// Why not, as a fact a tower can act on; none when it was sent. The push service's own words stay in the
     /// relay's log.
     #[serde(default)]
@@ -66,7 +63,7 @@ pub struct PushAnswer {
 impl PushAnswer {
     /// Not sent, for this reason.
     pub fn not_sent(why: NotPushed) -> PushAnswer {
-        PushAnswer { sent: false, gone: why == NotPushed::Gone, why: Some(why) }
+        PushAnswer { sent: false, why: Some(why) }
     }
 }
 

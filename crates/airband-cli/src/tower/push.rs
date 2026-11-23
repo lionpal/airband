@@ -10,7 +10,6 @@
 //! Nothing here knows which push service a phone uses: an address is a provider's name and a token, as the
 //! phone gave them. The log says when a notification was asked for and what came back, and never an address or
 //! a message's words.
-#![expect(clippy::disallowed_methods, reason = "asks the relay to wake his phone")]
 use super::*;
 use airband_core::radio::{Notice, PushTarget, deserves_notice};
 use airband_core::relay::{Direction, Keys, NotPushed, PUSH_MOST, PushAnswer, PushRequest, Route};
@@ -159,10 +158,10 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
         }
     };
     let sealed = airband_core::encode::base64(&sealed);
-    let agent = airband_io::http::agent(Duration::from_secs(20));
+    let client = airband_io::http::Client::new(Duration::from_secs(20));
     for target in targets {
         let ask = PushRequest { provider: target.provider, to: target.token.clone(), sealed: sealed.clone(), question: note.kind == Some(Kind::NeedsYou) };
-        let res = agent.post(keys.to(&relay, Route::Push)).header("authorization", keys.as_tower()).send_json(&ask);
+        let res = client.send(airband_io::http::Ask::post(keys.to(&relay, Route::Push)).header("authorization", keys.as_tower()).json(&ask));
         let outcome = match res {
             Err(e) => format!("the relay could not be reached ({e})"),
             Ok(mut res) => {
@@ -170,7 +169,7 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
                 // what the relay says, typed; a relay with no such route answers no `PushAnswer` at all
                 match res.body_mut().read_json::<PushAnswer>() {
                     Ok(answer) if answer.sent => "sent".into(),
-                    Ok(answer) if answer.gone || answer.why == Some(NotPushed::Gone) => {
+                    Ok(PushAnswer { why: Some(NotPushed::Gone), .. }) => {
                         let mut all = app.push.targets.lock().unwrap();
                         if let Some(mine) = all.get_mut(radio) {
                             mine.retain(|t| t != target);

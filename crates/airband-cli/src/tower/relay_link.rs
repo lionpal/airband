@@ -4,7 +4,6 @@
 //! The tower only ever calls out, so it works behind any router with no port opened. The relay sees sealed
 //! bytes; a request that does not open with a paired radio's key, is not fresh, or was already answered is
 //! dropped here.
-#![expect(clippy::disallowed_methods, reason = "the tower's own connection to the relay")]
 use airband_core::radio::wire::Refusal;
 use crate::config::PairedRadio;
 use super::{App, PRESENCE_HEADER, VIA_HEADER, log, now_ms};
@@ -12,6 +11,7 @@ use axum::extract::State;
 use airband_core::relay::{ADMISSION_HEADER, GOT_HEADER, PULL_HEADER, PULL_VERSION, RADIO_HASH_HEADER, REQUEST_HEADER};
 use axum::Router;
 use axum::body::Body;
+use airband_io::http::Ask;
 use axum::http::Request;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -67,7 +67,7 @@ impl RelaySaid {
 
 /// Tell the relay a channel is finished with (`airband unpair`), so it does not keep it on record for ever.
 pub(crate) fn close_channel(relay: &str, keys: &Keys) -> Result<RelaySaid, String> {
-    airband_io::http::agent(Duration::from_secs(8)).delete(keys.to(relay, Route::Channel)).header("authorization", keys.as_tower()).call().map(|r| RelaySaid::of(r.status().as_u16())).map_err(|e| e.to_string())
+    airband_io::http::Client::new(Duration::from_secs(8)).send(Ask::delete(keys.to(relay, Route::Channel)).header("authorization", keys.as_tower())).map(|r| RelaySaid::of(r.status().as_u16())).map_err(|e| e.to_string())
 }
 
 /// Why a link's serving thread ended. One the relay keeps closed, or a pairing undone, is not started again
@@ -172,7 +172,7 @@ impl Links {
                 }
             };
             let stop = Arc::new(AtomicBool::new(false));
-            let serve = Serve { app: app.clone(), relay: key.0.clone(), name: key.1.name.clone(), keys, router: router.clone(), handle: handle.clone(), stop: stop.clone(), seen: Arc::new(Mutex::new(HashMap::new())), replies: airband_io::http::agent(Duration::from_secs(15)) };
+            let serve = Serve { app: app.clone(), relay: key.0.clone(), name: key.1.name.clone(), keys, router: router.clone(), handle: handle.clone(), stop: stop.clone(), seen: Arc::new(Mutex::new(HashMap::new())), replies: airband_io::http::Client::new(Duration::from_secs(15)) };
             app.served.0.lock().unwrap().insert(serve.keys.channel.clone(), serve.clone());
             running.insert(key, (stop, std::thread::spawn(move || serve.run())));
         }
@@ -192,7 +192,7 @@ struct Serve {
     /// Ids of calls already answered, with when: a recorded request played back is dropped.
     seen: Arc<Mutex<HashMap<String, u64>>>,
     /// The HTTP agent answers go back through.
-    replies: ureq::Agent,
+    replies: airband_io::http::Client,
 }
 
 impl Serve {
@@ -210,7 +210,7 @@ impl Serve {
             }
             return Ended::Stopped;
         };
-        let agent = airband_io::http::agent(Duration::from_secs(40));
+        let agent = airband_io::http::Client::new(Duration::from_secs(40));
         let auth = self.keys.as_tower();
         let (channel, pull) = (self.keys.to(&relay, Route::Channel), self.keys.to(&relay, Route::Pull));
         let (mut open, mut wait, mut told) = (false, 1, false);
@@ -230,12 +230,12 @@ impl Serve {
                     return Ended::Unpaired;
                 }
                 // who its radio is goes with the opening, so the relay knows from the first moment whose channel it is
-                let mut req = agent.put(&channel).header("authorization", &auth).header(RADIO_HASH_HEADER, airband_core::relay::token_hash(&self.keys.radio_token));
+                let mut req = Ask::put(&channel).header("authorization", &auth).header(RADIO_HASH_HEADER, airband_core::relay::token_hash(&self.keys.radio_token));
                 // the admission key as the settings hold it now: a new one is used without a restart
                 if let Some(a) = &self.app.cfg().relay_admission {
                     req = req.header(ADMISSION_HEADER, a);
                 }
-                match req.send_empty().map(|r| RelaySaid::of(r.status().as_u16())) {
+                match agent.send(req).map(|r| RelaySaid::of(r.status().as_u16())) {
                     Ok(RelaySaid::Done | RelaySaid::Nothing) => {
                         log(format!("serving \"{}\" through {}", self.name, relay));
                         (open, wait, told, got) = (true, 1, false, None);
@@ -260,11 +260,11 @@ impl Serve {
                 }
                 continue;
             }
-            let mut ask = agent.get(&pull).header("authorization", &auth).header(PULL_HEADER, PULL_VERSION);
+            let mut ask = Ask::get(&pull).header("authorization", &auth).header(PULL_HEADER, PULL_VERSION);
             if let Some(id) = got.take() {
                 ask = ask.header(GOT_HEADER, id);
             }
-            match ask.call() {
+            match agent.send(ask) {
                 Ok(mut res) => match RelaySaid::of(res.status().as_u16()) {
                     RelaySaid::Done => {
                         wait = 1;
@@ -396,13 +396,15 @@ impl Serve {
         // one agent for every answer on this channel: its connection to the relay is kept, not made again each time
         let agent = self.replies.clone();
         let sent = tokio::task::spawn_blocking(move || {
-            let req = agent.post(url).header("authorization", auth);
+            let req = Ask::post(url).header("authorization", auth);
             let req = if kept { req.header(airband_core::relay::KEPT_HEADER, "1") } else { req };
-            match sealed {
-                Some(sealed) => req.header("content-type", "application/octet-stream").send(&sealed[..]),
-                None => req.send_empty(),
-            }
-            .map(|r| RelaySaid::of(r.status().as_u16()))
+            let req = match sealed {
+                Some(sealed) => req.bytes("application/octet-stream", sealed),
+                None => req,
+            };
+            agent
+                .send(req)
+                .map(|r| RelaySaid::of(r.status().as_u16()))
             .map_err(|e| e.to_string())
         })
         .await;
@@ -465,7 +467,7 @@ mod tests {
         app.settings.change(|c| c.pairings.push(phone.clone())).unwrap();
         let keys = Keys::derive(&phone.secret).unwrap();
         // a relay nothing listens on: were it asked, the link would wait on it, not end
-        let serve = Serve { app: app.clone(), relay: Some("http://127.0.0.1:9".into()), name: phone.name.clone(), keys, router: crate::tower::http::router(app.clone()), handle: tokio::runtime::Handle::current(), stop: Arc::new(AtomicBool::new(false)), seen: Default::default(), replies: airband_io::http::agent(Duration::from_secs(1)) };
+        let serve = Serve { app: app.clone(), relay: Some("http://127.0.0.1:9".into()), name: phone.name.clone(), keys, router: crate::tower::http::router(app.clone()), handle: tokio::runtime::Handle::current(), stop: Arc::new(AtomicBool::new(false)), seen: Default::default(), replies: airband_io::http::Client::new(Duration::from_secs(1)) };
         assert!(serve.still_paired());
         app.settings.change(|c| c.pairings.clear()).unwrap();
         assert!(!serve.still_paired());
@@ -500,7 +502,7 @@ mod tests {
         })
         .unwrap();
         let keys = Keys::derive(&phone.secret).unwrap();
-        let serve = Serve { app: app.clone(), relay: Some(relay), name: phone.name.clone(), keys, router: crate::tower::http::router(app.clone()), handle: tokio::runtime::Handle::current(), stop: Arc::new(AtomicBool::new(false)), seen: Default::default(), replies: airband_io::http::agent(Duration::from_secs(1)) };
+        let serve = Serve { app: app.clone(), relay: Some(relay), name: phone.name.clone(), keys, router: crate::tower::http::router(app.clone()), handle: tokio::runtime::Handle::current(), stop: Arc::new(AtomicBool::new(false)), seen: Default::default(), replies: airband_io::http::Client::new(Duration::from_secs(1)) };
         let ended = tokio::time::timeout(Duration::from_secs(5), tokio::task::spawn_blocking(move || serve.run())).await.unwrap().unwrap();
         assert_eq!(ended, Ended::Closed);
         assert_eq!(opens.load(Ordering::SeqCst), 1);

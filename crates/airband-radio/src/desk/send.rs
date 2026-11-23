@@ -60,7 +60,7 @@ impl Desk {
     /// Blocks for some seconds at most. What became of it says whether it went, is kept to go later, will never
     /// go, or had no computer to go to, with the words he is told.
     pub fn answer_now(&self, station: String, message_id: String, text: String, tapped: Option<Tapped>) -> AnswerOutcome {
-        let radio = self.shared.state.lock().unwrap().computer(&StationId::from(station.as_str())).map(|s| s.radio.clone());
+        let radio = self.shared.state.lock().unwrap().computer(&StationId::new(station.as_str())).map(|s| s.radio.clone());
         let Some(radio) = radio else { return AnswerOutcome::NotPaired { why: UNPAIRED.into() } };
         let words = match &tapped { Some(t @ (Tapped::Allow | Tapped::Deny)) => t.words(), _ => text };
         let outcome = radio.answer_now(words, message_id.clone(), tapped.map(|t| t.act()));
@@ -233,7 +233,7 @@ fn others(state: &State, pick: &StationId, room: Option<&str>) -> Vec<airband_co
         .filter(|(_, a)| room.is_none_or(|r| a.room == r) && seen.insert(a.id.clone()))
         .map(|(s, a)| {
             let last = s.messages.iter().rev().find(|m| m.agent.as_deref() == Some(a.id.as_str()) && !m.fyi);
-            airband_core::radio::Other { id: a.id.clone(), callsign: a.callsign.clone(), badge: a.badge.clone(), group: a.group.clone(), team: a.team.clone().into(), said: last.map(|m| m.text.chars().take(240).collect()).unwrap_or_default(), ago: last.map(|m| now.saturating_sub(m.at) / 1000).unwrap_or(0) }
+            airband_core::radio::Other { id: a.id.clone(), callsign: a.callsign.clone(), badge: a.badge.clone(), group: a.group.clone(), team: airband_core::ids::TeamId::new(a.team.clone()), said: last.map(|m| m.text.chars().take(240).collect()).unwrap_or_default(), ago: last.map(|m| now.saturating_sub(m.at) / 1000).unwrap_or(0) }
         })
         .collect()
 }

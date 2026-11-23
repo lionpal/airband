@@ -5,7 +5,6 @@
 //! [`Voicing`] that names it, and a line of [`VOICES`]. A provider's row names the interface it speaks
 //! (`by.interface`) and tells it what it needs (`by.with`). A service that speaks the common speech interface
 //! is a row and no code; one with a route of its own is one file here and its row.
-#![expect(clippy::disallowed_methods, reason = "asks a voice service")]
 use airband_core::providers::{By, Interface, Job, Offer, Provider, Use};
 
 mod generate_content;
@@ -77,13 +76,14 @@ impl Reach {
     }
 
     /// A request to it, with the key and what else the row says to send.
-    fn post(&self, timeout: std::time::Duration) -> ureq::RequestBuilder<ureq::typestate::WithBody> {
-        self.auth.iter().chain(self.headers.iter()).fold(crate::net::agent(timeout).post(&self.url), |r, (k, v)| r.header(k.as_str(), v.as_str()))
+    fn post(&self) -> crate::net::Ask {
+        crate::net::Ask::post(&self.url).headers(self.auth.iter().chain(self.headers.iter()).map(|(k, v)| (k, v)))
     }
 
-    /// The request, sent: its answer when it gives the sound, else what went wrong, in words for him.
-    fn sent(&self, res: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<ureq::http::Response<ureq::Body>, String> {
-        airband_io::http::sent(&self.service, res)
+    /// The request, sent, given `timeout`: its answer when it gives the sound, else what went wrong, in words
+    /// for him.
+    fn sent(&self, timeout: std::time::Duration, ask: crate::net::Ask) -> Result<crate::net::Response, String> {
+        airband_io::http::sent(&self.service, crate::net::Client::new(timeout).send(ask))
     }
 }
 

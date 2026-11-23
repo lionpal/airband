@@ -1,5 +1,6 @@
 use super::*;
 use airband_core::radio::SetReads;
+use airband_core::ids::TeamId;
 
 struct Quiet;
 impl RadioHost for Quiet {
@@ -161,7 +162,7 @@ fn a_computer_is_never_picked_for_him() {
     // the same for anything else asked of a computer he did not name
     assert!(matches!(desk.station_radio(&StationId::default()), Err(RadioError::Told { .. })));
     // a computer this phone does not have is gone, never out of reach; one it has that is not answering is
-    assert!(matches!(desk.station_radio(&StationId::from("laptop")), Err(RadioError::Told { reason }) if reason == UNPAIRED), "unknown");
+    assert!(matches!(desk.station_radio(&StationId::new("laptop")), Err(RadioError::Told { reason }) if reason == UNPAIRED), "unknown");
     let macbook = desk.shared.state.lock().unwrap().computers[1].id();
     desk.shared.state.lock().unwrap().computers[1].online = false;
     assert!(matches!(desk.station_radio(&macbook), Err(RadioError::Offline)));
@@ -192,7 +193,7 @@ fn a_button_is_sent_as_what_it_stands_for_and_never_as_words_to_be_read() {
             ("Allow".to_string(), Some("q1".to_string()), act(Act::Verdict { allow: true }), vec![]),
             ("Leave".to_string(), Some("q1".to_string()), act(Act::Option { index: 1 }), vec![]),
             ("Keep going.".to_string(), None, act(Act::Control { control: airband_core::routing::Control::Poke }), vec![]),
-            ("New agent in shop".to_string(), None, act(Act::Launch(airband_core::radio::Launch { team: "shop".into(), ..Default::default() })), vec![]),
+            ("New agent in shop".to_string(), None, act(Act::Launch(airband_core::radio::Launch { team: TeamId::new("shop"), ..Default::default() })), vec![]),
             ("ship it".to_string(), None, None, vec!["shop two".to_string()]),
         ]
     );
@@ -301,7 +302,7 @@ fn a_notification_is_opened_by_the_pairing_that_sealed_it_and_no_other() {
     let (mini, laptop, stranger) = (airband_core::relay::new_secret(), airband_core::relay::new_secret(), airband_core::relay::new_secret());
     let keys = Keys::derive(&laptop).unwrap();
     let seal = |n: &Notice| airband_core::encode::base64(&keys.seal(Direction::Push, &serde_json::to_vec(n).unwrap()));
-    let question = Notice { id: "m1".into(), from: "shop 3".into(), agent: Some("a3".into()), badge: "S3".into(), group: "shop".into(), team: Some("/work/shop".into()), station: "laptop".into(), text: "Rewrite or leave?".into(), kind: Some(Kind::NeedsYou), options: vec!["Rewrite".into(), "Leave".into()], permission: false };
+    let question = Notice { id: "m1".into(), from: "shop 3".into(), agent: Some("a3".into()), badge: "S3".into(), group: "shop".into(), team: Some(TeamId::new("/work/shop")), station: "laptop".into(), text: "Rewrite or leave?".into(), kind: Some(Kind::NeedsYou), options: vec!["Rewrite".into(), "Leave".into()], permission: false };
     let got = open_notice(vec![link(&mini), link(&laptop)], seal(&question), [(format!("{}//work/shop", keys.channel), 2)].into()).unwrap();
     assert_eq!((got.title.as_str(), got.subtitle.as_str(), got.body.as_str(), got.badge.as_str(), got.colour), ("shop 3", "laptop", "Rewrite or leave?", "S3", Some(2)));
     assert_eq!((got.station.as_str(), got.message.as_str(), got.room.as_str(), got.agent.as_str(), got.question), (keys.channel.as_str(), "m1", format!("{}//work/shop", keys.channel).as_str(), "a3", true));
@@ -641,7 +642,7 @@ fn an_unnamed_computer_can_be_chosen_as_main_by_its_id() {
     assert_eq!(shown.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["127.0.0.1", "127.0.0.1"]);
     desk.set_main_computer(shown[1].id.clone());
     let main = desk.shared.state.lock().unwrap().main().map(Computer::id);
-    assert_eq!(main, Some(StationId::from(shown[1].id.as_str())));
+    assert_eq!(main, Some(StationId::new(shown[1].id.as_str())));
     assert_eq!(looked(&desk, None, None).main_computer, Some(shown[1].id.clone()));
 }
 

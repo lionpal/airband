@@ -195,13 +195,13 @@ fn kept_agents_from_two_folders_in_one_team_go_back_to_their_own_folders_teams()
     let old: BTreeMap<String, String> = [("shop".to_string(), "/a/work/shop".to_string()), ("garden".to_string(), "/g".to_string())].into();
     let mut inner = Inner { sessions: vec![session("a", "/a/work/shop", "one"), session("b", "/b/work/shop", "two")], ..Inner::default() };
     // a line kept under a team's name, and one he said to several teams
-    inner.log.push(Entry { id: "l1".into(), team: Some("garden".into()), ..Entry::default() });
+    inner.log.push(Entry { id: "l1".into(), team: Some(TeamId::new("garden")), ..Entry::default() });
     inner.log.push(Entry { id: "l2".into(), ..Entry::default() });
     inner.settle_teams(old, ["garden".to_string()].into());
     assert_eq!(names(&inner), ["shop one", "work shop one"]);
     assert_eq!(inner.sessions.iter().map(|s| s.team.as_str()).collect::<Vec<_>>(), ["/a/work/shop", "/b/work/shop"]);
     assert_eq!(inner.log.iter().map(|e| e.team.as_ref().map(|t| t.as_str())).collect::<Vec<_>>(), [Some("/g"), None]);
-    assert!(inner.teams["/g"].named && !inner.teams["/a/work/shop"].named);
+    assert!(inner.teams[&TeamId::new("/g")].named && !inner.teams[&TeamId::new("/a/work/shop")].named);
     // once is enough: doing it again changes nothing
     inner.settle_teams(BTreeMap::new(), BTreeSet::new());
     assert_eq!(names(&inner), ["shop one", "work shop one"]);
@@ -673,11 +673,11 @@ fn a_start_keeps_the_name_he_gave_a_configured_team_and_makes_no_ghost() {
     let old: BTreeMap<String, String> = [("garden".to_string(), "/x/shop".to_string())].into();
     let listed: BTreeMap<String, String> = [("shop".to_string(), "/x/shop".to_string())].into();
     let mut inner = Inner { sessions: vec![kept_session("a", Some("/x/shop"), "garden")], ..Inner::default() };
-    inner.log.push(Entry { id: "l1".into(), team: Some("garden".into()), ..Entry::default() });
+    inner.log.push(Entry { id: "l1".into(), team: Some(TeamId::new("garden")), ..Entry::default() });
     inner.teams_at_start(old, ["garden".to_string()].into(), &listed);
     assert_eq!(inner.teams.iter().map(|(id, t)| (id.as_str(), t.name.as_str(), t.named)).collect::<Vec<_>>(), [("/x/shop", "garden", true)]);
     assert_eq!(inner.sessions[0].callsign.text(), "garden one");
-    assert_eq!(inner.log[0].team, Some("/x/shop".into()));
+    assert_eq!(inner.log[0].team, Some(TeamId::new("/x/shop")));
 }
 
 #[test]

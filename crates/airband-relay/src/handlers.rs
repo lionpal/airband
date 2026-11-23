@@ -697,17 +697,17 @@ mod tests {
                 let res = wake_phone(State(relay), Path(channel), headers, Bytes::from(body)).await;
                 let status = res.status().as_u16();
                 let answer: PushAnswer = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), 1 << 16).await.unwrap()).unwrap_or_default();
-                (status, answer.sent, answer.gone, answer.why)
+                (status, answer.sent, answer.why)
             }
         };
         // not the channel's tower: nothing is sent
         assert_eq!(ask("someone-else", airband_core::relay::PushService::Apns, "aa11").await.0, 403);
         assert_eq!(seen.load(Ordering::SeqCst), 0);
-        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "aa11").await, (200, true, false, None));
-        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "bb22").await, (410, false, true, Some(NotPushed::Gone)));
-        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "cc33").await, (410, false, true, Some(NotPushed::Gone)));
+        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "aa11").await, (200, true, None));
+        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "bb22").await, (410, false, Some(NotPushed::Gone)));
+        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "cc33").await, (410, false, Some(NotPushed::Gone)));
         // the service's own word for a refusal is never passed on: the tower is told its status
-        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "dd44").await, (502, false, false, Some(NotPushed::Refused { status: 503 })));
+        assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Apns, "dd44").await, (502, false, Some(NotPushed::Refused { status: 503 })));
         assert_eq!(seen.load(Ordering::SeqCst), 4);
         // a service this relay does not have, and an address that is not one
         assert_eq!(ask(&keys.pull_token, airband_core::relay::PushService::Unknown, "aa11").await.0, 503);

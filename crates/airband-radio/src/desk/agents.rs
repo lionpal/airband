@@ -7,7 +7,7 @@ impl Desk {
     /// [`DeskComputer::id`], or empty when he has only one; `under` is a folder's whole path, or empty for his
     /// home folder. Blocks: call it off the main thread.
     pub fn folders(&self, computer: String, under: String) -> Result<DeskFolders, RadioError> {
-        let f = self.station_radio(&StationId::from(computer.as_str()))?.folders(under)?;
+        let f = self.station_radio(&StationId::new(computer.as_str()))?.folders(under)?;
         Ok(DeskFolders { path: f.path, shown: f.shown, up: f.up, folders: f.folders.into_iter().map(|f| DeskFolder { name: f.name, path: f.path }).collect(), team: f.team, has_team: f.has_team })
     }
     /// The folders the coding tools on a computer have had sessions in, newest first, then the teams there
@@ -15,7 +15,7 @@ impl Desk {
     /// off the main thread.
     pub fn recent_folders(&self, computer: String) -> Result<Vec<DeskRecent>, RadioError> {
         // each tool by its name; one this phone's catalogue does not have is left out, never shown by its id
-        Ok(self.station_radio(&StationId::from(computer.as_str()))?.recent()?.folders.into_iter().map(|r| DeskRecent { tools: r.tools.iter().filter_map(|t| crate::services::tool_name(t)).collect(), folder: r.folder, shown: r.shown, name: r.name, team: r.team.is_some(), at: r.at }).collect())
+        Ok(self.station_radio(&StationId::new(computer.as_str()))?.recent()?.folders.into_iter().map(|r| DeskRecent { tools: r.tools.iter().filter_map(|t| crate::services::tool_name(t)).collect(), folder: r.folder, shown: r.shown, name: r.name, team: r.team.is_some(), at: r.at }).collect())
     }
     /// Make a new team on a computer, or start another agent in one that is there: its name as he wrote it,
     /// and the folder its agents work in (with `make`, the folder a new one called by that name is made in).
@@ -24,7 +24,7 @@ impl Desk {
     /// `computer` is its [`DeskComputer::id`], or empty when he has only one. Answers with the team's room on
     /// his screen ([`DeskRoom::id`]).
     pub fn new_team(&self, computer: String, name: String, folder: String, make: bool, tool: Option<String>) -> Result<String, RadioError> {
-        let (radio, station) = self.station_of(&StationId::from(computer.as_str()))?;
+        let (radio, station) = self.station_of(&StationId::new(computer.as_str()))?;
         let room = room_id(&station, &radio.new_project(name, folder, make, tool.filter(|t| !t.is_empty()))?);
         // he is shown the team at once, and it stays open, empty, until its first agent shows up
         {
@@ -45,7 +45,7 @@ impl Desk {
             Some(tool) => format!("New {} agent in {name}", tool.name),
             None => format!("New agent in {name}"),
         };
-        let launch = airband_core::radio::Launch { team: team.into(), tool: tool.map(|t| t.id), ..Default::default() };
+        let launch = airband_core::radio::Launch { team: airband_core::ids::TeamId::new(team), tool: tool.map(|t| t.id), ..Default::default() };
         radio.queue_as(Outgoing::of(shown).with_act(Some(&Act::Launch(launch))), Carry::Nothing);
     }
     /// Every paired computer's accounts, in the order the computers were paired. A computer that cannot be
@@ -75,7 +75,7 @@ impl Desk {
     /// Move one computer's sessions to another of its accounts. `station`, `harness` and `id` are as
     /// [`Desk::accounts`] gave them. Blocks: call it off the main thread.
     pub fn use_account(&self, station: String, harness: String, id: String) -> Result<StationAccounts, RadioError> {
-        let radio = self.station_radio(&StationId::from(station.as_str()))?;
+        let radio = self.station_radio(&StationId::new(station.as_str()))?;
         let computer = self.shared.state.lock().unwrap().named_radios().into_iter().map(|(c, _)| c).find(|c| c.id == station).ok_or_else(|| crate::choices::told(UNPAIRED))?;
         radio.use_account(&computer, harness, id)
     }
@@ -93,7 +93,7 @@ impl Desk {
                 if here.is_none() || here != state.room_computer(&room) {
                     return Err(crate::choices::told("An agent can only move to a team on its own computer."));
                 }
-                airband_core::radio::TeamPick::Team { id: team }
+                airband_core::radio::TeamPick::Team { id: airband_core::ids::TeamId::new(team) }
             }
             DeskTeamPick::New { name } => airband_core::radio::TeamPick::New { name },
         };

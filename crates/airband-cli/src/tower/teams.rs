@@ -345,7 +345,7 @@ impl Inner {
         all
     }
     /// The place of one of his teams, by its id, when it has a folder that is there.
-    pub(super) fn team_place(&self, id: &str) -> Option<Place> {
+    pub(super) fn team_place(&self, id: &TeamId) -> Option<Place> {
         let team = self.teams.get(id)?;
         team.live_folder().map(|folder| Place { name: team.name.to_string(), folder })
     }

@@ -1,25 +1,22 @@
 //! What Anthropic's account service is asked: whose a token is, how much of an account is used, and a new
 //! access token for a saved login. Every answer is read by its status and its own fields; one that cannot be
 //! read is said to be so, never taken for an empty one.
-#![expect(clippy::disallowed_methods, reason = "asks the account's own service over the network")]
 #![expect(clippy::disallowed_macros, reason = "the account service's own request bodies")]
 use super::{maker, Here, Res, ADD_AGAIN};
 use airband_core::radio::Limit;
+use airband_io::http::Ask;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::time::Duration;
 
-fn http() -> ureq::Agent {
-    airband_io::http::agent(Duration::from_secs(20))
+fn http() -> airband_io::http::Client {
+    airband_io::http::Client::new(Duration::from_secs(20))
 }
 
 /// One question to the account service with a login's token: its status and its answer's text.
 fn ask(here: &Here, path: &str, token: &str) -> Result<(u16, String), String> {
     let mut res = http()
-        .get(format!("{}{path}", here.api))
-        .header("authorization", format!("Bearer {token}"))
-        .header(&super::row("beta_header"), super::row("oauth_beta"))
-        .call()
+        .send(Ask::get(format!("{}{path}", here.api)).header("authorization", format!("Bearer {token}")).header(super::row("beta_header"), super::row("oauth_beta")))
         .map_err(|_| format!("Could not reach {} to check it.", maker()))?;
     let status = res.status().as_u16();
     let text = res.body_mut().read_to_string().map_err(|_| format!("{}'s answer could not be read.", maker()))?;
@@ -97,9 +94,7 @@ pub(super) fn refresh(here: &Here, o: &Value) -> Res<Value> {
     // the login says which client it was made by; one that does not was made by Claude Code's own, as its row has it
     let client = o.get("clientId").and_then(|x| x.as_str()).map(String::from).unwrap_or_else(|| super::row("oauth_client"));
     let mut res = http()
-        .post(&here.token_url)
-        .header("content-type", "application/json")
-        .send(json!({ "grant_type": "refresh_token", "refresh_token": refresh, "client_id": client, "scope": scopes }).to_string())
+        .send(Ask::post(&here.token_url).bytes("application/json", json!({ "grant_type": "refresh_token", "refresh_token": refresh, "client_id": client, "scope": scopes }).to_string().into_bytes()))
         .map_err(|_| format!("Could not reach {} to check it.", maker()))?;
     let status = res.status().as_u16();
     let body: Option<Value> = res.body_mut().read_to_string().ok().and_then(|t| serde_json::from_str(&t).ok());

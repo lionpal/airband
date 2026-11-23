@@ -1,5 +1,4 @@
 //! The pass a live listening service gives: asked for with his key, kept for the minutes it lasts.
-#![expect(clippy::disallowed_methods, reason = "asks the listening service for a pass")]
 use super::*;
 
 /// What the phone needs to listen live with a service: which dialect to speak, a pass from the service that
@@ -58,12 +57,13 @@ pub(super) fn pass_whole(by: &By, service: &Provider, set: &BTreeMap<String, Str
 /// (`pass`), with the key presented as its row says (`auth`), and `body` when the dialect sends one. The
 /// answer comes back for the dialect to take its pass from. Err says why not, in words for him, naming the
 /// service as its row does.
-pub(super) fn ask_pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str, body: Option<Value>) -> Result<ureq::http::Response<ureq::Body>, String> {
+pub(super) fn ask_pass(by: &By, service: &Provider, set: &BTreeMap<String, String>, key: &str, body: Option<Value>) -> Result<crate::net::Response, String> {
     let url = airband_core::providers::fill(by.text(crate::models::field::PASS), &|field| set.get(field).cloned().unwrap_or_default())?;
     let auth = by.auth().ok_or("This version of airband was not told how that listening service takes its key.")?;
-    let req = crate::net::agent(Duration::from_secs(8)).post(&url).header(auth.header.as_str(), auth.value(key.trim()).as_str());
-    airband_io::http::sent(&airband_core::providers::Answering::of(service), match body {
-        Some(body) => req.send_json(&body),
-        None => req.header("Content-Length", "0").send_empty(),
-    })
+    let req = crate::net::Ask::post(&url).header(auth.header.as_str(), auth.value(key.trim()));
+    let req = match body {
+        Some(body) => req.json(&body),
+        None => req.header("Content-Length", "0"),
+    };
+    airband_io::http::sent(&airband_core::providers::Answering::of(service), crate::net::Client::new(Duration::from_secs(8)).send(req))
 }

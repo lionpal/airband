@@ -19,6 +19,16 @@ disallowed-methods = [
   { path = "ureq::Agent::get", reason = "reach the network through airband_io::http" },
   { path = "ureq::Agent::post", reason = "reach the network through airband_io::http" },
   { path = "ureq::Agent::patch", reason = "reach the network through airband_io::http" },
+  { path = "ureq::Agent::head", reason = "reach the network through airband_io::http" },
+  { path = "ureq::Agent::config_builder", reason = "make a client through airband_io::http::Client" },
+  { path = "ureq::Agent::new_with_defaults", reason = "make a client through airband_io::http::Client" },
+  { path = "ureq::Agent::new_with_config", reason = "make a client through airband_io::http::Client" },
+  { path = "ureq::get", reason = "reach the network through airband_io::http" },
+  { path = "ureq::post", reason = "reach the network through airband_io::http" },
+  { path = "ureq::put", reason = "reach the network through airband_io::http" },
+  { path = "ureq::delete", reason = "reach the network through airband_io::http" },
+  { path = "ureq::patch", reason = "reach the network through airband_io::http" },
+  { path = "ureq::head", reason = "reach the network through airband_io::http" },
 ]
 disallowed-macros = [
   { path = "serde_json::json", reason = "wire and file bodies are typed; build them from their types" },

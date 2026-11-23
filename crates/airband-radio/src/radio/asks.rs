@@ -62,7 +62,7 @@ impl Radio {
 
     /// Rename one of his teams on this computer. Answers with the name it now has. Blocks.
     pub(crate) fn rename_team(&self, team: String, to: String) -> Result<String, RadioError> {
-        Ok(self.link.call::<at::RenameTeam>(None, &Nothing {}, &airband_core::radio::RenameTeam { team: team.into(), to })?.team)
+        Ok(self.link.call::<at::RenameTeam>(None, &Nothing {}, &airband_core::radio::RenameTeam { team: airband_core::ids::TeamId::new(team), to })?.team)
     }
     /// The folders inside one of his on this computer. Blocks.
     pub(crate) fn folders(&self, under: String) -> Result<airband_core::radio::Folders, RadioError> {

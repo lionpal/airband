@@ -11,6 +11,7 @@ macro_rules! ids {
         pub struct $name(String);
 
         impl $name {
+            /// The id a tool, a row or the wire gave, as it was given: the one way one is made.
             pub fn new(id: impl Into<String>) -> Self {
                 Self(id.into())
             }
@@ -29,33 +30,13 @@ macro_rules! ids {
                 f.write_str(&self.0)
             }
         }
-        impl From<String> for $name {
-            fn from(id: String) -> Self {
-                Self(id)
-            }
-        }
         impl From<$name> for String {
             fn from(id: $name) -> String {
                 id.0
             }
         }
-        impl From<&str> for $name {
-            fn from(id: &str) -> Self {
-                Self(id.to_string())
-            }
-        }
         impl AsRef<str> for $name {
             fn as_ref(&self) -> &str {
-                &self.0
-            }
-        }
-        impl std::borrow::Borrow<str> for $name {
-            fn borrow(&self) -> &str {
-                &self.0
-            }
-        }
-        impl std::borrow::Borrow<String> for $name {
-            fn borrow(&self) -> &String {
                 &self.0
             }
         }
@@ -85,8 +66,8 @@ mod tests {
         assert_eq!(serde_json::to_string(&id).unwrap(), r#""abc""#);
         assert_eq!(serde_json::from_str::<AgentId>(r#""abc""#).unwrap(), id);
         let mut by: std::collections::BTreeMap<TeamId, u8> = Default::default();
-        by.insert("t".into(), 1);
-        assert_eq!(by.get("t"), Some(&1));
+        by.insert(TeamId::new("t"), 1);
+        assert_eq!(by.get(&TeamId::new("t")), Some(&1));
         assert_eq!(id.to_string(), "abc");
     }
 }

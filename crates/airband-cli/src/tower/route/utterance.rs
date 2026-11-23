@@ -157,7 +157,7 @@ async fn new_agent(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
     }
     let Some(Act::Launch(new)) = &said.act else { return None };
     // the team he picked, by its id, and the folder it works in
-    let Some(place) = app.read().team_place(new.team.as_ref()) else {
+    let Some(place) = app.read().team_place(&new.team) else {
         return Some(say("That team is not on this computer any more, or its folder is gone.".into()));
     };
     let idea = Idea { tool: new.tool.clone(), project: Some(place), model: new.model.clone().map(Pick::Id), effort: new.effort.clone().map(Pick::Id), task: format!("{}{files}", new.task) };
@@ -393,6 +393,7 @@ fn kept(app: &App, radio: &str, to: &Addressed, message_id: String, sent: Vec<Se
 #[cfg(test)]
 mod tests {
     use super::*;
+    use airband_core::ids::QuestionId;
 
     #[test]
     fn say_more_with_several_agents_named_asks_which_and_never_takes_the_first() {
@@ -460,18 +461,18 @@ mod tests {
         // no model is set here, so asking one fails
         let app = crate::tower::http::tests::app("idea-kept");
         let idea = Idea { task: "add a cart".into(), ..Idea::default() };
-        app.change().call("radio").hold_unplaced(Unplaced { question: "q1".into(), idea: idea.clone() });
+        app.change().call("radio").hold_unplaced(Unplaced { question: QuestionId::new("q1"), idea: idea.clone() });
         let places = [Place { name: "shop".into(), folder: "/w/shop".into() }, Place { name: "garden".into(), folder: "/w/garden".into() }];
         let reply = new_agent(&app, "radio", "the shop", &answering("the shop", "q1"), "", &places).await;
         let reply = reply.expect("he is told");
         assert_eq!(reply.question.as_deref(), Some("q1"), "{}", reply.say);
-        assert_eq!(app.change().call("radio").unplaced_for(Some("q1")), Some(Unplaced { question: "q1".into(), idea }));
+        assert_eq!(app.change().call("radio").unplaced_for(Some("q1")), Some(Unplaced { question: QuestionId::new("q1"), idea }));
     }
 
     #[tokio::test]
     async fn an_idea_waiting_for_its_project_is_not_taken_by_words_that_pick_an_agent() {
         let app = crate::tower::http::tests::app("idea-picked");
-        app.change().call("radio").hold_unplaced(Unplaced { question: "q1".into(), idea: Idea { task: "add a cart".into(), ..Idea::default() } });
+        app.change().call("radio").hold_unplaced(Unplaced { question: QuestionId::new("q1"), idea: Idea { task: "add a cart".into(), ..Idea::default() } });
         let said = airband_core::radio::Utterance { to: vec!["a".into()], ..answering("hello", "q1") };
         assert!(new_agent(&app, "radio", "hello", &said, "", &[]).await.is_none());
         assert!(app.change().call("radio").unplaced_for(Some("q1")).is_some());
@@ -487,7 +488,7 @@ mod tests {
     }
 
     fn asked(question: &str) -> Asked {
-        Asked { question: question.into(), words: "ship it".into(), files: "\n[file]".into() }
+        Asked { question: QuestionId::new(question), words: "ship it".into(), files: "\n[file]".into() }
     }
 
     #[test]
@@ -496,18 +497,18 @@ mod tests {
         call.ask(asked("q2"));
         // an answer to an older question reads nothing, and settling that older question lets nothing go
         assert_eq!(call.asked_for(Some("q1")), None);
-        call.resolve_asked(&"q1".into());
+        call.resolve_asked(&QuestionId::new("q1"));
         assert_eq!(call.asked_for(Some("q2")), Some(asked("q2")));
         // its own answer reads it without taking it; only settling it lets it go
         assert_eq!(call.asked_for(Some("q2")), Some(asked("q2")));
         assert!(call.asked_for(Some("q2")).is_some());
-        call.resolve_asked(&"q2".into());
+        call.resolve_asked(&QuestionId::new("q2"));
         assert_eq!(call.asked_for(Some("q2")), None);
         let idea = Idea { task: "add a cart".into(), ..Idea::default() };
-        call.hold_unplaced(Unplaced { question: "q3".into(), idea });
-        call.resolve_unplaced(&"q1".into());
+        call.hold_unplaced(Unplaced { question: QuestionId::new("q3"), idea });
+        call.resolve_unplaced(&QuestionId::new("q1"));
         assert!(call.unplaced_for(Some("q3")).is_some() && call.unplaced_for(None).is_none());
-        call.resolve_unplaced(&"q3".into());
+        call.resolve_unplaced(&QuestionId::new("q3"));
         assert_eq!(call.unplaced_for(Some("q3")), None);
     }
 

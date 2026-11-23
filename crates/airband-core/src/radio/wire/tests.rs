@@ -43,7 +43,7 @@ fn no_two_routes_share_a_method_and_path_and_radio_routes_are_under_the_radio_pa
 
 #[test]
 fn a_feed_query_reads_back_as_it_was_written() {
-    let q = FeedQuery { team: Some("t 1&x".into()), since: Some(4), after: 9, roster: Some(2), wait: 99, ..Default::default() };
+    let q = FeedQuery { team: Some(crate::ids::TeamId::new("t 1&x")), since: Some(4), after: 9, roster: Some(2), wait: 99, ..Default::default() };
     let back: FeedQuery = read_query(&query_of(&q));
     assert_eq!(back, q);
     assert_eq!(q.wait_for(), std::time::Duration::from_secs(FeedQuery::WAIT_MOST.into()));

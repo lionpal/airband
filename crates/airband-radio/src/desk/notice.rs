@@ -70,7 +70,7 @@ pub fn open_notice(links: Vec<String>, sealed: String, colours: std::collections
         let Pairing::Relay { secret, .. } = Pairing::parse(link).ok()? else { return None };
         let keys = Keys::derive(&secret).ok()?;
         let n: airband_core::radio::Notice = serde_json::from_slice(&keys.open(Direction::Push, &sealed).ok()?).ok()?;
-        let room = n.team.as_ref().map(|t| room_id(&StationId::from(keys.channel.as_str()), t.as_ref())).unwrap_or_default();
+        let room = n.team.as_ref().map(|t| room_id(&StationId::new(keys.channel.as_str()), t.as_ref())).unwrap_or_default();
         let agent = n.agent.unwrap_or_default();
         Some(OpenedNotice {
             thread: format!("{}/{agent}", keys.channel),

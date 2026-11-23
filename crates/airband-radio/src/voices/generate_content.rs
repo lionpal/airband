@@ -38,7 +38,7 @@ impl Synth for Generated {
             "contents": [{ "parts": [{ "text": text, "speech_metadata": { "style": self.style } }] }],
             "generationConfig": { "responseModalities": ["AUDIO"], "speechConfig": { "voiceConfig": { "prebuiltVoiceConfig": { "voiceName": self.voice } } } },
         });
-        let res = self.reach.sent(self.reach.post(Duration::from_secs(30)).send_json(&body))?;
+        let res = self.reach.sent(Duration::from_secs(30), self.reach.post().json(&body))?;
         // server-sent events: one JSON document per "data:" line, each with a piece of audio in base64
         for line in BufReader::new(res.into_body().into_reader()).lines() {
             let line = line.map_err(|e| e.to_string())?;

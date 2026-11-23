@@ -8,7 +8,7 @@ use airband_io::http::Said;
 /// The tower on this computer, asked with its own token. Every status comes back as an answer, for the caller
 /// to read; only a tower that cannot be reached is an error. The one way the command line and the hooks reach it.
 pub(crate) struct TowerHere {
-    agent: ureq::Agent,
+    client: airband_io::http::Client,
     base: String,
     auth: String,
 }
@@ -22,25 +22,24 @@ impl TowerHere {
         TowerHere::at(reach.port, &reach.token, timeout)
     }
     fn at(port: u16, token: &str, timeout: std::time::Duration) -> TowerHere {
-        TowerHere { agent: airband_io::http::agent(timeout), base: format!("http://127.0.0.1:{port}"), auth: format!("Bearer {token}") }
+        TowerHere { client: airband_io::http::Client::new(timeout), base: format!("http://127.0.0.1:{port}"), auth: format!("Bearer {token}") }
     }
     // Each says which version of the radio protocol it speaks: the radio's routes are refused without it, and
     // the agent's routes do not read it.
     /// The tower's own page about itself, read as the type the tower writes it from. Nothing when the tower is
     /// not running, did not take the request, or answered in another shape (an older version).
-    #[expect(clippy::disallowed_methods, reason = "the tower's status page, its own shape for `airband status`")]
     pub(crate) fn status(&self) -> Option<crate::tower::Status> {
-        let res = self.agent.get(format!("{}{}", self.base, crate::tower::STATUS_PATH)).header("authorization", &self.auth).header(airband_core::radio::SCHEMA_HEADER, airband_core::radio::SCHEMA).call();
+        let res = self.client.send(airband_io::http::Ask::get(format!("{}{}", self.base, crate::tower::STATUS_PATH)).header("authorization", &self.auth).header(airband_core::radio::SCHEMA_HEADER, airband_core::radio::SCHEMA));
         taken(res)?.body_mut().read_json::<crate::tower::Status>().ok()
     }
     /// One of the tower's typed routes: the path, method and answer all come from the endpoint.
     pub(crate) fn call<E: wire::Endpoint>(&self, id: Option<&str>, query: &E::Query, body: Option<&E::Body>) -> Result<Said<E::Answer>, airband_io::http::Error> {
-        airband_io::http::call::<E>(&self.agent, &self.base, &[("authorization", &self.auth), (airband_core::radio::SCHEMA_HEADER, airband_core::radio::SCHEMA)], id, query, body)
+        airband_io::http::call::<E>(&self.client, &self.base, &[("authorization", &self.auth), (airband_core::radio::SCHEMA_HEADER, airband_core::radio::SCHEMA)], id, query, body)
     }
 }
 
 /// A request's answer, when the tower took it (200).
-pub(crate) fn taken(res: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Option<ureq::http::Response<ureq::Body>> {
+pub(crate) fn taken(res: Result<airband_io::http::Response, airband_io::http::Error>) -> Option<airband_io::http::Response> {
     res.ok().filter(|r| r.status().as_u16() == 200)
 }
 
