@@ -375,9 +375,9 @@ mod tests {
         let store = d;
         let channel = airband_core::encode::random_hex(16);
         let channel = channel.as_str();
-        let count = || async { dynamo::number(&d.db.call("GetItem", json!({ "TableName": d.held, "Key": Dyn::key(channel, "n"), "ConsistentRead": true })).await.unwrap()["Item"], "held").unwrap_or(0) };
+        let count = || async { dynamo::number(&d.db.call(dynamo::Op::GetItem, json!({ "TableName": d.held, "Key": Dyn::key(channel, "n"), "ConsistentRead": true })).await.unwrap()["Item"], "held").unwrap_or(0) };
         let set = move |k: String, name: &'static str, to: u64| async move {
-            d.db.call("UpdateItem", json!({ "TableName": d.held, "Key": Dyn::key(channel, &k), "UpdateExpression": "SET #a = :n", "ExpressionAttributeNames": { "#a": name }, "ExpressionAttributeValues": { ":n": n(to) } })).await.unwrap();
+            d.db.call(dynamo::Op::UpdateItem, json!({ "TableName": d.held, "Key": Dyn::key(channel, &k), "UpdateExpression": "SET #a = :n", "ExpressionAttributeNames": { "#a": name }, "ExpressionAttributeValues": { ":n": n(to) } })).await.unwrap();
         };
 
         // the same id five times at once is kept once
@@ -417,6 +417,6 @@ mod tests {
         // leave nothing: the one past its time goes when the line is counted
         d.recount(channel).await.unwrap();
         assert!(d.line(channel).await.unwrap().is_empty());
-        d.db.call("DeleteItem", json!({ "TableName": d.held, "Key": Dyn::key(channel, "n") })).await.unwrap();
+        d.db.call(dynamo::Op::DeleteItem, json!({ "TableName": d.held, "Key": Dyn::key(channel, "n") })).await.unwrap();
     }
 }

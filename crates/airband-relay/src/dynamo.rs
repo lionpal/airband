@@ -10,6 +10,50 @@ use ring::{digest, hmac};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+/// One DynamoDB operation the relay sends: the only ones it may, so the role it runs as can be given exactly
+/// what they need ([`Op::needs`], kept in `infra/relay-dynamodb.json`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Op {
+    GetItem,
+    PutItem,
+    UpdateItem,
+    DeleteItem,
+    Query,
+    Scan,
+    TransactWriteItems,
+}
+
+impl Op {
+    pub(crate) const ALL: [Op; 7] = [Op::GetItem, Op::PutItem, Op::UpdateItem, Op::DeleteItem, Op::Query, Op::Scan, Op::TransactWriteItems];
+
+    /// Its name in DynamoDB's API.
+    fn name(self) -> &'static str {
+        match self {
+            Op::GetItem => "GetItem",
+            Op::PutItem => "PutItem",
+            Op::UpdateItem => "UpdateItem",
+            Op::DeleteItem => "DeleteItem",
+            Op::Query => "Query",
+            Op::Scan => "Scan",
+            Op::TransactWriteItems => "TransactWriteItems",
+        }
+    }
+
+    /// The permissions it needs. A transaction is checked against each of its parts' own permissions, not one
+    /// of its own; the relay's transactions put, update, delete and check a condition.
+    pub(crate) fn needs(self) -> &'static [&'static str] {
+        match self {
+            Op::GetItem => &["dynamodb:GetItem"],
+            Op::PutItem => &["dynamodb:PutItem"],
+            Op::UpdateItem => &["dynamodb:UpdateItem"],
+            Op::DeleteItem => &["dynamodb:DeleteItem"],
+            Op::Query => &["dynamodb:Query"],
+            Op::Scan => &["dynamodb:Scan"],
+            Op::TransactWriteItems => &["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:ConditionCheckItem"],
+        }
+    }
+}
+
 pub(crate) struct Dynamo {
     region: String,
     http: reqwest::Client,
@@ -129,7 +173,7 @@ impl Dynamo {
 
     /// Every item a `Scan` or a `Query` finds, page after page. For a reader that stops at the first it can use,
     /// [`Pages`].
-    pub(crate) async fn all(&self, operation: &str, ask: Value) -> Result<Vec<Value>, String> {
+    pub(crate) async fn all(&self, operation: Op, ask: Value) -> Result<Vec<Value>, String> {
         let (mut all, mut pages) = (Vec::new(), Pages::new(operation, ask));
         while let Some(items) = pages.next(self).await? {
             all.extend(items);
@@ -140,7 +184,7 @@ impl Dynamo {
     /// One DynamoDB operation, such as `PutItem`. Tried again a few times when the service is busy, cannot be
     /// reached, or two transactions touched the same item at once; a refusal that trying again cannot change
     /// comes back at once.
-    pub(crate) async fn call(&self, operation: &str, body: Value) -> Result<Value, Failed> {
+    pub(crate) async fn call(&self, operation: Op, body: Value) -> Result<Value, Failed> {
         let host = format!("dynamodb.{}.amazonaws.com", self.region);
         let bytes = serde_json::to_vec(&body).expect("JSON can be written");
         let mut last = Failed { kind: "Unreachable".into(), message: String::new(), reasons: Vec::new() };
@@ -153,7 +197,7 @@ impl Dynamo {
             let creds = self.creds().await?;
             let secs = airband_core::clock::now_secs();
             let mut req = self.http.post(format!("https://{host}/")).body(bytes.clone());
-            for (name, value) in signed(&creds, &self.region, &host, &format!("DynamoDB_20120810.{operation}"), &bytes, secs) {
+            for (name, value) in signed(&creds, &self.region, &host, &format!("DynamoDB_20120810.{}", operation.name()), &bytes, secs) {
                 req = req.header(name, value);
             }
             let res = match req.send().await {
@@ -186,15 +230,15 @@ impl Dynamo {
 
 /// A `Scan` or a `Query` read a page at a time: the one way the relay pages through DynamoDB.
 pub(crate) struct Pages {
-    operation: String,
+    operation: Op,
     ask: Value,
     /// Where the next page starts; nothing once the last has been read.
     from: Option<Option<Value>>,
 }
 
 impl Pages {
-    pub(crate) fn new(operation: &str, ask: Value) -> Pages {
-        Pages { operation: operation.into(), ask, from: Some(None) }
+    pub(crate) fn new(operation: Op, ask: Value) -> Pages {
+        Pages { operation, ask, from: Some(None) }
     }
     /// The next page's items; nothing once every page has been read.
     pub(crate) async fn next(&mut self, db: &Dynamo) -> Result<Option<Vec<Value>>, String> {
@@ -203,7 +247,7 @@ impl Pages {
         if let Some(from) = from {
             ask["ExclusiveStartKey"] = from;
         }
-        let mut page = db.call(&self.operation, ask).await.map_err(|e| e.to_string())?;
+        let mut page = db.call(self.operation, ask).await.map_err(|e| e.to_string())?;
         self.from = page.get("LastEvaluatedKey").filter(|k| k.is_object()).cloned().map(Some);
         Ok(Some(match page["Items"].take() {
             Value::Array(items) => items,
@@ -234,6 +278,20 @@ pub(crate) fn bytes(item: &Value, name: &str) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn that_role_is_given_every_permission_the_relay_asks_for() {
+        let given: serde_json::Value = serde_json::from_str(include_str!("../../../infra/relay-dynamodb.json")).unwrap();
+        let given: Vec<&str> = given["actions"].as_array().unwrap().iter().map(|a| a.as_str().unwrap()).collect();
+        let mut needed: Vec<&str> = Op::ALL.iter().flat_map(|o| o.needs().iter().copied()).collect();
+        needed.sort();
+        needed.dedup();
+        let mut sorted = given.clone();
+        sorted.sort();
+        // exactly what is needed: a permission too few refuses the relay, one too many is more than it should have
+        assert_eq!(sorted, needed);
+        assert!(needed.contains(&"dynamodb:ConditionCheckItem"));
+    }
     use super::*;
 
     #[test]

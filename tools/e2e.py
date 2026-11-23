@@ -5,7 +5,9 @@ It starts a tower in a throwaway home on its own port, puts six agents on it the
 them (two teams with two agents each, two teams with one), and goes through everything a radio can do, checking
 each result. Nothing here touches the real tower or its files.
 
-    cargo build --release --features airband-cli/stand-ins && tools/e2e.py            about two minutes, some dozens of small model calls
+    CARGO_TARGET_DIR=target/stand-ins cargo build --release --features airband-cli/stand-ins && CARGO_TARGET_DIR=target/stand-ins tools/e2e.py
+                                                     about two minutes, some dozens of small model calls (built in a
+                                                     folder of its own, never where the README installs from)
     tools/e2e.py --local                             the same, with the model the tower runs itself doing the reading
     tools/e2e.py --claude                            also asks a real `claude -p` session for permission
     tools/e2e.py --gemini                            the same, with Gemini as the model that reads everything

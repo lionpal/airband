@@ -20,6 +20,7 @@
 // Deploy: the GitHub Actions (.github/workflows/deploy-relay.yml and deploy-site.yml), one per stack.
 // By hand, if the Action is down:  cd infra && npm ci && npx cdk deploy AirbandRelay --require-approval never
 // (a by-hand deploy builds the image locally and needs several GB of free disk for Docker)
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { App, CfnOutput, Duration, RemovalPolicy, Stack, Tags } from 'aws-cdk-lib';
@@ -166,7 +167,7 @@ class AirbandRelayUs extends Stack {
 
     const role = new iam.Role(this, 'HostRole', { assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'), description: 'The airband relay server',
       managedPolicies: [iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore')] });
-    role.addToPolicy(new iam.PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:Scan'], resources: tables.map((t) => t.tableArn) }));
+    role.addToPolicy(new iam.PolicyStatement({ actions: JSON.parse(readFileSync(join(HERE, 'relay-dynamodb.json'), 'utf8')).actions, resources: tables.map((t) => t.tableArn) }));
     const settings = ['relay-env', 'apns-key'].map((n) => `arn:aws:ssm:${this.region}:${this.account}:parameter/airband/${n}`);
     role.addToPolicy(new iam.PolicyStatement({ actions: ['ssm:GetParameter', 'ssm:GetParameters'], resources: settings }));
     ship.grantRead(role);
