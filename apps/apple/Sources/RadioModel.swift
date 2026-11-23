@@ -348,18 +348,10 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// choice stands, as the core last said. The core decides all of it; the screens draw this.
     @Published var choices: [ChoiceJob: [Choice]] = [:]
 
-    /// What he is told when a computer could not be asked.
-    static let unreached = "Your computer could not be reached."
-
-    /// What went wrong, in words for him: the reason the computer gave when it gave one, that it cannot be
-    /// reached when it cannot, and otherwise `fallback`, which says what did not happen.
+    /// What went wrong, in words for him: the core's words for any of its errors, and otherwise `fallback`,
+    /// which says what did not happen.
     static func words(for error: Error, else fallback: String) -> String {
-        switch error {
-        case RadioError.Told(let reason), RadioError.Trouble(let reason), RadioError.BadLink(let reason): return reason
-        case RadioError.Offline: return unreached
-        case RadioError.Refused: return "That computer refused it."
-        default: return fallback
-        }
+        (error as? RadioError).map { errorWords(error: $0) } ?? fallback
     }
 
     /// Run one of the core's blocking calls off the main thread and come back on it: with what the call gave,

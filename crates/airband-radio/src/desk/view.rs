@@ -125,7 +125,7 @@ impl Desk {
             focus: DeskFocus { room: room.clone(), agent: agent.clone() },
             new_agent: NewAgentDefaults { computer: (state.computers.len() == 1).then(|| state.computers[0].id().to_string()), tool: (used.len() == 1).then(|| used[0].clone()) },
             tools: used,
-            cannot_reach: if away.is_empty() { "Can\u{2019}t reach your computer".to_string() } else { format!("Can\u{2019}t reach {}", away.join(", ")) },
+            cannot_reach: if away.is_empty() { crate::UNREACHED.to_string() } else { format!("Can\u{2019}t reach {}.", away.join(", ")) },
             colours: state.colours.all(),
             paired: !state.computers.is_empty(),
             online: state.computers.iter().any(|s| s.online),

@@ -38,8 +38,9 @@ pub(super) fn send_file(shared: Arc<Shared>, radio: Arc<Radio>, id: String, file
             let mut state = shared.state.lock().unwrap();
             // only if this is still the sending that counts: it may have been taken off, or started again elsewhere
             if let Some(u) = state.uploads.iter_mut().find(|u| u.shown.id == id && Arc::ptr_eq(&u.dropped, &dropped)) {
-                u.shown.state = if outcome.is_ok() { UploadState::Ready } else { UploadState::Failed };
-                if outcome.is_ok() {
+                let arrived = matches!(outcome, Ok(crate::radio::UploadEnd::Arrived));
+                u.shown.state = if arrived { UploadState::Ready } else { UploadState::Failed };
+                if arrived {
                     radio.arm(id.clone());
                 }
             }

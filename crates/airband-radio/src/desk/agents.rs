@@ -76,7 +76,7 @@ impl Desk {
     /// [`Desk::accounts`] gave them. Blocks: call it off the main thread.
     pub fn use_account(&self, station: String, harness: String, id: String) -> Result<StationAccounts, RadioError> {
         let radio = self.station_radio(&StationId::from(station.as_str()))?;
-        let computer = self.shared.state.lock().unwrap().named_radios().into_iter().map(|(c, _)| c).find(|c| c.id == station).ok_or(RadioError::Offline)?;
+        let computer = self.shared.state.lock().unwrap().named_radios().into_iter().map(|(c, _)| c).find(|c| c.id == station).ok_or_else(|| crate::choices::told(UNPAIRED))?;
         radio.use_account(&computer, harness, id)
     }
     /// Put an agent in another team: a room on screen with that agent's computer ([`DeskRoom::id`]), or a new

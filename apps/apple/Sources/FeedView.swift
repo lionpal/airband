@@ -88,7 +88,7 @@ struct FeedView: View {
                                     }
                                     .font(.system(size: 13, weight: .medium)).padding(.horizontal, 12).frame(minHeight: 30).frosted(Capsule())
                                 }
-                                .buttonStyle(.plain).accessibilityLabel("Cannot reach your computer. Try again.")
+                                .buttonStyle(.plain).accessibilityLabel("\(model.cannotReach) Try again.")
                             }
                             bar
                         }

@@ -147,7 +147,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             state(.listening, with.map { ["Listening, for \($0)", "Listening"] } ?? ["Listening"], "mic.fill", talk: ("Send", "arrow.up"), other: ("Cancel", "xmark", { [weak self] in self?.model.cancelTalk() })),
             state(.sending, ["Sending"], "arrow.up.circle.fill", talk: nil),
             state(.speaking, with.map { ["\($0) is speaking", "Speaking"] } ?? ["Speaking"], "speaker.wave.2.fill", picture: model.only.flatMap { avatar(of: $0, side: 120) }, talk: ("Talk", "mic.fill"), other: ("Quiet", "speaker.slash.fill", { [weak self] in self?.model.voice.hush() })),
-            state(.offline, ["Can\u{2019}t reach your computer", "Offline"], "wifi.slash", talk: nil),
+            state(.offline, [model.cannotReach, "Offline"], "wifi.slash", talk: nil),
         ])
         if #available(iOS 26.4, *) {
             screen.leadingNavigationBarButtons = [CPBarButton(title: "End") { [weak self] _ in

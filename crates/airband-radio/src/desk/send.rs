@@ -79,18 +79,21 @@ impl Desk {
         self.deliver(text, None, re, room, agent);
     }
     /// Send the words of one of his messages again, to another agent: the whole of them, fetched from the
-    /// computer that has the message if the chat holds only their opening. Blocks while it fetches: call it
-    /// off the main thread.
-    pub fn resend(&self, message_id: String, agent_id: String) {
-        let found = {
+    /// computer that has the message if the chat holds only their opening. Nothing goes when the whole of them
+    /// cannot be fetched: an opening is never sent as the whole. Blocks while it fetches: call it off the main
+    /// thread.
+    pub fn resend(&self, message_id: String, agent_id: String) -> Result<(), RadioError> {
+        let (found, radio) = {
             let state = self.shared.state.lock().unwrap();
-            state.message(&message_id).map(|(_, m)| (m.text.clone(), m.long)).zip(state.radio_with_agent(&agent_id))
+            (state.message(&message_id).map(|(_, m)| (m.text.clone(), m.long)), state.radio_with_agent(&agent_id))
         };
-        let Some(((text, long), radio)) = found else { return };
-        let text = if long { self.full(message_id).unwrap_or(text) } else { text };
+        let (text, long) = found.ok_or_else(|| RadioError::gone("message"))?;
+        let radio = radio.ok_or_else(|| RadioError::gone("agent"))?;
+        let text = if long { self.full(message_id)? } else { text };
         // to the agent he picked, whatever tags the words start with: he chose who, so nothing in them is read
         radio.queue_as(Outgoing { to: vec![agent_id], ..Outgoing::of(text) }, Carry::Nothing);
         self.shared.host.changed();
+        Ok(())
     }
     /// Send a quick message: the feed shows `label`, the agent gets `text`. Who it is for is worked out as for
     /// anything he types.

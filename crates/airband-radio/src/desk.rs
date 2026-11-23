@@ -531,7 +531,12 @@ impl Desk {
             (true, [_, _, ..]) => return Err(crate::choices::told("Choose which computer first.")),
             _ => state.computers.iter().find(|s| s.id() == *computer),
         };
-        found.filter(|s| s.online).map(|s| (s.radio.clone(), station_id(&s.link))).ok_or(RadioError::Offline)
+        // a computer this phone does not have is gone; one it has that is not answering is out of reach
+        let found = found.ok_or_else(|| crate::choices::told(UNPAIRED))?;
+        if !found.online {
+            return Err(RadioError::Offline);
+        }
+        Ok((found.radio.clone(), station_id(&found.link)))
     }
     fn radio_of(&self, message: &str) -> Option<Arc<Radio>> {
         self.shared.state.lock().unwrap().owner(message).map(|s| s.radio.clone())
