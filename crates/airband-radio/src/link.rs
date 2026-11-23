@@ -660,8 +660,19 @@ mod tests {
             for conn in relay.incoming().flatten() {
                 use std::io::{Read, Write};
                 let mut conn = conn;
+                // the whole request is read before the answer: a connection closed with some of it unread is
+                // reset, and the reset can take the answer's body with it
+                let mut asked = Vec::new();
                 let mut buf = [0u8; 4096];
-                let _ = conn.read(&mut buf);
+                while let Ok(n @ 1..) = conn.read(&mut buf) {
+                    asked.extend_from_slice(&buf[..n]);
+                    let Some(end) = asked.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
+                    let head = String::from_utf8_lossy(&asked[..end]).to_ascii_lowercase();
+                    let length: usize = head.lines().find_map(|l| l.strip_prefix("content-length:")).and_then(|v| v.trim().parse().ok()).unwrap_or(0);
+                    if asked.len() >= end + 4 + length {
+                        break;
+                    }
+                }
                 let body = serde_json::to_vec(&airband_core::relay::CallRefused::Away).unwrap();
                 let _ = conn.write_all(format!("HTTP/1.1 503 Service Unavailable\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n", body.len()).as_bytes());
                 let _ = conn.write_all(&body);
