@@ -132,8 +132,8 @@ class AirbandRelay extends Stack {
 // The role the workflow uses for this can do only those two things. A new server does the same on first boot.
 //
 // Before the first deploy, once, by hand (none of it is in the repository):
-//   1. the three secrets, in this stack's region, as SecureString parameters:
-//      /airband/apns-key
+//   1. the two settings the server reads, in this stack's region, as SecureString parameters:
+//      /airband/relay-env and /airband/apns-key
 //   2. a Caddy built with the Route 53 module, in the bucket as caddy/caddy-linux-arm64
 //      (https://caddyserver.com/api/download?os=linux&arch=arm64&p=github.com/caddy-dns/route53)
 // The name itself (the A record for relay.airband.dev) is not made here while the Tokyo stack still owns it:
