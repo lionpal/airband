@@ -16,6 +16,7 @@ use airband_core::audio::{Endpointer, Heard, samples};
 use airband_core::providers::{By, Interface, Job, Offer, Provider, Use};
 use std::collections::BTreeMap;
 use std::sync::mpsc::sync_channel;
+use crate::takes::{Aim, Unheard};
 
 pub(crate) const RATE: u32 = 16000;
 
@@ -34,8 +35,6 @@ pub(crate) fn unknown_service() -> String {
 pub(crate) fn cannot_listen() -> String {
     crate::senses::Cannot::ServiceNotUsed(crate::senses::Sense::Listening).told()
 }
-/// What he is told when the live listening service or the line to it failed before anything was heard.
-const SERVICE_UNREACHED: &str = "The listening service you chose could not be reached. Nothing else listened in its place.";
 /// Said when he opens the microphone with nothing chosen to listen with.
 pub(crate) fn nothing_chosen() -> String {
     crate::senses::Cannot::NothingChosen(crate::senses::Sense::Listening).told()
@@ -205,9 +204,9 @@ enum Mic {
     Model(Arc<crate::engines::Held>),
     /// In one upload to a service, with the key of his own that is already here.
     OwnUpload { with: Use, phrases: Vec<String> },
-    /// Live, as he speaks, in a dialect this build has. Its pass is asked for once the microphone is open
-    /// ([`Ears::pass`]).
-    Live { with: &'static Listener },
+    /// Live, as he speaks, in a dialect this build has. Its pass is asked for once the microphone is open, and
+    /// whenever the connection needs a fresh one: [`Ears::pass`], worked out again each time.
+    Live { with: &'static Listener, pass: crate::ears_stream::PassFor },
 }
 
 /// The passes a live listening service gave, kept once on the device for every computer's radio: one pass
@@ -232,6 +231,11 @@ impl Ears {
         Ears { chosen }
     }
 
+    /// What he has said, kept until his computer has it.
+    pub(crate) fn takes(&self) -> &crate::takes::Takes {
+        &self.chosen.takes
+    }
+
     /// The pass kept for exactly this choice, while it is still good. One good for a single connection is
     /// never kept.
     fn kept(&self, with: &Use) -> Option<Pass> {
@@ -249,7 +253,10 @@ impl Ears {
             Some(Own::Cannot(why)) => Way::Nothing(why.told()),
             Some(Own::Host) => Way::Host,
             Some(Own::Service(with)) => match with.offer(Job::Ears).map(|(_, o)| (live(&o), crate::hears::by_upload(&with))) {
-                Some((Some(l), _)) => Way::Mic(Mic::Live { with: l }),
+                Some((Some(l), _)) => {
+                    let ears = self.clone();
+                    Way::Mic(Mic::Live { with: l, pass: Arc::new(move || ears.pass()) })
+                }
                 Some((None, true)) => Way::Mic(Mic::OwnUpload { phrases: self.chosen.ears.phrases.lock().unwrap().clone(), with }),
                 _ => Way::Nothing(cannot_listen()),
             },
@@ -280,7 +287,7 @@ impl Ears {
     /// Nothing when none is kept: a pass that cannot be had now is asked for again when he opens the
     /// microphone, and he is told then.
     pub(crate) fn warm(&self) -> Option<u64> {
-        let Way::Mic(Mic::Live { with }) = self.way() else { return None };
+        let Way::Mic(Mic::Live { with, .. }) = self.way() else { return None };
         if with.once {
             return None;
         }
@@ -291,83 +298,114 @@ impl Ears {
     /// and the connection to it are made while he is already talking, and what he said meanwhile is sent when
     /// they are ready. With `manual` he opened it himself: it stays open, through any pause, until the host
     /// closes it, and everything he said comes back. Without, it is open for one reply and closes by itself
-    /// when he stops talking.
-    pub(crate) fn hear(&self, host: &dyn RadioHost, manual: bool) -> Listened {
-        let said = |t: Option<String>| t.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).map(Listened::Said).unwrap_or(Listened::Nothing);
-        let fail = |host: &dyn RadioHost, why: String| self.chosen.ears.fail(host, why);
+    /// when he stops talking. `aim` is where his words go, kept with the recording for when they go later.
+    ///
+    /// Everything read from the microphone is written to a take as it comes ([`crate::takes`]), from the first
+    /// sample to the last, whatever the listening does: when it fails partway the recording goes on to his end.
+    pub(crate) fn hear(&self, host: &dyn RadioHost, manual: bool, aim: Aim) -> Listened {
         let mic = match self.way() {
             // a radio in a terminal: there is no microphone, and what he says is the line he types
-            Way::Host => return said(host.listen()),
+            Way::Host => {
+                return host.listen().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).map_or(Listened::Nothing, |text| Listened::Said { text, take: None });
+            }
             // nothing can listen: say why, and stop there
             Way::Nothing(why) => {
                 self.forget();
-                return fail(host, why);
+                return self.chosen.ears.fail(host, why);
             }
             Way::Mic(mic) => mic,
         };
+        self.hear_by(host, mic, manual, aim)
+    }
+
+    /// The same, with the way of hearing him worked out.
+    fn hear_by(&self, host: &dyn RadioHost, mic: Mic, manual: bool, aim: Aim) -> Listened {
         if !host.record_start(RATE) {
             host.told("The microphone could not be opened. Check that airband may use it, in Settings.".into());
             return Listened::Cannot;
         }
-        let heard_well = || *self.chosen.ears.failed.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        match mic {
+        let tape = self.chosen.takes.tape(host, aim);
+        let got = self.by(&tape, mic, manual);
+        // the listening stopped before he did: the recording goes on to his end all the same
+        if matches!(got, Got::Failed(_)) {
+            tape.rest(manual);
+        }
+        host.record_stop();
+        self.chosen.takes.ended(tape.done(), got)
+    }
+
+    /// Hear again a take that was not heard, from its recording, by what he has chosen now. What came of it is
+    /// kept with the take; nothing when it is not one to hear again.
+    pub(crate) fn hear_again(&self, host: &dyn RadioHost, id: &str) -> Listened {
+        let takes = &self.chosen.takes;
+        let mic = match self.way() {
+            Way::Mic(mic) => mic,
+            // a terminal has no recordings to hear
+            Way::Host => {
+                takes.back(id);
+                return Listened::Nothing;
+            }
+            Way::Nothing(why) => {
+                takes.back(id);
+                return self.chosen.ears.fail(host, why);
+            }
+        };
+        let Some(pcm) = takes.replay(id) else {
+            host.told("This phone could not read that recording. Unlock it and try again.".into());
+            return Listened::Unheard { take: id.into() };
+        };
+        let got = self.by(&crate::takes::Replay::of(host, &pcm), mic, true);
+        takes.heard_again(id, got)
+    }
+
+    /// What one way of hearing made of the microphone `host` gives: the words, or why there are none. Whether
+    /// it heard is kept for Settings to show; he is told of a recording that was not heard where it is shown.
+    fn by(&self, host: &dyn RadioHost, mic: Mic, manual: bool) -> Got {
+        let got = match mic {
             Mic::Model(held) => {
                 let name = held.m.name.clone();
-                let heard = by_model(host, &held, manual);
-                host.record_stop();
-                match heard {
-                    Ok(text) => {
-                        heard_well();
-                        said(text)
-                    }
-                    // the model would not run: it stays the one he chose, and he is told
-                    Err(fault) => fail(host, format!("{} Nothing else listened in its place.", fault.told(&name))),
+                match by_model(host, &held, manual) {
+                    Ok(text) => Got::Words(text),
+                    // the model would not run: it stays the one he chose
+                    Err(fault) => Got::Failed(Unheard::Model { why: format!("{} Nothing else listened in its place.", fault.told(&name)) }),
                 }
             }
             // The recording is made here and sent off whole, to the service, with his own key.
-            Mic::OwnUpload { with, phrases } => {
-                let clip = record(host, manual);
-                host.record_stop();
-                match clip {
-                    None => Listened::Nothing,
-                    Some(pcm) => {
-                        host.status(RadioStatus::Sending);
-                        match crate::hears::transcribe(&with, &crate::hears::wav(RATE, &pcm), &phrases) {
-                            Ok(text) => {
-                                heard_well();
-                                said(Some(text))
-                            }
-                            // the service's reason names it already
-                            Err(why) => fail(host, why),
-                        }
+            Mic::OwnUpload { with, phrases } => match record(host, manual) {
+                None => Got::Words(None),
+                Some(pcm) => {
+                    host.status(RadioStatus::Sending);
+                    match crate::hears::transcribe(&with, &crate::hears::wav(RATE, &pcm), &phrases) {
+                        Ok(text) => Got::Words(Some(text)),
+                        // the service's reason names it already
+                        Err(why) => Got::Failed(Unheard::Service { why }),
                     }
                 }
-            }
-            Mic::Live { with } => {
-                // a fresh pass whenever the connection asks for one: the same way, worked out again
-                let again: crate::ears_stream::PassFor = {
-                    let ears = self.clone();
-                    Arc::new(move || ears.pass())
-                };
-                // As he speaks, with the words coming back while he talks. When that connection cannot be made
-                // he is told, and nothing listens another way in its place.
-                let heard = crate::ears_stream::live(with.wire, again, host, RATE, crate::hears::wav_header(RATE, None), manual);
-                host.record_stop();
-                match heard {
-                    Ok(text) => {
-                        heard_well();
-                        said(text)
-                    }
-                    Err(failed) => {
-                        // the service or the line failed: ask for a fresh pass next time. When it was the pass he is
-                        // told the service's reason
-                        self.forget();
-                        fail(host, failed.why.unwrap_or_else(|| SERVICE_UNREACHED.into()))
-                    }
+            },
+            // As he speaks, with the words coming back while he talks. Nothing listens another way in its place.
+            Mic::Live { with, pass } => match crate::ears_stream::live(with.wire, pass, host, RATE, crate::hears::wav_header(RATE, None), manual) {
+                Ok(text) => Got::Words(text),
+                Err(why) => {
+                    // the service or the line failed: ask for a fresh pass next time
+                    self.forget();
+                    Got::Failed(why)
                 }
-            }
-        }
+            },
+        };
+        *self.chosen.ears.failed.lock().unwrap_or_else(|e| e.into_inner()) = match &got {
+            Got::Failed(why) => Some(why.told()),
+            Got::Words(_) => None,
+        };
+        got
     }
+}
+
+/// What one way of hearing made of a recording.
+pub(crate) enum Got {
+    /// What he said; nothing when it heard no words.
+    Words(Option<String>),
+    /// It did not hear it, and why.
+    Failed(Unheard),
 }
 
 /// The microphone until he stops, as samples: for a service that takes a finished recording. None when he
@@ -451,6 +489,9 @@ fn by_model(host: &dyn RadioHost, held: &crate::engines::Held, manual: bool) -> 
     host.status(RadioStatus::Sending);
     read(bytes(&pcm)).map(|text| Some(text.trim().to_string()).filter(|t| !t.is_empty()))
 }
+
+#[cfg(test)]
+mod kept_tests;
 
 #[cfg(test)]
 mod tests {

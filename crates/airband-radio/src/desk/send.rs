@@ -123,7 +123,12 @@ impl Desk {
     /// Let go of a message that was not sent (every copy given up on, for words sent to several computers).
     /// Returns its words, for putting back where he types.
     pub fn discard_unsent(&self, id: String) -> Option<String> {
-        self.senders_of(&id).into_iter().filter_map(|radio| radio.discard(&id)).last().map(|o| o.label.unwrap_or(o.text))
+        let gone = self.senders_of(&id).into_iter().filter_map(|radio| radio.discard(&id)).last().map(|o| o.label.unwrap_or(o.text));
+        // what he said aloud goes with its recording
+        if gone.is_some() {
+            self.shared.senses.takes.discard(&id);
+        }
+        gone
     }
     /// Take back something he said that is still waiting its turn. Blocks: call it off the main thread.
     /// Words sent to several computers at once are taken back from each.
@@ -140,20 +145,33 @@ impl Desk {
 
 impl Desk {
     pub(super) fn deliver(&self, text: String, label: Option<String>, re: Option<String>, room: Option<String>, agent: Option<String>) {
-        deliver(&self.shared, text, label, re, room, agent);
+        deliver(&self.shared, text, label, re, room, agent, None);
     }
 }
 
 /// Send something of his: typed, tapped or said. Who it is for, and so which computer it goes to, is worked out
 /// from what he can see; the tower it goes to is told about the agents the other computers have, so it can say
 /// the words are for one of those.
-pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>, re: Option<String>, room: Option<String>, agent: Option<String>) {
+///
+/// `said`: words he said aloud, by the take they were heard from. They go under its id, and the take is told
+/// whether they went into an outbox, or could not go anywhere and wait for him in the chat.
+pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>, re: Option<String>, room: Option<String>, agent: Option<String>, said: Option<String>) {
+    let takes = &shared.senses.takes;
+    let unsent = || {
+        if let Some(take) = &said {
+            takes.unsent(take);
+            shared.host.changed();
+        }
+    };
+    let line = |text: String| Outgoing { id: said.clone().unwrap_or_else(|| random_hex(12)), ..Outgoing::of(text) };
     let text = text.trim().to_string();
     let (radio, text, re, scope, others, to) = {
         let mut state = shared.state.lock().unwrap();
         // nothing typed is still something to send when files have arrived: the files themselves. Files still
         // on their way are not yet anything to send
         if state.computers.is_empty() || (text.is_empty() && !state.uploads.iter().any(|u| u.shown.state == UploadState::Ready)) {
+            drop(state);
+            unsent();
             return;
         }
         // something new said: whatever was waiting to be placed is let go
@@ -169,20 +187,29 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
         // a tag that names agents on several computers (`@all`, a team on two of them) goes to each of them
         if tagging.len() > 1 {
             drop(state);
-            to_each(shared, &tagging, text, label);
+            if let Some(take) = &said {
+                takes.sent(take);
+            }
+            to_each(shared, &tagging, line(text), label);
             return;
         }
         // looking at one agent, with nobody tagged and no message picked: it is for that agent
         let aimed = matches!((&agent, tagged, &re), (Some(_), false, None));
         // with several computers and no main one chosen the app asks him first, and nothing is sent until then
-        let Some(wanted) = pick_station(&state, &text, re.as_deref(), room.as_deref(), agent.as_deref()) else { return };
+        let Some(wanted) = pick_station(&state, &text, re.as_deref(), room.as_deref(), agent.as_deref()) else {
+            drop(state);
+            unsent();
+            return;
+        };
         // Files he attached are already on one computer. Words with no address go there with them. Words he
         // addressed (a tag, a message he picked, the agent he is looking at) go where they are addressed, and
         // if that is another computer the files are sent there first: the words wait for them.
         let pick = match files_at(&state) {
             Some(at) if at != wanted && (tagged || aimed || re.is_some()) => {
-                let words = AfterFiles { text: text.clone(), label: label.clone(), re: re.clone(), room: room.clone(), agent: agent.clone() };
+                let words = AfterFiles { text: text.clone(), label: label.clone(), re: re.clone(), room: room.clone(), agent: agent.clone(), said: said.clone() };
                 if !move_files(shared, &mut state, &at, &wanted, words) {
+                    drop(state);
+                    unsent();
                     return;
                 }
                 drop(state);
@@ -194,7 +221,11 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
         };
         // the ones that have arrived leave with this message
         state.files_went(&pick, &[]);
-        let Some(computer) = state.computer(&pick) else { return };
+        let Some(computer) = state.computer(&pick) else {
+            drop(state);
+            unsent();
+            return;
+        };
         // the agent he is looking at, by id: the tower reads nothing to find who it is for
         let to: Vec<String> = match (&agent, aimed) {
             (Some(id), true) => computer.agents.iter().find(|a| a.id == *id).map(|a| a.id.clone()).into_iter().collect(),
@@ -206,7 +237,10 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
         let others = if tagged || aimed || re.is_some() || state.computers.len() < 2 { Vec::new() } else { others(&state, &pick, room.as_deref()) };
         (computer.radio.clone(), text, re, scope, others, to)
     };
-    radio.queue_as(Outgoing { re, scope, label, others, to, ..Outgoing::of(text) }, Carry::Answer);
+    if let Some(take) = &said {
+        takes.sent(take);
+    }
+    radio.queue_as(Outgoing { re, scope, label, others, to, ..line(text) }, Carry::Answer);
     shared.host.changed();
 }
 /// Words of his that reached the computer `from` and no agent, now for `agent`: they go to the computer that
@@ -264,7 +298,7 @@ fn tagged_on(state: &State, text: &str) -> Vec<StationId> {
 /// Words whose tags name agents on each of these computers: each of them is sent them, and its tower reads
 /// the tags for its own agents. Files he attached go with the copy to the computer they are on; when that is
 /// none of these, they stay there for the next thing he sends to it, and he is told.
-fn to_each(shared: &Arc<Shared>, computers: &[StationId], text: String, label: Option<String>) {
+fn to_each(shared: &Arc<Shared>, computers: &[StationId], line: Outgoing, label: Option<String>) {
     let (radios, stranded) = {
         let mut state = shared.state.lock().unwrap();
         let files = files_at(&state);
@@ -277,7 +311,7 @@ fn to_each(shared: &Arc<Shared>, computers: &[StationId], text: String, label: O
     };
     // One line of his, under one id, sent to each: the chat shows it once whichever computers have it. Each
     // copy takes its own: the files that reached that computer, the question it last asked him back.
-    let line = Outgoing { label, ..Outgoing::of(text) };
+    let line = Outgoing { label, ..line };
     for radio in radios {
         radio.queue_as(line.clone(), Carry::Answer);
     }

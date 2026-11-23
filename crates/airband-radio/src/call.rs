@@ -10,8 +10,8 @@ pub(crate) enum Job {
     /// He wants to speak: the message he is answering, if he picked one, and the room he is looking at.
     Talk(Option<String>, Option<String>),
     /// He opened the microphone himself: listen until he closes it, and hand over what he said. Nothing is sent
-    /// from here; where it goes is the caller's to work out.
-    Dictate(Box<dyn FnOnce(Listened) + Send>),
+    /// from here; where it goes is the caller's to work out, and is kept with the recording as aimed.
+    Dictate(crate::takes::Aim, Box<dyn FnOnce(Listened) + Send>),
 }
 
 /// Everything the polling thread is given to work with.
@@ -130,10 +130,10 @@ pub(crate) fn work(with: Working) {
                 let _here = still_here(&link, &calling);
                 converse(&link, &session, &*host, &ears, &senses.mouth, re, scope)
             }
-            Job::Dictate(done) => {
+            Job::Dictate(aim, done) => {
                 let _here = still_here(&link, &calling);
                 host.status(RadioStatus::Listening);
-                done(ears.hear(&*host, true));
+                done(ears.hear(&*host, true, aim));
             }
         }
         busy.store(false, Ordering::SeqCst);
@@ -168,13 +168,23 @@ fn still_here(link: &Arc<Link>, calling: &Arc<AtomicBool>) -> impl Drop {
     Until(over)
 }
 
-/// Open the microphone; send what he says; speak the tower's answer; listen again if the tower asks.
+/// Open the microphone; send what he says; speak the tower's answer; listen again if the tower asks. What he
+/// says is kept until his computer has it: words that could not be sent wait in the chat, with their recording,
+/// for him to send again.
 pub(crate) fn converse(link: &Arc<Link>, session: &Session, host: &dyn RadioHost, ears: &ears::Ears, mouth: &mouth::Mouth, mut re: Option<String>, scope: Option<String>) {
     for _ in 0..MAX_ROUNDS {
         host.status(RadioStatus::Listening);
-        let Listened::Said(text) = ears.hear(host, false) else { return };
+        let Listened::Said { text, take } = ears.hear(host, false, crate::takes::Aim { re: re.clone(), ..Default::default() }) else { return };
         host.status(RadioStatus::Sending);
-        let reply = match session.say(link, &text, re.take(), scope.clone(), None) {
+        let said = session.say(link, &text, re.take(), scope.clone(), None);
+        if let Some(take) = &take {
+            match &said {
+                // his computer has it
+                Ok(_) => ears.takes().taken(take),
+                Err(_) => ears.takes().unsent(take),
+            }
+        }
+        let reply = match said {
             Ok(Some(reply)) => reply,
             // his computer has it and has not said what came of it yet: that is in the chat when it does
             Ok(None) => return,

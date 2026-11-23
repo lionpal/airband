@@ -517,7 +517,7 @@ mod tests {
         // the microphone, opened: he is told where to choose, and nothing listened
         let tape = crate::ears_stream::Tape::of(&[], false);
         let ears = crate::ears::Ears::new(desk.shared.senses.clone());
-        assert!(matches!(ears.hear(&tape, true), Listened::Cannot));
+        assert!(matches!(ears.hear(&tape, true, crate::takes::Aim::default()), Listened::Cannot));
         assert_eq!(desk.shared.senses.ears.failed().as_deref(), Some(crate::ears::nothing_chosen().as_str()));
         // reading aloud, turned on: the same for the voice, and nothing is said
         desk.set_call_mode(true);

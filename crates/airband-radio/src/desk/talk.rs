@@ -22,13 +22,21 @@ impl Desk {
             computer.radio.clone()
         };
         let shared = self.shared.clone();
-        radio.dictate(Box::new(move |heard| {
+        let aim = crate::takes::Aim { re: re.clone(), room: room.clone(), agent: agent.clone() };
+        radio.dictate(aim, Box::new(move |heard| {
             shared.host.hearing(String::new());
+            // he took it back: its recording goes with it
             if std::mem::take(&mut shared.state.lock().unwrap().discard) {
+                if let Listened::Said { take: Some(take), .. } | Listened::Unheard { take } = &heard {
+                    shared.senses.takes.discard(take);
+                }
                 return;
             }
             match heard {
-                Listened::Said(text) => deliver(&shared, text, None, re, room, agent),
+                // under the id of its recording, which is kept until his computer has it
+                Listened::Said { text, take } => deliver(&shared, text, None, re, room, agent, take),
+                // its recording waits in the chat, to be heard again
+                Listened::Unheard { .. } => shared.host.changed(),
                 Listened::Nothing => {}
                 // why was said where it was found out (`ears.rs`): nothing chosen, what he chose could not, or
                 // the microphone did not open

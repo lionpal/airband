@@ -15,7 +15,10 @@ const ASK_AFTER_LEFT: Duration = Duration::from_secs(60);
 /// (`Taken`); the outcome comes by the feed ([`settle`]) or to this asking again. The next message waits for
 /// that, so his words reach his agents in the order he said them. One the relay is keeping for a computer
 /// that is away (`Left`) holds up nothing: what he says next is left behind it.
-pub(crate) fn deliver_outbox(link: Arc<Link>, session: Arc<Session>, store: Arc<Store>, host: Arc<dyn RadioHost>, stop: Arc<AtomicBool>, wake: Arc<Wake>) {
+///
+/// What he said aloud goes under the id of its recording: when his computer takes it, the recording is deleted
+/// ([`crate::takes::Takes::taken`]), and not before.
+pub(crate) fn deliver_outbox(link: Arc<Link>, session: Arc<Session>, store: Arc<Store>, host: Arc<dyn RadioHost>, stop: Arc<AtomicBool>, wake: Arc<Wake>, senses: Arc<Senses>) {
     let mut wait = 1;
     // when each message the tower has, or the relay keeps, is next asked after
     let mut ask_at: std::collections::HashMap<String, std::time::Instant> = Default::default();
@@ -83,10 +86,12 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, session: Arc<Session>, store: Arc<
             Ok(Sent::Answered(reply)) => {
                 wait = 1;
                 session.asked(&reply);
-                settle(&store, &*host, &next.id, airband_core::radio::Outcome::Answered { reply });
+                settle(&store, &*host, &senses.takes, &next.id, airband_core::radio::Outcome::Answered { reply });
             }
             Ok(Sent::Taken) => {
                 wait = 1;
+                // his computer has it: the recording it was heard from has done its job
+                senses.takes.taken(&next.id);
                 if next.stage != Stage::Taken {
                     host.outbox(staged(Stage::Taken), None);
                 }
@@ -171,9 +176,14 @@ fn fail(store: &Store, host: &dyn RadioHost, id: &str, why: String) {
 }
 
 /// The tower has said what came of something he said: by the feed, or to the outbox asking. A message that
-/// is not in the list (it was settled already, or was never typed) is nothing to do.
-pub(crate) fn settle(store: &Store, host: &dyn RadioHost, id: &str, outcome: airband_core::radio::Outcome) {
+/// is not in the list (it was settled already, or was never typed) is nothing more to do. His computer having
+/// it, whatever came of it, is the fact the recording it was heard from is deleted on, before it leaves the list.
+pub(crate) fn settle(store: &Store, host: &dyn RadioHost, takes: &crate::takes::Takes, id: &str, outcome: airband_core::radio::Outcome) {
     use airband_core::radio::Outcome;
+    match &outcome {
+        Outcome::Taken | Outcome::Answered { .. } => takes.taken(id),
+        Outcome::Rejected { .. } => {}
+    }
     let Some(was) = store.saved.lock().unwrap().outbox.iter().find(|o| o.id == id).cloned() else { return };
     let gone = || {
         store.change(|s| {
@@ -336,6 +346,7 @@ mod tests {
         use airband_core::radio::{Outcome, Rejected};
         let host = Watching::default();
         let store = Store::open("", None);
+        let takes = crate::takes::Takes::default();
         let put = |id: &str, stage: Stage| {
             store.change(|s| s.outbox.push(Outgoing { stage, ..Outgoing::new(id.into(), format!("words of {id}"), None, None, None, Vec::new(), Vec::new()) }));
         };
@@ -345,29 +356,29 @@ mod tests {
             put(id, stage);
         }
         // the tower has it and nothing more: it stays
-        settle(&store, &host, "a", Outcome::Taken);
+        settle(&store, &host, &takes, "a", Outcome::Taken);
         assert_eq!(ids(), ["a", "b", "c", "d", "e"]);
         // done as he asked: it leaves the list, and there is nothing to tell him
-        settle(&store, &host, "a", Outcome::Answered { reply: Reply { say: "Sent to shop two.".into(), done: true, ..Reply::default() } });
+        settle(&store, &host, &takes, "a", Outcome::Answered { reply: Reply { say: "Sent to shop two.".into(), done: true, ..Reply::default() } });
         assert_eq!((ids(), last().1), (vec!["b".to_string(), "c".into(), "d".into(), "e".into()], None));
         // not done as he asked: it leaves the list and he is told what the tower said
-        settle(&store, &host, "b", Outcome::Answered { reply: Reply { say: "Nobody has stopped.".into(), ..Reply::default() } });
+        settle(&store, &host, &takes, "b", Outcome::Answered { reply: Reply { say: "Nobody has stopped.".into(), ..Reply::default() } });
         assert_eq!(last().1.as_deref(), Some("Nobody has stopped."));
         // one the relay kept, answered when his computer came back: the same
-        settle(&store, &host, "c", Outcome::Answered { reply: Reply { say: "Sent to shop two.".into(), done: true, ..Reply::default() } });
+        settle(&store, &host, &takes, "c", Outcome::Answered { reply: Reply { say: "Sent to shop two.".into(), done: true, ..Reply::default() } });
         assert_eq!(ids(), ["d", "e"]);
         // the tower cannot tell who it is for: it leaves this list and the host asks him
-        settle(&store, &host, "d", Outcome::Answered { reply: Reply { ask: vec!["a2".into(), "a1".into()], ..Reply::default() } });
+        settle(&store, &host, &takes, "d", Outcome::Answered { reply: Reply { ask: vec!["a2".into(), "a1".into()], ..Reply::default() } });
         assert_eq!((ids(), last().1.as_deref()), (vec!["e".to_string()], Some("unplaced: a2, a1")));
         // one his computer got too late: it stays, with the reason, to send again or let go, and he is told
-        settle(&store, &host, "e", Outcome::Rejected { why: Rejected::TooOld });
+        settle(&store, &host, &takes, "e", Outcome::Rejected { why: Rejected::TooOld });
         let kept = store.saved.lock().unwrap().outbox.clone();
         assert_eq!(kept[0].failed, Some(LinkError::Rejected(Rejected::TooOld).said()));
         assert!(last().1.unwrap().starts_with("Not sent: “words of e”. Your computer got it more than a week"));
         // an outcome told twice, or for something this radio never typed, is nothing to do
         let before = host.0.lock().unwrap().len();
-        settle(&store, &host, "a", Outcome::Answered { reply: Reply::default() });
-        settle(&store, &host, "zz", Outcome::Rejected { why: Rejected::TooOld });
+        settle(&store, &host, &takes, "a", Outcome::Answered { reply: Reply::default() });
+        settle(&store, &host, &takes, "zz", Outcome::Rejected { why: Rejected::TooOld });
         assert_eq!(host.0.lock().unwrap().len(), before);
     }
 }

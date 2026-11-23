@@ -180,6 +180,19 @@ pub fn for_writing(path: &Path) -> std::io::Result<std::fs::File> {
     std::fs::File::create(path)
 }
 
+/// A new file to add to as it is made (a recording, as it is captured): only its owner may read it, from the
+/// moment it is made. One that is there already is an error: nothing is ever written over.
+pub fn appending(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.append(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)
+}
+
 /// Make a folder only its owner can open (it holds sockets, tokens or keys), and the folders it is in. One that
 /// is there is made private too.
 pub fn private_folder(dir: &Path) -> std::io::Result<()> {

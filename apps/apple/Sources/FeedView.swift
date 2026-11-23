@@ -153,6 +153,8 @@ struct FeedView: View {
                     }
                     // what he sent that has not reached the tower yet
                     ForEach(model.view.sending, id: \.id) { o in Unsent(o: o) }
+                    // what he said aloud that was not heard, or not sent
+                    ForEach(model.view.takes, id: \.id) { t in TakeBanner(take: t) }
                     // the room the buttons take over the chat
                     Color.clear.frame(height: barHeight)
                     Color.clear.frame(height: 1).id("end")
@@ -172,6 +174,7 @@ struct FeedView: View {
             })
             .onChange(of: model.view.feed.last?.id) { _, _ in withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("end", anchor: .bottom) } }
             .onChange(of: model.view.sending.count) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
+            .onChange(of: model.view.takes.count) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
             .onChange(of: toEnd) { _, _ in withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("end", anchor: .bottom) } }
             // the buttons grew or shrank (the text box opened, a file was added): the end stays in view if it was
             .onChange(of: barHeight) { _, _ in if atEnd { proxy.scrollTo("end", anchor: .bottom) } }

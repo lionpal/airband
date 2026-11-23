@@ -15,7 +15,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     static let shared = RadioModel()
 
     /// What the screen shows, as the desk last gave it, for the room or agent he is looking at.
-    @Published var view = DeskView(paired: false, online: false, connecting: false, near: false, away: [], feed: [], rooms: [], unread: 0, severalComputers: false, unreadElsewhere: 0, canPoke: false, quick: [], sending: [], stations: [], colours: [:], mainComputer: nil, chooseMain: false, uploads: [], asking: nil, intents: [], focus: DeskFocus(room: nil, agent: nil), stoppable: [], newAgent: NewAgentDefaults(computer: nil, tool: nil), tools: [], cannotReach: "")
+    @Published var view = DeskView(paired: false, online: false, connecting: false, near: false, away: [], feed: [], rooms: [], unread: 0, severalComputers: false, unreadElsewhere: 0, canPoke: false, quick: [], sending: [], takes: [], stations: [], colours: [:], mainComputer: nil, chooseMain: false, uploads: [], asking: nil, intents: [], focus: DeskFocus(room: nil, agent: nil), stoppable: [], newAgent: NewAgentDefaults(computer: nil, tool: nil), tools: [], cannotReach: "")
     /// A project: show just its agents, and keep what he says among them. The desk keeps it ([`look`]).
     var room: String? { view.focus.room }
     /// An agent, by id: show just that agent.
@@ -82,6 +82,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         engines = [Self.neuralEngine: { [unowned self] in self.neuralEngineListening(folder: $0, job: $1, input: $2) }]
         // the newest catalogue of services and models this phone has kept, before anything is listed from it
         loadCatalog(dir: dir.path)
+        Self.protectTakes(dataDir: dir.path)
         desk = Desk.open(dataDir: dir.path, host: self)
         #if DEBUG
         // development only: `-airband.devTools '("<a tool id>")'` opens as someone who uses those coding tools, for a screenshot
@@ -346,6 +347,10 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// The clip being played to let him hear a voice before choosing it, and which voice it is.
     @Published var previewing: String?
+    /// The recording of something he said that is playing, by its id (`RadioModel+Takes.swift`).
+    @Published var playingTake: String?
+    var takePlayer: AVAudioPlayer?
+    let takeEnd = PlayerEnd()
     var previewPlayer: AVAudioPlayer?
     let previewEnd = PlayerEnd()
 
