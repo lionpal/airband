@@ -449,7 +449,7 @@ mod row_facts {
             }
         }
         // a sign-in is started by the arguments the row lists, none written in the code
-        assert_eq!(super::claude_accounts::sign_in_args(), ["auth", "login"]);
+        assert_eq!(super::claude_accounts::sign_in_args().unwrap(), ["auth", "login"]);
         // Codex is handed words by the command its row gives, his words one whole word of it
         let run = super::tool_row("codex").unwrap().command("deliver", &[("program", "codex"), ("session", "t1"), ("words", "--yes {session}")]);
         assert_eq!(run.first().map(String::as_str), Some("codex"));

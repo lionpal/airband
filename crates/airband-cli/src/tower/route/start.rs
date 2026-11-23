@@ -44,7 +44,7 @@ pub(super) async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, p
     let say = |s: String, listen: bool| reply(s, listen);
     let place = match (&idea.project, projects) {
         (Some(place), _) => place.clone(),
-        (None, _) if idea.task.is_empty() => return say("What should it do? Say new idea, then the idea.".into(), true),
+        (None, _) if idea.task.is_empty() => return say(launch::what_to_do(None), true),
         (None, []) => return say("There is no project to start it in yet. Run an agent in one first.".into(), false),
         (None, [only]) => only.clone(),
         (None, _) => {
@@ -59,6 +59,23 @@ pub(super) async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, p
 }
 
 /// The question when the place a new agent is for is not known.
+/// A few are read out; more than that, and he is asked for its name.
 fn which_project(projects: &[Place]) -> String {
-    format!("Which project is that for? {}.", either(&projects.iter().map(|p| p.name.as_str()).collect::<Vec<_>>()))
+    match projects {
+        few @ [_, _] | few @ [_, _, _] => format!("Which project is that for? {}.", either(&few.iter().map(|p| p.name.as_str()).collect::<Vec<_>>())),
+        _ => "Which project is that for? Say its name.".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_few_projects_are_read_out_and_more_are_asked_for_by_name() {
+        let places = |names: &[&str]| names.iter().map(|n| Place { name: n.to_string(), folder: format!("/w/{n}") }).collect::<Vec<_>>();
+        assert_eq!(which_project(&places(&["shop", "site"])), "Which project is that for? shop or site.");
+        assert_eq!(which_project(&places(&["a", "b", "c", "d"])), "Which project is that for? Say its name.");
+        assert_eq!(launch::what_to_do(Some("shop")), "What should it do? Say launch shop, then the task.");
+    }
 }

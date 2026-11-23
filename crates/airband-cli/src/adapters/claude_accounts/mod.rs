@@ -38,9 +38,9 @@ const ADD_AGAIN: &str = "Sign in to it again on the computer: airband accounts a
 fn row(what: &str) -> String {
     super::row_says(HARNESS, what)
 }
-/// The arguments that start a sign-in, as the row lists them.
-pub(super) fn sign_in_args() -> Vec<String> {
-    super::tool_row(HARNESS).and_then(|t| t.with.get("sign_in")).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect()).unwrap_or_default()
+/// The arguments that start a sign-in, as the row lists them; nothing when it lists none, never the tool run bare.
+pub(super) fn sign_in_args() -> Option<Vec<String>> {
+    super::tool_row(HARNESS).and_then(|t| t.with.get("sign_in")).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
 }
 
 /// Where in the tool's login item, and in a saved copy of it, the account's login is kept: its row says.
@@ -358,7 +358,7 @@ pub(crate) fn add() -> Res<String> {
     airband_io::files::write_atomic(&tmp.join(row("account_file")), row("account_seed")).map_err(|e| e.to_string())?;
     println!("A browser opens: sign in to the account to add. The login in use now is not touched.");
     let program = row("program");
-    let status = Command::new(&program).args(sign_in_args()).env(row("home_env"), &tmp).status().map_err(|e| format!("could not run {program}: {e}"));
+    let status = Command::new(&program).args(sign_in_args().ok_or_else(|| format!("airband does not know how {} is signed in to.", tool()))?).env(row("home_env"), &tmp).status().map_err(|e| format!("could not run {program}: {e}"));
     let result = (|| -> Res<String> {
         if !status?.success() {
             return Err("The sign-in did not finish.".into());

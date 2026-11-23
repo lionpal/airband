@@ -66,7 +66,7 @@ fn starter(app: &App, idea: &Idea) -> Result<(String, config::Launcher), String>
     let Some(picked) = picked else {
         return held::launcher_for(app, idea.tool.as_deref()).ok_or_else(|| match &idea.tool {
             Some(tool) => format!("This computer is not set up to start {tool} agents."),
-            None => "Which coding agent should start it? Choose the ones you use on your phone, in Settings, under Coding agents, or name one when you ask.".to_string(),
+            None => "Which coding agent should start it? Name one, or choose yours in Settings, under Coding agents.".to_string(),
         });
     };
     let cfg = app.cfg();
@@ -90,7 +90,7 @@ pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Result
     // An agent the tower runs can be started with nothing to do yet: it is there at once, waiting for his first
     // word. One that is handed off needs its task to start with.
     if task.is_empty() && launcher.held.is_none() {
-        return Err(Reply { say: format!("What should it do? Say launch {project}, then the task."), listen: true, ..Reply::default() });
+        return Err(Reply { say: what_to_do(Some(project)), listen: true, ..Reply::default() });
     }
     // The model and effort he asked for. One this launcher does not offer is not left out and the agent
     // started without it: he is told, and nothing is started.
@@ -166,6 +166,14 @@ pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Result
             Err(say(format!("Could not launch in {project}: {program} did not start.")))
         }
         Err(_) => Err(say(format!("Launching in {project} did not finish within twenty seconds."))),
+    }
+}
+
+/// The one way he is asked what a new agent should do: with the project when it is known.
+pub(super) fn what_to_do(project: Option<&str>) -> String {
+    match project {
+        Some(project) => format!("What should it do? Say launch {project}, then the task."),
+        None => "What should it do? Say launch, then the task.".to_string(),
     }
 }
 

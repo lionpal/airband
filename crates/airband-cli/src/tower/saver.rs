@@ -165,11 +165,11 @@ mod tests {
         app.flush();
         app.store.hold().execute_batch("PRAGMA query_only = ON").unwrap();
         app.change().check_in(&agent("a")).unwrap();
-        app.flush();
+        assert!(!app.saver.flush(), "a flush says what it was handed is not written yet");
         app.store.hold().execute_batch("PRAGMA query_only = OFF").unwrap();
         assert_eq!(app.store.load(10).unwrap().0.sessions.len(), 0, "nothing could be written while it refused");
         // nothing else changes: the one change that failed is still written
-        app.flush();
+        assert!(app.saver.flush());
         assert_eq!(app.store.load(10).unwrap().0.sessions.len(), 1, "the change it refused is written once it can be");
     }
 

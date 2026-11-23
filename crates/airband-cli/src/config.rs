@@ -114,6 +114,13 @@ pub(crate) struct StoredKey {
 }
 
 impl Config {
+    /// Whether the keys were read with these settings: the one refusal, for whatever needs them.
+    pub(crate) fn keys_read(&self) -> Result<(), String> {
+        match &self.keyless {
+            Some(why) => Err(format!("airband's keys are in the keychain and could not be read here ({why})")),
+            None => Ok(()),
+        }
+    }
     /// The launcher for a new agent, or to carry one on. With no tool asked for, the one he set as usual, and
     /// nothing when he has set none. For a tool: the usual one when that is the tool it starts; otherwise the
     /// one that tool's own row lists first; and for a tool airband has no row for, the one launcher of his own
@@ -362,9 +369,7 @@ fn parse(text: &str, path: &Path) -> Result<Config, String> {
 /// is written. Until the file is written the keys it has now are kept too, beside the new ones: a write that
 /// fails leaves no mark in it pointing at a key that is gone.
 fn render(cfg: &Config, path: &Path) -> Result<(String, Option<serde_json::Map<String, serde_json::Value>>), String> {
-    if let Some(why) = &cfg.keyless {
-        return Err(format!("the settings cannot be changed from here: {why}"));
-    }
+    cfg.keys_read().map_err(|why| format!("the settings cannot be changed from here: {why}"))?;
     // a file that is there and cannot be read is never taken as one without keys: that would write over it
     let existing = airband_io::files::read_text(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?.unwrap_or_default();
     let mut doc = serde_json::to_value(cfg).unwrap();
@@ -407,9 +412,7 @@ fn change_at<R>(path: &Path, f: impl FnOnce(&mut Config) -> Result<R, String>) -
         Some((_, cfg)) => cfg,
         None => parse("{}", path)?,
     };
-    if let Some(why) = &cfg.keyless {
-        return Err(format!("the settings cannot be changed from here: {why}"));
-    }
+    cfg.keys_read().map_err(|why| format!("the settings cannot be changed from here: {why}"))?;
     let made = f(&mut cfg)?;
     save_at(&cfg, path, &held)?;
     Ok(made)

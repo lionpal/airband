@@ -60,6 +60,12 @@ pub(crate) fn install() -> Result<(), String> {
     start_at_login(&exe)
 }
 
+/// Text as it is written inside an XML element: a folder or PATH with `&` or `<` in it stays what it is.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code, reason = "the plist is a Mac's"))]
+fn xml_text(text: &str) -> String {
+    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
 #[cfg(target_os = "macos")]
 fn start_at_login(exe: &std::path::Path) -> Result<(), String> {
     use std::process::Command;
@@ -78,8 +84,9 @@ fn start_at_login(exe: &std::path::Path) -> Result<(), String> {
   <key>StandardOutPath</key><string>{log}</string><key>StandardErrorPath</key><string>{log}</string>
 </dict></plist>
 "#,
-        exe = exe.display(),
-        log = log.display()
+        exe = xml_text(&exe.display().to_string()),
+        log = xml_text(&log.display().to_string()),
+        path = xml_text(&path),
     );
     airband_io::files::make_folder(plist_path().parent().unwrap()).map_err(|e| e.to_string())?;
     airband_io::files::write_atomic(&plist_path(), plist).map_err(|e| e.to_string())?;
@@ -151,5 +158,13 @@ mod tests {
         assert!(!installer.lasting.is_empty() && !installer.install.is_empty());
         let lasting = Path::new("/pm/opt/airband");
         assert_eq!(in_lasting(&installer, lasting, Path::new("/pm/Cellar/airband/0.1.1/bin/airband")), lasting.join(&installer.bin).join("airband"));
+    }
+}
+
+#[cfg(test)]
+mod xml_tests {
+    #[test]
+    fn a_path_with_markup_in_it_is_written_as_text() {
+        assert_eq!(super::xml_text("/Users/a&b/<bin>"), "/Users/a&amp;b/&lt;bin&gt;");
     }
 }

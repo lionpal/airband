@@ -159,7 +159,7 @@ fn holder_run(cfg: &config::Config, me: std::path::PathBuf, sock: &std::path::Pa
             }
             let mut fill = |a: &String| {
                 given_id |= a.contains("{id}");
-                a.replace("{cwd}", &kept.cwd).replace("{id}", &kept.id)
+                airband_core::template::filled(a, &[("cwd", &kept.cwd), ("id", &kept.id)])
             };
             let argv = launcher.command(kept.model.as_deref(), kept.effort.as_deref(), &mut fill);
             let session: Vec<String> = if fresh { new } else { resume }.iter().map(&mut fill).collect();
@@ -595,7 +595,7 @@ mod tests {
         unsend(&app, "l1").unwrap();
         unsend(&app, "l2").unwrap();
         let inner = app.read();
-        let held = |id: &str| inner.log.iter().find(|e| e.id == id).unwrap().held.clone();
+        let held = |id: &str| inner.log.iter().find(|e| e.id == id).unwrap().held;
         assert_eq!(held("l1"), None, "b has it: it stands as said to b");
         assert_eq!(held("l2"), Some(Held::Cancelled));
         assert!(inner.find("a").unwrap().queue.is_empty());

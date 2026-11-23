@@ -201,8 +201,11 @@ struct Serve {
     /// Answers to kept requests that did not reach the relay (with none: the request is only taken off its
     /// hands). The relay holds every later kept one, and every ordered call, until it has this one, so each is
     /// sent again before the next pull, until it gets there or the channel is opened again.
-    owed: Arc<Mutex<Vec<(String, Option<Vec<u8>>)>>>,
+    owed: Arc<Mutex<Vec<Owed>>>,
 }
+
+/// An answer owed to the relay: the request it answers, and the sealed answer (none: only taking it off its hands).
+type Owed = (String, Option<Vec<u8>>);
 
 impl Serve {
     /// Whether the settings now still hold this pairing, read again from the file when it has changed.
