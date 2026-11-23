@@ -97,6 +97,11 @@ fn take_in(root: &Path, part: AttachmentPart) -> Result<u64, String> {
             file.seek(SeekFrom::Start(part.from)).map_err(|e| e.to_string())?;
             file.write_all(&bytes).map_err(|e| e.to_string())?;
             let _guard = GOT.lock().unwrap();
+            // a part sent again after the file was whole: it is whole still, and what came is not counted afresh
+            // from a note that went when it was
+            if dir.join(".whole").exists() {
+                return Ok(total);
+            }
             let note = dir.join(".got");
             let mut got: Vec<(u64, u64)> = airband_io::files::read_text(&note).ok().flatten().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
             got.push((part.from, part.from + bytes.len() as u64));
@@ -251,6 +256,19 @@ mod tests {
         assert!(describe(&[]).await.unwrap().0.is_empty(), "no files, nothing to say");
         assert!(describe(&["not-one-of-ours".into()]).await.is_err());
         assert!(describe(&vec!["x".to_string(); MOST_AT_ONCE + 1]).await.is_err(), "more than one message carries");
+    }
+
+    #[test]
+    fn a_part_sent_again_after_the_file_is_whole_finds_it_whole() {
+        let root = std::env::temp_dir().join(format!("airband-again-{}", crate::config::random_hex(4)));
+        let id = "ab".repeat(16);
+        let part = |from: u64, data: &[u8]| AttachmentPart { id: id.clone(), name: "note.txt".into(), from, total: 6, data: airband_core::encode::base64(data) };
+        assert_eq!(take_in(&root, part(0, b"abc")).unwrap(), 3);
+        assert_eq!(take_in(&root, part(3, b"def")).unwrap(), 6);
+        // its answer was lost, and the radio sends the first part again
+        assert_eq!(take_in(&root, part(0, b"abc")).unwrap(), 6);
+        assert!(!root.join(&id).join(".got").exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

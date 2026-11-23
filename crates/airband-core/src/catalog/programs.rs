@@ -34,8 +34,37 @@ pub struct Frames {
 
 impl Frames {
     /// The words to run it with, for this video, this many frames, into this folder.
+    /// Each placeholder is filled once, in one pass over the row's words: a path that itself holds `{out}` is
+    /// put in as it is, never filled again.
     pub fn run(&self, video: &str, frames: usize, out: &str) -> Vec<String> {
-        self.args.iter().map(|w| w.replace("{video}", video).replace("{frames}", &frames.to_string()).replace("{out}", out)).collect()
+        let frames = frames.to_string();
+        let value = |field: &str| match field {
+            "video" => Some(video),
+            "frames" => Some(frames.as_str()),
+            "out" => Some(out),
+            _ => None,
+        };
+        self.args
+            .iter()
+            .map(|w| {
+                let (mut done, mut rest) = (String::new(), w.as_str());
+                while let Some((before, after)) = rest.split_once('{') {
+                    done.push_str(before);
+                    match after.split_once('}').and_then(|(field, tail)| Some((value(field)?, tail))) {
+                        Some((filled, tail)) => {
+                            done.push_str(filled);
+                            rest = tail;
+                        }
+                        None => {
+                            done.push('{');
+                            rest = after;
+                        }
+                    }
+                }
+                done.push_str(rest);
+                done
+            })
+            .collect()
     }
 }
 
@@ -76,4 +105,15 @@ pub fn frames_programs() -> Vec<Frames> {
 /// The terminal a row by this id describes.
 pub fn terminal(id: &str) -> Option<Terminal> {
     current().terminals.iter().find(|t| t.id == id).cloned()
+}
+
+#[cfg(test)]
+mod frames_tests {
+    use super::*;
+
+    #[test]
+    fn a_path_holding_a_placeholder_is_put_in_as_it_is() {
+        let f = Frames { id: "f".into(), name: "f".into(), program: "p".into(), args: vec!["-i".into(), "{video}".into(), "-frames".into(), "{frames}".into(), "{out}/%04d.jpg".into(), "{other}".into()] };
+        assert_eq!(f.run("/v/{out}.mov", 3, "/o"), ["-i", "/v/{out}.mov", "-frames", "3", "/o/%04d.jpg", "{other}"]);
+    }
 }
