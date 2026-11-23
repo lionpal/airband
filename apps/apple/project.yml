@@ -20,8 +20,11 @@ settings:
     # The Rust core is linked INTO the app and into its notification extension, as a static library named by its
     # whole path. Asked for by name (-lairband_radio) the linker prefers the dynamic library beside it, which
     # stays on the build machine: the app then starts in the simulator and nowhere else.
-    AIRBAND_CORE[sdk=iphoneos*]: $(PROJECT_DIR)/../../target/aarch64-apple-ios/release/libairband_radio.a
-    AIRBAND_CORE[sdk=iphonesimulator*]: $(PROJECT_DIR)/../../target/aarch64-apple-ios-sim/release/libairband_radio.a
+    # Where cargo built it: the repository's target folder, unless the build is told another
+    # (scripts/build-apple.sh passes CARGO_TARGET_DIR's).
+    AIRBAND_RUST_TARGET: $(PROJECT_DIR)/../../target
+    AIRBAND_CORE[sdk=iphoneos*]: $(AIRBAND_RUST_TARGET)/aarch64-apple-ios/release/libairband_radio.a
+    AIRBAND_CORE[sdk=iphonesimulator*]: $(AIRBAND_RUST_TARGET)/aarch64-apple-ios-sim/release/libairband_radio.a
     OTHER_LDFLAGS: $(AIRBAND_CORE)
     # The Keychain group the app and the extension share: the pairing links are kept there.
     AIRBAND_KEYCHAIN_GROUP: $(AppIdentifierPrefix)dev.airband.shared
