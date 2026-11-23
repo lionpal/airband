@@ -148,7 +148,7 @@ try:
     check("something no model read wakes it too, as what it is, and is not called a question", pushed(2) and pushes[1]["question"] is False and opened(pushes[1]["sealed"])["kind"] == "unjudged")
 
     print("The phone has the chat open")
-    showing, looking = threading.Event(), threading.Event()
+    showing, looking, saw_card = threading.Event(), threading.Event(), threading.Event()
     def show_chat():
         rev = 0
         while not showing.is_set():
@@ -156,6 +156,9 @@ try:
             rev = got["rev"] if got else rev
             # the tower has answered one: it knows the chat is in front of him
             looking.set()
+            # the card came to the chat he is looking at, and asking for what follows it tells the tower he has it
+            if any(m.get("permission") and m["open"] for m in (got or {"messages": []})["messages"]) and http("GET", f"/v1/radio/feed?since={rev}")[0] == 200:
+                saw_card.set()
     reader = threading.Thread(target=show_chat); reader.start()
     looking.wait(10)
     report("asked", "Deploy to staging now?")
@@ -165,10 +168,8 @@ try:
         r = report("permission", "run `npm run deploy`")
         out.append(r.returncode)
     asking = threading.Thread(target=ask_permission); asking.start()
-    # the card is in the chat he is looking at
-    for _ in range(100):
-        if any(m.get("permission") and m["open"] for m in (http("GET", "/v1/radio/feed?since=0")[1] or {"messages": []})["messages"]): break
-        time.sleep(0.1)
+    # the card is in the chat he is looking at, and the tower has been told he has it
+    saw_card.wait(10)
     showing.set(); reader.join()
 
     print("He puts the phone down with a permission card waiting")
