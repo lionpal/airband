@@ -37,9 +37,8 @@ impl Store {
     fn private(path: &std::path::Path) -> Result<(), String> {
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
             for file in [path.to_path_buf(), Store::beside(path, "-wal"), Store::beside(path, "-shm")] {
-                match std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)) {
+                match airband_io::files::set_mode(&file, 0o600) {
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                     other => other.map_err(|e| format!("cannot make {} private: {e}", file.display()))?,
                 }

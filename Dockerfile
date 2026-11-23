@@ -3,6 +3,8 @@ FROM rust:1-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
+# the core compiles the catalogue in (crates/airband-core/build.rs reads catalog/), so the relay cannot build without it
+COPY catalog catalog
 RUN cargo build --release -p airband-relay
 # Amazon RDS signs its servers' certificates with its own authorities; this is the list of them, for DB_CA
 RUN curl -fsSL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o /rds-global-bundle.pem && grep -q "BEGIN CERTIFICATE" /rds-global-bundle.pem

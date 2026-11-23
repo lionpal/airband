@@ -93,31 +93,33 @@ impl KeyCheck {
 ///
 /// Err says which setting is not that, in words for him.
 pub fn fill(template: &str, setting: &dyn Fn(&str) -> String) -> Result<String, String> {
+    use crate::template::Piece;
     let part = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b':');
     let mut out = String::new();
-    let mut rest = template;
-    while let Some((before, after)) = rest.split_once('{') {
-        let (field, after) = after.split_once('}').ok_or("An address in the catalogue is not well formed.")?;
-        let value = setting(field).trim().to_string();
-        if out.is_empty() && before.is_empty() {
-            let value = value.trim_end_matches('/');
-            // a whole web address with no login, question or fragment, made only of characters an address part may have
-            let whole = crate::links::web(value).filter(|u| u.username().is_empty() && u.password().is_none() && u.query().is_none() && u.fragment().is_none());
-            let plain = value.bytes().all(|b| part(b) || matches!(b, b'/' | b'[' | b']'));
-            if whole.is_none() || !plain {
-                return Err(format!("\"{value}\" is not something the setting {field} can be. It is the address of a service, like the usual one."));
+    for (i, piece) in crate::template::pieces(template).enumerate() {
+        match piece {
+            Piece::Text(text) => out.push_str(text),
+            Piece::Unclosed(_) => return Err("An address in the catalogue is not well formed.".into()),
+            Piece::Place(field) => {
+                let value = setting(field).trim().to_string();
+                if i == 0 {
+                    let value = value.trim_end_matches('/');
+                    // a whole web address with no login, question or fragment, made only of characters an address part may have
+                    let whole = crate::links::web(value).filter(|u| u.username().is_empty() && u.password().is_none() && u.query().is_none() && u.fragment().is_none());
+                    let plain = value.bytes().all(|b| part(b) || matches!(b, b'/' | b'[' | b']'));
+                    if whole.is_none() || !plain {
+                        return Err(format!("\"{value}\" is not something the setting {field} can be. It is the address of a service, like the usual one."));
+                    }
+                    out.push_str(value);
+                } else {
+                    if value.is_empty() || !value.bytes().all(part) {
+                        return Err(format!("\"{value}\" is not something the setting {field} can be. It is letters and digits, like the usual one."));
+                    }
+                    out.push_str(&value);
+                }
             }
-            out.push_str(value);
-        } else {
-            if value.is_empty() || !value.bytes().all(part) {
-                return Err(format!("\"{value}\" is not something the setting {field} can be. It is letters and digits, like the usual one."));
-            }
-            out.push_str(before);
-            out.push_str(&value);
         }
-        rest = after;
     }
-    out.push_str(rest);
     Ok(out)
 }
 

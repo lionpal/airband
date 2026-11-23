@@ -226,6 +226,11 @@ mod tests {
         assert_eq!(parse_utterance(&format!("  @shop1  @backoffice   {pasted}"), &live()), Parsed { to: vec![0, 2], rest: pasted.to_string() });
         // a tag in the middle of his words is his words
         assert_eq!(p("ship it\n@shop1 too").1, "ship it\n@shop1 too");
+        // B-30: the first line's indentation, after a tag on a line of its own, is his too
+        assert_eq!(p("@shop2\n    fn x()\n        y()"), (Some(1), "    fn x()\n        y()".to_string()));
+        assert_eq!(p("@shop2\n\n\tfn x()"), (Some(1), "\tfn x()".to_string()));
+        assert_eq!(p("@shop2   leave it"), (Some(1), "leave it".to_string()));
+        assert_eq!(p("@shop2\n@shop1\n  both").1, "  both");
     }
     #[test]
     fn next_callsign() {

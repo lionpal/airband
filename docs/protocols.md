@@ -37,7 +37,7 @@ pairing link carries, opens `/v1/radio/` only.
 |---|---|
 | `checkin` | The agent exists. Every other event also checks it in. |
 | `working` | It was given something to do; what it last said is stale and is dropped unheard. |
-| `said` | It finished a turn; `text` is what it wrote. Optional `kind`: `question` (blocked until answered) or `report`; left out, the tower works it out. |
+| `said` | It finished a turn; `text` is what it wrote. Optional `kind`: `needs-you` (blocked until answered; `question` is read as it too) or `report`; left out, the tower works it out. |
 | `notice` | It needs him at the keyboard (a login, a prompt the radio cannot answer). |
 | `picture` | A picture file on the tower's machine (`path`: PNG, JPEG, GIF or WebP). The tower copies it only with `shown: true`, which means the agent sent it to him, and attaches the copy to the next `said`. A picture file named in the text of a `said` is attached too, when it is in the agent's `cwd` or a temporary folder. |
 | `made` | Its tool made something that lives at a web address (`address`, and optionally `title` and `kind`, the id of a row in `catalog/links/`): a pull request, a published page. Shown as a card with the next thing the agent says. |
@@ -108,7 +108,8 @@ was wrong, such as a query value that is not a number), `other_version` (`speaks
 request is sent again in a moment, with status 503). A reader goes by `refusal`, never by the status, and a 200
 never carries an error. Every request a radio makes says which version it speaks: straight to the tower in the
 `x-airband-schema` header, through the relay in the sealed request's `schema`. One that says another version, or
-none, is answered `other_version` (426) and goes no further. A token that opens nothing is answered 401
+none, or that this tower cannot read (a method it does not know), is answered `other_version` (426) and goes no
+further. A token that opens nothing is answered 401
 `not_paired`. A radio names itself in the
 `x-airband-radio` header so the tower can keep its place in a call apart from another radio's; for a sealed
 request the tower uses the pairing's channel (`Keys::channel`).
@@ -150,7 +151,7 @@ Chat mode and the rest:
 | Call | Body → answer | Meaning |
 |---|---|---|
 | `GET /v1/radio/feed?since=<rev>&wait=<s>` | `FeedQuery` → `Feed` | Every line new or changed after change count `since`, oldest change first; pass `rev` back next time. `since=0` gets the newest lines. `team=<id>` or `agent=<id>` narrows it to one team or one agent. `after=<seq>` with no `since`: the lines added after that position. Held open up to `wait` seconds, 25 at most. `roster=<roster_rev>`: also answer when the roster changes. `answers` holds what came of things this radio said (see "What he says"); one arriving ends the wait too. A query value that is not a number is refused (`bad_ask`). |
-| `GET /v1/radio/message/{id}?form=detail\|full\|spoken` | `{ text }` | The fuller spoken version, exactly what the agent wrote, or (`spoken`) the whole message as it is read aloud, for the radio to say in the voice he chose on it. |
+| `GET /v1/radio/message/{id}?form=detail\|full\|spoken` | `{ text }` | The fuller spoken version, exactly what the agent wrote, or (`spoken`) the whole message as it is read aloud, for the radio to say in the voice he chose on it. `part=asked`: only the question in it, as he would be asked it on a call. |
 | `GET /v1/radio/picture/{id}?from=<byte>` | `{ data, next, done }` | One part (120 KB at most, base64) of a picture's kept copy. |
 | `POST /v1/radio/attachment` | `{ id, name, from, data, total }` → `{ next }`, or a refusal | One part of a file he is attaching, 120 KB at most. `total` is how long the whole file is; the parts may come in any order, several at once, and `next` says how much of the file is whole from its start. |
 | `POST /v1/radio/dismiss` | `{ message }` → `Done`, or a refusal | He does not mean to answer this question. It stops being open. The agent is told nothing. |
@@ -350,12 +351,13 @@ service the phone reaches with a key of his own.
 
 Limits, each answered with 429. Per channel in a minute: 3000 calls and 60 messages left in `queue`;
 from one internet address, twice that across all channels. At most 16 calls wait for an answer on a
-channel at once. No message is larger than 256 KB.
+channel at once. No message is larger than 256 KB. New channels: 10 a day from one internet address and 300 an
+hour in all; one refused by either is counted by neither, and an opening that opened nothing is not counted.
 
 ### Notifications
 
 A radio that has given the tower an address (`POST push`) is woken for a message judged `needs-you` or
-`report`, a permission card, or a question a harness puts to him. Once per message, and not on a radio that is
+`report`, one no model read (`unjudged`), a permission card, or a question a harness puts to him. Once per message, and not on a radio that is
 on a call or showing the chat: such a radio asks for what follows a message within a moment of getting it, and
 one that follows without showing it says so (`showing_chat: false` in its `Presence`).
 
@@ -388,15 +390,25 @@ name never reached the tower (its connection gone on the way, or the body cut of
 the line while its radio still waits, and a kept one is handed over again. A kept one the tower got and a later
 pull no longer names as being answered is handed over again too: its answer did not reach the relay, and the
 relay still keeps it. Nothing else kept is handed over meanwhile. An older pull still held open when a newer one
-comes is answered 204 and takes nothing. Opening the channel again (a tower that started over) hands again
-whatever it had been handed. A pull the relay does not take is answered with a `PullRefused` that says why:
-426 `{"refused":"other_version","older":"tower"|"relay"}` names the side to update, and 409
-`{"refused":"another_tower"}` is a pull from a second tower with the same pairing while the first has a pull
-held open (its settings copied to another computer): it takes nothing, and the first is not let go. The tower takes a kept request only if it is an utterance with an id,
+comes is answered 204 and takes nothing. The tower opens its channel again after it starts or loses its
+connection, saying the same headers as a pull: a request handed before and not named as got is handed again,
+and a kept one goes as on a pull (kept in its hands while the opening names it as being answered, handed again
+when it does not; a tower that does not say its version is handed it again). A pull, or an opening, the relay
+does not take is answered with a `PullRefused` that says why: 426 `{"refused":"other_version","older":"tower"|"relay"}`
+names the side to update. While another tower's pull is held open (its own id in `x-airband-tower`), the first
+time is 409 `{"refused":"ask_again"}`: that pull is let go, and this tower asks again at once, telling him
+nothing. A tower still there pulls again first, and then it is 409 `{"refused":"another_tower"}` (its settings
+copied to another computer), which takes nothing and lets go of nothing; a tower that is gone (one that
+restarted under a new id, its connection kept by a proxy) does not, and the asking again is taken. The tower takes a kept request only if it is an utterance with an id,
 and tells the radio in its feed when it will not take one (`rejected`). The radio shows a kept message as with
 the relay until the tower's outcome for it arrives.
 While some are still kept, the relay turns back a new utterance (409 to a call that carries
-`x-airband-ordered`) and the radio leaves that one with the relay too, so everything arrives in order. Files
+`x-airband-ordered`) and the radio leaves that one with the relay too, so everything arrives in order. Each of
+these refusals of a radio's request carries a `CallRefused` (`airband_core::relay`), which the relay writes and
+the radio reads, with its status agreed in that one type: 409 `{"refused":"behind"}` (earlier messages still on
+their way), 503 `away` (the tower is not connected), 504 `tower_silent` (the tower took it and did not answer in
+time) and 410 `ended` (the pairing was ended). A refusal about the request itself (its token 401, its size 413,
+too many 429) carries none. Files
 he attaches wait on the phone.
 
 ### What is written down, and where it stays

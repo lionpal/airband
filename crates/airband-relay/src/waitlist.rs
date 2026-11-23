@@ -31,10 +31,7 @@ impl Signups {
     /// May this one be taken? Counts it if so, against everyone's minute and day and its own address's hour:
     /// all three or none.
     pub(super) fn allow(&mut self, address: &Caller, now: Instant) -> bool {
-        if !(self.minute.room(&(), now) && self.day.room(&(), now) && self.by_address.room(address, now)) {
-            return false;
-        }
-        self.minute.allow(&(), now) && self.day.allow(&(), now) && self.by_address.allow(address, now)
+        limits::all_or_none(&mut [&mut (&mut self.minute, &()), &mut (&mut self.day, &()), &mut (&mut self.by_address, address)], now).is_ok()
     }
 }
 

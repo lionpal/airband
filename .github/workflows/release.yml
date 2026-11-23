@@ -85,7 +85,7 @@ jobs:
       - name: Publish
         env: { BUCKET: '${{ secrets.RELEASES_BUCKET }}' }
         run: |
-          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          version=$(scripts/version.sh)
           echo "version=$version" >> "$GITHUB_ENV"
           ls -l dist
           for f in dist/*.tar.gz; do

@@ -131,6 +131,8 @@ json.dump({
 import base64, http.server, socket, threading
 class Fake:
     sessions, messages, pending, replies, prompts, unauthorised = [], {}, {}, [], [], 0
+    # how many times the tower has listed the sessions: what a wait for "its watcher has looked again" waits on
+    listed = 0
 PASSWORD = os.urandom(8).hex()
 class OpenCode(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -144,7 +146,9 @@ class OpenCode(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.allowed(): return
         parts = self.path.split("?")[0].strip("/").split("/")
-        if parts == ["api", "session"]: return self.answer(200, {"data": Fake.sessions})
+        if parts == ["api", "session"]:
+            Fake.listed += 1
+            return self.answer(200, {"data": Fake.sessions})
         if len(parts) == 4 and parts[3] == "message": return self.answer(200, {"data": Fake.messages.get(parts[2], [])})
         if len(parts) == 4 and parts[3] == "permission": return self.answer(200, {"data": Fake.pending.get(parts[2], [])})
         self.answer(404)
@@ -207,6 +211,8 @@ open(os.path.join(claude_home, "projects", "-scratch", "passing.jsonl"), "w").wr
 # file per session that says where it was.
 class Codex:
     # the newest turn of each thread: one that was over before the tower started
+    # how many times the tower has asked for a thread's turns: what a wait for "it has looked again" waits on
+    turns_read = 0
     turns = {"thread-open-before": {"id": "turn-before", "status": "completed", "items": [{"type": "agentMessage", "id": "i0", "text": "SAID BEFORE THE TOWER STARTED"}]}}
     loaded, queued = ["thread-open-before", "thread-of-a-subagent"], os.path.join(got, "codex-queue")
     threads = {"thread-open-before": {"id": "thread-open-before", "cwd": loft, "parentThreadId": None, "ephemeral": False, "model": "gpt-stand-in", "name": "Made up by Codex", "status": {"type": "idle"}},
@@ -245,7 +251,9 @@ def serve_codex(conn):
             if m["method"] == "initialize": send({"id": m["id"], "result": {}})
             elif m["method"] == "thread/loaded/list": send({"id": m["id"], "result": {"data": list(Codex.loaded), "nextCursor": None}})
             elif m["method"] == "thread/read": send({"id": m["id"], "result": {"thread": Codex.threads[m["params"]["threadId"]]}})
-            elif m["method"] == "thread/turns/list": send({"id": m["id"], "result": {"data": [t for t in [Codex.turns.get(m["params"]["threadId"])] if t], "nextCursor": None}})
+            elif m["method"] == "thread/turns/list":
+                Codex.turns_read += 1
+                send({"id": m["id"], "result": {"data": [t for t in [Codex.turns.get(m["params"]["threadId"])] if t], "nextCursor": None}})
             else: send({"id": m["id"], "error": {"code": -32601, "message": "not known"}})
     except (EOFError, OSError, StopIteration): pass
     finally: conn.close()
@@ -323,7 +331,9 @@ try:
     check("a name Codex made up for a thread is not taken for one he gave", "made" not in one("codex")["callsign"], one("codex"))
     # what it says is read from Codex's server: this session's hooks were never trusted, so none report
     codex_said = lambda has: [m for m in feed()["messages"] if m.get("agent") == "thread-open-before" and has in m["text"]]
-    time.sleep(3.5)
+    # not said again however often the tower looks: it has looked twice more since this point
+    looked = Codex.turns_read
+    until(lambda: Codex.turns_read >= looked + 2)
     check("what it had said before the tower started is not said again", not codex_said("BEFORE THE TOWER"), feed()["messages"])
     Codex.turns["thread-open-before"] = {"id": "turn-1", "status": "inProgress", "items": [{"type": "userMessage", "id": "i1", "content": []}]}
     check("a Codex session with no hooks reporting is seen to be working, by Codex's own server", until(lambda: one("codex")["state"] == "working", 10), one("codex"))
@@ -331,7 +341,8 @@ try:
     check("and what it says when its turn is over arrives: the last thing it wrote", until(lambda: codex_said("TWO BOXES"), 10) and one("codex")["state"] != "working", [m["text"] for m in feed()["messages"]])
     # the same turn told by its hook as well, as one whose hooks do report would: taken once
     hooked = http("POST", "/v1/agent/events", {"schema": "airband.agent/1", "agent": {"id": "thread-open-before", "harness": "codex"}, "event": {"type": "said", "text": "TWO BOXES IN THE LOFT", "turn": "turn-1"}}, token=OWN)
-    time.sleep(3)
+    looked = Codex.turns_read
+    until(lambda: Codex.turns_read >= looked + 2)
     check("the same turn said by its hook too is taken once", hooked[0] == 200 and len(codex_said("TWO BOXES")) == 1, [m["text"] for m in feed()["messages"]])
     Codex.turns["thread-open-before"] = {"id": "turn-2", "status": "failed", "error": {"message": "THE MODEL COULD NOT BE REACHED"}, "items": []}
     check("a turn that failed is told to him in Codex's own words", until(lambda: codex_said("COULD NOT BE REACHED"), 10), [m["text"] for m in feed()["messages"]])
@@ -389,8 +400,8 @@ try:
     say("@shop1 work 6 across the restart")
     until(lambda: agent()["state"] == "working")
     say("@shop1 SAID BEFORE THE RESTART")
+    # gone once it has exited, and its port with it
     tower.terminate(); tower.wait(timeout=10)
-    time.sleep(1)
     tower = start_tower()
     check("the agent is still there, and still held", until(agent) and agent()["id"] == me["id"], feed()["roster"])
     check("it finishes what it was doing, and reports it to the new tower", until(lambda: [m for m in feed()["messages"] if m.get("agent") == me["id"] and "across the restart" in m["text"]], 15), [m["text"] for m in feed()["messages"]][-3:])
@@ -465,7 +476,8 @@ try:
     acp = one()
     # its session shows in its tool's own server too, as a real one's does: the driver reports for it, and nothing else
     Fake.sessions = [{"id": "ses-stand-in", "time": {"created": int(time.time() * 1000), "updated": int(time.time() * 1000)}, "location": {"directory": project}}]
-    time.sleep(5)
+    listed = Fake.listed
+    until(lambda: Fake.listed >= listed + 2)
     check("a session the tower runs is not put on the radio a second time by the watcher of its tool's server", not [a for a in feed()["roster"] if a.get("harness") == "opencode"], feed()["roster"])
     Fake.sessions = []
     check("it is on the radio, held, waiting, and says what it runs on", acp and acp.get("held") and acp["state"] not in ("working", "asking") and until(lambda: (one().get("model"), one().get("effort")) == ("stand-in-1", "low")), one())

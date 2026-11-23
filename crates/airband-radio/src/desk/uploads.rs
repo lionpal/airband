@@ -103,7 +103,7 @@ impl Desk {
     pub fn attach(&self, file_path: String, name: String, re: Option<String>, room: Option<String>, agent: Option<String>) -> String {
         let id = random_hex(12);
         let dropped = Arc::new(AtomicBool::new(false));
-        let total = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
+        let total = airband_io::files::metadata(std::path::Path::new(&file_path)).map(|m| m.len()).unwrap_or(0);
         let radio = {
             let mut state = self.shared.state.lock().unwrap();
             if state.computers.is_empty() {

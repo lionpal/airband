@@ -24,6 +24,13 @@ const ITEM_NOT_FOUND: i32 = 44;
 
 /// `security`, run as the user it really is: the login keychain is found through the home folder, and with
 /// HOME pointed anywhere else `security` finds no keychain and waits for ever on a dialog.
+/// The keychain file the end-to-end suites make for a run of their own (`AIRBAND_STAND_IN_KEYCHAIN`), in place of
+/// his login keychain: read only by a build with the `stand-ins` feature. Nothing for the airband he installs,
+/// which always uses his login keychain.
+fn stand_in_keychain() -> Option<String> {
+    super::super::stand_in("AIRBAND_STAND_IN_KEYCHAIN")
+}
+
 fn security() -> Command {
     // by its full path: the tower runs with his terminal's PATH, and every login goes to this program
     let mut c = Command::new(crate::platform::SECURITY);
@@ -36,7 +43,7 @@ fn security() -> Command {
 
 impl Vault for Keychain {
     fn read(&self, service: &str, account: &str) -> Res<Option<String>> {
-        let out = security().args(["find-generic-password", "-a", account, "-s", service, "-w"]).stderr(Stdio::piped()).output().map_err(|e| e.to_string())?;
+        let out = security().args(["find-generic-password", "-a", account, "-s", service, "-w"]).args(stand_in_keychain()).stderr(Stdio::piped()).output().map_err(|e| e.to_string())?;
         if !out.status.success() {
             // `security` exits with ITEM_NOT_FOUND when there is no such item (errSecItemNotFound)
             return if out.status.code() == Some(ITEM_NOT_FOUND) { Ok(None) } else { Err(format!("the keychain would not give {service} ({})", out.status)) };
@@ -52,7 +59,8 @@ impl Vault for Keychain {
     }
     fn write(&self, service: &str, account: &str, data: &str) -> Res<()> {
         let hex = airband_core::encode::hex(data.as_bytes());
-        let line = format!("add-generic-password -U -a \"{account}\" -s \"{service}\" -X \"{hex}\"\n");
+        let on = stand_in_keychain().map(|k| format!(" \"{k}\"")).unwrap_or_default();
+        let line = format!("add-generic-password -U -a \"{account}\" -s \"{service}\" -X \"{hex}\"{on}\n");
         // On standard input, so the login is never in the process list. `security -i` takes a line of about 4 KB
         // at most. A longer one could only go as an argument, where any program on this computer can read it
         // while the command runs, so it is not handed over at all.
@@ -73,7 +81,7 @@ impl Vault for Keychain {
         }
     }
     fn delete(&self, service: &str, account: &str) -> Res<()> {
-        let status = security().args(["delete-generic-password", "-a", account, "-s", service]).stdout(Stdio::null()).stderr(Stdio::null()).status().map_err(|e| format!("could not ask the keychain: {e}"))?;
+        let status = security().args(["delete-generic-password", "-a", account, "-s", service]).args(stand_in_keychain()).stdout(Stdio::null()).stderr(Stdio::null()).status().map_err(|e| format!("could not ask the keychain: {e}"))?;
         // `security` ends with 44 for an item that is not there
         match status.code() {
             Some(0 | ITEM_NOT_FOUND) => Ok(()),

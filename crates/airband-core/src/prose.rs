@@ -26,6 +26,8 @@ pub struct ProseSpan {
     pub code: bool,
     /// Where it leads, when it is a link.
     pub link: Option<String>,
+    /// A link written as the address itself, bare or in `<>`, with no words of its own: said as "a link".
+    pub bare: bool,
 }
 
 /// One thing in a list, which may hold anything, another list included.
@@ -87,7 +89,8 @@ struct Open {
     strong: u32,
     emphasis: u32,
     strike: u32,
-    links: Vec<String>,
+    /// Each link open here, innermost last: where it leads, and whether it is written as the address itself.
+    links: Vec<(String, bool)>,
 }
 
 impl Reader<'_> {
@@ -221,7 +224,7 @@ impl Reader<'_> {
             if text.is_empty() {
                 return;
             }
-            let span = ProseSpan { text: String::new(), strong: open.strong > 0, emphasis: open.emphasis > 0, strike: open.strike > 0, code, link: open.links.last().cloned() };
+            let span = ProseSpan { text: String::new(), strong: open.strong > 0, emphasis: open.emphasis > 0, strike: open.strike > 0, code, link: open.links.last().map(|(to, _)| to.clone()), bare: open.links.last().is_some_and(|(_, bare)| *bare) };
             match out.last_mut() {
                 Some(last) if ProseSpan { text: String::new(), ..last.clone() } == span => last.text.push_str(text),
                 _ => out.push(ProseSpan { text: text.to_string(), ..span }),
@@ -234,7 +237,7 @@ impl Reader<'_> {
                     for piece in addresses().spans(&text) {
                         match piece.kind() {
                             Some(_) => {
-                                open.links.push(piece.as_str().to_string());
+                                open.links.push((piece.as_str().to_string(), true));
                                 put(&open, piece.as_str(), false);
                                 open.links.pop();
                             }
@@ -250,7 +253,8 @@ impl Reader<'_> {
                 Event::Start(Tag::Emphasis) => open.emphasis += 1,
                 Event::Start(Tag::Strikethrough) => open.strike += 1,
                 // a picture cannot be drawn from here: its description is shown, leading to it
-                Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) => open.links.push(dest_url.to_string()),
+                Event::Start(Tag::Link { link_type, dest_url, .. }) => open.links.push((dest_url.to_string(), matches!(link_type, pulldown_cmark::LinkType::Autolink | pulldown_cmark::LinkType::Email))),
+                Event::Start(Tag::Image { dest_url, .. }) => open.links.push((dest_url.to_string(), false)),
                 Event::End(TagEnd::Strong) => open.strong = open.strong.saturating_sub(1),
                 Event::End(TagEnd::Emphasis) => open.emphasis = open.emphasis.saturating_sub(1),
                 Event::End(TagEnd::Strikethrough) => open.strike = open.strike.saturating_sub(1),
@@ -314,10 +318,7 @@ pub fn links(text: &str) -> Vec<String> {
 
 /// The words of some spans as they are said: a link by its words, and an address written out bare as "a link".
 fn words(spans: &[ProseSpan]) -> String {
-    spans.iter().map(|span| match &span.link {
-        Some(link) if *link == span.text => "a link",
-        _ => span.text.as_str(),
-    }).collect::<String>()
+    spans.iter().map(|span| if span.bare { "a link" } else { span.text.as_str() }).collect::<String>()
 }
 
 /// `text` with its first letter a capital, as the start of a sentence.
@@ -536,8 +537,8 @@ mod tests {
 
     #[test]
     fn links_are_the_written_ones_and_the_bare_addresses_each_once_and_never_code() {
-        let text = "Published: https://claude.ai/artifact/abc123. See [the PR](https://github.com/a/b/pull/7), again https://claude.ai/artifact/abc123 and `http://localhost:3000/x`.\n\n```\ncurl https://in.code/x\n```";
-        assert_eq!(links(text), ["https://claude.ai/artifact/abc123", "https://github.com/a/b/pull/7"]);
+        let text = "Published: https://pages.example/artifact/abc123. See [the PR](https://code.example/a/b/pull/7), again https://pages.example/artifact/abc123 and `http://localhost:3000/x`.\n\n```\ncurl https://in.code/x\n```";
+        assert_eq!(links(text), ["https://pages.example/artifact/abc123", "https://code.example/a/b/pull/7"]);
         assert!(links("No links, only a path /Users/c/x.png and a [note](notes.md)").is_empty());
     }
 
@@ -545,6 +546,9 @@ mod tests {
     fn said_aloud_a_bare_address_is_a_link_and_marks_are_gone() {
         assert_eq!(said("**Done.** See `scripts/check.mjs` and https://example.com/z\n- one"), "Done. See scripts/check.mjs and a link. one.");
         assert_eq!(said("rewrite and/or drop [the doc](https://x.y/z)"), "rewrite and/or drop the doc.");
+        // A-10: bare by how it was written, never by its words reading like where it leads
+        assert_eq!(said("see <https://x.y/z>"), "see a link.");
+        assert_eq!(said("see [https://x.y/z](https://x.y/z)"), "see https://x.y/z.");
         assert_eq!(opening("One. Two? Three. Four."), "One. Two?");
         // shown short, an agent's words are its own: nothing is added to them
         assert_eq!(super::plain("the shelves are **stocked**"), "the shelves are stocked");

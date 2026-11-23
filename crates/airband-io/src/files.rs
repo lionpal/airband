@@ -192,6 +192,43 @@ pub fn private_folder(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Copy a file's bytes to another name, as [`std::fs::copy`]: how many were copied. For a program's own file
+/// put in place to be moved over the old one; anything of ours is written with [`write_atomic`].
+pub fn copy(from: &Path, to: &Path) -> std::io::Result<u64> {
+    std::fs::copy(from, to)
+}
+
+/// The path with every symbolic link and `..` in it followed: where the file or folder really is. An error
+/// when it is not there.
+pub fn real_path(path: &Path) -> std::io::Result<PathBuf> {
+    std::fs::canonicalize(path)
+}
+
+/// What the system records of a file (its kind, size and times), through any symbolic link.
+pub fn metadata(path: &Path) -> std::io::Result<std::fs::Metadata> {
+    std::fs::metadata(path)
+}
+
+/// What the system records of the path itself: a symbolic link is described as a link, not followed.
+pub fn link_metadata(path: &Path) -> std::io::Result<std::fs::Metadata> {
+    std::fs::symlink_metadata(path)
+}
+
+/// Make a file or folder readable and writable only by its owner (`0o600` for a file, `0o700` for a folder,
+/// as `mode` says). Nothing to do where the system has no such modes.
+pub fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, mode);
+        Ok(())
+    }
+}
+
 /// A lock on a file, held across every process on this computer until it is dropped.
 pub struct Lock {
     _file: std::fs::File,
@@ -247,6 +284,27 @@ mod tests {
         }
         make_folder(&dir.join("z")).unwrap();
         assert!(dir.join("z").is_dir());
+    }
+
+    #[test]
+    fn a_file_is_copied_described_followed_and_made_private_here() {
+        // A-13: each of these was reached past this module
+        let dir = folder();
+        let (a, b) = (dir.join("a"), dir.join("b"));
+        write_atomic(&a, "hello").unwrap();
+        assert_eq!(copy(&a, &b).unwrap(), 5);
+        assert_eq!((metadata(&b).unwrap().len(), read_text(&b).unwrap().as_deref()), (5, Some("hello")));
+        assert!(metadata(&dir.join("none")).is_err() && real_path(&dir.join("none")).is_err());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let link = dir.join("link");
+            std::os::unix::fs::symlink(&a, &link).unwrap();
+            assert!(link_metadata(&link).unwrap().file_type().is_symlink() && metadata(&link).unwrap().is_file());
+            assert_eq!(real_path(&link).unwrap(), real_path(&a).unwrap());
+            set_mode(&b, 0o600).unwrap();
+            assert_eq!(metadata(&b).unwrap().permissions().mode() & 0o777, 0o600);
+        }
     }
 
     use super::*;

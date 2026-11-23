@@ -1,10 +1,18 @@
 //! Tokens on a request: reading one from its `Authorization` header and comparing it with the one wanted. The
 //! tower and the relay both do this, here and nowhere else.
 
+/// How a bearer token starts in an `Authorization` header's value: written and read by this one word.
+const BEARER: &str = "Bearer ";
+
 /// The token in an `Authorization: Bearer …` header's value. Empty when there is none, or it is not a bearer
 /// token.
 pub fn bearer(authorization: Option<&str>) -> &str {
-    authorization.and_then(|v| v.strip_prefix("Bearer ")).unwrap_or("")
+    authorization.and_then(|v| v.strip_prefix(BEARER)).unwrap_or("")
+}
+
+/// The `Authorization` header's value that shows `token`: what [`bearer`] reads back.
+pub fn as_bearer(token: &str) -> String {
+    format!("{BEARER}{token}")
 }
 
 /// Are these the same secret? Every byte is compared whatever the outcome, so how long it takes says nothing
@@ -20,6 +28,7 @@ mod tests {
     #[test]
     fn a_bearer_token_is_read_only_from_a_bearer_header_and_compared_whole() {
         assert_eq!(bearer(Some("Bearer abc")), "abc");
+        assert_eq!(bearer(Some(&as_bearer("xyz"))), "xyz");
         assert_eq!(bearer(Some("Basic abc")), "");
         assert_eq!(bearer(None), "");
         assert!(same(b"abc", b"abc"));

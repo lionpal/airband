@@ -52,7 +52,7 @@ The compiler keeps some of them, so they cannot drift:
 | The radio | `crates/airband-radio` | The whole client side. `desk`: every paired computer as one, what is waiting and done, where his messages go, who has the floor on a call. Under it, per computer: reaching the tower (`link`), the call loop (`call`), sending over bad connections (`outbox`), what is kept on the device (`store`), sound in and out (`voice`, `ears`) | Draw, make sound or capture it |
 | Hosts | `apps/apple`, `crates/airband-cli/src/terminal.rs` | Drawing the view the desk gives, playing and capturing audio, keeping pairing links and a speech key of his own safe | Decide order, routing, retries, or what counts as waiting or done |
 | The relay | `crates/airband-relay` | Passing sealed bytes between a radio and its tower; remembering which channels exist; handing a sealed notification to a push service; the homepage's waiting list | Hold a pairing key or read a message |
-| Deployment | `infra/`, `.github/workflows/` | Running the relay: one small server in us-east-2 with DynamoDB behind it (`AirbandRelayUs` in `infra/cdk.mjs`, what runs on the server in `infra/host/`), deployed by `deploy-relay.yml` on a push that changes what the relay is built from, as cargo says (`scripts/relay-sources.py`) | |
+| Deployment | `infra/`, `.github/workflows/` | Running the relay: one small server in us-east-2 with DynamoDB behind it (`AirbandRelayUs` in `infra/cdk.mjs`, what runs on the server in `infra/host/`), deployed by `deploy-relay.yml` on a push when what changed since the last deploy that answered (the `relay-deployed` tag, moved only by a deploy) touches what the relay is built from, as cargo says (`scripts/relay-sources.py`) | |
 
 ## Where a new thing goes
 
@@ -306,7 +306,7 @@ offer. All of it is worked out in the core, so every host shows the same thing.
 
 ## Notifications
 
-What deserves a notification is the tower's decision (`tower/push.rs`): a question, a report, a permission card,
+What deserves a notification is the tower's decision (`tower/push.rs`): a question, a report, a message no model read (`unjudged`), a permission card,
 when the phone is neither on a call nor showing the chat. The tower seals it and the relay hands it to the push
 service, so neither can read it. On the iPhone a notification extension (`apps/apple/Notify`) opens it with the
 radio core. An answer given there is sent in the background (`Desk.answer_now`), or kept and sent later.
@@ -362,8 +362,8 @@ in the same folder. Rooms and callsigns make themselves from where agents run an
 - The tower has no `if harness == …` anywhere, and starts no tool's watcher by name: it starts every adapter's (`adapters::watch_all`). Keep it that way.
 - Messages from agents are untrusted input to the model that judges them. That model is given no tools.
 - CI runs on every push to main that changes code: build and tests on Linux, Windows and macOS, the radio core
-  for Android, the iPhone app, and three end-to-end suites that need no model (`tools/e2e-relay.py`,
-  `tools/e2e-held.py`, `tools/e2e-links.py`).
+  for Android, the iPhone app, and four end-to-end suites that need no model (`tools/e2e-relay.py`, `tools/e2e-pull.py`
+  (the built tower against the built relay, for the pull itself), `tools/e2e-held.py`, `tools/e2e-links.py`).
 - `tools/e2e.py` goes through everything a radio can do with real model calls, so it runs on your computer:
   `scripts/check.sh --full`. Run it before a release.
 - Say what was run and what was only compiled. `docs/state.md` is the record; keep it true.

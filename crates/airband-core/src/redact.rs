@@ -1,4 +1,4 @@
-//! Keys and tokens that turn up in what is said are not kept or shown: a GitHub token pasted to an agent, an
+//! Keys and tokens that turn up in what is said are not kept or shown: a code host's token pasted to an agent, an
 //! API key in a log an agent quotes. What an agent is given is not touched; this is for the copy the chat
 //! keeps, which is stored on the tower, sent to every paired radio and read by a model.
 //!
@@ -114,6 +114,15 @@ impl std::fmt::Debug for Shown<'_> {
     }
 }
 
+/// His words, or an agent's, in a debug form: how long they are, never what they say.
+pub struct Withheld<'a>(pub &'a str);
+
+impl std::fmt::Debug for Withheld<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({} characters, not shown)", self.0.chars().count())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,6 +135,7 @@ mod tests {
             format!("{:?}", crate::radio::SetReads { kind: "openai".into(), offer: "o".into(), key: "sk-live-1".into(), set: [("x".to_string(), "sk-live-2".to_string())].into() }),
             format!("{:?}", crate::pairing::Pairing::Relay { relay: "https://r".into(), secret: "sk-live-1".into() }),
             format!("{:?}", crate::pairing::Pairing::Direct { url: "http://h".into(), token: "sk-live-1".into() }),
+            format!("{:?}", crate::pairing::Pairing::Near { at: vec!["http://h".into()], secret: "sk-live-1".into() }),
             format!("{:?}", Deliver::Socket { path: "/s".into(), token: Some("sk-live-1".into()) }),
             format!("{:?}", SocketLine::Auth { token: "sk-live-1".into() }),
             format!("{:?}", SocketLine::User { uuid: "u".into(), message: SocketTurn { role: SocketRole::User, content: "sk-live-2 ship it".into() } }),
@@ -134,6 +144,28 @@ mod tests {
             assert!(!line.contains("sk-live"), "{line}");
         }
         assert!(shown[0].contains("(set, not shown)") && shown[0].contains("url"), "{}", shown[0]);
+    }
+
+    #[test]
+    fn his_words_and_his_email_are_never_in_a_debug_form() {
+        // A-21: derived debug forms printed what he said, the task he gave, what an agent wrote and his email
+        let words = "ship the payments fix";
+        let launch = crate::radio::Launch { team: crate::ids::TeamId::new("t1"), tool: None, model: None, effort: None, task: words.into() };
+        let shown = [
+            format!("{:?}", crate::radio::Utterance { text: words.into(), id: "u1".into(), label: Some(words.into()), act: Some(crate::radio::Act::Launch(launch.clone())), ..Default::default() }),
+            format!("{launch:?}"),
+            format!("{:?}", crate::relay::Call { t: 1, id: "c1".into(), method: crate::radio::wire::Method::Post, path: "/v1/radio/utterance".into(), body: serde_json::Value::String(words.into()), schema: crate::radio::SCHEMA.into(), presence: Default::default() }),
+            format!("{:?}", crate::agent::Event::Said { text: words.into(), kind: None, turn: None }),
+            format!("{:?}", crate::agent::Event::Notice { text: words.into() }),
+            format!("{:?}", crate::radio::Account { id: "a".into(), harness: "h".into(), label: "him@example.com".into(), ..Default::default() }),
+        ];
+        for line in &shown {
+            assert!(!line.contains("payments") && !line.contains("him@"), "{line}");
+        }
+        // what is not his is still there to read
+        assert!(shown[0].contains("\"u1\"") && shown[0].contains("(21 characters, not shown)"), "{}", shown[0]);
+        assert!(shown[2].contains("/v1/radio/utterance") && shown[5].contains("(set, not shown)"));
+        assert_eq!(format!("{:?}", crate::agent::Event::Working), r#"{"type":"working"}"#);
     }
 
     #[test]

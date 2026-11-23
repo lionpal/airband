@@ -79,9 +79,9 @@ mod tests {
         let kinds = crate::catalog::built().links.clone();
         check(&kinds).unwrap();
         // however its address reads, nothing said what this is
-        let unsaid = link(&kinds, "https://github.com/a/shop/pull/12", None, None);
-        assert_eq!((unsaid.kind.as_str(), unsaid.name.as_str(), unsaid.host.as_str()), ("", "", "github.com"));
-        let said = link(&kinds, "https://github.com/a/shop/pull/12", Some("pull-request"), Some("a/shop #12".into()));
+        let unsaid = link(&kinds, "https://code.example/a/shop/pull/12", None, None);
+        assert_eq!((unsaid.kind.as_str(), unsaid.name.as_str(), unsaid.host.as_str()), ("", "", "code.example"));
+        let said = link(&kinds, "https://code.example/a/shop/pull/12", Some("pull-request"), Some("a/shop #12".into()));
         assert_eq!((said.name.as_str(), said.title.as_deref()), ("Pull request", Some("a/shop #12")));
         // a kind no row has is no kind
         assert_eq!(link(&kinds, "https://example.com/x", Some("no-such-kind"), None).name, "");

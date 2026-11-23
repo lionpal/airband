@@ -35,6 +35,9 @@ pub(super) struct Channel {
     /// The pull held open now, and the tower it is from ([`airband_core::relay::TOWER_HEADER`]). Another tower's
     /// pull is refused while it is: two computers with one pairing never take each other's place for ever.
     pub(super) live: Option<(Option<String>, u64)>,
+    /// The tower another tower's held pull was last let go for ([`Channel::contend`]). Asking again while that
+    /// other tower is pulling once more is how the relay knows both are really there.
+    pub(super) let_go_for: Option<String>,
     /// The hash of the token the paired radio proves itself with, as the tower gave it when it opened the
     /// channel.
     pub(super) radio_hash: String,
@@ -48,7 +51,7 @@ impl Channel {
         Channel::from(store::Saved { pull_hash, radio_hash })
     }
     pub(super) fn from(saved: store::Saved) -> Channel {
-        Channel { pull_hash: saved.pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, keeps: 0, holding: None, handed: Vec::new(), pulls: 0, live: None, radio_hash: saved.radio_hash, pushed: None }
+        Channel { pull_hash: saved.pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, keeps: 0, holding: None, handed: Vec::new(), pulls: 0, live: None, let_go_for: None, radio_hash: saved.radio_hash, pushed: None }
     }
 }
 
@@ -76,7 +79,8 @@ impl Channel {
             }
         }
         match &mut self.holding {
-            Some((id, at)) if Some(id.as_str()) == said.got => *at = Got::Got,
+            // named as got, or as being answered for (a tower that opened again while it still works on it)
+            Some((id, at)) if Some(id.as_str()) == said.got || said.answering == Some(Some(id.as_str())) => *at = Got::Got,
             Some((_, Got::Handed)) => self.holding = None,
             _ => {}
         }
@@ -88,10 +92,34 @@ impl Channel {
         self.wake.notify_waiters();
         self.pulls
     }
-    /// The tower opened its channel again: it started over, so nothing handed to it before is in its hands.
-    pub(super) fn reopened(&mut self) {
-        self.pulled(Said::default());
-        self.holding = None;
+    /// The tower opened its channel again. A radio's request handed to it before and not said to be got is
+    /// handed again. A kept message: a tower that says which one it is still answering for (`answering`, version
+    /// 3 and up) keeps it in its hands while it does, and has it handed again when it no longer names it, as on a
+    /// pull; one that does not say started over, and is handed it again.
+    pub(super) fn reopened(&mut self, answering: Option<Option<&str>>) {
+        self.pulled(Said { got: None, answering });
+        if answering.is_none() {
+            self.holding = None;
+        }
+    }
+    /// A pull or an opening from tower `this` (its [`airband_core::relay::TOWER_HEADER`]): may it go on? Not
+    /// while another tower's pull is held open. The first time, that pull is let go and this one is told to ask
+    /// again: a tower that is still there pulls again at once, and the next time is refused as another tower;
+    /// one that is gone (restarted under a new id, its connection kept by a proxy) does not, and this one is taken.
+    /// Nothing is waited for by the clock.
+    pub(super) fn contend(&mut self, this: Option<&str>) -> Result<(), PullRefused> {
+        let (Some((Some(pulling), _)), Some(this)) = (&self.live, this) else { return Ok(()) };
+        if pulling == this {
+            return Ok(());
+        }
+        if self.let_go_for.as_deref() == Some(this) {
+            return Err(PullRefused::AnotherTower);
+        }
+        self.let_go_for = Some(this.to_string());
+        // the held pull is no longer the latest: woken, it answers that it has nothing and takes nothing
+        self.pulls += 1;
+        self.wake.notify_waiters();
+        Err(PullRefused::AskAgain)
     }
     /// The store had nothing kept, as looked at when `seen` keeps had come in. Unmarked only if none came since:
     /// one kept while the store was being read is still there, and newer ordered words must not pass it.

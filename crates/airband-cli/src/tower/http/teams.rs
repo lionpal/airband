@@ -17,7 +17,7 @@ pub(super) async fn team_rename(State(app): State<Arc<App>>, Sent(to): Sent<at::
 /// A folder on this computer, as it really is on disk (links followed). With none named, his home folder:
 /// that is where a walk starts, and from there he can go up to the top and into other disks.
 pub(super) fn folder_at(path: &str) -> Result<std::path::PathBuf, String> {
-    let at = if path.trim().is_empty() { config::home().canonicalize().map_err(|e| e.to_string())? } else { std::path::Path::new(path).canonicalize().map_err(|_| "That folder is not there.".to_string())? };
+    let at = if path.trim().is_empty() { airband_io::files::real_path(&config::home()).map_err(|e| e.to_string())? } else { airband_io::files::real_path(std::path::Path::new(path)).map_err(|_| "That folder is not there.".to_string())? };
     if !at.is_dir() {
         return Err("That is not a folder.".into());
     }

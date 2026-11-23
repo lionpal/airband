@@ -271,9 +271,8 @@ fn listen(sock: &str, state: Arc<Mutex<State>>, tx: mpsc::Sender<Msg>) -> Result
     airband_io::files::remove(std::path::Path::new(sock)).ok();
     let listener = UnixListener::bind(sock).map_err(|e| format!("cannot open {sock}: {e}"))?;
     {
-        use std::os::unix::fs::PermissionsExt;
         // only he may talk to the agent: a socket others could reach is not opened at all
-        std::fs::set_permissions(sock, std::fs::Permissions::from_mode(0o600)).map_err(|e| format!("cannot make {sock} private: {e}"))?;
+        airband_io::files::set_mode(std::path::Path::new(sock), 0o600).map_err(|e| format!("cannot make {sock} private: {e}"))?;
     }
     std::thread::spawn(move || {
         for conn in listener.incoming() {

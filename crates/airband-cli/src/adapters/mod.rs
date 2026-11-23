@@ -306,8 +306,8 @@ pub(crate) fn worked_all() -> Vec<(String, Vec<String>, u64)> {
     // Not the ones that are gone, nor the ones in a temporary folder: nothing lasting is there. Which folders
     // are temporary is the system's to say: the one it gives this user (`temp_dir`), and `/tmp`, which POSIX
     // sets aside for that. Each is compared as the disk has it, links followed.
-    let passing: Vec<std::path::PathBuf> = [std::env::temp_dir(), "/tmp".into()].into_iter().filter_map(|temp| temp.canonicalize().ok()).collect();
-    all.retain(|(folder, _, _)| std::path::Path::new(folder).canonicalize().is_ok_and(|real| real.is_dir() && !passing.iter().any(|temp| real.starts_with(temp))));
+    let passing: Vec<std::path::PathBuf> = [std::env::temp_dir(), "/tmp".into()].into_iter().filter_map(|temp| airband_io::files::real_path(&temp).ok()).collect();
+    all.retain(|(folder, _, _)| airband_io::files::real_path(std::path::Path::new(folder)).is_ok_and(|real| real.is_dir() && !passing.iter().any(|temp| real.starts_with(temp))));
     all.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
     all
 }

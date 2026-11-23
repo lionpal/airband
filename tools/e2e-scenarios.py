@@ -136,7 +136,8 @@ try:
     tower.send_signal(signal.SIGSTOP)
     late = report("a1", shop, "said", "Said while the tower was slow.")
     tower.send_signal(signal.SIGCONT)
-    time.sleep(8)  # the tower takes what was kept for it every five seconds
+    # the tower takes what was kept for it every five seconds: once it is in the chat, it has been taken
+    until(lambda: any("Said while the tower was slow." in m.get("text", "") for m in messages()), 20)
     times = sum("Said while the tower was slow." in m.get("text", "") for m in messages())
     check("N43: a report that timed out while the tower was slow, and that it then took, is in the chat once", times == 1, f"{times} times; report said: {late.stdout.strip()} {late.stderr.strip()}")
 

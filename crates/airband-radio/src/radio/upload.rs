@@ -20,7 +20,7 @@ impl Radio {
         // of them. The first goes alone: a file his computer will not take is refused before the rest is sent.
         const AT_ONCE: usize = 6;
         let unread = |_| RadioError::here("read that file");
-        let total = std::fs::metadata(path).map_err(unread)?.len();
+        let total = airband_io::files::metadata(std::path::Path::new(path)).map_err(unread)?.len();
         let part_at = |from: u64| -> Result<airband_core::radio::AttachmentPart, RadioError> {
             let buf = airband_io::files::read_part(std::path::Path::new(path), from, PART).map_err(unread)?;
             Ok(airband_core::radio::AttachmentPart { id: id.into(), name: name.into(), from, data: airband_core::encode::base64(&buf), total })

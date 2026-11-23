@@ -25,6 +25,7 @@ case "$CARGO_TARGET_DIR" in /*) ;; *) CARGO_TARGET_DIR="$PWD/$CARGO_TARGET_DIR" 
 export CARGO_TARGET_DIR
 cargo build -q --release -p airband-cli -p airband-relay --features airband-cli/stand-ins
 python3 tools/e2e-relay.py
+python3 tools/e2e-pull.py
 python3 tools/e2e-held.py
 python3 tools/e2e-links.py
 python3 tools/e2e-scenarios.py

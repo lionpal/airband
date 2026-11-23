@@ -277,9 +277,9 @@ pub struct RosterEntry {
     /// he started in a terminal of his own is reached as a message from outside, which it treats with more care.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub held: bool,
-    /// It runs in a terminal of his: the tower types into its pane, or it is a Claude Code session started
-    /// at its command line (the only kind of Claude Code session that is listed). False says nothing of
-    /// where one runs that the tower does not run: an OpenCode or Codex session may be in their own apps.
+    /// It runs in a terminal of his: the tower types into its pane, or it is a session its tool started at its
+    /// command line (for a tool whose sessions are listed only from there). False says nothing of where one
+    /// runs that the tower does not run: another tool's session may be in that tool's own app.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub terminal: bool,
     /// He can end it from a phone: the tower runs it, or its tool has a way to put a session away.

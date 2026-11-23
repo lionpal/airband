@@ -26,10 +26,11 @@ jobs:
         env: { AIRBAND_INFRA: '${{ secrets.AIRBAND_INFRA }}' }
         run: npm ci --no-audit --no-fund && npx cdk deploy AirbandSite --require-approval never
       - name: Check the live page is the one in this commit
+        # the same bytes: the page served is compared whole, by its hash, with the one in this commit
         run: |
-          want=$(grep -o '<title>[^<]*</title>' site/index.html)
+          want=$(sha256sum site/index.html | cut -d' ' -f1)
           for i in $(seq 1 20); do
-            got=$(curl -s https://airband.dev/ | grep -o '<title>[^<]*</title>' || true)
+            got=$(curl -sf https://airband.dev/ | sha256sum | cut -d' ' -f1 || true)
             echo "attempt $i: $got"; [ "$got" = "$want" ] && exit 0; sleep 15
           done
           exit 1

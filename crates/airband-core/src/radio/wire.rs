@@ -271,7 +271,7 @@ pub mod at {
 
 /// An endpoint's path with the thing it names put in place of `{id}`.
 pub fn path_of<E: Endpoint>(id: &str) -> String {
-    E::PATH.replacen("{id}", &crate::encode::address_part(id), 1)
+    crate::template::filled(E::PATH, &[("id", &crate::encode::address_part(id))])
 }
 
 /// An endpoint's whole address: its path (with `id` in place of `{id}`) and its query.

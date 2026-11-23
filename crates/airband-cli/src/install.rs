@@ -1,6 +1,5 @@
 //! `airband install` / `uninstall`: putting the tower in place and starting it at login.
 use crate::config;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "macos")]
@@ -33,9 +32,9 @@ fn in_lasting(installer: &airband_core::catalog::Installer, lasting: &Path, real
 pub(crate) fn install() -> Result<(), String> {
     config::load();
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
-    let real = fs::canonicalize(&me).unwrap_or_else(|_| me.clone());
+    let real = airband_io::files::real_path(&me).unwrap_or_else(|_| me.clone());
     // a package manager's copy is used where it is, so its updates change what the hooks and the tower run
-    let packaged = airband_core::catalog::installers().into_iter().find_map(|i| packaged_exe(&i, &real).filter(|lasting| fs::canonicalize(lasting).is_ok_and(|to| to == real)).map(|lasting| (i.name, lasting)));
+    let packaged = airband_core::catalog::installers().into_iter().find_map(|i| packaged_exe(&i, &real).filter(|lasting| airband_io::files::real_path(lasting).is_ok_and(|to| to == real)).map(|lasting| (i.name, lasting)));
     let exe = match packaged {
         Some((name, lasting)) => {
             println!("Using {name}\u{2019}s copy at {}. After {name} updates airband, run `airband install` again to restart airband.", lasting.display());
@@ -47,7 +46,7 @@ pub(crate) fn install() -> Result<(), String> {
             airband_io::files::make_folder(exe.parent().unwrap()).map_err(|e| e.to_string())?;
             if me != exe {
                 let tmp = exe.with_extension("new");
-                fs::copy(&me, &tmp).map_err(|e| format!("cannot copy the binary to {}: {e}", exe.display()))?;
+                airband_io::files::copy(&me, &tmp).map_err(|e| format!("cannot copy the binary to {}: {e}", exe.display()))?;
                 airband_io::files::move_to(&tmp, &exe).map_err(|e| e.to_string())?;
             }
             exe

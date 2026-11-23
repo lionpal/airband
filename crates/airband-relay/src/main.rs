@@ -37,7 +37,7 @@
 #![warn(clippy::let_underscore_must_use)]
 // test code may touch files and build JSON by hand to stand in for the outside
 #![cfg_attr(test, allow(clippy::disallowed_methods, clippy::disallowed_macros, clippy::let_underscore_must_use))]
-use airband_core::relay::{ADMISSION_HEADER, ANSWERING_HEADER, GOT_HEADER, ID_HEADER, ORDERED_HEADER, PULL_HEADER, PullRefused, RADIO_HASH_HEADER, REQUEST_HEADER, Route, TOWER_HEADER};
+use airband_core::relay::{ADMISSION_HEADER, ANSWERING_HEADER, CallRefused, GOT_HEADER, ID_HEADER, ORDERED_HEADER, PULL_HEADER, PullRefused, RADIO_HASH_HEADER, REQUEST_HEADER, Route, TOWER_HEADER};
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{HeaderMap, StatusCode};

@@ -148,14 +148,16 @@ try:
     check("something no model read wakes it too, as what it is, and is not called a question", pushed(2) and pushes[1]["question"] is False and opened(pushes[1]["sealed"])["kind"] == "unjudged")
 
     print("The phone has the chat open")
-    showing = threading.Event()
+    showing, looking = threading.Event(), threading.Event()
     def show_chat():
         rev = 0
         while not showing.is_set():
             got = http("GET", f"/v1/radio/feed?since={rev}&wait=2")[1]
             rev = got["rev"] if got else rev
+            # the tower has answered one: it knows the chat is in front of him
+            looking.set()
     reader = threading.Thread(target=show_chat); reader.start()
-    time.sleep(1)
+    looking.wait(10)
     report("asked", "Deploy to staging now?")
     check("what arrives while he is looking at the chat wakes nothing", quiet(2))
     out = []
@@ -163,7 +165,10 @@ try:
         r = report("permission", "run `npm run deploy`")
         out.append(r.returncode)
     asking = threading.Thread(target=ask_permission); asking.start()
-    time.sleep(1)
+    # the card is in the chat he is looking at
+    for _ in range(100):
+        if any(m.get("permission") and m["open"] for m in (http("GET", "/v1/radio/feed?since=0")[1] or {"messages": []})["messages"]): break
+        time.sleep(0.1)
     showing.set(); reader.join()
 
     print("He puts the phone down with a permission card waiting")
@@ -197,7 +202,10 @@ try:
     answer_with[0] = 410
     report("asked", "Tag the release?")
     check("the tower asks, and is told", pushed(5))
-    time.sleep(1)
+    # and has forgotten the address, as its log says
+    for _ in range(100):
+        if "the phone's address is no longer good; forgotten" in open(os.path.join(work, "tower.log")).read(): break
+        time.sleep(0.1)
     answer_with[0] = 200
     report("asked", "Publish the notes?")
     check("it forgets the address: nothing more is asked for it", quiet(5))
