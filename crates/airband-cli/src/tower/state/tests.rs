@@ -208,6 +208,17 @@ fn kept_agents_from_two_folders_in_one_team_go_back_to_their_own_folders_teams()
 }
 
 #[test]
+fn a_team_id_kept_in_the_current_format_is_never_read_as_a_name() {
+    let mut inner = Inner::default();
+    let garden = inner.new_team("garden", true).unwrap();
+    // a line and a placement kept under an id the teams no longer hold, though it reads as a team's name
+    inner.log.push(Entry { id: "l1".into(), team: Some(TeamId::new("garden")), ..Entry::default() });
+    inner.settle_teams(BTreeMap::new(), BTreeSet::new());
+    assert_eq!(inner.log[0].team, Some(TeamId::new("garden")), "left as kept, never moved to {garden:?} by its name");
+    assert_ne!(inner.log[0].team.as_ref(), Some(&garden));
+}
+
+#[test]
 fn one_found_by_its_tools_list_goes_to_the_team_it_was_started_under_when_it_says_so() {
     let mut inner = Inner::default();
     // first heard of from its tool's list: no name, so it is in its folder's team
@@ -766,6 +777,14 @@ fn whether_there_is_more_to_read_is_the_verdict_kept_on_the_line_never_a_compari
     inner.fill(&id, &verdict("Refunds sent, all forty checked.", false));
     let e = inner.log.iter().find(|e| e.id == id).unwrap().clone();
     assert!(!inner.message(&e).long);
+}
+
+#[test]
+fn a_line_not_yet_summarised_has_more_to_read_exactly_when_its_opening_stops_short() {
+    let line = |full: &str| Entry { id: "l".into(), full: full.into(), ..Entry::default() };
+    assert!(!line("Refunds sent.").more_to_read());
+    assert!(!line("Refunds sent. All forty.").more_to_read());
+    assert!(line("Refunds sent. All forty. Each checked against the order.").more_to_read());
 }
 
 #[test]

@@ -364,7 +364,7 @@ pub(super) async fn detail_by(app: &Arc<App>, model: &dyn Model, id: &str) -> Op
             let mut inner = app.change();
             if let Some(e) = inner.log.iter_mut().find(|e| e.id == id) {
                 e.detail = Some(d.clone());
-                inner.unsaved.borrow_mut().insert(id.to_string());
+                inner.touch(id);
             }
             Some(d)
         }
@@ -426,7 +426,12 @@ mod tests {
         assert_eq!(j.options, vec!["Ship it".to_string(), "Wait".to_string()]);
         assert_eq!(j.recommended, Some(1), "\"Wait\" is the one recommended");
         let dropped = Answer { kind: Kind::NeedsYou, say: "Which one?".into(), options: vec!["a very long answer that is far too long".into(), "Wait".into()], recommended: Some(0), read: None, background: false, own_session: false, as_written: false };
-        assert_eq!(judged(&item, dropped).recommended, None, "the one recommended was dropped: nothing is marked");
+        let dropped = judged(&item, dropped);
+        assert_eq!(dropped.recommended, None, "the one recommended was dropped: nothing is marked");
+        // whether there is more to read is the model's verdict: cut unless it said the words stand as written
+        assert!(dropped.cut);
+        let whole = Answer { kind: Kind::NeedsYou, say: "Which?".into(), options: Vec::new(), recommended: None, read: None, background: false, own_session: false, as_written: true };
+        assert!(!judged(&item, whole).cut);
     }
     #[test]
     fn why_a_model_did_not_answer_is_told_from_the_status_and_never_in_the_services_words() {
