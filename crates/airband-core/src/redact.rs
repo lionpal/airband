@@ -135,6 +135,7 @@ mod tests {
             format!("{:?}", crate::radio::SetReads { kind: "openai".into(), offer: "o".into(), key: "sk-live-1".into(), set: [("x".to_string(), "sk-live-2".to_string())].into() }),
             format!("{:?}", crate::pairing::Pairing::Relay { relay: "https://r".into(), secret: "sk-live-1".into() }),
             format!("{:?}", crate::pairing::Pairing::Direct { url: "http://h".into(), token: "sk-live-1".into() }),
+            format!("{:?}", crate::pairing::Pairing::Near { at: vec!["http://h".into()], secret: "sk-live-1".into() }),
             format!("{:?}", Deliver::Socket { path: "/s".into(), token: Some("sk-live-1".into()) }),
             format!("{:?}", SocketLine::Auth { token: "sk-live-1".into() }),
             format!("{:?}", SocketLine::User { uuid: "u".into(), message: SocketTurn { role: SocketRole::User, content: "sk-live-2 ship it".into() } }),

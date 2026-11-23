@@ -342,11 +342,11 @@ impl Keys {
     }
     /// What a tower shows the relay it is this channel's tower with (`Authorization`).
     pub fn as_tower(&self) -> String {
-        format!("Bearer {}", self.pull_token)
+        crate::token::as_bearer(&self.pull_token)
     }
     /// What a radio shows the relay it is this channel's radio with (`Authorization`).
     pub fn as_radio(&self) -> String {
-        format!("Bearer {}", self.radio_token)
+        crate::token::as_bearer(&self.radio_token)
     }
     /// A request sealed for the tower.
     pub fn seal_call(&self, call: &Call) -> Vec<u8> {
