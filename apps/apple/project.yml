@@ -180,3 +180,18 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
     scheme:
       testTargets: [AirbandTests]
+  # The phone end to end: the app's radio core in the simulator against a tower and relay on this Mac, which
+  # tools/e2e-phone.py starts and hands the test (it runs this scheme); it fails when run any other way
+  AirbandEndToEnd:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - EndToEnd
+    dependencies:
+      - target: Airband
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.airband.app.endtoend
+        GENERATE_INFOPLIST_FILE: YES
+    scheme:
+      testTargets: [AirbandEndToEnd]

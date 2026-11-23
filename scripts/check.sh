@@ -5,8 +5,9 @@
 #                              (under a minute once built)
 #   scripts/check.sh --full    those, then the end-to-end suites, side by side: the relay and its queue, the pull,
 #                              agents the tower runs itself, links, the paths the audits keep finding faults in
-#                              (e2e-scenarios), notifications (e2e-push), and the whole tower with real model calls
-#                              (a few minutes, and it needs `claude` signed in)
+#                              (e2e-scenarios), notifications (e2e-push), the phone's own core in a simulator of its
+#                              own (e2e-phone), and the whole tower with real model calls (a few minutes, and it needs
+#                              `claude` signed in)
 #
 # `git push` runs the first form by itself (.githooks/pre-push, turned on once with
 # `git config core.hooksPath .githooks`). CI on GitHub runs on every push too: every system the tower is meant
@@ -46,7 +47,7 @@ cargo build -q --release -p airband-cli -p airband-relay --features airband-cli/
 # (tools/wire.py free_port), so none reaches another's. Each is told apart in what it prints, with how long it took.
 logs=$(mktemp -d "${TMPDIR:-/tmp}/airband-suites.XXXXXX")
 began=$(date +%s)
-for suite in e2e-relay e2e-pull e2e-held e2e-links e2e-scenarios "e2e --claude" e2e-push; do
+for suite in e2e-relay e2e-pull e2e-held e2e-links e2e-scenarios "e2e --claude" e2e-push e2e-phone; do
   name=${suite%% *}
   (
     start=$(date +%s)
@@ -57,7 +58,7 @@ for suite in e2e-relay e2e-pull e2e-held e2e-links e2e-scenarios "e2e --claude" 
 done
 wait
 failed=0
-for name in e2e-relay e2e-pull e2e-held e2e-links e2e-scenarios e2e e2e-push; do
+for name in e2e-relay e2e-pull e2e-held e2e-links e2e-scenarios e2e e2e-push e2e-phone; do
   result=$(cat "$logs/$name.result")
   printf '%-14s %-6s %4ss  %s\n' "$name" "$result" "$(cat "$logs/$name.seconds")" "$logs/$name.log"
   if [ "$result" != ok ]; then failed=1; tail -n 30 "$logs/$name.log"; fi
