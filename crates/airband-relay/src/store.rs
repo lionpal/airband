@@ -48,7 +48,7 @@ pub(crate) use folder::Folder;
 pub(crate) use postgres::Pg;
 
 /// What is remembered about one channel.
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Saved {
     /// The hash of the token its tower pulls with.
     #[serde(rename = "pull")]

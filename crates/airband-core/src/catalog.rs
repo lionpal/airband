@@ -309,6 +309,14 @@ mod tests {
     }
 
     #[test]
+    fn two_copies_that_differ_only_in_what_is_retired_hash_apart() {
+        // K-N3: a later copy's `retired` is used, so a same-rev copy that differs there must not pass as the same
+        let a = hash_of(r#"{"providers":[],"retired":[]}"#).unwrap();
+        let b = hash_of(r#"{"providers":[],"retired":["groq"]}"#).unwrap();
+        assert_ne!(a, b);
+    }
+
+    #[test]
     fn a_row_this_build_cannot_read_is_left_out_and_said_so_and_the_rest_is_kept() {
         let c = read(
             r#"{"rev":9,"providers":[

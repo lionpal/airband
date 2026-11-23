@@ -271,7 +271,7 @@ pub mod at {
 
 /// An endpoint's path with the thing it names put in place of `{id}`.
 pub fn path_of<E: Endpoint>(id: &str) -> String {
-    E::PATH.replacen("{id}", &encode(id), 1)
+    E::PATH.replacen("{id}", &crate::encode::address_part(id), 1)
 }
 
 /// An endpoint's whole address: its path (with `id` in place of `{id}`) and its query.
@@ -294,20 +294,10 @@ pub fn query_of<Q: Serialize>(query: &Q) -> String {
                 serde_json::Value::Bool(false) => return None,
                 other => other.to_string(),
             };
-            Some(format!("{}={}", encode(&k), encode(&v)))
+            Some(format!("{}={}", crate::encode::address_part(&k), crate::encode::address_part(&v)))
         })
         .collect::<Vec<_>>()
         .join("&")
-}
-
-/// Percent-encoding for one part of an address: everything but letters, digits and `-._~`.
-fn encode(s: &str) -> String {
-    s.bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => (b as char).to_string(),
-            _ => format!("%{b:02X}"),
-        })
-        .collect()
 }
 
 #[cfg(test)]

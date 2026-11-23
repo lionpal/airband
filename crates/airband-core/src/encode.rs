@@ -66,9 +66,28 @@ pub fn word<T: serde::Serialize>(v: &T) -> Option<String> {
     serde_json::to_value(v).ok().and_then(|v| v.as_str().map(String::from))
 }
 
+/// Percent-encoding for one part of an address, a path segment or a query's key or value: everything but
+/// letters, digits and `-._~`. The one encoder every address we put together uses.
+pub fn address_part(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_address_part_is_percent_encoded_one_way_everywhere() {
+        // K-N2: the relay's reply route gave `+` for a space where the radio's routes gave `%20`
+        assert_eq!(address_part("a b+c/d?é"), "a%20b%2Bc%2Fd%3F%C3%A9");
+        assert_eq!(address_part("Az09-._~"), "Az09-._~");
+        assert_eq!(crate::relay::Route::Reply("a b").on("c"), "/v1/channels/c/reply/a%20b");
+    }
 
     #[test]
     fn hex_and_base64_go_there_and_back_and_a_uuid_says_its_version() {

@@ -312,7 +312,7 @@ impl Route<'_> {
         let tail = match self {
             Route::Channel => String::new(),
             Route::Pull => "/pull".into(),
-            Route::Reply(id) => format!("/reply/{}", url::form_urlencoded::byte_serialize(id.as_bytes()).collect::<String>()),
+            Route::Reply(id) => format!("/reply/{}", crate::encode::address_part(id)),
             Route::Call => "/call".into(),
             Route::Queue => "/queue".into(),
             Route::Push => "/push".into(),

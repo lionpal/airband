@@ -30,8 +30,8 @@ fn content_hash(doc: &serde_json::Value) -> String {
     }
     let mut rows = String::new();
     // the kinds of link, the shapes of credentials, the terminals and the frame programs are not in it: a build
-    // only ever uses its own
-    for part in ["providers", "models", "tools", "servers", "phrases"] {
+    // only ever uses its own. What is retired is: a later copy's list is used, so two that differ there differ.
+    for part in ["providers", "models", "tools", "servers", "phrases", "retired"] {
         canon(&doc[part], &mut rows);
     }
     sha2::Sha256::digest(rows.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
