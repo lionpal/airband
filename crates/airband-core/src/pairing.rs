@@ -7,13 +7,24 @@
 //!                                                                        with commas), on its network or a private one
 //!   airband://pair?url=http%3A%2F%2F127.0.0.1%3A7373&token=<token>       unsealed, to a tower on this same machine
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Pairing {
     Relay { relay: String, secret: String },
     /// No relay: every request goes straight to the tower, sealed with the keys the secret gives. `at` is where
     /// the tower was when the link was made; it says where it is now each time it is asked.
     Near { at: Vec<String>, secret: String },
     Direct { url: String, token: String },
+}
+
+/// Where a pairing reaches, and never its secret or token.
+impl std::fmt::Debug for Pairing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Pairing::Relay { relay, .. } => f.debug_struct("Relay").field("relay", relay).finish_non_exhaustive(),
+            Pairing::Near { at, .. } => f.debug_struct("Near").field("at", at).finish_non_exhaustive(),
+            Pairing::Direct { url, .. } => f.debug_struct("Direct").field("url", url).finish_non_exhaustive(),
+        }
+    }
 }
 
 /// A link's query, each value encoded: written with the same rules it is read by.
@@ -93,5 +104,21 @@ mod tests {
         // a secret alone reaches nothing
         assert!(Pairing::parse(&format!("airband://pair?secret={}", "ab".repeat(32))).is_err());
         assert!(Pairing::parse("airband://pair?url=%ZZ&token=").is_err());
+    }
+}
+
+#[cfg(test)]
+mod debug_tests {
+    use super::*;
+
+    #[test]
+    fn a_pairing_and_a_key_are_never_printed() {
+        let secret = "ab".repeat(32);
+        assert!(!format!("{:?}", Pairing::Relay { relay: "https://r".into(), secret: secret.clone() }).contains(&secret));
+        assert!(!format!("{:?}", Pairing::Direct { url: "http://h".into(), token: "tok-123".into() }).contains("tok-123"));
+        let with = crate::providers::Use { kind: "k".into(), key: "sk-secret".into(), ..Default::default() };
+        assert!(!format!("{with:?}").contains("sk-secret"));
+        let set = crate::radio::SetReads { kind: "k".into(), key: "sk-secret".into(), ..Default::default() };
+        assert!(!format!("{set:?}").contains("sk-secret"));
     }
 }

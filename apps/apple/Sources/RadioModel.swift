@@ -326,20 +326,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// The picture he chose for each of his computers, by its id: a system symbol's name.
     @Published var computerIcons: [String: String] = Stored.setting("airband.computers.icons.byid", or: [:])
-    /// The pictures a computer can have.
-    static let computerSymbols = ["laptopcomputer", "desktopcomputer", "display", "pc", "server.rack", "cpu"]
 
-    func icon(of computer: String) -> String { computerIcons[computer] ?? "desktopcomputer" }
-    /// What the default computer is for, in the words used wherever he chooses it.
-    static let mainComputerNote = "New agents start here."
-    func setMainComputer(_ computer: String) {
-        guard !computer.isEmpty else { return }
-        desk.setMainComputer(computer: computer)
-    }
-    func setIcon(_ symbol: String, of computer: String) {
-        computerIcons[computer] = symbol
-        Stored.keepSetting("airband.computers.icons.byid", computerIcons)
-    }
 
     /// Goes up when a newer catalogue of services and models has been taken: what the choosers list is read again.
     @Published var catalogRev = 0
@@ -349,46 +336,6 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
     /// choice stands, as the core last said. The core decides all of it; the screens draw this.
     @Published var choices: [ChoiceJob: [Choice]] = [:]
 
-    /// What went wrong, in words for him: the core's words for any of its errors, and otherwise `fallback`,
-    /// which says what did not happen.
-    static func words(for error: Error, else fallback: String) -> String {
-        (error as? RadioError).map { errorWords(error: $0) } ?? fallback
-    }
-
-    /// Run one of the core's blocking calls off the main thread and come back on it: with what the call gave,
-    /// or with what went wrong in words. Every call that can fail goes through here.
-    func ask<T>(_ fallback: String, _ call: @escaping () throws -> T, then: @escaping (T?, String?) -> Void) {
-        fetch.async {
-            let result = Result { try call() }
-            DispatchQueue.main.async {
-                switch result {
-                case .success(let got): then(got, nil)
-                case .failure(let error): then(nil, Self.words(for: error, else: fallback))
-                }
-            }
-        }
-    }
-
-    /// The same, for something done to an agent or a message: what went wrong is shown to him, and `done`
-    /// runs when nothing did.
-    func tell(_ fallback: String, _ call: @escaping () throws -> Void, done: @escaping () -> Void = {}) {
-        ask(fallback, call) { _, wrong in
-            if let wrong { self.problem = wrong } else { done() }
-        }
-    }
-
-    /// One of the core's calls that changes what is chosen. Calls back with what it said was wrong.
-    func work(_ done: @escaping (String?) -> Void, _ call: @escaping () throws -> Void) {
-        ask("That did not work. Try again.", call) { _, wrong in
-            // a model can be fetched again, so it is left out of the phone's backups
-            var folder = URL(fileURLWithPath: self.voiceDir).appendingPathComponent("models")
-            var values = URLResourceValues()
-            values.isExcludedFromBackup = true
-            try? folder.setResourceValues(values)
-            self.refreshChoices()
-            done(wrong)
-        }
-    }
 
     /// The app's own folder: the core keeps what he chose there, and the models that run on this phone.
     let voiceDir: String
@@ -402,7 +349,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
 
     /// The engines this app runs models with itself, by the name a model's row in the catalogue gives. The
     /// core offers a model for one of these only on a system its row allows, and asks for it by this name.
-    lazy var engines: [String: (String, ChoiceJob, Data) -> Data?] = ["phonon-coreml": { [unowned self] in self.neuralEngineListening(folder: $0, job: $1, input: $2) }]
+    lazy var engines: [String: (String, ChoiceJob, Data) -> Data?] = [Self.neuralEngine: { [unowned self] in self.neuralEngineListening(folder: $0, job: $1, input: $2) }]
 
     /// The models loaded so far, by the folder each is in. Loading one takes a moment, so it is kept.
     var heardWith: [String: Transcriber] = [:]

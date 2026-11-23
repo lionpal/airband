@@ -43,6 +43,10 @@ extension RadioModel {
         HostDevice(engines: engines.keys.sorted(), os: "ios", osVersion: UInt32(ProcessInfo.processInfo.operatingSystemVersion.majorVersion), teamColours: UInt8(TeamColours.rgb.count))
     }
 
+    /// The engine this app runs its listening model with, by the name the model's row in the catalogue gives
+    /// it (`engine`): the package that runs it on the Neural Engine. The row and this name are one contract.
+    static let neuralEngine = "phonon-coreml"
+
     /// The core asks for a model to be run by one of the engines above.
     func runModel(engine: String, folder: String, job: ChoiceJob, input: Data) -> Data? {
         engines[engine]?(folder, job, input)

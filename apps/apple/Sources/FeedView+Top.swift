@@ -63,7 +63,7 @@ extension FeedView {
     /// What is selected, as the id of its chip: for scrolling the row to it.
     var chosen: String { model.only.map { "agent:" + $0 } ?? model.room.map { "team:" + $0 } ?? "all" }
 
-    private func chip(_ label: String, on: Bool, dot: AgentState? = nil, working: Bool = false, colour: UInt8? = nil, badge: (String, UInt8?)? = nil, unread: UInt32 = 0, subagents: UInt32 = 0) -> some View {
+    private func chip(_ label: String, on: Bool, dot: AgentState? = nil, working: Bool = false, colour: UInt8? = nil, badge: (String, UInt8?)? = nil, unread: UInt32 = 0) -> some View {
         HStack(spacing: 7) {
             if let dot { StateDot(state: dot, working: working).id("\(dot)" + (working ? "+" : "")) }
             if let badge { Badge(text: badge.0, colour: badge.1, size: 20) }
@@ -114,7 +114,7 @@ extension FeedView {
                     Button {
                         model.look(room: on ? nil : room.id)
                     } label: {
-                        chip(room.name, on: on, dot: room.state, working: room.working, colour: room.colour, subagents: room.subagents)
+                        chip(room.name, on: on, dot: room.state, working: room.working, colour: room.colour)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("\(room.name), \(RadioModel.spoken(state: room.state))\(room.subagents > 0 ? ", \(room.subagents) subagents" : "")")

@@ -4,7 +4,7 @@ use super::*;
 /// A provider in use for one job: which row and which of its offers, with what key, and whatever is set
 /// differently from the offer. Written in the settings as `{"kind": …, "offer": …, "key": …, …}`. The key is
 /// the provider's: the same one whichever of its offers is used.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Use {
     pub kind: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -13,6 +13,13 @@ pub struct Use {
     pub key: String,
     #[serde(flatten)]
     pub set: BTreeMap<String, Value>,
+}
+
+/// Everything but the key, which is never printed.
+impl std::fmt::Debug for Use {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Use").field("kind", &self.kind).field("offer", &self.offer).field("key", &if self.key.is_empty() { "" } else { "…" }).field("set", &self.set).finish()
+    }
 }
 
 impl Use {
