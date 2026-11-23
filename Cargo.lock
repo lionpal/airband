@@ -43,7 +43,7 @@ dependencies = [
 
 [[package]]
 name = "airband-cli"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "airband-core",
  "airband-io",
@@ -70,7 +70,7 @@ dependencies = [
 
 [[package]]
 name = "airband-core"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "base64 0.22.1",
  "chacha20poly1305",
@@ -89,7 +89,7 @@ dependencies = [
 
 [[package]]
 name = "airband-io"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "airband-core",
  "libc",
@@ -100,7 +100,7 @@ dependencies = [
 
 [[package]]
 name = "airband-radio"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "airband-core",
  "airband-io",
@@ -118,7 +118,7 @@ dependencies = [
 
 [[package]]
 name = "airband-relay"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "airband-core",
  "airband-io",
@@ -3439,7 +3439,7 @@ dependencies = [
 
 [[package]]
 name = "uniffi-bindgen"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "uniffi",
 ]
