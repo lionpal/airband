@@ -73,6 +73,9 @@ pub struct Catalog {
     /// The package managers airband is installed with (`catalog/installers/`). Always the ones compiled in:
     /// they are programs run.
     pub installers: Vec<Installer>,
+    /// Who makes airband, to write to from the app (`catalog/contact/`): one row. Always the one compiled in,
+    /// so no later copy can send his messages anywhere else.
+    pub contact: Vec<Contact>,
     /// Words of the trade that a recogniser otherwise hears as everyday ones ("sync" as "sink").
     pub phrases: Vec<String>,
     /// Providers and coding tools that are no more, by id. One this build has compiled in and a later copy

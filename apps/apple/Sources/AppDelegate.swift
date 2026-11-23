@@ -8,6 +8,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         UNUserNotificationCenter.current().delegate = Push.shared
         return true
     }
+    /// The system woke the app because transfers of a model it was moving have ended: they are told to the core,
+    /// and the system is told when that is done.
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
+        guard identifier == ModelTransfers.identifier else { return completionHandler() }
+        ModelTransfers.shared.wokenFor = completionHandler
+        _ = RadioModel.shared
+        ModelTransfers.shared.open()
+    }
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         RadioModel.shared.pushAddress(deviceToken.map { String(format: "%02x", $0) }.joined())
     }

@@ -246,6 +246,7 @@ struct ChoicePicker: View {
                 .id(c.id)
             }
             MoreServices(shown: $more)
+            ContactRow(from: .job(job: job))
             if let wrong { Text(wrong).font(.system(size: 13)).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading) }
         }
         .onAppear {
@@ -269,6 +270,8 @@ struct ChoicePicker: View {
     /// One that needs something typed opens for it. Otherwise the first run takes it at once (a model is only
     /// noted, and fetched at the end), and Settings asks first.
     private func tapped(_ c: Choice) {
+        // one this phone cannot run says why on its card, and is not chosen
+        if case .cannotRun = c.state { return }
         if c.chosen && c.megabytesToFetch == nil { return }
         if c.place == .service && (c.key || !c.asks.isEmpty) {
             open = open == c.id ? nil : c.id
@@ -412,6 +415,7 @@ struct ToolsPicker: View {
                     }
                 }
             }
+            ContactRow(from: .tools)
         }
     }
 }

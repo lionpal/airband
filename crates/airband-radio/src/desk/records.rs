@@ -155,6 +155,8 @@ pub enum IntentKind {
     Push,
     /// The coding tools he uses.
     Tools,
+    /// How his summaries are to be written, in his words.
+    Brief,
 }
 /// One thing his computers are to be told, and the computers that do not have it yet.
 #[derive(Debug, Clone, uniffi::Record)]

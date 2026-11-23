@@ -84,6 +84,10 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         loadCatalog(dir: dir.path)
         Self.protectTakes(dataDir: dir.path)
         desk = Desk.open(dataDir: dir.path, host: self)
+        // a model's files come with the system's own transfers, which go on while the app is in the background
+        ModelTransfers.shared.model = self
+        ModelTransfers.shared.open()
+        desk.useTransfers(transfers: ModelTransfers.shared)
         #if DEBUG
         // development only: `-airband.devTools '("<a tool id>")'` opens as someone who uses those coding tools, for a screenshot
         if let tools = Dev.list("devTools") { desk.setTools(tools: tools) }

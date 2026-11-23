@@ -15,6 +15,8 @@ pub(super) struct Facts<'a> {
     pub(super) work: Option<(String, String, Option<f64>)>,
     /// The computers paired now, by id.
     pub(super) paired: &'a [StationId],
+    /// The model this job starts with, when this device cannot run it, and why.
+    pub(super) cannot: Option<(Arc<Model>, crate::engines::CannotRun)>,
 }
 
 pub(super) fn megabytes(m: &Model) -> u32 {
@@ -128,6 +130,29 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
             voices: m.voices.iter().map(|(name, about)| VoiceChoice { name: name.clone(), label: name.clone(), about: about.clone(), preview: format!("{}/previews/{name}.m4a", m.base) }).collect(),
             // with none named, the voice the row names as its usual one
             voice: m.voice(pick.as_ref().filter(|_| chosen).map(|p| p.voice.as_str()).unwrap_or_default()).to_string(),
+        });
+    }
+    // the model this job starts with, when this device cannot run it: shown, with why, so he knows to pick
+    // something else; never chosen, and nothing is chosen for him in its place
+    if let Some((m, why)) = &facts.cannot {
+        out.push(Choice {
+            id: m.kind.clone(),
+            place: ChoicePlace::Phone,
+            provider: m.kind.clone(),
+            offer: String::new(),
+            title: m.name.clone(),
+            line: why.said().into(),
+            free: true,
+            more: false,
+            chosen: false,
+            state: ChoiceState::CannotRun { why: why.said().into() },
+            key: false,
+            has_key: false,
+            key_name: String::new(),
+            keys_at: String::new(),
+            asks: Vec::new(),
+            voices: Vec::new(),
+            voice: String::new(),
         });
     }
     for s in crate::services::services(job.job()) {

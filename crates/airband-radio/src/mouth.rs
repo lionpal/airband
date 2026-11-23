@@ -219,7 +219,7 @@ mod tests {
         let dir = std::env::var("AIRBAND_VOICE_DIR").expect("AIRBAND_VOICE_DIR");
         let device = HostDevice::default();
         let m = model("phonon", &device).unwrap();
-        fetch_local_model(dir.clone(), &m).unwrap();
+        fetch_local_model(dir.clone(), &m, None).unwrap();
         assert_eq!(local_model_progress(), 100);
         let mouth = Mouth::default();
         // every voice it offers speaks, and changing voice does not load the model again

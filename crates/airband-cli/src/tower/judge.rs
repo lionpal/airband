@@ -74,10 +74,15 @@ impl Judged {
 /// The tower's main job: decide how much of his attention a message deserves, what to tell him of it, and, when
 /// it is a question he can answer by picking, what the picks are.
 pub(super) async fn prepare(settings: &Settings, item: &Item) -> Judged {
+    prepare_by(settings, &settings.current(), item).await
+}
+
+/// The same, asking `model`, with these settings.
+async fn prepare_by(model: &dyn Model, cfg: &Config, item: &Item) -> Judged {
     if item.notice {
         return Judged::as_written(item, Kind::NeedsYou);
     }
-    let parsed = ask_json::<Answer>(settings, reading(&settings.current(), item), Some(answer_shape())).await;
+    let parsed = ask_json::<Answer>(model, reading(cfg, item), Some(answer_shape())).await;
     match parsed {
         // a kind the model made up does not read, and is no verdict: he gets the message as written, below
         Ok(o) if !o.say.trim().is_empty() => judged(item, o),
@@ -140,41 +145,7 @@ fn reading(cfg: &Config, item: &Item) -> String {
          work it said it would still do: a message that ends by saying what comes next (\"next up is the \
          importer\", \"then I will wire the tests\") from an agent that has stopped is \"stalled\", however \
          much it reports before that.\n\n\
-         Then what to tell him, in plain spoken English. He will not read much: he glances. One short sentence, \
-         14 words at most. If the agent is asking him something, the sentence is the question itself, as \
-         briefly as it can be put (\"Two questions are too easy. Rewrite or leave?\"); how it got there is \
-         one tap away and does not belong here.\n\
-         The one exception is findings he asked for, so check for it before writing anything: look at the last \
-         thing he told this agent, given below. If that was to investigate, research, review, compare, audit or \
-         explain something, and this message is the answer, a headline would throw the answer away. Then \"say\" \
-         is an executive summary instead: three to five short sentences, between 40 and 90 words, the conclusion \
-         first, then the findings that matter with their numbers as digits, then what he has to decide if \
-         anything. It is read aloud to him, so it is sentences, never a list.\n\
-         The same longer form is for a message that leaves him several things to decide or do: he cannot act on \
-         a count. Never say that there are some number of things (\"four decisions needed\", \"three issues found\") \
-         without saying what each one is, in a few words each: \"Before going public: delete the old logs, pick a \
-         commit email, decide on the account code.\" If naming them takes more than one sentence, take the room.\n\
-         - Keep only: the result; anything left undone or gone wrong; the one thing he must decide.\n\
-         - Always keep anything the work is waiting on that only he can do (a request he has to file, an approval, \
-         a payment, a sign-in, a setting only his account can change, a choice he has not made), whether or not \
-         the agent has stopped for it: an agent that went on with other work has still left that part blocked on \
-         him. Say it in its own sentence, beginning \"Waiting on you:\", with what he has to do and what it \
-         unblocks (\"Waiting on you: approve the payment provider's form, before refunds can go out.\"). \
-         If there are several, name each. This comes before detail about what was done.\n\
-         - Always keep what the work left outside the conversation, each with the number or name that finds it: \
-         a push or commit (its short id), a pull request or ticket (its number), a build or release (its number or \
-         version, and where it went), a deploy (to what), a published page or file, a message sent to someone. \
-         These are what he will go and look for, so they outrank detail about how the work was done. Say plainly \
-         when one of them was made but not finished (built but not uploaded, committed but not pushed).\n\
-         - If the agent needs an answer from him, end with that question, with the options if it gave any. \
-         The question does not stand in for the rest: a message that reports finished work and then asks \
-         something is told as the news first (what is now done, live, moved, spent or broken) and the question \
-         last. He must not lose the news because a question came after it. Each finished thing is news of its own: \
-         \"the bug is fixed, and the refunds are ready to send\" keeps both, and does not shrink to the one the \
-         question is about. Take the longer form for it.\n\
-         - No file paths, code, lists or markdown, and no identifiers other than those just named. Say \"the checker script\", not its filename.\n\
-         - Speak as the agent, in the first person. No greeting, no padding (\"nothing needed from you\", \"let me know\").\n\
-         - Say only what the message says. Add no fact, date or reassurance that is not in it.\n\n\
+         {how}\n\n\
          Last, only when it is \"needs-you\" and he could answer by choosing: the choices, as button labels. At \
          most three, one to three words each, in the order the agent gave them. \"recommended\" is the position \
          (0 for the first) of the choice the AGENT ITSELF said it recommends or would do; null if it expressed \
@@ -201,6 +172,7 @@ fn reading(cfg: &Config, item: &Item) -> String {
          {asked}<message>\n{msg}\n</message>",
         asked = item.asked.as_deref().map(|a| format!("The last thing he told this agent was:\n<asked>\n{}\n</asked>\nIf the message below says that is done, or cannot be done, that is at least a report.\n\n", airband_core::prose::tail(a, 2000))).unwrap_or_default(),
         name = cfg.name,
+        how = airband_core::summary::how(cfg.summary_brief.as_deref()),
         msg = airband_core::prose::tail(&item.full, 12000)
     )
 }
@@ -412,6 +384,28 @@ mod detail_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tower::edges::models::FakeModel;
+
+    #[tokio::test]
+    async fn his_own_words_reach_the_model_and_the_answer_is_read_as_before() {
+        let item = Item { notice: false, full: "I fixed the bug and pushed 4f2a1c.".into(), kind: None, say: None, asked: None };
+        let answer = r#"{"say":"Sir, the bug is fixed and pushed.","kind":"report","options":[],"recommended":null,"read":null,"background":false,"own_session":false,"as_written":false}"#;
+        let usual = crate::tower::http::tests::app("brief-usual").cfg().as_ref().clone();
+        let his = Config { summary_brief: Some("Always call me sir. One sentence.".into()), ..usual.clone() };
+        // his words stand where the usual ones did; what the answer holds and its shape are asked for as before
+        let (with_his, with_usual) = (reading(&his, &item), reading(&usual, &item));
+        assert!(with_his.contains("Always call me sir.") && !with_his.contains(airband_core::summary::USUAL));
+        assert!(with_usual.contains(airband_core::summary::USUAL));
+        assert_eq!(with_his.replace("Always call me sir. One sentence.", airband_core::summary::USUAL), with_usual);
+        for part in ["Reply with one line of JSON and nothing else", "\"as_written\"", "<message>\nI fixed the bug"] {
+            assert!(with_his.contains(part), "{part}");
+        }
+        // the question the model is put has his words, and its answer is read the same way
+        let model = FakeModel::answers(Ok(answer));
+        let judged = prepare_by(&model, &his, &item).await;
+        assert_eq!(model.heard.lock().unwrap().as_slice(), [with_his]);
+        assert_eq!((judged.kind, judged.say.as_str(), judged.cut), (Kind::Report, "Sir, the bug is fixed and pushed.", true));
+    }
 
     #[test]
     fn the_answer_the_model_recommended_stays_marked_when_an_answer_before_it_is_dropped() {

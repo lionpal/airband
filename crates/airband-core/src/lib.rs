@@ -34,6 +34,7 @@ pub mod radio;
 pub mod redact;
 pub mod relay;
 pub mod routing;
+pub mod summary;
 pub mod template;
 pub mod token;
 pub mod tools;

@@ -94,6 +94,11 @@ impl Radio {
         self.done::<at::Tools>(&airband_core::radio::UsesTools { tools: tools.to_vec() })
     }
 
+    /// Tell the tower how his summaries are to be written, in his words, or with nothing to use the usual text.
+    pub(crate) fn summary_brief(&self, text: Option<String>) -> Result<(), RadioError> {
+        self.done::<at::Brief>(&airband_core::radio::SummaryBrief { text })
+    }
+
     /// Tell the tower where this radio can be woken with a notification (its address at a push service), or
     /// with an empty token that it no longer can.
     pub(crate) fn push_target(&self, provider: desk::PushService, token: &str) -> Result<(), RadioError> {

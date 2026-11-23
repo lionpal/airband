@@ -44,6 +44,21 @@ pub fn check(c: &Catalog) -> Result<(), String> {
             }
         }
     }
+    // a coding tool's sign-in writes summaries one way: the one offer its row prefers is what a first run
+    // starts him on, so there is never more than one to pick from
+    for p in &c.providers {
+        for o in p.offers.iter().filter(|o| !o.login.is_empty() && o.preferred && o.job == crate::providers::Job::Summary) {
+            if c.providers.iter().flat_map(|q| q.offers.iter()).filter(|x| x.login == o.login && x.preferred && x.job == o.job).count() != 1 {
+                return Err(format!("{}: more than one preferred offer writes summaries with this sign-in", o.login));
+            }
+        }
+    }
+    // a job has one model to start with at most
+    for m in c.models.iter().filter(|m| m.with.get("usual").and_then(|u| u.as_bool()) == Some(true)) {
+        if c.models.iter().filter(|o| o.job == m.job && o.with.get("usual").and_then(|u| u.as_bool()) == Some(true)).count() != 1 {
+            return Err(format!("{}: another model for its job is marked usual too", m.kind));
+        }
+    }
     // a model's name, its version and its files' paths are parts of a folder on the device: none may lead
     // out of it
     let part = |name: &str| !name.is_empty() && !name.starts_with('.') && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_'));
@@ -60,6 +75,11 @@ pub fn check(c: &Catalog) -> Result<(), String> {
         if !crate::links::secure(&m.base) {
             return Err(format!("{}: its files are not fetched over https", m.kind));
         }
+    }
+    // one person to write to, by a name and a number a text message can go to
+    match c.contact.as_slice() {
+        [one] if !one.name.trim().is_empty() && one.sms.strip_prefix('+').is_some_and(|d| (8..=15).contains(&d.len()) && d.bytes().all(|b| b.is_ascii_digit())) => {}
+        _ => return Err("the catalog names no one to write to, more than one, or a number a text cannot go to".into()),
     }
     crate::links::check(&c.links)?;
     for s in &c.servers {

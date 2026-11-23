@@ -340,4 +340,11 @@ mod tests {
         let other: Other = serde_json::from_str(r#"{"id":"a","callsign":"shop one","group":"shop","team":"t1"}"#).unwrap();
         assert_eq!(other.team, crate::ids::TeamId::new("t1"));
     }
+    #[test]
+    fn a_summary_brief_says_its_text_even_when_it_is_the_usual_one() {
+        assert_eq!(serde_json::from_str::<SummaryBrief>(r#"{"text":null}"#).unwrap().text, None);
+        assert_eq!(serde_json::from_str::<SummaryBrief>(r#"{"text":"Sir."}"#).unwrap().text.as_deref(), Some("Sir."));
+        // a body that says nothing is not read as the usual text
+        assert!(serde_json::from_str::<SummaryBrief>("{}").is_err());
+    }
 }

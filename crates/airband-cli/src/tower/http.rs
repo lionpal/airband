@@ -189,6 +189,7 @@ pub(super) fn router(app: Arc<App>) -> Router {
     let r = serve::<at::End, _, _>(r, end_agent);
     let r = serve::<at::Push, _, _>(r, push_target);
     let r = serve::<at::Tools, _, _>(r, uses_tools);
+    let r = serve::<at::Brief, _, _>(r, summary_brief);
     // the command line's page about the tower: its type is the command line's own, not part of the wire
     r.route(super::STATUS_PATH, get(status))
         .layer(middleware::from_fn_with_state(app.clone(), presence_said))
@@ -249,6 +250,26 @@ pub(super) mod tests {
         // with the wrong token the tower does not take it, and nothing is read
         let wrong: Config = serde_json::from_value(serde_json::json!({ "token": "not-it", "radio_token": "radio", "port": port })).unwrap();
         assert!(tokio::task::spawn_blocking(move || crate::adapters::TowerHere::here(&wrong, Duration::from_secs(5)).status()).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn his_summary_brief_is_kept_reset_and_one_too_long_is_refused() {
+        let app = app("brief");
+        let post = |body: String| Request::builder().method("POST").uri("/v1/radio/brief").header("authorization", "Bearer radio").header(SCHEMA_HEADER, airband_core::radio::SCHEMA).header("content-type", "application/json").extension(RadioId("kitchen".into())).body(axum::body::Body::from(body)).unwrap();
+        let res = router(app.clone()).oneshot(post(r#"{"text":"  Call me sir.  "}"#.into())).await.unwrap();
+        assert_eq!(res.status(), 200);
+        assert_eq!(app.cfg().summary_brief.as_deref(), Some("Call me sir."));
+        // too long: refused, and what he had stands
+        let long = serde_json::json!({ "text": "a".repeat(airband_core::summary::MOST + 1) }).to_string();
+        assert!(router(app.clone()).oneshot(post(long)).await.unwrap().status().is_client_error());
+        assert_eq!(app.cfg().summary_brief.as_deref(), Some("Call me sir."));
+        // the usual text, sent back as his, is the usual text; and nothing is the usual text
+        let usual = serde_json::json!({ "text": airband_core::summary::USUAL }).to_string();
+        assert_eq!(router(app.clone()).oneshot(post(usual)).await.unwrap().status(), 200);
+        assert_eq!(app.cfg().summary_brief, None);
+        router(app.clone()).oneshot(post(r#"{"text":"Sir."}"#.into())).await.unwrap();
+        assert_eq!(router(app.clone()).oneshot(post(r#"{"text":null}"#.into())).await.unwrap().status(), 200);
+        assert_eq!(app.cfg().summary_brief, None);
     }
 
     #[tokio::test]

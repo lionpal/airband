@@ -56,12 +56,43 @@ pub struct HostDevice {
 /// Can this build, on this device, run the model? Its engine is here or the host's, and where the row says
 /// which version of an operating system it needs, this is that system at that version or later.
 pub(crate) fn runs(m: &Model, device: &HostDevice) -> bool {
+    cannot_run(m, device).is_none()
+}
+
+/// Why this device cannot run the model, when it cannot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CannotRun {
+    /// Its row names a newer version of this device's system than it has.
+    OldSystem,
+    /// Its row allows other systems, not this one, or nothing here or in the host runs its engine.
+    NotHere,
+}
+
+impl CannotRun {
+    /// In words for him.
+    pub(crate) fn said(self) -> &'static str {
+        match self {
+            CannotRun::OldSystem => "This phone can't run it until its software is updated.",
+            CannotRun::NotHere => "This phone can't run it.",
+        }
+    }
+}
+
+pub(crate) fn cannot_run(m: &Model, device: &HostDevice) -> Option<CannotRun> {
     let engine = HERE.iter().any(|(name, _)| *name == m.engine) || device.engines.contains(&m.engine);
     let system = match m.with.get(crate::models::field::MIN_OS) {
-        None => true,
-        Some(needs) => needs.get(&device.os).and_then(|v| v.as_u64()).is_some_and(|least| u64::from(device.os_version) >= least),
+        None => Ok(()),
+        Some(needs) => match needs.get(&device.os).and_then(|v| v.as_u64()) {
+            None => Err(CannotRun::NotHere),
+            Some(least) if u64::from(device.os_version) < least => Err(CannotRun::OldSystem),
+            Some(_) => Ok(()),
+        },
     };
-    engine && system
+    match (engine, system) {
+        (false, _) => Some(CannotRun::NotHere),
+        (true, Err(why)) => Some(why),
+        (true, Ok(())) => None,
+    }
 }
 
 /// A model run by an engine the host has: nothing is loaded here, the host keeps it.
@@ -162,6 +193,8 @@ mod tests {
         // the row says what it needs: this system at that version or later, and no other system
         assert!(runs(&row("host-new", serde_json::json!({"min_os": {"ios": 18}})), &phone));
         assert!(!runs(&row("host-new", serde_json::json!({"min_os": {"ios": 19}})), &phone));
+        assert_eq!(cannot_run(&row("host-new", serde_json::json!({"min_os": {"ios": 19}})), &phone), Some(CannotRun::OldSystem));
+        assert_eq!(cannot_run(&row("host-new", serde_json::json!({"min_os": {"android": 12}})), &phone), Some(CannotRun::NotHere));
         assert!(!runs(&row("host-new", serde_json::json!({"min_os": {"android": 12}})), &phone));
         // one in this build needs nothing of the host
         #[cfg(feature = "phonon")]

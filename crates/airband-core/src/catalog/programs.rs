@@ -69,6 +69,23 @@ pub fn installers() -> Vec<Installer> {
     current().installers.clone()
 }
 
+/// Who makes airband, to write to from the app: what to call him and the number a text message goes to.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Contact {
+    pub id: String,
+    pub name: String,
+    /// The number a text message to him goes to, in international form (`+` and digits).
+    pub sms: String,
+}
+
+/// Who makes airband. The catalogue has exactly one (`form::check`).
+pub fn contact() -> Option<Contact> {
+    match current().contact.as_slice() {
+        [one] => Some(one.clone()),
+        _ => None,
+    }
+}
+
 /// Every program this build can pull frames out of a video with. A caller tries each until one runs.
 pub fn frames_programs() -> Vec<Frames> {
     current().frames.clone()

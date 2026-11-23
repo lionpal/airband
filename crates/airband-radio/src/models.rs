@@ -21,13 +21,24 @@ pub(crate) fn models(device: &HostDevice) -> impl Iterator<Item = Arc<Model>> + 
     airband_core::catalog::current().models.clone().into_iter().filter(move |m| crate::engines::runs(m, device) && !m.version.is_empty())
 }
 
-/// The model a row marks as the one to start with for a job (`usual`), among those that run on this device.
+/// The row marked as the one to start with for a job (`usual`), and whether this device can run it. The
+/// catalogue marks one row a job at most (`airband_core::catalog`'s checks); nothing when it marks none.
+pub(crate) fn usual_row(device: &HostDevice, job: airband_core::providers::Job) -> Option<(Arc<Model>, Option<crate::engines::CannotRun>)> {
+    airband_core::catalog::current().models.iter().find(|m| m.job == job && !m.version.is_empty() && is_usual(m)).map(|m| (m.clone(), crate::engines::cannot_run(m, device)))
+}
+
+/// The model a row marks as the one to start with for a job (`usual`), when this device can run it.
 pub(crate) fn usual(device: &HostDevice, job: airband_core::providers::Job) -> Option<Arc<Model>> {
-    models(device).find(|m| m.job == job && m.with.get(field::USUAL).and_then(|u| u.as_bool()) == Some(true))
+    usual_row(device, job).filter(|(_, cannot)| cannot.is_none()).map(|(m, _)| m)
+}
+
+fn is_usual(m: &Model) -> bool {
+    m.with.get(field::USUAL).and_then(|u| u.as_bool()) == Some(true)
 }
 
 pub(crate) mod field;
 mod fetch;
+pub use fetch::Transfers;
 pub(crate) use fetch::{fetch_local_model, local_model_progress};
 
 pub(crate) fn model(kind: &str, device: &HostDevice) -> Option<Arc<Model>> {
@@ -163,7 +174,7 @@ mod tests {
         // a phone that has every engine the catalogue names
         let device = HostDevice { engines: airband_core::catalog::current().models.iter().map(|m| m.engine.clone()).collect(), os: "ios".into(), os_version: u32::MAX, team_colours: 0 };
         let m = model(&kind, &device).unwrap();
-        fetch_local_model(dir.clone(), &m).unwrap();
+        fetch_local_model(dir.clone(), &m, None).unwrap();
         assert!(fetched(&dir, &m) && local_model_progress() == 100);
         println!("{kind}: fetched to {} in {:.0} s", folder(&dir, &m).display(), began.elapsed().as_secs_f32());
     }

@@ -188,7 +188,8 @@ impl Saved {
         if self.offered.is_none() && self.reads.as_ref().is_none_or(|w| !w.wanted.his) {
             let most = self.tools.first().cloned().unwrap_or_default();
             let before = self.reads.take();
-            // the offer its row marks as the one to use for that sign-in; none marked is nothing chosen
+            // the offer its row marks as the one to use for that sign-in (the catalogue has one at most: its
+            // checks refuse a second); none marked is nothing chosen
             self.reads = crate::services::services(Job::Summary).into_iter().find(|s| !most.is_empty() && s.login == most && !s.more).map(|s| Intent::after(before.as_ref(), ReadsWanted { id: s.kind, offer: s.offer, set: BTreeMap::new(), his: false }));
         }
     }
