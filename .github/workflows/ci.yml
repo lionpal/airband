@@ -5,7 +5,7 @@ name: CI
 on:
   push:
     branches: [main]
-    paths: ['crates/**', 'apps/**', 'scripts/**', 'tools/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/ci.yml']
+    paths: ['crates/**', 'catalog/**', 'apps/**', 'scripts/**', 'tools/**', 'Cargo.toml', 'Cargo.lock', '.github/workflows/ci.yml']
   schedule:
     - cron: '17 9 * * *'
   pull_request:

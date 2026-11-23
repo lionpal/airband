@@ -56,12 +56,15 @@ fn tagged(tag: &str, live: &[Callsign]) -> Option<Vec<usize>> {
 /// Nothing else is read here. Who his own words are for ("shop two, leave it", "everyone, stop") is for a
 /// model to say, with the roster in front of it; his words reach the agent as he said them.
 pub fn parse_utterance(text: &str, live: &[Callsign]) -> Parsed {
-    let words: Vec<&str> = text.split_whitespace().collect();
     let mut to: Vec<usize> = Vec::new();
-    let mut taken = 0;
-    while let Some(hit) = words.get(taken).filter(|w| w.starts_with('@')).and_then(|w| tagged(w, live)) {
+    // what is left is a slice of what he wrote, never his words split and joined again: his line breaks,
+    // indents and spacing reach the agent as they were
+    let mut rest = text.trim_start();
+    loop {
+        let word = rest.split(char::is_whitespace).next().unwrap_or_default();
+        let Some(hit) = Some(word).filter(|w| w.starts_with('@')).and_then(|w| tagged(w, live)) else { break };
         hit.into_iter().for_each(|i| if !to.contains(&i) { to.push(i) });
-        taken += 1;
+        rest = rest[word.len()..].trim_start();
     }
-    Parsed { to, rest: words[taken..].join(" ") }
+    Parsed { to, rest: rest.trim_end().to_string() }
 }

@@ -1,8 +1,10 @@
 name: Deploy relay.airband.dev
 # Every push to main that could change the relay ships it to its server (AirbandRelayUs in infra/cdk.mjs). Only
-# those: the relay is built from its own crate and the core, so a change to the docs, the phone app, the tower or
-# the design files cannot change what runs at relay.airband.dev. The list below is what the relay and its
-# infrastructure are made from. It can also be run by hand (Actions tab, "Run workflow").
+# those. What the relay is built from is not a list kept here: the first job builds it and asks cargo what that
+# build read (scripts/relay-sources.py: the relay's crate and every crate of ours it depends on, their files, what
+# their build scripts read, such as the catalogue the core compiles in, and the manifests), and the deploy runs
+# only when the push changed one of those, the infrastructure (infra/) or this file. It can also be run by hand
+# (Actions tab, "Run workflow"), which always deploys.
 #
 # What a deploy does: builds the relay for Linux on arm64 as one static file, brings the infrastructure up to
 # date, puts the relay and the files in infra/host/ in the server's bucket, and asks the server to fetch them and
@@ -19,17 +21,6 @@ name: Deploy relay.airband.dev
 on:
   push:
     branches: [main]
-    paths:
-      - 'crates/airband-relay/**'
-      # of the core, the relay uses only its own protocol and what that is built with: a change to how radios
-      # and agents talk does not touch it
-      - 'crates/airband-core/src/relay.rs'
-      - 'crates/airband-core/src/lib.rs'
-      - 'crates/airband-core/Cargo.toml'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'infra/**'
-      - '.github/workflows/deploy-relay.yml'
   workflow_dispatch:
     inputs:
       tokyo:
@@ -40,8 +31,30 @@ concurrency: { group: deploy-relay, cancel-in-progress: false }
 permissions: { id-token: write, contents: read }
 env: { REGION: us-east-2 }
 jobs:
-  deploy:
+  changed:
+    name: Did this push change what the relay is made from
     if: ${{ !inputs.tokyo }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      relay: ${{ steps.made.outputs.relay }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: What the relay is built from, by cargo, against what changed
+        id: made
+        env: { BEFORE: '${{ github.event.before }}', EVENT: '${{ github.event_name }}' }
+        run: |
+          python3 scripts/relay-sources.py --self-test
+          # by hand, a first push of a branch, or a history rewritten under it: there is nothing to compare with
+          if [ "$EVENT" != push ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then echo "relay=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          ours=$(git diff --name-only "$BEFORE" HEAD -- infra .github/workflows/deploy-relay.yml)
+          built=$(python3 scripts/relay-sources.py --changed "$BEFORE" HEAD)
+          if [ -n "$ours" ] || [ "$built" = true ]; then echo "relay=true" >> "$GITHUB_OUTPUT"; else echo "relay=false" >> "$GITHUB_OUTPUT"; fi
+  deploy:
+    needs: changed
+    if: ${{ !inputs.tokyo && needs.changed.outputs.relay == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:

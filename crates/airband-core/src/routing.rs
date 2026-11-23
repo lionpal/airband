@@ -218,6 +218,16 @@ mod tests {
         assert_eq!(parse_utterance("@nobody hello", &live()).rest, "@nobody hello");
     }
     #[test]
+    fn his_line_breaks_and_indents_reach_the_agent_as_he_wrote_them() {
+        // M2: the words were split on whitespace and joined with one space, so a pasted trace arrived flat
+        let pasted = "this fails:\n\n  at main (a.rs:3)\n\tat run (b.rs:9)\n- one  two";
+        assert_eq!(p(pasted), (None, pasted.to_string()));
+        assert_eq!(p(&format!("@shop2\n{pasted}\n")), (Some(1), pasted.to_string()));
+        assert_eq!(parse_utterance(&format!("  @shop1  @backoffice   {pasted}"), &live()), Parsed { to: vec![0, 2], rest: pasted.to_string() });
+        // a tag in the middle of his words is his words
+        assert_eq!(p("ship it\n@shop1 too").1, "ship it\n@shop1 too");
+    }
+    #[test]
     fn next_callsign() {
         assert_eq!(Callsign::next_in("shop", &live()).text(), "shop three");
         assert_eq!(Callsign::next_in("my app", &live()).text(), "my app one");
