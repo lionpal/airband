@@ -14,7 +14,8 @@ impl Desk {
         }
         self.shared.host.changed();
     }
-    /// He let his unplaced words go: they are sent to nobody.
+    /// He put off saying who his unplaced words are for: the question goes, and the words stay in the chat as
+    /// not delivered, to try again, copy or delete.
     pub fn drop_ask(&self) {
         self.shared.state.lock().unwrap().asking = None;
         self.shared.host.changed();
@@ -74,9 +75,10 @@ impl Desk {
     /// Send what he typed. Who it is for, in this order: tags at its start (`@shop2`, `@shop`, `@all`); the
     /// message `re` if he picked one; the `agent` he is looking at; otherwise the tower works it out from his
     /// words, among the agents of the `room` he is in or among all of them. It goes to the computer that has
-    /// whoever that is.
-    pub fn send(&self, text: String, re: Option<String>, room: Option<String>, agent: Option<String>) {
-        self.deliver(text, None, re, room, agent);
+    /// whoever that is. Returns his words when nothing could take them yet (he has several computers and has
+    /// not chosen the main one, or none is paired), to put back where he types: nothing he typed is let go.
+    pub fn send(&self, text: String, re: Option<String>, room: Option<String>, agent: Option<String>) -> Option<String> {
+        self.deliver(text, None, re, room, agent)
     }
     /// Send the words of one of his messages again, to another agent: the whole of them, fetched from the
     /// computer that has the message if the chat holds only their opening. Nothing goes when the whole of them
@@ -98,7 +100,8 @@ impl Desk {
     /// Send a quick message: the feed shows `label`, the agent gets `text`. Who it is for is worked out as for
     /// anything he types.
     pub fn quick(&self, label: String, text: String, re: Option<String>, room: Option<String>, agent: Option<String>) {
-        self.deliver(text, Some(label), re, room, agent);
+        // a button he can tap again: nothing of his to put back
+        let _back = self.deliver(text, Some(label), re, room, agent);
     }
     /// Set going again every agent that has stopped without finishing: in one team, or everywhere.
     pub fn poke(&self, room: Option<String>) {
@@ -113,15 +116,31 @@ impl Desk {
         }
         self.shared.host.changed();
     }
-    /// Try again a message that was not sent ([`Outgoing::failed`]). It goes after anything else still waiting.
-    /// Words sent to several computers at once are one line: each copy given up on is tried again.
+    /// Try again a message that was not delivered ([`Outgoing::undelivered`]). It goes after anything else still
+    /// waiting, to the agents it did not reach. Words sent to several computers at once are one line: each copy
+    /// not delivered is tried again, under one id.
     pub fn send_again(&self, id: String) {
+        let fresh = random_hex(12);
         for radio in self.senders_of(&id) {
-            radio.send_again(&id);
+            radio.send_again(&id, &fresh, None);
         }
+        self.shared.host.changed();
     }
-    /// Let go of a message that was not sent (every copy given up on, for words sent to several computers).
-    /// Returns its words, for putting back where he types.
+    /// He tapped "Take over and send" on a message that did not reach an agent with no way in
+    /// ([`DeskOutgoing::take_over`]): its computer takes that agent over, and then the message goes to it, once.
+    /// When the take-over does not happen the message stays as it was, not delivered, and he is told why.
+    /// Blocks: call it off the main thread.
+    pub fn take_over_and_send(&self, id: String) -> Result<(), RadioError> {
+        let agent = self.view().sending.into_iter().find(|o| o.id == id).and_then(|o| o.take_over).ok_or_else(|| RadioError::gone("message"))?;
+        // the computer that has the agent is the one the message did not reach it on
+        let radio = self.senders_of(&id).into_iter().find(|r| r.unsent_one(&id).and_then(|o| o.undelivered).is_some_and(|u| u.missed().iter().any(|m| m.agent == agent))).ok_or_else(|| RadioError::gone("message"))?;
+        radio.take_over(agent.clone())?;
+        radio.send_again(&id, &random_hex(12), Some(agent));
+        self.shared.host.changed();
+        Ok(())
+    }
+    /// Let go of a message that was not delivered (every copy not delivered, for words sent to several
+    /// computers). Returns its words, for putting back where he types.
     pub fn discard_unsent(&self, id: String) -> Option<String> {
         let gone = self.senders_of(&id).into_iter().filter_map(|radio| radio.discard(&id)).last().map(|o| o.label.unwrap_or(o.text));
         // what he said aloud goes with its recording
@@ -144,8 +163,8 @@ impl Desk {
 }
 
 impl Desk {
-    pub(super) fn deliver(&self, text: String, label: Option<String>, re: Option<String>, room: Option<String>, agent: Option<String>) {
-        deliver(&self.shared, text, label, re, room, agent, None);
+    pub(super) fn deliver(&self, text: String, label: Option<String>, re: Option<String>, room: Option<String>, agent: Option<String>) -> Option<String> {
+        deliver(&self.shared, text, label, re, room, agent, None)
     }
 }
 
@@ -155,15 +174,26 @@ impl Desk {
 ///
 /// `said`: words he said aloud, by the take they were heard from. They go under its id, and the take is told
 /// whether they went into an outbox, or could not go anywhere and wait for him in the chat.
-pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>, re: Option<String>, room: Option<String>, agent: Option<String>, said: Option<String>) {
+///
+/// Returns typed words that could go nowhere yet, to be put back where he typed them: words he said wait in
+/// the chat with their recording instead, and anything that went is kept by an outbox until it is delivered.
+#[must_use]
+pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>, re: Option<String>, room: Option<String>, agent: Option<String>, said: Option<String>) -> Option<String> {
     let takes = &shared.senses.takes;
+    let typed = text.clone();
     let unsent = || {
-        if let Some(take) = &said {
-            takes.unsent(take);
-            shared.host.changed();
+        match &said {
+            Some(take) => {
+                takes.unsent(take);
+                shared.host.changed();
+                None
+            }
+            None => Some(typed.clone()).filter(|t| !t.trim().is_empty()),
         }
     };
-    let line = |text: String| Outgoing { id: said.clone().unwrap_or_else(|| random_hex(12)), ..Outgoing::of(text) };
+    // where he was looking: where it is shown until it is delivered
+    let sent_from = crate::SentFrom { room: room.clone(), agent: agent.clone() };
+    let line = |text: String| Outgoing { id: said.clone().unwrap_or_else(|| random_hex(12)), sent_from: sent_from.clone(), ..Outgoing::of(text) };
     let text = text.trim().to_string();
     let (radio, text, re, scope, others, to) = {
         let mut state = shared.state.lock().unwrap();
@@ -171,10 +201,10 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
         // on their way are not yet anything to send
         if state.computers.is_empty() || (text.is_empty() && !state.uploads.iter().any(|u| u.shown.state == UploadState::Ready)) {
             drop(state);
-            unsent();
-            return;
+            return unsent();
         }
-        // something new said: whatever was waiting to be placed is let go
+        // something new said: the question of who the last words were for is put off. Those words stay in the
+        // chat as not delivered (their outbox keeps them)
         state.asking = None;
         // tags are the one thing he types that addresses: `@shop2`, `@all`, read as the tower reads them; words
         // that only start with an @ ("@home is broken") address nobody
@@ -191,15 +221,14 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
                 takes.sent(take);
             }
             to_each(shared, &tagging, line(text), label);
-            return;
+            return None;
         }
         // looking at one agent, with nobody tagged and no message picked: it is for that agent
         let aimed = matches!((&agent, tagged, &re), (Some(_), false, None));
         // with several computers and no main one chosen the app asks him first, and nothing is sent until then
         let Some(wanted) = pick_station(&state, &text, re.as_deref(), room.as_deref(), agent.as_deref()) else {
             drop(state);
-            unsent();
-            return;
+            return unsent();
         };
         // Files he attached are already on one computer. Words with no address go there with them. Words he
         // addressed (a tag, a message he picked, the agent he is looking at) go where they are addressed, and
@@ -209,12 +238,11 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
                 let words = AfterFiles { text: text.clone(), label: label.clone(), re: re.clone(), room: room.clone(), agent: agent.clone(), said: said.clone() };
                 if !move_files(shared, &mut state, &at, &wanted, words) {
                     drop(state);
-                    unsent();
-                    return;
+                    return unsent();
                 }
                 drop(state);
                 shared.host.changed();
-                return;
+                return None;
             }
             Some(at) => at,
             None => wanted,
@@ -223,8 +251,7 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
         state.files_went(&pick, &[]);
         let Some(computer) = state.computer(&pick) else {
             drop(state);
-            unsent();
-            return;
+            return unsent();
         };
         // the agent he is looking at, by id: the tower reads nothing to find who it is for
         let to: Vec<String> = match (&agent, aimed) {
@@ -242,10 +269,13 @@ pub(super) fn deliver(shared: &Arc<Shared>, text: String, label: Option<String>,
     }
     radio.queue_as(Outgoing { re, scope, label, others, to, ..line(text) }, Carry::Answer);
     shared.host.changed();
+    None
 }
 /// Words of his that reached the computer `from` and no agent, now for `agent`: they go to the computer that
 /// has it, addressed to it. The files they took go too when that is the computer they are on; otherwise they
-/// stay there, for the next thing he sends to it, and he is told.
+/// stay there, for the next thing he sends to it, and he is told. The words wait as not delivered in the
+/// outbox of `from` until then: they leave it once they are on their way to the agent, and stay when no
+/// computer has it now.
 pub(super) fn place(shared: &Arc<Shared>, from: &StationId, message: Outgoing, agent: String) {
     let found = {
         let state = shared.state.lock().unwrap();
@@ -253,6 +283,8 @@ pub(super) fn place(shared: &Arc<Shared>, from: &StationId, message: Outgoing, a
         state.with_agent(&agent).map(|to| (to.radio.clone(), from.map(|f| (f.id() == to.id(), f.radio.clone(), state.computer_name(&f.id())))))
     };
     let Some((radio, origin)) = found else { return };
+    let kept = origin.as_ref().map(|(_, r, _)| r.clone());
+    let (kept_id, sent_from) = (message.id.clone(), message.sent_from.clone());
     // the files go with the words when they are on that computer; the words still answer what they answered
     let mut attachments = Vec::new();
     if !message.attachments.is_empty() {
@@ -265,7 +297,11 @@ pub(super) fn place(shared: &Arc<Shared>, from: &StationId, message: Outgoing, a
             None => shared.host.note("The files you attached were on a computer that is no longer paired. Your words went without them.".into()),
         }
     }
-    radio.queue_as(Outgoing { label: message.label, to: vec![agent], answers: message.answers, attachments, ..Outgoing::of(message.text) }, Carry::Nothing);
+    radio.queue_as(Outgoing { label: message.label, to: vec![agent], answers: message.answers, attachments, sent_from, ..Outgoing::of(message.text) }, Carry::Nothing);
+    // on its way now under an id of its own: the copy kept as not delivered has done its job
+    if let Some(kept) = kept {
+        let _words = kept.discard(&kept_id);
+    }
 }
 /// The agents on his screen that computers other than `pick` have, each with the last thing it said: for the
 /// tower his words are going to. In one room, only that room's.

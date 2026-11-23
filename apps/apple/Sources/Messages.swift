@@ -244,25 +244,38 @@ struct Mine: View {
         .accessibilityAddTraits(long ? .isButton : [])
     }
 }
-/// Something he sent that has not reached his computer. Once it has been trying for a while it says how the
-/// last try went, each way it was tried. One that was given up on says why and stays, to send again or delete.
+/// Something he sent that is on its way or was not delivered. Once it has been trying for a while it says how
+/// the last try went, each way it was tried. One not delivered says why, in the core's line, and stays: to try
+/// again, copy or delete, and to take over the agent it did not reach when the core says that can be done.
 struct Unsent: View {
     @EnvironmentObject var model: RadioModel
     let o: DeskOutgoing
+    @State private var taking = false
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 5) {
             Text(o.shown).font(.system(size: 16, weight: .medium)).foregroundStyle(Palette.ground)
                 .padding(.horizontal, 14).padding(.vertical, 9)
-                .background(Palette.ink.opacity(o.failed == nil ? 0.45 : 0.3), in: RoundedRectangle(cornerRadius: 18))
-            if let failed = o.failed {
-                Text("Not sent. " + failed).font(.system(size: 13)).foregroundStyle(Palette.ask).multilineTextAlignment(.trailing)
+                .background(Palette.ink.opacity(o.notDelivered == nil ? 0.45 : 0.3), in: RoundedRectangle(cornerRadius: 18))
+            if let line = o.notDelivered {
+                Text(line).font(.system(size: 13)).foregroundStyle(Palette.ask).multilineTextAlignment(.trailing)
                 HStack(spacing: 18) {
                     if o.recording { PlayTake(id: o.id) }
                     Button("Delete") { model.discardUnsent(o) }.foregroundStyle(Palette.quiet)
-                    Button("Send again") { model.sendAgain(o) }.foregroundStyle(Palette.ink)
+                    Button("Copy") { UIPasteboard.general.string = o.text }.foregroundStyle(Palette.quiet)
+                    Button("Try again") { model.sendAgain(o) }.foregroundStyle(Palette.ink)
                 }
                 .font(.system(size: 14, weight: .semibold)).buttonStyle(.plain)
+                if let agent = o.takeOver.flatMap({ model.member($0)?.agent }) {
+                    Button("Take over and send") { taking = true }
+                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.ink).buttonStyle(.plain)
+                        .alert("Take over \(agent.callsign)?", isPresented: $taking) {
+                            Button("Take over and send") { model.takeOverAndSend(o) }
+                            Button("Cancel", role: .cancel) {}
+                        } message: {
+                            Text("Its terminal session ends and airband carries on the same conversation, then sends this.")
+                        }
+                }
             } else if o.stage == .left {
                 Text("Waiting for your computer.").font(.system(size: 13)).foregroundStyle(Palette.quiet).multilineTextAlignment(.trailing)
             } else if let trying = o.trying {
@@ -271,7 +284,7 @@ struct Unsent: View {
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(o.failed == nil ? "Sending: \(o.shown)" : "Not sent: \(o.shown)")
+        .accessibilityLabel(o.notDelivered == nil ? "Sending: \(o.shown)" : "Not delivered: \(o.shown)")
     }
 }
 

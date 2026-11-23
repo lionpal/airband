@@ -57,10 +57,11 @@ impl Inner {
     }
     /// A number that changes when anything a radio shows about the agents does: who is there, what each is
     /// called, its state, what it is doing.
-    pub(in crate::tower) fn roster_rev(&self) -> u64 {
+    /// `carried`: the coding tools a launcher here carries on ([`crate::tower::held::carried_on`]).
+    pub(in crate::tower) fn roster_rev(&self, carried: &[String]) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        serde_json::to_string(&self.roster_entries()).unwrap_or_default().hash(&mut h);
+        serde_json::to_string(&self.roster_entries(carried)).unwrap_or_default().hash(&mut h);
         // never 0: that is what a radio sends before it has seen one
         h.finish() | 1
     }
@@ -69,9 +70,15 @@ impl Inner {
         let open = self.open_ids();
         self.sessions.iter().filter(|s| self.state_of(s, &open) == AgentState::Stalled).cloned().collect()
     }
-    pub(in crate::tower) fn roster_entries(&self) -> Vec<RosterEntry> {
+    /// Every agent on the radio. `carried`: the coding tools a launcher here carries on, which says whether
+    /// one with no way in can be taken over.
+    pub(in crate::tower) fn roster_entries(&self, carried: &[String]) -> Vec<RosterEntry> {
         let open = self.open_ids();
-        self.sessions.iter().map(|s| RosterEntry { id: s.agent.id.clone(), callsign: s.callsign.clone(), team: s.team.clone(), harness: s.agent.harness.clone(), waiting: s.waiting, state: self.state_of(s, &open), subagents: s.subagents, doing: s.doing.clone().filter(|_| !s.waiting), held: s.agent.deliver == Some(Deliver::Held), terminal: matches!(s.agent.deliver, Some(Deliver::Keys { .. } | Deliver::Socket { .. })), ends: match &s.agent.deliver { Some(Deliver::Held) => true, Some(Deliver::Harness { name, .. }) => crate::adapters::puts_away(name), _ => false }, model: s.model.clone(), effort: s.effort.clone() }).collect()
+        let reach = |s: &Session| match s.agent.deliver {
+            Some(_) => Reach::Reaches,
+            None => Reach::NoWayIn { take_over: crate::tower::held::can_take_over(self, s, carried) },
+        };
+        self.sessions.iter().map(|s| RosterEntry { reach: reach(s), id: s.agent.id.clone(), callsign: s.callsign.clone(), team: s.team.clone(), harness: s.agent.harness.clone(), waiting: s.waiting, state: self.state_of(s, &open), subagents: s.subagents, doing: s.doing.clone().filter(|_| !s.waiting), held: s.agent.deliver == Some(Deliver::Held), terminal: matches!(s.agent.deliver, Some(Deliver::Keys { .. } | Deliver::Socket { .. })), ends: match &s.agent.deliver { Some(Deliver::Held) => true, Some(Deliver::Harness { name, .. }) => crate::adapters::puts_away(name), _ => false }, model: s.model.clone(), effort: s.effort.clone() }).collect()
     }
     pub(in crate::tower) fn roster(&self) -> String {
         if self.sessions.is_empty() {

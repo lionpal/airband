@@ -46,6 +46,7 @@ extension FeedView {
                     .buttonStyle(.plain).padding(.horizontal, 8)
             }
             if let ask = model.view.asking { AskCard(ask: ask) }
+            if let shut = model.view.noWayIn { NoWayIn(shut: shut) }
             if !model.tray.isEmpty { Tray(sends: !model.listening && !typingOpen) }
             if showQuick { quickGrid }
             if typingOpen {
@@ -93,8 +94,8 @@ extension FeedView {
                     typing = false
                     typingOpen = false
                 } else {
-                    model.send(draft)
-                    draft = ""
+                    // words nothing could take yet come back to where he typed them
+                    draft = model.send(draft) ?? ""
                 }
             } label: {
                 Image(systemName: empty ? "mic.fill" : "arrow.up").font(.system(size: 22, weight: .bold))

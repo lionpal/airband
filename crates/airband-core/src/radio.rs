@@ -1,4 +1,4 @@
-//! `airband.radio/4` ([`SCHEMA`]): what goes between the tower and a radio (the app on the phone, in the car, on a desk).
+//! `airband.radio/5` ([`SCHEMA`]): what goes between the tower and a radio (the app on the phone, in the car, on a desk).
 //!
 //! The radio asks; the tower answers. All under `/v1/radio/`; every route, with the types it takes and gives,
 //! is one [`wire::Endpoint`] in [`wire::at`]. Sent straight to the tower with
@@ -29,7 +29,7 @@ pub mod wire;
 pub use asks::*;
 pub use feed::*;
 
-pub const SCHEMA: &str = "airband.radio/4";
+pub const SCHEMA: &str = "airband.radio/5";
 
 /// Where every request of a radio's goes on the tower. A radio's token opens these and nothing else.
 pub const PATH: &str = "/v1/radio/";
@@ -293,6 +293,56 @@ pub struct Reply {
     /// this computer carries it as `Utterance::answers`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub question: Option<crate::ids::QuestionId>,
+    /// His words did not reach everyone they were for, and why. The radio keeps them, marked as not delivered,
+    /// until he sends them again or lets them go. Nothing when they reached everyone, or were not words for
+    /// agents (a control, an answer to a request for leave).
+    /// Boxed: most answers have none, and every answer is moved about whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub undelivered: Option<Box<Undelivered>>,
+}
+
+/// Why words of his for agents were not delivered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "why", rename_all = "snake_case")]
+pub enum Undelivered {
+    /// These agents, each by id with why, did not get them. Any others they were for did, and the chat has them.
+    Missed { missed: Vec<Missed> },
+    /// No agent is running on this computer.
+    NobodyRunning,
+    /// Files that came with them had not arrived on this computer, or there were more than it takes at once.
+    Files,
+    /// They were to start a new agent in a team this computer no longer has, or whose folder is gone.
+    TeamGone,
+}
+
+/// One agent words of his did not reach.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Missed {
+    pub agent: String,
+    pub why: NotReachable,
+}
+
+/// Why an agent could not be given his words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotReachable {
+    /// It was started in a way that gives airband nowhere to send it messages ([`Reach::NoWayIn`]).
+    NoWayIn,
+    /// It is not running any more.
+    Gone,
+    /// There is a way in, and handing them over that way failed.
+    Failed,
+}
+
+/// Whether his words can reach an agent, as its computer knows it now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Reach {
+    /// They do.
+    Reaches,
+    /// airband has nowhere to send it messages. `take_over`: its computer can take it over (it ends where it
+    /// runs and goes on run by airband), after which they reach it.
+    NoWayIn { take_over: bool },
 }
 
 /// Which form of a message a radio asks for (`GET message/{id}`).
@@ -326,7 +376,10 @@ mod tests {
         // an agent on the roster always has its team: one without is not made up
         let roster: Result<RosterEntry, _> = serde_json::from_str(r#"{"id":"a","callsign":{"project":"shop","number":"one"},"harness":"h","waiting":false,"state":"idle"}"#);
         assert!(roster.is_err());
-        let roster: RosterEntry = serde_json::from_str(r#"{"id":"a","callsign":{"project":"shop","number":"one"},"team":"t1","harness":"h","waiting":false,"state":"idle"}"#).unwrap();
+        let roster: RosterEntry = serde_json::from_str(r#"{"id":"a","callsign":{"project":"shop","number":"one"},"team":"t1","harness":"h","waiting":false,"state":"idle","reach":{"kind":"no_way_in","take_over":true}}"#).unwrap();
+        assert_eq!(roster.reach, Reach::NoWayIn { take_over: true });
+        // whether his words reach it is always said: one that does not say is not read
+        assert!(serde_json::from_str::<RosterEntry>(r#"{"id":"a","callsign":{"project":"shop","number":"one"},"team":"t1","harness":"h","waiting":false,"state":"idle"}"#).is_err());
         assert_eq!(roster.team, crate::ids::TeamId::new("t1"));
     }
     #[test]
@@ -339,6 +392,16 @@ mod tests {
         assert_eq!(serde_json::from_value::<Utterance>(sent).unwrap().answers, asked.question);
         let other: Other = serde_json::from_str(r#"{"id":"a","callsign":"shop one","group":"shop","team":"t1"}"#).unwrap();
         assert_eq!(other.team, crate::ids::TeamId::new("t1"));
+    }
+    #[test]
+    fn words_that_reached_nobody_are_said_so_by_kind_and_agent() {
+        let reply = Reply { undelivered: Some(Box::new(Undelivered::Missed { missed: vec![Missed { agent: "a1".into(), why: NotReachable::NoWayIn }] })), ..Reply::default() };
+        let sent = serde_json::to_value(&reply).unwrap();
+        assert_eq!(sent["undelivered"], serde_json::json!({ "why": "missed", "missed": [{ "agent": "a1", "why": "no_way_in" }] }));
+        assert_eq!(serde_json::from_value::<Reply>(sent).unwrap().undelivered, reply.undelivered);
+        // an answer that says nothing of it reached everyone it was for
+        assert_eq!(serde_json::from_str::<Reply>(r#"{"say":"Sent to shop two.","done":true}"#).unwrap().undelivered, None);
+        assert_eq!(serde_json::to_value(Undelivered::NobodyRunning).unwrap(), serde_json::json!({ "why": "nobody_running" }));
     }
     #[test]
     fn a_summary_brief_says_its_text_even_when_it_is_the_usual_one() {

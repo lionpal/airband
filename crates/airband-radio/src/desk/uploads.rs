@@ -66,7 +66,8 @@ pub(super) struct AfterFiles {
 }
 impl AfterFiles {
     fn go(self, shared: &Arc<Shared>) {
-        deliver(shared, self.text, self.label, self.re, self.room, self.agent, self.said);
+        // they had a computer to go to when he sent them, which is where the files went: it is still there
+        let _back = deliver(shared, self.text, self.label, self.re, self.room, self.agent, self.said);
     }
 }
 /// The words waiting for his files, taken, once none of the files is still on its way: each has got there,

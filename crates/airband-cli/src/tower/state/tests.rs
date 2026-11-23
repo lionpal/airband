@@ -164,7 +164,7 @@ fn a_renamed_team_keeps_its_lines_its_folder_and_its_id() {
     assert!(inner.taken_elsewhere(&[theirs]));
     let b = inner.find("b").unwrap();
     assert_eq!((b.team.as_str(), b.callsign.project.as_str()), (garden.as_str(), "laptop garden"));
-    assert_eq!(inner.roster_entries()[0].team, garden);
+    assert_eq!(inner.roster_entries(&[])[0].team, garden);
 }
 
 #[test]

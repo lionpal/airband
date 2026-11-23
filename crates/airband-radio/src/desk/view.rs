@@ -190,7 +190,8 @@ impl Desk {
                 unread_from.values().sum::<u32>() - team.and_then(|t| unread_in.get(t.as_str()).copied()).unwrap_or(0)
             },
             quick,
-            sending: sending(&state, &self.shared.senses.takes),
+            sending: sending(&state, &self.shared.senses.takes, room.as_deref(), agent.as_deref()),
+            no_way_in: agent.as_ref().and_then(|id| agents.iter().find(|a| a.id == *id)).filter(|a| !a.reaches).map(|a| DeskNoWayIn { agent: a.id.clone(), line: no_way_in(&a.callsign), take_over: a.take_over }),
             takes: takes_shown(&state, &self.shared.senses.takes),
             stations: state.computers.iter().map(|s| state.shown(s)).collect(),
             main_computer: state.main().map(|s| s.id().to_string()),
@@ -224,7 +225,7 @@ fn rooms(state: &State, agents: &[&ChatAgent], all: &[ChatMessage], unread_from:
     // what an agent is waiting on him for: its newest question still open
     let asked = |a: &ChatAgent| all.iter().rev().find(|m| m.needs_you && m.agent.as_deref() == Some(a.id.as_str()) && state.is_open(&m.id));
     for a in agents {
-        let member = DeskMember { tool_name: crate::services::tool_name(&a.harness).unwrap_or_default(), id: a.id.clone(), callsign: a.callsign.clone(), state: a.state, subagents: a.subagents, doing: a.doing.clone(), held: a.held, can_stop: a.held && a.state == AgentState::Working, move_to: Vec::new(), terminal: a.terminal, ends: a.ends, unread: unread_from.get(a.id.as_str()).copied().unwrap_or(0), question: asked(a).map(|m| m.text.clone()).unwrap_or_default(), question_id: asked(a).map(|m| m.id.clone()).unwrap_or_default(), harness: a.harness.clone(), badge: a.badge.clone(), model: a.model.clone().unwrap_or_default(), effort: a.effort.clone().unwrap_or_default(), number: a.number.clone(), station: if state.computers.len() > 1 { state.computers.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(|s| s.id().to_string()).unwrap_or_default() } else { String::new() } };
+        let member = DeskMember { take_over: a.take_over, tool_name: crate::services::tool_name(&a.harness).unwrap_or_default(), id: a.id.clone(), callsign: a.callsign.clone(), state: a.state, subagents: a.subagents, doing: a.doing.clone(), held: a.held, can_stop: a.held && a.state == AgentState::Working, move_to: Vec::new(), terminal: a.terminal, ends: a.ends, unread: unread_from.get(a.id.as_str()).copied().unwrap_or(0), question: asked(a).map(|m| m.text.clone()).unwrap_or_default(), question_id: asked(a).map(|m| m.id.clone()).unwrap_or_default(), harness: a.harness.clone(), badge: a.badge.clone(), model: a.model.clone().unwrap_or_default(), effort: a.effort.clone().unwrap_or_default(), number: a.number.clone(), station: if state.computers.len() > 1 { state.computers.iter().find(|s| s.agents.iter().any(|x| x.id == a.id)).map(|s| s.id().to_string()).unwrap_or_default() } else { String::new() } };
         // what the team is doing is said in the name of whoever is doing it, without the team's own name
         let doing = a.doing.as_ref().map(|d| match Some(a.number.as_str()).filter(|rest| !rest.is_empty()) {
             Some(who) => format!("{who}: {d}"),
@@ -257,23 +258,55 @@ fn rooms(state: &State, agents: &[&ChatAgent], all: &[ChatMessage], unread_from:
     rooms
 }
 
-/// What is on its way: not yet sent, then sent and not yet back in the chat (for [`super::LANDING`] at most).
+/// What the place he types says of an agent his words cannot reach.
+pub(super) fn no_way_in(callsign: &str) -> String {
+    format!("airband can\u{2019}t send messages to {callsign}.")
+}
+
+/// What is on its way: not yet sent, then sent and not yet back in the chat (for [`super::LANDING`] at most),
+/// and what was not delivered, which stays until he lets it go or sends it again and it is. Each is shown where
+/// he sent it from, and with any agent it was for: looking at everyone, all of it.
 /// Words sent to several computers at once (a tag on agents of each) are one line under one id: shown once,
-/// and not at all once the chat has them from one of those computers, unless a copy was given up on, which
-/// is shown so he can send it again or let it go.
-fn sending(state: &State, takes: &crate::takes::Takes) -> Vec<DeskOutgoing> {
+/// and not at all once the chat has them from one of those computers, unless a copy was not delivered, which
+/// is shown so he can send it again or let it go, with why for every copy that was not.
+fn sending(state: &State, takes: &crate::takes::Takes, room: Option<&str>, agent: Option<&str>) -> Vec<DeskOutgoing> {
     let in_chat = |id: &str| state.computers.iter().any(|s| s.messages.iter().any(|m| m.id == id));
-    let mut shown: Vec<Outgoing> = Vec::new();
+    let agents = state.everyone();
+    let room_of = |id: &str| agents.iter().find(|a| a.id == id).map(|a| a.room.clone());
+    let named = |id: &str| agents.iter().find(|a| a.id == id).map(|a| a.callsign.clone()).unwrap_or_else(|| "an agent that has gone".into());
+    // the agents it is about: the ones it was for, and the ones it did not reach
+    let about = |o: &Outgoing| -> Vec<String> { o.to.iter().cloned().chain(o.sent_from.agent.clone()).chain(o.undelivered.iter().flat_map(|u| u.missed().into_iter().map(|m| m.agent.clone()))).collect() };
+    let here = |o: &Outgoing| match (room, agent) {
+        (None, None) => true,
+        (_, Some(a)) => about(o).iter().any(|x| x == a),
+        (Some(r), None) => o.sent_from.room.as_deref() == Some(r) || about(o).iter().any(|x| room_of(x).as_deref() == Some(r)),
+    };
+    let mut shown: Vec<(Outgoing, Vec<String>)> = Vec::new();
     let waiting = state.computers.iter().flat_map(|s| s.radio.unsent().into_iter().chain(s.landing.iter().filter(|(_, at)| at.elapsed() < super::LANDING).map(|(o, _)| o.clone())));
-    for o in waiting.filter(|o| o.failed.is_some() || !in_chat(&o.id)) {
-        match shown.iter_mut().find(|have| have.id == o.id) {
-            // the copy given up on is the one he has to act on
-            Some(have) if have.failed.is_none() && o.failed.is_some() => *have = o,
-            Some(_) => {}
-            None => shown.push(o),
+    for o in waiting.filter(|o| (o.undelivered.is_some() || !in_chat(&o.id)) && here(o)) {
+        let why = o.undelivered.is_some().then(|| crate::outbox::not_delivered_why(&o, &named));
+        match shown.iter_mut().find(|(have, _)| have.id == o.id) {
+            // the copy not delivered is the one he has to act on, and every such copy says why
+            Some((have, whys)) => {
+                if let Some(why) = why.filter(|w| !whys.contains(w)) {
+                    whys.push(why);
+                }
+                if have.undelivered.is_none() && o.undelivered.is_some() {
+                    *have = o;
+                }
+            }
+            None => shown.push((o, why.into_iter().collect())),
         }
     }
-    shown.iter().map(|o| DeskOutgoing { recording: takes.kept(&o.id), ..DeskOutgoing::from(o) }).collect()
+    shown
+        .iter()
+        .map(|(o, whys)| {
+            // the agent it did not reach for want of a way in, when its computer can take it over
+            let take_over = o.undelivered.iter().flat_map(|u| u.missed()).filter(|m| m.why == airband_core::radio::NotReachable::NoWayIn).map(|m| m.agent.clone()).find(|id| agents.iter().any(|a| a.id == *id && a.take_over));
+            let not_delivered = o.undelivered.is_some().then(|| format!("Not delivered. {}", whys.join(" ")).trim_end().to_string());
+            DeskOutgoing { recording: takes.kept(&o.id), not_delivered, take_over, ..DeskOutgoing::from(o) }
+        })
+        .collect()
 }
 
 /// What he said aloud that is not on its way, each in a line: not heard, being heard again, or heard and not

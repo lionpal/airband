@@ -60,7 +60,7 @@ fn n25_what_did_not_go_is_still_shown_after_a_relaunch_and_can_be_let_go() {
     let radio = radio_at(&desk, 0);
     let waiting = radio.queue("still waiting".into(), None, None, None);
     let given_up = radio.queue("given up on".into(), None, None, None);
-    radio.store.change(|s| s.outbox.iter_mut().filter(|o| o.id == given_up).for_each(|o| o.failed = Some("It could not be sent.".into())));
+    radio.store.change(|s| s.outbox.iter_mut().filter(|o| o.id == given_up).for_each(|o| o.undelivered = Some(crate::NotDelivered::Refused { why: "It could not be sent.".into() })));
     desk.stop();
     drop(radio);
     // the app is opened again

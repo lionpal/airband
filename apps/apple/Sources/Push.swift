@@ -97,7 +97,7 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
             // it went: a "still sending" said meanwhile is taken back
             case .sent: UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [notice])
             case .keptForLater(let why): Self.say(notice, title: "Waiting to send to " + name, body: "\u{201C}\(text)\u{201D}. \(why)", room: room, agent: agent)
-            case .refused(let why), .notPaired(let why): Self.say(notice, title: "Not sent to " + name, body: "\u{201C}\(text)\u{201D}. \(why)", room: room, agent: agent)
+            case .refused(let why), .notPaired(let why): Self.say(notice, title: "Not delivered to " + name, body: "\u{201C}\(text)\u{201D}. \(why)", room: room, agent: agent)
             }
             DispatchQueue.main.async { end() }
         }

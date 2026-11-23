@@ -30,7 +30,7 @@ final class PhoneEndToEndTests: XCTestCase {
         XCTAssertEqual(computer.picture, pairing.picture)
 
         let words = "hello from the simulator " + UUID().uuidString.prefix(8)
-        phone.desk.send(text: words, re: nil, room: nil, agent: agent)
+        XCTAssertNil(phone.desk.send(text: words, re: nil, room: nil, agent: agent), "it had somewhere to go")
         let answer = try phone.answer(to: words, from: agent, tower: tower)
         XCTAssertEqual(try tower.heard().filter { $0.heard.contains(words) }.count, 1, "the agent was given it once")
         XCTAssertTrue(phone.desk.view().feed.contains { $0.his && $0.text == words }, "what he typed is in the chat")
@@ -49,13 +49,13 @@ final class PhoneEndToEndTests: XCTestCase {
 
         XCTAssertFalse(try tower.relay("stop"), "the relay has stopped")
         let words = "said with the relay gone " + UUID().uuidString.prefix(8)
-        phone.desk.send(text: words, re: nil, room: nil, agent: agent)
+        XCTAssertNil(phone.desk.send(text: words, re: nil, room: nil, agent: agent), "it had somewhere to go")
         // tried, and still being tried: the phone says how the tries are going once they have gone on a while
         let waiting = try phone.until("it waits on the phone, being tried", seconds: 90) { view in
             view.sending.first { $0.shown == words && $0.trying != nil }
         }
         XCTAssertEqual(waiting.stage, .trying)
-        XCTAssertNil(waiting.failed)
+        XCTAssertNil(waiting.notDelivered)
         XCTAssertTrue(try tower.heard().allSatisfy { !$0.heard.contains(words) }, "the agent has not had it")
 
         XCTAssertTrue(try tower.relay("start"), "the relay is back")

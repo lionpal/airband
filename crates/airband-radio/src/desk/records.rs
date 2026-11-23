@@ -65,6 +65,8 @@ pub struct DeskMember {
     pub harness: String,
     /// What that tool is called, from the catalogue; empty for a tool it does not list.
     pub tool_name: String,
+    /// Its computer can take it over: his words cannot reach it as it runs now, and would then.
+    pub take_over: bool,
 }
 /// What he is looking at: one team, one agent in it, or (both empty) everyone. The desk keeps it valid: a team
 /// that has gone is let go of once the computers can say so.
@@ -145,6 +147,19 @@ pub struct DeskView {
     pub tools: Vec<CodingTool>,
     /// What to say when a computer cannot be reached: which ones, when he has several.
     pub cannot_reach: String,
+    /// He is looking at an agent his words cannot reach: said where he types, before he does. What he sends it
+    /// anyway is kept in the chat as not delivered.
+    pub no_way_in: Option<DeskNoWayIn>,
+}
+/// An agent his words cannot reach, as the place he types says so.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct DeskNoWayIn {
+    /// The agent, by id.
+    pub agent: String,
+    /// The line to show: "airband can’t send messages to shop two."
+    pub line: String,
+    /// Its computer can take it over ([`Desk::take_over`]).
+    pub take_over: bool,
 }
 /// Which thing his computers are to be told.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -350,8 +365,14 @@ pub struct DeskOutgoing {
     pub shown: String,
     /// How far it has got.
     pub stage: crate::Stage,
-    /// It is no longer being tried, and why, in a sentence. He can send it again or let it go.
-    pub failed: Option<String>,
+    /// The whole of what he wrote, for copying.
+    pub text: String,
+    /// It is not delivered and no longer being tried: why, in a line ("Not delivered. airband can’t send
+    /// messages to shop two."). He can try again, copy it or delete it.
+    pub not_delivered: Option<String>,
+    /// It did not reach this agent (by id) because nothing could send it messages, and its computer can take
+    /// it over: [`Desk::take_over_and_send`] does, then sends it once.
+    pub take_over: Option<String>,
     /// While it is still being tried and has been for a while: how the tries are going, in sentences ("Trying.
     /// The relay says your computer is not connected. 3 tries.").
     pub trying: Option<String>,
@@ -374,8 +395,8 @@ pub struct DeskTake {
 impl From<&crate::Outgoing> for DeskOutgoing {
     fn from(o: &crate::Outgoing) -> Self {
         // how the tries go is worth showing only once they have gone on for ten seconds and said something
-        let trying = (o.failed.is_none() && !o.trail.is_empty() && o.last_tried >= o.at + 10_000)
+        let trying = (o.undelivered.is_none() && !o.trail.is_empty() && o.last_tried >= o.at + 10_000)
             .then(|| format!("Trying. {}{}", o.trail.join(" "), if o.tries > 1 { format!(" {} tries.", o.tries) } else { String::new() }));
-        DeskOutgoing { id: o.id.clone(), shown: o.shown(), stage: o.stage, failed: o.failed.clone(), trying, recording: false }
+        DeskOutgoing { id: o.id.clone(), shown: o.shown(), text: o.text.clone(), stage: o.stage, not_delivered: None, take_over: None, trying, recording: false }
     }
 }

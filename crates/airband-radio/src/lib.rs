@@ -223,11 +223,15 @@ pub struct Outgoing {
     /// connected."). Empty before the first try, and while nothing has gone wrong. Kept on this device only.
     #[serde(default)]
     pub trail: Vec<String>,
-    /// It is no longer being tried, and why, in a sentence: it could not be sent, or half an hour of trying
-    /// was not enough. It stays in the list until he sends it again ([`Radio::send_again`]) or lets it go
+    /// It is not delivered and is no longer being tried, and why: it could not be sent, half an hour of trying
+    /// was not enough, or his computer had it and the agents it was for did not get it. It stays in the list,
+    /// shown where he sent it, until he sends it again ([`Radio::send_again`]) or lets it go
     /// ([`Radio::discard`]).
     #[serde(default)]
-    pub failed: Option<String>,
+    pub undelivered: Option<NotDelivered>,
+    /// What he was looking at when he sent it: where it is shown while it is on its way or not delivered.
+    #[serde(default)]
+    pub sent_from: SentFrom,
     /// How far it has got.
     #[serde(default)]
     pub stage: Stage,
@@ -235,6 +239,49 @@ pub struct Outgoing {
     /// patience with a message his computer has and never settles is counted from. Nothing before then.
     #[serde(default)]
     pub taken_at: Option<u64>,
+}
+
+/// Where he was when he sent something: the room (a team on one computer, by its room id) and the agent he was
+/// looking at, each when he was.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SentFrom {
+    pub room: Option<String>,
+    pub agent: Option<String>,
+}
+
+/// Why a message of his is not delivered. Kept with it until he sends it again or lets it go.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum NotDelivered {
+    /// Half an hour of trying did not get it to his computer. How the last try went is its `trail`.
+    Expired,
+    /// His computer took it and in half an hour did not say what came of it.
+    NeverSettled,
+    /// His computer was away for longer than the relay keeps a message.
+    AwayTooLong,
+    /// His computer or the relay will never take it as it is: why, in words for him, as the link says it.
+    Refused { why: String },
+    /// His computer had it, and the agents it was for did not get it, as the tower said.
+    Agents { why: airband_core::radio::Undelivered },
+    /// His computer read it as for an agent another of his computers has (by id), and none of them has it now.
+    Elsewhere { agent: String },
+    /// His computer could not tell who it was for: who it might be, by id, likeliest first.
+    WhoFor { guesses: Vec<String> },
+}
+
+impl NotDelivered {
+    /// His computer had it and answered. Sent again it goes under a new id: an id his computer has had is
+    /// answered with what came of it then.
+    pub(crate) fn answered(&self) -> bool {
+        matches!(self, NotDelivered::Agents { .. } | NotDelivered::Elsewhere { .. } | NotDelivered::WhoFor { .. })
+    }
+    /// The agents it did not reach, by id, when the tower named them.
+    pub(crate) fn missed(&self) -> Vec<&airband_core::radio::Missed> {
+        match self {
+            NotDelivered::Agents { why: airband_core::radio::Undelivered::Missed { missed } } => missed.iter().collect(),
+            _ => Vec::new(),
+        }
+    }
 }
 
 /// What an agent is doing.
@@ -275,11 +322,24 @@ pub enum Stage {
 impl Outgoing {
     /// Something he has just said, not yet tried.
     pub(crate) fn new(id: String, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, attachments: Vec<String>, others: Vec<airband_core::radio::Other>) -> Outgoing {
-        Outgoing { id, text, re, at: now_ms(), scope, label, attachments, others, to: Vec::new(), act: None, answers: None, tries: 0, last_tried: 0, trail: Vec::new(), failed: None, stage: Stage::Trying, taken_at: None }
+        Outgoing { id, text, re, at: now_ms(), scope, label, attachments, others, to: Vec::new(), act: None, answers: None, tries: 0, last_tried: 0, trail: Vec::new(), undelivered: None, sent_from: SentFrom::default(), stage: Stage::Trying, taken_at: None }
     }
     /// Words to send, under a new id, with nothing else yet: the rest is set by whoever sends them.
     pub(crate) fn of(text: String) -> Outgoing {
         Outgoing::new(random_hex(12), text, None, None, None, Vec::new(), Vec::new())
+    }
+    /// The same words, to be tried again from the start: under `id`, which is a new one when his computer
+    /// answered it before ([`NotDelivered::answered`]), and then to the agents it did not reach when the tower
+    /// named them. Everything else about it (what it answers, the files, where he sent it from) stays.
+    pub(crate) fn again(self, id: String) -> Outgoing {
+        let missed: Vec<String> = self.undelivered.as_ref().map(|u| u.missed().into_iter().map(|m| m.agent.clone()).collect()).unwrap_or_default();
+        let to = if missed.is_empty() { self.to.clone() } else { missed };
+        Outgoing { id, to, at: now_ms(), tries: 0, last_tried: 0, trail: Vec::new(), undelivered: None, stage: Stage::Trying, taken_at: None, ..self }
+    }
+    /// Why it is not delivered, in a sentence, with each agent named by its id: for a host that has no
+    /// names for them (a terminal). Nothing while it is still on its way.
+    pub fn why_not_delivered(&self) -> Option<String> {
+        self.undelivered.is_some().then(|| outbox::not_delivered_why(self, &|id| id.to_string()))
     }
     /// What a button of his stood for goes with it.
     pub(crate) fn with_act(self, act: Option<&Act>) -> Outgoing {

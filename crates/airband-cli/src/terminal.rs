@@ -269,7 +269,7 @@ pub(crate) fn send(cfg: &Config, args: &[String]) -> Result<(), String> {
                     println!("Delivered.");
                     return Ok(());
                 }
-                Some(o) if o.failed.is_some() => return Err(o.failed.unwrap_or_default()),
+                Some(o) if o.undelivered.is_some() => return Err(format!("Not delivered. {}", o.why_not_delivered().unwrap_or_default())),
                 Some(o) if o.stage == airband_radio::Stage::Left => return Ok(()),
                 Some(_) => std::thread::sleep(Duration::from_millis(200)),
             }

@@ -449,7 +449,7 @@ impl Inner {
 }
 
 /// Whether a team could hold an agent working in this folder: the one there, or one the folder could name.
-fn a_team_can_hold(inner: &Inner, cwd: &str) -> bool {
+pub(super) fn a_team_can_hold(inner: &Inner, cwd: &str) -> bool {
     inner.team_at(cwd).is_some() || inner.name_for_folder(cwd).is_some()
 }
 
@@ -477,6 +477,22 @@ pub(super) fn forget(inner: &mut Inner, id: &str) {
 fn holder_for(cfg: &config::Config, harness: &str) -> launch::Starts {
     let holding: Vec<LauncherId> = cfg.launchers.iter().filter(|(_, l)| l.harness == harness && l.held.is_some()).map(|(name, _)| LauncherId::new(name.as_str())).collect();
     launch::which_launcher(cfg.launcher.as_ref(), &holding)
+}
+
+/// The coding tools whose agents a launcher here would carry on, by the one rule (`holder_for`): what a
+/// take-over needs of this computer's settings.
+pub(super) fn carried_on(cfg: &config::Config) -> Vec<String> {
+    let mut tools: Vec<String> = cfg.launchers.values().filter(|l| l.held.is_some()).map(|l| l.harness.clone()).filter(|h| matches!(holder_for(cfg, h), launch::Starts::This(_))).collect();
+    tools.sort();
+    tools.dedup();
+    tools
+}
+
+/// Whether the tower can take this agent over as things are: it does not run it already, a launcher here
+/// carries on its tool's agents (`carried`, from [`carried_on`]), and it knows the agent's folder, its process
+/// and a team to put it in. Whether it is in the middle of something is asked at the moment he taps.
+pub(super) fn can_take_over(inner: &Inner, s: &Session, carried: &[String]) -> bool {
+    s.agent.deliver != Some(Deliver::Held) && carried.contains(&s.agent.harness) && s.agent.pid.is_some() && s.agent.cwd.as_deref().is_some_and(|cwd| a_team_can_hold(inner, cwd))
 }
 
 /// Take over an agent he started in a terminal of his own: end that process and carry the same session on in

@@ -31,8 +31,8 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, session: Arc<Session>, store: Arc<
         let due = |o: &&Outgoing| ask_at.get(&o.id).is_none_or(|at| now >= *at);
         // the one whose turn it is: the oldest that is still being tried and is not with the relay. Failing
         // that, one the relay keeps that is due to be asked after.
-        let in_turn = outbox.iter().find(|o| o.failed.is_none() && o.stage != Stage::Left);
-        let Some(next) = in_turn.filter(due).or_else(|| outbox.iter().filter(|o| o.failed.is_none() && o.stage == Stage::Left).find(due)).cloned() else {
+        let in_turn = outbox.iter().find(|o| o.undelivered.is_none() && o.stage != Stage::Left);
+        let Some(next) = in_turn.filter(due).or_else(|| outbox.iter().filter(|o| o.undelivered.is_none() && o.stage == Stage::Left).find(due)).cloned() else {
             // nothing to do now: sleep until something is queued or settled, or the next is due
             let soonest = ask_at.values().map(|at| at.saturating_duration_since(now)).min().unwrap_or(Duration::from_secs(30));
             wake.wait_since(turn, soonest.clamp(Duration::from_millis(200), Duration::from_secs(30)));
@@ -40,7 +40,7 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, session: Arc<Session>, store: Arc<
         };
         // it did not go and is not tried any more: it stays in the list with the reason, for him to send
         // again or let go. He is told once, wherever he is looking.
-        let gave_up = |why: String| fail(&store, &*host, &next.id, why);
+        let gave_up = |why: NotDelivered| fail(&store, &*host, &next.id, why);
         let staged = |stage: Stage| {
             store.change(|s| {
                 if let Some(o) = s.outbox.iter_mut().find(|o| o.id == next.id) {
@@ -57,28 +57,28 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, session: Arc<Session>, store: Arc<
         match next.stage {
             // with how the last try went, when there was one: "no connection" alone tells him nothing
             Stage::Trying if now_ms().saturating_sub(next.at) > OUTBOX_EXPIRY_MS => {
-                gave_up(expired(&next.trail));
+                gave_up(NotDelivered::Expired);
                 continue;
             }
             // His computer took it half an hour ago and, asked again and again, still says only that it has it: it
             // ends, and holds up nothing behind it. Sent again, it goes under the same id, so his computer never
             // acts on it twice.
             Stage::Taken if next.taken_at.is_some_and(|taken| now_ms().saturating_sub(taken) > OUTBOX_EXPIRY_MS) => {
-                gave_up(NEVER_SETTLED.into());
+                gave_up(NotDelivered::NeverSettled);
                 continue;
             }
             Stage::Left if now_ms().saturating_sub(next.at) > airband_core::relay::HELD_FOR_MS => {
-                gave_up("Your computer was away for more than a week, and the relay keeps a message that long.".into());
+                gave_up(NotDelivered::AwayTooLong);
                 continue;
             }
             _ => {}
         }
         let utterance = next.utterance();
-        link.keeps_at_relay(outbox.iter().any(|o| o.stage == Stage::Left && o.failed.is_none() && o.id != next.id));
+        link.keeps_at_relay(outbox.iter().any(|o| o.stage == Stage::Left && o.undelivered.is_none() && o.id != next.id));
         let (got, steps) = link.utterance_once(&utterance);
         // It went straight to his computer while the relay still keeps earlier words of his for it: these
         // arrive first. Worth a line, for whoever wonders about the order.
-        let kept = outbox.iter().filter(|o| o.stage == Stage::Left && o.failed.is_none() && o.id != next.id).count();
+        let kept = outbox.iter().filter(|o| o.stage == Stage::Left && o.undelivered.is_none() && o.id != next.id).count();
         if kept > 0 && got.is_ok() && steps.last().is_some_and(|s| s.way == Way::Near && s.outcome.is_ok()) {
             link.remark(format!("something he said went straight to his computer ahead of {kept} the relay still keeps for it"));
         }
@@ -118,7 +118,7 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, session: Arc<Session>, store: Arc<
                 match after_failure(e.retry(), next.stage) {
                     AfterFailure::GiveUp => {
                         wait = 1;
-                        gave_up(e.said());
+                        gave_up(NotDelivered::Refused { why: e.said() });
                     }
                     AfterFailure::AskAfter(then) => {
                         ask_at.insert(next.id.clone(), now + then);
@@ -171,18 +171,19 @@ fn after_failure(retry: Retry, stage: Stage) -> AfterFailure {
     }
 }
 
-/// It is not tried any more, and why: it stays in the list for him to send again or let go, and he is told.
-fn fail(store: &Store, host: &dyn RadioHost, id: &str, why: String) {
+/// It is not delivered and not tried any more, and why: it stays in the list for him to send again or let go,
+/// and he is told.
+fn fail(store: &Store, host: &dyn RadioHost, id: &str, why: NotDelivered) {
     let (text, waiting) = store.change(|s| {
         // quoted as he saw it
         let text = s.outbox.iter_mut().find(|o| o.id == id).map(|o| {
-            o.failed = Some(why.clone());
+            o.undelivered = Some(why.clone());
             o.shown()
         });
         (text, s.outbox.clone())
     });
     if let Some(text) = text {
-        host.outbox(waiting, Some(format!("Not sent: “{}”. {why}", opening(&text))));
+        host.outbox(waiting, Some(format!("Not delivered: “{}”.", opening(&text))));
     }
 }
 
@@ -202,18 +203,93 @@ pub(crate) fn settle(store: &Store, host: &dyn RadioHost, takes: &crate::takes::
             s.outbox.clone()
         })
     };
-    match outcome {
-        Outcome::Taken => {}
-        // not delivered: it is for an agent on another computer, or the tower cannot tell who it is for.
-        // The host takes it from here; it has left this radio's list either way
-        Outcome::Answered { reply } if reply.elsewhere.is_some() || !reply.ask.is_empty() => {
-            host.outbox(gone(), None);
+    let reply = match outcome {
+        Outcome::Taken => return,
+        Outcome::Rejected { why } => return fail(store, host, id, NotDelivered::Refused { why: LinkError::Rejected(why).said() }),
+        Outcome::Answered { reply } => reply,
+    };
+    match kept_for(&reply) {
+        // The agents it was for did not get it, all or some: it stays, with why, wherever he sent it from. It
+        // leaves only when he lets it go, or sends it again and they get it.
+        Some(why @ NotDelivered::Agents { .. }) => fail(store, host, id, why),
+        // Not delivered: it is for an agent on another computer, or the tower cannot tell who it is for. It
+        // stays here as not delivered while the host offers who it is for (and sends it on to an agent another
+        // computer has), and leaves once it has gone there.
+        Some(why) => {
+            let waiting = store.change(|s| {
+                s.outbox.iter_mut().filter(|o| o.id == id).for_each(|o| o.undelivered = Some(why.clone()));
+                s.outbox.clone()
+            });
+            host.outbox(waiting, None);
             // the agents it might be for, by id
-            host.unplaced(was, reply.elsewhere, reply.ask);
+            host.unplaced(Outgoing { undelivered: Some(why), ..was }, reply.elsewhere, reply.ask);
         }
         // what was done as he asked shows as his own line in the chat; anything else he has to see
-        Outcome::Answered { reply } => host.outbox(gone(), (!reply.say.is_empty() && !reply.done).then_some(reply.say)),
-        Outcome::Rejected { why } => fail(store, host, id, LinkError::Rejected(why).said()),
+        None => host.outbox(gone(), (!reply.say.is_empty() && !reply.done).then_some(reply.say)),
+    }
+}
+
+/// Why an answer of his computer's leaves his words not delivered, when it does: the agents did not get them, or
+/// the tower read them as for an agent another computer has, or could not tell who they were for.
+fn kept_for(reply: &Reply) -> Option<NotDelivered> {
+    match (&reply.undelivered, &reply.elsewhere) {
+        (Some(why), _) => Some(NotDelivered::Agents { why: (**why).clone() }),
+        (None, Some(agent)) => Some(NotDelivered::Elsewhere { agent: agent.clone() }),
+        (None, None) if !reply.ask.is_empty() => Some(NotDelivered::WhoFor { guesses: reply.ask.clone() }),
+        (None, None) => None,
+    }
+}
+
+/// Something of his that was answered at once, never having been in the outbox (said on a call, an answer from
+/// a notification): when the answer leaves it not delivered, it is kept in the outbox as such, as anything of
+/// his is, and the host is told as for anything settled. True when it was kept.
+pub(crate) fn keep_answered(store: &Store, host: &dyn RadioHost, takes: &crate::takes::Takes, out: Outgoing, reply: &Reply) -> bool {
+    let Some(why) = kept_for(reply) else { return false };
+    let id = out.id.clone();
+    store.change(|s| {
+        if !s.outbox.iter().any(|o| o.id == id) {
+            s.outbox.push(Outgoing { undelivered: Some(why), stage: Stage::Taken, ..out });
+        }
+    });
+    settle(store, host, takes, &id, airband_core::radio::Outcome::Answered { reply: reply.clone() });
+    true
+}
+
+/// Why a message of his was not delivered, in a sentence for him. `named` says what an agent is called, by id.
+pub(crate) fn not_delivered_why(o: &Outgoing, named: &dyn Fn(&str) -> String) -> String {
+    use airband_core::radio::{NotReachable, Undelivered};
+    let Some(why) = &o.undelivered else { return String::new() };
+    match why {
+        NotDelivered::Expired => expired(&o.trail),
+        NotDelivered::NeverSettled => NEVER_SETTLED.into(),
+        NotDelivered::AwayTooLong => "Your computer was away for more than a week, and the relay keeps a message that long.".into(),
+        NotDelivered::Refused { why } => why.clone(),
+        NotDelivered::Agents { why: Undelivered::NobodyRunning } => "No agents are running.".into(),
+        NotDelivered::Agents { why: Undelivered::Files } => "Your files hadn\u{2019}t arrived.".into(),
+        NotDelivered::Agents { why: Undelivered::TeamGone } => "That team isn\u{2019}t on your computer anymore.".into(),
+        NotDelivered::Agents { why: Undelivered::Missed { missed } } => {
+            // a sentence for each reason, naming the agents it holds for
+            let of = |kind: NotReachable| missed.iter().filter(|m| m.why == kind).map(|m| named(&m.agent)).collect::<Vec<_>>();
+            let mut said = Vec::new();
+            for (kind, says) in [(NotReachable::NoWayIn, "airband can\u{2019}t send messages to"), (NotReachable::Gone, "No longer running:"), (NotReachable::Failed, "Handing it over failed for")] {
+                let names = of(kind);
+                if !names.is_empty() {
+                    said.push(format!("{says} {}.", and_list(&names)));
+                }
+            }
+            said.join(" ")
+        }
+        NotDelivered::Elsewhere { .. } => "That agent isn\u{2019}t running anymore.".into(),
+        NotDelivered::WhoFor { .. } => "airband couldn\u{2019}t tell who it was for.".into(),
+    }
+}
+
+/// Names as said in English: "a", "a and b", "a, b and c".
+fn and_list(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     }
 }
 
@@ -328,29 +404,90 @@ mod tests {
         // half an hour on, it is given up on: it stays, with the reason, and he is told once
         radio.store.change(|s| s.outbox[0].at = 1);
         radio.wake.ring();
-        assert!(until(&|o| o[0].failed == Some(expired(&[LinkError::Unreachable(Way::Relay).said()]))), "{:?}", outbox());
+        assert!(until(&|o| o[0].undelivered == Some(NotDelivered::Expired) && not_delivered_why(&o[0], &|a| a.to_string()) == expired(&[LinkError::Unreachable(Way::Relay).said()])), "{:?}", outbox());
         let notes: Vec<String> = host.0.lock().unwrap().iter().filter_map(|(_, note)| note.clone()).collect();
         assert_eq!(notes.len(), 1);
-        assert!(notes[0].starts_with("Not sent: “the first thing”. Half an hour"), "{notes:?}");
+        assert_eq!(notes[0], "Not delivered: “the first thing”.");
         // what he says next is tried all the same
         let second = radio.queue("the second thing".into(), None, None, None);
-        assert!(until(&|o| o.len() == 2 && o[0].failed.is_some() && o[1].failed.is_none() && o[1].tries >= 1), "{:?}", outbox());
+        assert!(until(&|o| o.len() == 2 && o[0].undelivered.is_some() && o[1].undelivered.is_none() && o[1].tries >= 1), "{:?}", outbox());
         // it is followed by the id it was queued under, not by being the last one waiting
         assert_eq!(outbox()[1].id, second);
         // sent again, the first goes to the end as if just said
         let first = outbox()[0].id.clone();
-        radio.send_again(&first);
-        assert!(until(&|o| o.len() == 2 && o[1].id == first && o[1].failed.is_none() && o[1].at > 1), "{:?}", outbox());
+        radio.send_again(&first, "fresh", None);
+        assert!(until(&|o| o.len() == 2 && o[1].id == first && o[1].undelivered.is_none() && o[1].at > 1), "{:?}", outbox());
         // and one that was given up on can be let go, which hands back its words
         radio.store.change(|s| s.outbox[0].at = 1);
         radio.wake.ring();
-        assert!(until(&|o| o[0].failed.is_some()));
+        assert!(until(&|o| o[0].undelivered.is_some()));
         let second = outbox()[0].id.clone();
         assert_eq!(radio.discard(&second).map(|o| o.text), Some("the second thing".into()));
         assert!(outbox().iter().all(|o| o.id != second));
         // one still being tried is not let go that way
         assert!(radio.discard(&first).is_none());
         radio.stop();
+    }
+
+    #[test]
+    fn words_the_agents_did_not_get_stay_with_why_until_he_lets_them_go_or_they_get_there() {
+        use airband_core::radio::{Missed, NotReachable, Outcome, Undelivered};
+        let host = Watching::default();
+        let store = Store::open("", None);
+        let takes = crate::takes::Takes::default();
+        let put = |id: &str| store.change(|s| s.outbox.push(Outgoing { stage: Stage::Taken, sent_from: SentFrom { room: Some("r1".into()), agent: None }, ..Outgoing::new(id.into(), format!("words of {id}"), None, None, None, Vec::new(), Vec::new()) }));
+        let kept = |id: &str| store.saved.lock().unwrap().outbox.iter().find(|o| o.id == id).cloned();
+        // for an agent airband has no way to send to: it stays, marked, and he is told once
+        put("a");
+        let missed = vec![Missed { agent: "x1".into(), why: NotReachable::NoWayIn }, Missed { agent: "x2".into(), why: NotReachable::Gone }];
+        settle(&store, &host, &takes, "a", Outcome::Answered { reply: Reply { say: "Could not reach shop one.".into(), undelivered: Some(Box::new(Undelivered::Missed { missed: missed.clone() })), ..Reply::default() } });
+        let a = kept("a").expect("kept");
+        assert_eq!(a.undelivered, Some(NotDelivered::Agents { why: Undelivered::Missed { missed } }));
+        assert_eq!(host.0.lock().unwrap().last().unwrap().1.as_deref(), Some("Not delivered: “words of a”."));
+        // why, in words, naming each agent
+        let named = |id: &str| if id == "x1" { "shop one".to_string() } else { "shop two".to_string() };
+        assert_eq!(not_delivered_why(&a, &named), "airband can\u{2019}t send messages to shop one. No longer running: shop two.");
+        // told again (the feed and the asking both say it): nothing changes
+        settle(&store, &host, &takes, "a", Outcome::Answered { reply: Reply { undelivered: Some(Box::new(Undelivered::NobodyRunning)), ..Reply::default() } });
+        assert!(kept("a").is_some());
+        // tried again: under a new id, since his computer has had this one, to the agents it did not reach, from
+        // where he sent it
+        let again = a.clone().again("b".into());
+        assert_eq!((again.id.as_str(), again.to.clone(), again.undelivered.clone(), again.sent_from.room.as_deref(), again.text.as_str()), ("b", vec!["x1".to_string(), "x2".into()], None, Some("r1"), "words of a"));
+        // one that never reached his computer goes under its own id again
+        let expired = Outgoing { undelivered: Some(NotDelivered::Expired), ..a.clone() };
+        assert!(!expired.undelivered.as_ref().unwrap().answered());
+        // nobody running, files that had not arrived: kept the same way
+        for (id, why) in [("c", Undelivered::NobodyRunning), ("d", Undelivered::Files)] {
+            put(id);
+            settle(&store, &host, &takes, id, Outcome::Answered { reply: Reply { undelivered: Some(Box::new(why.clone())), ..Reply::default() } });
+            assert_eq!(kept(id).and_then(|o| o.undelivered), Some(NotDelivered::Agents { why }));
+        }
+        // for an agent another computer has: kept as not delivered while the host sends it there
+        put("e");
+        settle(&store, &host, &takes, "e", Outcome::Answered { reply: Reply { elsewhere: Some("far".into()), ..Reply::default() } });
+        assert_eq!(kept("e").and_then(|o| o.undelivered), Some(NotDelivered::Elsewhere { agent: "far".into() }));
+        // delivered: it leaves the list
+        put("f");
+        settle(&store, &host, &takes, "f", Outcome::Answered { reply: Reply { say: "Sent to shop one.".into(), done: true, ..Reply::default() } });
+        assert!(kept("f").is_none());
+    }
+
+    #[test]
+    fn something_answered_at_once_that_did_not_get_there_is_kept_as_anything_is() {
+        use airband_core::radio::{Missed, NotReachable, Undelivered};
+        let host = Watching::default();
+        let store = Store::open("", None);
+        let takes = crate::takes::Takes::default();
+        let out = Outgoing::of("said on a call".into());
+        // delivered: nothing is kept
+        assert!(!keep_answered(&store, &host, &takes, out.clone(), &Reply { done: true, ..Reply::default() }));
+        assert!(store.saved.lock().unwrap().outbox.is_empty());
+        // not delivered: kept, marked, and never tried again by itself
+        let reply = Reply { undelivered: Some(Box::new(Undelivered::Missed { missed: vec![Missed { agent: "x1".into(), why: NotReachable::Failed }] })), ..Reply::default() };
+        assert!(keep_answered(&store, &host, &takes, out.clone(), &reply));
+        let kept = store.saved.lock().unwrap().outbox.clone();
+        assert_eq!((kept.len(), kept[0].id.clone(), kept[0].undelivered.is_some()), (1, out.id.clone(), true));
     }
 
     #[test]
@@ -379,14 +516,16 @@ mod tests {
         // one the relay kept, answered when his computer came back: the same
         settle(&store, &host, &takes, "c", Outcome::Answered { reply: Reply { say: "Sent to shop two.".into(), done: true, ..Reply::default() } });
         assert_eq!(ids(), ["d", "e"]);
-        // the tower cannot tell who it is for: it leaves this list and the host asks him
+        // the tower cannot tell who it is for: the host asks him, and it stays as not delivered meanwhile
         settle(&store, &host, &takes, "d", Outcome::Answered { reply: Reply { ask: vec!["a2".into(), "a1".into()], ..Reply::default() } });
-        assert_eq!((ids(), last().1.as_deref()), (vec!["e".to_string()], Some("unplaced: a2, a1")));
+        assert_eq!((ids(), last().1.as_deref()), (vec!["d".to_string(), "e".into()], Some("unplaced: a2, a1")));
+        assert_eq!(store.saved.lock().unwrap().outbox[0].undelivered, Some(NotDelivered::WhoFor { guesses: vec!["a2".into(), "a1".into()] }));
+        store.change(|s| s.outbox.retain(|o| o.id != "d"));
         // one his computer got too late: it stays, with the reason, to send again or let go, and he is told
         settle(&store, &host, &takes, "e", Outcome::Rejected { why: Rejected::TooOld });
         let kept = store.saved.lock().unwrap().outbox.clone();
-        assert_eq!(kept[0].failed, Some(LinkError::Rejected(Rejected::TooOld).said()));
-        assert_eq!(last().1, Some(format!("Not sent: “words of e”. {}", LinkError::Rejected(Rejected::TooOld).said())));
+        assert_eq!(kept[0].undelivered, Some(NotDelivered::Refused { why: LinkError::Rejected(Rejected::TooOld).said() }));
+        assert_eq!(last().1.as_deref(), Some("Not delivered: “words of e”."));
         // an outcome told twice, or for something this radio never typed, is nothing to do
         let before = host.0.lock().unwrap().len();
         settle(&store, &host, &takes, "a", Outcome::Answered { reply: Reply::default() });

@@ -34,7 +34,10 @@ impl Desk {
             }
             match heard {
                 // under the id of its recording, which is kept until his computer has it
-                Listened::Said { text, take } => deliver(&shared, text, None, re, room, agent, take),
+                // words he said that could go nowhere wait in the chat with their recording: nothing comes back
+                Listened::Said { text, take } => {
+                    let _kept = deliver(&shared, text, None, re, room, agent, take);
+                }
                 // its recording waits in the chat, to be heard again
                 Listened::Unheard { .. } => shared.host.changed(),
                 Listened::Nothing => {}

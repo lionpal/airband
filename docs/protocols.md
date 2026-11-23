@@ -1,6 +1,6 @@
 # Protocols
 
-Three versioned protocols: `airband.agent/1` (agents → tower), `airband.radio/4` (phone ↔ tower) and
+Three versioned protocols: `airband.agent/1` (agents → tower), `airband.radio/5` (phone ↔ tower) and
 `airband.relay/1` (how the second one travels sealed). The first two are plain JSON over HTTP with
 `Authorization: Bearer <token>` when sent to the tower's own port. The types are in `crates/airband-core`
 and are the source of truth; this page explains them.
@@ -97,7 +97,7 @@ answers only.
 A hook that runs with `AIRBAND_HELD_ID` set belongs to an agent the tower runs: `airband hook` reports it under
 that id with `deliver.kind` `held`.
 
-## `airband.radio/4`: radio ↔ tower
+## `airband.radio/5`: radio ↔ tower
 
 The radio always asks; the tower never calls the phone. All under `/v1/radio/`. Every route, with the types of
 its query, body and answer, is one `Endpoint` in `airband_core::radio::wire::at`, and both ends use those
@@ -140,12 +140,16 @@ ids of files sent with `POST attachment`. `others` are the agents on his screen 
 has, each `{ id, callsign, group, team, badge, said, ago }`. `to` is the agents he picked on his screen, by id;
 `act` is what a button did (see "What he says"); `answers` is the id of the `question` it answers.
 
-A `Reply` is `{ say, done, listen, ask, elsewhere, question }`. `done` says that what he asked was done whole and
+A `Reply` is `{ say, done, listen, ask, elsewhere, question, undelivered }`. `done` says that what he asked was done whole and
 `say` only confirms it: a radio with a screen already shows his words in the chat, so it shows `say` only when
 `done` is not set. `say` is spoken back and `listen` asks for the
 microphone again. `ask` lists the agents his words could be for when the tower could not tell. `elsewhere` is the id of one
 of `others`: the radio sends his words to that computer. `question` is the id of something the tower asked
-him back ("Which project is that for?"); what he says next carries it as `answers`.
+him back ("Which project is that for?"); what he says next carries it as `answers`. `undelivered` says, by kind,
+that his words did not reach everyone they were for: `{ "why": "missed", "missed": [{ agent, why }] }` with `why`
+`no_way_in`, `gone` or `failed` for each agent that did not get them, or `{ "why": "nobody_running" }`,
+`{ "why": "files" }`, `{ "why": "team_gone" }`. A radio keeps such words in the chat as not delivered until he
+sends them again (under a new id: an id the tower has answered is answered the same way again) or lets them go.
 
 Chat mode and the rest:
 
@@ -224,7 +228,8 @@ read, own_session, queued, seen, cancelled, permission, pictures, agent, rev, li
   permission request is open while its harness waits.
 
 A roster entry is `{ id, callsign, team, harness, waiting, state, subagents, doing, held, terminal, ends, model,
-effort }`. `state` is `working`, `asking`, `stalled` or `idle`. `doing` is what a working agent is doing right
+effort, reach }`. `reach` is `{ "kind": "reaches" }`, or `{ "kind": "no_way_in", "take_over": bool }` for an agent
+the tower has nowhere to send messages to, with whether this computer can take it over (`POST takeover`). `state` is `working`, `asking`, `stalled` or `idle`. `doing` is what a working agent is doing right
 now, asked of its adapter every two seconds while a radio is reading the feed. `held` marks an agent the tower
 runs; `terminal` one he started in a terminal; `ends` one the tower can end.
 
@@ -316,7 +321,7 @@ HKDF-SHA256, the channel's name, the pull token that lets only the tower pull fr
 that lets only the radio send to it (`Keys::radio_token`), and one ChaCha20-Poly1305 key per direction (RFC
 8439, a random 96-bit nonce on each message). The relay stores the hash of each token.
 
-Inside each sealed request is `{ t, id, method, path, body, schema, presence }`: an `airband.radio/4` call with
+Inside each sealed request is `{ t, id, method, path, body, schema, presence }`: an `airband.radio/5` call with
 the time, a random id, and where the radio stands as it makes it (`presence`: on a call or not, showing the chat
 or not). The tower answers 409 to one more than two minutes off its clock, drops one it has answered
 before, answers 426 (`other_version`) to a `schema` it does not speak, and serves only `/v1/radio/`. The answer is

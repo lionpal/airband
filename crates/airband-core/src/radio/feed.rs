@@ -279,6 +279,8 @@ pub struct RosterEntry {
     /// How hard it is set to think ("high"), when its harness has such a setting and can tell.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    /// Whether his words can reach it.
+    pub reach: crate::radio::Reach,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

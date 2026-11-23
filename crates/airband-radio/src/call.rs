@@ -236,6 +236,9 @@ pub(crate) fn send_said(line: &CallLine, host: &dyn RadioHost, takes: &crate::ta
     match line.session.send(line.link, &out) {
         Ok(Sent::Answered(reply)) => {
             take.iter().for_each(|t| takes.taken(t));
+            // the agents did not get it, or it is for one another computer has: it is kept in the chat as not
+            // delivered (and sent on there), as anything of his is. What the tower said is still said to him
+            crate::outbox::keep_answered(line.store, host, takes, out, &reply);
             Went::Answered(reply)
         }
         Ok(Sent::Taken) => {
@@ -253,7 +256,7 @@ pub(crate) fn send_said(line: &CallLine, host: &dyn RadioHost, takes: &crate::ta
             let never = e.retry() == Retry::Never;
             let why = e.said();
             let said = if never { format!("That was not sent. {why}") } else { format!("That was not sent yet. {why} It goes when it can.") };
-            to_outbox(Outgoing { failed: never.then_some(why), ..out });
+            to_outbox(Outgoing { undelivered: never.then(|| NotDelivered::Refused { why: e.said() }), ..out });
             Went::Say(said)
         }
     }
@@ -321,7 +324,7 @@ mod tests {
         assert!(matches!(went, Went::Say(_)), "{went:?}");
         // one id for the one thing he said: tried again from the outbox, his computer acts on it once
         let outbox = store.saved.lock().unwrap().outbox.clone();
-        assert_eq!(outbox.iter().map(|o| (o.id.as_str(), o.scope.as_deref(), o.failed.is_none())).collect::<Vec<_>>(), [(take.as_str(), Some("team-1"), true)]);
+        assert_eq!(outbox.iter().map(|o| (o.id.as_str(), o.scope.as_deref(), o.undelivered.is_none())).collect::<Vec<_>>(), [(take.as_str(), Some("team-1"), true)]);
         // its recording is kept, and it is the outbox's to send
         assert!(takes.all().iter().any(|t| t.id == take && matches!(t.stage, crate::takes::Stage::Sent { .. })));
     }

@@ -23,8 +23,9 @@ struct Addressed {
     /// Whoever it goes to.
     targets: Vec<Session>,
     roster: String,
-    /// Every agent's callsign, for asking him who it is for.
+    /// Every agent's callsign, for asking him who it is for, and its id, in the same order.
     names: Vec<String>,
+    everyone: Vec<String>,
     /// How many messages are waiting on him.
     pending: usize,
 }
@@ -40,7 +41,7 @@ pub(in crate::tower) async fn on_utterance(app: &Arc<App>, radio: &str, text: &s
     // pictures to show beside them in the chat
     let (files, shown_files) = match attachments::describe(&said.attachments).await {
         Ok(described) => described,
-        Err(why) => return say(why),
+        Err(why) => return Reply { undelivered: Some(Box::new(Undelivered::Files)), ..say(why) },
     };
     // starting a new agent comes next: it is addressed to the tower, not to anyone on the radio
     let projects: Vec<Place> = app.read().launchable();
@@ -71,9 +72,8 @@ pub(in crate::tower) async fn on_utterance(app: &Arc<App>, radio: &str, text: &s
         to.rest = "Keep going.".into();
         shown = None;
     }
-    // his words by their length only: what he says is never written in the log
-    log(format!("← radio: {} characters → {} {:?} ({} characters passed on)", text.chars().count(), if to.targets.is_empty() { "nobody".into() } else { list(&to.targets.iter().map(|s| short_id(&s.agent.id).to_string()).collect::<Vec<_>>()) }, control, to.rest.chars().count()));
     if let Some(control) = control {
+        log(format!("← radio: {} characters → the control {control:?}", text.chars().count()));
         return controlled(app, radio, control, &to).await;
     }
     // files with no words: the files are the message. The agent is told so by the tower, in the tower's own
@@ -86,8 +86,12 @@ pub(in crate::tower) async fn on_utterance(app: &Arc<App>, radio: &str, text: &s
         };
     }
     if to.targets.is_empty() {
-        return if to.names.is_empty() { say("No agents are running.".into()) } else { ask(format!("Who is that for? {}.", either(&to.names))) };
+        // asked who among all of them, by id: a radio keeps his words as not delivered until he says
+        return if to.names.is_empty() { nobody_running() } else { Reply { ask: to.everyone.clone(), ..ask(format!("Who is that for? {}.", either(&to.names))) } };
     }
+    // his words by their length only, and who they are for by id: what he says is never written in the log.
+    // What came of handing them over is logged once that is known (`send`, `kept`)
+    log(format!("← radio: {} characters for {}", to.rest.chars().count(), ids_of(&to.targets)));
     // The line in the chat takes the id the radio gave what he said, when it is not in use: the radio can then
     // tell that the message it is still showing as on its way has arrived, and swap one for the other without a gap.
     let message_id = Some(said.id.as_str()).filter(|id| !id.is_empty() && id.len() <= 40 && id.bytes().all(|b| b.is_ascii_alphanumeric()) && !app.read().log.iter().any(|e| e.id == *id)).map(str::to_string).unwrap_or_else(|| config::random_hex(8));
@@ -183,7 +187,7 @@ async fn new_agent(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
     let Some(Act::Launch(new)) = &said.act else { return None };
     // the team he picked, by its id, and the folder it works in
     let Some(place) = app.read().team_place(&new.team) else {
-        return Some(say("That team is not on this computer any more, or its folder is gone.".into()));
+        return Some(Reply { undelivered: Some(Box::new(Undelivered::TeamGone)), ..say("That team is not on this computer any more, or its folder is gone.".into()) });
     };
     let idea = Idea { tool: new.tool.clone(), project: Some(place), model: new.model.clone().map(Pick::Id), effort: new.effort.clone().map(Pick::Id), task: format!("{}{files}", new.task) };
     Some(start(app, radio, text, idea, projects).await)
@@ -200,17 +204,21 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
         let parsed = if control.is_some() { airband_core::routing::Parsed { to: Vec::new(), rest: String::new() } } else { parse_utterance(text, &inner.callsigns()) };
         // the agents he picked on his screen, by id; else the ones his tags name
         let named: Vec<Session> = if said.to.is_empty() { parsed.to.iter().map(|&i| inner.sessions[i].clone()).collect() } else { said.to.iter().filter_map(|id| inner.find(id).cloned()).collect() };
+        // the agents he picked are none of them here: his words are kept for him, as not delivered to them
         if !said.to.is_empty() && named.is_empty() {
-            return Err(say(NOT_RUNNING.into()));
+            let missed = said.to.iter().map(|id| Missed { agent: id.clone(), why: NotReachable::Gone }).collect();
+            return Err(Reply { undelivered: Some(Box::new(Undelivered::Missed { missed })), ..say(NOT_RUNNING.into()) });
         }
         if let [one] = named.as_slice() {
             inner.call(radio).focus = Some(one.agent.id.clone());
         }
         let names = inner.sessions.iter().map(|s| s.callsign.text()).collect::<Vec<_>>();
+        let everyone = inner.sessions.iter().map(|s| s.agent.id.clone()).collect::<Vec<_>>();
         // only words that answer "Who is that for?" by its id read what it holds; it is let go once settled
         let held = inner.call(radio).asked_for(said.answers.as_ref().map(airband_core::ids::QuestionId::as_str));
-        (parsed, named, inner.roster(), names, inner.unheard().count(), held)
+        (parsed, named, inner.roster(), (names, everyone), inner.unheard().count(), held)
     };
+    let (names, everyone) = names;
     let (mut rest, mut files) = (parsed.rest, files);
     // "Who is that for?" was just asked. A tag and nothing else answers it; so do words of his that a model reads
     // as naming someone. Either way what goes out is what he said the first time. Any answer to it settles it,
@@ -253,7 +261,7 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
                 idea.task.push_str(&files);
                 return Err(start(app, radio, text, idea, projects).await);
             }
-            Routed::Ask(options) if options.is_empty() => return Err(say("No agents are running.".into())),
+            Routed::Ask(options) if options.is_empty() => return Err(nobody_running()),
             Routed::Ask(options) => {
                 // held with its files, so they go along when he says who it was for
                 let question = new_question();
@@ -264,7 +272,17 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
             }
         }
     };
-    Ok(Addressed { rest, files, named, targets, roster, names, pending })
+    Ok(Addressed { rest, files, named, targets, roster, names, everyone, pending })
+}
+
+/// His words were for agents, and none is running here: they are kept for him, as not delivered.
+fn nobody_running() -> Reply {
+    Reply { undelivered: Some(Box::new(Undelivered::NobodyRunning)), ..say("No agents are running.".into()) }
+}
+
+/// Agents for the log: by the start of each id, never by what they are called.
+fn ids_of(agents: &[Session]) -> String {
+    list(&agents.iter().map(|s| short_id(&s.agent.id).to_string()).collect::<Vec<_>>())
 }
 
 /// The one agent a control that reads one agent's line is for: none, or several, is said back to him.
@@ -346,33 +364,36 @@ async fn send(app: &Arc<App>, to: &Addressed, wordless: bool, re: Option<&str>, 
                     queued.push(t.agent.id.clone());
                     Ok(())
                 } else {
-                    deliver(app, &Deliver::Held, &t.agent.id, &words, &ids).await
+                    deliver(app, &Deliver::Held, &t.agent.id, &words, &ids).await.map_err(|e| (NotReachable::Failed, e))
                 }
             }
             // One reached through its own tool takes his words as a turn of his own too, and the tool keeps them
             // in order itself while the agent is busy.
-            Some(how @ Deliver::Harness { .. }) => deliver(app, how, &t.agent.id, &format!("{about}{rest}{files}"), &ids).await,
+            Some(how @ Deliver::Harness { .. }) => deliver(app, how, &t.agent.id, &format!("{about}{rest}{files}"), &ids).await.map_err(|e| (NotReachable::Failed, e)),
             // Anything else gets them from outside, as a message: one line in front says who they are from.
-            Some(how) => deliver(app, how, &t.agent.id, &content, &ids).await,
-            None => Err("it was started in a way that gives airband nowhere to send it messages".into()),
+            Some(how) => deliver(app, how, &t.agent.id, &content, &ids).await.map_err(|e| (NotReachable::Failed, e)),
+            None => Err((NotReachable::NoWayIn, NO_WAY_IN.to_string())),
         };
-        app.store.delivery(message_id, Some(uid), &t.callsign.text(), &outcome);
+        app.store.delivery(message_id, Some(uid), &t.callsign.text(), &outcome.clone().map_err(|(_, e)| e));
         match outcome {
             Ok(()) => sent.push(t.clone()),
-            Err(e) => {
+            Err((why, e)) => {
                 log(format!("could not reach agent {}: {e}", crate::tower::short_id(&t.agent.id)));
-                failed.push(t.callsign.text());
+                failed.push((t.clone(), why));
             }
         }
     }
     Reached { sent, failed, queued }
 }
 
-/// What came of sending his words: the agents they reached, the callsigns of those they did not, and the ids
-/// of the ones that took them to wait until they stop (among `sent`).
+/// What the log and the delivery record say of an agent with no way in.
+const NO_WAY_IN: &str = "it was started in a way that gives airband nowhere to send it messages";
+
+/// What came of sending his words: the agents they reached, those they did not with why, and the ids of the
+/// ones that took them to wait until they stop (among `sent`).
 struct Reached {
     sent: Vec<Session>,
-    failed: Vec<String>,
+    failed: Vec<(Session, NotReachable)>,
     queued: Vec<String>,
 }
 
@@ -411,15 +432,30 @@ fn kept(app: &App, radio: &str, to: &Addressed, message_id: String, Reached { se
         let entry = Entry::his(message_id, &sent, to.rest.clone());
         inner.record(Entry { short: shown.or(entry.short.clone()), pictures: shown_files, held: (!queued.is_empty()).then_some(Held::Queued), ..entry });
     }
+    drop(inner);
     let sent_names: Vec<String> = sent.iter().map(|s| s.callsign.text()).collect();
-    let reply = say(match (sent_names.len(), failed.len()) {
-        (0, _) => format!("Could not reach {}.", list(&failed)),
+    let failed_names: Vec<String> = failed.iter().map(|(s, _)| s.callsign.text()).collect();
+    // what came of it, by ids: the one line that says whether it was delivered
+    log(match (sent.is_empty(), failed.is_empty()) {
+        (_, true) => format!("delivered to {}", ids_of(&sent)),
+        (true, false) => format!("not delivered: {}", missed_of(&failed)),
+        (false, false) => format!("delivered to {}; not delivered: {}", ids_of(&sent), missed_of(&failed)),
+    });
+    let reply = say(match (sent_names.len(), failed_names.len()) {
+        (0, _) => format!("Could not reach {}.", list(&failed_names)),
         (n, 0) if n > 3 => format!("Sent to all {n}."),
         (_, 0) => format!("Sent to {}.", list(&sent_names)),
-        _ => format!("Sent to {}. Could not reach {}.", list(&sent_names), list(&failed)),
+        _ => format!("Sent to {}. Could not reach {}.", list(&sent_names), list(&failed_names)),
     });
+    // the ones it did not reach, each with why: the radio keeps his words for them
+    let undelivered = (!failed.is_empty()).then(|| Box::new(Undelivered::Missed { missed: failed.iter().map(|(s, why)| Missed { agent: s.agent.id.clone(), why: *why }).collect() }));
     // it reached everyone it was for: the words only confirm that
-    Reply { done: failed.is_empty() && !sent_names.is_empty(), ..reply }
+    Reply { done: failed.is_empty() && !sent_names.is_empty(), undelivered, ..reply }
+}
+
+/// Agents his words did not reach, for the log: each by the start of its id, with why by kind.
+fn missed_of(failed: &[(Session, NotReachable)]) -> String {
+    list(&failed.iter().map(|(s, why)| format!("{} ({why:?})", short_id(&s.agent.id))).collect::<Vec<_>>())
 }
 
 #[cfg(test)]
@@ -447,7 +483,7 @@ mod tests {
             s.last_heard = Some("l1".into());
             s.clone()
         };
-        let to = Addressed { rest: String::new(), files: String::new(), named: Vec::new(), targets: vec![s], roster: String::new(), names: Vec::new(), pending: 0 };
+        let to = Addressed { rest: String::new(), files: String::new(), named: Vec::new(), targets: vec![s], roster: String::new(), names: Vec::new(), everyone: Vec::new(), pending: 0 };
         let reply = controlled(&app, "radio", Control::Repeat, &to).await;
         assert!(reply.say.ends_with("The deploy is done."), "{}", reply.say);
     }
@@ -522,6 +558,63 @@ mod tests {
         let lines = crate::tower::logged::take();
         assert!(lines.iter().any(|l| l.contains("is gone")), "{lines:?}");
         assert!(lines.iter().all(|l| !l.contains("billing") && !l.contains("refunds")), "{lines:?}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn words_for_an_agent_with_no_way_in_are_refused_by_kind_and_the_log_says_so_by_id() {
+        let app = crate::tower::http::tests::app("no-way-in");
+        {
+            let mut inner = app.change();
+            let a = airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("c02ccdbf-1", "test") };
+            inner.check_in(&a).unwrap();
+        }
+        crate::tower::logged::take();
+        let said = airband_core::radio::Utterance { text: "fifteen letters".into(), id: "u1".into(), to: vec!["c02ccdbf-1".into()], ..Default::default() };
+        let reply = on_utterance(&app, "radio", "fifteen letters", &said).await;
+        assert_eq!(reply.undelivered.as_deref(), Some(&Undelivered::Missed { missed: vec![Missed { agent: "c02ccdbf-1".into(), why: NotReachable::NoWayIn }] }));
+        assert!(!reply.done);
+        let lines = crate::tower::logged::take();
+        // no line reads as if it went: the one about it says it was not delivered, by id and kind
+        assert!(lines.iter().all(|l| !l.contains("passed on") && !l.contains("None")), "{lines:?}");
+        assert!(lines.iter().any(|l| l == "not delivered: c02ccdbf (NoWayIn)"), "{lines:?}");
+        // and the chat has no line of his for it: nothing reached anyone
+        assert!(app.read().log.iter().all(|e| !e.his));
+        // the roster says so before he types, and that this computer cannot take it over (no launcher holds its tool)
+        assert_eq!(app.read().roster_entries(&[])[0].reach, Reach::NoWayIn { take_over: false });
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn words_for_agents_that_are_gone_or_for_nobody_are_refused_by_kind() {
+        let app = crate::tower::http::tests::app("gone-or-nobody");
+        // nobody is running
+        let reply = on_utterance(&app, "radio", "hello", &airband_core::radio::Utterance { text: "hello".into(), id: "u1".into(), ..Default::default() }).await;
+        assert_eq!(reply.undelivered.as_deref(), Some(&Undelivered::NobodyRunning));
+        // the agent he picked has gone
+        let reply = on_utterance(&app, "radio", "hello", &airband_core::radio::Utterance { text: "hello".into(), id: "u2".into(), to: vec!["gone".into()], ..Default::default() }).await;
+        assert_eq!(reply.undelivered.as_deref(), Some(&Undelivered::Missed { missed: vec![Missed { agent: "gone".into(), why: NotReachable::Gone }] }));
+        // files that had not arrived
+        let reply = on_utterance(&app, "radio", "hello", &airband_core::radio::Utterance { text: "hello".into(), id: "u3".into(), attachments: vec!["never-sent".into()], ..Default::default() }).await;
+        assert_eq!(reply.undelivered.as_deref(), Some(&Undelivered::Files));
+    }
+
+    #[test]
+    fn an_agent_with_a_way_in_reaches_and_one_without_can_be_taken_over_only_where_a_launcher_carries_its_tool() {
+        let app = crate::tower::http::tests::app("reach");
+        let mut inner = app.change();
+        let open = airband_core::agent::Agent { cwd: Some("/x/shop".into()), pid: Some(std::process::id()), deliver: Some(Deliver::Socket { path: "/tmp/x.sock".into(), token: None }), ..crate::adapters::agent_with("a", "test") };
+        let shut = airband_core::agent::Agent { cwd: Some("/x/shop".into()), pid: Some(std::process::id()), ..crate::adapters::agent_with("b", "test") };
+        let no_pid = airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("c", "test") };
+        for a in [&open, &shut, &no_pid] {
+            inner.check_in(a).unwrap();
+        }
+        fn reach(inner: &Inner, carried: &[String]) -> Vec<(String, Reach)> {
+            inner.roster_entries(carried).into_iter().map(|r| (r.id, r.reach)).collect()
+        }
+        assert_eq!(reach(&inner, &["test".into()]), [("a".into(), Reach::Reaches), ("b".into(), Reach::NoWayIn { take_over: true }), ("c".into(), Reach::NoWayIn { take_over: false })]);
+        assert_eq!(reach(&inner, &[])[1], ("b".into(), Reach::NoWayIn { take_over: false }));
+        // a later report that cannot see its way in does not take it away
+        inner.check_in(&airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a", "test") }).unwrap();
+        assert_eq!(reach(&inner, &[])[0], ("a".into(), Reach::Reaches));
     }
 
     fn answering(text: &str, question: &str) -> airband_core::radio::Utterance {

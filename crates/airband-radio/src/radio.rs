@@ -91,11 +91,16 @@ pub enum AnswerOutcome {
     Sent,
     /// It is kept on the phone and goes when it can.
     KeptForLater { why: String },
-    /// It will never go as it is; nothing is kept.
+    /// It did not go, and why: it is kept in the chat as not delivered, to send again or let go.
     Refused { why: String },
     /// The computer it was for is no longer paired.
     NotPaired { why: String },
 }
+/// What he is told of an answer from a notification that his computer had and its agent did not get.
+const NOT_DELIVERED_THERE: &str = "Not delivered. It\u{2019}s in the chat to try again.";
+/// What follows why an answer from a notification did not go.
+const KEPT_IN_CHAT: &str = "It\u{2019}s in the chat to try again.";
+
 impl AnswerOutcome {
     /// Whether the answer is given, now or later: only then is the question no longer waiting on him.
     pub(crate) fn given(&self) -> bool {
@@ -208,23 +213,38 @@ impl Radio {
         enqueue(&self.store, &self.wake, &*self.host, out);
     }
 
-    /// Try again something that was given up on: it goes to the end of what is waiting, as if just said.
-    pub(crate) fn send_again(&self, id: &str) {
-        let waiting = self.store.change(|s| {
-            if let Some(i) = s.outbox.iter().position(|o| o.id == id && o.failed.is_some()) {
+    /// Try again something that was not delivered: it goes to the end of what is waiting, as if just said. One
+    /// his computer answered before goes under `fresh` ([`Outgoing::again`]); `to`, when given, is who it is
+    /// for now (an agent just taken over). Returns the id it now waits under, if it was there.
+    pub(crate) fn send_again(&self, id: &str, fresh: &str, to: Option<String>) -> Option<String> {
+        let (now, waiting) = self.store.change(|s| {
+            let now = s.outbox.iter().position(|o| o.id == id && o.undelivered.is_some()).map(|i| {
                 let was = s.outbox.remove(i);
-                s.outbox.push(Outgoing { at: now_ms(), tries: 0, last_tried: 0, trail: Vec::new(), failed: None, stage: Stage::Trying, taken_at: None, ..was });
-            }
-            s.outbox.clone()
+                let under = if was.undelivered.as_ref().is_some_and(NotDelivered::answered) { fresh.to_string() } else { was.id.clone() };
+                let again = was.again(under);
+                let again = match &to {
+                    Some(agent) => Outgoing { to: vec![agent.clone()], ..again },
+                    None => again,
+                };
+                let under = again.id.clone();
+                s.outbox.push(again);
+                under
+            });
+            (now, s.outbox.clone())
         });
         self.wake.ring();
         self.host.outbox(waiting, None);
+        now
+    }
+    /// The message waiting under this id, if it is here.
+    pub(crate) fn unsent_one(&self, id: &str) -> Option<Outgoing> {
+        self.store.saved.lock().unwrap().outbox.iter().find(|o| o.id == id).cloned()
     }
     /// Let go of something that was not sent. Returns it, if it was there, so its words can be put back for
     /// him to change.
     pub(crate) fn discard(&self, id: &str) -> Option<Outgoing> {
         let (gone, waiting) = self.store.change(|s| {
-            let gone = s.outbox.iter().position(|o| o.id == id && o.failed.is_some()).map(|i| s.outbox.remove(i));
+            let gone = s.outbox.iter().position(|o| o.id == id && o.undelivered.is_some()).map(|i| s.outbox.remove(i));
             (gone, s.outbox.clone())
         });
         // with a note of nothing to say: it did not go, so it is not shown as on its way to the chat
@@ -426,10 +446,19 @@ impl Radio {
                     self.enqueue(Outgoing { stage: Stage::Left, ..out });
                     return AnswerOutcome::KeptForLater { why: if away { AWAY.into() } else { LinkError::Behind.said() } };
                 }
-                // his computer has it: that is the answer given
+                // his computer has it: that is the answer given, unless it says the agent did not get it. Then
+                // it is kept in the chat as not delivered, as anything of his is
+                Ok(Sent::Answered(reply)) if crate::outbox::keep_answered(&self.store, &*self.host, &self.senses.takes, out.clone(), &reply) => {
+                    return AnswerOutcome::Refused { why: NOT_DELIVERED_THERE.into() };
+                }
                 Ok(Sent::Taken | Sent::Answered(_)) => return AnswerOutcome::Sent,
-                // it cannot be sent however often it is tried: he is told why, and nothing is left to try again
-                Err(e) if e.retry() == Retry::Never => return AnswerOutcome::Refused { why: RadioError::from(e).said() },
+                // it cannot be sent however often it is tried: he is told why, and it is kept in the chat as not
+                // delivered, to send again or let go
+                Err(e) if e.retry() == Retry::Never => {
+                    let why = RadioError::from(e).said();
+                    self.enqueue(Outgoing { undelivered: Some(NotDelivered::Refused { why: why.clone() }), ..out });
+                    return AnswerOutcome::Refused { why: format!("{why} {KEPT_IN_CHAT}") };
+                }
                 Err(e) => failed = e,
             }
         }

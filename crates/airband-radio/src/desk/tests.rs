@@ -54,7 +54,7 @@ fn station(name: &str, port: u16, agents: &[(&str, &str)], messages: Vec<ChatMes
         failing_since: None,
         reads: String::new(),
         reads_failed: String::new(),
-        agents: agents.iter().map(|(c, g)| (c, g, c.strip_prefix(g).unwrap_or(c).trim().to_string())).map(|(c, g, number)| ChatAgent { id: c.to_string(), callsign: c.to_string(), badge: airband_core::routing::Callsign { project: g.to_string(), number: number.clone(), named: false }.badge(), group: g.to_string(), team: g.to_string(), room: String::new(), number: number.clone(), number_kept: number, named: false, harness: "h".into(), waiting: false, state: AgentState::Working, subagents: 0, doing: None, held: false, terminal: false, ends: false, model: None, effort: None }).collect(),
+        agents: agents.iter().map(|(c, g)| (c, g, c.strip_prefix(g).unwrap_or(c).trim().to_string())).map(|(c, g, number)| ChatAgent { id: c.to_string(), callsign: c.to_string(), badge: airband_core::routing::Callsign { project: g.to_string(), number: number.clone(), named: false }.badge(), group: g.to_string(), team: g.to_string(), room: String::new(), number: number.clone(), number_kept: number, named: false, harness: "h".into(), waiting: false, state: AgentState::Working, subagents: 0, doing: None, held: false, terminal: false, ends: false, model: None, effort: None, reaches: true, take_over: false }).collect(),
         open: messages.iter().filter(|m| m.needs_you).map(|m| m.id.clone()).collect(),
         epoch: 0,
         was_waiting: Vec::new(),
@@ -1126,7 +1126,7 @@ fn words_said_aloud_go_once_under_their_recordings_id_and_trying_again_never_sen
     let rec = takes.begin(Aim::default());
     let id = rec.id.clone();
     let Listened::Said { text, take } = takes.ended(rec, Got::Words(Some("ship it".into()))) else { panic!() };
-    deliver(&desk.shared, text, None, None, None, None, take);
+    assert_eq!(deliver(&desk.shared, text, None, None, None, None, take), None);
     assert_eq!(radio.unsent().iter().map(|o| (o.id.clone(), o.text.clone())).collect::<Vec<_>>(), [(id.clone(), "ship it".to_string())]);
     assert_eq!(stage(&id), Some(Stage::Sent { text: "ship it".into() }));
     // on its way, it shows as his message, with its recording; there is nothing else to show for it
@@ -1136,12 +1136,12 @@ fn words_said_aloud_go_once_under_their_recordings_id_and_trying_again_never_sen
     desk.take_again(id.clone());
     assert_eq!(radio.unsent().len(), 1);
     // given up on and sent again by the outbox: the same words, the same id, and no listening
-    radio.store.change(|s| s.outbox[0].failed = Some("no".into()));
+    radio.store.change(|s| s.outbox[0].undelivered = Some(crate::NotDelivered::Refused { why: "no".into() }));
     desk.send_again(id.clone());
     assert_eq!(radio.unsent().iter().filter(|o| o.id == id).count(), 1);
     assert_eq!(stage(&id), Some(Stage::Sent { text: "ship it".into() }));
     // let go: the recording goes with it
-    radio.store.change(|s| s.outbox[0].failed = Some("no".into()));
+    radio.store.change(|s| s.outbox[0].undelivered = Some(crate::NotDelivered::Refused { why: "no".into() }));
     desk.discard_unsent(id.clone());
     assert_eq!(stage(&id), None);
 }
@@ -1169,4 +1169,83 @@ fn his_summary_brief_starts_as_the_usual_text_is_kept_and_reset() {
     assert_eq!(desk.summary_brief(), USUAL);
     assert_eq!(crate::desk::intents::KeptIntents::open(&at).now.brief.unwrap().wanted.0, None);
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn words_an_agent_did_not_get_stay_where_he_sent_them_with_why_and_the_take_over_when_there_is_one() {
+    use airband_core::radio::{Missed, NotReachable, Undelivered};
+    let desk = Desk::through("", Arc::new(Watching(std::sync::atomic::AtomicBool::new(true))), |_| Arc::default());
+    let mut mini = station("mini", 1, &[("shop two", "shop"), ("backoffice one", "backoffice")], Vec::new());
+    // shop two was started where airband has nowhere to send it messages, and its computer can take it over
+    mini.agents.iter_mut().filter(|a| a.id == "shop two").for_each(|a| (a.reaches, a.take_over) = (false, true));
+    let radio = mini.radio.clone();
+    let shop = mini.agents[0].room.clone();
+    desk.shared.state.lock().unwrap().computers.push(mini);
+    let kept = Outgoing { undelivered: Some(crate::NotDelivered::Agents { why: Undelivered::Missed { missed: vec![Missed { agent: "shop two".into(), why: NotReachable::NoWayIn }] } }), sent_from: crate::SentFrom { room: None, agent: Some("shop two".into()) }, to: vec!["shop two".into()], ..Outgoing::of("ship it".into()) };
+    let id = kept.id.clone();
+    radio.store.change(|s| s.outbox.push(kept));
+    // where he sent it, and in its team, and with everyone: marked, with why, the words to copy, and the take-over
+    for (room, agent) in [(None, Some("shop two".to_string())), (Some(shop.clone()), None), (None, None)] {
+        let view = looked(&desk, room.clone(), agent.clone());
+        let shown = view.sending.iter().find(|o| o.id == id).unwrap_or_else(|| panic!("not shown at {room:?} {agent:?}"));
+        assert_eq!(shown.not_delivered.as_deref(), Some("Not delivered. airband can\u{2019}t send messages to shop two."));
+        assert_eq!((shown.text.as_str(), shown.take_over.as_deref()), ("ship it", Some("shop two")));
+    }
+    // not with another agent he looks at
+    assert!(looked(&desk, None, Some("backoffice one".into())).sending.is_empty());
+    // said where he types, before he does, when he looks at that agent; never for one his words reach
+    let view = looked(&desk, None, Some("shop two".into()));
+    assert_eq!(view.no_way_in, Some(DeskNoWayIn { agent: "shop two".into(), line: "airband can\u{2019}t send messages to shop two.".into(), take_over: true }));
+    assert_eq!(looked(&desk, None, Some("backoffice one".into())).no_way_in, None);
+    // tried again: under a new id (his computer answered this one), to the agent it did not reach, once
+    desk.send_again(id.clone());
+    let now = radio.unsent();
+    assert_eq!(now.len(), 1);
+    assert!(now[0].id != id && now[0].undelivered.is_none() && now[0].to == ["shop two"] && now[0].text == "ship it");
+    // let go only when he says so
+    radio.store.change(|s| s.outbox[0].undelivered = Some(crate::NotDelivered::WhoFor { guesses: Vec::new() }));
+    let again = radio.unsent()[0].id.clone();
+    assert_eq!(desk.discard_unsent(again), Some("ship it".into()));
+    assert!(radio.unsent().is_empty());
+}
+
+#[test]
+fn typed_words_that_have_nowhere_to_go_yet_come_back_to_him() {
+    let desk = Desk::through("", Arc::new(Watching(std::sync::atomic::AtomicBool::new(true))), |_| Arc::default());
+    // nothing paired
+    assert_eq!(desk.send("ship it".into(), None, None, None), Some("ship it".into()));
+    // two computers, no main one chosen, and nothing in his words says which
+    {
+        let mut state = desk.shared.state.lock().unwrap();
+        state.computers.push(station("mini", 1, &[("shop two", "shop")], Vec::new()));
+        state.computers.push(station("macbook", 2, &[("ff one", "ff")], Vec::new()));
+    }
+    assert_eq!(desk.send("ship it".into(), None, None, None), Some("ship it".into()));
+    // addressed to an agent: it goes, and nothing comes back
+    assert_eq!(desk.send("ship it".into(), None, None, Some("ff one".into())), None);
+}
+
+#[test]
+fn words_waiting_to_be_told_who_they_are_for_stay_when_he_says_something_else() {
+    let desk = Desk::through("", Arc::new(Watching(std::sync::atomic::AtomicBool::new(true))), |_| Arc::default());
+    let mini = station("mini", 1, &[("shop two", "shop"), ("shop three", "shop")], Vec::new());
+    let (radio, at) = (mini.radio.clone(), mini.id());
+    desk.shared.state.lock().unwrap().computers.push(mini);
+    let host = ComputerHost { shared: desk.shared.clone(), station: at };
+    // the tower could not tell: the outbox keeps it as not delivered, and he is asked
+    let unplaced = Outgoing { undelivered: Some(crate::NotDelivered::WhoFor { guesses: vec!["shop two".into()] }), ..Outgoing::of("ship it".into()) };
+    radio.store.change(|s| s.outbox.push(unplaced.clone()));
+    host.unplaced(unplaced.clone(), None, vec!["shop two".into()]);
+    assert!(desk.view().asking.is_some());
+    // he puts it off: the question goes, the words stay
+    desk.drop_ask();
+    let view = desk.view();
+    assert!(view.asking.is_none());
+    assert_eq!(view.sending.iter().find(|o| o.id == unplaced.id).and_then(|o| o.not_delivered.clone()).as_deref(), Some("Not delivered. airband couldn\u{2019}t tell who it was for."));
+    // asked again and answered: it goes to that agent, and the kept copy leaves
+    host.unplaced(unplaced.clone(), None, vec!["shop two".into()]);
+    desk.choose("shop two".into());
+    let now = radio.unsent();
+    assert_eq!(now.len(), 1);
+    assert!(now[0].id != unplaced.id && now[0].to == ["shop two"] && now[0].text == "ship it");
 }

@@ -44,8 +44,11 @@ fn a_notification_answer_goes_only_to_the_computer_it_came_from() {
     let got = desk.answer_now(station_id(&link(2)).to_string(), "m1".into(), "yes".into(), None);
     let gone = desk.answer_now("not-a-computer".into(), "m2".into(), "yes".into(), None);
     let answered = desk.shared.state.lock().unwrap().answered.clone();
+    let kept: Vec<(String, Option<crate::NotDelivered>)> = radio_of(&desk, &link(2)).unsent().into_iter().map(|o| (o.text, o.undelivered)).collect();
     desk.stop();
-    assert_eq!(got, AnswerOutcome::Refused { why: "That question was closed.".into() });
+    assert_eq!(got, AnswerOutcome::Refused { why: "That question was closed. It\u{2019}s in the chat to try again.".into() });
+    // what he answered is kept in the chat as not delivered, never let go
+    assert_eq!(kept, [("yes".to_string(), Some(crate::NotDelivered::Refused { why: "That question was closed.".into() }))]);
     assert_eq!(one.asked_on::<at::Utterance>(), 0, "it went to another computer");
     assert!(matches!(gone, AnswerOutcome::NotPaired { .. }));
     assert!(!answered.contains("m1") && !answered.contains("m2"), "an answer that never went was taken as given");
@@ -81,16 +84,16 @@ fn a_message_his_computer_only_ever_says_it_has_ends_and_he_is_told() {
     let find = |text: &str| radio.unsent().into_iter().find(|o| o.text == text);
     let mut ended = None;
     for _ in 0..300 {
-        ended = find("old").and_then(|o| o.failed);
+        ended = find("old").and_then(|o| o.undelivered);
         if ended.is_some() && find("slept").is_some_and(|o| o.stage == Stage::Taken) {
             break;
         }
         thread::sleep(Duration::from_millis(10));
     }
     desk.stop();
-    assert_eq!(ended.as_deref(), Some(crate::outbox::NEVER_SETTLED));
+    assert_eq!(ended, Some(crate::NotDelivered::NeverSettled));
     let slept = find("slept").expect("still waiting for what came of it");
-    assert_eq!((slept.stage, slept.failed), (Stage::Taken, None), "taken just now, so not given up on");
+    assert_eq!((slept.stage, slept.undelivered), (Stage::Taken, None), "taken just now, so not given up on");
     assert!(slept.taken_at.is_some_and(|t| t > long_ago));
 }
 

@@ -18,14 +18,18 @@ impl Desk {
     pub fn take_again(&self, id: String) {
         let waiting = self.shared.state.lock().unwrap().computers.iter().any(|s| s.radio.unsent().iter().any(|o| o.id == id));
         match self.shared.senses.takes.again(&id, waiting) {
-            Again::Send { text, aim } => deliver(&self.shared, text, None, aim.re, aim.room, aim.agent, Some(id)),
+            Again::Send { text, aim } => {
+                let _kept = deliver(&self.shared, text, None, aim.re, aim.room, aim.agent, Some(id));
+            }
             Again::Hear { aim } => {
                 let shared = self.shared.clone();
                 thread::spawn(move || {
                     let side = Side { shared: shared.clone() };
                     let heard = crate::ears::Ears::new(shared.senses.clone()).hear_again(&side, &id);
                     match heard {
-                        Listened::Said { text, take } => deliver(&shared, text, None, aim.re, aim.room, aim.agent, take),
+                        Listened::Said { text, take } => {
+                            let _kept = deliver(&shared, text, None, aim.re, aim.room, aim.agent, take);
+                        }
                         Listened::Nothing | Listened::Cannot | Listened::Unheard { .. } => {}
                     }
                     shared.host.changed();
