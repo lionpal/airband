@@ -63,6 +63,35 @@ pub(crate) fn station(cfg: &Config) -> String {
     .clone()
 }
 
+/// The identifier of this computer's model as its system gives it (`hw.model`, "Mac16,10"): the phone shows the
+/// computer's shape by it. Empty where the system gives none. Asked of the system once.
+pub(crate) fn model() -> String {
+    static MODEL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    MODEL.get_or_init(hw_model).clone()
+}
+
+#[cfg(target_os = "macos")]
+fn hw_model() -> String {
+    let name = c"hw.model";
+    let mut size: libc::size_t = 0;
+    // SAFETY: the name is a C string; asked first for the length, then into a buffer of that length
+    if unsafe { libc::sysctlbyname(name.as_ptr(), std::ptr::null_mut(), &mut size, std::ptr::null_mut(), 0) } != 0 || size == 0 {
+        return String::new();
+    }
+    let mut buf = vec![0u8; size];
+    // SAFETY: `buf` holds `size` bytes, and `size` says so
+    if unsafe { libc::sysctlbyname(name.as_ptr(), buf.as_mut_ptr().cast(), &mut size, std::ptr::null_mut(), 0) } != 0 {
+        return String::new();
+    }
+    buf.truncate(size);
+    std::ffi::CStr::from_bytes_until_nul(&buf).ok().and_then(|c| c.to_str().ok()).map(str::to_string).unwrap_or_default()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn hw_model() -> String {
+    String::new()
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -72,5 +101,12 @@ mod tests {
         assert!(all[first_own..].iter().all(|(_, own)| *own), "the private network's come first");
         assert!(super::direct_addrs(false).iter().all(|(_, own)| !own), "none of its own network's without lan");
         assert_eq!(super::direct_url(std::net::Ipv4Addr::new(100, 64, 0, 1), 7800), "http://100.64.0.1:7800");
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn this_mac_gives_its_models_identifier() {
+        let model = super::model();
+        assert!(model.contains(',') && model.bytes().next().is_some_and(|b| b.is_ascii_alphabetic()), "{model:?}");
     }
 }

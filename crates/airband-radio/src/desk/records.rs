@@ -277,9 +277,68 @@ pub enum DeskTeamPick {
 pub struct DeskComputer {
     /// The same every time, from its pairing; nothing secret.
     pub id: String,
-    /// Its own name once it has said one; until then what its pairing link calls it, or "Your computer" when
-    /// it is the only one, or "New computer".
+    /// Its own name once it has said one; until then what its pairing link calls it.
     pub name: String,
+    /// What shape it is, by its model.
+    pub shape: MachineShape,
+    /// What to draw it as: the picture he picked, else its shape, else a plain computer.
+    pub picture: ComputerPicture,
+}
+
+/// A picture a computer is drawn with: one for each shape, a plain computer, and a few more he can pick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum ComputerPicture {
+    Laptop,
+    Mini,
+    Studio,
+    Imac,
+    Pro,
+    Plain,
+    Pc,
+    Server,
+    Chip,
+}
+
+impl ComputerPicture {
+    /// The picture of a shape; a shape not known is a plain computer.
+    pub(crate) fn of(shape: MachineShape) -> ComputerPicture {
+        match shape {
+            MachineShape::Laptop => ComputerPicture::Laptop,
+            MachineShape::Mini => ComputerPicture::Mini,
+            MachineShape::Studio => ComputerPicture::Studio,
+            MachineShape::Imac => ComputerPicture::Imac,
+            MachineShape::Pro => ComputerPicture::Pro,
+            MachineShape::Unknown => ComputerPicture::Plain,
+        }
+    }
+}
+
+/// The shape of a computer, by the identifier of its model (`airband_core::catalog::shape_of`). `Unknown` when
+/// it gave no identifier, or one the catalogue does not list: drawn as a plain computer, and never guessed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum MachineShape {
+    Laptop,
+    Mini,
+    Studio,
+    Imac,
+    Pro,
+    Unknown,
+}
+
+impl MachineShape {
+    /// The shape of the computer whose model goes by this identifier, as the catalogue in use lists it.
+    pub(crate) fn of(model: &str) -> MachineShape {
+        use airband_core::catalog::Shape;
+        match airband_core::catalog::shape_of(model) {
+            Some(Shape::Laptop) => MachineShape::Laptop,
+            Some(Shape::Mini) => MachineShape::Mini,
+            Some(Shape::Studio) => MachineShape::Studio,
+            Some(Shape::Imac) => MachineShape::Imac,
+            Some(Shape::Pro) => MachineShape::Pro,
+            None => MachineShape::Unknown,
+        }
+    }
 }
 
 /// One of his messages on its way, as a host shows it.

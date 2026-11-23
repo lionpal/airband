@@ -99,6 +99,10 @@ fn take(shared: &Shared, radio: &Radio, station: &StationId, epoch: u64, got: &R
                 computer.name = feed.station.clone();
                 computer.radio.store.change(|s| s.computer = feed.station.clone());
             }
+            if !feed.model.is_empty() && computer.model != feed.model {
+                computer.model = feed.model.clone();
+                computer.radio.store.change(|s| s.model = feed.model.clone());
+            }
             computer.reads = feed.reads.clone();
             // what reads there has stopped working: he is told once, when it stops, and each message comes as
             // it was written until it works again

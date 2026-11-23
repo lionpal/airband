@@ -6,7 +6,7 @@
 use super::*;
 use airband_core::routing::{Callsign, parse_utterance};
 use crate::services::CodingTool;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Condvar;
 pub(crate) use airband_core::ids::StationId;
 mod agents;
@@ -101,6 +101,9 @@ pub(crate) struct Computer {
     /// Which connection this is: a thread of an older one finds it changed and stops.
     epoch: u64,
     name: String,
+    /// The identifier of its model, as its system gave it: the one it last said, and from the moment it was
+    /// paired, the one its pairing link carried. Empty when neither said one.
+    model: String,
     pub(crate) online: bool,
     /// It answered, and the answer was that it will not talk to this phone as things are (another version of
     /// airband, or it no longer knows this phone): what he is to do, in words for him. Nothing while it talks.
@@ -248,9 +251,16 @@ impl State {
     pub(super) fn computer_name(&self, id: &StationId) -> String {
         self.computer(id).map(|c| c.name.clone()).unwrap_or_default()
     }
+    /// A computer as the screens show it: its id, what it is called, and its shape.
+    pub(super) fn shown(&self, computer: &Computer) -> DeskComputer {
+        let shape = MachineShape::of(&computer.model);
+        // his pick, else its shape, else a plain computer
+        let picture = self.read.marks.pictures.get(computer.id().as_str()).copied().unwrap_or_else(|| ComputerPicture::of(shape));
+        DeskComputer { id: computer.id().to_string(), name: self.computer_name(&computer.id()), shape, picture }
+    }
     /// Every computer's radio with its id and what it is called.
     fn named_radios(&self) -> Vec<(DeskComputer, Arc<Radio>)> {
-        self.computers.iter().map(|s| (DeskComputer { id: s.id().to_string(), name: self.computer_name(&s.id()) }, s.radio.clone())).collect()
+        self.computers.iter().map(|s| (self.shown(s), s.radio.clone())).collect()
     }
     /// The colour a team is shown in.
     fn colour(&self, group: &str) -> Option<u8> {
@@ -416,14 +426,16 @@ impl Desk {
             let Ok(radio) = self.connect(&link, None) else { continue };
             radio.set_call_mode(calling);
             // what it last said it is called, kept on the phone; until it has said, what its link calls it
-            let kept = radio.store.saved.lock().unwrap().computer.clone();
+            let (kept, kept_model) = { let saved = radio.store.saved.lock().unwrap(); (saved.computer.clone(), saved.model.clone()) };
             let name = if kept.is_empty() { named } else { kept };
+            let model = if kept_model.is_empty() { airband_core::pairing::Pairing::model(&link) } else { kept_model };
             let was_waiting = radio.unsent();
             let mut computer = Computer {
                 messages: radio.history(),
                 radio,
                 epoch,
                 name,
+                model,
                 online: false,
                 refused: None,
                 tried: false,

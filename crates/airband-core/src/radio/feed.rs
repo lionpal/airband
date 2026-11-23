@@ -299,6 +299,10 @@ pub struct Feed {
     /// What this tower's computer is called ("mini", "macbook"), for a client paired with more than one.
     #[serde(default)]
     pub station: String,
+    /// The identifier of this tower's computer's model, as its system gives it: what the radio shows the
+    /// computer's shape by. Empty when the system gives none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub model: String,
     /// Addresses a radio may try to reach this tower at without the relay, when it is on the same network:
     /// `http://<address>:<port>`. A radio paired through a relay posts the same sealed request it would give
     /// the relay to `<address>/v1/sealed/<channel>` and gets the sealed answer back, so nothing on that network

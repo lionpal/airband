@@ -30,6 +30,8 @@ pub(super) struct Document {
     #[serde(default)]
     contact: Vec<Value>,
     #[serde(default)]
+    machines: Vec<Value>,
+    #[serde(default)]
     phrases: Vec<Value>,
     #[serde(default)]
     retired: Vec<Value>,
@@ -129,6 +131,7 @@ pub(super) fn read(text: &str) -> Result<Catalog, String> {
     let frames = each::<Frames>(doc.frames, "frames", &mut left_out);
     let installers = each::<Installer>(doc.installers, "installer", &mut left_out);
     let contact = each::<Contact>(doc.contact, "contact", &mut left_out);
+    let machines = each::<Machines>(doc.machines, "machine", &mut left_out);
     // a secret's shape that would mask nothing, or every word, is no shape: it is left out and said
     let secrets = each::<crate::redact::Shape>(doc.secrets, "secret", &mut left_out)
         .into_iter()
@@ -157,5 +160,5 @@ pub(super) fn read(text: &str) -> Result<Catalog, String> {
     // a copy without a readable one is not read at all
     let phrases = each::<String>(doc.phrases, "phrase", &mut left_out);
     let retired = each::<String>(doc.retired, "retired", &mut left_out);
-    Ok(Catalog { rev: doc.rev, hash: doc.hash, providers, tools, models, servers, links, secrets, terminals, frames, installers, contact, phrases, retired, left_out })
+    Ok(Catalog { rev: doc.rev, hash: doc.hash, providers, tools, models, servers, links, secrets, terminals, frames, installers, contact, machines, phrases, retired, left_out })
 }

@@ -44,9 +44,10 @@ struct FeedView: View {
         .fullScreenCover(isPresented: $onboarding) { OnboardingView().environmentObject(model) }
         // several computers and no default one chosen: he is asked once, before anything can be sent. Each is
         // named as the core names it to him.
-        .confirmationDialog("Default computer", isPresented: Binding(get: { model.view.chooseMain && !onboarding && !showScan }, set: { _ in }), titleVisibility: .visible) {
-            ForEach(model.computers, id: \.id) { c in Button(c.name) { model.setMainComputer(c.id) } }
-        } message: {
+        // Shown with the computers as they are now, and drawn again when one's name changes while it is up.
+        .confirmationDialog("Default computer", isPresented: Binding(get: { model.view.chooseMain && !onboarding && !showScan }, set: { _ in }), titleVisibility: .visible, presenting: model.computers) { computers in
+            ForEach(computers, id: \.self) { c in Button { model.setMainComputer(c.id) } label: { Label(c.name, systemImage: RadioModel.symbol(c.picture)) } }
+        } message: { _ in
             Text(RadioModel.mainComputerNote)
         }
         .fullScreenCover(isPresented: $showScan) { ScanSheet().environmentObject(model) }

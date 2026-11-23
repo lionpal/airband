@@ -44,11 +44,11 @@ struct NewAgentSheet: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if model.onlyComputer == nil {
                         label("Computer")
-                        chips(model.view.stations.map { ($0.id, $0.name, nil) }, chosen: computer) { computer = $0; (place, name) = (nil, ""); load() }
+                        chips(model.view.stations.map { ($0.id, $0.name, .symbol(RadioModel.symbol($0.picture))) }, chosen: computer) { computer = $0; (place, name) = (nil, ""); load() }
                     }
                     if model.onlyTool == nil {
                         label("Coding agent")
-                        chips(model.usedTools.map { ($0.id, $0.name, Marks.tool($0.id)) }, chosen: tool) { tool = $0 }
+                        chips(model.usedTools.map { ($0.id, $0.name, .asset(Marks.tool($0.id))) }, chosen: tool) { tool = $0 }
                     }
                     label("Recent folders")
                     VStack(spacing: 8) {
@@ -134,14 +134,20 @@ struct NewAgentSheet: View {
     }
 
     /// A few choices side by side, one of them chosen: (what it is, what it is called, its mark).
-    private func chips(_ all: [(String, String, String?)], chosen: String, pick: @escaping (String) -> Void) -> some View {
+    /// A chip's picture: a system symbol, or one of the app's own images when it has it.
+    private enum Mark { case symbol(String), asset(String) }
+
+    private func chips(_ all: [(String, String, Mark)], chosen: String, pick: @escaping (String) -> Void) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(all, id: \.0) { id, called, mark in
                     let on = id == chosen
                     Button { pick(id) } label: {
                         HStack(spacing: 8) {
-                            if let mark, UIImage(named: mark) != nil { Image(mark).resizable().scaledToFit().frame(width: 18, height: 18) }
+                            switch mark {
+                            case .symbol(let name): Image(systemName: name).font(.system(size: 16, weight: .medium)).frame(width: 18, height: 18)
+                            case .asset(let name): if UIImage(named: name) != nil { Image(name).resizable().scaledToFit().frame(width: 18, height: 18) }
+                            }
                             Text(called).font(.system(size: 15, weight: .semibold))
                         }
                         .foregroundStyle(on ? Palette.ink : Palette.soft).padding(.horizontal, 14).frame(minHeight: 44)

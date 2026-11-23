@@ -82,6 +82,7 @@ pub fn check(c: &Catalog) -> Result<(), String> {
         _ => return Err("the catalog names no one to write to, more than one, or a number a text cannot go to".into()),
     }
     crate::links::check(&c.links)?;
+    check_machines(&c.machines)?;
     for s in &c.servers {
         if !plain(&s.id) || !crate::links::secure(&s.base) || s.archives.iter().any(|a| !part(&a.file) || !crate::encode::is_hex(&a.sha256, 64..=64)) || s.program.split('/').any(|p| !part(p)) {
             return Err(format!("{}: not a program that can be fetched safely", s.id));

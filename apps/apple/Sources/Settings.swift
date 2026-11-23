@@ -10,14 +10,21 @@ struct SetupView: View {
     @State private var devPage = Dev.text("devPage")
     @State private var scanning = false
 
+    /// The job whose page was asked for at launch, in development only.
+    private var devJob: ChoiceJob? { model.jobs.first { $0.title == devPage } }
+
+    private func choicePage(_ job: ChoiceJob) -> some View {
+        ChoicePage(title: job.title, headline: job.headline) { ChoicePicker(job: job, mode: .settings) }.environmentObject(model)
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 Section {
                     // one row for each job the core lists, opening the same picker the first run showed
                     ForEach(model.jobs, id: \.self) { job in
-                        NavigationLink(isActive: Binding(get: { devPage == job.title }, set: { if !$0 { devPage = nil } })) {
-                            ChoicePage(title: job.title, headline: job.headline) { ChoicePicker(job: job, mode: .settings) }.environmentObject(model)
+                        NavigationLink {
+                            choicePage(job)
                         } label: {
                             row(job.title, model.chosenLabel(job))
                         }
@@ -47,12 +54,12 @@ struct SetupView: View {
                         if model.view.severalComputers {
                             Picker("Default computer", selection: Binding(get: { model.view.mainComputer ?? "" }, set: { model.setMainComputer($0) })) {
                                 if model.view.mainComputer == nil { Text("Not chosen").tag("") }
-                                ForEach(model.computers, id: \.id) { c in Text(c.name).tag(c.id) }
+                                ForEach(model.computers, id: \.self) { c in Label(c.name, systemImage: RadioModel.symbol(c.picture)).tag(c.id) }
                             }
                         }
                         ForEach(model.computers, id: \.id) { c in
-                            Picker(selection: Binding(get: { model.icon(of: c.id) }, set: { model.setIcon($0, of: c.id) })) {
-                                ForEach(RadioModel.computerSymbols, id: \.self) { symbol in Image(systemName: symbol).tag(symbol) }
+                            Picker(selection: Binding(get: { c.picture }, set: { model.setPicture($0, of: c.id) })) {
+                                ForEach(RadioModel.computerPictures, id: \.self) { picture in Image(systemName: RadioModel.symbol(picture)).tag(picture) }
                             } label: {
                                 Text(c.name)
                             }
@@ -66,7 +73,7 @@ struct SetupView: View {
                 if model.paired {
                     Section {
                         NavigationLink("Connection") { ConnectionPage().environmentObject(model) }
-                        NavigationLink("Accounts", isActive: $showAccounts) { AccountsView().environmentObject(model) }
+                        NavigationLink("Accounts") { AccountsView().environmentObject(model) }
                         if push.denied {
                             Button("Turn on notifications") { UIApplication.shared.open(URL(string: UIApplication.openNotificationSettingsURLString)!) }
                         }
@@ -95,6 +102,11 @@ struct SetupView: View {
                 }
             }
             .fullScreenCover(isPresented: $scanning) { ScanSheet().environmentObject(model) }
+            // development only: a page opened at launch for a screenshot
+            .navigationDestination(isPresented: Binding(get: { devJob != nil }, set: { if !$0 { devPage = nil } })) {
+                if let job = devJob { choicePage(job) }
+            }
+            .navigationDestination(isPresented: $showAccounts) { AccountsView().environmentObject(model) }
             .navigationTitle("Settings").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }

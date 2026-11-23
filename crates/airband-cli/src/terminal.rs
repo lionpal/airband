@@ -145,7 +145,7 @@ fn link_from(cfg: &Config, link: Option<&str>) -> Result<String, String> {
         eprintln!("airband: {why}");
         std::process::exit(2);
     }
-    Pairing::Direct { url: format!("http://127.0.0.1:{}", cfg.port), token: cfg.radio_token.clone() }.link(&crate::config::station(cfg)).map_err(|_| NO_NAME.to_string())
+    Pairing::Direct { url: format!("http://127.0.0.1:{}", cfg.port), token: cfg.radio_token.clone() }.link(&crate::config::station(cfg), &crate::config::model()).map_err(|_| NO_NAME.to_string())
 }
 
 /// Why this computer gives no pairing link: the system gives it no name a phone could call it by.

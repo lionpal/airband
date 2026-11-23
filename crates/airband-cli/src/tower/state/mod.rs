@@ -38,7 +38,7 @@ pub(super) struct Inner {
     /// What an agent of each launcher that says so itself last said it can be set to, by the launcher's name
     /// (`held::offers`).
     pub(super) menus: BTreeMap<String, airband_core::tools::Offers>,
-    /// The coding tools he uses, by their rows' ids, the one he uses most first: as his phone last said.
+    /// The coding tools he uses, by their rows' ids, as his phone last said. Their order decides nothing.
     pub(super) tools: Vec<String>,
     /// Names agents go by on his other computers, as a radio last told it. None of this tower's numbered
     /// agents is called any of them.

@@ -46,6 +46,7 @@ pub(crate) fn chat_feed(feed: Feed) -> ChatFeed {
         reads_failed: feed.reads_failed.map(|trouble| trouble.said(&feed.reads)).unwrap_or_default(),
         reads: feed.reads,
         station: feed.station,
+        model: feed.model,
     }
 }
 
@@ -215,6 +216,8 @@ pub struct ChatFeed {
     pub open: Vec<String>,
     /// What the tower's computer is called, for an app paired with more than one.
     pub station: String,
+    /// The identifier of its model, as its system gives it. Empty when it gives none.
+    pub model: String,
     /// What reads the agents' messages on that computer, by name. Empty when nothing does.
     pub reads: String,
     /// Why what reads there could not, the last time it was asked, in words for him. Empty while it works.
