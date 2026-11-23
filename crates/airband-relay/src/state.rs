@@ -24,8 +24,14 @@ pub(super) struct Channel {
     /// How many messages have been kept for it since the relay started: a pull that found nothing kept unmarks
     /// `has_held` only when none came in while it looked.
     pub(super) keeps: u64,
-    /// The kept message the tower has been handed and has not yet said it took, and when.
-    pub(super) holding: Option<(String, Instant)>,
+    /// The kept message the tower has been handed and has not yet answered for, and whether a later pull said
+    /// it got it ([`airband_core::relay::GOT_HEADER`]).
+    pub(super) holding: Option<(String, Got)>,
+    /// Radios' requests handed to a pull that no later pull has said it got: each still waits on its tower.
+    pub(super) handed: Vec<(String, Bytes)>,
+    /// Which pull is the tower's latest. A tower pulls one at a time, so an older pull still held open is one
+    /// whose connection died: it is let go and takes nothing.
+    pub(super) pulls: u64,
     /// The hash of the token the paired radio proves itself with, as the tower gave it when it opened the
     /// channel.
     pub(super) radio_hash: String,
@@ -39,15 +45,39 @@ impl Channel {
         Channel::from(store::Saved { pull_hash, radio_hash })
     }
     pub(super) fn from(saved: store::Saved) -> Channel {
-        Channel { pull_hash: saved.pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, keeps: 0, holding: None, radio_hash: saved.radio_hash, pushed: None }
+        Channel { pull_hash: saved.pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, keeps: 0, holding: None, handed: Vec::new(), pulls: 0, radio_hash: saved.radio_hash, pushed: None }
     }
 }
 
 impl Channel {
     /// Is a kept message to be handed to the tower now? The count of keeps seen so far, when it is: there may be
-    /// one, and none has been handed and left unanswered for less than [`HAND_AGAIN`].
+    /// one, and none is in the tower's hands.
     pub(super) fn kept_due(&self) -> Option<u64> {
-        (self.has_held && self.holding.as_ref().is_none_or(|(_, at)| at.elapsed() > HAND_AGAIN)).then_some(self.keeps)
+        (self.has_held && self.holding.is_none()).then_some(self.keeps)
+    }
+    /// A new pull from the tower, which says it got `got` from the one before. Every older pull is let go
+    /// (the number this one goes by is returned). What was handed over and not got went to a pull whose
+    /// connection died: a radio's request goes back to the front of the line while its radio still waits, and
+    /// a kept message is handed over again.
+    pub(super) fn pulled(&mut self, got: Option<&str>) -> u64 {
+        self.pulls += 1;
+        for (id, sealed) in std::mem::take(&mut self.handed).into_iter().rev() {
+            if Some(id.as_str()) != got && self.waiting.contains_key(&id) && !self.queue.iter().any(|(queued, _)| queued == &id) {
+                self.queue.push_front((id, sealed));
+            }
+        }
+        match &mut self.holding {
+            Some((id, at)) if Some(id.as_str()) == got => *at = Got::Got,
+            Some((_, Got::Handed)) => self.holding = None,
+            _ => {}
+        }
+        self.wake.notify_waiters();
+        self.pulls
+    }
+    /// The tower opened its channel again: it started over, so nothing handed to it before is in its hands.
+    pub(super) fn reopened(&mut self) {
+        self.pulled(None);
+        self.holding = None;
     }
     /// The store had nothing kept, as looked at when `seen` keeps had come in. Unmarked only if none came since:
     /// one kept while the store was being read is still there, and newer ordered words must not pass it.
@@ -64,8 +94,14 @@ impl Channel {
     }
 }
 
-/// A kept message the tower was handed and never answered for is handed over again after this long.
-pub(super) const HAND_AGAIN: Duration = Duration::from_secs(60);
+/// Where a kept message handed to the tower stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Got {
+    /// Handed to a pull; no later pull has said it got it.
+    Handed,
+    /// A later pull said it got it: the tower is answering for it.
+    Got,
+}
 
 pub(super) struct Relay {
     /// The push services this relay can wake phones through.

@@ -9,7 +9,7 @@ use airband_core::radio::wire::Refusal;
 use crate::config::PairedRadio;
 use super::{App, PRESENCE_HEADER, VIA_HEADER, log, now_ms};
 use axum::extract::State;
-use airband_core::relay::{ADMISSION_HEADER, RADIO_HASH_HEADER, REQUEST_HEADER};
+use airband_core::relay::{ADMISSION_HEADER, GOT_HEADER, PULL_HEADER, PULL_VERSION, RADIO_HASH_HEADER, REQUEST_HEADER};
 use axum::Router;
 use axum::body::Body;
 use axum::http::Request;
@@ -135,6 +135,9 @@ impl Serve {
         let auth = self.keys.as_tower();
         let (channel, pull) = (self.keys.to(&relay, Route::Channel), self.keys.to(&relay, Route::Pull));
         let (mut open, mut wait, mut told) = (false, 1, false);
+        // the request the last pull handed over and this tower read: the next pull names it, so the relay knows it
+        // arrived (`GOT_HEADER`); one it is not told of it hands over again
+        let mut got: Option<String> = None;
         let nap = |wait: &mut u64| {
             std::thread::sleep(Duration::from_secs(*wait));
             *wait = (*wait * 2).min(15);
@@ -156,7 +159,7 @@ impl Serve {
                 match req.send_empty().map(|r| r.status().as_u16()) {
                     Ok(201 | 204) => {
                         log(format!("serving \"{}\" through {}", self.name, relay));
-                        (open, wait, told) = (true, 1, false);
+                        (open, wait, told, got) = (true, 1, false, None);
                     }
                     // the relay keeps this channel closed for good: it was unpaired, and only a new pairing opens one
                     Ok(410) => {
@@ -178,7 +181,11 @@ impl Serve {
                 }
                 continue;
             }
-            match agent.get(&pull).header("authorization", &auth).call() {
+            let mut ask = agent.get(&pull).header("authorization", &auth).header(PULL_HEADER, PULL_VERSION);
+            if let Some(id) = got.take() {
+                ask = ask.header(GOT_HEADER, id);
+            }
+            match ask.call() {
                 Ok(mut res) => match res.status().as_u16() {
                     200 => {
                         wait = 1;
@@ -189,6 +196,8 @@ impl Serve {
                         };
                         // the relay says outright when it had been keeping this one; nothing is read from the id
                         let kept = res.headers().contains_key(airband_core::relay::KEPT_HEADER);
+                        // read or not, it is answered for from here: the next pull says it was got
+                        got = Some(id.clone());
                         let me = self.clone();
                         match res.body_mut().read_to_vec() {
                             // not awaited: `next` is held for 25 s, and other requests must get through meanwhile

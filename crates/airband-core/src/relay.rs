@@ -46,6 +46,16 @@ pub const ID_HEADER: &str = "x-airband-id";
 /// On a radio's request: keep it in order behind the ones the relay is keeping for the tower.
 pub const ORDERED_HEADER: &str = "x-airband-ordered";
 
+/// On every pull: the version of the pull the tower speaks ([`PULL_VERSION`]). The relay refuses a pull without
+/// it (426), since an older tower never says what it got.
+pub const PULL_HEADER: &str = "x-airband-pull";
+/// Pulls that say what they got ([`GOT_HEADER`]).
+pub const PULL_VERSION: &str = "2";
+/// On a pull: the id of the request the tower's previous pull was handed and the tower read. A tower pulls one at a
+/// time, so a request handed over that the next pull does not name never reached it (the connection died on the
+/// way), and the relay hands it over again. Nothing else tells the relay a request arrived.
+pub const GOT_HEADER: &str = "x-airband-got";
+
 /// On what the relay hands a tower, and on the tower's reply to it: this is one the relay had been keeping while
 /// the tower was away. Each side goes by this and never by how the request's id reads.
 pub const KEPT_HEADER: &str = "x-airband-kept";

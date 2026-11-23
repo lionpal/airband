@@ -24,6 +24,7 @@ pub(crate) enum Op {
 }
 
 impl Op {
+    #[cfg(test)]
     pub(crate) const ALL: [Op; 7] = [Op::GetItem, Op::PutItem, Op::UpdateItem, Op::DeleteItem, Op::Query, Op::Scan, Op::TransactWriteItems];
 
     /// Its name in DynamoDB's API.
@@ -41,6 +42,7 @@ impl Op {
 
     /// The permissions it needs. A transaction is checked against each of its parts' own permissions, not one
     /// of its own; the relay's transactions put, update, delete and check a condition.
+    #[cfg(test)]
     pub(crate) fn needs(self) -> &'static [&'static str] {
         match self {
             Op::GetItem => &["dynamodb:GetItem"],
