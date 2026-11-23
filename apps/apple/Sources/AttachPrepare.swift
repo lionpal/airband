@@ -13,7 +13,12 @@ struct TrayItem: Identifiable, Equatable {
     var video = false
     /// The id the desk gave it. Nothing while the phone is still shrinking the photo or the video.
     var attachment: String?
-    var failed = false
+    /// Why the phone could not make it ready to send, in words for him.
+    var why: String?
+    var failed: Bool { why != nil }
+    /// Which making-ready of it counts: each trim starts a new one, and only the newest is sent. One that ends
+    /// after a newer one began is thrown away, however it ends.
+    var making = UUID()
     /// For a video: the one he picked, kept until it is sent or taken off, so it can be trimmed again.
     var source: URL?
     /// For a video: the part of it he kept, in seconds. Nothing means all of it.
@@ -62,7 +67,7 @@ enum Prepare {
 
     /// `kept`: the part of the video to send, in seconds; nothing sends all of it. The picked video is left as it
     /// is, so he can trim it again.
-    static func video(_ source: URL, number: Int, kept: ClosedRange<Double>? = nil) async -> (URL, String, UIImage?)? {
+    static func video(_ source: URL, number: Int, kept: ClosedRange<Double>? = nil) async -> Made {
         let asset = AVURLAsset(url: source)
         let name = "video-\(number).mp4"
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString)-\(name)")
@@ -75,15 +80,23 @@ enum Prepare {
         // smaller first: a minute at 960x540 is around a tenth of what the camera recorded
         // with no way to make it smaller it is not sent: the whole recording never goes in its place, and the tray
         // shows it failed
-        guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset960x540) else { return nil }
+        guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset960x540) else { return .failure(Unmade(why: Unmade.notSmaller)) }
         export.outputURL = file
         export.outputFileType = .mp4
         export.shouldOptimizeForNetworkUse = true
         if let kept { export.timeRange = CMTimeRange(start: first, end: CMTime(seconds: kept.upperBound, preferredTimescale: 600)) }
         await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in export.exportAsynchronously { done.resume() } }
         // one that could not be made is not sent as the whole recording: the tray shows it failed
-        guard export.status == .completed else { return nil }
-        return (file, name, picture)
+        guard export.status == .completed else { return .failure(Unmade(why: Unmade.notSmaller)) }
+        return .success((file, name, picture))
+    }
+
+    /// What came of making something ready: the file, what to call it and its small picture, or why not.
+    typealias Made = Result<(URL, String, UIImage?), Unmade>
+    struct Unmade: Error {
+        let why: String
+        static let notSmaller = "This video could not be made small enough to send."
+        static let unread = "This could not be read on the phone."
     }
 
     private static func thumb(_ image: UIImage) -> UIImage {
@@ -100,17 +113,29 @@ enum Prepare {
 
 extension RadioModel {
     /// He trimmed a video in the tray: what was on its way is dropped and the part he kept is sent in its place.
+    /// Trimmed twice quickly, the second trim wins: the first one's clip is thrown away when it is done, and
+    /// only one is ever sent (audit 9, B-3).
     @MainActor func trim(_ item: TrayItem, to range: ClosedRange<Double>?) {
         guard let i = tray.firstIndex(where: { $0.id == item.id }), let source = tray[i].source, tray[i].kept != range else { return }
         if let id = tray[i].attachment { dropUpload(id) }
         tray[i].attachment = nil
-        tray[i].failed = false
+        tray[i].why = nil
         tray[i].kept = range
-        let (ident, number) = (item.id, item.number)
+        tray[i].making = UUID()
+        let (ident, number, making) = (item.id, item.number, tray[i].making)
         Task {
             let made = await Prepare.video(source, number: number, kept: range)
-            await MainActor.run { self.prepared(ident, made, source: source) }
+            await MainActor.run { self.prepared(ident, made, source: source, making: making) }
         }
+    }
+
+    /// What has gone with a message has left the desk's list: it leaves the tray too, with the video it was
+    /// trimmed from.
+    func letGoOfSent() {
+        guard !tray.isEmpty else { return }
+        let gone = tray.filter { item in item.attachment.map { id in !view.uploads.contains { $0.id == id } } ?? false }
+        gone.forEach { if let source = $0.source { try? FileManager.default.removeItem(at: source) } }
+        tray.removeAll { item in gone.contains { $0.id == item.id } }
     }
 
     /// The number the next thing he attaches is called by: one past the highest in the tray, so a removal
@@ -129,9 +154,9 @@ extension RadioModel {
             PHImageManager.default().requestAVAsset(forVideo: asset, options: wanted) { movie, _, _ in
                 // A copy of the app's own, as a picked video is: the tray trims its source and deletes it when the
                 // item is taken off, and neither may ever touch the one in his library.
-                guard let url = (movie as? AVURLAsset)?.url else { return self.failed(item) }
+                guard let url = (movie as? AVURLAsset)?.url else { return self.unread(item) }
                 let copy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + Prepare.ending(url))
-                guard (try? FileManager.default.copyItem(at: url, to: copy)) != nil else { return self.failed(item) }
+                guard (try? FileManager.default.copyItem(at: url, to: copy)) != nil else { return self.unread(item) }
                 Task { await self.ready(item, video: copy) }
             }
         } else {
@@ -167,15 +192,15 @@ extension RadioModel {
     /// A video of the app's own, made ready to send: the tray keeps it as the source to trim again.
     private func ready(_ item: TrayItem, video copy: URL) async {
         let made = await Prepare.video(copy, number: item.number)
-        await MainActor.run { self.prepared(item.id, made, source: copy) }
+        await MainActor.run { self.prepared(item.id, made, source: copy, making: item.making) }
     }
-    /// A photo made ready to send; nothing when it could not be read.
+    /// A photo made ready to send, or why it was not.
     private func ready(_ item: TrayItem, photo data: Data?) async {
-        let photo = data.flatMap { Prepare.photo($0, number: item.number) }
-        await MainActor.run { self.prepared(item.id, photo.map { ($0.0, $0.1, $0.2) }, source: nil) }
+        let made: Prepare.Made = data.flatMap { Prepare.photo($0, number: item.number) }.map { .success(($0.0, $0.1, $0.2)) } ?? .failure(Prepare.Unmade(why: Prepare.Unmade.unread))
+        await MainActor.run { self.prepared(item.id, made, source: nil, making: item.making) }
     }
     /// What he attached could not be had at all.
-    private func failed(_ item: TrayItem) {
-        DispatchQueue.main.async { self.prepared(item.id, nil, source: nil) }
+    private func unread(_ item: TrayItem) {
+        DispatchQueue.main.async { self.prepared(item.id, .failure(Prepare.Unmade(why: Prepare.Unmade.unread)), source: nil, making: item.making) }
     }
 }

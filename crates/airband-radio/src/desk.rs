@@ -544,7 +544,8 @@ impl Desk {
         self.shared.moved.notify_all();
     }
     /// The computer called this. With no name it is the one computer he has; with several he has to say
-    /// which, and none is picked for him.
+    /// which, and none is picked for him. One that refuses this phone is refused with what it said; one that
+    /// is not answering is out of reach.
     fn station_radio(&self, computer: &StationId) -> Result<Arc<Radio>, RadioError> {
         self.station_of(computer).map(|(radio, _)| radio)
     }

@@ -79,7 +79,7 @@ struct AccountsView: View {
                     HStack(spacing: 6) {
                         Text("\(limit.name) \(Int((limit.used * 100).rounded()))%")
                         if let at = limit.resetsAt {
-                            Text("· resets \(Date(timeIntervalSince1970: Double(at) / 1000), format: .dateTime.weekday(.abbreviated).hour().minute())")
+                            Text("· resets \(Date(ms: at), format: .dateTime.weekday(.abbreviated).hour().minute())")
                         }
                     }
                     .font(.system(size: 13)).foregroundStyle(Palette.quiet)

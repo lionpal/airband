@@ -81,7 +81,7 @@ struct OnboardingView: View {
                 Spacer()
                 if step == last && !finishing {
                     Button("Paste a link instead") {
-                        wrong = model.pair(with: UIPasteboard.general.string ?? "")
+                        wrong = model.pairPasted()
                     }
                 }
             }
@@ -92,8 +92,7 @@ struct OnboardingView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in typing = false }
         .padding(.horizontal, 24).padding(.bottom, 16)
         .frame(maxWidth: 560).frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Palette.ground.ignoresSafeArea())
-        .preferredColorScheme(.dark)
+        .darkPage()
         .interactiveDismissDisabled()
         .fullScreenCover(isPresented: $scanning) { ScanSheet().environmentObject(model) }
         // paired, by the scan or by a link: fetch what he chose and finish
@@ -161,10 +160,11 @@ struct OnboardingView: View {
     private func finish() {
         finishing = true
         model.finishChoices { problem in
-            (finishing, working, wrong) = (false, nil, problem)
+            (finishing, working) = (false, nil)
             // a download that failed does not keep him out: what he chose stays chosen and says so, and it
-            // can be fetched again in Settings
+            // can be fetched again in Settings. What went wrong is told where he lands, since this closes
             UserDefaults.standard.set(true, forKey: "airband.onboarded")
+            if let problem { model.problem = problem }
             dismiss()
         }
     }

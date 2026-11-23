@@ -3,7 +3,8 @@ import SwiftUI
 // How the app looks: its colours, the frosted back of what sits over the chat, and the small pieces of look
 // and behaviour that several screens share.
 
-/// The colours. Dark first. Flat: no gradients or shadows. Each of the three accents means one thing.
+/// The colours. Dark first. Flat colours; a fade and a soft shadow only where something sits over the chat (the
+/// bar, the tray, a picture opened). Each of the three accents means one thing.
 enum Palette {
     static let ground = Colours.ground
     static let ink = Colours.ink

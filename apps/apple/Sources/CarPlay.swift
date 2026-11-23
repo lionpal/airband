@@ -3,10 +3,12 @@ import SwiftUI
 import Combine
 import UIKit
 
-/// The car's screen. A list with one thing on it, "Talk to your agents", and while a conversation is on, the
-/// voice screen: a few words on what is happening and buttons to talk, to stop what is being read, and to end.
+/// The car's screen. A list: "Talk to everyone", then the agents waiting on him and the agents working, by name;
+/// and while a conversation is on, the voice screen: a few words on what is happening and buttons to talk, to
+/// stop what is being read, and to end.
 ///
-/// Apple's rules for this kind of app shape it. Nothing an agent says is shown, only heard. The microphone is
+/// Apple's rules for this kind of app shape it. Nothing an agent says is shown here, only heard (a banner the
+/// system shows on the car is the system's). The microphone is
 /// used only while the voice screen is up, and the audio is held only for as long as the conversation is on.
 /// Nothing here asks him to pick up his phone.
 final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
@@ -21,10 +23,18 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var model: RadioModel { RadioModel.shared }
     /// The conversation was started from the car: it ends when the car goes.
     private var started = false
-    /// What the list is drawn from: it is drawn again when any of it changes, an agent's id included.
+    /// What the list is drawn from, and nothing else: it is drawn again only when what a row shows changes,
+    /// not each time an agent's doing line moves.
     private struct Shown: Equatable {
+        struct Row: Equatable {
+            let id: String
+            let callsign: String
+            let state: AgentState
+            let badge: String
+            let colour: UInt8?
+        }
         let paired: Bool
-        let members: [DeskMember]
+        let rows: [Row]
     }
 
     func templateApplicationScene(_ scene: CPTemplateApplicationScene, didConnect controller: CPInterfaceController) {
@@ -32,7 +42,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         model.voice.inCar = true
         controller.setRootTemplate(root(), animated: false, completion: nil)
         // what the list says follows whether he is paired; what the voice screen says follows the conversation
-        model.$view.map { view in Shown(paired: view.paired, members: view.rooms.flatMap(\.members)) }.removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.refreshRoot() }.store(in: &watching)
+        model.$view.map { view in Shown(paired: view.paired, rows: view.rooms.flatMap { room in room.members.map { Shown.Row(id: $0.id, callsign: $0.callsign, state: $0.state, badge: $0.badge, colour: room.colour) } }) }.removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.refreshRoot() }.store(in: &watching)
         model.$status.combineLatest(model.$micOpen).receive(on: DispatchQueue.main).sink { [weak self] _ in self?.show() }.store(in: &watching)
         model.$calling.removeDuplicates().receive(on: DispatchQueue.main).sink { [weak self] on in if !on { self?.close() } }.store(in: &watching)
         // a conversation already on when the car connects carries on, on the car's screen
@@ -81,7 +91,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         // Who is waiting on him: choosing one has its question read out, then opens the microphone for the
         // answer. What it asked is heard, not shown.
         let waiting = agents.filter { $0.state == .asking }.map { agent -> CPListItem in
-            let item = CPListItem(text: agent.callsign, detailText: Self.waiting, image: avatar(of: agent.id, side: 44))
+            // the section's header says it is waiting: the row does not say it again
+            let item = CPListItem(text: agent.callsign, detailText: nil, image: avatar(of: agent.id, side: 44))
             item.handler = { [weak self] _, done in
                 self?.start(then: agent.id)
                 done()
@@ -90,7 +101,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
         if !waiting.isEmpty { sections.append(CPListSection(items: waiting, header: Self.waiting, sectionIndexTitle: nil)) }
         let working = agents.filter { $0.state == .working }.map { agent -> CPListItem in
-            let item = CPListItem(text: agent.callsign, detailText: "Working", image: avatar(of: agent.id, side: 44))
+            let item = CPListItem(text: agent.callsign, detailText: nil, image: avatar(of: agent.id, side: 44))
             item.handler = { [weak self] _, done in
                 // as on the phone's list: that agent, whichever team it is in
                 self?.model.look(agent: agent.id)
@@ -216,9 +227,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         case .speaking: wanted = .speaking
         case .idle: wanted = model.micOpen ? .listening : .idle
         }
-        if case .speaking(let agent, let callsign?) = model.status, speaker?.title != callsign {
-            speaker?.title = callsign
-            if let agent, let face = avatar(of: agent, side: 28) { speakerFace?.image = face }
+        if case .speaking(let agent, let callsign) = model.status, speaker?.title != (callsign ?? "") {
+            // one speaking with no callsign (the desk itself) shows no name: never the last one's
+            speaker?.title = callsign ?? ""
+            speakerFace?.image = agent.flatMap { avatar(of: $0, side: 28) } ?? UIImage()
         }
         guard screen.activeStateIdentifier != wanted.rawValue else { return }
         screen.activateVoiceControlState(withIdentifier: wanted.rawValue)

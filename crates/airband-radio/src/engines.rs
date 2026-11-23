@@ -6,7 +6,6 @@
 //!
 //! A new model for an engine that is here is a row of the catalogue. A new engine in this build is one module
 //! and one row of `HERE`; a new engine in a host is that host saying its name and answering `run_model` for it.
-#![expect(clippy::disallowed_macros, reason = "the host engine's input")]
 use super::*;
 use crate::models::Model;
 use std::path::{Path, PathBuf};
@@ -73,7 +72,7 @@ struct Hosted {
 
 impl Loaded for Hosted {
     fn speak(&mut self, host: ByHost, voice: &str, text: &str, sink: &mut dyn FnMut(&[u8]), _: &dyn Fn() -> bool) -> Result<(), String> {
-        let pcm = host(&self.engine, &self.folder, ChoiceJob::Voice, serde_json::to_vec(&serde_json::json!({ "text": text, "voice": voice })).expect("words write as JSON")).ok_or("this device could not run it")?;
+        let pcm = host(&self.engine, &self.folder, ChoiceJob::Voice, serde_json::to_vec(&HostVoice { text, voice }).expect("words write as JSON")).ok_or("this device could not run it")?;
         sink(&pcm);
         Ok(())
     }
@@ -134,6 +133,13 @@ impl Fault {
             Fault::Run(why) => format!("{name} did not run on this phone: {why}."),
         }
     }
+}
+
+/// What a host's own voice engine is given, as [`DeskHost::run_model`] says: the words, and the voice's name.
+#[derive(serde::Serialize)]
+struct HostVoice<'a> {
+    text: &'a str,
+    voice: &'a str,
 }
 
 #[cfg(test)]

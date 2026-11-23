@@ -1019,3 +1019,13 @@ fn an_agent_moves_only_to_a_team_on_its_own_computer() {
     let moved = desk.move_agent(agent, DeskTeamPick::Room { room: elsewhere });
     assert!(matches!(&moved, Err(RadioError::Told { reason }) if reason == "An agent can only move to a team on its own computer."), "{moved:?}");
 }
+
+#[test]
+fn what_he_and_his_agents_said_is_never_in_a_printed_record() {
+    // (audit 9, A-21)
+    let words = "my secret plan for the shop";
+    let out = Outgoing::of(words.into());
+    let shown = format!("{out:?} {:?}", msg("m1", 1, "shop two", "shop", false));
+    assert!(!shown.contains("secret"), "{shown}");
+    assert!(shown.contains(&out.id) && shown.contains("characters"), "{shown}");
+}

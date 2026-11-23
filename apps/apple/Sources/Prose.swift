@@ -213,8 +213,7 @@ struct ProseSample: View {
         ScrollView {
             Prose(text: Self.text).padding(.horizontal, 16).padding(.vertical, 20).textSelection(.enabled)
         }
-        .background(Palette.ground.ignoresSafeArea())
-        .preferredColorScheme(.dark)
+        .darkPage()
     }
 }
 #endif

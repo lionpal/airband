@@ -347,7 +347,6 @@ impl Link {
     /// A request sealed for the tower: straight to it on this network, or through the relay. `path` is the
     /// whole path, as the tower serves it.
     /// `what` is what the trail calls it: the method and the endpoint's path, with nothing filled in.
-    #[expect(clippy::too_many_arguments, reason = "one sealed request, what the trail calls it, and where its steps go")]
     fn sealed(&self, method: Method, path: &str, what: &str, body: Option<Value>, ordered: bool, steps: &mut Vec<Step>) -> Result<(u16, Value), LinkError> {
         match &self.route {
             // asked through `direct`, never sealed

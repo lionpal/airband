@@ -108,14 +108,14 @@ struct TrimView: View {
                 handle.offset(x: x(start) - 18)
                     .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("strip")).onChanged { drag in
                         pause()
-                        start = min(max(0, length * drag.location.x / width), end - 1)
+                        start = TrimBounds.start(length * drag.location.x / width, end: end, length: length)
                         seek(start)
                     })
                     .accessibilityLabel("Start").accessibilityValue(clock(start))
                 handle.offset(x: x(end) - 18)
                     .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("strip")).onChanged { drag in
                         pause()
-                        end = max(min(length, length * drag.location.x / width), start + 1)
+                        end = TrimBounds.end(length * drag.location.x / width, start: start, length: length)
                         seek(end)
                     })
                     .accessibilityLabel("End").accessibilityValue(clock(end))

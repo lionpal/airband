@@ -20,6 +20,9 @@ struct NewAgentSheet: View {
     struct Place: Equatable {
         var folder: String
         var shown: String
+        /// The folder's own name, as the computer listed it (`DeskFolder.name`); nothing when it was never
+        /// listed as one inside another, such as his home folder.
+        var called: String?
         /// A new folder is made inside it, called as the team is.
         var make = false
         /// A team works there already: the agent joins it, and its name is not his to change here.
@@ -57,7 +60,7 @@ struct NewAgentSheet: View {
                             }
                         }
                         if let walked {
-                            row(walked.make ? "New folder" : (walked.shown as NSString).lastPathComponent, walked.make ? "Inside \(walked.shown)" : walked.shown, "", chosen: true) {}
+                            row(walked.make ? "New folder" : (walked.called ?? walked.shown), walked.make ? "Inside \(walked.shown)" : walked.shown, "", chosen: true) {}
                         }
                         if !loading && recent.isEmpty && walked == nil {
                             Text(computer.isEmpty ? "Pick a computer to see its folders." : "No coding agent has worked in a folder here yet.").font(.system(size: 15)).foregroundStyle(Palette.quiet)
@@ -174,7 +177,7 @@ struct NewAgentSheet: View {
     private func meta(_ r: DeskRecent) -> String {
         var lines: [String] = []
         if !r.tools.isEmpty { lines.append(r.tools.joined(separator: ", ")) }
-        if r.at > 0 { lines.append(RelativeDateTimeFormatter().localizedString(for: Date(timeIntervalSince1970: Double(r.at) / 1000), relativeTo: Date())) }
+        if r.at > 0 { lines.append(RelativeDateTimeFormatter().localizedString(for: Date(ms: r.at), relativeTo: Date())) }
         return lines.joined(separator: "\n")
     }
 
@@ -213,7 +216,8 @@ struct NewAgentSheet: View {
     private func start() {
         guard let place, ready else { return }
         (starting, wrong) = (true, nil)
-        model.newTeam(place.make ? name : team, on: computer, folder: place.folder, make: place.make, tool: tool.isEmpty ? nil : tool) { made, problem in
+        // the team's name as the core cleans it: also what a new folder is called
+        model.newTeam(team, on: computer, folder: place.folder, make: place.make, tool: tool.orNone) { made, problem in
             starting = false
             if made != nil {
                 model.openMade()
@@ -232,6 +236,8 @@ struct FolderWalk: View {
     let computer: String
     let use: (NewAgentSheet.Place) -> Void
     @State private var here: DeskFolders?
+    /// Each folder's own name by its path, as the listings it was inside gave it.
+    @State private var named: [String: String] = [:]
     @State private var makeNew = false
     @State private var loading = false
     @State private var wrong: String?
@@ -268,7 +274,7 @@ struct FolderWalk: View {
         .background(Palette.ground.ignoresSafeArea())
         .safeAreaInset(edge: .bottom, spacing: 0) {
             Button {
-                if let here { use(NewAgentSheet.Place(folder: here.path, shown: here.shown, make: makeNew, team: here.hasTeam && !makeNew, name: makeNew ? "" : here.team)) }
+                if let here { use(NewAgentSheet.Place(folder: here.path, shown: here.shown, called: named[here.path], make: makeNew, team: here.hasTeam && !makeNew, name: makeNew ? "" : here.team)) }
             } label: {
                 Text(makeNew ? "New folder in \(here?.shown ?? "")" : "Use \(here?.shown ?? "")").font(.system(size: 18, weight: .semibold)).lineLimit(1).truncationMode(.head)
                     .foregroundStyle(Palette.ground).padding(.horizontal, 16).frame(maxWidth: 520, minHeight: 56).frame(maxWidth: .infinity)
@@ -298,7 +304,10 @@ struct FolderWalk: View {
         (loading, wrong) = (true, nil)
         model.folders(on: computer, under: path) { found, problem in
             loading = false
-            if let found { here = found } else { wrong = problem }
+            if let found {
+                here = found
+                found.folders.forEach { named[$0.path] = $0.name }
+            } else { wrong = problem }
         }
     }
 }

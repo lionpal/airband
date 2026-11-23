@@ -76,6 +76,29 @@ pub(crate) fn services(job: airband_core::providers::Job) -> Vec<Service> {
         .collect()
 }
 
+/// What his computer offers to read with, as a service he can choose: the one way one is made from its row
+/// in the computer's list (audit 9, A-16). It speaks no voices.
+impl From<&airband_core::radio::ReadsOffer> for Service {
+    fn from(r: &airband_core::radio::ReadsOffer) -> Service {
+        Service {
+            kind: r.provider.clone(),
+            offer: r.offer.clone(),
+            name: r.label.clone(),
+            more: !r.preferred,
+            free: r.free,
+            login: r.login.clone(),
+            price: r.price.clone(),
+            voices: Vec::new(),
+            about: r.about.clone(),
+            key: r.key,
+            key_name: r.key_name.clone(),
+            keys_at: r.keys_at.clone(),
+            asks: r.asks.iter().map(|a| ServiceAsk { field: a.field.clone(), question: a.question.clone(), usual: a.usual.clone() }).collect(),
+            usual_voice: String::new(),
+        }
+    }
+}
+
 /// A coding tool airband works with, for where he picks the ones he uses.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct CodingTool {

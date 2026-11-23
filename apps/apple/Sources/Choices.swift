@@ -70,7 +70,7 @@ struct ServiceEntry: View {
     @Environment(\.reveal) private var reveal
 
     private var kept: Bool { choice.hasKey && !replacing }
-    private var ready: Bool { !checking && !(choice.key && !kept && key.trimmingCharacters(in: .whitespaces).isEmpty) }
+    private var ready: Bool { !checking && !(choice.key && !kept && key.isBlank) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -119,7 +119,7 @@ struct ServiceEntry: View {
         }
         #if DEBUG
         // development only: with `-airband.devOpen <service>`, the key in AIRBAND_DEV_KEY and the settings in
-        // AIRBAND_DEV_SETTINGS ("region=eastus") are filled in and "Use it" is pressed, to see the key tried
+        // AIRBAND_DEV_SETTINGS ("region=<a region>") are filled in and "Use it" is pressed, to see the key tried
         .onAppear {
             guard Dev.text("devOpen") == choice.id, let dev = ProcessInfo.processInfo.environment["AIRBAND_DEV_KEY"] else { return }
             key = dev
@@ -135,8 +135,8 @@ struct ServiceEntry: View {
     /// Have the key tried and, if it passes, kept and the service used.
     private func tryIt() {
         (checking, wrong) = (true, nil)
-        let fresh = key.trimmingCharacters(in: .whitespaces)
-        use(fresh.isEmpty ? nil : fresh, told.filter { !$0.value.trimmingCharacters(in: .whitespaces).isEmpty }) { problem in
+        let fresh = key.trimmed
+        use(fresh.orNone, told.filter { !$0.value.isBlank }) { problem in
             (checking, wrong) = (false, problem)
             if problem == nil { key = ""; replacing = false }
         }
@@ -387,9 +387,8 @@ struct ChoicePage<Picker: View>: View {
             }
             .environment(\.reveal) { id in withAnimation(.snappy(duration: 0.25)) { page.scrollTo(id, anchor: .top) } }
         }
-        .background(Palette.ground.ignoresSafeArea())
         .navigationTitle(title).navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
+        .darkPage()
     }
 }
 

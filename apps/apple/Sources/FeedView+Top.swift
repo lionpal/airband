@@ -174,7 +174,7 @@ extension FeedView {
                     .padding(.horizontal, 26).frame(minHeight: 52).background(Palette.ink, in: RoundedRectangle(cornerRadius: 16))
             }
             .buttonStyle(.plain)
-            Button("Paste a link instead") { model.pair(with: UIPasteboard.general.string ?? "") }
+            Button("Paste a link instead") { model.pairPasted() }
                 .font(.system(size: 15)).foregroundStyle(Palette.quiet).frame(minHeight: 44)
             if let problem = model.problem { Text(problem).font(.footnote).foregroundStyle(.red) }
             Spacer()

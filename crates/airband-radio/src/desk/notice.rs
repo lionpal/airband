@@ -3,7 +3,7 @@ use super::*;
 
 /// What a notification says once this device has opened it: everything a host needs to show it and to send an
 /// answer to it, with the app running or not.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
 pub struct OpenedNotice {
     /// The computer it came from, for [`Desk::answer_now`].
     pub station: String,

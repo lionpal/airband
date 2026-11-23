@@ -108,16 +108,27 @@ extension RadioModel {
 
     /// The phone has made a picked photo or video ready (or could not): hand it to the desk, which sends it to
     /// whoever he is looking at, and remember the id it travels under.
-    @MainActor func prepared(_ item: UUID, _ made: (URL, String, UIImage?)?, source: URL?) {
+    /// `making` is which making-ready this was ([`TrayItem.making`]): one a newer trim has replaced is thrown away.
+    @MainActor func prepared(_ item: UUID, _ made: Prepare.Made, source: URL?, making: UUID) {
+        let file = try? made.get().0
         guard let i = tray.firstIndex(where: { $0.id == item }) else {
             // he took it off while it was being made
-            if let made { try? FileManager.default.removeItem(at: made.0) }
+            if let file { try? FileManager.default.removeItem(at: file) }
             if let source { try? FileManager.default.removeItem(at: source) }
             return
         }
+        guard tray[i].making == making else {
+            // trimmed again meanwhile: the newer clip is the one that goes, and the source stays for it
+            if let file { try? FileManager.default.removeItem(at: file) }
+            return
+        }
         tray[i].source = source
-        guard let made else {
-            tray[i].failed = true
+        let result = made
+        let made: (URL, String, UIImage?)
+        switch result {
+        case .success(let got): made = got
+        case .failure(let unmade):
+            tray[i].why = unmade.why
             return
         }
         tray[i].thumb = made.2
@@ -196,7 +207,8 @@ extension RadioModel {
 
     /// Rename a team, by its room. Its room stays the same, so whoever was looking at it still is.
     func renameTeam(_ room: DeskRoom, to name: String) {
-        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        // what the computer will call it, by the core's rule: the one place a team's name is cleaned
+        let name = teamName(written: name)
         guard !name.isEmpty, name != room.name else { return }
         ask("It was not renamed.", { try self.desk.renameTeam(room: room.id, to: name) }) { _, wrong in
             if let wrong { self.problem = wrong }
@@ -205,7 +217,7 @@ extension RadioModel {
 
     /// Put an agent in another team: a room on screen, or a new team of the name he typed.
     func moveAgent(_ agent: DeskMember, to pick: DeskTeamPick) {
-        if case .new(let name) = pick, name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return }
+        if case .new(let name) = pick, teamName(written: name).isEmpty { return }
         tell("It did not move.", { try self.desk.moveAgent(agent: agent.id, to: pick) }) {}
     }
 

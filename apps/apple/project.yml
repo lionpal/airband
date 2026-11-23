@@ -161,3 +161,17 @@ targets:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.usernotifications.service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+  # The phone's own Swift rules, run on the simulator inside the app: xcodebuild test -scheme AirbandTests
+  AirbandTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests
+    dependencies:
+      - target: Airband
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.airband.app.tests
+        GENERATE_INFOPLIST_FILE: YES
+    scheme:
+      testTargets: [AirbandTests]

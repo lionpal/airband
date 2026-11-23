@@ -162,6 +162,21 @@ impl Desk {
         }))
     }
 
+    /// A short clip of one of a voice model's voices, for him to hear before choosing it: fetched from where
+    /// the model is kept (its [`crate::VoiceChoice::preview`]), so it works before the model is on the phone.
+    /// Through the one way to the network, as everything the app fetches is. Blocks for one request.
+    pub fn voice_preview(&self, preview: String) -> Result<Vec<u8>, RadioError> {
+        const UNREACHED: &str = "The sample could not be fetched. Check the connection.";
+        if airband_core::links::web(&preview).is_none() {
+            return Err(told("That sample is not at an address that can be reached."));
+        }
+        let mut res = crate::net::Client::new(Duration::from_secs(20)).send(crate::net::Ask::get(&preview)).map_err(|_| told(UNREACHED))?;
+        if res.status().as_u16() != 200 {
+            return Err(told(format!("The sample could not be fetched ({}).", res.status().as_u16())));
+        }
+        res.body_mut().read_to_vec().map_err(|_| told(UNREACHED))
+    }
+
     /// A sentence in the device's own voice as it is now set, for a "hear it" button. Blocks while it is made.
     pub fn own_voice_sample(&self) -> Result<crate::mouth::VoiceSample, RadioError> {
         let host = &self.shared.host;

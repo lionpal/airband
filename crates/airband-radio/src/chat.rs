@@ -51,7 +51,7 @@ pub(crate) fn chat_feed(feed: Feed) -> ChatFeed {
 }
 
 /// One line of the chat: something an agent said, cut to a line or two, or something he said.
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
 pub struct ChatMessage {
     pub seq: u64,
     pub id: String,

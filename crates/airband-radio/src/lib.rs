@@ -11,7 +11,13 @@
 //! - `voice`: outbound, words said aloud by the voice he chose on this device
 //! - `ears`: inbound, his speech to text, by the model or the service he chose on this device
 //! - `outbox`: delivering typed messages over a bad connection
-//! - `store`: what is kept on the device
+//! - `store`: what is kept on the device; `kept`: a file of ours kept, and what happens when it is damaged
+//! - `session`: what his next words take with them (files he attached, the question they answer)
+//! - `choices`: what he chooses to read, listen and speak with, and his keys for it (`keys`, `services`)
+//! - `senses`: why what he chose cannot be used, worded in one place
+//! - `mouth`, `voices`: the voice he chose, on the device or a service; `hears`, `ears_stream`: listening by
+//!   one upload or live
+//! - `models`, `engines`, `catalog`: the models that run on the device, what runs them, and the catalogue
 //!
 //! A host (Swift on iPhone and Mac, Kotlin on Android, the terminal host in the `airband` command) implements
 //! [`RadioHost`]: speak this text, listen for a reply, show this status. The loop here decides everything
@@ -163,7 +169,7 @@ pub(crate) enum Listened {
 
 /// A message he typed that is on its way, as it is kept on the device and sent. A host sees it as a
 /// [`desk::DeskOutgoing`].
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Outgoing {
     pub id: String,
     pub text: String,
@@ -274,6 +280,25 @@ impl Outgoing {
         Utterance { text: self.text.clone(), id: self.id.clone(), re: self.re.clone(), scope: self.scope.clone(), label: self.label.clone(), attachments: self.attachments.clone(), others: self.others.clone(), to: self.to.clone(), act: self.act.clone(), answers: self.answers.clone().map(airband_core::ids::QuestionId::new) }
     }
 }
+
+/// His words and an agent's are never printed: what is printed of each is its id and how long its words are
+/// (audit 9, A-21). Everything else about them is in the type.
+macro_rules! words_hidden {
+    ($t:ty, $name:literal, $id:ident, $($words:ident),+) => {
+        impl std::fmt::Debug for $t {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let mut d = f.debug_struct($name);
+                d.field(stringify!($id), &self.$id);
+                $(d.field(stringify!($words), &format_args!("{} characters", self.$words.chars().count()));)+
+                d.finish_non_exhaustive()
+            }
+        }
+    };
+}
+words_hidden!(Outgoing, "Outgoing", id, text);
+words_hidden!(chat::ChatMessage, "ChatMessage", id, text);
+words_hidden!(desk::OpenedNotice, "OpenedNotice", message, title, body);
+words_hidden!(desk::DeskOutgoing, "DeskOutgoing", id, shown);
 
 #[derive(Debug, uniffi::Error)]
 pub enum RadioError {
