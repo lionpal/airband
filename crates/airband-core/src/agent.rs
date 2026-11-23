@@ -78,8 +78,8 @@ pub struct Agent {
     pub meta: serde_json::Map<String, serde_json::Value>,
 }
 
-/// A way to put text in front of an agent as its next instruction.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A way to put text in front of an agent as its next instruction. Its debug form never shows a socket's token.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Deliver {
     /// A socket on this machine that takes a turn as one line of JSON ([`SocketLine`]), after a line that shows
@@ -103,6 +103,19 @@ pub enum Deliver {
     /// A kind this tower does not know yet.
     #[serde(other)]
     Unknown,
+}
+
+impl std::fmt::Debug for Deliver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Deliver::Socket { path, token } => f.debug_struct("Socket").field("path", path).field("token", &token.as_deref().map(crate::redact::Shown)).finish(),
+            Deliver::Command { argv } => f.debug_struct("Command").field("argv", argv).finish(),
+            Deliver::Held => f.write_str("Held"),
+            Deliver::Keys { terminal, pane } => f.debug_struct("Keys").field("terminal", terminal).field("pane", pane).finish(),
+            Deliver::Harness { name, session } => f.debug_struct("Harness").field("name", name).field("session", session).finish(),
+            Deliver::Unknown => f.write_str("Unknown"),
+        }
+    }
 }
 
 /// A harness asks, on its agent's behalf, whether the agent may do something it needs permission for. Posted to
@@ -270,14 +283,24 @@ mod tests {
     }
 }
 
-/// The lines a [`Deliver::Socket`] takes, one JSON object to a line: the shape the variant is defined by.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The lines a [`Deliver::Socket`] takes, one JSON object to a line: the shape the variant is defined by. Its
+/// debug form shows neither the token nor his words, only how long they are.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SocketLine {
     /// Shown first, when the socket asks for a token.
     Auth { token: String },
     /// His words, as a turn; `uuid` is the id the session writes on its record of it, which marks it read.
     User { uuid: String, message: SocketTurn },
+}
+
+impl std::fmt::Debug for SocketLine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SocketLine::Auth { token } => f.debug_struct("Auth").field("token", &crate::redact::Shown(token)).finish(),
+            SocketLine::User { uuid, message } => f.debug_struct("User").field("uuid", uuid).field("role", &message.role).field("characters", &message.content.chars().count()).finish(),
+        }
+    }
 }
 
 /// A turn on a [`SocketLine::User`].

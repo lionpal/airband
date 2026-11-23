@@ -259,7 +259,7 @@ pub struct Unsend {
 /// choose, never a command of the radio's own naming. `key` is its provider's key, or empty to use one this
 /// tower already keeps for that provider. `set` is what else it is told.
 /// The tower tries it with a real call first, and answers `{ reads }` (its name) or `{ error }`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct SetReads {
     pub kind: String,
     pub offer: String,
@@ -267,6 +267,13 @@ pub struct SetReads {
     pub key: String,
     #[serde(default)]
     pub set: std::collections::BTreeMap<String, String>,
+}
+
+/// Written out for debugging: whether a key was given, never the key, and the names of what is set.
+impl std::fmt::Debug for SetReads {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SetReads").field("kind", &self.kind).field("offer", &self.offer).field("key", &crate::redact::Shown(&self.key)).field("set", &self.set.keys().collect::<Vec<_>>()).finish()
+    }
 }
 
 /// Which of a tower's offers: the provider and the offer, both by id.

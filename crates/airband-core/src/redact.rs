@@ -105,9 +105,36 @@ fn matched(shape: &Shape, rest: &str, at_word: bool) -> Option<(usize, usize)> {
     }
 }
 
+/// A secret in a debug form: whether there is one, never what it is.
+pub struct Shown<'a>(pub &'a str);
+
+impl std::fmt::Debug for Shown<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_empty() { "(none)" } else { "(set, not shown)" })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nothing_that_holds_a_secret_or_his_words_writes_them_in_its_debug_form() {
+        use crate::agent::{Deliver, SocketLine, SocketRole, SocketTurn};
+        let shown = [
+            format!("{:?}", crate::providers::Use { kind: "openai".into(), key: "sk-live-1".into(), set: [("url".to_string(), serde_json::Value::String("sk-live-2".into()))].into(), ..Default::default() }),
+            format!("{:?}", crate::radio::SetReads { kind: "openai".into(), offer: "o".into(), key: "sk-live-1".into(), set: [("x".to_string(), "sk-live-2".to_string())].into() }),
+            format!("{:?}", crate::pairing::Pairing::Relay { relay: "https://r".into(), secret: "sk-live-1".into() }),
+            format!("{:?}", crate::pairing::Pairing::Direct { url: "http://h".into(), token: "sk-live-1".into() }),
+            format!("{:?}", Deliver::Socket { path: "/s".into(), token: Some("sk-live-1".into()) }),
+            format!("{:?}", SocketLine::Auth { token: "sk-live-1".into() }),
+            format!("{:?}", SocketLine::User { uuid: "u".into(), message: SocketTurn { role: SocketRole::User, content: "sk-live-2 ship it".into() } }),
+        ];
+        for line in &shown {
+            assert!(!line.contains("sk-live"), "{line}");
+        }
+        assert!(shown[0].contains("(set, not shown)") && shown[0].contains("url"), "{}", shown[0]);
+    }
 
     #[test]
     fn credentials_are_masked_and_nothing_else_is() {

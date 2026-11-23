@@ -7,13 +7,25 @@
 //!                                                                        with commas), on its network or a private one
 //!   airband://pair?url=http%3A%2F%2F127.0.0.1%3A7373&token=<token>       unsealed, to a tower on this same machine
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Its debug form says where it reaches and never the secret or the token.
+#[derive(Clone, PartialEq, Eq)]
 pub enum Pairing {
     Relay { relay: String, secret: String },
     /// No relay: every request goes straight to the tower, sealed with the keys the secret gives. `at` is where
     /// the tower was when the link was made; it says where it is now each time it is asked.
     Near { at: Vec<String>, secret: String },
     Direct { url: String, token: String },
+}
+
+impl std::fmt::Debug for Pairing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::redact::Shown;
+        match self {
+            Pairing::Relay { relay, secret } => f.debug_struct("Relay").field("relay", relay).field("secret", &Shown(secret)).finish(),
+            Pairing::Near { at, secret } => f.debug_struct("Near").field("at", at).field("secret", &Shown(secret)).finish(),
+            Pairing::Direct { url, token } => f.debug_struct("Direct").field("url", url).field("token", &Shown(token)).finish(),
+        }
+    }
 }
 
 /// A link's query, each value encoded: written with the same rules it is read by.
