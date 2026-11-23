@@ -126,8 +126,8 @@ impl Radio {
         let calling = Arc::new(AtomicBool::new(false));
         let wake = Arc::new(Wake::default());
         {
-            let (link, session, host, stop, busy, calling, senses) = (link.clone(), session.clone(), host.clone(), stop.clone(), busy.clone(), calling.clone(), senses.clone());
-            thread::spawn(move || work(call::Working { jobs: rx, link, session, host, stop, busy, calling, senses }));
+            let (link, session, store, wake, host, stop, busy, calling, senses) = (link.clone(), session.clone(), store.clone(), wake.clone(), host.clone(), stop.clone(), busy.clone(), calling.clone(), senses.clone());
+            thread::spawn(move || work(call::Working { jobs: rx, link, session, store, wake, host, stop, busy, calling, senses }));
         }
         {
             let (tx, stop, link, calling, host, wake, senses) = (tx.clone(), stop.clone(), link.clone(), calling.clone(), host.clone(), wake.clone(), senses.clone());
@@ -203,15 +203,9 @@ impl Radio {
         id
     }
 
-    /// Put it at the end of what is waiting to go, wake the sender, and show him what waits: the one way into
-    /// the outbox.
+    /// Put it at the end of what is waiting to go ([`enqueue`]).
     fn enqueue(&self, out: Outgoing) {
-        let waiting = self.store.change(|s| {
-            s.outbox.push(out);
-            s.outbox.clone()
-        });
-        self.wake.ring();
-        self.host.outbox(waiting, None);
+        enqueue(&self.store, &self.wake, &*self.host, out);
     }
 
     /// Try again something that was given up on: it goes to the end of what is waiting, as if just said.
@@ -360,14 +354,14 @@ impl Radio {
     /// With no tag it goes to whoever spoke last. Returns the tower's one-line answer ("Sent to shop two.").
     /// `re` is the id of the message he is replying to, when he picked one.
     pub fn send(&self, text: String, re: Option<String>) -> Result<String, RadioError> {
-        Ok(self.session.say(&self.link, &text, re, None, None)?.map(|reply| reply.say).unwrap_or_default())
+        Ok(self.session.say(&self.link, &text, re, None, None)?.said())
     }
 
     /// Start a new agent in one of his teams, by the team's id, from a command line. Returns the tower's
     /// one-line answer.
     pub fn launch(&self, team: String, tool: Option<String>, model: Option<String>, effort: Option<String>, task: String) -> Result<String, RadioError> {
         let shown = "New agent".to_string();
-        Ok(self.session.say(&self.link, &shown, None, None, Some(Act::Launch(airband_core::radio::Launch { team: airband_core::ids::TeamId::new(team), tool, model, effort, task })))?.map(|reply| reply.say).unwrap_or_default())
+        Ok(self.session.say(&self.link, &shown, None, None, Some(Act::Launch(airband_core::radio::Launch { team: airband_core::ids::TeamId::new(team), tool, model, effort, task })))?.said())
     }
 
     /// He has read these in the chat, so call mode will not also read them out.
@@ -426,10 +420,12 @@ impl Radio {
                 thread::sleep(Duration::from_secs(2));
             }
             match self.link.utterance_once(&u).0 {
-                // left with the relay for a computer that is away: it will get there, and he should know it has not yet
-                Ok(Sent::Left { away: true }) => return AnswerOutcome::KeptForLater { why: AWAY.into() },
-                // the relay keeps it behind earlier words of his: it will get there, and has not yet
-                Ok(Sent::Left { away: false }) => return AnswerOutcome::KeptForLater { why: LinkError::Behind.said() },
+                // Left with the relay for a computer that is away, or behind earlier words of his: it will get
+                // there, and he should know it has not yet. The outbox follows it until his computer has it.
+                Ok(Sent::Left { away }) => {
+                    self.enqueue(Outgoing { stage: Stage::Left, ..out });
+                    return AnswerOutcome::KeptForLater { why: if away { AWAY.into() } else { LinkError::Behind.said() } };
+                }
                 // his computer has it: that is the answer given
                 Ok(Sent::Taken | Sent::Answered(_)) => return AnswerOutcome::Sent,
                 // it cannot be sent however often it is tried: he is told why, and nothing is left to try again

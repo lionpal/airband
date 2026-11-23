@@ -21,7 +21,6 @@
 //! - `mouth`, `voices`: the voice he chose, on the device or a service; `hears`, `ears_stream`: listening by
 //!   one upload or live
 //! - `models`, `engines`, `catalog`: the models that run on the device, what runs them, and the catalog
-//! - `shared`: what the app and its notification extension both keep that is no secret
 //!
 //! A host (the iPhone app, in Swift, and the terminal host in the `airband` command) implements
 //! [`RadioHost`]: speak this text, listen for a reply, show this status. The loop here decides everything
@@ -178,8 +177,8 @@ pub(crate) enum Listened {
     /// There is nothing to listen with: nothing is chosen, what he chose cannot be used, or the microphone
     /// would not open. Nothing was recorded.
     Cannot,
-    /// What listened did not hear it. The take keeps the whole recording, and the chat shows it to him.
-    Unheard { take: String },
+    /// What listened did not hear it, and why. The take keeps the whole recording, and the chat shows it to him.
+    Unheard { take: String, why: crate::takes::Unheard },
 }
 
 /// A message he typed that is on its way, as it is kept on the device and sent. A host sees it as a

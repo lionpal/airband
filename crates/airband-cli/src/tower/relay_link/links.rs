@@ -83,7 +83,11 @@ impl Links {
                     app.served.forget(&key.1);
                     self.finished.insert(key);
                 }
-                Ok(Ended::Stopped) | Err(_) => log(format!("the link serving \"{}\" stopped; starting it again", key.1.name)),
+                // by its channel, never by the name he gave the pairing
+                Ok(Ended::Stopped) | Err(_) => match super::super::push::channel_of(&key.1) {
+                    Some(channel) => log(format!("the link serving {} stopped; starting it again", super::super::radio_tag(&channel))),
+                    None => log("the link serving a pairing stopped; starting it again"),
+                },
             }
         }
     }

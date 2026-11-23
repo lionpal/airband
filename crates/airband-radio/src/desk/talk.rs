@@ -27,7 +27,7 @@ impl Desk {
             shared.host.hearing(String::new());
             // he took it back: its recording goes with it
             if std::mem::take(&mut shared.state.lock().unwrap().discard) {
-                if let Listened::Said { take: Some(take), .. } | Listened::Unheard { take } = &heard {
+                if let Listened::Said { take: Some(take), .. } | Listened::Unheard { take, .. } = &heard {
                     shared.senses.takes.discard(take);
                 }
                 return;

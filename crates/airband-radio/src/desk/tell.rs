@@ -21,7 +21,7 @@ impl Desk {
     /// told, now and whenever one is reached. Err, in words for him, when it cannot be used.
     pub fn set_summary_brief(&self, text: String) -> Result<(), RadioError> {
         let his = airband_core::summary::checked(&text).map_err(|why| crate::choices::told(why.said()))?;
-        self.want_brief(his);
+        self.want_brief(Some(his));
         Ok(())
     }
 

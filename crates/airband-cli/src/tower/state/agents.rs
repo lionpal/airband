@@ -18,9 +18,10 @@ impl Inner {
         self.sender(e).map(|s| s.callsign.text()).unwrap_or_else(|| e.from.clone())
     }
     pub(in crate::tower) fn reap(&mut self) -> bool {
-        let dead: Vec<(String, String)> = self.sessions.iter().filter(|s| s.agent.deliver != Some(Deliver::Held) && s.agent.pid.is_some_and(|p| !alive(p))).map(|s| (s.agent.id.clone(), s.callsign.text())).collect();
-        for (id, callsign) in &dead {
-            log(format!("{callsign} is gone"));
+        let dead: Vec<String> = self.sessions.iter().filter(|s| s.agent.deliver != Some(Deliver::Held) && s.agent.pid.is_some_and(|p| !alive(p))).map(|s| s.agent.id.clone()).collect();
+        for id in &dead {
+            // by its id: its callsign carries its team's name
+            log(format!("agent {} is gone", super::super::short_id(id)));
             self.remove(id);
         }
         // a permission request nobody is waiting on any more: its line stops offering an answer

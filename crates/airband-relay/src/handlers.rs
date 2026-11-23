@@ -390,7 +390,7 @@ mod tests {
         headers
     }
     fn token(t: &str) -> (&'static str, String) {
-        ("authorization", format!("Bearer {t}"))
+        ("authorization", airband_core::token::as_bearer(t))
     }
     /// A pull's answer: its status, the id it hands over and what is sealed in it.
     async fn text_with_id(res: impl std::future::Future<Output = Response>) -> (u16, Option<String>, String) {

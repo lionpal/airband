@@ -134,6 +134,17 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, session: Arc<Session>, store: Arc<
     }
 }
 
+/// Put it at the end of what is waiting to go, wake the sender, and show him what waits: the one way into the
+/// outbox.
+pub(crate) fn enqueue(store: &Store, wake: &Wake, host: &dyn RadioHost, out: Outgoing) {
+    let waiting = store.change(|s| {
+        s.outbox.push(out);
+        s.outbox.clone()
+    });
+    wake.ring();
+    host.outbox(waiting, None);
+}
+
 /// What is done with a message after a try at it failed.
 #[derive(Debug, PartialEq)]
 enum AfterFailure {
@@ -259,9 +270,10 @@ mod tests {
     fn a_try_is_told_a_sentence_for_each_way_it_failed() {
         let step = |way, outcome| Step { at: 0, what: "POST /v1/radio/utterance".into(), way, outcome, ms: 3 };
         let steps = [step(Way::Relay, Err(LinkError::Away)), step(Way::Near, Err(LinkError::Unreachable(Way::Near))), step(Way::Kept, Err(LinkError::HoldRefused(507))), step(Way::Kept, Err(LinkError::HoldRefused(507))), step(Way::Near, Ok(200))];
-        assert_eq!(told(&steps), ["The relay says your computer is not connected.", "Your computer did not answer on this network.", "The relay is keeping as many messages as it can for your computer."]);
+        // each cause once, in the order tried; the try that worked says nothing
+        assert_eq!(told(&steps), [LinkError::Away.said(), LinkError::Unreachable(Way::Near).said(), LinkError::HoldRefused(507).said()]);
         assert_eq!(expired(&[]), "Half an hour of trying did not get it through.");
-        assert_eq!(expired(&told(&steps[..1])), "Half an hour of trying did not get it through. The relay says your computer is not connected.");
+        assert_eq!(expired(&told(&steps[..1])), format!("{} {}", expired(&[]), LinkError::Away.said()));
     }
 
     /// A host that only keeps what it is told about the outbox.
@@ -312,11 +324,11 @@ mod tests {
         };
         radio.queue("the first thing".into(), None, None, None);
         // tried, and how the try went is with the message
-        assert!(until(&|o| o.first().is_some_and(|m| m.tries >= 1 && m.last_tried > 0 && m.trail == ["There was no connection to the relay."])), "{:?}", outbox());
+        assert!(until(&|o| o.first().is_some_and(|m| m.tries >= 1 && m.last_tried > 0 && m.trail == [LinkError::Unreachable(Way::Relay).said()])), "{:?}", outbox());
         // half an hour on, it is given up on: it stays, with the reason, and he is told once
         radio.store.change(|s| s.outbox[0].at = 1);
         radio.wake.ring();
-        assert!(until(&|o| o[0].failed.as_deref() == Some("Half an hour of trying did not get it through. There was no connection to the relay.")), "{:?}", outbox());
+        assert!(until(&|o| o[0].failed == Some(expired(&[LinkError::Unreachable(Way::Relay).said()]))), "{:?}", outbox());
         let notes: Vec<String> = host.0.lock().unwrap().iter().filter_map(|(_, note)| note.clone()).collect();
         assert_eq!(notes.len(), 1);
         assert!(notes[0].starts_with("Not sent: “the first thing”. Half an hour"), "{notes:?}");
@@ -374,7 +386,7 @@ mod tests {
         settle(&store, &host, &takes, "e", Outcome::Rejected { why: Rejected::TooOld });
         let kept = store.saved.lock().unwrap().outbox.clone();
         assert_eq!(kept[0].failed, Some(LinkError::Rejected(Rejected::TooOld).said()));
-        assert!(last().1.unwrap().starts_with("Not sent: “words of e”. Your computer got it more than a week"));
+        assert_eq!(last().1, Some(format!("Not sent: “words of e”. {}", LinkError::Rejected(Rejected::TooOld).said())));
         // an outcome told twice, or for something this radio never typed, is nothing to do
         let before = host.0.lock().unwrap().len();
         settle(&store, &host, &takes, "a", Outcome::Answered { reply: Reply::default() });

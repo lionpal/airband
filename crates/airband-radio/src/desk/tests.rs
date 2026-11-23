@@ -515,8 +515,8 @@ fn kept_reads(dir: &std::path::Path) -> serde_json::Value {
 #[test]
 fn a_summary_choice_made_offline_waits_for_every_computer() {
     let dir = temp_dir("reads");
-    std::fs::write(dir.join("choices.json"), r#"{"reads":{"rev":1,"wanted":{"id":"anthropic","offer":"haiku","his":true}}}"#).unwrap();
-    let state = State { computers: vec![station("mini", tower_answering(r#"{"reads":"Haiku","offers":[{"provider":"anthropic","offer":"haiku","label":"Haiku","key":true,"has_key":true}]}"#), &[], vec![]), station("laptop", 9, &[], vec![])], ..State::default() };
+    std::fs::write(dir.join("choices.json"), r#"{"reads":{"rev":1,"wanted":{"id":"fixture-reader","offer":"fixture-offer","his":true}}}"#).unwrap();
+    let state = State { computers: vec![station("mini", tower_answering(r#"{"reads":"Fixture reader","offers":[{"provider":"fixture-reader","offer":"fixture-offer","label":"Fixture reader","key":true,"has_key":true}]}"#), &[], vec![]), station("laptop", 9, &[], vec![])], ..State::default() };
     let (mini, epoch) = (state.computers[0].id(), state.computers[0].epoch);
     let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
     let shared = Shared { state: Mutex::new(state), floor: Floor::default(), moved: Condvar::new(), host, chooser: crate::choices::Chooser::open(dir.to_str().unwrap(), HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None };
@@ -531,8 +531,8 @@ fn a_summary_choice_made_offline_waits_for_every_computer() {
 #[test]
 fn when_one_computer_refuses_the_others_are_still_asked() {
     let laptop = station("laptop", tower_saying(409, r#"{"refusal":"told","reason":"That service is not offered here."}"#), &[], vec![]);
-    let mini = station("mini", tower_answering(r#"{"reads":"Haiku"}"#), &[], vec![]);
-    let wanted = SetReads { kind: "anthropic".into(), offer: "haiku".into(), key: String::new(), set: Default::default() };
+    let mini = station("mini", tower_answering(r#"{"reads":"Fixture reader"}"#), &[], vec![]);
+    let wanted = SetReads { kind: "fixture-reader".into(), offer: "fixture-offer".into(), key: String::new(), set: Default::default() };
     let targets = vec![(laptop.id(), laptop.radio.clone()), (mini.id(), mini.radio.clone())];
     let per = super::fan_out(targets, |radio| super::Reach::of(radio.set_reads(&wanted)));
     assert_eq!(per[&mini.id()], super::Reach::Done(()));
@@ -542,7 +542,7 @@ fn when_one_computer_refuses_the_others_are_still_asked() {
 /// A desk with these computers, keeping its choices in `dir`, where his summary service is offered with its
 /// key kept on the main computer.
 fn desk_choosing(dir: &std::path::Path, computers: Vec<Computer>, reads: serde_json::Value) -> Desk {
-    let offered = serde_json::json!({ "reads": reads, "offered": { "offers": [{ "provider": "anthropic", "offer": "haiku", "label": "Haiku", "key": true, "has_key": true, "key_name": "API key", "preferred": true }] } });
+    let offered = serde_json::json!({ "reads": reads, "offered": { "offers": [{ "provider": "fixture-reader", "offer": "fixture-offer", "label": "Fixture reader", "key": true, "has_key": true, "key_name": "API key", "preferred": true }] } });
     std::fs::write(dir.join("choices.json"), offered.to_string()).unwrap();
     let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
     Desk { shared: Arc::new(Shared { state: Mutex::new(State { computers, ..State::default() }), floor: Floor::default(), moved: Condvar::new(), host, chooser: crate::choices::Chooser::open(dir.to_str().unwrap(), HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: String::new() }
@@ -551,14 +551,14 @@ fn desk_choosing(dir: &std::path::Path, computers: Vec<Computer>, reads: serde_j
 #[test]
 fn a_summary_choice_some_computers_took_is_remembered_as_taken_there() {
     let dir = temp_dir("partly");
-    let mini = station("mini", tower_answering(r#"{"reads":"Haiku","offers":[{"provider":"anthropic","offer":"haiku","label":"Haiku","key":true,"has_key":true}]}"#), &[], vec![]);
+    let mini = station("mini", tower_answering(r#"{"reads":"Fixture reader","offers":[{"provider":"fixture-reader","offer":"fixture-offer","label":"Fixture reader","key":true,"has_key":true}]}"#), &[], vec![]);
     let laptop = station("laptop", tower_saying(409, r#"{"refusal":"told","reason":"Enter your API key."}"#), &[], vec![]);
     let away = station("away", 9, &[], vec![]);
     let ids = [mini.id(), laptop.id()];
     let desk = desk_choosing(&dir, vec![mini, laptop, away], serde_json::Value::Null);
     desk.shared.state.lock().unwrap().computers[2].online = false;
     desk.shared.state.lock().unwrap().read.marks.main = Some(ids[0].clone());
-    let id = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "anthropic").map(|c| c.id).unwrap();
+    let id = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "fixture-reader").map(|c| c.id).unwrap();
     let chose = desk.choose_for(ChoiceJob::Reads, id, None, HashMap::new(), false);
     assert!(chose.is_ok(), "{chose:?}");
     // mini has it, laptop said no and is not asked again, and it still waits for the one away
@@ -579,23 +579,23 @@ fn a_computer_that_refuses_a_waiting_summary_choice_does_not_cancel_it_for_the_o
     let laptop = station("laptop", tower_saying(409, r#"{"refusal":"told","reason":"Enter your API key."}"#), &[], vec![]);
     let mini = station("mini", 9, &[], vec![]);
     let (laptop_id, laptop_epoch, mini_id) = (laptop.id(), laptop.epoch, mini.id());
-    let desk = desk_choosing(&dir, vec![laptop, mini], serde_json::json!({ "rev": 1, "wanted": { "id": "anthropic", "offer": "haiku", "his": true } }));
+    let desk = desk_choosing(&dir, vec![laptop, mini], serde_json::json!({ "rev": 1, "wanted": { "id": "fixture-reader", "offer": "fixture-offer", "his": true } }));
     crate::choices::tell_reads(&desk.shared, &laptop_id, laptop_epoch, true);
     // still waiting for mini
     let reads = kept_reads(&dir);
-    assert_eq!(reads["wanted"]["id"], "anthropic", "{reads}");
+    assert_eq!(reads["wanted"]["id"], "fixture-reader", "{reads}");
     assert!(reads["per"].get(mini_id.as_str()).is_none(), "{reads}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 #[test]
 fn a_summary_service_whose_key_his_computer_keeps_is_chosen_with_no_key_on_the_phone() {
     let dir = temp_dir("kept-there");
-    let offered = serde_json::json!({ "offered": { "offers": [{ "provider": "anthropic", "offer": "haiku", "label": "Haiku", "key": true, "has_key": true, "key_name": "API key", "preferred": true }] } });
+    let offered = serde_json::json!({ "offered": { "offers": [{ "provider": "fixture-reader", "offer": "fixture-offer", "label": "Fixture reader", "key": true, "has_key": true, "key_name": "API key", "preferred": true }] } });
     std::fs::write(dir.join("choices.json"), offered.to_string()).unwrap();
-    let state = State { computers: vec![station("mini", tower_answering(r#"{"reads":"Haiku","offers":[{"provider":"anthropic","offer":"haiku","label":"Haiku","key":true,"has_key":true}]}"#), &[], vec![])], ..State::default() };
+    let state = State { computers: vec![station("mini", tower_answering(r#"{"reads":"Fixture reader","offers":[{"provider":"fixture-reader","offer":"fixture-offer","label":"Fixture reader","key":true,"has_key":true}]}"#), &[], vec![])], ..State::default() };
     let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
     let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), moved: Condvar::new(), host, chooser: crate::choices::Chooser::open(dir.to_str().unwrap(), HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: String::new() };
-    let id = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "anthropic").map(|c| c.id).unwrap();
+    let id = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "fixture-reader").map(|c| c.id).unwrap();
     let chose = desk.choose_for(ChoiceJob::Reads, id, None, HashMap::new(), false);
     assert!(chose.is_ok(), "{chose:?}");
     let _ = std::fs::remove_dir_all(&dir);
@@ -662,13 +662,18 @@ impl RadioHost for Telling {
     }
 }
 
+/// A service of the catalogue's that speaks, by its provider's id and its offer's.
+fn voice_row() -> (String, String) {
+    airband_core::providers::in_order(airband_core::providers::Job::Voice).into_iter().next().map(|(p, o)| (p.id.clone(), o.id.clone())).expect("a row that speaks")
+}
+
 #[test]
 fn a_message_that_cannot_be_fetched_to_read_aloud_says_why() {
     let host = Arc::new(Telling(Mutex::new(Vec::new())));
     let radio = Radio::start("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t&name=Mac".into(), String::new(), host.clone()).unwrap();
     radio.stop();
     // a voice is chosen, so it is the fetching that fails
-    radio.senses.mouth.set(Some(crate::mouth::Own::Service(crate::services::service_of("gemini", "flash-lite-tts", "k", HashMap::new()))));
+    radio.senses.mouth.set(Some(crate::mouth::Own::Service(crate::services::service_of(&voice_row().0, &voice_row().1, "k", HashMap::new()))));
     assert!(!radio.read_question("m1"));
     assert_eq!(host.0.lock().unwrap().as_slice(), ["That could not be read aloud. Can\u{2019}t reach your computer."]);
 }
@@ -724,7 +729,7 @@ fn each_computer_is_called_what_its_link_says_from_the_moment_it_is_paired_and_t
     let host = Arc::new(Watching(std::sync::atomic::AtomicBool::new(true)));
     let first = Desk::open(dir.display().to_string(), host.clone());
     // neither has answered yet: each is called what its link says, never a made-up label
-    assert_eq!(first.set_links(vec![studio.clone(), laptop.clone()]).len(), 2);
+    assert_eq!(first.set_links(vec![studio.clone(), laptop.clone()]).links.len(), 2);
     let names = |desk: &Desk| looked(desk, None, None).stations.into_iter().map(|c| c.name).collect::<Vec<_>>();
     assert_eq!(names(&first), ["Studio Mac", "Laptop"]);
     // the name it last said is kept on the phone, and outlives the app
@@ -733,8 +738,13 @@ fn each_computer_is_called_what_its_link_says_from_the_moment_it_is_paired_and_t
     let again = Desk::open(dir.display().to_string(), host);
     again.set_links(vec![studio, laptop]);
     assert_eq!(names(&again), ["Studio", "Laptop"]);
-    // a link that does not say what its computer is called is not taken
-    assert!(again.set_links(vec!["airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t3".into()]).is_empty());
+    // links that do not say what their computer is called are not taken, and he is told how many, to pair again
+    let nameless = |n: &str| format!("airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t{n}");
+    let paired = again.set_links(vec![nameless("3")]);
+    assert!(paired.links.is_empty());
+    assert_eq!(paired.unread, unread_links(1));
+    assert_eq!(again.set_links(vec![nameless("4"), nameless("5")]).unread, unread_links(2));
+    assert!(unread_links(2).is_some_and(|n| n.starts_with('2')) && unread_links(0).is_none());
     again.stop();
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -263,11 +263,10 @@ pub(super) mod tests {
         let long = serde_json::json!({ "text": "a".repeat(airband_core::summary::MOST + 1) }).to_string();
         assert!(router(app.clone()).oneshot(post(long)).await.unwrap().status().is_client_error());
         assert_eq!(app.cfg().summary_brief.as_deref(), Some("Call me sir."));
-        // the usual text, sent back as his, is the usual text; and nothing is the usual text
+        // the usual text, sent back as his, is kept as his; only nothing is the usual text
         let usual = serde_json::json!({ "text": airband_core::summary::USUAL }).to_string();
         assert_eq!(router(app.clone()).oneshot(post(usual)).await.unwrap().status(), 200);
-        assert_eq!(app.cfg().summary_brief, None);
-        router(app.clone()).oneshot(post(r#"{"text":"Sir."}"#.into())).await.unwrap();
+        assert_eq!(app.cfg().summary_brief.as_deref(), Some(airband_core::summary::USUAL));
         assert_eq!(router(app.clone()).oneshot(post(r#"{"text":null}"#.into())).await.unwrap().status(), 200);
         assert_eq!(app.cfg().summary_brief, None);
     }

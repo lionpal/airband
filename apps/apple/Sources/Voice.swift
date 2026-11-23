@@ -195,6 +195,40 @@ final class Voice: NSObject, @unchecked Sendable {
         playLock.unlock()
     }
 
+    // MARK: a whole clip: a recording of his, a voice's sample
+
+    private var clip: AVAudioPlayer?
+    private let clipEnd = PlayerEnd()
+    /// Why a clip did not play.
+    enum ClipRefused { case micOpen, unreadable }
+
+    /// Play a whole clip through the one holder of the audio session, which sets it for playing and back after.
+    /// Not while the microphone is open or on its way: the session is set for it, and playing would take it.
+    /// `ended` is told on the main thread when the clip is over or stopped. Nothing when it plays.
+    func playClip(_ data: Data, ended: @escaping () -> Void) -> ClipRefused? {
+        if micBusy { return .micOpen }
+        guard let player = try? AVAudioPlayer(data: data) else { return .unreadable }
+        stopClip()
+        set(.speaking)
+        clipEnd.ended = { [weak self] in
+            self?.clip = nil
+            if let self, !self.micBusy { self.set(.idle) }
+            ended()
+        }
+        clip = player
+        player.delegate = clipEnd
+        player.play()
+        return nil
+    }
+
+    /// Stop the clip playing, if one is.
+    func stopClip() {
+        guard let playing = clip else { return }
+        playing.stop()
+        clip = nil
+        clipEnd.ended()
+    }
+
     // MARK: the microphone, as plain audio
 
     private let recEngine = AVAudioEngine()

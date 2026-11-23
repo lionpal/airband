@@ -35,13 +35,35 @@ final class ModelTransfers: NSObject, Transfers, URLSessionDownloadDelegate, @un
             return
         }
         session.getAllTasks { tasks in
-            if tasks.contains(where: { Self.tag(of: $0)?.id == id && $0.state == .running }) { return }
+            // one with this id that has not yet said how it ended, whatever its state, is the one: a second
+            // would put its file where the first one's was taken from
+            if tasks.contains(where: { Self.tag(of: $0)?.id == id }) || !self.claim(id) { return }
             var request = URLRequest(url: address)
             request.setValue("bytes=\(from)-\(until - 1)", forHTTPHeaderField: "Range")
             let task = self.session.downloadTask(with: request)
             task.taskDescription = (try? JSONEncoder().encode(Tag(id: id, to: to))).flatMap { String(data: $0, encoding: .utf8) }
             task.resume()
         }
+    }
+
+    func stop(id: String) {
+        session.getAllTasks { tasks in
+            for task in tasks where Self.tag(of: task)?.id == id { task.cancel() }
+        }
+    }
+
+    /// The transfers started and not yet ended, by id: a task that has ended is out of the session's list before
+    /// it has said so here.
+    private var running = Set<String>()
+    private let runningLock = NSLock()
+    /// Take this id for a new transfer: false when one with it has not yet said how it ended.
+    private func claim(_ id: String) -> Bool {
+        runningLock.lock(); defer { runningLock.unlock() }
+        return running.insert(id).inserted
+    }
+    private func ended(_ id: String) {
+        runningLock.lock(); defer { runningLock.unlock() }
+        running.remove(id)
     }
 
     private static func tag(of task: URLSessionTask) -> Tag? {
@@ -63,6 +85,7 @@ final class ModelTransfers: NSObject, Transfers, URLSessionDownloadDelegate, @un
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard let tag = Self.tag(of: task) else { return }
+        ended(tag.id)
         let status = error == nil ? (task.response as? HTTPURLResponse).map { UInt16(clamping: $0.statusCode) } : nil
         model?.desk.transferEnded(id: tag.id, status: status)
     }

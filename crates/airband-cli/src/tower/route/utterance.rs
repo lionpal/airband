@@ -360,7 +360,7 @@ async fn send(app: &Arc<App>, to: &Addressed, wordless: bool, re: Option<&str>, 
         match outcome {
             Ok(()) => sent.push(t.clone()),
             Err(e) => {
-                log(format!("could not reach {}: {e}", t.callsign.text()));
+                log(format!("could not reach agent {}: {e}", crate::tower::short_id(&t.agent.id)));
                 failed.push(t.callsign.text());
             }
         }
@@ -500,6 +500,28 @@ mod tests {
             let lines = logged_saying(&crate::tower::http::tests::app_with("words-unlogged-far", reader), &["a"], words, vec![other]).await;
             assert!(lines.iter().any(|l| l.contains("on another computer")) && unlogged(&lines), "{lines:?}");
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn his_agents_names_are_never_written_in_the_log() {
+        // an agent named for its folder, that cannot be reached, and then is found gone
+        let app = crate::tower::http::tests::app("names-unlogged");
+        {
+            let mut inner = app.change();
+            let a = airband_core::agent::Agent { cwd: Some("/x/billing-refunds".into()), ..crate::adapters::agent_with("a", "test") };
+            inner.check_in(&a).unwrap();
+        }
+        crate::tower::logged::take();
+        let _ = on_utterance(&app, "radio", "hello", &airband_core::radio::Utterance { text: "hello".into(), id: "u1".into(), ..Default::default() }).await;
+        {
+            let mut inner = app.change();
+            let gone = airband_core::agent::Agent { cwd: Some("/x/billing-refunds".into()), pid: Some(i32::MAX as u32), ..crate::adapters::agent_with("b", "test") };
+            inner.check_in(&gone).unwrap();
+            inner.reap();
+        }
+        let lines = crate::tower::logged::take();
+        assert!(lines.iter().any(|l| l.contains("is gone")), "{lines:?}");
+        assert!(lines.iter().all(|l| !l.contains("billing") && !l.contains("refunds")), "{lines:?}");
     }
 
     fn answering(text: &str, question: &str) -> airband_core::radio::Utterance {

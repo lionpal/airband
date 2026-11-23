@@ -68,8 +68,7 @@ pub(super) fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> b
                 harness: HARNESS.into(),
                 cwd: field("cwd"),
                 name: None,
-                // a name he gave it; one Claude Code made up is not used
-                title: field("name").filter(|_| v["nameSource"] == "user"),
+                title: named_by_him(v),
                 pid: Some(pid),
                 deliver: Some(Deliver::Socket { path: socket, token }),
                 meta: transcript.map(|t| serde_json::Map::from_iter([("transcript".to_string(), Value::String(t))])).unwrap_or_default(),

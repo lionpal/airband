@@ -49,6 +49,7 @@ pub(crate) enum Way {
 pub(crate) const AWAY: &str = "Your computer is away. It gets this when it is back.";
 
 /// What came of one try at sending something he said.
+#[derive(Debug)]
 pub(crate) enum Sent {
     /// His computer has it and is working out what to do with it. What comes of it arrives in the feed.
     Taken,
@@ -57,6 +58,18 @@ pub(crate) enum Sent {
     /// The relay is keeping it for his computer: because the computer is `away`, or because the relay is still
     /// handing it earlier words of his and these wait their turn behind them.
     Left { away: bool },
+}
+
+impl Sent {
+    /// The one line a terminal is told of it: the tower's answer, or that the relay keeps it for a computer
+    /// that is away. Nothing while his computer is still working on it.
+    pub(crate) fn said(self) -> String {
+        match self {
+            Sent::Answered(reply) => reply.say,
+            Sent::Left { away: true } => AWAY.into(),
+            Sent::Left { away: false } | Sent::Taken => String::new(),
+        }
+    }
 }
 
 /// The tower's own addresses, for reaching it without the relay when the radio is on its network.
@@ -121,7 +134,7 @@ impl Link {
                 at = given;
                 Route::Near { keys: Keys::derive(&secret)? }
             }
-            Pairing::Direct { url, token } => Route::Direct { url, auth: format!("Bearer {token}"), radio: radio.to_string() },
+            Pairing::Direct { url, token } => Route::Direct { url, auth: airband_core::token::as_bearer(&token), radio: radio.to_string() },
             Pairing::Relay { relay, secret } => Route::Relay { relay, keys: Keys::derive(&secret)? },
         };
         Ok(Link { route, agent, near: crate::net::Client::quick(POLL_TIMEOUT, Duration::from_millis(700)), direct: Mutex::new(Direct { addrs: at, ..Direct::default() }), trail, presence: Mutex::default(), kept_at_relay: Default::default(), lost: Mutex::default(), awaited: Mutex::default(), told: std::sync::Condvar::new(), relay_knew: AtomicBool::new(false) })
@@ -484,15 +497,15 @@ impl Link {
 
     /// Something he said aloud, tried a few times over a few seconds while he waits for the answer. The tower
     /// takes it at once; its answer comes by the feed, or to this asking again, and is waited for as long as a
-    /// person on a call would. Nothing, when the tower has it and has not said what came of it in that time:
-    /// it is in the chat when it does.
-    pub(crate) fn say_and_wait(&self, u: &Utterance) -> Result<Option<Reply>, LinkError> {
+    /// person on a call would. `Taken`, when the tower has it and has not said what came of it in that time: it
+    /// is in the chat when it does. `Left`, when the relay keeps it for his computer: it is not there yet.
+    pub(crate) fn say_and_wait(&self, u: &Utterance) -> Result<Sent, LinkError> {
         self.awaited.lock().unwrap().insert(u.id.clone(), None);
         let got = self.keep_trying(u);
         self.awaited.lock().unwrap().remove(&u.id);
         got
     }
-    fn keep_trying(&self, u: &Utterance) -> Result<Option<Reply>, LinkError> {
+    fn keep_trying(&self, u: &Utterance) -> Result<Sent, LinkError> {
         /// How long his answer is waited for before the microphone is given back to him.
         const WAIT: Duration = Duration::from_secs(90);
         /// The longest the tower goes unasked meanwhile, for a radio that is not following the feed. It is
@@ -502,12 +515,12 @@ impl Link {
         let (mut failures, mut taken, mut ask_in) = (0, false, Duration::from_secs(1));
         while began.elapsed() < WAIT {
             match self.say_or_leave(u, &mut Vec::new()) {
-                Ok(Sent::Answered(reply)) => return Ok(Some(reply)),
-                Ok(Sent::Left { away }) => return Ok(Some(Reply { say: if away { AWAY.into() } else { String::new() }, ..Reply::default() })),
+                Ok(Sent::Answered(reply)) => return Ok(Sent::Answered(reply)),
+                Ok(left @ Sent::Left { .. }) => return Ok(left),
                 Ok(Sent::Taken) => {
                     taken = true;
                     if let Some(reply) = self.await_answer(&u.id, ask_in) {
-                        return Ok(Some(reply));
+                        return Ok(Sent::Answered(reply));
                     }
                     ask_in = (ask_in * 2).min(ASK_AGAIN);
                 }
@@ -522,7 +535,7 @@ impl Link {
                 }
             }
         }
-        Ok(None)
+        Ok(Sent::Taken)
     }
 }
 

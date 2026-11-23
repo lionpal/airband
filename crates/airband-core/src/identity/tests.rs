@@ -8,15 +8,15 @@ fn row(tool: &str) -> std::collections::BTreeMap<String, Value> {
 
 #[test]
 fn a_key_is_known_by_its_fingerprint_and_shown_by_its_last_four() {
-    let a = AccountIdentity::of_key("openai", "sk-abcdef1234");
+    let a = AccountIdentity::of_key("fixture-provider", "sk-abcdef1234");
     let AccountIdentity::Key { fingerprint, last4 } = &a else { panic!() };
     assert_eq!(last4, "1234");
     assert_eq!(fingerprint.len(), 64);
     assert!(!fingerprint.contains("abcdef"));
     // the same key on another computer is the same account; another key ending alike is not
-    assert!(a.same(&AccountIdentity::of_key("openai", "sk-abcdef1234")));
-    assert!(!a.same(&AccountIdentity::of_key("openai", "sk-zzzzzz1234")));
-    assert!(!a.same(&AccountIdentity::of_key("anthropic", "sk-abcdef1234")));
+    assert!(a.same(&AccountIdentity::of_key("fixture-provider", "sk-abcdef1234")));
+    assert!(!a.same(&AccountIdentity::of_key("fixture-provider", "sk-zzzzzz1234")));
+    assert!(!a.same(&AccountIdentity::of_key("fixture-other", "sk-abcdef1234")));
     assert_eq!(super::last4("ab"), "", "a short key shows nothing of itself");
     assert_eq!(super::last4("sk-abcdef1234"), "1234");
 }

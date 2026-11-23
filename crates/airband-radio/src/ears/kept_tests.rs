@@ -53,10 +53,12 @@ struct Mic {
     left: Mutex<VecDeque<Vec<u8>>>,
     pause: Duration,
     stopped: Mutex<bool>,
+    /// How many times he was told something went wrong: the tone, and the banner.
+    told: Mutex<usize>,
 }
 impl Mic {
     fn of(sound: &[u8], pause: Duration) -> Mic {
-        Mic { left: Mutex::new(sound.chunks(3200).map(<[u8]>::to_vec).collect()), pause, stopped: Mutex::new(false) }
+        Mic { left: Mutex::new(sound.chunks(3200).map(<[u8]>::to_vec).collect()), pause, stopped: Mutex::new(false), told: Mutex::new(0) }
     }
 }
 impl RadioHost for Mic {
@@ -70,7 +72,9 @@ impl RadioHost for Mic {
     fn record_stop(&self) {
         *self.stopped.lock().unwrap() = true;
     }
-    fn told(&self, _: String) {}
+    fn told(&self, _: String) {
+        *self.told.lock().unwrap() += 1;
+    }
     fn speak(&self, _: String) {}
     fn listen(&self) -> Option<String> {
         None
@@ -113,10 +117,13 @@ fn a_line_that_drops_mid_sentence_stops_neither_the_recording_nor_takes_the_word
     let sound = speech(3);
     let mic = Mic::of(&sound, Duration::from_millis(15));
     let heard = ears.hear_by(&mic, by_stand_in(port), true, Aim::default());
-    let Listened::Unheard { take } = heard else { panic!("it was taken as heard") };
+    let Listened::Unheard { take, why } = heard else { panic!("it was taken as heard") };
+    assert_eq!(why, Unheard::Dropped);
     // every sample he said is kept, to the end, after the line went
     assert_eq!(kept(&ears, &dir, &take), (Some(Stage::Unheard { why: Unheard::Dropped }), Some(sound.len())));
     assert!(*mic.stopped.lock().unwrap());
+    // and he is told, once: he may believe it went
+    assert_eq!(*mic.told.lock().unwrap(), 1);
 }
 
 #[test]
@@ -159,7 +166,7 @@ fn final_words_that_never_come_leave_the_take_unheard_with_its_sound_and_nothing
     let ears = ears_in(&dir);
     let sound = speech(1);
     let heard = ears.hear_by(&Mic::of(&sound, Duration::from_millis(5)), by_stand_in(port), true, Aim::default());
-    let Listened::Unheard { take } = heard else { panic!("words it had not finished were taken for what he said") };
+    let Listened::Unheard { take, .. } = heard else { panic!("words it had not finished were taken for what he said") };
     assert_eq!(kept(&ears, &dir, &take), (Some(Stage::Unheard { why: Unheard::TimedOut }), Some(sound.len())));
 }
 
@@ -169,7 +176,7 @@ fn a_take_not_heard_is_heard_again_whole_from_its_recording() {
     let ears = ears_in(&dir);
     // the first time, nothing can be reached
     let sound = speech(2);
-    let Listened::Unheard { take } = ears.hear_by(&Mic::of(&sound, Duration::ZERO), by_stand_in(1), true, Aim::default()) else { panic!() };
+    let Listened::Unheard { take, .. } = ears.hear_by(&Mic::of(&sound, Duration::ZERO), by_stand_in(1), true, Aim::default()) else { panic!() };
     // the second, the service has all of the recording before it answers
     let port = stand_in(|ws| {
         let mut got = 0;
@@ -184,7 +191,58 @@ fn a_take_not_heard_is_heard_again_whole_from_its_recording() {
     let side = Mic::of(&[], Duration::ZERO);
     ears.takes().again(&take, false);
     let mic = by_stand_in(port);
-    let got = ears.by(&crate::takes::Replay::of(&side, &ears.takes().replay(&take).unwrap()), mic, true);
+    let got = ears.by(&crate::takes::Replay::of(&side, &ears.takes().replay(&take).unwrap(), false), mic, true);
     let Listened::Said { text, .. } = ears.takes().heard_again(&take, got) else { panic!() };
     assert_eq!(text, format!("{} bytes", sound.len()));
+}
+
+#[test]
+fn a_recording_heard_again_by_a_live_service_is_given_no_faster_than_it_was_spoken() {
+    let side = Mic::of(&[], Duration::ZERO);
+    let sound = speech(2);
+    let replay = crate::takes::Replay::of(&side, &sound, true);
+    let began = std::time::Instant::now();
+    while !replay.record_read().is_empty() {}
+    // two seconds of sound: the second is given a second after the first
+    assert!(began.elapsed() >= Duration::from_millis(950), "{:?}", began.elapsed());
+    let fast = crate::takes::Replay::of(&side, &sound, false);
+    let began = std::time::Instant::now();
+    while !fast.record_read().is_empty() {}
+    assert!(began.elapsed() < Duration::from_millis(500));
+}
+
+#[test]
+fn an_upload_closes_the_microphone_when_he_stops_and_not_after_the_upload() {
+    // a recording read by a reader that only records when the microphone was stopped before it was asked
+    let dir = Folder::new();
+    let ears = ears_in(&dir);
+    let mic = Mic::of(&speech(1), Duration::ZERO);
+    let tape = ears.takes().tape(&mic, Aim::default());
+    assert!(record(&tape, true).is_some());
+    tape.record_stop();
+    tape.record_stop();
+    assert!(*mic.stopped.lock().unwrap());
+    // stopped once, whoever asks: nothing more is read from it
+    assert!(tape.record_read().is_empty());
+}
+
+#[test]
+fn a_take_ends_at_the_longest_one_is() {
+    let dir = Folder::new();
+    let ears = ears_in(&dir);
+    // a microphone left open, giving sound for as long as it is read
+    let longest = crate::takes::LONGEST as usize;
+    let mic = Mic::of(&vec![1u8; longest + 32000], Duration::ZERO);
+    let tape = ears.takes().tape(&mic, Aim::default());
+    let mut read = 0;
+    loop {
+        let got = tape.record_read();
+        if got.is_empty() {
+            break;
+        }
+        read += got.len();
+    }
+    assert_eq!(read, longest);
+    let rec = tape.done();
+    assert_eq!(kept(&ears, &dir, &rec.id).1, Some(longest));
 }

@@ -170,12 +170,18 @@ struct MoreServices: View {
 
 /// Fetching a model that runs on the phone, shown inside its card.
 private struct Fetching: View {
+    @EnvironmentObject var model: RadioModel
     let label: String
     let progress: Double?
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let progress { ProgressView(value: progress).tint(Palette.ink) } else { ProgressView().controlSize(.small) }
-            Text(label).font(.system(size: 13)).foregroundStyle(Palette.soft)
+            HStack {
+                Text(label).font(.system(size: 13)).foregroundStyle(Palette.soft)
+                Spacer()
+                // a download the system put off can sit for good: he can stop it, and what came is kept
+                if progress != nil { Button("Stop") { model.desk.stopModelFetch() }.font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.ink).buttonStyle(.plain) }
+            }
         }
     }
 }
@@ -393,8 +399,8 @@ struct ChoicePage<Picker: View>: View {
     }
 }
 
-/// The coding tools he uses: one is chosen on first run (`single`), and more are added in Settings. The first
-/// in his list is the one he uses most.
+/// The coding tools he uses: one is chosen on first run (`single`), and more are added in Settings. When several
+/// can write his summaries with their sign-in and none is chosen for it, he is asked which.
 struct ToolsPicker: View {
     @EnvironmentObject var model: RadioModel
     /// First run: choosing one replaces the choice. Settings: each is added or taken away, and one always stays.
@@ -416,6 +422,11 @@ struct ToolsPicker: View {
                 }
             }
             ContactRow(from: .tools)
+        }
+        .confirmationDialog("Which sign-in writes your summaries?", isPresented: Binding(get: { !single && model.summaryTool.ask }, set: { _ in }), titleVisibility: .visible) {
+            ForEach(codingTools().filter { model.summaryTool.can.contains($0.id) }, id: \.id) { tool in
+                Button(tool.name) { model.setSummaryTool(tool.id) }
+            }
         }
     }
 }

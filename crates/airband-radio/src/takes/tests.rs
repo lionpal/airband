@@ -70,7 +70,7 @@ fn a_take_that_was_not_heard_keeps_all_its_sound_and_says_why() {
     let dir = Folder::new();
     let (takes, _) = Takes::open(&dir.path());
     let (id, heard) = recorded(&takes, &speech(1), Got::Failed(Unheard::Dropped));
-    assert!(matches!(heard, Listened::Unheard { ref take } if *take == id));
+    assert!(matches!(heard, Listened::Unheard { ref take, why: Unheard::Dropped } if *take == id));
     assert_eq!((stage(&takes, &id), on_disk(&dir, &id)), (Some(Stage::Unheard { why: Unheard::Dropped }), Some(32000)));
     // speech in it and no words back: not heard either
     let (id, _) = recorded(&takes, &speech(1), Got::Words(None));
@@ -151,7 +151,7 @@ fn what_was_left_partway_when_the_app_closed_is_found_again() {
 }
 
 #[test]
-fn past_the_limit_the_oldest_goes_those_on_their_way_first_and_he_is_told_of_the_rest() {
+fn past_the_limit_nothing_is_deleted_and_he_is_told_once() {
     let told = Arc::new(Mutex::new(Vec::<String>::new()));
     let takes = Takes::default();
     let heard = told.clone();
@@ -164,20 +164,14 @@ fn past_the_limit_the_oldest_goes_those_on_their_way_first_and_he_is_told_of_the
         }
         ids.push(id);
     }
-    // the one on its way goes first, and he need not be told: its words are still going
-    recorded(&takes, &speech(1), Got::Failed(Unheard::Dropped));
-    assert!(stage(&takes, &ids[3]).is_none() && stage(&takes, &ids[0]).is_some());
     assert!(told.lock().unwrap().is_empty());
-    // then the oldest, and he is told
+    // past it: every take stays, those on their way too, since his computer has none of them yet
     recorded(&takes, &speech(1), Got::Failed(Unheard::Dropped));
-    assert!(stage(&takes, &ids[0]).is_none());
-    assert_eq!(*told.lock().unwrap(), ["Your oldest recording that was not sent was deleted to make room."]);
-    assert_eq!(takes.all().len(), KEEP.takes);
-    // a take still recording is never what goes
-    let rec = takes.begin(Aim::default());
-    takes.stage(&rec.id, |t| t.bytes = KEEP.bytes);
     recorded(&takes, &speech(1), Got::Failed(Unheard::Dropped));
-    assert!(stage(&takes, &rec.id).is_some());
+    assert!(ids.iter().all(|id| stage(&takes, id).is_some()));
+    assert_eq!(takes.all().len(), KEEP.takes + 2);
+    // and he is told once, when it went past
+    assert_eq!(told.lock().unwrap().len(), 1);
 }
 
 #[test]

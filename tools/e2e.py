@@ -679,8 +679,10 @@ Send it as written, or do you want changes?""")
         waiting = http("GET", "/v1/status", token=OWN)[1]["pending"]
         check("a report that made no sound stays waiting to be read", any(p["callsign"] == "solo second" for p in waiting), waiting)
         # how long the radio's reason was, never its words: what a phone sends is not written in the log
-        check("and the tower writes down that it could not", f"could not read solo second aloud ({len('the test made no sound')} characters said why)" in open(os.path.join(work, "tower.log")).read()
-              and "the test made no sound" not in open(os.path.join(work, "tower.log")).read())
+        # by the line's id and the radio's, never by the name of the agent that said it
+        logged = open(os.path.join(work, "tower.log")).read()
+        check("and the tower writes down that it could not", f"radio reader could not read line {silent['id']} aloud ({len('the test made no sound')} characters said why)" in logged
+              and "the test made no sound" not in logged and "could not read solo second" not in logged)
         # the record names the line and the radio by id only (`radio_tag` in crates/airband-cli/src/tower/mod.rs)
         check("its place in the queue is on record: handed over, then back to waiting", f"aloud: line {silent['id']} handed to radio reader → waiting" in "\n".join(trail()), trail())
         # another radio takes it, and the answer that carried it is lost on the way: asking again, saying what it
@@ -728,7 +730,7 @@ Send it as written, or do you want changes?""")
     check("and in no other radio's", not other.get("answers"), other.get("answers"))
     code, later = http("POST", "/v1/radio/utterance", {"text": "the invoices: file the March ones too", "id": mine})
     check("asking again says the same, and nothing is delivered twice", later.get("state") == "answered" and told and later["reply"]["say"] == told["reply"]["say"] and received("solo3")[len(before):].count("March") <= 1, (later, received("solo3")[len(before):]))
-    check("everything he says is one line in the tower's log, with its id and what became of it", f"utterance {mine} from e2e by this computer: answered in" in open(os.path.join(work, "tower.log")).read())
+    check("everything he says is one line in the tower's log, with its id and what became of it", f"utterance {mine} from radio e2e by this computer: answered in" in open(os.path.join(work, "tower.log")).read())
     check("something said with no id is refused", http("POST", "/v1/radio/utterance", {"text": "@solo3 thanks"})[0] in (400, 422))
     # a tower that stopped part way through answering: the id is in its database with no answer, and nothing in
     # this tower is answering it. It is taken up again, with no wait.

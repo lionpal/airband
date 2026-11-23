@@ -35,7 +35,7 @@ pub(super) async fn uses_tools(State(app): State<Arc<App>>, Sent(said): Sent<at:
 pub(super) async fn summary_brief(State(app): State<Arc<App>>, Sent(said): Sent<at::Brief>) -> Answer<at::Brief> {
     let his = match said.text {
         None => None,
-        Some(text) => airband_core::summary::checked(&text).map_err(|why| no(why.said()))?,
+        Some(text) => Some(airband_core::summary::checked(&text).map_err(|why| no(why.said()))?),
     };
     app.settings.change(|cfg| cfg.summary_brief = his).map_err(no)?;
     done()

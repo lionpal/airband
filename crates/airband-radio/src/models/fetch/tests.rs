@@ -133,7 +133,7 @@ fn a_fetch_cut_short_goes_on_from_the_bytes_it_has() {
     let (dir, at) = folder();
     let m = model(&server.base, &files);
     let first = fetch_local_model(at.clone(), &m, None);
-    assert!(matches!(&first, Err(RadioError::Told { reason }) if reason == STOPPED), "{first:?}");
+    assert_eq!(first, Err(FetchFailed::Stopped));
     assert!(!here_whole(&dir, &files));
     let before = server.asked.lock().unwrap().len();
     let kept = on_disk(&dir.join("models/tiny/1"));
@@ -169,7 +169,7 @@ fn bytes_that_are_not_the_model_never_take_its_name() {
     let server = serve(files.clone(), Ways { wrong: true, ..Ways::default() });
     let (dir, at) = folder();
     let went = fetch_local_model(at, &model(&server.base, &files), None);
-    assert!(matches!(&went, Err(RadioError::Told { reason }) if reason.starts_with("What came down was not the model")), "{went:?}");
+    assert_eq!(went, Err(FetchFailed::NotTheModel));
     let v = dir.join("models/tiny/1");
     assert!(files.iter().all(|(n, _)| !v.join(n).exists() && !part_of(&v.join(n)).exists()) && !v.join(WHOLE).exists());
     std::fs::remove_dir_all(dir).ok();
@@ -181,7 +181,7 @@ fn a_server_that_ignores_ranges_is_not_taken_for_a_piece() {
     let server = serve(files.clone(), Ways { no_ranges: true, ..Ways::default() });
     let (dir, at) = folder();
     let went = fetch_local_model(at, &model(&server.base, &files), None);
-    assert!(matches!(&went, Err(RadioError::Told { reason }) if reason == NOT_RESUMED), "{went:?}");
+    assert_eq!(went, Err(FetchFailed::NotResumed));
     assert!(!dir.join("models/tiny/1/weights/big.bin").exists());
     std::fs::remove_dir_all(dir).ok();
 }
@@ -193,6 +193,16 @@ struct Moves {
     started: Mutex<Vec<(String, u64, u64)>>,
     /// Put this many bytes too few in the piece that starts here.
     short_at: Option<u64>,
+    /// Never end the piece that starts here: a transfer the system put off.
+    stuck_at: Option<u64>,
+    /// The transfers stopped, by id.
+    stopped: Mutex<Vec<String>>,
+}
+
+impl Moves {
+    fn of(files: &[(String, Vec<u8>)]) -> Moves {
+        Moves { files: files.to_vec(), started: Mutex::new(Vec::new()), short_at: None, stuck_at: None, stopped: Mutex::new(Vec::new()) }
+    }
 }
 
 impl Transfers for Moves {
@@ -201,12 +211,18 @@ impl Transfers for Moves {
         self.started.lock().unwrap().push((name.clone(), from, until));
         let body = self.files.iter().find(|(n, _)| *n == name).unwrap().1[from as usize..until as usize].to_vec();
         let short = self.short_at == Some(from);
+        if self.stuck_at == Some(from) {
+            return;
+        }
         std::thread::spawn(move || {
             heard(Event::Moved { id: id.clone(), bytes: body.len() as u64 / 2 });
             let body = if short { &body[..body.len() - 1] } else { &body[..] };
             std::fs::write(&to, body).unwrap();
             heard(Event::Ended { id, status: Some(206) });
         });
+    }
+    fn stop(&self, id: String) {
+        self.stopped.lock().unwrap().push(id);
     }
 }
 
@@ -215,7 +231,7 @@ fn with_the_hosts_transfers_every_piece_is_handed_over_at_once_and_checked_here(
     let files = files();
     let (dir, at) = folder();
     let m = model("https://example.invalid/m", &files);
-    let host = Arc::new(Moves { files: files.clone(), started: Mutex::new(Vec::new()), short_at: None });
+    let host = Arc::new(Moves::of(&files));
     fetch_local_model(at.clone(), &m, Some(host.clone())).unwrap();
     assert!(here_whole(&dir, &files));
     let mut started = host.started.lock().unwrap().clone();
@@ -225,10 +241,10 @@ fn with_the_hosts_transfers_every_piece_is_handed_over_at_once_and_checked_here(
 
     // a piece that came short is not joined, and is asked for again next time
     let (dir, at) = folder();
-    let host = Arc::new(Moves { files: files.clone(), started: Mutex::new(Vec::new()), short_at: Some(PIECE) });
+    let host = Arc::new(Moves { short_at: Some(PIECE), ..Moves::of(&files) });
     assert!(fetch_local_model(at.clone(), &m, Some(host.clone())).is_err());
     assert!(!dir.join("models/tiny/1/weights/big.bin").exists());
-    let whole = Arc::new(Moves { files: files.clone(), started: Mutex::new(Vec::new()), short_at: None });
+    let whole = Arc::new(Moves::of(&files));
     fetch_local_model(at, &m, Some(whole.clone())).unwrap();
     assert!(here_whole(&dir, &files));
     assert!(whole.started.lock().unwrap().iter().any(|(_, from, _)| *from == PIECE));
@@ -237,10 +253,67 @@ fn with_the_hosts_transfers_every_piece_is_handed_over_at_once_and_checked_here(
 
 #[test]
 fn a_download_that_fails_is_told_by_what_it_answered() {
-    assert_eq!(not_fetched(404), "The download is not there.");
-    assert!(not_fetched(503).contains("trouble (503)"));
-    assert!(not_fetched(429).contains("too often"));
-    assert!(not_fetched(403).contains("(403)"));
+    let files = files();
+    let (dir, at) = folder();
+    // a server that has nothing there
+    let server = serve(Vec::new(), Ways::default());
+    assert_eq!(fetch_local_model(at, &model(&server.base, &files), None), Err(FetchFailed::Status(404)));
+    // each answer is told in words of its own
+    let all = [FetchFailed::Stopped, FetchFailed::Cancelled, FetchFailed::Unreached, FetchFailed::NotWritten, FetchFailed::NoRoom, FetchFailed::NotResumed, FetchFailed::NotTheModel, FetchFailed::Status(404), FetchFailed::Status(429), FetchFailed::Status(503), FetchFailed::Status(403)];
+    let said: std::collections::HashSet<String> = all.iter().map(|f| f.said()).collect();
+    assert_eq!(said.len(), all.len());
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn a_fetch_he_stops_ends_and_lets_the_next_one_start() {
+    let files = files();
+    let (dir, at) = folder();
+    let m = model("https://example.invalid/m", &files);
+    // the system puts off the second piece of the big file, for good
+    let host = Arc::new(Moves { stuck_at: Some(PIECE), ..Moves::of(&files) });
+    let fetching = {
+        let (at, m, host) = (at.clone(), m.clone(), host.clone());
+        std::thread::spawn(move || fetch_local_model(at, &m, Some(host)))
+    };
+    // once the stuck one is all that is left, he stops it
+    for _ in 0..200 {
+        if host.started.lock().unwrap().len() == 3 && dir.join("models/tiny/1/small.json").exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // what `Desk::stop_model_fetch` tells
+    heard(Event::Stop);
+    assert_eq!(fetching.join().unwrap(), Err(FetchFailed::Cancelled));
+    // its transfer is stopped, and another fetch can start: it goes on from what came
+    assert_eq!(host.stopped.lock().unwrap().len(), 1);
+    let whole = Arc::new(Moves::of(&files));
+    fetch_local_model(at, &m, Some(whole.clone())).unwrap();
+    assert!(here_whole(&dir, &files));
+    assert_eq!(whole.started.lock().unwrap().iter().map(|(_, from, _)| *from).collect::<Vec<_>>(), [PIECE]);
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn a_piece_that_came_before_the_fetch_was_listening_is_taken_and_none_is_left_behind() {
+    let files = files();
+    let (dir, at) = folder();
+    let m = model("https://example.invalid/m", &files);
+    // a transfer from before ended whole, with nobody listening, and another left a piece of no use
+    let big = dir.join("models/tiny/1/weights/big.bin");
+    std::fs::create_dir_all(big.parent().unwrap()).unwrap();
+    std::fs::write(piece_at(&big, 0), &files[0].1[..PIECE as usize]).unwrap();
+    let host = Arc::new(Moves::of(&files));
+    fetch_local_model(at, &m, Some(host.clone())).unwrap();
+    assert!(here_whole(&dir, &files));
+    // it was not asked for again
+    assert!(host.started.lock().unwrap().iter().all(|(n, from, _)| !(n == "weights/big.bin" && *from == 0)));
+    // and once the version is whole, a piece a late transfer put there goes too
+    std::fs::write(piece_at(&big, PIECE), b"late").unwrap();
+    sweep_pieces(&dir.join("models/tiny/1"));
+    assert_eq!(std::fs::read_dir(big.parent().unwrap()).unwrap().count(), 1);
+    std::fs::remove_dir_all(dir).ok();
 }
 
 #[test]

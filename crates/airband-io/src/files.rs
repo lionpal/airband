@@ -69,6 +69,14 @@ fn write(path: &Path, bytes: &[u8], leave: Leave) -> std::io::Result<()> {
     written
 }
 
+/// The path of a file beside `path`, named as it is with `tail` after its name: `model.bin` and `.part` make
+/// `model.bin.part`.
+pub fn beside(path: &Path, tail: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(tail);
+    PathBuf::from(name)
+}
+
 /// Replace a file with these bytes, whole or not at all. It can be read by whoever could read the one it
 /// replaces; a new one is as the system makes files.
 pub fn write_atomic(path: &Path, bytes: impl AsRef<[u8]>) -> std::io::Result<()> {

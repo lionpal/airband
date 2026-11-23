@@ -496,7 +496,7 @@ mod tests {
 
     #[test]
     fn secrets_leave_the_file_and_come_back_whole() {
-        let whole = json!({"port": 7373, "token": "local", "radio_token": "t2", "name": "C", "summarizer": {"kind": "gemini", "key": "vk", "model": "v"}, "pairings": [{"name": "phone", "secret": "s1"}, {"name": "pad", "secret": "s2"}]});
+        let whole = json!({"port": 7373, "token": "local", "radio_token": "t2", "name": "C", "summarizer": {"kind": "fixture-provider", "key": "vk", "model": "v"}, "pairings": [{"name": "phone", "secret": "s1"}, {"name": "pad", "secret": "s2"}]});
         let mut doc = whole.clone();
         let kept = seal(&mut doc, &Map::new());
         let text = doc.to_string();
