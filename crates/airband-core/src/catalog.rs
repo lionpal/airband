@@ -336,31 +336,33 @@ mod tests {
     #[test]
     fn a_tool_row_this_build_cannot_read_is_left_out_said_and_the_compiled_in_tool_stays() {
         // N20: one tool row in a shape this build cannot read leaves the rest of the copy to be taken
+        let id = built().tools[1].id.as_str();
         let (taken, said) = offered(&|d| {
             let tools = d["tools"].as_array_mut().unwrap();
-            tools.iter_mut().find(|t| t["id"] == "codex").unwrap()["name"] = serde_json::json!({ "a": "new shape" });
+            tools.iter_mut().find(|t| t["id"] == id).unwrap()["name"] = serde_json::json!({ "a": "new shape" });
             tools.push(serde_json::json!({ "id": "newtool", "launchers": "a new shape" }));
         })
         .unwrap();
         let taken = taken.unwrap();
-        assert_eq!(taken.tools.iter().find(|t| t.id == "codex"), built().tools.iter().find(|t| t.id == "codex"));
+        assert_eq!(taken.tools.iter().find(|t| t.id == id), built().tools.iter().find(|t| t.id == id));
         assert!(!taken.tools.iter().any(|t| t.id == "newtool"));
-        assert!(said.left_out.iter().any(|l| l.starts_with("codex:")) && said.left_out.iter().any(|l| l.starts_with("newtool:")), "{:?}", said.left_out);
+        assert!(said.left_out.iter().any(|l| l.starts_with(&format!("{id}:"))) && said.left_out.iter().any(|l| l.starts_with("newtool:")), "{:?}", said.left_out);
     }
 
     #[test]
     fn a_launcher_this_build_cannot_read_is_left_out_and_said_and_its_tool_and_other_launchers_stay() {
+        let id = built().tools[1].id.as_str();
         let (taken, said) = offered(&|d| {
             let tools = d["tools"].as_array_mut().unwrap();
-            let codex = tools.iter_mut().find(|t| t["id"] == "codex").unwrap();
-            codex["launchers"].as_array_mut().unwrap().push(serde_json::json!({ "name": "later", "held": { "by": "a way this build has no code for" } }));
+            let tool = tools.iter_mut().find(|t| t["id"] == id).unwrap();
+            tool["launchers"].as_array_mut().unwrap().push(serde_json::json!({ "name": "later", "held": { "by": "a way this build has no code for" } }));
         })
         .unwrap();
         let taken = taken.unwrap();
-        let codex = taken.tools.iter().find(|t| t.id == "codex").unwrap();
-        let built_codex = built().tools.iter().find(|t| t.id == "codex").unwrap().clone();
-        assert_eq!(codex.launchers, built_codex.launchers);
-        assert!(said.left_out.iter().any(|l| l.starts_with("codex: a launcher")), "{:?}", said.left_out);
+        let tool = taken.tools.iter().find(|t| t.id == id).unwrap();
+        let built_tool = built().tools.iter().find(|t| t.id == id).unwrap().clone();
+        assert_eq!(tool.launchers, built_tool.launchers);
+        assert!(said.left_out.iter().any(|l| l.starts_with(&format!("{id}: a launcher"))), "{:?}", said.left_out);
     }
 
     #[test]

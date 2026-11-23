@@ -375,7 +375,7 @@ mod tests {
     #[test]
     fn a_model_is_taken_by_its_id_or_this_launchers_own_id_for_the_heard_one_and_never_by_a_near_word() {
         let models = vec![Choice { id: "gpt-6.2-sol".into(), name: "6.2 Sol".into() }, Choice { id: "gpt-6-luna".into(), name: "6 Luna".into() }];
-        let (here, other) = (LauncherId::new("codex"), LauncherId::new("held-codex"));
+        let (here, other) = (LauncherId::new("some-tool"), LauncherId::new("held-some-tool"));
         let id = |r: Result<Option<Choice>, String>| r.map(|c| c.map(|c| c.id));
         assert_eq!(id(chosen(Some(&Pick::Id("gpt-6-luna".into())), &here, &models, false)), Ok(Some("gpt-6-luna".into())));
         // what was heard is this launcher's by the id this launcher gave it
@@ -482,17 +482,19 @@ mod tests {
     #[test]
     fn launchers_are_offered_by_names_he_can_say_back_and_the_one_he_chose_starts_it() {
         let held = serde_json::json!({ "by": "lines", "fresh": [], "resume": [], "line": "{text}", "stop": "{id}" });
+        // a tool with a row, whichever this build has first
+        let real = airband_core::catalog::built().tools[0].id.as_str();
         let app = with_launchers("spoken", "mine", serde_json::json!({
             "mine": { "harness": "tool-one", "argv": ["true"] },
-            "x": { "harness": "claude-code", "argv": ["true"], "models": { "Nova": "nova-x" }, "held": held },
-            "y": { "harness": "claude-code", "argv": ["true"], "models": { "Nova": "nova-y" } },
+            "x": { "harness": real, "argv": ["true"], "models": { "Nova": "nova-x" }, "held": held },
+            "y": { "harness": real, "argv": ["true"], "models": { "Nova": "nova-y" } },
             "z": { "harness": "tool-four", "argv": ["true"], "models": { "Nova": "nova-z" } },
         }));
         let (x, y, z) = (LauncherId::new("x"), LauncherId::new("y"), LauncherId::new("z"));
         let named = sayable(&app.cfg(), &[x.clone(), y.clone(), z.clone()]);
         // by the tool's name from its row, and how each runs it where two start the same tool; one of his own for
         // a tool with no row by the name he gave it
-        let row = crate::adapters::tool_row("claude-code").unwrap().name.clone();
+        let row = crate::adapters::tool_row(real).unwrap().name.clone();
         assert_eq!(named, vec![(x.clone(), format!("{row} run by airband")), (y.clone(), format!("{row} in a terminal")), (z.clone(), "z".into())]);
         assert_eq!(sayable(&app.cfg(), &[x.clone(), z.clone()])[0].1, row);
         let nova = || Some(heard("Nova", &[(&x, "nova-x"), (&y, "nova-y"), (&z, "nova-z")]));

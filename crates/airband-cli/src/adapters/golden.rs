@@ -1,5 +1,5 @@
 //! Golden tests: what an adapter makes of a tool's real-shaped notifications and records, written down once
-//! and held to, so a change to how adapters are put together changes nothing a tool's agents report.
+//! and held to, so a change to the code tools share changes nothing a tool's agents report.
 //!
 //! A tool's fixtures are a list of steps (`fixtures/hooks.json` in its folder), each one of:
 //! - `{"hook": …}`: a notification as the tool sends it; what it reports, and what is asked of him;

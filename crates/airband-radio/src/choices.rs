@@ -405,8 +405,8 @@ mod tests {
         use airband_core::radio::ReadsOffer;
         let offer = |id: &str, login: &str, key: bool, has_key: bool| ReadsOffer { provider: id.into(), offer: "x".into(), label: format!("The {id} one"), login: login.into(), key, has_key, key_name: "API key".into(), preferred: true, ..ReadsOffer::default() };
         let named = |provider: &str, offer: &str| OfferName { provider: provider.into(), offer: offer.into() };
-        let offered = ReadsOffered { now: Some(named("b", "x")), failed: None, offers: vec![offer("a", "", true, false), offer("b", "", true, true), offer("c", "codex", false, false), offer("d", "opencode", false, false)] };
-        let saved = Saved { offered: Some(offered), tools: vec!["codex".into()], ..Saved::default() };
+        let offered = ReadsOffered { now: Some(named("b", "x")), failed: None, offers: vec![offer("a", "", true, false), offer("b", "", true, true), offer("c", "some-tool", false, false), offer("d", "other-tool", false, false)] };
+        let saved = Saved { offered: Some(offered), tools: vec!["some-tool".into()], ..Saved::default() };
         let all = list(ChoiceJob::Reads, &saved, &facts(HERE, NO_KEYS));
         // his tool's sign-in first, another tool's left out, and the label is the computer's own
         assert_eq!(all.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), vec!["c/x", "a/x", "b/x"]);
@@ -501,7 +501,7 @@ mod tests {
         // the folder choices are kept in can no longer be written
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
-        let went = chooser.change(|s| s.tools = vec!["codex".into()]);
+        let went = chooser.change(|s| s.tools = vec!["some-tool".into()]);
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(matches!(went, Err(RadioError::Told { .. })), "{went:?}");
         let _ = std::fs::remove_dir_all(&dir);
@@ -512,7 +512,7 @@ mod tests {
         // kept by a build that let his computer listen and speak for the phone
         let dir = std::env::temp_dir().join(format!("airband-choices-{}", random_hex(4)));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("choices.json"), r#"{"ears":{"place":"computer","id":"","offer":"","set":{},"voice":""},"voice":{"place":"computer","id":""},"tools":["codex"]}"#).unwrap();
+        std::fs::write(dir.join("choices.json"), r#"{"ears":{"place":"computer","id":"","offer":"","set":{},"voice":""},"voice":{"place":"computer","id":""},"tools":["some-tool"]}"#).unwrap();
         let host = Arc::new(Host::default());
         let desk = Desk::alone(&dir.display().to_string(), host.clone());
         // nothing is chosen for either, the rest of what was kept stands, and nothing else took their place
@@ -520,7 +520,7 @@ mod tests {
             assert!(chosen(&desk.choices(job)).is_empty());
             assert_eq!(desk.chosen_label(job), "Nothing chosen");
         }
-        assert_eq!(desk.tools(), vec!["codex".to_string()]);
+        assert_eq!(desk.tools(), vec!["some-tool".to_string()]);
         assert!(!desk.shared.senses.mouth.ready());
         // the microphone, opened: he is told where to choose, and nothing listened
         let tape = crate::ears_stream::Tape::of(&[], false);

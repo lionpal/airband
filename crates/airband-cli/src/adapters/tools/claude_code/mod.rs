@@ -260,8 +260,6 @@ mod tests {
         assert_eq!(crate::adapters::row_says(HARNESS, "home_env"), "CLAUDE_CONFIG_DIR");
         assert_eq!(crate::adapters::home_given(HARNESS, Some("/elsewhere/claude".into())), std::path::PathBuf::from("/elsewhere/claude"));
         assert_eq!(crate::adapters::home_given(HARNESS, None), crate::config::home().join(".claude"));
-        // every tool by the same rule, from its own row
-        assert_eq!(crate::adapters::home_given("opencode", None), crate::config::home().join(".local/state"));
     }
 
     /// A hook is read with the environment and home the test gives it, never this process's: run from inside one of
@@ -537,3 +535,5 @@ mod tests {
 
 #[cfg(test)]
 mod golden;
+#[cfg(test)]
+mod row;

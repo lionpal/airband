@@ -34,40 +34,10 @@ fn an_unknown_account_is_never_taken_for_another() {
 
 #[test]
 fn every_tool_row_says_where_its_account_is_and_each_source_reads() {
-    for tool in ["claude-code", "codex", "opencode"] {
-        assert!(!sources(&row(tool)).unwrap().is_empty(), "{tool} names no account source");
+    // what each tool's sources give is held to in that tool's own folder (`adapters/tools/<tool>/row.rs`)
+    for tool in &crate::catalog::built().tools {
+        assert!(!sources(&row(&tool.id)).unwrap().is_empty(), "{} names no account source", tool.id);
     }
-}
-
-#[test]
-fn claude_codes_account_is_its_account_id_in_its_organisation() {
-    let s = sources(&row("claude-code")).unwrap();
-    let doc = json!({"oauthAccount": {"accountUuid": "acc-1", "organizationUuid": "org-1", "emailAddress": "x"}});
-    assert_eq!(s[0].identity(&doc, None), Some(AccountIdentity::Id { id: "acc-1".into(), org: Some("org-1".into()) }));
-    assert_eq!(s[0].identity(&json!({}), None), None);
-    assert!(matches!(s[1].identity(&json!("sk-ant-fake-key-xyz9"), None), Some(AccountIdentity::Key { last4, .. }) if last4 == "xyz9"));
-}
-
-#[test]
-fn codexs_account_is_the_person_in_the_workspace_from_its_token() {
-    use base64::Engine;
-    let claims = json!({"https://api.openai.com/auth": {"chatgpt_user_id": "user-1", "chatgpt_account_id": "ws-1"}});
-    let body = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
-    let doc = json!({"auth_mode": "chatgpt", "tokens": {"id_token": format!("h.{body}.s")}, "OPENAI_API_KEY": null});
-    let s = sources(&row("codex")).unwrap();
-    assert_eq!(s[0].identity(&doc, None), Some(AccountIdentity::Id { id: "user-1".into(), org: Some("ws-1".into()) }));
-    // signed in with a key: no token, the key is the account
-    let keyed = json!({"auth_mode": "apikey", "OPENAI_API_KEY": "sk-proj-0000abcd"});
-    assert_eq!(s[0].identity(&keyed, None), None);
-    assert_eq!(s[1].identity(&keyed, None), Some(AccountIdentity::of_key("openai", "sk-proj-0000abcd")));
-}
-
-#[test]
-fn opencodes_keys_are_known_by_the_provider_each_row_names() {
-    let s = sources(&row("opencode")).unwrap();
-    assert_eq!(s[0].identity(&json!({"type": "key", "key": "k-1234"}), Some("opencode-go")), Some(AccountIdentity::of_key("opencode-go", "k-1234")));
-    // a sign-in that is not a key records no account here
-    assert_eq!(s[0].identity(&json!({"type": "oauth", "refresh": "r"}), Some("p")), None);
 }
 
 #[test]

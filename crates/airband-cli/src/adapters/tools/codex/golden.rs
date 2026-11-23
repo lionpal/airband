@@ -1,5 +1,5 @@
-//! What this adapter made of Codex's real-shaped notifications and records before adapters were described by
-//! their rows, held to (`adapters/golden.rs`).
+//! What this adapter makes of Codex's real-shaped notifications and records, as it made it when written down, held to
+//! (`adapters/golden.rs`): a change to code it shares with other tools changes nothing it reports.
 use super::NAME;
 use crate::adapters::golden::*;
 use crate::adapters::{agent_with, harness, put_away};

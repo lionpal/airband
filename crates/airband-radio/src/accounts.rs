@@ -205,11 +205,11 @@ mod tests {
     #[test]
     fn accounts_are_shown_by_tool_and_a_key_by_its_last_four() {
         let mut key = account("x", AccountIdentity::of_key("openai", "sk-fake-abcd1234"), false);
-        key.harness = "codex".into();
+        key.harness = "some-tool".into();
         let told = [(computer("mini"), on(vec![account("me@example.com", person("p1"), true), key]))];
         let shown = accounts_by_tool(StationAccounts::across(&told));
         let names: Vec<(&str, Vec<&str>)> = shown.iter().map(|t| (t.harness.as_str(), t.rows.iter().map(|r| r.shown.as_str()).collect())).collect();
-        assert!(names.iter().any(|(h, rows)| *h == "codex" && rows == &vec!["Key \u{2026}1234"]), "{names:?}");
+        assert!(names.iter().any(|(h, rows)| *h == "some-tool" && rows == &vec!["Key \u{2026}1234"]), "{names:?}");
         assert!(shown.iter().all(|t| t.rows.iter().all(|r| r.computer.is_empty())), "one computer is never named");
     }
 }

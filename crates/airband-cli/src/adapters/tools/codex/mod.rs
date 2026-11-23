@@ -1,6 +1,6 @@
 //! Codex, in a terminal he opened himself or reached through its own server.
 //!
-//! Codex has hooks in the same shape as Claude Code's: a command run on an event, the event as JSON on its
+//! Codex has hooks of the common shape (`hooks.rs`): a command run on an event, the event as JSON on its
 //! standard input, and for a permission request the decision as JSON on its standard output. So this adapter
 //! is short. Two things differ, and both in Codex's favour:
 //!
@@ -580,3 +580,5 @@ mod tests {
 
 #[cfg(test)]
 mod golden;
+#[cfg(test)]
+mod row;

@@ -1,4 +1,4 @@
-//! For a tool that reports through hooks of the shape Claude Code made common: a JSON file of the tool's own
+//! For a tool that reports through hooks of the common shape: a JSON file of the tool's own
 //! in which each event has a list of commands, each run with the event as JSON on its standard input, and for
 //! a permission request the decision read as JSON from its standard output. An adapter for such a tool says
 //! where the file is and which events it wants ([`File`]); putting them there and taking them out is here.
@@ -245,7 +245,7 @@ mod tests {
     }
     const EVENTS: &[On] = &[on("Stop", 5), On { event: "PostToolUse", timeout: 5, only: Some(read) }];
     fn file(dir: &Path) -> File {
-        File { name: "claude-code", path: dir.join("settings.json"), events: EVENTS }
+        File { name: "some-tool", path: dir.join("settings.json"), events: EVENTS }
     }
 
     #[test]
@@ -254,18 +254,18 @@ mod tests {
         let exe = Path::new("/Users/c/.airband/bin/airband");
         let mut s = json!({ "model": "x", "hooks": {
             "Stop": [
-                { "hooks": [{ "type": "command", "command": "\"/opt/homebrew/opt/airband/bin/airband\" hook claude-code --put-there-by-airband" }] },
+                { "hooks": [{ "type": "command", "command": "\"/opt/homebrew/opt/airband/bin/airband\" hook some-tool --put-there-by-airband" }] },
                 { "hooks": [{ "type": "command", "command": "afplay ding.aiff" }] }
             ],
             // what this program wrote before hooks carried the mark
-            "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"/Users/c/.airband/bin/airband\" hook claude-code" }] }]
+            "SessionStart": [{ "hooks": [{ "type": "command", "command": "\"/Users/c/.airband/bin/airband\" hook some-tool" }] }]
         }});
         f.strip(&mut s, exe);
         assert_eq!(s, json!({ "model": "x", "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "afplay ding.aiff" }] }] } }));
         // a program that happens to take the same arguments is not ours, and neither is our hook for another tool
         let mut other = json!({ "hooks": { "Stop": [
-            { "hooks": [{ "type": "command", "command": "\"/usr/local/bin/other-airband\" hook claude-code" }] },
-            { "hooks": [{ "type": "command", "command": "\"/x/airband\" hook codex --put-there-by-airband" }] }
+            { "hooks": [{ "type": "command", "command": "\"/usr/local/bin/other-airband\" hook some-tool" }] },
+            { "hooks": [{ "type": "command", "command": "\"/x/airband\" hook other-tool --put-there-by-airband" }] }
         ] } });
         f.strip(&mut other, exe);
         assert_eq!(other["hooks"]["Stop"].as_array().unwrap().len(), 2);

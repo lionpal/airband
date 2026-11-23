@@ -1,4 +1,4 @@
-//! What this adapter made before adapters were described by their rows, held to (`adapters/golden.rs`).
+//! What this adapter makes, as it made it when written down, held to (`adapters/golden.rs`).
 //! OpenCode has no hooks: everything else it says comes from its own server, which is not running here.
 use super::NAME;
 use crate::adapters::golden::*;

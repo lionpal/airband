@@ -1,5 +1,5 @@
-//! What this adapter made of Claude Code's real-shaped notifications, transcript and records before adapters
-//! were described by their rows, held to (`adapters/golden.rs`).
+//! What this adapter makes of Claude Code's real-shaped notifications, transcript and records, as it made it when written down, held to
+//! (`adapters/golden.rs`): a change to code it shares with other tools changes nothing it reports.
 use super::HARNESS;
 use crate::adapters::golden::*;
 use crate::adapters::{agent_with, harness, put_away};

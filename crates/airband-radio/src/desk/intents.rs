@@ -175,8 +175,8 @@ mod tests {
     #[test]
     fn what_was_wanted_while_the_file_could_not_be_read_is_what_is_wanted() {
         let target = |t: &str| PushTarget { provider: airband_core::relay::PushService::Apns, token: t.into() };
-        let mut found = Intents { push: Some(Intent { rev: 5, wanted: target("old"), per: BTreeMap::new() }), tools: Some(Intent { rev: 2, wanted: vec!["codex".into()], per: BTreeMap::from([(StationId::new("a"), Delivery::Done)]) }) };
-        let since = Intents { push: Some(Intent::after(None, target("new"))), tools: Some(Intent { rev: 1, wanted: vec!["codex".into()], per: BTreeMap::from([(StationId::new("b"), Delivery::Done)]) }) };
+        let mut found = Intents { push: Some(Intent { rev: 5, wanted: target("old"), per: BTreeMap::new() }), tools: Some(Intent { rev: 2, wanted: vec!["some-tool".into()], per: BTreeMap::from([(StationId::new("a"), Delivery::Done)]) }) };
+        let since = Intents { push: Some(Intent::after(None, target("new"))), tools: Some(Intent { rev: 1, wanted: vec!["some-tool".into()], per: BTreeMap::from([(StationId::new("b"), Delivery::Done)]) }) };
         found.rejoin(since);
         let push = found.push.unwrap();
         assert_eq!((push.wanted.token.as_str(), push.rev), ("new", 6), "an answer to the file's older one would count for the new one");

@@ -72,7 +72,7 @@ fn the_same_thing_is_never_sent_to_one_computer_twice_at_once() {
     {
         let mut state = desk.shared.state.lock().unwrap();
         state.computers.push(computer);
-        let _ = state.intents.change(|i| i.want_tools(vec!["codex".into()]));
+        let _ = state.intents.change(|i| i.want_tools(vec!["some-tool".into()]));
     }
     use super::tell::{owed, settle};
     let first = owed(&desk.shared, IntentKind::Tools, &id, epoch, |i| &i.tools);

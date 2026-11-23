@@ -347,3 +347,5 @@ mod tests {
 
 #[cfg(test)]
 mod golden;
+#[cfg(test)]
+mod row;
