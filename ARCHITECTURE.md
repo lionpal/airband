@@ -25,14 +25,17 @@ agent, and the shape of a credential.
 ## How the rules are kept
 
 The compiler keeps some of them, so they cannot drift:
-- `clippy.toml` refuses raw file calls (`std::fs::write`, `read`, `read_to_string`, `rename`, `remove_file`,
-  `create_dir_all`, `read_dir`, `remove_dir_all`, `File::open`, `OpenOptions`), the HTTP client's `get`, `post`,
-  `put` and `delete`, and hand-built JSON (`serde_json::json!`). Files and the
-  network go through `airband-io`; our own bodies are typed. A module that is an edge by nature (another tool's
-  files or protocol, a service's request body, a download, the relay's folder store) says so at its top with
-  `#![expect(..., reason = "...")]`, and that list is the whole of the exceptions. Tests may do either.
-- `clippy::let_underscore_must_use` is on in every crate: a result is used or let go with `.ok()` in plain sight,
-  never dropped with `let _ =`.
+- `clippy.toml` refuses the raw file calls that read or write a file's contents or make and remove files
+  (`std::fs::write`, `read`, `read_to_string`, `rename`, `remove_file`, `create_dir`, `create_dir_all`,
+  `read_dir`, `remove_dir_all`, `File::open`, `File::create`, `OpenOptions`), the HTTP client's `get`, `post`,
+  `put`, `patch` and `delete`, and hand-built JSON (`serde_json::json!`). Files and the network go through
+  `airband-io`; our own bodies are typed. A module that is an edge by nature (another tool's files or protocol, a
+  service's request body, a download, the relay's folder store) says so at its top with
+  `#![expect(..., reason = "...")]`, and that list is the whole of the exceptions. Tests may do either. Not
+  refused: reading a file's facts (`metadata`, `canonicalize`), setting its permissions (`set_permissions`), and
+  the one `fs::copy` with which `airband install` copies itself.
+- `clippy::let_underscore_must_use` is on in every crate that is ours (not `uniffi-bindgen`, which only runs the
+  library's generator): a result is used or let go with `.ok()` in plain sight, never dropped with `let _ =`.
 - CI fails if `airband-core` depends on an HTTP client or touches files.
 
 ## What each part owns
@@ -58,13 +61,13 @@ The compiler keeps some of them, so they cannot drift:
 | A launcher of his own (another way to start a tool, or a tool airband has no row for) | An entry in `launchers` in `~/.airband/config.json`, under a name of its own: the `harness` it starts, and either a command (`argv`, with `{cwd}`, `{task}`, `{project}`, `{session}` filled in) or `held` (`by: lines` with the line templates, or `by: acp` with the program). The file holds only his own; the ones that come with airband are never written there. | Config only |
 | The models and efforts he can ask a new agent for ("with fable high, …") | For a program started with arguments: `models`, `efforts`, `with_model` and `with_effort` on the launcher, and one he names that the row does not list is refused in words. An agent that speaks the Agent Client Protocol lists its own when a session opens (its settings of the protocol's kinds `model` and `thought_level`): its holder passes the two lists to the tower, which offers what the tool last listed (nothing until one of its agents has been started on this computer), and sets what he asked for before the agent is said to be there. One the agent does not have starts nothing, and he is told. | The row, or nothing |
 | Another way to drive a held program | A kind of `Held` in `airband-core/src/tools.rs` and its driver in `hold.rs`. The tower says the same typed lines to every holder (`hold::Tell`) and asks it where it has got to (`hold::State`). | Two files |
-| Another way to reach an agent (an HTTP callback, a queue) | A variant of `Deliver` in `airband-core/src/agent.rs`; its arm in `tower/deliver.rs`. A tool that takes his words in a way of its own needs neither: `Deliver::Harness` and the adapter's `deliver`. | Two files |
+| Another way to reach an agent (an HTTP callback, a queue) | A variant of `Deliver` in `airband-core/src/agent.rs`; its arm in `tower/edges/deliver.rs`. A tool that takes his words in a way of its own needs neither: `Deliver::Harness` and the adapter's `deliver`. | Two files |
 | Something else an agent can report (a file, a cost) | A variant of `Event`. Old towers skip what they do not know. | `agent.rs`, `tower/intake.rs` |
 | Permission prompts from another agent tool | No code: `airband report … permission "<what>"` and act on its exit code. Or two functions in its adapter: its prompt to a `PermissionAsk`, and yes or no to whatever the tool reads back. | `adapters/` only |
 | Accounts for another agent tool (several logins, switched while sessions run) | Five functions in its adapter (`AccountBook`: list with allowances, switch, save, add, forget). `adapters/claude_accounts/` is the model. | `adapters/` only |
 | What an agent is doing right now, and its model and effort | No code: `airband report … doing "<text>"` and `… model "<name>" [effort]`. Or one function in its adapter (`glance`). | `adapters/` only |
 | Progress notes, what he types at an agent's own keyboard, and which team it belongs in, for another agent tool | One adapter function each: `steps` (the labels of its steps since a moment), `told` (his prompts, with any pictures he pasted), `touched` (the files and commands of its latest steps, from which a model says which project the work is part of, in `tower/place.rs`). | `adapters/` only |
-| Another model, or no model | `airband setup`, or `summarizer` in the config. When it does not answer he is told on his phone why (`judge::Trouble`, `Feed.reads_failed`) and gets each message as written; no second model is asked. A new service is a row in `catalog/providers/`; a new way of asking one is an interface in `airband-core/src/providers/` and its arm in `tower/judge/models.rs`. | Config, a row, or two files |
+| Another model, or no model | `airband setup`, or `summarizer` in the config. When it does not answer he is told on his phone why (`providers::Trouble`, `Feed.reads_failed`) and gets each message as written; no second model is asked. A new service is a row in `catalog/providers/`; a new way of asking one is an interface in `airband-core/src/providers/` and its arm in `tower/judge/models.rs`. | Config, a row, or two files |
 | A better judgement of what is worth showing | `tower/judge.rs`. Try it with `airband triage < message.txt` on real messages first. | One file |
 | A better guess at who a reply is for | `tower/route.rs` for the model's reading; `airband-core/src/routing/` for tags | One of two files |
 | Something else a button can tell the tower (mute, today) | A `Control` in `airband-core/src/routing/tags.rs` and its arm in `tower/route.rs`. A radio's button sends it as `Act::Control`, never as words. | Two files |
@@ -312,7 +315,7 @@ to another one, from the Accounts page or with `airband accounts`. A switch take
 cannot be said. `tower/accounts.rs` keeps the list for five minutes and looks at saved logins every three hours
 so none lapses.
 
-For Claude Code (`adapters/claude_accounts.rs`): saved logins are keychain items of airband's own, and a switch
+For Claude Code (`adapters/claude_accounts/`): saved logins are keychain items of airband's own, and a switch
 swaps the one Claude Code reads; running sessions pick it up within 30 seconds. macOS only so far. A login's
 refresh token changes each time it is used, so airband has to be the only keeper of saved logins on a computer.
 

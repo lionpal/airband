@@ -44,6 +44,7 @@ pairing link carries, opens `/v1/radio/` only.
 | `subagent` | It started a subagent (`done: false`) or one finished (`done: true`); `what` says what it is for. Only counted. |
 | `activity` | What it is doing right now, in a few words (`text`). Shown small while it works, never kept, never read aloud. |
 | `model` | The model it runs on and how hard it is set to think (`name`, `effort`), as a person would say them: "Opus 4.7", "high". |
+| `took` | It has taken in what the tower gave it under `receipt` (a `held` delivery): the messages that delivery carried are marked read. For a tool whose own record does not name the receipt. |
 | `stopped` | Its turn is over and it wrote nothing: it was stopped, or had nothing to say. It is waiting from now, as after a `said`. With `why`, the turn failed, and he is told in those words. |
 | `signoff` | It is gone. |
 
@@ -74,7 +75,7 @@ the question to him on the radio.
 | `pending` | Ask again, for `wait_seconds` in all, then withdraw the request and ask in its own way. |
 | `allow` | Go ahead. |
 | `deny` | Refuse. `message` is his own words if he gave any; pass them to the agent. |
-| `nobody` | Ask in its own way now: no radio has read the feed in the last 90 seconds, or `permission_wait` is 0. |
+| `nobody` | Ask in its own way now: no radio is following the chat or on a call (a radio unheard from for 60 seconds is gone), the agent is not on the radio, or `permission_wait` is 0. |
 | `gone` | The same: the tower no longer knows the request. |
 
 The rules are the tower's and hold for every harness. Only he can turn `pending` into `allow`, and waiting
@@ -92,8 +93,6 @@ answers only.
   (his reason on standard output), 2 for no answer.
 - An adapter: a module in `crates/airband-cli/src/adapters/`, selected as `airband hook <harness>`.
 
-`DELETE /v1/agent/held/{id}`: the program of an agent the tower runs is gone.
-
 A hook that runs with `AIRBAND_HELD_ID` set belongs to an agent the tower runs: `airband hook` reports it under
 that id with `deliver.kind` `held`.
 
@@ -104,12 +103,13 @@ its query, body and answer, is one `Endpoint` in `airband_core::radio::wire::at`
 types. A 200 carries the route's answer and nothing else; "nothing to say back" is `Done` (`{}`). A refusal is a
 4xx whose body is a `Refusal`: `{ refusal: "told", reason }` (words for him), `bad_ask` (the request itself
 was wrong, such as a query value that is not a number), `other_version` (`speaks` the version the tower takes),
-`too_big`, `gone`, `not_allowed`, or `not_now` (with a `reason`: it could not be done just now, and the same
+`too_big`, `gone`, `not_allowed` (403: only a radio may ask this, or only the tower's own reporters),
+`not_paired` (401: the token opens nothing on this computer, and the phone must be paired again), or `not_now` (with a `reason`: it could not be done just now, and the same
 request is sent again in a moment, with status 503). A reader goes by `refusal`, never by the status, and a 200
 never carries an error. Every request a radio makes says which version it speaks: straight to the tower in the
 `x-airband-schema` header, through the relay in the sealed request's `schema`. One that says another version, or
 none, is answered `other_version` (426) and goes no further. A token that opens nothing is answered 401
-`not_allowed`. A radio names itself in the
+`not_paired`. A radio names itself in the
 `x-airband-radio` header so the tower can keep its place in a call apart from another radio's; for a sealed
 request the tower uses the pairing's channel (`Keys::channel`).
 

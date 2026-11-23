@@ -11,11 +11,14 @@ disallowed-methods = [
   { path = "std::fs::read_dir", reason = "list a folder through airband_io::files::entries" },
   { path = "std::fs::remove_dir_all", reason = "remove folders through airband_io::files::remove_folder" },
   { path = "std::fs::File::open", reason = "open files through airband_io" },
+  { path = "std::fs::File::create", reason = "write files through airband_io::files" },
+  { path = "std::fs::create_dir", reason = "make folders through airband_io" },
   { path = "std::fs::OpenOptions::new", reason = "open files through airband_io" },
   { path = "ureq::Agent::put", reason = "reach the network through airband_io::http" },
   { path = "ureq::Agent::delete", reason = "reach the network through airband_io::http" },
   { path = "ureq::Agent::get", reason = "reach the network through airband_io::http" },
   { path = "ureq::Agent::post", reason = "reach the network through airband_io::http" },
+  { path = "ureq::Agent::patch", reason = "reach the network through airband_io::http" },
 ]
 disallowed-macros = [
   { path = "serde_json::json", reason = "wire and file bodies are typed; build them from their types" },
