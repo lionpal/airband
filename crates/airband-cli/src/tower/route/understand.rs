@@ -238,8 +238,9 @@ fn last_said(focus: &Option<(Session, Option<Spoke>)>, now: u64) -> String {
 
 /// Every tool, model and effort a new agent could be started with.
 fn menus(app: &App) -> Menus {
-    let inner = app.read();
+    // found before the state is read below: finding it reads the state too
     let usual = held::launcher_for(app, None).map(|(name, _)| LauncherId::new(name));
+    let inner = app.read();
     let mut menus: Vec<(LauncherId, airband_core::tools::Offers)> = app.cfg().launchers.iter().map(|(name, l)| (LauncherId::new(name.as_str()), held::offers(&inner, name, l))).collect();
     usual_first(&mut menus, usual.as_ref());
     Menus { tools: app.cfg().tools(), models: Listing::of(&menus, |m| &m.models), efforts: Listing::of(&menus, |m| &m.efforts), usual }
@@ -444,6 +445,20 @@ pub(super) async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope:
 mod tests {
     use super::*;
     use airband_core::tools::{Choice, Offers};
+
+    #[tokio::test]
+    async fn the_menus_are_read_without_holding_the_state_twice() {
+        // finding the usual launcher reads the state: done while the state was held, it never returned
+        let app = crate::tower::http::tests::app("menus-once");
+        let done = std::thread::spawn(move || drop(menus(&app)));
+        for _ in 0..100 {
+            if done.is_finished() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        panic!("reading the menus did not finish");
+    }
 
     #[test]
     fn the_usual_launchers_choices_are_listed_first() {
