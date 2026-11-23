@@ -192,13 +192,13 @@ mod tests {
         i.record::<()>(&a, &Reach::Done(()));
         i.record::<()>(&b, &Reach::Refused("No.".into()));
         // (audit 7, P-N3) a computer since unpaired that took it does not make it taken
-        assert_eq!(i.standing(&[b.clone()]), Standing::Refused(vec!["No.".into()]));
+        assert_eq!(i.standing(std::slice::from_ref(&b)), Standing::Refused(vec!["No.".into()]));
         assert_eq!(i.standing(&[a.clone(), b.clone()]), Standing::Taken);
         assert_eq!(i.standing(&[]), Standing::Waiting);
         // (audit 7, P-N8) one that could not be sent it for want of a key shows why, and is tried again
         i.record::<()>(&b, &Reach::Skipped(crate::choices::Withheld::NoKey));
         assert!(i.owed(&b));
-        assert_eq!(i.standing(&[b.clone()]), Standing::Refused(vec![crate::choices::Withheld::NoKey.said()]));
+        assert_eq!(i.standing(std::slice::from_ref(&b)), Standing::Refused(vec![crate::choices::Withheld::NoKey.said()]));
         i.record::<()>(&b, &Reach::Refused("No.".into()));
         assert!(!i.owed(&b));
     }

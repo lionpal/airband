@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use std::sync::mpsc::sync_channel;
 use std::time::Instant;
 
-const RATE: u32 = 16000;
+pub(crate) const RATE: u32 = 16000;
 /// A pass is asked for again after this long (the shortest-lived of them lasts ten minutes).
 const PASS_LIFE: Duration = Duration::from_secs(300);
 

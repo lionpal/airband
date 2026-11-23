@@ -219,7 +219,7 @@ mod tests {
         s.heard_from(&other, &offered(false));
         assert!(s.key_wanted(&[main.clone(), other.clone()], "anthropic"));
         s.heard_from(&gone, &offered(false));
-        assert!(!s.key_wanted(&[main.clone()], "anthropic"), "a computer since unpaired counts for nothing");
+        assert!(!s.key_wanted(std::slice::from_ref(&main), "anthropic"), "a computer since unpaired counts for nothing");
     }
 
     #[test]

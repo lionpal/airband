@@ -30,7 +30,8 @@ fn primary_subtag(tag: &str) -> Option<&str> {
 fn connect(grant: &Pass, _request: &str) -> Result<Socket, ()> {
     let (stream, host) = grant.stream()?;
     let model = grant.get(crate::models::field::MODEL);
-    let mut query: Vec<(&str, &str)> = vec![("model_id", model), ("audio_format", "pcm_16000"), ("commit_strategy", "manual"), ("token", &grant.token)];
+    let format = format!("pcm_{}", crate::ears::RATE);
+    let mut query: Vec<(&str, &str)> = vec![("model_id", model), ("audio_format", &format), ("commit_strategy", "manual"), ("token", &grant.token)];
     // its language codes are the primary subtag ("en") of the tag a setting gives ("en-US")
     if let Some(language) = primary_subtag(grant.get(crate::models::field::LANGUAGE)) {
         query.push(("language_code", language));
@@ -56,7 +57,7 @@ fn connect(grant: &Pass, _request: &str) -> Result<Socket, ()> {
 }
 
 fn chunk(bytes: &[u8], commit: bool) -> Message {
-    Message::text(json!({ "message_type": "input_audio_chunk", "audio_base_64": airband_core::encode::base64(bytes), "commit": commit, "sample_rate": 16000 }).to_string())
+    Message::text(json!({ "message_type": "input_audio_chunk", "audio_base_64": airband_core::encode::base64(bytes), "commit": commit, "sample_rate": crate::ears::RATE }).to_string())
 }
 
 /// A partial replaces the one before it; a committed stretch is final, and the next partial starts from nothing.
