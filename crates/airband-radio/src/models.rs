@@ -8,11 +8,10 @@
 //! Each model is a row of the catalogue (`catalog/models/`, see `airband_core::catalog`): what job it does,
 //! what to show, what to fetch, where it goes and what its engine is told about it. Where he chooses
 //! (`choices.rs`) lists them beside the services; a host names none itself.
-#![expect(clippy::disallowed_methods, reason = "writes a model to this device a part at a time as it downloads: airband_io writes files whole")]
+#![expect(clippy::disallowed_methods, reason = "lists the versions of a model kept on this device, by when each was made whole")]
 use super::*;
 use crate::engines::HostDevice;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicU64;
 
 pub(crate) use airband_core::catalog::PhoneModel as Model;
 
@@ -27,80 +26,25 @@ pub(crate) fn usual(device: &HostDevice, job: airband_core::providers::Job) -> O
     models(device).find(|m| m.job == job && m.with.get(field::USUAL).and_then(|u| u.as_bool()) == Some(true))
 }
 
-/// The names of the fields of a row's `with` that this build reads, each written once.
-pub(crate) mod field {
-    /// A model row: the one to start with for its job.
-    pub(crate) const USUAL: &str = "usual";
-    /// A model row: what the device does once before first use, in words for him.
-    pub(crate) const PREPARE: &str = "prepare";
-    /// A model row: the lowest system it runs on, for each kind of device.
-    pub(crate) const MIN_OS: &str = "min_os";
-    /// A voice: the rate of its sound.
-    pub(crate) const RATE: &str = "rate";
-    /// A voice service's setting: which of its voices speaks.
-    pub(crate) const VOICE: &str = "voice";
-    /// A service row: further headers each request carries.
-    pub(crate) const HEADERS: &str = "headers";
-    /// A service's setting: where it is reached.
-    pub(crate) const URL: &str = "url";
-    /// A service's setting: which of its models does the work.
-    pub(crate) const MODEL: &str = "model";
-    /// A listening service's setting, or a voice row's: the language he speaks.
-    pub(crate) const LANGUAGE: &str = "language";
-    /// A service row: how his key is presented.
-    pub(crate) const AUTH: &str = "auth";
-    /// A voice row: how the words are to be said, sent beside them and never spoken.
-    pub(crate) const STYLE: &str = "style";
-    /// A live listening row: where its stream is reached.
-    pub(crate) const STREAM: &str = "stream";
-    /// A live listening row: where a pass for the stream is asked for.
-    pub(crate) const PASS: &str = "pass";
-    /// A model row for the device's own voice: how its weights are packed, its language, and what runs it.
-    #[cfg(feature = "phonon")]
-    pub(crate) const QUANT: &str = "quant";
-    #[cfg(feature = "phonon")]
-    pub(crate) const LANG: &str = "lang";
-    #[cfg(feature = "phonon")]
-    pub(crate) const DEVICE: &str = "device";
-}
-
-/// The setting a voice service's voice is chosen by, for a host that lays out its own voice picker.
-#[uniffi::export]
-pub fn voice_setting() -> String {
-    field::VOICE.to_string()
-}
-
-/// Use the newest catalogue this device has kept (in `dir`, a folder of the app's own), if it is newer than
-/// the one built in. Nothing is fetched. Call once at the start.
-#[uniffi::export]
-pub fn load_catalog(dir: String) {
-    airband_io::catalog::load_kept(Path::new(&dir), &crate::can_use).iter().for_each(|line| eprintln!("{line}"));
-}
-
-/// Fetch the published catalogue and, if it is airband's and newer, use it and keep it in `dir`. True when
-/// what a chooser lists may have changed. Blocks for a few seconds at most; does nothing with no network.
-#[uniffi::export]
-pub fn refresh_catalog(dir: String) -> bool {
-    let (changed, lines) = airband_io::catalog::refresh(Path::new(&dir), &crate::can_use);
-    lines.iter().for_each(|line| eprintln!("{line}"));
-    changed
-}
+pub(crate) mod field;
+mod fetch;
+pub(crate) use fetch::{fetch_local_model, local_model_progress};
 
 pub(crate) fn model(kind: &str, device: &HostDevice) -> Option<Arc<Model>> {
     models(device).find(|m| m.kind == kind)
 }
 
 /// Everything of one model on this device, under the app's folder: a folder for each version of it.
-fn home(dir: &str, m: &Model) -> PathBuf {
+pub(super) fn home(dir: &str, m: &Model) -> PathBuf {
     Path::new(dir).join("models").join(&m.kind)
 }
 /// Where the version the catalogue now names is kept.
-fn version_folder(dir: &str, m: &Model) -> PathBuf {
+pub(super) fn version_folder(dir: &str, m: &Model) -> PathBuf {
     home(dir, m).join(&m.version)
 }
 /// Left in a version's folder when every file of it has been fetched and checked: it says the folder is whole
 /// without the catalogue row it was fetched by, which may since have moved on.
-const WHOLE: &str = ".whole";
+pub(super) const WHOLE: &str = ".whole";
 
 /// The version the catalogue names is on this device, whole: each file was checked against its hash before
 /// it took its name.
@@ -139,80 +83,6 @@ pub struct VoiceChoice {
     /// A short clip of it, to hear before choosing: an address the host can fetch and play, whether or not
     /// the model is on the device yet.
     pub preview: String,
-}
-
-/// How far the fetch now running has got: bytes so far, and bytes in all.
-static GOT: AtomicU64 = AtomicU64::new(0);
-static OF: AtomicU64 = AtomicU64::new(0);
-/// One fetch at a time.
-static FETCHING: Mutex<()> = Mutex::new(());
-
-/// How far the fetch now running has got, in hundredths. For a progress bar, asked a few times a second.
-pub(crate) fn local_model_progress() -> u32 {
-    let of = OF.load(Ordering::SeqCst);
-    (GOT.load(Ordering::SeqCst).min(of) * 100).checked_div(of).unwrap_or(0) as u32
-}
-
-/// Fetch a model. Blocks until it is all here: call it off the main thread. Files already here are kept, so
-/// one that was cut short goes on from the last whole file.
-pub(crate) fn fetch_local_model(dir: String, m: &Model) -> Result<(), RadioError> {
-    let told = crate::choices::told;
-    let _one = FETCHING.lock().unwrap_or_else(|e| e.into_inner());
-    let folder = version_folder(&dir, m);
-    GOT.store(0, Ordering::SeqCst);
-    OF.store(m.files.iter().map(|f| f.1).sum(), Ordering::SeqCst);
-    // no limit on the whole of it (a model is tens or hundreds of megabytes on whatever connection he has),
-    // only on a stall
-    let client = crate::net::Client::download(Duration::from_secs(15), Duration::from_secs(30));
-    for (to, size, sha) in &m.files {
-        let path = folder.join(to);
-        if std::fs::metadata(&path).is_ok_and(|f| f.len() == *size) {
-            GOT.fetch_add(*size, Ordering::SeqCst);
-            continue;
-        }
-        std::fs::create_dir_all(path.parent().unwrap_or(&folder)).map_err(|_| told("Could not make room for the model on this device."))?;
-        let part = path.with_extension("part");
-        let mut res = client.send(crate::net::Ask::get(format!("{}/{to}", m.base))).map_err(|_| told("Could not reach the download. Check the connection and try again."))?;
-        if res.status().as_u16() != 200 {
-            return Err(told("The download is not there."));
-        }
-        let mut file = std::fs::File::create(&part).map_err(|_| told("Could not write the model to this device."))?;
-        let mut body = res.body_mut().as_reader();
-        let mut buf = vec![0u8; 64 * 1024];
-        let mut hash = <sha2::Sha256 as sha2::Digest>::new();
-        let before = GOT.load(Ordering::SeqCst);
-        loop {
-            let n = match std::io::Read::read(&mut body, &mut buf) {
-                Ok(n) => n,
-                Err(_) => {
-                    GOT.store(before, Ordering::SeqCst);
-                    return Err(told("The download stopped part way. Try again."));
-                }
-            };
-            if n == 0 {
-                break;
-            }
-            std::io::Write::write_all(&mut file, &buf[..n]).map_err(|_| told("This device ran out of room for the model."))?;
-            sha2::Digest::update(&mut hash, &buf[..n]);
-            GOT.fetch_add(n as u64, Ordering::SeqCst);
-        }
-        drop(file);
-        // a sign-in page, a connection that closed early, a file changed at the source: none of them is the model
-        let got: String = airband_core::encode::hex(&sha2::Digest::finalize(hash));
-        if got != *sha {
-            std::fs::remove_file(&part).ok();
-            GOT.store(before, Ordering::SeqCst);
-            return Err(told("What came down was not the model. Check the connection and try again."));
-        }
-        std::fs::rename(&part, &path).map_err(|_| told("Could not write the model to this device."))?;
-    }
-    // This version is whole: say so, and only now let go of the one that was here before it, which was in use
-    // until this moment.
-    std::fs::write(folder.join(WHOLE), "").map_err(|_| told("Could not write the model to this device."))?;
-    for other in std::fs::read_dir(home(&dir, m)).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| *p != folder) {
-        if other.is_dir() { std::fs::remove_dir_all(&other) } else { std::fs::remove_file(&other) }.ok();
-    }
-    Ok(())
 }
 
 #[cfg(test)]

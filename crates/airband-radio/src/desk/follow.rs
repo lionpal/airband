@@ -15,7 +15,7 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, station: StationId,
         // the tower is told whether the chat is in front of him: only then does having it count as seeing it
         radio.set_away(!shared.host.watching());
         // the first answer must come at once: it is what says the tower is there and who is on it
-        let got = radio.follow(if first { 0 } else { 25 });
+        let got = radio.followed(if first { 0 } else { 25 });
         let mut seen: Vec<String> = Vec::new();
         // this computer has just been reached, or says it now reads with something else
         let mut reached = false;
@@ -35,6 +35,7 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, station: StationId,
                     computer.fails = 0;
                     computer.failing_since = None;
                     computer.answered_at = Some(std::time::Instant::now());
+                    computer.refused = None;
                     reached = !computer.online || computer.reads != feed.reads || computer.reads_failed != feed.reads_failed;
                     computer.online = true;
                     if !feed.station.is_empty() && computer.name != feed.station {
@@ -60,6 +61,12 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, station: StationId,
                     if !calling && shared.host.watching() {
                         seen = feed.messages.iter().filter(|m| !m.his && !m.needs_you).map(|m| m.id.clone()).collect();
                     }
+                }
+                // it answered, and will never talk to this phone as things are: he is told what to do, at once
+                Err(e) if e.retry() == Retry::Never => {
+                    computer.tried = true;
+                    computer.online = false;
+                    computer.refused = Some(e.said());
                 }
                 // one request lost is not a computer out of reach: it is asked again at once, and only a second
                 // failure says so

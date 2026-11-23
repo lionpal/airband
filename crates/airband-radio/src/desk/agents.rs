@@ -52,7 +52,7 @@ impl Desk {
     /// reached, or whose airband is too old, comes back with a note and no accounts. Blocks: call it off the
     /// main thread.
     pub fn accounts(&self, fresh: bool) -> Vec<StationAccounts> {
-        // a computer is always headed by a name: its own, or its place in the list until it has said its own
+        // a computer is always headed by a name: its own, or until it has said one what the desk calls it
         let radios = self.shared.state.lock().unwrap().named_radios();
         // one after another, not all at once: two computers on the same account asking its provider in the same
         // moment is how one of them gets refused

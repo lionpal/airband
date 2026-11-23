@@ -97,17 +97,6 @@ pub(crate) struct Working {
 pub(crate) fn work(with: Working) {
     let Working { jobs, link, session, host, stop, busy, calling, senses } = with;
     let ears = ears::Ears::new(senses.clone());
-    {
-        // the pass for the listening service is fetched before he first needs it, and again now and then, so
-        // opening the microphone never waits on it
-        let (ears, stop) = (ears.clone(), stop.clone());
-        thread::spawn(move || {
-            while !stop.load(Ordering::SeqCst) {
-                ears.warm();
-                thread::sleep(Duration::from_secs(240));
-            }
-        });
-    }
     while let Ok(job) = jobs.recv() {
         if stop.load(Ordering::SeqCst) {
             return;

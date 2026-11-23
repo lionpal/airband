@@ -99,7 +99,7 @@ fn a_computer_he_unpairs_is_let_go_and_the_others_are_left_as_they_are() {
 }
 
 #[test]
-fn a_computer_that_refuses_this_phone_is_shown_as_out_of_reach_and_the_others_are_not() {
+fn a_computer_that_refuses_this_phone_is_told_by_what_it_said_and_the_others_are_not() {
     let refusing = Arc::new(FakeTower::default());
     refusing.refuses::<at::Feed>(426, &airband_core::radio::wire::Refusal::OtherVersion { speaks: "airband.radio/9".into() });
     let desk = desk_with(vec![(link(1), tower("studio")), (link(2), refusing.clone())]);
@@ -114,9 +114,12 @@ fn a_computer_that_refuses_this_phone_is_shown_as_out_of_reach_and_the_others_ar
         thread::sleep(Duration::from_millis(10));
     }
     let asked = refusing.asked_on::<at::Feed>();
+    let told = looked(&desk, None, None).cannot_reach;
     desk.stop();
-    assert!(asked >= 2, "the refusing computer was not asked through its own connection");
+    assert!(asked >= 1, "the refusing computer was not asked through its own connection");
     assert_eq!(away, ["127.0.0.1"], "only the computer that refused is out of reach");
+    // he is told what it said, not that it cannot be reached (audit 8, M5)
+    assert_eq!(told, format!("127.0.0.1: {}", crate::link::LinkError::Refused(airband_core::radio::wire::Refusal::OtherVersion { speaks: "airband.radio/9".into() }).said()));
 }
 
 #[test]

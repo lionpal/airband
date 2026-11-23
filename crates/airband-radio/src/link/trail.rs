@@ -20,6 +20,13 @@ impl Trail {
     }
 }
 
+impl crate::kept::Rejoin for std::collections::VecDeque<Line> {
+    /// The file's lines first, then the ones written since.
+    fn rejoin(&mut self, since: Self) {
+        self.extend(since);
+    }
+}
+
 /// One try at one request, one way: what the trail is made of. Nothing of what was said is in it, only the
 /// kind of request, the way it went and how it ended. It never leaves the phone.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

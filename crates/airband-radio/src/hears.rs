@@ -87,9 +87,7 @@ fn transcriptions(with: &Use, provider: &Provider, by: &By, wav: &[u8], phrases:
     body.extend_from_slice(format!("\r\n--{edge}--\r\n").as_bytes());
     let mut req = crate::net::Ask::post(format!("{}/audio/transcriptions", set(crate::models::field::URL).trim_end_matches('/')));
     // how this service takes a key is its row's to say; one sent no key needs nothing said
-    if let Some((header, value)) = by.key_header(&with.key).map_err(|_| "This version of airband was not told how that service takes its key.")? {
-        req = req.header(header, value);
-    }
+    req = crate::services::keyed(req, by, &with.key)?;
     // what went wrong is worded once, for every service, by the service's own row and name
     let service = airband_core::providers::Answering::of(provider);
     let v: Value = airband_io::http::sent(&service, crate::net::Client::new(Duration::from_secs(60)).send(req.bytes(&format!("multipart/form-data; boundary={edge}"), body)))?.body_mut().read_json().map_err(|_| service.no_answer())?;

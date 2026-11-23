@@ -11,7 +11,12 @@ pub(super) const VOICING: Voicing = Voicing { is: Interface { name: "speech", ca
 fn make(voice: &Use, by: &By, provider: &Provider) -> Made {
     let set = |field: &str| voice.get(Job::Voice, field);
     // the interface does not say the rate in a way every service agrees on, so the row or his setting does
-    let rate = set(crate::models::field::RATE).parse().ok().filter(|r| super::RATES.contains(r)).ok_or_else(|| format!("\"{}\" is not a rate a voice can be played at. It is a number like 24000.", set(crate::models::field::RATE)))?;
+    // nothing given is said as that, never as an empty rate (audit 7, P-N11)
+    let given = set(crate::models::field::RATE);
+    let rate = match given.trim() {
+        "" => super::rate_of(None),
+        r => r.parse::<u64>().map_err(|_| format!("\"{r}\" is not a rate a voice can be played at. It is a number like 24000.")).and_then(|r| super::rate_of(Some(r))),
+    }?;
     let reach = super::Reach { url: format!("{}/audio/speech", set(crate::models::field::URL).trim_end_matches('/')), auth: super::key_header(by, &voice.key)?, headers: Vec::new(), rate, service: super::Answering::of(provider) };
     Ok(Box::new(SpeechServer { reach, model: set(crate::models::field::MODEL), voice: set(crate::models::field::VOICE) }))
 }

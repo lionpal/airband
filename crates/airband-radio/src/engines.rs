@@ -16,8 +16,8 @@ mod ptts;
 
 /// How an engine the host has is asked to run a model: the engine's name, the folder the model's files are
 /// in, the job, and what to work on. For listening that is a recording (16-bit little-endian mono PCM at 16
-/// kHz) and the answer is the words, as UTF-8. For a voice it is the words, as UTF-8, then a line feed and the
-/// name of the voice, and the answer is the sound (16-bit little-endian mono PCM at the rate the model's row
+/// kHz) and the answer is the words, as UTF-8. For a voice it is JSON, `{"text": the words, "voice": the
+/// voice's name}`, and the answer is the sound (16-bit little-endian mono PCM at the rate the model's row
 /// gives). Nothing when the host could not.
 pub(crate) type ByHost<'a> = &'a dyn Fn(&str, &str, ChoiceJob, Vec<u8>) -> Option<Vec<u8>>;
 
@@ -102,15 +102,37 @@ impl Held {
     }
 
     /// Do something with the model, loading it first if it is not loaded. One thing at a time.
-    pub(crate) fn with<T>(&self, f: impl FnOnce(&mut dyn Loaded) -> T) -> Result<T, String> {
+    pub(crate) fn with<T>(&self, f: impl FnOnce(&mut dyn Loaded) -> T) -> Result<T, Fault> {
         let mut loaded = self.loaded.lock().unwrap_or_else(|e| e.into_inner());
         if loaded.is_none() {
             *loaded = Some(match HERE.iter().find(|(name, _)| *name == self.m.engine) {
-                Some((_, engine)) => engine.load(&self.folder, &self.m).map_err(|e| format!("{} could not be loaded: {e}", self.m.name))?,
+                Some((_, engine)) => engine.load(&self.folder, &self.m).map_err(Fault::Load)?,
                 None => Box::new(Hosted { engine: self.m.engine.clone(), folder: self.folder.display().to_string() }),
             });
         }
         Ok(f(loaded.as_mut().unwrap().as_mut()))
+    }
+    /// Run the model at its job, loading it first: what the engine made, or what went wrong.
+    pub(crate) fn run<T>(&self, f: impl FnOnce(&mut dyn Loaded) -> Result<T, String>) -> Result<T, Fault> {
+        self.with(f).and_then(|ran| ran.map_err(Fault::Run))
+    }
+}
+
+/// What went wrong with a model on this device, in the engine's own words (no capital, no full stop). It is
+/// put in a sentence once, where the job is done ([`Fault::told`]), never wrapped again.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Fault {
+    Load(String),
+    Run(String),
+}
+
+impl Fault {
+    /// In a sentence for him, naming the model.
+    pub(crate) fn told(&self, name: &str) -> String {
+        match self {
+            Fault::Load(why) => format!("{name} could not be loaded on this phone: {why}."),
+            Fault::Run(why) => format!("{name} did not run on this phone: {why}."),
+        }
     }
 }
 
@@ -161,6 +183,8 @@ mod tests {
         // words with a line in them reach the host whole, beside the voice
         assert_eq!(serde_json::from_slice::<serde_json::Value>(&asked[1].3).unwrap(), serde_json::json!({ "text": "Hello.", "voice": "Zoey" }));
         // a host that cannot says so, and nothing is made up in its place
-        assert!(held.with(|m| m.hear(&|_, _, _, _| None, vec![0, 0])).unwrap().is_err());
+        assert_eq!(held.run(|m| m.hear(&|_, _, _, _| None, vec![0, 0])), Err(Fault::Run("this device could not run it".into())));
+        // said once, naming the model (audit 5, B-18)
+        assert_eq!(Fault::Run("this device could not run it".into()).told("Tiny"), "Tiny did not run on this phone: this device could not run it.");
     }
 }

@@ -32,8 +32,7 @@ pub(crate) use desk::tell_reads;
 use list::*;
 use saved::{Pick, Saved};
 pub(crate) use saved::ReadsWanted;
-#[cfg(test)]
-pub(crate) use saved::NO_KEY;
+pub(crate) use saved::Withheld;
 
 /// The jobs he chooses something for, in the order a first run asks about them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -185,10 +184,12 @@ impl Chooser {
     /// Change what is kept, and keep it. Err when it could not be kept: it holds until the app closes.
     fn change(&self, with: impl FnOnce(&mut Saved)) -> Result<(), RadioError> {
         let mut saved = self.saved.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(found) = self.keeper.read_again::<Option<Saved>>() {
-            *saved = found.flatten().unwrap_or_else(|| Saved::fresh(&self.device));
-        }
+        crate::kept::again_as::<Option<Saved>, Saved>(&self.keeper, &mut saved, |found| found.flatten().unwrap_or_else(|| Saved::fresh(&self.device)));
+        let before = saved.clone();
         with(&mut saved);
+        let mut touched = saved.touched;
+        touched.add(&before, &saved);
+        saved.touched = touched;
         crate::kept::said(self.keeper.save(&*saved)).map_err(|why| told(format!("{why} It holds until the app closes.")))
     }
 
@@ -255,7 +256,7 @@ impl Chooser {
         self.working.lock().unwrap_or_else(|e| e.into_inner()).clone().map(|w| (w.job, w.id, w.label, w.fetching.then(|| crate::models::local_model_progress() as f64 / 100.0)))
     }
 
-    fn choices(&self, job: ChoiceJob, host: &dyn DeskHost, senses: &Senses) -> Vec<Choice> {
+    fn choices(&self, job: ChoiceJob, host: &dyn DeskHost, senses: &Senses, paired: &[StationId]) -> Vec<Choice> {
         let saved = self.saved();
         let facts = Facts {
             models: crate::models::models(&self.device).collect(),
@@ -271,6 +272,7 @@ impl Chooser {
                 (ChoiceJob::Ears, Some((of, took))) => format!("Last heard {of:.1} s of speech in {took:.2} s"),
                 _ => String::new(),
             },
+            paired,
         };
         list(job, &saved, &facts)
     }
@@ -291,12 +293,16 @@ impl Chooser {
             // much (a second of silence to hear, a word to say)
             let held = crate::engines::Held::of(m, crate::models::folder(&self.dir, m));
             let by: crate::engines::ByHost = &|engine, folder, job, input| host.run_model(engine.into(), folder.into(), job, input);
-            let ran = held.with(|loaded| match m.job {
-                // in the voice he picked, or the one its row names as usual: never just the first it lists
-                Job::Voice => voice_of(m, &self.saved().pick(ChoiceJob::Voice).filter(|p| p.id == m.kind).map(|p| p.voice).unwrap_or_default()).map_err(|why| why.told()).and_then(|voice| loaded.speak(by, &voice, "Ready.", &mut |_| {}, &|| false)),
+            // in the voice he picked, or the one its row names as usual: never just the first it lists
+            let voice = match m.job {
+                Job::Voice => voice_of(m, &self.saved().pick(ChoiceJob::Voice).filter(|p| p.id == m.kind).map(|p| p.voice).unwrap_or_default()).map_err(|why| told(why.told()))?,
+                _ => String::new(),
+            };
+            held.run(|loaded| match m.job {
+                Job::Voice => loaded.speak(by, &voice, "Ready.", &mut |_| {}, &|| false),
                 _ => loaded.hear(by, vec![0u8; 32000]).map(|_| ()),
-            });
-            ran.and_then(|ran| ran).map_err(|why| told(format!("{} did not load on this phone: {why}.", m.name)))?;
+            })
+            .map_err(|fault| told(fault.told(&m.name)))?;
         }
         Ok(())
     }
@@ -317,7 +323,7 @@ mod tests {
     use super::*;
 
     fn facts<'a>(here: &'a dyn Fn(&Model) -> (bool, bool), has_key: &'a dyn Fn(&str) -> bool) -> Facts<'a> {
-        Facts { models: crate::models::models(&phone()).collect(), here, has_key, failed: None, work: None, note: String::new() }
+        Facts { models: crate::models::models(&phone()).collect(), here, has_key, failed: None, work: None, note: String::new(), paired: &[] }
     }
     /// A phone whose host runs every engine the catalogue names.
     fn phone() -> HostDevice {

@@ -61,16 +61,10 @@ impl Colours {
         }
         crate::kept::told(self.keeper.save(&self.by_team), "Team colours may change when the app opens again.")
     }
-    /// The file could not be read when the app opened: once it can be, what it holds is taken, with the
-    /// colours given since kept where it has none.
+    /// The file could not be read when the app opened: once it can be, what it holds is taken
+    /// ([`crate::kept::Rejoin`]).
     fn again(&mut self) {
-        if let Some(found) = self.keeper.read_again::<BTreeMap<String, u8>>() {
-            let mut found = found.unwrap_or_default();
-            for (room, colour) in std::mem::take(&mut self.by_team) {
-                found.entry(room).or_insert(colour);
-            }
-            self.by_team = found;
-        }
+        crate::kept::again(&self.keeper, &mut self.by_team);
     }
     /// A room's colour: its place in the host's list of team colours. Nothing for one not seen yet.
     pub(crate) fn of(&self, room: &str) -> Option<u8> {
@@ -78,5 +72,14 @@ impl Colours {
     }
     pub(crate) fn all(&self) -> HashMap<String, u8> {
         self.by_team.iter().map(|(t, c)| (t.clone(), *c)).collect()
+    }
+}
+
+impl crate::kept::Rejoin for BTreeMap<String, u8> {
+    /// A colour the file holds stays; one given since is kept where it has none.
+    fn rejoin(&mut self, since: Self) {
+        for (room, colour) in since {
+            self.entry(room).or_insert(colour);
+        }
     }
 }

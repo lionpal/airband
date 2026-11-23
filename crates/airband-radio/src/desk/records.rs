@@ -265,7 +265,8 @@ pub enum DeskTeamPick {
 pub struct DeskComputer {
     /// The same every time, from its pairing; nothing secret.
     pub id: String,
-    /// Its own name once it has said one, or "Your computer", or its place in the list.
+    /// Its own name once it has said one; until then what its pairing link calls it, or "Your computer" when
+    /// it is the only one, or "New computer".
     pub name: String,
 }
 
@@ -290,6 +291,6 @@ impl From<&crate::Outgoing> for DeskOutgoing {
         // how the tries go is worth showing only once they have gone on for ten seconds and said something
         let trying = (o.failed.is_none() && !o.trail.is_empty() && o.last_tried >= o.at + 10_000)
             .then(|| format!("Trying. {}{}", o.trail.join(" "), if o.tries > 1 { format!(" {} tries.", o.tries) } else { String::new() }));
-        DeskOutgoing { id: o.id.clone(), shown: o.label.clone().unwrap_or_else(|| o.text.clone()), stage: o.stage, failed: o.failed.clone(), trying }
+        DeskOutgoing { id: o.id.clone(), shown: o.shown(), stage: o.stage, failed: o.failed.clone(), trying }
     }
 }

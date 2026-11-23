@@ -42,6 +42,7 @@ fn station(name: &str, port: u16, agents: &[(&str, &str)], messages: Vec<ChatMes
     let radio = Radio::start(link.clone(), String::new(), Arc::new(Quiet)).unwrap();
     radio.stop();
     let mut station = Computer {
+        refused: None,
         link,
         radio,
         name: name.into(),
@@ -63,6 +64,28 @@ fn station(name: &str, port: u16, agents: &[(&str, &str)], messages: Vec<ChatMes
     station.settle_rooms();
     station
 }
+#[test]
+fn the_same_thing_is_never_sent_to_one_computer_twice_at_once() {
+    // (audit 7, P-N5)
+    let desk = Desk::through("", Arc::new(Watching(std::sync::atomic::AtomicBool::new(true))), |_| Arc::default());
+    let computer = station("studio", 1, &[], Vec::new());
+    let (id, epoch) = (computer.id(), computer.epoch);
+    {
+        let mut state = desk.shared.state.lock().unwrap();
+        state.computers.push(computer);
+        let _ = state.intents.change(|i| i.want_tools(vec!["codex".into()]));
+    }
+    use super::tell::{owed, settle};
+    let first = owed(&desk.shared, IntentKind::Tools, &id, epoch, |i| &i.tools);
+    let meanwhile = owed(&desk.shared, IntentKind::Tools, &id, epoch, |i| &i.tools);
+    let push = owed(&desk.shared, IntentKind::Push, &id, epoch, |i| &i.push);
+    settle::<Vec<String>, ()>(&desk.shared, IntentKind::Tools, &id, first.as_ref().map_or(0, |f| f.0), |i| &mut i.tools, &super::fanout::Reach::Unreachable);
+    let after = owed(&desk.shared, IntentKind::Tools, &id, epoch, |i| &i.tools);
+    assert!(first.is_some() && meanwhile.is_none(), "it was sent twice at once");
+    assert!(push.is_none(), "nothing was wanted for push");
+    assert!(after.is_some(), "one not reached is sent it again");
+}
+
 /// The room on his screen of a team (by its id) on whichever computer has it.
 fn room(state: &State, team: &str) -> String {
     state.computers.iter().flat_map(|s| s.agents.iter()).find(|a| a.team == team).map(|a| a.room.clone()).unwrap()
@@ -267,7 +290,7 @@ fn what_he_is_not_looking_at_stays_unread_and_is_counted() {
     let dir = std::env::temp_dir().join(format!("airband-read-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let mut read = ReadMarks::load(&dir.display().to_string());
-    read.since = 0;
+    read.marks.since = 0;
     let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(State { read, ..two() }), floor: Floor::default(), host: host.clone(), chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: dir.display().to_string() };
     let counts = |v: &DeskView| (v.unread, v.rooms.iter().map(|r| (r.name.clone(), r.unread)).collect::<Vec<_>>());
     // looking at one team: what it said is read, and the other two teams' one thing each is not
@@ -289,7 +312,7 @@ fn what_he_is_not_looking_at_stays_unread_and_is_counted() {
     host.0.store(true, std::sync::atomic::Ordering::SeqCst);
     assert_eq!(counts(&looked(&desk, Some(ff.clone()), Some("ff one".into()))), (1, vec![("backoffice".into(), 1), ("ff".into(), 0), ("shop".into(), 0)]));
     // what was read is kept on the device: a desk opened again on the same folder starts from there
-    assert_eq!(ReadMarks::load(&dir.display().to_string()).upto.get("ff one"), Some(&6));
+    assert_eq!(ReadMarks::load(&dir.display().to_string()).marks.upto.get("ff one"), Some(&6));
     // everything at once
     assert_eq!(looked(&desk, None, None).unread, 0);
     let _ = std::fs::remove_dir_all(dir);
@@ -337,7 +360,7 @@ fn a_message_goes_to_the_computer_that_has_who_it_is_for() {
     assert_eq!(pick_station(&state, "go", None, None, Some("backoffice login fix")), Some(state.computers[0].id()));
     // nothing says, and he has not chosen a main computer: there is no answer, and he is asked
     assert_eq!(pick_station(&state, "go", None, None, None), None);
-    state.read.main = Some(state.computers[1].id());
+    state.read.marks.main = Some(state.computers[1].id());
     assert_eq!(pick_station(&state, "go", None, None, None), Some(state.computers[1].id()));
 }
 
@@ -496,7 +519,7 @@ fn a_summary_choice_some_computers_took_is_remembered_as_taken_there() {
     let ids = [mini.id(), laptop.id()];
     let desk = desk_choosing(&dir, vec![mini, laptop, away], serde_json::Value::Null);
     desk.shared.state.lock().unwrap().computers[2].online = false;
-    desk.shared.state.lock().unwrap().read.main = Some(ids[0].clone());
+    desk.shared.state.lock().unwrap().read.marks.main = Some(ids[0].clone());
     let id = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "anthropic").map(|c| c.id).unwrap();
     let chose = desk.choose_for(ChoiceJob::Reads, id, None, HashMap::new(), false);
     assert!(chose.is_ok(), "{chose:?}");

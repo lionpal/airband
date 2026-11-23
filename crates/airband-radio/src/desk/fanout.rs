@@ -12,7 +12,7 @@ pub(crate) enum Reach<T> {
     /// It could not be reached, or had trouble that may pass: it is asked again when it is reached.
     Unreachable,
     /// It was not asked, because it could not take it as things are: why, in words for him.
-    Skipped(String),
+    Skipped(crate::choices::Withheld),
 }
 
 impl<T> Reach<T> {
@@ -35,9 +35,10 @@ impl<T> Reach<T> {
         }
     }
     /// Why it was not taken, in words for him, when it said no or could not be asked.
-    pub(crate) fn why_not(&self) -> Option<&str> {
+    pub(crate) fn why_not(&self) -> Option<String> {
         match self {
-            Reach::Refused(why) | Reach::Skipped(why) => Some(why),
+            Reach::Refused(why) => Some(why.clone()),
+            Reach::Skipped(why) => Some(why.said()),
             Reach::Done(_) | Reach::Unreachable => None,
         }
     }
@@ -49,6 +50,16 @@ pub(crate) fn fan_out<T: Send>(targets: Vec<(StationId, Arc<Radio>)>, op: impl F
     let op = &op;
     thread::scope(|scope| {
         let asked: Vec<_> = targets.into_iter().map(|(id, radio)| (id, scope.spawn(move || op(&radio)))).collect();
-        asked.into_iter().map(|(id, asking)| (id, asking.join().unwrap_or(Reach::Unreachable))).collect()
+        asked
+            .into_iter()
+            .map(|(id, asking)| {
+                // a fault while asking is not an answer: it is asked again when it is reached, and the log says so
+                let reach = asking.join().unwrap_or_else(|_| {
+                    eprintln!("airband: asking one computer stopped with a fault");
+                    Reach::Unreachable
+                });
+                (id, reach)
+            })
+            .collect()
     })
 }

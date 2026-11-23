@@ -52,7 +52,7 @@ fn connect(grant: &Pass, _request: &str) -> Result<Socket, ()> {
 }
 
 fn audio(_request: &str, bytes: &[u8]) -> Message {
-    Message::text(json!({ "realtimeInput": { "audio": { "data": airband_core::encode::base64(bytes), "mimeType": "audio/pcm;rate=16000" } } }).to_string())
+    Message::text(json!({ "realtimeInput": { "audio": { "data": airband_core::encode::base64(bytes), "mimeType": format!("audio/pcm;rate={}", crate::ears::RATE) } } }).to_string())
 }
 
 /// Its messages come as JSON, in a text frame or a binary one.

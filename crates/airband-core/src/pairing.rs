@@ -107,3 +107,19 @@ mod tests {
         assert!(Pairing::parse("airband://pair?url=%ZZ&token=").is_err());
     }
 }
+
+#[cfg(test)]
+mod debug_tests {
+    use super::*;
+
+    #[test]
+    fn a_pairing_and_a_key_are_never_printed() {
+        let secret = "ab".repeat(32);
+        assert!(!format!("{:?}", Pairing::Relay { relay: "https://r".into(), secret: secret.clone() }).contains(&secret));
+        assert!(!format!("{:?}", Pairing::Direct { url: "http://h".into(), token: "tok-123".into() }).contains("tok-123"));
+        let with = crate::providers::Use { kind: "k".into(), key: "sk-secret".into(), ..Default::default() };
+        assert!(!format!("{with:?}").contains("sk-secret"));
+        let set = crate::radio::SetReads { kind: "k".into(), key: "sk-secret".into(), ..Default::default() };
+        assert!(!format!("{set:?}").contains("sk-secret"));
+    }
+}
