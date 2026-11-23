@@ -38,36 +38,32 @@ struct Menus {
     efforts: Listing,
 }
 
-/// One menu across every launcher: each name once, as the routing model is shown it, and with each name the
-/// launchers that offer it, each by its own id for it. A name picked is passed on with those ids, and the
-/// launcher that starts the agent takes its own (`launch::chosen`).
+/// One menu across every launcher: each launcher's own choices, each listed apart under the launcher that offers
+/// it. Two launchers' choices are never one because their names are alike: a name picked is passed on with the
+/// one launcher's id for it, and only that launcher can start it (`launch::chosen`).
 #[derive(Default)]
 struct Listing {
+    /// Each choice as the routing model is shown it: its name and the launcher it is for.
     names: Vec<String>,
-    ids: Vec<Vec<(LauncherId, String)>>,
+    /// Each choice, in the same order: its name alone, its launcher, and that launcher's id for it.
+    choices: Vec<(String, LauncherId, String)>,
 }
 impl Listing {
     fn of(menus: &[(LauncherId, airband_core::tools::Offers)], of: fn(&airband_core::tools::Offers) -> &Vec<airband_core::tools::Choice>) -> Listing {
-        let mut listing = Listing::default();
-        for (launcher, offers) in menus {
-            for c in of(offers) {
-                let at = match listing.names.iter().position(|n| *n == c.name) {
-                    Some(at) => at,
-                    None => {
-                        listing.names.push(c.name.clone());
-                        listing.ids.push(Vec::new());
-                        listing.names.len() - 1
-                    }
-                };
-                listing.ids[at].push((launcher.clone(), c.id.clone()));
-            }
-        }
-        listing
+        let choices: Vec<(String, LauncherId, String)> = menus.iter().flat_map(|(launcher, offers)| of(offers).iter().map(|c| (c.name.clone(), launcher.clone(), c.id.clone()))).collect();
+        Listing { names: choices.iter().map(|(name, launcher, _)| format!("{name} ({launcher})")).collect(), choices }
+    }
+    /// A choice's name alone, for an example in the question.
+    fn first_name(&self) -> Option<&str> {
+        self.choices.first().map(|(name, _, _)| name.as_str())
+    }
+    fn last_name(&self) -> Option<&str> {
+        self.choices.last().map(|(name, _, _)| name.as_str())
     }
     /// What the model's number for one of these comes to.
     fn picked(&self, n: Option<usize>) -> Option<Pick> {
-        let at = n?.checked_sub(1).filter(|at| *at < self.names.len())?;
-        Some(Pick::Listed { name: self.names[at].clone(), ids: self.ids[at].clone() })
+        let (name, launcher, id) = judge::listed(n, &self.choices)?;
+        Some(Pick::Listed { name: name.clone(), launcher: launcher.clone(), id: id.clone() })
     }
 }
 
@@ -281,7 +277,7 @@ fn starting(app: &App, menus: &Menus, projects: &[Place], room: Option<&str>) ->
         }
     };
     // the examples are written with a model and an effort he can ask for, by the names their rows give
-    let by_model = match (models.first(), efforts.last()) {
+    let by_model = match (menus.models.first_name(), menus.efforts.last_name()) {
         (Some(m), Some(e)) => format!(
             ", or he asks for work to be done by a model he names (\"with {m}, look into…\", \"with {m} {e}, investigate…\", \"have {m} investigate…\", \"get {m} on {e} to review…\"). \
              A remark about a model (\"with {m} it was too slow\") is not a request for one"
@@ -436,16 +432,17 @@ mod tests {
     use airband_core::tools::{Choice, Offers};
 
     #[test]
-    fn a_menu_lists_each_name_once_and_keeps_every_launchers_own_id_for_it() {
+    fn each_launchers_choices_are_listed_apart_and_never_merged_by_a_name_alike() {
         let offers = |models: &[(&str, &str)]| Offers { models: models.iter().map(|(id, name)| Choice { id: id.to_string(), name: name.to_string() }).collect(), ..Offers::default() };
         let (a, b) = (LauncherId::new("codex"), LauncherId::new("held-codex"));
         let menus = vec![(a.clone(), offers(&[("gpt-6.2-sol", "6.2 Sol"), ("gpt-6-luna", "6 Luna")])), (b.clone(), offers(&[("sol-2", "6.2 Sol")]))];
         let listing = Listing::of(&menus, |m| &m.models);
-        assert_eq!(listing.names, ["6.2 Sol", "6 Luna"]);
-        // the model's number 1 is "6.2 Sol", with each launcher's own id for it
-        assert_eq!(listing.picked(Some(1)), Some(Pick::Listed { name: "6.2 Sol".into(), ids: vec![(a.clone(), "gpt-6.2-sol".into()), (b, "sol-2".into())] }));
-        assert_eq!(listing.picked(Some(2)), Some(Pick::Listed { name: "6 Luna".into(), ids: vec![(a, "gpt-6-luna".into())] }));
-        assert_eq!(listing.picked(Some(3)), None);
+        assert_eq!(listing.names, ["6.2 Sol (codex)", "6 Luna (codex)", "6.2 Sol (held-codex)"]);
+        // each number is one launcher's choice, with that launcher's id alone
+        assert_eq!(listing.picked(Some(1)), Some(Pick::Listed { name: "6.2 Sol".into(), launcher: a.clone(), id: "gpt-6.2-sol".into() }));
+        assert_eq!(listing.picked(Some(2)), Some(Pick::Listed { name: "6 Luna".into(), launcher: a.clone(), id: "gpt-6-luna".into() }));
+        assert_eq!(listing.picked(Some(3)), Some(Pick::Listed { name: "6.2 Sol".into(), launcher: b.clone(), id: "sol-2".into() }));
+        assert_eq!(listing.picked(Some(4)), None);
         assert_eq!(listing.picked(None), None);
     }
 }
