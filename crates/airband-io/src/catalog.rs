@@ -6,18 +6,31 @@ use airband_core::providers::Offer;
 use std::path::Path;
 use std::time::Duration;
 
+/// Why nothing was fetched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotFetched {
+    /// No answer at all: no network, or the address could not be reached. Nothing to say.
+    Unreachable,
+    /// The address answered, with something other than 200: worth a line, since the catalogue should be there.
+    Status(u16),
+}
+
 /// Where a catalogue comes from: the published one, or a test's.
 pub trait Fetch {
     /// The bytes at `address`, when it answered 200.
-    fn get(&self, address: &str) -> Option<Vec<u8>>;
+    fn get(&self, address: &str) -> Result<Vec<u8>, NotFetched>;
 }
 
 /// The published catalogue, over the network: a few seconds at most.
 pub struct Published;
 impl Fetch for Published {
-    fn get(&self, address: &str) -> Option<Vec<u8>> {
+    fn get(&self, address: &str) -> Result<Vec<u8>, NotFetched> {
         let agent = crate::http::agent(Duration::from_secs(6));
-        agent.get(address).call().ok().filter(|r| r.status().as_u16() == 200).and_then(|mut r| r.body_mut().read_to_vec().ok())
+        let mut res = agent.get(address).call().map_err(|_| NotFetched::Unreachable)?;
+        match res.status().as_u16() {
+            200 => res.body_mut().read_to_vec().map_err(|_| NotFetched::Unreachable),
+            status => Err(NotFetched::Status(status)),
+        }
     }
 }
 
@@ -46,7 +59,11 @@ pub fn refresh(dir: &Path, speaks: &dyn Fn(&Offer) -> bool) -> (bool, Vec<String
 
 /// [`refresh`], from `from`.
 pub fn refresh_from(from: &dyn Fetch, dir: &Path, speaks: &dyn Fn(&Offer) -> bool) -> (bool, Vec<String>) {
-    let (Some(doc), Some(sig)) = (from.get(ADDRESS), from.get(&format!("{ADDRESS}.sig"))) else { return (false, Vec::new()) };
+    let (doc, sig) = match (from.get(ADDRESS), from.get(&format!("{ADDRESS}.sig"))) {
+        (Ok(doc), Ok(sig)) => (doc, sig),
+        (Err(NotFetched::Status(status)), _) | (_, Err(NotFetched::Status(status))) => return (false, vec![format!("catalogue: the published copy could not be had (the address answered {status})")]),
+        _ => return (false, Vec::new()),
+    };
     let sig = String::from_utf8_lossy(&sig).to_string();
     match accept(&doc, &sig) {
         Ok(taken) => {
@@ -73,14 +90,20 @@ mod tests {
 
     struct Nothing;
     impl Fetch for Nothing {
-        fn get(&self, _: &str) -> Option<Vec<u8>> {
-            None
+        fn get(&self, _: &str) -> Result<Vec<u8>, NotFetched> {
+            Err(NotFetched::Unreachable)
+        }
+    }
+    struct Missing;
+    impl Fetch for Missing {
+        fn get(&self, _: &str) -> Result<Vec<u8>, NotFetched> {
+            Err(NotFetched::Status(404))
         }
     }
     struct Forged;
     impl Fetch for Forged {
-        fn get(&self, address: &str) -> Option<Vec<u8>> {
-            Some(if address.ends_with(".sig") { b"not a signature".to_vec() } else { b"{}".to_vec() })
+        fn get(&self, address: &str) -> Result<Vec<u8>, NotFetched> {
+            Ok(if address.ends_with(".sig") { b"not a signature".to_vec() } else { b"{}".to_vec() })
         }
     }
 
@@ -95,6 +118,9 @@ mod tests {
         std::fs::remove_file(dir.join(KEPT)).unwrap();
         // no network: nothing, quietly; a forged copy: said, and nothing kept
         assert_eq!(refresh_from(&Nothing, &dir, &|_| true), (false, Vec::new()));
+        // K-N1: an address that answers, but not with the catalogue, is said
+        let (taken, said) = refresh_from(&Missing, &dir, &|_| true);
+        assert!(!taken && said.len() == 1 && said[0].contains("404"), "{said:?}");
         let (taken, said) = refresh_from(&Forged, &dir, &|_| true);
         assert!(!taken && said.len() == 1, "{said:?}");
         assert!(!dir.join(KEPT).exists());
