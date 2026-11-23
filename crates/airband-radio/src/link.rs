@@ -270,7 +270,7 @@ impl Link {
             let began = std::time::Instant::now();
             let call = self.sealed_call(method, path, body.clone().unwrap_or(Value::Null));
             let sealed = keys.seal_call(&call);
-            let got = match self.near.send(Ask::post(format!("{addr}/v1/sealed/{}", keys.channel)).bytes("application/octet-stream", sealed)) {
+            let got = match self.near.send(Ask::post(keys.straight(&addr)).bytes("application/octet-stream", sealed)) {
                 Err(e) => Err(unsent(&e, Way::Near)),
                 // only the tower can make an answer this key opens: anything else at that address is not it
                 Ok(mut res) => match (res.status().as_u16() == 200).then(|| res.body_mut().read_to_vec().ok()).flatten().and_then(|bytes| keys.open_answer(&bytes, &call.id)) {
@@ -363,7 +363,7 @@ impl Link {
                 let call = self.sealed_call(method, path, body.clone().unwrap_or(Value::Null));
                 let sealed = keys.seal_call(&call);
                 // the token shows the relay this is the channel's own radio: it takes nothing on the channel from anyone else
-                let mut req = Ask::post(keys.at(relay, "/call")).header("authorization", keys.as_radio());
+                let mut req = Ask::post(keys.to(relay, airband_core::relay::Route::Call)).header("authorization", keys.as_radio());
                 if ordered {
                     req = req.header(airband_core::relay::ORDERED_HEADER, "1");
                 }
@@ -417,7 +417,7 @@ impl Link {
         let began = std::time::Instant::now();
         let path = at::Utterance::PATH;
         let sealed = keys.seal_call(&self.sealed_call(Method::Post, path, serde_json::to_value(u).unwrap()));
-        let kept = match self.agent.send(Ask::post(keys.at(relay, "/queue")).header("authorization", keys.as_radio()).header(airband_core::relay::ID_HEADER, id).bytes("application/octet-stream", sealed)) {
+        let kept = match self.agent.send(Ask::post(keys.to(relay, airband_core::relay::Route::Queue)).header("authorization", keys.as_radio()).header(airband_core::relay::ID_HEADER, id).bytes("application/octet-stream", sealed)) {
             Err(e) => Err(unsent(&e, Way::Kept)),
             Ok(res) if res.status().as_u16() == 202 => Ok(202),
             Ok(res) => Err(LinkError::HoldRefused(res.status().as_u16())),

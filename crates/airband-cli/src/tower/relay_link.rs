@@ -91,7 +91,7 @@ pub(crate) struct Served(Mutex<HashMap<String, Serve>>);
 /// relay, answered with the sealed answer. Whoever sends it needs the pairing key to make a request the tower
 /// will open, and to read what comes back; nothing else is served here.
 pub(crate) fn sealed_router(app: Arc<App>) -> Router {
-    Router::new().route("/v1/sealed/{channel}", axum::routing::post(sealed)).with_state(app)
+    Router::new().route(airband_core::relay::SEALED, axum::routing::post(sealed)).with_state(app)
 }
 
 async fn sealed(State(app): State<Arc<App>>, axum::extract::Path(channel): axum::extract::Path<String>, body: axum::body::Bytes) -> axum::response::Response {

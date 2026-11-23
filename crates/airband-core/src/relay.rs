@@ -26,7 +26,7 @@ use sha2::{Digest, Sha256};
 mod push;
 mod routes;
 pub use push::*;
-pub use routes::Route;
+pub use routes::{Route, SEALED};
 
 pub const SCHEMA: &str = "airband.relay/1";
 /// A request older or newer than this, by the tower's clock, is refused.
@@ -271,10 +271,10 @@ impl Keys {
     pub fn to(&self, relay: &str, route: Route) -> String {
         format!("{}{}", relay.trim_end_matches('/'), route.on(&self.channel))
     }
-    /// The same, with the route's tail as text (`""`, `/pull`, `/reply/<id>`, `/push`). Kept for callers not yet
-    /// on [`Keys::to`].
-    pub fn at(&self, relay: &str, route: &str) -> String {
-        format!("{}/v1/channels/{}{route}", relay.trim_end_matches('/'), self.channel)
+    /// Where a tower on his own network takes this channel's sealed requests straight, with no relay between
+    /// (`base` is the address its feed lists): [`routes::SEALED`] for this channel.
+    pub fn straight(&self, base: &str) -> String {
+        format!("{}{}", base.trim_end_matches('/'), routes::SEALED.replace("{channel}", &self.channel))
     }
     /// What a tower shows the relay it is this channel's tower with (`Authorization`).
     pub fn as_tower(&self) -> String {

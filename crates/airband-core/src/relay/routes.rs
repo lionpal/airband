@@ -1,4 +1,8 @@
-//! Where on a relay each of a channel's routes is.
+//! Where on a relay each of a channel's routes is, and the one route a tower serves on his own network.
+
+/// The route a tower serves on his own network, as its router writes it: the same sealed request a radio would
+/// give the relay, answered with the sealed answer ([`crate::relay::Keys::straight`] for a channel's address).
+pub const SEALED: &str = "/v1/sealed/{channel}";
 
 /// The relay's routes for one channel: each written once, as the relay serves it ([`Route::PATTERNS`]) and as a
 /// tower or a radio reaches it ([`Route::on`]).
@@ -61,5 +65,7 @@ mod tests {
             assert_eq!(route.pattern(), pattern);
         }
         assert!(keys.to("r", Route::Reply("a/b")).ends_with("/reply/a%2Fb"), "an id is one segment");
+        // the tower's own route, reached where its router serves it
+        assert_eq!(keys.straight("http://192.168.1.4:7400/"), format!("http://192.168.1.4:7400{}", SEALED.replace("{channel}", &keys.channel)));
     }
 }
