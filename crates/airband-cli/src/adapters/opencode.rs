@@ -59,15 +59,10 @@ fn post(path: &str, body: Value) -> Option<u16> {
 
 fn agent(id: &str, cwd: Option<&str>) -> Agent {
     Agent {
-        id: id.into(),
-        harness: NAME.into(),
         cwd: cwd.map(String::from),
-        name: None,
-        title: None,
-        pid: None,
-        // his words go to the session through OpenCode's server (`deliver` below)
+        // his words go to the session through the tool's own server (`deliver` below)
         deliver: Some(Deliver::Harness { name: NAME.into(), session: id.into() }),
-        meta: Default::default(),
+        ..super::agent_with(id, NAME)
     }
 }
 

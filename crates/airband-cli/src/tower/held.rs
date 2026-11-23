@@ -138,7 +138,7 @@ const STARTS_WITHIN: Duration = Duration::from_secs(150);
 /// holder says so), with what its tool calls its session; or with why it is not.
 #[cfg(unix)]
 async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Started, String> {
-    spawn_with(app, &edges::procs::SystemProcs, kept, fresh).await
+    spawn_with(app, &*app.procs, kept, fresh).await
 }
 
 /// What starts a held agent's holder: this program's `hold`, told the socket, the folder, the program and how
@@ -434,7 +434,8 @@ pub(super) async fn carry_on(app: &Arc<App>) {
         inner.drop_held_off_the_radio();
         inner.held.clone()
     };
-    for k in to_carry_on(kept, &edges::folders::Disk) {
+    let disk = app.read().disk.clone();
+    for k in to_carry_on(kept, &*disk) {
         // one at a time with a delivery that may be starting it too
         let _one = app.reviving.lock().await;
         // its holder outlived the last tower, or a delivery started it: it is running, and there is nothing to do
@@ -529,7 +530,7 @@ pub(super) async fn take_over(app: &Arc<App>, id: &str) -> Result<(), String> {
     }
     // ask it to end, and wait for it to be gone: two processes must never run one session, so the one the
     // tower holds can only start once this one has ended
-    if edges::procs::end_and_wait(&edges::procs::SystemProcs, pid).await.is_err() {
+    if edges::procs::end_and_wait(&*app.procs, pid).await.is_err() {
         return Err("Its terminal session did not end. Close it there, then try again.".into());
     }
     let mut kept = Kept { id: id.to_string(), cwd, launcher, model: None, effort: None, session: Some(id.to_string()) };

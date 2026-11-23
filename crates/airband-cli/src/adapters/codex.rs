@@ -37,13 +37,10 @@ fn agent_of(hook: &Value) -> Option<Agent> {
         // What he says is queued for the session with the tool's own command (`deliver` below). The session takes
         // it as a turn of his. One the tower holds is reached through its holder (`super::as_held`).
         deliver: Some(Deliver::Harness { name: NAME.into(), session: id.clone() }),
-        id,
-        harness: NAME.into(),
         cwd: text(hook, "cwd"),
         name: env("AIRBAND_NAME"),
-        title: None,
-        pid: None,
         meta,
+        ..super::agent_with(id, NAME)
     })
 }
 
@@ -163,7 +160,7 @@ fn open_of(thread: &Value) -> Option<super::Open> {
         meta.insert("model".into(), Value::String(model));
     }
     Some(super::Open {
-        agent: Agent { deliver: Some(Deliver::Harness { name: NAME.into(), session: id.clone() }), id, harness: NAME.into(), cwd: text(thread, "cwd"), name: None, title: None, pid: None, meta },
+        agent: Agent { deliver: Some(Deliver::Harness { name: NAME.into(), session: id.clone() }), cwd: text(thread, "cwd"), meta, ..super::agent_with(id, NAME) },
         idle: thread["status"]["type"] == "idle",
     })
 }

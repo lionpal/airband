@@ -13,7 +13,6 @@ mod transcript;
 use sessions::*;
 use transcript::*;
 
-/// What Claude Code set the variable its row names under `what` to, for this hook.
 /// The value of the variable the row names for `what`; nothing when the row names none.
 fn row_env(what: &str) -> Option<String> {
     Some(super::row_says(HARNESS, what)).filter(|name| !name.is_empty()).and_then(|name| env(&name))
@@ -33,8 +32,6 @@ fn session_name(hook: &Value) -> Option<String> {
 /// Who a notification is about: the session, where it works, how to reach it, and the name he gave it.
 fn agent_of(hook: &Value) -> Option<Agent> {
     Some(Agent {
-        id: text(hook, "session_id")?,
-        harness: HARNESS.into(),
         cwd: text(hook, "cwd"),
         name: env("AIRBAND_NAME"),
         // one the tower holds keeps the name it has (`super::as_held`)
@@ -44,6 +41,7 @@ fn agent_of(hook: &Value) -> Option<Agent> {
         deliver: row_env("inbox_env").and_then(|s| s.strip_prefix(super::row_says(HARNESS, "inbox_scheme").as_str()).map(|path| Deliver::Socket { path: path.to_string(), token: row_env("inbox_token_env") })),
         // where its transcript is, so the tower can ask what it is doing without a hook on every step
         meta: text(hook, "transcript_path").map(|t| serde_json::Map::from_iter([("transcript".to_string(), Value::String(t))])).unwrap_or_default(),
+        ..super::agent_with(text(hook, "session_id")?, HARNESS)
     })
 }
 

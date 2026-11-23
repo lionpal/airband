@@ -69,8 +69,9 @@ async fn other_way(app: &Arc<App>, how: &Deliver, agent: &str, words: &str, line
             let line = words.split_whitespace().collect::<Vec<_>>().join(" ");
             for args in row.runs(pane, &line) {
                 let out = tokio::process::Command::new(&row.program).args(&args).output().await.map_err(|e| format!("cannot run {}: {e}", row.program))?;
+                // what it wrote on failing is its own, and can hold his words: he is told it failed, never its text
                 if !out.status.success() {
-                    return Err(format!("{}: {}", row.program, String::from_utf8_lossy(&out.stderr).trim()));
+                    return Err(format!("{} stopped with an error ({})", row.program, out.status));
                 }
             }
             Ok(())
@@ -81,6 +82,21 @@ async fn other_way(app: &Arc<App>, how: &Deliver, agent: &str, words: &str, line
             tokio::task::spawn_blocking(move || crate::adapters::deliver(&name, &session, &words)).await.map_err(|e| e.to_string())?
         }
         Deliver::Unknown => Err("this tower does not know its kind of delivery".into()),
+    }
+}
+
+/// Ways to agents that take every message and keep it, for a test to see what reached whom.
+#[cfg(test)]
+#[derive(Default)]
+pub(in crate::tower) struct FakeWays(pub(in crate::tower) std::sync::Mutex<Vec<(String, String)>>);
+
+#[cfg(test)]
+impl Deliverer for FakeWays {
+    fn deliver<'a>(&'a self, _how: &'a Deliver, agent: &'a str, words: &'a str, _lines: &'a [String]) -> Boxed<'a, Result<(), String>> {
+        Box::pin(async move {
+            self.0.lock().unwrap().push((agent.to_string(), words.to_string()));
+            Ok(())
+        })
     }
 }
 

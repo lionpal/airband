@@ -100,23 +100,6 @@ pub(crate) fn words(command: &str, args: &[String], takes: &[&str], switches: &[
     Ok(read)
 }
 
-#[cfg(test)]
-mod words_tests {
-    #[test]
-    fn a_debug_form_of_his_text_says_its_length_only() {
-        assert_eq!(super::unshown("buy milk"), "<8 characters>");
-    }
-
-    #[test]
-    fn a_mistyped_flag_is_refused_and_never_passed_over() {
-        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        let read = super::words("feed", &args(&["--team", "shop", "--once", "rest"]), &["--team"], &["--once"]).unwrap();
-        assert_eq!((read.flag("team"), read.is_on("once"), read.rest.as_slice()), (Some("shop"), true, ["rest".to_string()].as_slice()));
-        assert!(super::words("model", &args(&["maker", "--key-evn", "V"]), &["--key-env"], &[]).map(|_| ()).unwrap_err().contains("--key-evn"));
-        assert!(super::words("radio", &args(&["--window"]), &["--window"], &[]).map(|_| ()).unwrap_err().contains("needs a value"));
-    }
-}
-
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // The catalogue: the newest signed copy this computer has kept, for everything but the small commands a
@@ -184,5 +167,22 @@ fn main() {
     if let Err(e) = result {
         eprintln!("airband: {e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod words_tests {
+    #[test]
+    fn a_debug_form_of_his_text_says_its_length_only() {
+        assert_eq!(super::unshown("buy milk"), "<8 characters>");
+    }
+
+    #[test]
+    fn a_mistyped_flag_is_refused_and_never_passed_over() {
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let read = super::words("feed", &args(&["--team", "shop", "--once", "rest"]), &["--team"], &["--once"]).unwrap();
+        assert_eq!((read.flag("team"), read.is_on("once"), read.rest.as_slice()), (Some("shop"), true, ["rest".to_string()].as_slice()));
+        assert!(super::words("model", &args(&["maker", "--key-evn", "V"]), &["--key-env"], &[]).map(|_| ()).unwrap_err().contains("--key-evn"));
+        assert!(super::words("radio", &args(&["--window"]), &["--window"], &[]).map(|_| ()).unwrap_err().contains("needs a value"));
     }
 }

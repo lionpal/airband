@@ -85,12 +85,12 @@ fn login_item(moved: Option<&std::path::Path>) -> String {
     }
 }
 
-/// A stand-in the end-to-end suites put in place of the account service and the keychain items. Only a build made
-/// with the `stand-ins` feature reads these: the airband he installs never does, so nothing set in his shell can
-/// send his logins anywhere else.
 use super::stand_in;
 
 impl Here {
+    /// This computer's keychain, account service and files. The end-to-end suites put a stand-in in place of the
+    /// account service and the keychain items; only a build made with the `stand-ins` feature reads those: the
+    /// airband he installs never does, so nothing set in his shell can send his logins anywhere else.
     fn this_computer() -> Here {
         let place = |key: &str, default: String| stand_in(key).unwrap_or(default);
         let moved = super::moved_home(HARNESS);

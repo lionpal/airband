@@ -171,6 +171,11 @@ pub(crate) struct App {
     /// Held when a held agent's holder is started again, so two deliveries to one whose holder has gone never
     /// start two holders on one session.
     reviving: tokio::sync::Mutex<()>,
+    /// The processes on this computer, as the tower asks after them and starts and ends them.
+    procs: Arc<dyn edges::procs::Procs + Send>,
+    /// The way his words get to agents in place of the real ones ([`edges::deliver::AgentWays`]), when a test
+    /// puts one there; the real ones need the tower itself, so they are made from it.
+    deliverer: Option<Arc<dyn edges::deliver::Deliverer + Send>>,
     /// The addresses besides 127.0.0.1 the tower is listening on now: what a radio is told it can reach
     /// directly, so it is never told of one that is not served.
     listening: Mutex<Vec<std::net::Ipv4Addr>>,
