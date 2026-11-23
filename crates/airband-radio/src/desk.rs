@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Condvar;
 pub(crate) use airband_core::ids::StationId;
 mod agents;
+mod car;
 pub(crate) mod colours;
 mod fanout;
 mod follow;
@@ -30,6 +31,7 @@ mod uploads;
 mod view;
 
 pub use notice::*;
+pub use car::*;
 use ids::*;
 
 pub use rules::*;

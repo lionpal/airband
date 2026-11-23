@@ -168,6 +168,17 @@ extension RadioModel {
         }
     }
 
+    /// Read one message aloud, by its id: who said it, its short form, and the answers it offers. Whatever
+    /// was being read is left off.
+    func readAloud(_ message: String) {
+        stopReading()
+        reading = message
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = self.desk.readQuestion(messageId: message)
+            DispatchQueue.main.async { if self.reading == message { self.reading = nil } }
+        }
+    }
+
     func stopReading() {
         guard reading != nil else { return }
         reading = nil
@@ -250,6 +261,10 @@ extension RadioModel {
     /// The microphone stays open until he taps again, however long he pauses: that second tap sends what he
     /// said. Nothing is ever sent because he stopped talking.
     @MainActor func talk(about message: ChatMessage? = nil) async {
+        await talk(re: message?.id)
+    }
+    /// The same, about a message known by its id: what he says answers it.
+    @MainActor func talk(re message: String?) async {
         // the microphone is open: this tap closes it, and what he said goes
         if listening {
             micOpen = false
@@ -272,10 +287,10 @@ extension RadioModel {
         voice.openMic()
         stopReading()
         // `message`: he is looking at something of one agent's (a picture, say) and this is about that
-        let target = message ?? replyingTo
+        let target = message ?? replyingTo?.id
         replyingTo = nil
         // who it is for is worked out by the core, as for anything he types
-        desk.talk(re: target?.id, room: room, agent: only)
+        desk.talk(re: target, room: room, agent: only)
     }
 
     /// He took back what he was saying: the microphone closes and nothing is sent. Returns what had been heard,
