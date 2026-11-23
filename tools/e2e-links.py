@@ -81,7 +81,7 @@ try:
     print("Each is reported once")
     hook({**base, "hook_event_name": "UserPromptSubmit", "prompt": "thanks"})
     stop("Glad to help with that.")
-    time.sleep(1)
+    until(lambda: any("Glad to help" in m.get("text", "") for m in (http("GET", "/v1/radio/feed?since=0") or {"messages": []})["messages"]), 20)
     check("the next thing it says has no cards", links_of("Glad to help") == {}, str(links_of("Glad to help")))
     hook({**base, "hook_event_name": "UserPromptSubmit", "prompt": "where is it"})
     stop(f"Again, it is at {pull} for you.")
