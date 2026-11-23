@@ -54,8 +54,10 @@ pub(super) fn held_list(held: &Path) -> Result<HeldList, String> {
             eprintln!("airband-relay: the list of kept messages on a channel could not be read; it starts again: {}", crate::state::masked(&why, &channel));
             // the bodies it named can never be handed over now: they go, and the next ones start at 1 again
             for body in airband_io::files::entries(held).map_err(|e| e.to_string())? {
-                if body.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.parse::<u64>().is_ok()) {
-                    airband_io::files::remove(&body).ok();
+                if body.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.parse::<u64>().is_ok())
+                    && let Err(e) = airband_io::files::remove(&body)
+                {
+                    eprintln!("airband-relay: a kept message that can no longer be handed over could not be removed: {}", crate::state::masked(&e.to_string(), &channel));
                 }
             }
             Ok(list)
@@ -244,5 +246,12 @@ impl ChannelStore for Folder {
     }
     async fn held_purge(&self) -> Result<(), String> {
         held_purge(&self.dir)
+    }
+    #[cfg(test)]
+    async fn outlive(&self, channel: &str, id: &str) {
+        let held = held_dir(&self.dir, channel);
+        let mut list = held_list(&held).unwrap();
+        list.items.iter_mut().filter(|h| h.id == id).for_each(|h| h.at = 1);
+        held_keep(&held, &list).unwrap();
     }
 }

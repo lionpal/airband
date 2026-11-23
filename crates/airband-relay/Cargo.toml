@@ -10,7 +10,6 @@ license.workspace = true
 airband-core = { path = "../airband-core" }
 airband-io = { path = "../airband-io" }
 async-trait = "0.1"
-http-body = "1"
 serde.workspace = true
 serde_json.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }

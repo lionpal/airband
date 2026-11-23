@@ -146,8 +146,8 @@ pub struct Message {
     /// There is more than `text` says: `message/<id>` has it.
     #[serde(default)]
     pub long: bool,
-    /// Answers he can give with one tap, when the agent asked something he can answer by picking: up to three
-    /// short labels, in the order the agent put them. Sending one as an utterance with `re` set to this message answers it.
+    /// Answers he can give with one tap, when the agent asked something he can answer by picking: short labels,
+    /// in the order the agent put them (up to three from a message, up to four from a question its tool put). Sending one as an utterance with `re` set to this message answers it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<String>,
     /// Which of `options` the agent itself recommended, when it said so. Nothing otherwise: a client must not
@@ -337,9 +337,4 @@ pub struct Feed {
     /// utterance's id. One may be told more than once; a radio that has dealt with an id ignores it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub answers: Vec<Settled>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct More {
-    pub text: String,
 }

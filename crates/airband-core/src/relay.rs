@@ -23,6 +23,11 @@ use serde::{Deserialize, Serialize};
 use crate::encode::{hex, random_hex, unhex};
 use sha2::{Digest, Sha256};
 
+mod push;
+mod routes;
+pub use push::*;
+pub use routes::Route;
+
 pub const SCHEMA: &str = "airband.relay/1";
 /// A request older or newer than this, by the tower's clock, is refused.
 pub const FRESH_MS: u64 = 120_000;
@@ -45,6 +50,16 @@ pub const REQUEST_HEADER: &str = "x-airband-request";
 pub const ID_HEADER: &str = "x-airband-id";
 /// On a radio's request: keep it in order behind the ones the relay is keeping for the tower.
 pub const ORDERED_HEADER: &str = "x-airband-ordered";
+
+/// On every pull: the version of the pull the tower speaks ([`PULL_VERSION`]). The relay refuses a pull without
+/// it (426), since an older tower never says what it got.
+pub const PULL_HEADER: &str = "x-airband-pull";
+/// Pulls that say what they got ([`GOT_HEADER`]).
+pub const PULL_VERSION: &str = "2";
+/// On a pull: the id of the request the tower's previous pull was handed and the tower read. A tower pulls one at a
+/// time, so a request handed over that the next pull does not name never reached it (the connection died on the
+/// way), and the relay hands it over again. Nothing else tells the relay a request arrived.
+pub const GOT_HEADER: &str = "x-airband-got";
 
 /// On what the relay hands a tower, and on the tower's reply to it: this is one the relay had been keeping while
 /// the tower was away. Each side goes by this and never by how the request's id reads.
@@ -219,172 +234,6 @@ pub struct Answer {
     pub body: serde_json::Value,
 }
 
-/// A push service a phone can be woken through.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
-pub enum PushService {
-    /// Apple's.
-    #[serde(rename = "apns")]
-    Apns,
-    /// One a newer build knows and this one does not: kept, and never sent to.
-    #[default]
-    #[serde(other, rename = "unknown")]
-    Unknown,
-}
-
-/// `POST /v1/channels/<channel>/push`, from the channel's tower: have a push service wake the phone. The relay
-/// passes `sealed` on as it is and can read none of it; the phone opens it with the pairing's key.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PushRequest {
-    /// Which push service the address belongs to.
-    pub provider: PushService,
-    /// The phone's address at that service, as the phone gave it to the tower.
-    pub to: String,
-    /// A notification sealed for [`Direction::Push`], base64.
-    pub sealed: String,
-    /// It is a question to him. All the relay and the push service learn about what is inside.
-    #[serde(default)]
-    pub question: bool,
-}
-
-/// The most characters a phone's address at a push service has.
-const PUSH_ADDRESS_MOST: usize = 256;
-
-/// Is this the shape of a phone's address at a push service: a short run of letters, digits, `-`, `_` and `:`?
-/// The one rule, for the tower taking an address from a radio and the relay passing one on.
-pub fn push_address(to: &str) -> bool {
-    !to.is_empty() && to.len() <= PUSH_ADDRESS_MOST && to.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_:".contains(&b))
-}
-
-impl PushRequest {
-    /// Is it the right shape to pass on: an address ([`push_address`]), and a sealed notification that is
-    /// base64 of no more than [`PUSH_MOST`] bytes?
-    pub fn well_formed(&self) -> bool {
-        let base64 = !self.sealed.is_empty() && self.sealed.bytes().all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b));
-        push_address(&self.to) && base64 && self.sealed.len() <= PUSH_MOST.div_ceil(3) * 4
-    }
-}
-
-/// The relay's routes for one channel: each written once, as the relay serves it ([`Route::PATTERNS`]) and as a
-/// tower or a radio reaches it ([`Route::on`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Route<'a> {
-    /// `PUT` opens the channel (its tower), `DELETE` closes it.
-    Channel,
-    /// `GET`: the tower waits here for what its radios sent.
-    Pull,
-    /// `POST`: the tower's answer to one request.
-    Reply(&'a str),
-    /// `POST`: a radio's request, answered when the tower answers.
-    Call,
-    /// `POST`: a radio's request kept until the tower comes for it.
-    Queue,
-    /// `POST`: the tower asks for the phone to be woken.
-    Push,
-}
-
-impl Route<'_> {
-    /// Every route as the relay's router writes it, with `{channel}` and `{id}` where they go.
-    pub const PATTERNS: [(&'static str, Route<'static>); 6] = [
-        ("/v1/channels/{channel}", Route::Channel),
-        ("/v1/channels/{channel}/pull", Route::Pull),
-        ("/v1/channels/{channel}/reply/{id}", Route::Reply("{id}")),
-        ("/v1/channels/{channel}/call", Route::Call),
-        ("/v1/channels/{channel}/queue", Route::Queue),
-        ("/v1/channels/{channel}/push", Route::Push),
-    ];
-    /// The route's pattern for the relay's router.
-    pub fn pattern(self) -> &'static str {
-        Route::PATTERNS.iter().find(|(_, r)| std::mem::discriminant(r) == std::mem::discriminant(&self)).map(|(p, _)| *p).unwrap_or_default()
-    }
-    /// Its path for this channel.
-    pub fn on(self, channel: &str) -> String {
-        let tail = match self {
-            Route::Channel => String::new(),
-            Route::Pull => "/pull".into(),
-            Route::Reply(id) => format!("/reply/{}", url::form_urlencoded::byte_serialize(id.as_bytes()).collect::<String>()),
-            Route::Call => "/call".into(),
-            Route::Queue => "/queue".into(),
-            Route::Push => "/push".into(),
-        };
-        format!("/v1/channels/{channel}{tail}")
-    }
-}
-
-/// The relay's answer to a [`PushRequest`]. The HTTP status says the same in a number: 200 sent, 410 the address
-/// is no longer good, 429 too many, 503 this relay has no such push service, 502 the service refused or failed.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct PushAnswer {
-    pub sent: bool,
-    /// The phone no longer takes notifications at that address: the tower forgets it.
-    #[serde(default)]
-    pub gone: bool,
-    /// Why not, as a fact a tower can act on. None from a relay older than this field, or when it was sent.
-    #[serde(default)]
-    pub why: Option<NotPushed>,
-    /// Why not, in the relay's own words ([`NotPushed`]'s), for a tower older than `why`. Never the push
-    /// service's own words: those stay in the relay's log.
-    #[serde(default)]
-    pub reason: String,
-}
-
-impl PushAnswer {
-    /// Not sent, for this reason.
-    pub fn not_sent(why: NotPushed) -> PushAnswer {
-        PushAnswer { sent: false, gone: why == NotPushed::Gone, reason: why.to_string(), why: Some(why) }
-    }
-}
-
-/// Why the relay did not hand a notification on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NotPushed {
-    /// Too many from the tower's internet address lately.
-    TooManyFromAddress,
-    /// Too many on this channel lately.
-    TooManyOnChannel,
-    /// The body was not a [`PushRequest`].
-    NotARequest,
-    /// The address or the sealed notification was not the right shape ([`PushRequest::well_formed`]).
-    WrongShape,
-    /// This relay has no such push service.
-    NoSuchService,
-    /// The phone no longer takes notifications at that address.
-    Gone,
-    /// The push service said no, with this status.
-    Refused { status: u16 },
-    /// The relay could not sign what the push service asks for.
-    CannotSign,
-    /// The push service did not answer in time.
-    TimedOut,
-    /// The push service could not be reached.
-    Unreachable,
-    /// A reason a newer relay has and this build does not.
-    #[serde(other)]
-    Other,
-}
-
-impl std::fmt::Display for NotPushed {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            NotPushed::TooManyFromAddress => f.write_str("too many notifications from this address; try again later"),
-            NotPushed::TooManyOnChannel => f.write_str("too many notifications from this channel; try again later"),
-            NotPushed::NotARequest => f.write_str("not a push request"),
-            NotPushed::WrongShape => f.write_str("the address or the sealed notification is not the right shape"),
-            NotPushed::NoSuchService => f.write_str("this relay has no such push service"),
-            NotPushed::Gone => f.write_str("the phone's address is no longer good"),
-            NotPushed::Refused { status } => write!(f, "the push service said no (status {status})"),
-            NotPushed::CannotSign => f.write_str("the push key could not sign"),
-            NotPushed::TimedOut => f.write_str("the push service did not answer in time"),
-            NotPushed::Unreachable => f.write_str("the push service could not be reached"),
-            NotPushed::Other => f.write_str("the relay did not send it"),
-        }
-    }
-}
-
-/// The largest sealed notification, in bytes before base64: what fits in one push with room for the rest.
-pub const PUSH_MOST: usize = 2400;
-
 /// True when a call's time is close enough to now to be accepted.
 pub fn fresh(call_ms: u64, now_ms: u64) -> bool {
     call_ms.abs_diff(now_ms) <= FRESH_MS
@@ -393,18 +242,6 @@ pub fn fresh(call_ms: u64, now_ms: u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn each_relay_route_is_reached_where_the_relay_serves_it() {
-        let keys = Keys::derive(&new_secret()).unwrap();
-        for (pattern, route) in Route::PATTERNS {
-            let reached = keys.to("https://relay.test/", route);
-            let served = pattern.replace("{channel}", &keys.channel).replace("{id}", "%7Bid%7D");
-            assert_eq!(reached, format!("https://relay.test{served}"));
-            assert_eq!(route.pattern(), pattern);
-        }
-        assert!(keys.to("r", Route::Reply("a/b")).ends_with("/reply/a%2Fb"), "an id is one segment");
-    }
 
     #[test]
     fn both_ends_derive_the_same_and_only_the_right_key_opens() {

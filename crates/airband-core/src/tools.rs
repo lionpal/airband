@@ -47,10 +47,10 @@ impl Launcher {
     pub fn command(&self, model: Option<&str>, effort: Option<&str>, mut fill: impl FnMut(&String) -> String) -> Vec<String> {
         let mut options: Vec<String> = Vec::new();
         if let Some(m) = model {
-            options.extend(self.with_model.iter().map(|a| a.replace("{model}", m)));
+            options.extend(self.with_model.iter().map(|a| crate::template::filled(a, &[("model", m)])));
         }
         if let Some(e) = effort {
-            options.extend(self.with_effort.iter().map(|a| a.replace("{effort}", e)));
+            options.extend(self.with_effort.iter().map(|a| crate::template::filled(a, &[("effort", e)])));
         }
         self.argv.iter().flat_map(|a| if a == "{options}" { options.clone() } else { vec![fill(a)] }).collect()
     }

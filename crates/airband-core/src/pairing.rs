@@ -54,7 +54,7 @@ impl Pairing {
             Pairing::Near { at, .. } => at.into_iter().next()?,
             Pairing::Relay { .. } => return None,
         };
-        url::Url::parse(&at).ok()?.host_str().map(str::to_string)
+        Some(crate::links::site(&at)).filter(|host| !host.is_empty())
     }
     pub fn link(&self) -> String {
         match self {

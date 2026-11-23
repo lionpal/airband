@@ -1,0 +1,12 @@
+{
+  "why": "Every DynamoDB permission the relay's role is given: what the relay's own code asks for (crates/airband-relay/src/dynamo.rs, Op::needs), checked by its test that_role_is_given_every_permission_the_relay_asks_for.",
+  "actions": [
+    "dynamodb:ConditionCheckItem",
+    "dynamodb:DeleteItem",
+    "dynamodb:GetItem",
+    "dynamodb:PutItem",
+    "dynamodb:Query",
+    "dynamodb:Scan",
+    "dynamodb:UpdateItem"
+  ]
+}

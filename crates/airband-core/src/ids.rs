@@ -69,8 +69,6 @@ ids! {
     TeamId;
     /// One computer (a tower), as its pairing names it: the same on every phone it is paired with.
     StationId;
-    /// One radio paired with a tower: its relay channel, never its display name.
-    RadioId;
     /// One way of starting an agent (a launcher row).
     LauncherId;
     /// One question the tower put to him and waits on.

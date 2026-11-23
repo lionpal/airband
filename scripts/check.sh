@@ -2,7 +2,7 @@
 # The checks, run on this computer: what CI ran on every push, without spending build minutes on it.
 #
 #   scripts/check.sh           the linter, then the unit tests of every crate (under a minute once built)
-#   scripts/check.sh --full    those, then the end-to-end suites: the relay and its queue (25 checks), agents the
+#   scripts/check.sh --full    those, then the end-to-end suites: the relay and its queue (26 checks), agents the
 #                              tower runs itself (84), links (10), the paths the audits keep finding faults in
 #                              (e2e-scenarios), and the whole tower with real model calls (139, a few minutes, and
 #                              it needs `claude` signed in)
@@ -17,6 +17,10 @@ export PATH="$HOME/.cargo/bin:$PATH"
 cargo clippy -q --workspace --all-targets -- -D warnings
 cargo test -q --release -p airband-core -p airband-io -p airband-relay -p airband-radio -p airband-cli
 [ "$1" = "--full" ] || exit 0
+# The suites run a build with the stand-ins in it (test accounts and addresses read from the environment). It is
+# built into a folder of its own, never where the README installs from, so it can never become his copy.
+CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target}/stand-ins"
+export CARGO_TARGET_DIR
 cargo build -q --release -p airband-cli -p airband-relay --features airband-cli/stand-ins
 python3 tools/e2e-relay.py
 python3 tools/e2e-held.py

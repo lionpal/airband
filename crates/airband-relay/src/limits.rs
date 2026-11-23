@@ -58,6 +58,12 @@ impl<K: std::hash::Hash + Eq + Clone> Limiter<K> {
         }
         count(self.by.entry(key.clone()).or_default(), self.most, self.window, now)
     }
+    /// One taken that came to nothing is not counted after all.
+    pub(super) fn give_back(&mut self, key: &K) {
+        if let Some(Some((_, taken))) = self.by.get_mut(key) {
+            *taken = taken.saturating_sub(1);
+        }
+    }
     /// Forget stretches that are over: now and then, and at once when there is no room left.
     fn sweep(&mut self, now: Instant) {
         if self.by.len() >= KEYS_KEPT || self.swept.is_none_or(|at| now.duration_since(at) >= self.window) {

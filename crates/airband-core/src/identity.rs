@@ -171,9 +171,8 @@ fn at_path<'a>(doc: &'a Value, path: &[String]) -> Option<&'a Value> {
 /// The payload of a JSON web token, read in memory. Nothing is checked: it names who signed in, and is never
 /// trusted for anything else.
 fn jwt_payload(token: &str) -> Option<Value> {
-    use base64::Engine;
     let payload = token.split('.').nth(1)?;
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')).ok()?;
+    let bytes = crate::encode::unbase64_url(payload.trim_end_matches('='))?;
     serde_json::from_slice(&bytes).ok()
 }
 

@@ -33,7 +33,7 @@ impl Dyn {
     }
     /// Write an item unless one with its key is already there, which is left as it is.
     pub(super) async fn put_new(&self, table: &str, key: &str, item: Value) -> Result<(), String> {
-        match self.db.call("PutItem", json!({ "TableName": table, "Item": item, "ConditionExpression": "attribute_not_exists(#k)", "ExpressionAttributeNames": { "#k": key } })).await {
+        match self.db.call(dynamo::Op::PutItem, json!({ "TableName": table, "Item": item, "ConditionExpression": "attribute_not_exists(#k)", "ExpressionAttributeNames": { "#k": key } })).await {
             Ok(_) => Ok(()),
             Err(e) if e.condition() => Ok(()),
             Err(e) => Err(e.to_string()),
@@ -52,14 +52,14 @@ impl Dyn {
     }
     /// A channel's line: the place of every message kept for it, oldest first, as (key, id, expires).
     pub(super) async fn line(&self, channel: &str) -> Result<Vec<(String, String, u64)>, String> {
-        let items = self.db.all("Query", self.line_ask(channel)).await?;
+        let items = self.db.all(dynamo::Op::Query, self.line_ask(channel)).await?;
         Ok(items.iter().filter_map(place).collect())
     }
     /// Take a message out of the table without touching the count: for one that has outlived its time. One that
     /// could not be taken out is said; it is passed over all the same, and DynamoDB drops it in its time.
     pub(super) async fn drop_stale(&self, channel: &str, place: &str, id: &str) {
-        let line = self.db.call("DeleteItem", json!({ "TableName": self.held, "Key": Self::key(channel, place) })).await;
-        let body = self.db.call("DeleteItem", json!({ "TableName": self.held, "Key": Self::key(channel, &Self::body(id)), "ConditionExpression": "#at = :at", "ExpressionAttributeNames": { "#at": "at" }, "ExpressionAttributeValues": { ":at": s(place) } })).await;
+        let line = self.db.call(dynamo::Op::DeleteItem, json!({ "TableName": self.held, "Key": Self::key(channel, place) })).await;
+        let body = self.db.call(dynamo::Op::DeleteItem, json!({ "TableName": self.held, "Key": Self::key(channel, &Self::body(id)), "ConditionExpression": "#at = :at", "ExpressionAttributeNames": { "#at": "at" }, "ExpressionAttributeValues": { ":at": s(place) } })).await;
         for failed in [line.err(), body.err().filter(|e| !e.condition())].into_iter().flatten() {
             eprintln!("airband-relay: a kept message past its time could not be removed: {failed}");
         }
@@ -67,7 +67,7 @@ impl Dyn {
     /// The count ran high because DynamoDB removed old messages by itself: count the line and put that in its
     /// place, unless the count changed while we looked, in which case someone else's change stands.
     pub(super) async fn recount(&self, channel: &str) -> Result<(), String> {
-        let counter = self.db.call("GetItem", json!({ "TableName": self.held, "Key": Self::key(channel, "n"), "ConsistentRead": true })).await.map_err(|e| e.to_string())?;
+        let counter = self.db.call(dynamo::Op::GetItem, json!({ "TableName": self.held, "Key": Self::key(channel, "n"), "ConsistentRead": true })).await.map_err(|e| e.to_string())?;
         let Some(was) = dynamo::number(&counter["Item"], "held") else { return Ok(()) };
         let (line, now) = (self.line(channel).await?, airband_core::clock::now_secs());
         let mut live = 0u64;
@@ -80,7 +80,7 @@ impl Dyn {
         }
         if live != was {
             let ask = json!({ "TableName": self.held, "Key": Self::key(channel, "n"), "UpdateExpression": "SET #h = :live", "ConditionExpression": "#h = :was", "ExpressionAttributeNames": { "#h": "held" }, "ExpressionAttributeValues": { ":live": n(live), ":was": n(was) } });
-            match self.db.call("UpdateItem", ask).await {
+            match self.db.call(dynamo::Op::UpdateItem, ask).await {
                 Ok(_) => {}
                 Err(e) if e.condition() => {}
                 Err(e) => return Err(e.to_string()),
@@ -96,7 +96,7 @@ impl ChannelStore for Dyn {
         format!("the DynamoDB table {} in {}", self.channels, self.db.region())
     }
     async fn load(&self) -> Result<HashMap<String, Saved>, String> {
-        let items = self.db.all("Scan", json!({ "TableName": self.channels, "ConsistentRead": true })).await?;
+        let items = self.db.all(dynamo::Op::Scan, json!({ "TableName": self.channels, "ConsistentRead": true })).await?;
         Ok(items
             .iter()
             .filter_map(|item| match (dynamo::text(item, "channel"), dynamo::text(item, "pull_hash"), dynamo::text(item, "radio_hash")) {
@@ -110,19 +110,19 @@ impl ChannelStore for Dyn {
     }
     async fn remove(&self, channel: &str) -> Result<(), String> {
         // the channel's item becomes a closed one, with nothing of its tower's in it: never opened again
-        self.db.call("PutItem", json!({ "TableName": self.channels, "Item": { "channel": s(channel), "closed": n(airband_core::clock::now_secs()) } })).await.map_err(|e| e.to_string())?;
+        self.db.call(dynamo::Op::PutItem, json!({ "TableName": self.channels, "Item": { "channel": s(channel), "closed": n(airband_core::clock::now_secs()) } })).await.map_err(|e| e.to_string())?;
         // what was kept for it goes too: its count, its line and the messages themselves
         let ask = json!({ "TableName": self.held, "ConsistentRead": true, "KeyConditionExpression": "#c = :c", "ProjectionExpression": "#c, #k", "ExpressionAttributeNames": { "#c": "channel", "#k": "k" }, "ExpressionAttributeValues": { ":c": s(channel) } });
-        for item in self.db.all("Query", ask).await? {
+        for item in self.db.all(dynamo::Op::Query, ask).await? {
             let Some(k) = dynamo::text(&item, "k") else { continue };
-            self.db.call("DeleteItem", json!({ "TableName": self.held, "Key": Self::key(channel, &k) })).await.map_err(|e| format!("the channel is forgotten, but what was kept for it could not all be removed: {e}"))?;
+            self.db.call(dynamo::Op::DeleteItem, json!({ "TableName": self.held, "Key": Self::key(channel, &k) })).await.map_err(|e| format!("the channel is forgotten, but what was kept for it could not all be removed: {e}"))?;
         }
         Ok(())
     }
     async fn add(&self, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<Added, String> {
         self.put_new(&self.channels, "channel", json!({ "channel": s(channel), "pull_hash": s(pull_hash), "radio_hash": s(radio_hash), "created_at": n(airband_core::clock::now_secs()) })).await?;
         // what is on record now: this tower's, the one that was first, or a closed one
-        let got = self.db.call("GetItem", json!({ "TableName": self.channels, "Key": { "channel": s(channel) }, "ConsistentRead": true })).await.map_err(|e| e.to_string())?;
+        let got = self.db.call(dynamo::Op::GetItem, json!({ "TableName": self.channels, "Key": { "channel": s(channel) }, "ConsistentRead": true })).await.map_err(|e| e.to_string())?;
         let item = &got["Item"];
         if dynamo::number(item, "closed").is_some() {
             return Ok(Added::Closed);
@@ -147,7 +147,7 @@ impl ChannelStore for Dyn {
                 // and only while its tower has not closed it
                 { "ConditionCheck": { "TableName": self.channels, "Key": { "channel": s(channel) }, "ConditionExpression": "attribute_not_exists(#x)", "ExpressionAttributeNames": { "#x": "closed" } } },
             ] });
-            match self.db.call("TransactWriteItems", ask).await {
+            match self.db.call(dynamo::Op::TransactWriteItems, ask).await {
                 Ok(_) => return Ok(Held::Kept),
                 Err(e) if e.part_refused(3) => return Ok(Held::Closed),
                 Err(e) if e.part_refused(0) => return Ok(Held::Kept),
@@ -164,7 +164,7 @@ impl ChannelStore for Dyn {
     async fn held_next(&self, channel: &str) -> Result<Option<(String, Vec<u8>)>, String> {
         let mut ask = self.line_ask(channel);
         ask["Limit"] = 20.into();
-        let mut pages = Pages::new("Query", ask);
+        let mut pages = Pages::new(dynamo::Op::Query, ask);
         while let Some(items) = pages.next(&self.db).await? {
             let now = airband_core::clock::now_secs();
             for item in &items {
@@ -173,7 +173,7 @@ impl ChannelStore for Dyn {
                 if !in_time(expires, now) {
                     continue;
                 }
-                let kept = self.db.call("GetItem", json!({ "TableName": self.held, "Key": Self::key(channel, &Self::body(&id)), "ConsistentRead": true })).await.map_err(|e| e.to_string())?;
+                let kept = self.db.call(dynamo::Op::GetItem, json!({ "TableName": self.held, "Key": Self::key(channel, &Self::body(&id)), "ConsistentRead": true })).await.map_err(|e| e.to_string())?;
                 match dynamo::bytes(&kept["Item"], "sealed").filter(|_| dynamo::text(&kept["Item"], "at").as_deref() == Some(place.as_str())) {
                     Some(sealed) => return Ok(Some((id, sealed))),
                     // a place in line with no message behind it: taken already, or half removed
@@ -184,14 +184,14 @@ impl ChannelStore for Dyn {
         Ok(None)
     }
     async fn held_done(&self, channel: &str, id: &str) -> Result<(), String> {
-        let kept = self.db.call("GetItem", json!({ "TableName": self.held, "Key": Self::key(channel, &Self::body(id)), "ConsistentRead": true, "ProjectionExpression": "#at", "ExpressionAttributeNames": { "#at": "at" } })).await.map_err(|e| e.to_string())?;
+        let kept = self.db.call(dynamo::Op::GetItem, json!({ "TableName": self.held, "Key": Self::key(channel, &Self::body(id)), "ConsistentRead": true, "ProjectionExpression": "#at", "ExpressionAttributeNames": { "#at": "at" } })).await.map_err(|e| e.to_string())?;
         let Some(place) = dynamo::text(&kept["Item"], "at") else { return Ok(()) };
         let ask = json!({ "TransactItems": [
             { "Delete": { "TableName": self.held, "Key": Self::key(channel, &Self::body(id)), "ConditionExpression": "#at = :at", "ExpressionAttributeNames": { "#at": "at" }, "ExpressionAttributeValues": { ":at": s(&place) } } },
             { "Delete": { "TableName": self.held, "Key": Self::key(channel, &place) } },
             { "Update": { "TableName": self.held, "Key": Self::key(channel, "n"), "UpdateExpression": "ADD #h :less", "ConditionExpression": "#h > :none", "ExpressionAttributeNames": { "#h": "held" }, "ExpressionAttributeValues": { ":less": { "N": "-1" }, ":none": n(0) } } },
         ] });
-        match self.db.call("TransactWriteItems", ask).await {
+        match self.db.call(dynamo::Op::TransactWriteItems, ask).await {
             Ok(_) => Ok(()),
             // someone took it first
             Err(e) if e.part_refused(0) => Ok(()),
@@ -201,6 +201,14 @@ impl ChannelStore for Dyn {
                 Ok(())
             }
             Err(e) => Err(e.to_string()),
+        }
+    }
+    #[cfg(test)]
+    async fn outlive(&self, channel: &str, id: &str) {
+        let kept = self.db.call(dynamo::Op::GetItem, json!({ "TableName": self.held, "Key": Self::key(channel, &Self::body(id)), "ConsistentRead": true })).await.unwrap();
+        let place = dynamo::text(&kept["Item"], "at").unwrap();
+        for k in [Self::body(id), place] {
+            self.db.call(dynamo::Op::UpdateItem, json!({ "TableName": self.held, "Key": Self::key(channel, &k), "UpdateExpression": "SET #e = :old", "ExpressionAttributeNames": { "#e": "expires" }, "ExpressionAttributeValues": { ":old": n(1) } })).await.unwrap();
         }
     }
 }

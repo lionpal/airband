@@ -115,7 +115,12 @@ try:
     link = [w for w in subprocess.run([BIN, "pair", "test"], env=tower_env, capture_output=True, text=True).stdout.split() if w.startswith("airband:")][-1]
     keys = derive(urllib.parse.parse_qs(urllib.parse.urlparse(link).query)["secret"][0])
     stranger = derive(os.urandom(32).hex())  # another pairing altogether, whose channel was never opened here
-    time.sleep(11)  # the tower picks a new pairing up within ten seconds
+    # the tower picks a new pairing up on its next look at the settings (every ten seconds): go on once it says
+    # it is serving it through the relay, not after a guess at how long that takes
+    until = time.time() + 40
+    while 'serving "test" through' not in open(os.path.join(work, "tower.log")).read() and time.time() < until:
+        time.sleep(0.5)
+    check("the tower serves the new pairing through the relay", 'serving "test" through' in open(os.path.join(work, "tower.log")).read(), open(os.path.join(work, "tower.log")).read()[-400:])
     subprocess.run([BIN, "report", "--id", "a1", "--harness", "script", "--cwd", project, "--deliver-command", json.dumps(["sh", "-c", f"cat>>{got}"]), "checkin"], env=tower_env)
 
     print("With the computer there")

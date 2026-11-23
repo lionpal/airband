@@ -6,9 +6,11 @@
 //! | no file                               | [`Loaded::Fresh`]: the default, saved as usual                      |
 //! | a file that is not the value          | moved aside beside it ([`Loaded::SetAside`]), the default in its place |
 //! | one that cannot be moved aside        | left as it is ([`Loaded::LeftInPlace`]): every save is refused      |
-//! | a read that fails (out of files, an error of the disk) | tried again twice; then left as it is, saves refused until a later read works |
+//! | a read that fails (out of files, an error of the disk) | tried again twice; then left as it is, saves refused until it is read again and reads |
 //!
-//! So nothing kept is ever lost by being taken for empty and written over. A file that is a link is written
+//! [`Kept::change`] reads such a file again before each change. A [`Keeper`] holds no value to put what it reads
+//! into, so its owner calls [`Keeper::read_again`] before a change and takes what comes back. So nothing kept is
+//! ever lost by being taken for empty and written over. A file that is a link is written
 //! where it points ([`crate::files`]).
 //!
 //! [`Kept`] holds the value itself. [`Keeper`] is the same without it, for a value that lives inside something
@@ -129,8 +131,9 @@ impl Keeper {
         self.path.as_deref()
     }
     /// When the file could not be read, read it again: what it holds now, once it can be read (`Some(None)` when
-    /// it is gone or was set aside), and saves may go on. `None` while it still cannot be.
-    fn read_again<T: DeserializeOwned>(&self) -> Option<Option<T>> {
+    /// it is gone or was set aside), and saves may go on; the owner puts that in place of what it holds before it
+    /// changes anything. `None` when nothing needs reading again, or while it still cannot be.
+    pub fn read_again<T: DeserializeOwned>(&self) -> Option<Option<T>> {
         let path = self.path.as_deref()?;
         let mut read_only = self.read_only.lock().unwrap_or_else(|e| e.into_inner());
         if !read_only.as_ref().is_some_and(|r| r.read_failed) {
@@ -281,6 +284,33 @@ mod tests {
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
         assert_eq!(kept.change(|v| v.push(1)).1, Saved::Kept);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "[7,1]");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_keepers_owner_reads_again_what_could_not_be_read_and_only_then_may_save() {
+        // K-B1: a Keeper stayed read-only for good after one failed read
+        use std::os::unix::fs::PermissionsExt;
+        let dir = folder();
+        let file = dir.join("marks.json");
+        std::fs::write(&file, "[7]").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let (value, keeper, loaded) = Keeper::open::<Vec<u32>>(Some(file.clone()));
+        if !matches!(loaded, Loaded::LeftInPlace { .. }) {
+            return; // run as a user who reads anything: nothing to show
+        }
+        assert!(value.is_empty());
+        assert_eq!(keeper.read_again::<Vec<u32>>(), None, "still cannot be read");
+        assert!(matches!(keeper.save(&vec![1u32]), Saved::Failed { .. }));
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let mut value = keeper.read_again::<Vec<u32>>().unwrap().unwrap_or_default();
+        assert_eq!(value, [7]);
+        value.push(1);
+        assert_eq!(keeper.save(&value), Saved::Kept);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "[7,1]");
+        // once it has read, there is nothing to read again
+        assert_eq!(keeper.read_again::<Vec<u32>>(), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

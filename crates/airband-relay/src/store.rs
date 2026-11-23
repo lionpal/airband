@@ -48,7 +48,7 @@ pub(crate) use folder::Folder;
 pub(crate) use postgres::Pg;
 
 /// What is remembered about one channel.
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Saved {
     /// The hash of the token its tower pulls with.
     #[serde(rename = "pull")]
@@ -123,6 +123,9 @@ pub(crate) trait ChannelStore: Send + Sync {
     async fn held_purge(&self) -> Result<(), String> {
         Ok(())
     }
+    /// For the conformance test: make what is kept under `id` past its time, as it would be a week on.
+    #[cfg(test)]
+    async fn outlive(&self, channel: &str, id: &str);
 }
 
 /// The store the relay uses.
@@ -165,6 +168,13 @@ mod tests {
         store.held_done(c, "aaaaaaaa").await.unwrap();
         store.held_done(c, "aaaaaaaa").await.unwrap(); // twice is once
         assert_eq!(store.held_next(c).await, Ok(Some(("bbbbbbbb".into(), b"two".to_vec()))));
+        // R-B3: one past its time is passed over, does not count, and the same id left again is kept again as new
+        store.outlive(c, "bbbbbbbb").await;
+        assert_eq!(store.held_next(c).await, Ok(None));
+        assert_eq!(store.hold(c, "bbbbbbbb", b"two again", 1).await, Ok(Held::Kept));
+        assert_eq!(store.held_next(c).await, Ok(Some(("bbbbbbbb".into(), b"two again".to_vec()))));
+        store.held_done(c, "bbbbbbbb").await.unwrap();
+        assert_eq!(store.held_next(c).await, Ok(None));
         // a channel's record: made once, read back, and what is on record is what a second tower is told
         let first = Saved { pull_hash: "pull".into(), radio_hash: "radio".into() };
         assert_eq!(store.add(c, "pull", "radio").await, Ok(Added::Open(first.clone())));
@@ -375,9 +385,9 @@ mod tests {
         let store = d;
         let channel = airband_core::encode::random_hex(16);
         let channel = channel.as_str();
-        let count = || async { dynamo::number(&d.db.call("GetItem", json!({ "TableName": d.held, "Key": Dyn::key(channel, "n"), "ConsistentRead": true })).await.unwrap()["Item"], "held").unwrap_or(0) };
+        let count = || async { dynamo::number(&d.db.call(dynamo::Op::GetItem, json!({ "TableName": d.held, "Key": Dyn::key(channel, "n"), "ConsistentRead": true })).await.unwrap()["Item"], "held").unwrap_or(0) };
         let set = move |k: String, name: &'static str, to: u64| async move {
-            d.db.call("UpdateItem", json!({ "TableName": d.held, "Key": Dyn::key(channel, &k), "UpdateExpression": "SET #a = :n", "ExpressionAttributeNames": { "#a": name }, "ExpressionAttributeValues": { ":n": n(to) } })).await.unwrap();
+            d.db.call(dynamo::Op::UpdateItem, json!({ "TableName": d.held, "Key": Dyn::key(channel, &k), "UpdateExpression": "SET #a = :n", "ExpressionAttributeNames": { "#a": name }, "ExpressionAttributeValues": { ":n": n(to) } })).await.unwrap();
         };
 
         // the same id five times at once is kept once
@@ -417,6 +427,6 @@ mod tests {
         // leave nothing: the one past its time goes when the line is counted
         d.recount(channel).await.unwrap();
         assert!(d.line(channel).await.unwrap().is_empty());
-        d.db.call("DeleteItem", json!({ "TableName": d.held, "Key": Dyn::key(channel, "n") })).await.unwrap();
+        d.db.call(dynamo::Op::DeleteItem, json!({ "TableName": d.held, "Key": Dyn::key(channel, "n") })).await.unwrap();
     }
 }
