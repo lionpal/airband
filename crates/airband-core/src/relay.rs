@@ -321,27 +321,26 @@ impl Route<'_> {
     }
 }
 
-/// The relay's answer to a [`PushRequest`]. The HTTP status says the same in a number: 200 sent, 410 the address
-/// is no longer good, 429 too many, 503 this relay has no such push service, 502 the service refused or failed.
+/// The relay's answer to a [`PushRequest`]. The HTTP status says the same in a number: 200 sent, 400 a request
+/// that is not one, 410 the address is no longer good, 429 too many, 503 this relay has no such push service, 502
+/// the service refused or failed. A 403 or 404 (not this channel's tower, no such channel) carries no
+/// `PushAnswer`: those are the relay's answers to any tower route.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PushAnswer {
     pub sent: bool,
     /// The phone no longer takes notifications at that address: the tower forgets it.
     #[serde(default)]
     pub gone: bool,
-    /// Why not, as a fact a tower can act on. None from a relay older than this field, or when it was sent.
+    /// Why not, as a fact a tower can act on; none when it was sent. The push service's own words stay in the
+    /// relay's log.
     #[serde(default)]
     pub why: Option<NotPushed>,
-    /// Why not, in the relay's own words ([`NotPushed`]'s), for a tower older than `why`. Never the push
-    /// service's own words: those stay in the relay's log.
-    #[serde(default)]
-    pub reason: String,
 }
 
 impl PushAnswer {
     /// Not sent, for this reason.
     pub fn not_sent(why: NotPushed) -> PushAnswer {
-        PushAnswer { sent: false, gone: why == NotPushed::Gone, reason: why.to_string(), why: Some(why) }
+        PushAnswer { sent: false, gone: why == NotPushed::Gone, why: Some(why) }
     }
 }
 

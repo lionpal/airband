@@ -203,4 +203,12 @@ impl ChannelStore for Dyn {
             Err(e) => Err(e.to_string()),
         }
     }
+    #[cfg(test)]
+    async fn outlive(&self, channel: &str, id: &str) {
+        let kept = self.db.call(dynamo::Op::GetItem, json!({ "TableName": self.held, "Key": Self::key(channel, &Self::body(id)), "ConsistentRead": true })).await.unwrap();
+        let place = dynamo::text(&kept["Item"], "at").unwrap();
+        for k in [Self::body(id), place] {
+            self.db.call(dynamo::Op::UpdateItem, json!({ "TableName": self.held, "Key": Self::key(channel, &k), "UpdateExpression": "SET #e = :old", "ExpressionAttributeNames": { "#e": "expires" }, "ExpressionAttributeValues": { ":old": n(1) } })).await.unwrap();
+        }
+    }
 }

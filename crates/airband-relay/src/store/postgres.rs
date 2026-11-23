@@ -160,4 +160,9 @@ impl ChannelStore for Pg {
         let db = self.connect(&self.name).await?;
         db.execute(&format!("delete from relay_held where not ({})", in_time_sql(1)), &[&HELD_FOR]).await.map(|_| ()).map_err(|e| e.to_string())
     }
+    #[cfg(test)]
+    async fn outlive(&self, channel: &str, id: &str) {
+        let db = self.connect(&self.name).await.unwrap();
+        db.execute("update relay_held set held_at = to_timestamp(1) where channel = $1 and id = $2", &[&channel, &id]).await.unwrap();
+    }
 }

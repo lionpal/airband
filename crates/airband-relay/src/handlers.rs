@@ -2,6 +2,11 @@
 //! a radio calling through it, leaving a message on it, and a tower waking its phone.
 use super::*;
 
+/// A channel opened with a pull token that is not the one on record.
+fn another_tower() -> Response {
+    say(StatusCode::FORBIDDEN, "that channel belongs to another tower")
+}
+
 pub(super) async fn open(State(relay): State<Arc<Relay>>, Path(channel): Path<String>, headers: HeaderMap) -> Response {
     let (true, false, Some(radio)) = (valid_channel(&channel), bearer(&headers).is_empty(), radio_hash_given(&headers)) else {
         return say(StatusCode::BAD_REQUEST, "a channel is 32 hex characters and needs a pull token and its radio's token hash");
@@ -11,7 +16,7 @@ pub(super) async fn open(State(relay): State<Arc<Relay>>, Path(channel): Path<St
     // starts over: nothing handed to it before is in its hands then
     if let Some(ch) = relay.channels.lock().unwrap().get_mut(&channel) {
         if !same(&ch.pull_hash, &hash) {
-            return say(StatusCode::FORBIDDEN, "that channel belongs to another tower");
+            return another_tower();
         }
         ch.reopened();
         return StatusCode::NO_CONTENT.into_response();
@@ -39,12 +44,19 @@ pub(super) async fn open(State(relay): State<Arc<Relay>>, Path(channel): Path<St
             eprintln!("airband-relay: could not save a new channel: {}", state::masked(&e, &channel));
             return say(StatusCode::SERVICE_UNAVAILABLE, "the relay could not save the channel; try again");
         }
-        // its tower closed it when the phone was unpaired: only a new pairing (a new channel) opens again
-        Ok(store::Added::Closed) => return say(StatusCode::GONE, "that pairing was ended; pair again"),
+        // its tower closed it when the phone was unpaired: only a new pairing (a new channel) opens again. It
+        // opened nothing, so it does not count against the address's new pairings: a tower that keeps asking
+        // must not lock its own address out of pairing again
+        Ok(store::Added::Closed) => {
+            let mut limits = relay.limits.lock().unwrap();
+            limits.opened_by_address.give_back(&caller(&headers));
+            limits.opened.give_back(&());
+            return say(StatusCode::GONE, "that pairing was ended; pair again");
+        }
         Ok(store::Added::Open(saved)) => saved,
     };
     if !same(&on_record.pull_hash, &hash) {
-        return say(StatusCode::FORBIDDEN, "that channel belongs to another tower");
+        return another_tower();
     }
     relay.channels.lock().unwrap().entry(channel).or_insert_with(|| Channel::from(on_record));
     StatusCode::CREATED.into_response()
@@ -113,7 +125,8 @@ pub(super) async fn close(State(relay): State<Arc<Relay>>, Path(channel): Path<S
         return *no;
     }
     // closed on record first: a failure leaves the channel open and the tower is told so (503), rather than a
-    // channel gone here and back after a restart. Once closed, a tower still running with that pairing that
+    // channel gone here and back after a restart. Nothing here tries again: `airband unpair` says it was not
+    // closed, and the channel stays on record, though its tower no longer answers on it. Once closed, a tower still running with that pairing that
     // opens it again is refused (410): nothing reopens it but a new pairing.
     if let Err(e) = relay.store.remove(&channel).await {
         eprintln!("airband-relay: cannot forget a channel: {}", state::masked(&e, &channel));
@@ -133,8 +146,10 @@ pub(super) async fn reply(State(relay): State<Arc<Relay>>, Path((channel, id)): 
         }
         // gone from the store first: only then is the tower woken for the next one, so it is never handed this
         // one again, and a failure leaves it exactly as it was (still held, handed again in its time)
+        // why stays in the relay's log: a store's words can name where it keeps things
         if let Err(e) = relay.store.held_done(&channel, kept).await {
-            return say(StatusCode::SERVICE_UNAVAILABLE, &e);
+            eprintln!("airband-relay: cannot let a kept message go: {}", state::masked(&e, &channel));
+            return say(StatusCode::SERVICE_UNAVAILABLE, "the relay could not let that message go; try again");
         }
         if let Some(ch) = relay.channels.lock().unwrap().get_mut(&channel) {
             if ch.holding.as_ref().is_some_and(|(held, _)| held == kept) {
@@ -146,10 +161,11 @@ pub(super) async fn reply(State(relay): State<Arc<Relay>>, Path((channel, id)): 
     }
     match relay.with_tower(&channel, &headers, |ch| ch.waiting.remove(&id)) {
         Err(no) => *no,
-        Ok(Some(radio)) => {
-            radio.send(sealed).ok();
-            StatusCode::NO_CONTENT.into_response()
-        }
+        // the radio hung up between: told as for one that stopped waiting, never as delivered
+        Ok(Some(radio)) => match radio.send(sealed) {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(_) => say(StatusCode::GONE, "the radio stopped waiting for that answer"),
+        },
         Ok(None) => say(StatusCode::GONE, "the radio stopped waiting for that answer"),
     }
 }
@@ -219,15 +235,28 @@ pub(super) async fn carry(relay: &Arc<Relay>, channel: &str, headers: &HeaderMap
         ch.wake.notify_one();
         rx
     };
+    // nothing of a request nobody waits for stays in memory: when the wait ends, or when the radio hangs up and
+    // this is dropped, it goes, so one the tower never answers cannot fill the channel's share
+    let _waiting = Waiting { relay: relay.clone(), channel: channel.to_string(), id };
     match tokio::time::timeout(ANSWER_WAIT, answer).await {
         Ok(Ok(sealed)) => sealed.into_response(),
-        _ => {
-            // nothing of a request nobody waits for stays in memory
-            if let Some(ch) = relay.channels.lock().unwrap().get_mut(channel) {
-                ch.waiting.remove(&id);
-                ch.queue.retain(|(queued, _)| queued != &id);
-            }
-            say(StatusCode::GATEWAY_TIMEOUT, "the tower did not answer")
+        _ => say(StatusCode::GATEWAY_TIMEOUT, "the tower did not answer"),
+    }
+}
+
+/// A radio's request while its radio waits. Dropped, the request goes from the channel, answered or not.
+struct Waiting {
+    relay: Arc<Relay>,
+    channel: String,
+    id: String,
+}
+
+impl Drop for Waiting {
+    fn drop(&mut self) {
+        if let Some(ch) = self.relay.channels.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&self.channel) {
+            ch.waiting.remove(&self.id);
+            ch.queue.retain(|(queued, _)| queued != &self.id);
+            ch.handed.retain(|(handed, _)| handed != &self.id);
         }
     }
 }
@@ -354,6 +383,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn opening_a_closed_channel_again_and_again_never_uses_up_the_addresss_new_pairings() {
+        // M1: each refused open counted against the ten a day, so the tower's own address could pair no more
+        let (relay, folder) = relay_in_a_folder(None);
+        let keys = Keys::derive(&airband_core::relay::new_secret()).unwrap();
+        assert_eq!(open_as(&relay, &keys, "").await, 201);
+        assert_eq!(close(State(relay.clone()), Path(keys.channel.clone()), pulling(&keys, None)).await.status().as_u16(), 204);
+        for _ in 0..30 {
+            assert_eq!(open_as(&relay, &keys, "").await, 410);
+        }
+        let fresh = Keys::derive(&airband_core::relay::new_secret()).unwrap();
+        assert_eq!(open_as(&relay, &fresh, "").await, 201);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[tokio::test]
     async fn two_towers_opening_one_channel_are_told_whose_it_is_by_the_record() {
         let (relay, folder) = relay_in_a_folder(None);
         let keys = Keys::derive(&airband_core::relay::new_secret()).unwrap();
@@ -447,6 +491,35 @@ mod tests {
         // a tower that starts over opens its channel again: then it is handed again
         assert_eq!(open_as(&relay, &keys, "").await, 204);
         assert!(relay.channels.lock().unwrap()[&keys.channel].kept_due().is_some());
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[tokio::test]
+    async fn a_radio_that_hangs_up_leaves_nothing_behind_and_its_answer_is_not_taken_as_delivered() {
+        // R-N3: only carry's own timeout cleaned up, so requests the tower never answered filled the channel
+        let (relay, folder) = relay_in_a_folder(None);
+        let keys = Keys::derive(&airband_core::relay::new_secret()).unwrap();
+        assert_eq!(open_as(&relay, &keys, "").await, 201);
+        relay.channels.lock().unwrap().get_mut(&keys.channel).unwrap().last_pull = Some(Instant::now());
+        let auth = token(&keys.radio_token);
+        let radio = with(&[(auth.0, &auth.1)]);
+        let calling = tokio::spawn(call(State(relay.clone()), Path(keys.channel.clone()), radio, Bytes::from_static(b"sealed")));
+        while relay.channels.lock().unwrap()[&keys.channel].waiting.is_empty() {
+            tokio::task::yield_now().await;
+        }
+        let id = relay.channels.lock().unwrap()[&keys.channel].queue[0].0.clone();
+        // handed over, then the radio hangs up
+        assert_eq!(text_with_id(pull(State(relay.clone()), Path(keys.channel.clone()), pulling(&keys, None))).await.1, Some(id.clone()));
+        calling.abort();
+        assert!(calling.await.is_err());
+        {
+            let channels = relay.channels.lock().unwrap();
+            let ch = &channels[&keys.channel];
+            assert!(ch.waiting.is_empty() && ch.queue.is_empty() && ch.handed.is_empty());
+        }
+        // the tower's answer finds nobody: told so, never 204
+        let tower = pulling(&keys, None);
+        assert_eq!(reply(State(relay.clone()), Path((keys.channel.clone(), id)), tower, Bytes::from_static(b"answer")).await.status().as_u16(), 410);
         let _ = std::fs::remove_dir_all(&folder);
     }
 

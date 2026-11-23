@@ -363,7 +363,7 @@ to pass it on:
 
 | Call | Body → answer | Meaning |
 |---|---|---|
-| `POST /v1/channels/<channel>/push` | `{ provider, to, sealed, question }` → `{ sent, gone, why, reason }` | `to` is the phone's address, `sealed` the notification in base64 (2400 bytes at most before base64), `question` whether it is one. 200 sent; 410 the address is no longer good and the tower forgets it; 429 more than 60 from this channel in ten minutes, or 240 from one internet address; 503 this relay has no such push service; 502 the service refused or could not be reached. `why` says which, as a fact (`NotPushed`: `refused` carries the service's status); `reason` is the relay's own words for it, never the push service's. |
+| `POST /v1/channels/<channel>/push` | `{ provider, to, sealed, question }` → `{ sent, gone, why }` | `to` is the phone's address, `sealed` the notification in base64 (2400 bytes at most before base64), `question` whether it is one. 200 sent; 400 not a request, or one of the wrong shape; 410 the address is no longer good and the tower forgets it; 429 more than 60 from this channel in ten minutes, or 240 from one internet address; 503 this relay has no such push service; 502 the service refused or could not be reached. `why` says which, as a fact (`NotPushed`: `refused` carries the service's status); the push service's own words stay in the relay's log. 403 and 404 (not this channel's tower, no such channel) carry no answer of this kind. |
 
 The relay holds the push service's key and adds the same visible words to every notification ("airband", "New
 message" or "A question for you"), which is what shows if the phone cannot open it. The relay and the push

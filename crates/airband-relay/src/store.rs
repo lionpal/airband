@@ -123,6 +123,9 @@ pub(crate) trait ChannelStore: Send + Sync {
     async fn held_purge(&self) -> Result<(), String> {
         Ok(())
     }
+    /// For the conformance test: make what is kept under `id` past its time, as it would be a week on.
+    #[cfg(test)]
+    async fn outlive(&self, channel: &str, id: &str);
 }
 
 /// The store the relay uses.
@@ -165,6 +168,13 @@ mod tests {
         store.held_done(c, "aaaaaaaa").await.unwrap();
         store.held_done(c, "aaaaaaaa").await.unwrap(); // twice is once
         assert_eq!(store.held_next(c).await, Ok(Some(("bbbbbbbb".into(), b"two".to_vec()))));
+        // R-B3: one past its time is passed over, does not count, and the same id left again is kept again as new
+        store.outlive(c, "bbbbbbbb").await;
+        assert_eq!(store.held_next(c).await, Ok(None));
+        assert_eq!(store.hold(c, "bbbbbbbb", b"two again", 1).await, Ok(Held::Kept));
+        assert_eq!(store.held_next(c).await, Ok(Some(("bbbbbbbb".into(), b"two again".to_vec()))));
+        store.held_done(c, "bbbbbbbb").await.unwrap();
+        assert_eq!(store.held_next(c).await, Ok(None));
         // a channel's record: made once, read back, and what is on record is what a second tower is told
         let first = Saved { pull_hash: "pull".into(), radio_hash: "radio".into() };
         assert_eq!(store.add(c, "pull", "radio").await, Ok(Added::Open(first.clone())));
