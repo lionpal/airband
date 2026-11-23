@@ -380,7 +380,8 @@ fn render(cfg: &Config, path: &Path) -> Result<String, String> {
 pub(crate) fn hold() -> Result<crate::lock::Held, String> {
     hold_at(&file())
 }
-fn hold_at(path: &Path) -> Result<crate::lock::Held, String> {
+/// Hold the settings file at `path` while it is read, changed and written.
+pub(crate) fn hold_at(path: &Path) -> Result<crate::lock::Held, String> {
     crate::lock::take(&path.with_extension("lock"))
 }
 
@@ -405,10 +406,8 @@ fn change_at<R>(path: &Path, f: impl FnOnce(&mut Config) -> Result<R, String>) -
 }
 
 /// Write the settings, for one that already holds the file.
-pub(crate) fn save_held(cfg: &Config, held: &crate::lock::Held) -> Result<(), String> {
-    save_at(cfg, &file(), held)
-}
-fn save_at(cfg: &Config, path: &Path, _: &crate::lock::Held) -> Result<(), String> {
+/// Write the settings to the file at `path`, which the caller holds.
+pub(crate) fn save_at(cfg: &Config, path: &Path, _: &crate::lock::Held) -> Result<(), String> {
     let text = render(cfg, path)?;
     write_private(path, &text).map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
