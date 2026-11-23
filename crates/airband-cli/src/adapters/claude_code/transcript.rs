@@ -66,7 +66,7 @@ pub(super) fn new_lines(transcript: &str, session: &str, note: &str, first: Firs
             eprintln!("airband: {why}");
         }
     };
-    let Ok(meta) = std::fs::metadata(transcript) else {
+    let Ok(meta) = airband_io::files::metadata(std::path::Path::new(transcript)) else {
         if first == FirstLook::FromEnd && !std::path::Path::new(transcript).exists() && kept.get("at").is_none() {
             kept["at"] = 0.into();
             keep(&kept);
@@ -162,7 +162,7 @@ pub(crate) fn glance(agent: &Agent) -> super::super::Glance {
 /// The end of a session's transcript: at most this many bytes of it.
 pub(super) fn tail_of(agent: &Agent, most: u64) -> Option<String> {
     let path = std::path::Path::new(agent.meta.get("transcript")?.as_str()?);
-    let size = std::fs::metadata(path).ok()?.len();
+    let size = airband_io::files::metadata(path).ok()?.len();
     let tail = airband_io::files::read_part(path, size.saturating_sub(most), most).ok()?;
     Some(String::from_utf8_lossy(&tail).into_owned())
 }
@@ -175,7 +175,7 @@ pub(super) fn tail_of(agent: &Agent, most: u64) -> Option<String> {
 pub(crate) fn told(agent: &Agent, from: u64) -> (Vec<super::super::Told>, u64) {
     let read = || {
         let path = std::path::Path::new(agent.meta.get("transcript")?.as_str()?);
-        let size = std::fs::metadata(path).ok()?.len();
+        let size = airband_io::files::metadata(path).ok()?.len();
         // the transcript was replaced by a shorter one: start over; what was already taken is known by its id
         let from = if from > size { 0 } else { from };
         let fresh = from == 0 && size > 24 * 1024 * 1024;

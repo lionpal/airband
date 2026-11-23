@@ -1,10 +1,28 @@
 //! Saved logins: one keychain item each (service `airband`, account: the email), with the list of emails, and
 //! nothing secret, in `accounts.json`. A list that cannot be read is never taken for an empty one: writing it
 //! back would orphan every login it names.
-#![expect(clippy::disallowed_macros, reason = "a saved login holds the tool's own records (its login and oauthAccount), and airband's list of them is written beside it in the same small shape")]
 use super::{Here, Res, ADD_AGAIN};
 use crate::config;
-use serde_json::{json, Value};
+use serde_json::Value;
+
+/// `accounts.json`: the emails of the saved logins, in the order they were saved.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct List {
+    accounts: Vec<String>,
+}
+
+/// One saved login as it is kept in its keychain item: the email, the tool's own two records as the tool wrote
+/// them (its login, under the tool's own name for it, and its `oauthAccount`), and when it was saved.
+#[derive(serde::Serialize)]
+struct Entry<'a> {
+    email: &'a str,
+    #[serde(rename = "oauthAccount")]
+    oauth_account: &'a Value,
+    #[serde(rename = "savedAt")]
+    saved_at: u64,
+    #[serde(flatten)]
+    login: std::collections::BTreeMap<String, &'a Value>,
+}
 
 fn index_path(here: &Here) -> std::path::PathBuf {
     here.dir.join("accounts.json")
@@ -19,10 +37,6 @@ pub(super) fn index(here: &Here) -> Res<Vec<String>> {
         Ok(None) => return Ok(Vec::new()),
         Err(e) => return Err(unreadable(&p, &e.to_string())),
     };
-    #[derive(serde::Deserialize)]
-    struct List {
-        accounts: Vec<String>,
-    }
     serde_json::from_str::<List>(&text).map(|l| l.accounts).map_err(|e| unreadable(&p, &e.to_string()))
 }
 fn unreadable(p: &std::path::Path, why: &str) -> String {
@@ -30,7 +44,7 @@ fn unreadable(p: &std::path::Path, why: &str) -> String {
 }
 fn write_index(here: &Here, list: &[String]) -> Res<()> {
     airband_io::files::make_folder(&here.dir).map_err(|e| e.to_string())?;
-    config::write_private(&index_path(here), json!({ "accounts": list }).to_string()).map_err(|e| e.to_string())
+    config::write_private(&index_path(here), serde_json::to_string(&List { accounts: list.to_vec() }).unwrap_or_default()).map_err(|e| e.to_string())
 }
 
 /// A saved login, as it was kept.
@@ -45,11 +59,8 @@ pub(super) fn saved(here: &Here, email: &str) -> Res<Option<Value>> {
 pub(super) fn keep(here: &Here, email: &str, oauth: &Value, account: &Value) -> Res<()> {
     // the list first: one that cannot be read stops this before anything is written
     let mut list = index(here)?;
-    here.vault.write(&here.vault_service, email, &{
-        let mut entry = json!({ "email": email, "oauthAccount": account, "savedAt": airband_core::clock::now_ms() });
-        entry[super::login_key()] = oauth.clone();
-        entry
-    }.to_string())?;
+    let entry = Entry { email, oauth_account: account, saved_at: airband_core::clock::now_ms(), login: [(super::login_key(), oauth)].into() };
+    here.vault.write(&here.vault_service, email, &serde_json::to_string(&entry).unwrap_or_default())?;
     if !list.iter().any(|e| e == email) {
         list.push(email.into());
         write_index(here, &list)?;

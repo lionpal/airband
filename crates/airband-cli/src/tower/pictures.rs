@@ -35,7 +35,7 @@ fn file(id: &str) -> Option<PathBuf> {
 /// Keep a copy of the picture at `path`. Nothing if it is not there, not a picture, or too large. Slow (it
 /// decodes and shrinks the picture): not for a thread that others wait on.
 pub(super) fn keep(path: &Path) -> Option<Picture> {
-    let meta = std::fs::metadata(path).ok().filter(|m| m.is_file() && m.len() <= TOO_LARGE)?;
+    let meta = airband_io::files::metadata(path).ok().filter(|m| m.is_file() && m.len() <= TOO_LARGE)?;
     let modified = crate::adapters::written(path)?;
     let digest = Sha256::digest(format!("{}\n{}\n{modified}", path.display(), meta.len()));
     keep_as(airband_core::encode::hex(&digest[..12]), || image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.decode().ok())
@@ -58,7 +58,7 @@ fn keep_bytes(bytes: &[u8]) -> Option<Picture> {
 fn keep_as(id: String, decode: impl FnOnce() -> Option<image::DynamicImage>) -> Option<Picture> {
     let out = file(&id)?;
     // seen before: read its size from the copy's header and not the whole picture
-    if let Ok(kept) = std::fs::metadata(&out) {
+    if let Ok(kept) = airband_io::files::metadata(&out) {
         let (width, height) = image::image_dimensions(&out).ok()?;
         return Some(Picture { id, width, height, bytes: kept.len() as u32 });
     }
@@ -113,7 +113,7 @@ pub(super) fn part(id: &str, from: usize) -> Result<PicturePart, Refusal> {
     let path = file(id).ok_or(Refusal::Gone)?;
     let trouble = |e: std::io::Error| Refusal::NotNow { reason: format!("airband could not read that picture ({e}).") };
     let gone_or = |e: std::io::Error| if e.kind() == std::io::ErrorKind::NotFound { Refusal::Gone } else { trouble(e) };
-    let len = std::fs::metadata(&path).map_err(gone_or)?.len() as usize;
+    let len = airband_io::files::metadata(&path).map_err(gone_or)?.len() as usize;
     if from > len {
         return Err(Refusal::BadAsk { reason: format!("the picture is {len} bytes long, and the part asked for starts at {from}") });
     }

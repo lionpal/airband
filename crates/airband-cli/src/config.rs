@@ -1,7 +1,6 @@
 //! ~/.airband: the config (port, token, who to call him, which model summarises), state and log.
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 /// The settings. Their `Debug` shows what is plain and leaves every token, key and pairing secret out.
@@ -317,7 +316,7 @@ pub(crate) fn read_from(path: &Path) -> Result<Option<Config>, String> {
 
 /// When this file was last changed, or None when there is none.
 pub(crate) fn stamp_of(path: &Path) -> Option<std::time::SystemTime> {
-    fs::metadata(path).and_then(|m| m.modified()).ok()
+    airband_io::files::metadata(path).and_then(|m| m.modified()).ok()
 }
 
 /// What the keychain holds for the tower, read once for each version of the file: every program that changes

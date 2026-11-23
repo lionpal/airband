@@ -48,7 +48,32 @@ impl Error {
             ureq::Error::Io(io) if io.kind() == ErrorKind::TimedOut => Error::TimedOut,
             ureq::Error::Json(e) => Error::Unreadable(e.to_string()),
             ureq::Error::BodyExceedsLimit(_) | ureq::Error::BodyStalled => Error::Unreadable(e.to_string()),
+            // its words are the address itself, key and all
+            ureq::Error::BadUri(_) => Error::NotWritten("the address is not one a request can be made to".into()),
             other => Error::Broken(other.to_string()),
+        }
+    }
+    /// This error with nothing in its words of what in `url` can hold a key: its query and its login, each put
+    /// as dots wherever the library's words quote them.
+    fn without_secrets_of(self, url: &str) -> Error {
+        let mut secret: Vec<String> = Vec::new();
+        // the query, however the rest of the address reads, and the login and the query as a parser finds them
+        secret.extend(url.split_once('?').map(|(_, query)| query.to_string()));
+        if let Some(u) = airband_core::links::web(url) {
+            // the login with the `@` that ends it, as the address writes it: never a bare name found elsewhere
+            if !u.username().is_empty() || u.password().is_some() {
+                secret.push(format!("{}{}@", u.username(), u.password().map(|p| format!(":{p}")).unwrap_or_default()));
+            }
+            secret.extend(u.query().map(str::to_string));
+        }
+        secret.retain(|s| !s.is_empty());
+        secret.sort_by_key(|s| std::cmp::Reverse(s.len()));
+        let clean = |words: String| secret.iter().fold(words, |w, s| w.replace(s.as_str(), "\u{2022}\u{2022}\u{2022}"));
+        match self {
+            Error::Broken(w) => Error::Broken(clean(w)),
+            Error::Unreadable(w) => Error::Unreadable(clean(w)),
+            Error::NotWritten(w) => Error::NotWritten(clean(w)),
+            other => other,
         }
     }
 }
@@ -152,7 +177,7 @@ impl Client {
     pub fn send(&self, ask: Ask) -> Result<Response, Error> {
         let Ask { verb, url, headers, body } = ask;
         let body = body?;
-        self.sent(verb, &url, &headers, body).map(Response::of).map_err(Error::of)
+        self.sent(verb, &url, &headers, body).map(Response::of).map_err(|e| Error::of(e).without_secrets_of(&url))
     }
     fn sent(&self, verb: Verb, url: &str, headers: &[(String, String)], body: Option<Vec<u8>>) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
         macro_rules! with_body {
@@ -296,6 +321,20 @@ pub fn call<E: airband_core::radio::wire::Endpoint>(client: &Client, base: &str,
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_error_never_carries_a_key_from_the_address() {
+        // A-22: the library's words for a bad address quote it whole
+        let client = super::Client::new(std::time::Duration::from_secs(2));
+        for url in ["http://exa mple.test/v1?key=SECRET-1", "http://user:SECRET-2@127.0.0.1:9/v1?key=SECRET-3", "ht!tp://nowhere?key=SECRET-4"] {
+            if let Err(e) = client.send(super::Ask::get(url)) {
+                let (said, debug) = (e.to_string(), format!("{e:?}"));
+                assert!(!said.contains("SECRET") && !debug.contains("SECRET"), "{said} / {debug}");
+            }
+        }
+        let scrubbed = super::Error::Broken("GET http://u:pw@h/x?key=abc failed".into()).without_secrets_of("http://u:pw@h/x?key=abc");
+        assert_eq!(scrubbed.to_string(), "the connection broke: GET http://\u{2022}\u{2022}\u{2022}h/x?\u{2022}\u{2022}\u{2022} failed");
+    }
+
     use super::*;
     use std::io::{Read, Write};
 

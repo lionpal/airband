@@ -22,11 +22,11 @@ impl Folders for Disk {
     }
     fn real(&self, folder: &str) -> String {
         let at = Path::new(folder);
-        at.canonicalize().unwrap_or_else(|_| at.components().collect()).display().to_string()
+        airband_io::files::real_path(at).unwrap_or_else(|_| at.components().collect()).display().to_string()
     }
     fn shown(&self, at: &Path) -> String {
         let home = crate::config::home();
-        shown_under(&[home.canonicalize().ok(), Some(home)].into_iter().flatten().collect::<Vec<_>>(), at)
+        shown_under(&[airband_io::files::real_path(&home).ok(), Some(home)].into_iter().flatten().collect::<Vec<_>>(), at)
     }
 }
 

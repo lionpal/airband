@@ -108,7 +108,7 @@ impl Keeper {
         let Some(path) = &self.path else { return Saved::Nowhere };
         // a file that could not be read and has since gone holds nothing to lose
         let mut read_only = self.read_only.lock().unwrap_or_else(|e| e.into_inner());
-        if read_only.as_ref().is_some_and(|r| r.read_failed) && matches!(std::fs::symlink_metadata(path), Err(e) if e.kind() == std::io::ErrorKind::NotFound) {
+        if read_only.as_ref().is_some_and(|r| r.read_failed) && matches!(crate::files::link_metadata(path), Err(e) if e.kind() == std::io::ErrorKind::NotFound) {
             *read_only = None;
         }
         let done = match read_only.as_ref() {
@@ -213,8 +213,8 @@ fn load<T: DeserializeOwned>(path: &Path) -> (Option<T>, Loaded, Option<ReadOnly
         Err(e) => format!("{} is not what was kept there ({e})", path.display()),
     };
     // a link stays where it is: the file it points at is what is set aside, so saves go on through the link
-    let file = match std::fs::symlink_metadata(path) {
-        Ok(m) if m.file_type().is_symlink() => std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
+    let file = match crate::files::link_metadata(path) {
+        Ok(m) if m.file_type().is_symlink() => crate::files::real_path(path).unwrap_or_else(|_| path.to_path_buf()),
         _ => path.to_path_buf(),
     };
     let name = file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
