@@ -261,6 +261,7 @@ pub mod at {
         End: Post "/v1/radio/end", Nothing, EndAgent => Done;
         Push: Post "/v1/radio/push", Nothing, PushTarget => Done;
         Tools: Post "/v1/radio/tools", Nothing, UsesTools => Done;
+        Brief: Post "/v1/radio/brief", Nothing, SummaryBrief => Done;
         /// An agent's reporter: one event.
         Events: Post "/v1/agent/events", Nothing, AgentEvent => Done;
         Permission: Post "/v1/agent/permission", Nothing, PermissionAsk => PermissionState;

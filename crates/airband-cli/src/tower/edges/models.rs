@@ -14,19 +14,22 @@ pub(in crate::tower) trait Model: Sync {
 pub(in crate::tower) struct FakeModel {
     pub(in crate::tower) answer: Result<String, String>,
     pub(in crate::tower) asked: std::sync::atomic::AtomicUsize,
+    /// Every question it was put, in order.
+    pub(in crate::tower) heard: std::sync::Mutex<Vec<String>>,
 }
 
 #[cfg(test)]
 impl FakeModel {
     pub(in crate::tower) fn answers(answer: Result<&str, &str>) -> FakeModel {
-        FakeModel { answer: answer.map(str::to_string).map_err(str::to_string), asked: Default::default() }
+        FakeModel { answer: answer.map(str::to_string).map_err(str::to_string), asked: Default::default(), heard: Default::default() }
     }
 }
 
 #[cfg(test)]
 impl Model for FakeModel {
-    fn ask<'a>(&'a self, _prompt: String, _shape: Option<Value>) -> Boxed<'a, Result<String, String>> {
+    fn ask<'a>(&'a self, prompt: String, _shape: Option<Value>) -> Boxed<'a, Result<String, String>> {
         self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.heard.lock().unwrap().push(prompt);
         let answer = self.answer.clone();
         Box::pin(async move { answer })
     }

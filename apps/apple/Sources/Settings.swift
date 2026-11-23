@@ -22,6 +22,7 @@ struct SetupView: View {
                             row(job.title, model.chosenLabel(job))
                         }
                     }
+                    NavigationLink("Summary instructions") { SummaryBriefPage().environmentObject(model) }
                 }
                 Section {
                     NavigationLink {
@@ -83,6 +84,9 @@ struct SetupView: View {
                         Button("Forget all", role: .destructive) { model.forgetAll() }
                     }
                     if let problem = model.problem { Text(problem).foregroundStyle(.red) }
+                }
+                Section {
+                    ContactRow(from: .settings, plain: true)
                 }
                 Section {
                     NavigationLink("Acknowledgments") {

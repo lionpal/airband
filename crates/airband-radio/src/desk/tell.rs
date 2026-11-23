@@ -9,6 +9,27 @@ use airband_core::relay::PushService;
 
 #[uniffi::export]
 impl Desk {
+    /// How the model that writes his summaries is told to write them: his own text, or the usual one in full
+    /// until he changes it. For the box he edits it in. The rest of what that model is told is his computer's,
+    /// and fixed.
+    pub fn summary_brief(&self) -> String {
+        let state = self.shared.state.lock().unwrap();
+        airband_core::summary::how(state.intents.now.brief.as_ref().and_then(|i| i.wanted.0.as_deref())).to_string()
+    }
+
+    /// Write his summaries this way from now on: `text` is the whole of how, in his words. Every computer is
+    /// told, now and whenever one is reached. Err, in words for him, when it cannot be used.
+    pub fn set_summary_brief(&self, text: String) -> Result<(), RadioError> {
+        let his = airband_core::summary::checked(&text).map_err(|why| crate::choices::told(why.said()))?;
+        self.want_brief(his);
+        Ok(())
+    }
+
+    /// Back to the usual text.
+    pub fn reset_summary_brief(&self) {
+        self.want_brief(None);
+    }
+
     /// Where this device can be woken with a notification: the push service and the device's address there, as
     /// the system gave it. Every paired computer is told, now and whenever one is paired later. Call it each
     /// time the system gives the address; the same one again does nothing.
@@ -31,6 +52,25 @@ impl Desk {
 }
 
 impl Desk {
+    /// Every computer is to write his summaries this way: kept, and sent to each that can be reached now.
+    fn want_brief(&self, his: Option<String>) {
+        let (changed, lost) = self.shared.state.lock().unwrap().intents.change(|i| i.want_brief(his));
+        if let Some(lost) = lost {
+            self.shared.host.note(lost);
+        }
+        self.shared.host.changed();
+        if !changed {
+            return;
+        }
+        let shared = self.shared.clone();
+        thread::spawn(move || {
+            let connections: Vec<(StationId, u64, Arc<Radio>)> = shared.state.lock().unwrap().computers.iter().map(|s| (s.id(), s.epoch, s.radio.clone())).collect();
+            for (station, epoch, radio) in &connections {
+                tell_brief(&shared, radio, station, *epoch);
+            }
+        });
+    }
+
     /// What the computers do not all have yet, for the view.
     pub(super) fn intents_view(&self, state: &State) -> Vec<DeskIntent> {
         let reads = self.shared.chooser.reads_intent();
@@ -38,6 +78,7 @@ impl Desk {
             (IntentKind::Reads, reads.as_ref().map(|i| lines(i, state))),
             (IntentKind::Push, state.intents.now.push.as_ref().map(|i| lines(i, state))),
             (IntentKind::Tools, state.intents.now.tools.as_ref().map(|i| lines(i, state))),
+            (IntentKind::Brief, state.intents.now.brief.as_ref().map(|i| lines(i, state))),
         ];
         kinds.into_iter().filter_map(|(kind, computers)| computers.filter(|c| !c.is_empty()).map(|computers| DeskIntent { kind, computers })).collect()
     }
@@ -48,6 +89,7 @@ impl Desk {
 pub(super) fn tell_owed(shared: &Arc<Shared>, radio: &Arc<Radio>, station: &StationId, epoch: u64) {
     tell_push(shared, radio, station, epoch);
     tell_tools(shared, radio, station, epoch);
+    tell_brief(shared, radio, station, epoch);
 }
 
 /// What `slot` wants, when that computer is still owed it on this connection and is not being sent it now: its
@@ -99,4 +141,11 @@ pub(super) fn tell_tools(shared: &Arc<Shared>, radio: &Arc<Radio>, station: &Sta
     let Some((rev, tools)) = owed(shared, IntentKind::Tools, station, epoch, |i| &i.tools) else { return };
     let reach = Reach::of(radio.uses_tools(&tools));
     settle(shared, IntentKind::Tools, station, rev, |i| &mut i.tools, &reach);
+}
+
+/// Tell one computer how his summaries are to be written, if it has not taken it yet.
+pub(super) fn tell_brief(shared: &Arc<Shared>, radio: &Arc<Radio>, station: &StationId, epoch: u64) {
+    let Some((rev, brief)) = owed(shared, IntentKind::Brief, station, epoch, |i| &i.brief) else { return };
+    let reach = Reach::of(radio.summary_brief(brief.0));
+    settle(shared, IntentKind::Brief, station, rev, |i| &mut i.brief, &reach);
 }

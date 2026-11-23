@@ -171,6 +171,7 @@ Chat mode and the rest:
 | `POST /v1/radio/accounts/use` | `{ harness, id }` → the same, or a refusal | Move that harness's sessions to that account. |
 | `POST /v1/radio/push` | `{ provider, token }` → `Done` | Where this radio can be woken: its address at a push service (`apns` is Apple's). An empty `token` takes it away. |
 | `POST /v1/radio/tools` | `{ tools }` → `Done` | The coding tools he uses, by the ids their rows give, the one he uses most first. A new agent asked for without naming a tool is started with the first; with none said and no usual launcher set, he is asked. |
+| `POST /v1/radio/brief` | `{ text }` → `Done` | How the model that writes his summaries is to write them, in his words (at most 8000 characters), or `null` for the usual text. Only that part of the question is his: what the answer holds and its shape stay the tower's. Never logged. |
 
 ### The feed
 

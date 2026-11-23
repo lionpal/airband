@@ -134,6 +134,7 @@ pub(super) fn weigh_against(text: &str, now: u64, have: &Catalog, built: &Catalo
     newer.terminals = built.terminals.clone();
     newer.frames = built.frames.clone();
     newer.installers = built.installers.clone();
+    newer.contact = built.contact.clone();
     // How a coding tool is started is a program to run, and is this build's own for every tool it knows. What
     // a later copy says about that is not kept: a tool new to this build comes with no way to start it.
     for t in newer.tools.iter_mut() {

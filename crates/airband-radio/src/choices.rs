@@ -25,9 +25,11 @@ use airband_core::radio::{OfferName, ReadsOffered};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
+mod contact;
 mod desk;
 mod list;
 mod saved;
+pub use contact::{ContactFrom, ContactNote};
 pub(crate) use desk::tell_reads;
 use list::*;
 use saved::{Pick, Saved};
@@ -82,6 +84,9 @@ pub enum ChoiceState {
     Waiting,
     /// It is chosen and did not do its job the last time it was tried, and why. It stays chosen.
     Failed { why: String },
+    /// The model this job starts with, which this device cannot run, and why. It cannot be chosen: he picks
+    /// something else.
+    CannotRun { why: String },
 }
 
 /// One thing he can choose for a job.
@@ -144,6 +149,9 @@ pub(crate) struct Chooser {
     working: Mutex<Option<Work>>,
     /// What he is to be told about the file when the desk opens: it could not be read.
     pub(crate) opened: Mutex<Option<String>>,
+    /// The host's own way to bring a model's files, which goes on while the app is in the background, when
+    /// it has given one (`Desk::use_transfers`).
+    pub(crate) transfers: Mutex<Option<Arc<dyn crate::models::Transfers>>>,
 }
 
 /// The key kept on this phone for a provider, when there is one.
@@ -160,7 +168,7 @@ impl Chooser {
     pub(crate) fn open(dir: &str, device: HostDevice) -> Chooser {
         let (kept, keeper, opened) = crate::kept::open::<Option<Saved>>(crate::kept::file(dir, "choices.json"), "What you chose in Settings");
         let saved = Mutex::new(kept.unwrap_or_else(|| Saved::fresh(&device)));
-        Chooser { dir: dir.into(), keeper, device, saved, working: Mutex::new(None), opened: Mutex::new(opened) }
+        Chooser { dir: dir.into(), keeper, device, saved, working: Mutex::new(None), opened: Mutex::new(opened), transfers: Mutex::new(None) }
     }
 
     /// The coding tools he uses, by id, the one he uses most first.
@@ -274,6 +282,7 @@ impl Chooser {
             },
             work: self.at_work().filter(|w| w.0 == job).map(|w| (w.1, w.2, w.3)),
             paired,
+            cannot: crate::models::usual_row(&self.device, job.job()).and_then(|(m, why)| why.map(|why| (m, why))),
         };
         list(job, &saved, &facts)
     }
@@ -284,7 +293,7 @@ impl Chooser {
         if !crate::models::current(&self.dir, m) {
             self.work(job, &m.kind, format!("Downloading {}", m.name), true);
             host.changed();
-            crate::models::fetch_local_model(self.dir.clone(), m)?;
+            crate::models::fetch_local_model(self.dir.clone(), m, self.transfers.lock().unwrap_or_else(|e| e.into_inner()).clone())?;
         }
         let note = m.told(crate::models::field::PREPARE);
         if !note.is_empty() {
@@ -324,7 +333,7 @@ mod tests {
     use super::*;
 
     fn facts<'a>(here: &'a dyn Fn(&Model) -> (bool, bool), has_key: &'a dyn Fn(&str) -> bool) -> Facts<'a> {
-        Facts { models: crate::models::models(&phone()).collect(), here, has_key, failed: None, work: None, paired: &[] }
+        Facts { models: crate::models::models(&phone()).collect(), here, has_key, failed: None, work: None, paired: &[], cannot: None }
     }
     /// A phone whose host runs every engine the catalogue names.
     fn phone() -> HostDevice {
@@ -483,6 +492,36 @@ mod tests {
         assert!(said.reads.is_none());
     }
 
+    #[test]
+    fn a_first_run_starts_with_his_tools_sign_in_and_the_two_models_on_the_phone() {
+        // listening and speaking: the rows the catalogue marks usual for each, nothing he has to give
+        let saved = Saved::fresh(&phone());
+        let marked = |job: Job| airband_core::catalog::current().models.iter().filter(|m| m.job == job && m.with.get(crate::models::field::USUAL).and_then(|u| u.as_bool()) == Some(true)).map(|m| m.kind.clone()).collect::<Vec<_>>();
+        assert_eq!(saved.ears.as_ref().map(|p| vec![p.id.clone()]), Some(marked(Job::Ears)));
+        assert_eq!(saved.voice.as_ref().map(|p| vec![p.id.clone()]), Some(marked(Job::Voice)));
+        assert!(saved.ears.iter().chain(saved.voice.iter()).all(|p| p.place == ChoicePlace::Phone));
+        // summaries: nothing until he names his coding tool, then that tool's own sign-in, never a key
+        assert!(saved.reads.is_none());
+        for tool in airband_core::catalog::current().tools.iter() {
+            let mut s = saved.clone();
+            s.use_tools(vec![tool.id.clone()]);
+            let Some(wanted) = s.reads.map(|r| r.wanted) else { continue };
+            let service = crate::services::services(Job::Summary).into_iter().find(|x| x.kind == wanted.id && x.offer == wanted.offer).unwrap();
+            assert!(service.login == tool.id && !service.key && !wanted.his, "{}", tool.id);
+        }
+        // a phone whose system is too old for the listening model: nothing is chosen for listening, and the
+        // list says why, so he can pick something else
+        let (m, _) = crate::models::usual_row(&phone(), Job::Ears).expect("a usual listening model");
+        let least = m.with.get(crate::models::field::MIN_OS).and_then(|n| n.get("ios")).and_then(|v| v.as_u64()).expect("the listening model names the system it needs") as u32;
+        let old = HostDevice { os_version: least - 1, ..phone() };
+        assert!(Saved::fresh(&old).ears.is_none() && Saved::fresh(&old).voice.is_some());
+        let chooser = Chooser::open("", old);
+        let all = chooser.choices(ChoiceJob::Ears, &Host::default(), &Senses::default(), &[]);
+        let row = all.iter().find(|c| c.id == m.kind).expect("the model it cannot run is shown");
+        assert_eq!(row.state, ChoiceState::CannotRun { why: crate::engines::CannotRun::OldSystem.said().into() });
+        assert!(chosen(&all).is_empty() && !row.chosen);
+    }
+
     // Unix only: it makes the folder unwritable by its permission bits
     #[cfg(unix)]
     #[test]
@@ -570,7 +609,7 @@ mod tests {
 
     /// A host that keeps keys in memory and has no microphone, speaker or model.
     #[derive(Default)]
-    struct Host {
+    pub(super) struct Host {
         keys: Mutex<HashMap<String, String>>,
         notes: Mutex<Vec<String>>,
     }

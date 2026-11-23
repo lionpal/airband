@@ -1080,3 +1080,28 @@ fn the_core_says_whom_he_can_stop_where_an_agent_can_move_and_which_answers_woul
     desk.look(Some(ff), None);
     assert!(desk.view().stoppable.is_empty());
 }
+
+#[test]
+fn his_summary_brief_starts_as_the_usual_text_is_kept_and_reset() {
+    use airband_core::summary::{MOST, USUAL};
+    let dir = std::env::temp_dir().join(format!("airband-brief-{}", random_hex(4)));
+    std::fs::create_dir_all(&dir).unwrap();
+    let at = dir.display().to_string();
+    let desk = Desk::alone(&at, Arc::new(Watching(false.into())));
+    desk.shared.state.lock().unwrap().intents = crate::desk::intents::KeptIntents::open(&at);
+    // the whole of the usual text, to edit
+    assert_eq!(desk.summary_brief(), USUAL);
+    desk.set_summary_brief("  Call me sir.\n".into()).unwrap();
+    assert_eq!(desk.summary_brief(), "Call me sir.");
+    assert_eq!(crate::desk::intents::KeptIntents::open(&at).now.brief.unwrap().wanted.0.as_deref(), Some("Call me sir."));
+    // nothing, or too much: refused, and his stands
+    assert!(desk.set_summary_brief(" ".into()).is_err());
+    assert!(desk.set_summary_brief("a".repeat(MOST + 1)).is_err());
+    assert_eq!(desk.summary_brief(), "Call me sir.");
+    // his words are never in what is logged of it
+    assert!(!format!("{:?}", desk.shared.state.lock().unwrap().intents.now).contains("sir"));
+    desk.reset_summary_brief();
+    assert_eq!(desk.summary_brief(), USUAL);
+    assert_eq!(crate::desk::intents::KeptIntents::open(&at).now.brief.unwrap().wanted.0, None);
+    let _ = std::fs::remove_dir_all(dir);
+}

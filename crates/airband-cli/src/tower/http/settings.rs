@@ -29,3 +29,14 @@ pub(super) async fn uses_tools(State(app): State<Arc<App>>, Sent(said): Sent<at:
     }
     done()
 }
+
+/// A radio says how the model that writes his summaries is to write them, or that it is to use the usual text.
+/// Kept in this computer's settings, and used from the next message on. His words are never logged.
+pub(super) async fn summary_brief(State(app): State<Arc<App>>, Sent(said): Sent<at::Brief>) -> Answer<at::Brief> {
+    let his = match said.text {
+        None => None,
+        Some(text) => airband_core::summary::checked(&text).map_err(|why| no(why.said()))?,
+    };
+    app.settings.change(|cfg| cfg.summary_brief = his).map_err(no)?;
+    done()
+}

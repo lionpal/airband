@@ -354,6 +354,21 @@ pub struct UsesTools {
     pub tools: Vec<String>,
 }
 
+/// `POST brief`: how the model that writes his summaries is to write them, in his own words
+/// (`crate::summary`), or nothing for the usual text. The rest of what that model is told stays the tower's.
+/// Never logged.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SummaryBrief {
+    #[serde(default)]
+    pub text: Option<String>,
+}
+
+impl std::fmt::Debug for SummaryBrief {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SummaryBrief").field("his", &self.text.is_some()).finish()
+    }
+}
+
 /// `POST push`: where this radio can be woken when it is not listening: its address at a push service. The tower
 /// keeps it with the pairing it came through and uses it only for what deserves a notification. An empty
 /// `token` takes the address away.

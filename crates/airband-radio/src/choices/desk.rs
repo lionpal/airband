@@ -47,6 +47,9 @@ impl Desk {
         let chooser = &self.shared.chooser;
         let host = &*self.shared.host;
         let choice = self.choices(job).into_iter().find(|c| c.id == id).ok_or_else(|| told("That is not offered here."))?;
+        if let ChoiceState::CannotRun { why } = &choice.state {
+            return Err(told(why.clone()));
+        }
         let key = key.map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
         let set: BTreeMap<String, String> = settings.into_iter().map(|(k, v)| (k, v.trim().to_string())).filter(|(_, v)| !v.is_empty()).collect();
         let done = |r: Result<(), RadioError>| {

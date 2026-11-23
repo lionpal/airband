@@ -76,6 +76,18 @@ pub(crate) enum Standing {
     Refused(Vec<String>),
 }
 
+/// How his summaries are to be written, in his words; nothing for the usual text. Its debug form says only
+/// whether there are words of his: they are never logged.
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub(crate) struct Brief(pub(crate) Option<String>);
+
+impl std::fmt::Debug for Brief {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Brief").field(&self.0.is_some()).finish()
+    }
+}
+
 /// What every computer is to be told about this device.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Intents {
@@ -85,6 +97,10 @@ pub(crate) struct Intents {
     /// The coding tools he uses, the one he uses most first.
     #[serde(default)]
     pub(crate) tools: Option<Intent<Vec<String>>>,
+    /// How his summaries are to be written, in his words; nothing for the usual text (`airband_core::summary`).
+    /// Nothing at all until he first changes it.
+    #[serde(default)]
+    pub(crate) brief: Option<Intent<Brief>>,
 }
 
 impl Intents {
@@ -102,6 +118,9 @@ impl Intents {
     }
     pub(crate) fn want_tools(&mut self, tools: Vec<String>) -> bool {
         Self::want(&mut self.tools, tools)
+    }
+    pub(crate) fn want_brief(&mut self, brief: Option<String>) -> bool {
+        Self::want(&mut self.brief, Brief(brief))
     }
 }
 
@@ -121,6 +140,7 @@ impl crate::kept::Rejoin for Intents {
         }
         slot(&mut self.push, since.push);
         slot(&mut self.tools, since.tools);
+        slot(&mut self.brief, since.brief);
     }
 }
 
@@ -175,8 +195,8 @@ mod tests {
     #[test]
     fn what_was_wanted_while_the_file_could_not_be_read_is_what_is_wanted() {
         let target = |t: &str| PushTarget { provider: airband_core::relay::PushService::Apns, token: t.into() };
-        let mut found = Intents { push: Some(Intent { rev: 5, wanted: target("old"), per: BTreeMap::new() }), tools: Some(Intent { rev: 2, wanted: vec!["codex".into()], per: BTreeMap::from([(StationId::new("a"), Delivery::Done)]) }) };
-        let since = Intents { push: Some(Intent::after(None, target("new"))), tools: Some(Intent { rev: 1, wanted: vec!["codex".into()], per: BTreeMap::from([(StationId::new("b"), Delivery::Done)]) }) };
+        let mut found = Intents { push: Some(Intent { rev: 5, wanted: target("old"), per: BTreeMap::new() }), tools: Some(Intent { rev: 2, wanted: vec!["codex".into()], per: BTreeMap::from([(StationId::new("a"), Delivery::Done)]) }), brief: None };
+        let since = Intents { push: Some(Intent::after(None, target("new"))), tools: Some(Intent { rev: 1, wanted: vec!["codex".into()], per: BTreeMap::from([(StationId::new("b"), Delivery::Done)]) }), brief: None };
         found.rejoin(since);
         let push = found.push.unwrap();
         assert_eq!((push.wanted.token.as_str(), push.rev), ("new", 6), "an answer to the file's older one would count for the new one");

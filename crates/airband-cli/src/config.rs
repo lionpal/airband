@@ -36,6 +36,10 @@ pub(crate) struct Config {
     /// words themselves in place of a model.
     #[serde(default)]
     pub(crate) summarizer: Summarizer,
+    /// How the model that writes his summaries is to write them, in his own words, set on his phone; nothing
+    /// for the usual text (`airband_core::summary`). Only that part of the question is his. Never logged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) summary_brief: Option<String>,
     /// The keys he has given, each under the id of the provider it is for. What uses a key (summaries) holds
     /// its value here in memory; the settings file writes that as `key:<name>`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
