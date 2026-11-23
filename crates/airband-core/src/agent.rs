@@ -1,7 +1,7 @@
 //! `airband.agent/1`: what an agent's harness tells the tower, and how the tower can speak back to it.
 //!
 //! One JSON document per event, `POST /v1/agent/events`. An adapter is whatever turns a harness's own
-//! notifications into these: `airband hook claude-code` does it for Claude Code; `airband report` does it from any
+//! notifications into these: `airband hook <tool>` does it for a coding tool with hooks; `airband report` does it from any
 //! script. Unknown fields are ignored and unknown `type`/`kind` values are accepted and skipped, so a newer
 //! adapter never breaks an older tower.
 use serde::{Deserialize, Serialize};

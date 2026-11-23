@@ -1,4 +1,4 @@
-//! Keys and tokens that turn up in what is said are not kept or shown: a GitHub token pasted to an agent, an
+//! Keys and tokens that turn up in what is said are not kept or shown: a code host's token pasted to an agent, an
 //! API key in a log an agent quotes. What an agent is given is not touched; this is for the copy the chat
 //! keeps, which is stored on the tower, sent to every paired radio and read by a model.
 //!

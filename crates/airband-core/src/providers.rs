@@ -5,12 +5,12 @@
 //! says which interface the service is reached through and what it has to be told. Where a common interface
 //! exists, that is the one used, so most services are a row and no code:
 //!
-//! - reading: OpenAI's Chat Completions (`POST {url}/chat/completions`), which nearly every model service and
+//! - reading: the common chat-completions interface (`POST {url}/chat/completions`), which nearly every model service and
 //!   every local model server accepts; or a command, for a model reached through a program on this computer.
-//! - speaking: OpenAI's speech endpoint (`POST {url}/audio/speech`), which several services and most local
+//! - speaking: the common speech endpoint (`POST {url}/audio/speech`), which several services and most local
 //!   voice servers accept. Services with something that endpoint lacks (word timings) keep an interface of
 //!   their own.
-//! - listening: for a finished recording, OpenAI's transcription endpoint (`POST {url}/audio/transcriptions`),
+//! - listening: for a finished recording, the common transcription endpoint (`POST {url}/audio/transcriptions`),
 //!   which several services and most local speech servers accept. For speech while it is spoken there is no
 //!   common interface, so each such service is a dialect the phone speaks (`airband-radio/src/ears.rs`),
 //!   named here.
@@ -134,7 +134,7 @@ pub struct Offer {
     pub id: String,
     pub job: Job,
     pub by: By,
-    /// What this is called where he chooses it: the maker and the model ("Google Gemini 3.5 Flash-Lite").
+    /// What this is called where he chooses it: the maker and the model, as its row names them.
     pub label: String,
     /// One line under that, for something that needs no key: where it runs and what it costs him.
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -145,7 +145,7 @@ pub struct Offer {
     /// It runs on his own computer: nothing leaves it, and it costs him nothing.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub local: bool,
-    /// The coding tool whose sign-in on his computer this uses (`claude-code`, `codex`, `opencode`), when it
+    /// The coding tool whose sign-in on his computer this uses (its row's id in `catalog/tools/`), when it
     /// uses one and so needs no key. It is offered to someone who uses that tool. Empty otherwise.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub login: String,
@@ -190,7 +190,7 @@ pub struct Provider {
     pub id: String,
     pub name: String,
     pub key: bool,
-    /// What its key is called, for asking for it ("Gemini API key").
+    /// What its key is called, for asking for it, as its row names it.
     pub key_name: String,
     /// Where its keys are made.
     pub keys_at: String,

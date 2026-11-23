@@ -537,8 +537,8 @@ mod tests {
 
     #[test]
     fn links_are_the_written_ones_and_the_bare_addresses_each_once_and_never_code() {
-        let text = "Published: https://claude.ai/artifact/abc123. See [the PR](https://github.com/a/b/pull/7), again https://claude.ai/artifact/abc123 and `http://localhost:3000/x`.\n\n```\ncurl https://in.code/x\n```";
-        assert_eq!(links(text), ["https://claude.ai/artifact/abc123", "https://github.com/a/b/pull/7"]);
+        let text = "Published: https://pages.example/artifact/abc123. See [the PR](https://code.example/a/b/pull/7), again https://pages.example/artifact/abc123 and `http://localhost:3000/x`.\n\n```\ncurl https://in.code/x\n```";
+        assert_eq!(links(text), ["https://pages.example/artifact/abc123", "https://code.example/a/b/pull/7"]);
         assert!(links("No links, only a path /Users/c/x.png and a [note](notes.md)").is_empty());
     }
 
