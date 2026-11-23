@@ -262,14 +262,8 @@ pub fn lock(path: &Path) -> std::io::Result<Lock> {
         make_folder(dir)?;
     }
     let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::fd::AsRawFd;
-        // SAFETY: the descriptor is the open file's own, and it stays open while the lock is held
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-    }
+    // the system's own lock on the open file (flock on Unix, LockFileEx on Windows): every process asks the same one
+    file.lock()?;
     Ok(Lock { _file: file })
 }
 

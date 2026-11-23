@@ -20,15 +20,13 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("airband-lock-{}", std::process::id()));
         let path = dir.join("one.lock");
         let held = take(&path).unwrap();
-        let (tx, rx) = std::sync::mpsc::channel();
-        let other = path.clone();
-        std::thread::spawn(move || {
-            let _second = take(&other).unwrap();
-            tx.send(()).unwrap();
-        });
-        assert!(rx.recv_timeout(std::time::Duration::from_millis(300)).is_err(), "a second waits while the first holds it");
+        // while it is held, the system says another may not have it: asked, never waited for
+        let other = std::fs::File::options().write(true).open(&path).unwrap();
+        assert!(matches!(other.try_lock(), Err(std::fs::TryLockError::WouldBlock)), "a second waits while the first holds it");
         drop(held);
-        rx.recv_timeout(std::time::Duration::from_secs(5)).expect("and takes it once it is let go");
+        other.try_lock().expect("and has it once it is let go");
+        drop(other);
+        take(&path).expect("and it can be taken again once that one is let go too");
         // a lock whose folder is a file cannot be made: an error, not work done without it
         std::fs::write(dir.join("file"), "").unwrap();
         assert!(take(&dir.join("file").join("x.lock")).is_err());

@@ -83,6 +83,7 @@ mod tests {
         assert_eq!(disk.shown(Path::new("/home/him")), "~");
         assert_eq!(disk.shown(Path::new("/home/him/work/shop")), "~/work/shop");
         assert_eq!(disk.shown(Path::new("/srv/shop")), "/srv/shop");
-        assert_eq!(disk.real("/work//shop/"), "/work/shop");
+        // read by its parts, as this system writes a path
+        assert_eq!(disk.real("/work//shop/"), format!("{s}work{s}shop", s = std::path::MAIN_SEPARATOR));
     }
 }
