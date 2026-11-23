@@ -16,7 +16,7 @@ pub struct Terminal {
 impl Terminal {
     /// The two runs of the program that type `line` into `pane` and press Enter.
     pub fn runs(&self, pane: &str, line: &str) -> [Vec<String>; 2] {
-        let fill = |words: &[String]| words.iter().map(|w| if w == "{pane}" { pane.to_string() } else if w == "{line}" { line.to_string() } else { w.clone() }).collect();
+        let fill = |words: &[String]| words.iter().map(|w| crate::template::word(w, &[("pane", pane), ("line", line)])).collect();
         [fill(&self.type_line), fill(&self.enter)]
     }
 }

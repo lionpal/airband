@@ -111,7 +111,7 @@ impl Tool {
     /// row does not say.
     pub fn command(&self, what: &str, values: &[(&str, &str)]) -> Vec<String> {
         let words = self.with.get(what).and_then(Value::as_array).cloned().unwrap_or_default();
-        words.iter().filter_map(Value::as_str).map(|w| values.iter().find(|(name, _)| w.strip_prefix('{').and_then(|r| r.strip_suffix('}')) == Some(*name)).map_or_else(|| w.to_string(), |(_, v)| v.to_string())).collect()
+        words.iter().filter_map(Value::as_str).map(|w| crate::template::word(w, values)).collect()
     }
 }
 
