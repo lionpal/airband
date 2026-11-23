@@ -132,11 +132,12 @@ try:
     print("Whether he is there")
     # a radio says where it stands inside each sealed request; the tower reads that, and nothing else
     check("a radio that only types is not on a call", "test" not in status()["radios"], status()["radios"])
-    on_call = subprocess.Popen([BIN, "radio", "--quiet", "--link", link], env=phone_env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # what it says goes to a file of its own, so a radio that would not start says why in the check
+    on_call = subprocess.Popen([BIN, "radio", "--link", link], env=phone_env, stdin=subprocess.DEVNULL, stdout=open(os.path.join(work, "radio.log"), "w"), stderr=subprocess.STDOUT)
     for _ in range(40):
         if "test" in status()["radios"]: break
         time.sleep(0.25)
-    check("one that turns reading aloud on says so through the relay, and is on a call", "test" in status()["radios"], status()["radios"])
+    check("one that turns reading aloud on says so through the relay, and is on a call", "test" in status()["radios"], (status()["radios"], on_call.poll(), logged("radio.log")[-300:]))
     on_call.terminate(); on_call.wait(10)
 
     print("Only the channel's own radio")

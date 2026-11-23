@@ -265,10 +265,9 @@ pub(super) async fn launch_by(app: &Arc<App>, place: &Place, idea: &Idea, by: Op
                 log(format!("started {named}{with} in {project}, held by the tower, with a task of {} characters", task.chars().count()));
                 Ok(say(launched(app, place, &with, task, Some(id), line)))
             }
-            Err(e) => {
-                // what the holder or its program said can be the tool's own words: the log has it, he is told where
-                log(format!("launch in {project} failed: {e}"));
-                Err(say(format!("Could not launch in {project}: the agent did not start. This computer's airband log says why.")))
+            Err(why) => {
+                log(format!("launch in {project} did not start: {why}"));
+                Err(say(not_started(project, &why)))
             }
         };
     }
@@ -327,10 +326,37 @@ fn launched(app: &App, place: &Place, with: &str, task: &str, agent: Option<Stri
     format!("Launching in {project}{with}.")
 }
 
+/// What he is told of a held agent that did not start. airband's own refusal (a setting the agent does not have,
+/// no team for it) is said as it is; what the holder or its program said can be the tool's own words, which the
+/// log has, and he is told where to look.
+fn not_started(project: &str, why: &held::NotStarted) -> String {
+    match why {
+        held::NotStarted::NoSuch(_) | held::NotStarted::Told(_) => format!("Could not launch in {project}: {why}"),
+        held::NotStarted::Failed(_) => format!("Could not launch in {project}: the agent did not start. This computer's airband log says why."),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use airband_core::tools::Choice;
+
+    #[test]
+    fn a_setting_the_agent_does_not_have_is_told_him_and_a_programs_own_words_are_not() {
+        use crate::hold::{NoSuch, SettingKind};
+        let no = held::NotStarted::NoSuch(NoSuch { setting: SettingKind::Effort, asked: "max".into(), can_be: vec!["low".into(), "mid".into()] });
+        assert_eq!(not_started("shop", &no), "Could not launch in shop: it has no effort called max. It can be low, mid");
+        assert_eq!(not_started("shop", &held::NotStarted::Told("It has no team airband can put it in.".into())), "Could not launch in shop: It has no team airband can put it in.");
+        let failed = not_started("shop", &held::NotStarted::Failed("you are not signed in".into()));
+        assert!(failed.contains("did not start") && !failed.contains("signed in"), "{failed}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_held_agent_in_a_folder_no_team_could_hold_is_refused_in_airbands_own_words() {
+        let held = serde_json::json!({ "by": "lines", "fresh": [], "resume": [], "line": "{text}" });
+        let app = crate::tower::http::tests::app_with("held-refused", serde_json::json!({ "launchers": { "l": { "harness": "tool-one", "argv": ["true"], "held": held } } }));
+        assert!(matches!(held::start(&app, "l", "/", None, None, "", "line").await, Err(held::NotStarted::Told(_))));
+    }
 
     /// What the routing model heard: one name, offered by each of these launchers under its own id.
     fn heard(name: &str, by: &[(&LauncherId, &str)]) -> Pick {

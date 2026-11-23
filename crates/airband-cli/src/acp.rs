@@ -63,20 +63,14 @@ fn offers(options: &Value) -> Offers {
     Offers { models: of(MODEL), efforts: of(EFFORT) }
 }
 
-/// Why something he asked for cannot be had: the agent has no such setting, or no such value of it. The ones
-/// it does have are named when they are few enough to say.
-/// `noun` is the setting's name ("effort"), `what` the same with its article ("an effort").
-fn no_such(noun: &str, what: &str, said: &str, has: Option<&Setting>) -> String {
-    match has.map(|s| s.choices.as_slice()) {
-        None | Some([]) => format!("it cannot be given {what}"),
-        Some(choices) if choices.len() <= 8 => format!("it has no {noun} called {said}. It can be {}", choices.iter().map(|c| c.id.as_str()).collect::<Vec<_>>().join(", ")),
-        Some(_) => format!("it has no {noun} called {said}"),
-    }
+/// What he asked for that the agent does not have: the setting, and the agent's own ids for what it can be.
+fn no_such(setting: crate::hold::SettingKind, said: &str, has: Option<&Setting>) -> crate::hold::NoSuch {
+    crate::hold::NoSuch { setting, asked: said.to_string(), can_be: has.map(|s| s.choices.iter().map(|c| c.id.clone()).collect()).unwrap_or_default() }
 }
 
 /// Open a session (a new one, or `session` carried on), set it to what he asked for, say the agent is ready,
 /// and drive it until it ends. An error is the agent never having started.
-pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>, asked: Asked) -> Result<(), String> {
+pub(crate) fn run(held: &Held, session: Option<String>, mode: Option<&str>, asked: Asked) -> Result<(), crate::hold::NotStarted> {
     let mut opening = Opening { held, early: VecDeque::new() };
     let (session, made) = opening.open(session, mode)?;
     let me = airband_core::agent::Agent { cwd: Some(held.cwd.clone()), deliver: Some(Deliver::Held), ..crate::adapters::agent_with(held.id.clone(), held.harness.clone()) };
@@ -166,18 +160,19 @@ impl Opening<'_> {
     /// What he asked for, the model first: which efforts there are can depend on it, and the agent lists its
     /// settings again after each change. One it does not have is not left out and the agent started without
     /// it. Gives its settings as they now are.
-    fn set_asked(&mut self, session: &str, mut settings: Value, asked: &Asked) -> Result<Value, String> {
-        for (category, noun, what, said, request) in [(MODEL, "model", "a model", &asked.model, 5), (EFFORT, "effort", "an effort", &asked.effort, 6)] {
+    fn set_asked(&mut self, session: &str, mut settings: Value, asked: &Asked) -> Result<Value, crate::hold::NotStarted> {
+        use crate::hold::SettingKind;
+        for (category, kind, said, request) in [(MODEL, SettingKind::Model, &asked.model, 5), (EFFORT, SettingKind::Effort, &asked.effort, 6)] {
             let Some(said) = said else { continue };
             let has = setting(&settings, category);
             let (Some(s), Some(choice)) = (has.as_ref(), has.as_ref().and_then(|s| s.choices.iter().find(|c| c.id == *said || c.name == *said))) else {
-                return Err(no_such(noun, what, said, has.as_ref()));
+                return Err(crate::hold::NotStarted::NoSuch(no_such(kind, said, has.as_ref())));
             };
             if s.now.as_deref() != Some(choice.id.as_str()) {
                 send(self.held, json!({ "jsonrpc": "2.0", "id": request, "method": "session/set_config_option", "params": { "sessionId": session, "configId": s.id, "value": choice.id } }));
                 let set = self.answer_to(request).map_err(|e| format!("it would not be set to {}: {e}", choice.id))?;
                 if !set["configOptions"].is_array() {
-                    return Err(format!("it did not say whether it was set to {}", choice.id));
+                    return Err(format!("it did not say whether it was set to {}", choice.id).into());
                 }
                 settings = set["configOptions"].clone();
             }
@@ -381,8 +376,13 @@ mod tests {
         assert_eq!((s.id.as_str(), s.now.as_deref()), ("reasoning", Some("low")));
         // an agent that lists nothing offers nothing
         assert_eq!(offers(&Value::Null), Offers::default());
-        assert_eq!(no_such("effort", "an effort", "huge", Some(&s)), "it has no effort called huge. It can be low, high");
-        assert_eq!(no_such("model", "a model", "x", None), "it cannot be given a model");
+        use crate::hold::SettingKind;
+        assert_eq!(no_such(SettingKind::Effort, "huge", Some(&s)).said(), "it has no effort called huge. It can be low, high");
+        assert_eq!(no_such(SettingKind::Model, "x", None).said(), "it cannot be given a model");
+        // said to the tower as what it is, and worded there: never as words read back
+        let no = no_such(SettingKind::Effort, "huge", Some(&s));
+        let state = crate::hold::State::NoSuch(no.clone());
+        assert_eq!(serde_json::from_str::<crate::hold::State>(&serde_json::to_string(&state).unwrap()).unwrap(), state);
     }
 
     #[test]

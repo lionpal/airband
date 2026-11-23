@@ -99,6 +99,73 @@ pub(crate) enum State {
     },
     /// It did not start, and never will: why, in the program's own words where it had any.
     Failed { why: String },
+    /// It did not start because the agent has no such setting as he asked for: airband's own refusal, which
+    /// he is told.
+    NoSuch(NoSuch),
+}
+
+/// Which of an agent's settings he asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum SettingKind {
+    Model,
+    Effort,
+}
+
+/// A setting he asked for that the agent does not have, with what the agent does have (its own ids for them;
+/// none when it has no such setting at all).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct NoSuch {
+    pub(crate) setting: SettingKind,
+    pub(crate) asked: String,
+    #[serde(default)]
+    pub(crate) can_be: Vec<String>,
+}
+
+impl NoSuch {
+    /// Why it cannot be had, in words for him. What it can be is named when that is few enough to say.
+    pub(crate) fn said(&self) -> String {
+        let (noun, what) = match self.setting {
+            SettingKind::Model => ("model", "a model"),
+            SettingKind::Effort => ("effort", "an effort"),
+        };
+        let asked = &self.asked;
+        match self.can_be.len() {
+            0 => format!("it cannot be given {what}"),
+            1..=8 => format!("it has no {noun} called {asked}. It can be {}", self.can_be.join(", ")),
+            _ => format!("it has no {noun} called {asked}"),
+        }
+    }
+}
+
+/// Why a holder's program never became an agent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum NotStarted {
+    /// The agent has no such setting as he asked for: he is told so.
+    NoSuch(NoSuch),
+    /// airband's own refusal, in its own words: he is told so.
+    Told(String),
+    /// The program or its holder failed: why, which can be the program's own words, for the log alone.
+    Failed(String),
+}
+
+impl From<String> for NotStarted {
+    fn from(why: String) -> NotStarted {
+        NotStarted::Failed(why)
+    }
+}
+impl From<&str> for NotStarted {
+    fn from(why: &str) -> NotStarted {
+        NotStarted::Failed(why.to_string())
+    }
+}
+impl std::fmt::Display for NotStarted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NotStarted::NoSuch(no) => f.write_str(&no.said()),
+            NotStarted::Told(why) | NotStarted::Failed(why) => f.write_str(why),
+        }
+    }
 }
 
 pub(crate) enum Msg {
@@ -245,14 +312,14 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     }
     let errors = Arc::new(Mutex::new(String::new()));
     let outcome = match command.spawn() {
-        Err(e) => Err(format!("{program} did not start: {e}")),
+        Err(e) => Err(NotStarted::Failed(format!("{program} did not start: {e}"))),
         Ok(mut child) => {
             pass_output(&mut child, tx, by == By::Acp);
             keep_errors(&mut child, errors.clone());
             let held = Held { id, harness, cwd, rx, to_program: Arc::new(Mutex::new(child.stdin.take())), state: state.clone(), errors };
             // a line to write is what a program driven by lines has, and only that
             let done = match &line {
-                Some(line) => lines(&held, line, named.get("stop").map(String::as_str)),
+                Some(line) => lines(&held, line, named.get("stop").map(String::as_str)).map_err(NotStarted::Failed),
                 None => crate::acp::run(&held, named.get("session").cloned(), named.get("mode").map(String::as_str), crate::acp::Asked { model: named.get("model").cloned(), effort: named.get("effort").cloned() }),
             };
             held.close_input();
@@ -262,12 +329,15 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     };
     if let Err(why) = &outcome {
         // it never became an agent: say why to whoever asks, for long enough that the tower has asked
-        *state.lock().unwrap() = State::Failed { why: why.clone() };
+        *state.lock().unwrap() = match why {
+            NotStarted::NoSuch(no) => State::NoSuch(no.clone()),
+            other => State::Failed { why: other.to_string() },
+        };
         std::thread::sleep(Duration::from_secs(15));
     }
     airband_io::files::remove(std::path::Path::new(&sock)).ok();
     end_group();
-    outcome
+    outcome.map_err(|e| e.to_string())
 }
 
 

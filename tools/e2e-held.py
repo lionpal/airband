@@ -559,7 +559,11 @@ try:
     check("every call to the server carried its password", Fake.unauthorised == 0, Fake.unauthorised)
     began = time.time()
     told = say("New agent in shop", act={"kind": "launch", "team": os.path.realpath(project), "tool": "broken"})
-    check("one that cannot start is not announced: he is told why, in the program's own words", "Could not launch in shop" in told and "you are not signed in" in told and not [a for a in feed()["roster"] if a.get("harness") == "broken"], told)
+    # what the program said can be its own words, which are never read to him: he is told it did not start and
+    # where to look, and the tower's log has them
+    check("one that cannot start is not announced: he is told it did not start, and the log has the program's own words",
+          "Could not launch in shop" in told and "did not start" in told and "you are not signed in" not in told and "you are not signed in" in open(os.path.join(work, "tower.log")).read()
+          and not [a for a in feed()["roster"] if a.get("harness") == "broken"], told)
     check("a tool this computer cannot start is refused in words, and nothing is started", "not set up to start nothing agents" in say("New agent in shop", act={"kind": "launch", "team": os.path.realpath(project), "tool": "nothing"}))
 finally:
     tower.terminate()

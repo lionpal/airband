@@ -15,6 +15,7 @@
 use super::*;
 #[cfg(unix)]
 use tokio::io::AsyncReadExt;
+pub(super) use crate::hold::NotStarted;
 
 /// One held agent, as remembered across restarts.
 #[derive(Clone, Serialize, Deserialize)]
@@ -137,7 +138,7 @@ const STARTS_WITHIN: Duration = Duration::from_secs(150);
 /// from the tower, so the agent goes on when the tower is restarted. Returns once the agent is there (the
 /// holder says so), with what its tool calls its session; or with why it is not.
 #[cfg(unix)]
-async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Started, String> {
+async fn spawn(app: &Arc<App>, kept: &Kept, fresh: bool) -> Result<Started, NotStarted> {
     spawn_with(app, &*app.procs, kept, fresh).await
 }
 
@@ -200,7 +201,7 @@ fn holder_run(cfg: &config::Config, me: std::path::PathBuf, sock: &std::path::Pa
 }
 
 #[cfg(unix)]
-async fn spawn_with(app: &Arc<App>, procs: &dyn edges::procs::Procs, kept: &Kept, fresh: bool) -> Result<Started, String> {
+async fn spawn_with(app: &Arc<App>, procs: &dyn edges::procs::Procs, kept: &Kept, fresh: bool) -> Result<Started, NotStarted> {
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
     let sock = socket(&kept.id);
     let (holder, program) = holder_run(&app.cfg(), me, &sock, kept, fresh)?;
@@ -215,10 +216,11 @@ async fn spawn_with(app: &Arc<App>, procs: &dyn edges::procs::Procs, kept: &Kept
     while Instant::now() < until {
         match status(&kept.id).await {
             Ok(crate::hold::State::Ready { session, offers }) => return Ok(Started { session, offers }),
-            Ok(crate::hold::State::Failed { why }) => return Err(why),
+            Ok(crate::hold::State::Failed { why }) => return Err(NotStarted::Failed(why)),
+            Ok(crate::hold::State::NoSuch(no)) => return Err(NotStarted::NoSuch(no)),
             Ok(_) => listening = true,
             // its holder has gone again without a word: the program could not be started at all
-            Err(_) if listening => return Err(format!("{called} did not start")),
+            Err(_) if listening => return Err(format!("{called} did not start").into()),
             Err(_) => {}
         }
         tokio::time::sleep(Duration::from_millis(150)).await;
@@ -228,16 +230,16 @@ async fn spawn_with(app: &Arc<App>, procs: &dyn edges::procs::Procs, kept: &Kept
     if let Err(e) = say(&kept.id, format!("{}\n", crate::hold::Tell::End.line()).as_bytes()).await {
         log(format!("{called} was late and could not be told to end ({e}); it may still start"));
     }
-    Err(format!("{called} had not started after {} seconds", STARTS_WITHIN.as_secs()))
+    Err(format!("{called} had not started after {} seconds", STARTS_WITHIN.as_secs()).into())
 }
 #[cfg(not(unix))]
-async fn spawn(_: &Arc<App>, _: &Kept, _: bool) -> Result<Started, String> {
-    Err("airband cannot start agents itself on this system yet".into())
+async fn spawn(_: &Arc<App>, _: &Kept, _: bool) -> Result<Started, NotStarted> {
+    Err(NotStarted::Told("airband cannot start agents itself on this system yet".into()))
 }
 
 /// Carry on a held agent whose holder has gone, and remember what its session is called now.
 async fn revive(app: &Arc<App>, kept: &Kept) -> Result<(), String> {
-    let started = spawn(app, kept, false).await?;
+    let started = spawn(app, kept, false).await.map_err(|e| e.to_string())?;
     let mut inner = app.change();
     if let Some(k) = inner.held.iter_mut().find(|k| k.id == kept.id) {
         k.session = started.session.or(k.session.take());
@@ -392,11 +394,12 @@ impl Inner {
 /// is left waiting for his first word, on the radio at once so he can see it and speak to it.
 /// `model` and `effort` are what he asked for it to be set to, as its tool takes them.
 /// `line` is the chat line the task is written as, so the agent taking it in marks that line seen.
-pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, model: Option<String>, effort: Option<String>, task: &str, line: &str) -> Result<String, String> {
+/// Why it did not start is [`NotStarted`]: what he is told, and what only the log is.
+pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, model: Option<String>, effort: Option<String>, task: &str, line: &str) -> Result<String, NotStarted> {
     let harness = app.cfg().launchers.get(launcher).map(|l| l.harness.clone()).ok_or_else(|| format!("no launcher called {launcher} is configured"))?;
     // nothing is started that no team could hold: it would run with nobody able to speak to it
     if !a_team_can_hold(&app.read(), cwd) {
-        return Err("That folder has no name a team could have.".into());
+        return Err(NotStarted::Told("That folder has no name a team could have.".into()));
     }
     let mut kept = Kept { id: new_id(), cwd: cwd.to_string(), launcher: launcher.to_string(), model, effort, session: None };
     let started = spawn(app, &kept, true).await?;
@@ -413,14 +416,14 @@ pub(super) async fn start(app: &Arc<App>, launcher: &str, cwd: &str, model: Opti
     };
     if taken == Some(None) {
         end(app, &kept.id).await;
-        return Err("It has no team airband can put it in.".into());
+        return Err(NotStarted::Told("It has no team airband can put it in.".into()));
     }
     if task.is_empty() {
         app.kick.notify_one();
     } else if let Err(why) = tell(app, &kept.id, task, &[line.to_string()]).await {
         // started for this task and it could not be given: it is not left running without it
         end(app, &kept.id).await;
-        return Err(why);
+        return Err(NotStarted::Failed(why));
     }
     Ok(kept.id)
 }
