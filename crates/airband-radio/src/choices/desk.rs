@@ -108,7 +108,7 @@ impl Desk {
             // every computer it reached said no: nothing changed anywhere, and he is told why
             if !per.is_empty() && per.values().all(|r| r.why_not().is_some()) {
                 let state = self.shared.state.lock().unwrap();
-                let why: Vec<String> = per.iter().map(|(c, r)| if per.len() == 1 { r.why_not().unwrap_or_default().to_string() } else { format!("{}: {}", state.computer_name(c), r.why_not().unwrap_or_default()) }).collect();
+                let why: Vec<String> = per.iter().map(|(c, r)| if per.len() == 1 { r.why_not().unwrap_or_default() } else { format!("{}: {}", state.computer_name(c), r.why_not().unwrap_or_default()) }).collect();
                 return done(Err(told(why.join(" "))));
             }
             // what is offered and in use is the main computer's: the one he chose, or the only one

@@ -364,6 +364,18 @@ pub(crate) fn same_name(from: u64, bytes: &[u8]) -> String {
     let h = bytes.iter().fold(from, |h, b| (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3));
     format!("{h:x}")
 }
+/// The pass for the live listening service he chose is fetched before he first needs it, and again now and
+/// then, so opening the microphone never waits on it: once for the device, whichever computers are paired
+/// (audit 6, C-B5). It ends with the desk.
+fn warm_passes(shared: std::sync::Weak<Shared>) {
+    thread::spawn(move || {
+        while let Some(ears) = shared.upgrade().map(|s| crate::ears::Ears::new(s.senses.clone())) {
+            ears.warm();
+            drop(ears);
+            thread::sleep(Duration::from_secs(240));
+        }
+    });
+}
 /// A folder name that is the same every launch for the same link.
 fn folder(link: &str) -> String {
     same_name(1469598103934665603, link.as_bytes())
@@ -383,7 +395,9 @@ impl Desk {
         let senses: Arc<Senses> = Arc::default();
         // what he chose to listen and speak with is in use from the start
         chooser.apply(&*host, &senses);
-        Arc::new(Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser, senses, key_test: crate::keys::check, dial: None }), data_dir })
+        let desk = Arc::new(Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), host, chooser, senses, key_test: crate::keys::check, dial: None }), data_dir });
+        warm_passes(Arc::downgrade(&desk.shared));
+        desk
     }
     /// The computers he is paired with, as the links `airband pair` printed, one each. Replaces whatever set
     /// was there: a computer that stays is left as it is, connection and all; one no longer listed is let go;

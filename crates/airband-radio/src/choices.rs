@@ -32,8 +32,7 @@ pub(crate) use desk::tell_reads;
 use list::*;
 use saved::{Pick, Saved};
 pub(crate) use saved::ReadsWanted;
-#[cfg(test)]
-pub(crate) use saved::NO_KEY;
+pub(crate) use saved::Withheld;
 
 /// The jobs he chooses something for, in the order a first run asks about them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -294,12 +293,16 @@ impl Chooser {
             // much (a second of silence to hear, a word to say)
             let held = crate::engines::Held::of(m, crate::models::folder(&self.dir, m));
             let by: crate::engines::ByHost = &|engine, folder, job, input| host.run_model(engine.into(), folder.into(), job, input);
-            let ran = held.with(|loaded| match m.job {
-                // in the voice he picked, or the one its row names as usual: never just the first it lists
-                Job::Voice => voice_of(m, &self.saved().pick(ChoiceJob::Voice).filter(|p| p.id == m.kind).map(|p| p.voice).unwrap_or_default()).map_err(|why| why.told()).and_then(|voice| loaded.speak(by, &voice, "Ready.", &mut |_| {}, &|| false)),
+            // in the voice he picked, or the one its row names as usual: never just the first it lists
+            let voice = match m.job {
+                Job::Voice => voice_of(m, &self.saved().pick(ChoiceJob::Voice).filter(|p| p.id == m.kind).map(|p| p.voice).unwrap_or_default()).map_err(|why| told(why.told()))?,
+                _ => String::new(),
+            };
+            held.run(|loaded| match m.job {
+                Job::Voice => loaded.speak(by, &voice, "Ready.", &mut |_| {}, &|| false),
                 _ => loaded.hear(by, vec![0u8; 32000]).map(|_| ()),
-            });
-            ran.and_then(|ran| ran).map_err(|why| told(format!("{} did not load on this phone: {why}.", m.name)))?;
+            })
+            .map_err(|fault| told(fault.told(&m.name)))?;
         }
         Ok(())
     }

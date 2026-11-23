@@ -60,15 +60,6 @@ pub(crate) struct Listener {
 /// Every live dialect this build speaks.
 pub(crate) const LISTENERS: &[Listener] = &[usp::LISTENER, bidi::LISTENER, chunks::LISTENER];
 
-/// A pass for this dialect is used up by one connection, so it is never kept for the next.
-pub(crate) fn once(kind: &str) -> bool {
-    listener(kind).is_some_and(|l| l.once)
-}
-
-pub(crate) fn listener(kind: &str) -> Option<&'static Listener> {
-    LISTENERS.iter().find(|l| l.is.name == kind)
-}
-
 /// The live dialect an offer names, when this build speaks it and can do what the offer needs.
 pub(crate) fn live(offer: &Offer) -> Option<&'static Listener> {
     LISTENERS.iter().find(|l| offer.job == Job::Ears && l.is.fits(offer))
@@ -158,13 +149,15 @@ impl Chosen {
     }
 }
 
-/// A pass from a live service for a key. Err says why not, in words for him.
-#[cfg(test)]
-pub(crate) fn pass_for(with: &Use) -> Result<Pass, String> {
+/// A new pass from the live service `with` names, for his key, with the names he is likely to say: the one
+/// way one is asked for. The dialect comes with it, so whoever asked knows whether it may be kept. Err says
+/// why not, in words for him.
+pub(crate) fn pass_for(with: &Use, phrases: Vec<String>) -> Result<(Pass, &'static Listener), String> {
     let (provider, offer) = with.offer(Job::Ears).ok_or(UNKNOWN_SERVICE)?;
     let l = live(&offer).ok_or_else(cannot_listen)?;
     let set = with.settings(Job::Ears);
-    Ok(Pass { dialect: l.is.name.into(), token: (l.pass)(&offer.by, &provider, &set, &with.key)?, set, phrases: Vec::new(), by: offer.by.clone() })
+    let token = (l.pass)(&offer.by, &provider, &set, &with.key)?;
+    Ok((Pass { dialect: l.is.name.into(), token, set, phrases, by: offer.by.clone() }, l))
 }
 
 /// Does this service listen with this key and these settings? One real call to it.
@@ -222,15 +215,13 @@ impl Ears {
         Ears { chosen }
     }
 
-    /// The pass kept for exactly this choice, while it is still good.
+    /// The pass kept for exactly this choice, while it is still good. One good for a single connection is
+    /// never kept.
     fn kept(&self, with: &Use) -> Option<Pass> {
-        self.chosen.passes.pass.lock().unwrap().clone().filter(|(p, when, made)| made == with && when.elapsed() < PASS_LIFE && !once(&p.dialect)).map(|(p, _, _)| p)
-    }
-    fn keep(&self, pass: &Pass, with: &Use) {
-        *self.chosen.passes.pass.lock().unwrap() = Some((pass.clone(), Instant::now(), with.clone()));
+        self.chosen.passes.pass.lock().unwrap_or_else(|e| e.into_inner()).clone().filter(|(_, when, made)| made == with && when.elapsed() < PASS_LIFE).map(|(p, _, _)| p)
     }
     fn forget(&self) {
-        *self.chosen.passes.pass.lock().unwrap() = None;
+        *self.chosen.passes.pass.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     fn way(&self) -> Way {
@@ -251,17 +242,15 @@ impl Ears {
     /// asked for now. Err says why there is none, in words for him.
     fn pass(&self) -> Result<Pass, String> {
         let Some(Own::Service(with)) = self.chosen.ears.using() else { return Err(NOTHING_CHOSEN.into()) };
-        let (provider, offer) = with.offer(Job::Ears).ok_or(UNKNOWN_SERVICE)?;
-        let l = live(&offer).ok_or_else(cannot_listen)?;
-        let phrases = self.chosen.ears.phrases.lock().unwrap().clone();
+        let phrases = self.chosen.ears.phrases.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let _asking = self.chosen.passes.asking.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(pass) = self.kept(&with) {
             return Ok(Pass { phrases, ..pass });
         }
-        let set = with.settings(Job::Ears);
-        let token = (l.pass)(&offer.by, &provider, &set, &with.key)?;
-        let pass = Pass { dialect: l.is.name.into(), token, set, phrases, by: offer.by.clone() };
-        self.keep(&pass, &with);
+        let (pass, l) = pass_for(&with, phrases)?;
+        if !l.once {
+            *self.chosen.passes.pass.lock().unwrap_or_else(|e| e.into_inner()) = Some((pass.clone(), Instant::now(), with.clone()));
+        }
         Ok(pass)
     }
 
@@ -311,7 +300,7 @@ impl Ears {
                         said(text)
                     }
                     // the model would not run: it stays the one he chose, and he is told
-                    Err(why) => fail(host, format!("{name} did not run on this device: {why}. Nothing else listened in its place.")),
+                    Err(fault) => fail(host, format!("{} Nothing else listened in its place.", fault.told(&name))),
                 }
             }
             // The recording is made here and sent off whole, to the service, with his own key.
@@ -415,8 +404,8 @@ fn record_with(host: &dyn RadioHost, manual: bool, so_far: &mut dyn FnMut(&[i16]
 /// words while he talks the recording so far is read again about twice a second, on a thread of its own: the
 /// microphone is never kept waiting, and a reading that is still going when the next is due is let finish
 /// and the next one skipped. When he stops, all of it is read once more, and that is what he said.
-fn by_model(host: &dyn RadioHost, held: &crate::engines::Held, chosen: &Chosen, manual: bool) -> Result<Option<String>, String> {
-    let read = |pcm: Vec<u8>| held.with(|m| m.hear(&|engine, folder, job, input| host.run_model(engine.into(), folder.into(), job, input), pcm)).and_then(|heard| heard);
+fn by_model(host: &dyn RadioHost, held: &crate::engines::Held, chosen: &Chosen, manual: bool) -> Result<Option<String>, crate::engines::Fault> {
+    let read = |pcm: Vec<u8>| held.run(|m| m.hear(&|engine, folder, job, input| host.run_model(engine.into(), folder.into(), job, input), pcm));
     let bytes = |pcm: &[i16]| pcm.iter().flat_map(|s| s.to_le_bytes()).collect::<Vec<u8>>();
     let clip = thread::scope(|scope| {
         let (tx, rx) = sync_channel::<Vec<u8>>(1);
@@ -470,7 +459,7 @@ mod tests {
         let ears = Ears::new(Arc::new(Senses::default()));
         let (a, b) = (scribe("a"), scribe("b"));
         let by = a.offer(Job::Ears).unwrap().1.by.clone();
-        ears.keep(&Pass { dialect: "usp".into(), token: "t".into(), set: BTreeMap::new(), phrases: Vec::new(), by }, &a);
+        *ears.chosen.passes.pass.lock().unwrap() = Some((Pass { dialect: "usp".into(), token: "t".into(), set: BTreeMap::new(), phrases: Vec::new(), by }, Instant::now(), a.clone()));
         assert!(ears.kept(&a).is_some());
         assert!(ears.kept(&b).is_none());
     }

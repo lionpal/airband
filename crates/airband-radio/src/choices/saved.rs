@@ -23,6 +23,22 @@ pub(super) struct Pick {
 /// Why a computer was not sent what writes his summaries: it needs a key, and neither it nor this phone has one.
 pub(crate) const NO_KEY: &str = "It has no key for this. Add one here.";
 
+/// Why a computer was not sent something, decided here: it could not take it as things are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Withheld {
+    /// It needs a key that neither it nor this phone has.
+    NoKey,
+}
+
+impl Withheld {
+    /// In words for him.
+    pub(crate) fn said(self) -> String {
+        match self {
+            Withheld::NoKey => NO_KEY.into(),
+        }
+    }
+}
+
 /// What is to write his summaries, sent to every computer ([`Intent`]): it waits for each that has not
 /// answered, and is let go once every computer has it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -43,14 +59,14 @@ impl ReadsWanted {
     /// What one computer is sent: with no key when it keeps its own or the provider takes none; else with the
     /// key on this phone. Err, in words for him, when it needs a key neither has. `there` is what that
     /// computer says it can read with.
-    pub(crate) fn body_for(&self, phone_key: Option<&str>, there: &ReadsOffered) -> Result<airband_core::radio::SetReads, String> {
+    pub(crate) fn body_for(&self, phone_key: Option<&str>, there: &ReadsOffered) -> Result<airband_core::radio::SetReads, Withheld> {
         let offer = there.offers.iter().find(|r| r.provider == self.id && r.offer == self.offer);
         let needs_key = offer.map_or_else(|| airband_core::providers::provider(&self.id).is_some_and(|p| p.key), |r| r.key);
         // a computer's own key is its own: the phone's goes only where there is none
         let key = match phone_key.filter(|k| !k.is_empty()) {
             _ if !needs_key || offer.is_some_and(|r| r.has_key) => String::new(),
             Some(key) => key.to_string(),
-            None => return Err(NO_KEY.into()),
+            None => return Err(Withheld::NoKey),
         };
         Ok(airband_core::radio::SetReads { kind: self.id.clone(), offer: self.offer.clone(), key, set: self.set.clone() })
     }

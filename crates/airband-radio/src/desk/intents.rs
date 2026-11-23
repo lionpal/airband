@@ -51,7 +51,7 @@ impl<T> Intent<T> {
             Reach::Done(_) => Delivery::Done,
             Reach::Unreachable => Delivery::Pending,
             Reach::Refused(why) => Delivery::Refused { reason: why.clone() },
-            Reach::Skipped(why) => Delivery::Held { reason: why.clone() },
+            Reach::Skipped(why) => Delivery::Held { reason: why.said() },
         };
         self.per.insert(computer.clone(), now);
     }
@@ -196,9 +196,9 @@ mod tests {
         assert_eq!(i.standing(&[a.clone(), b.clone()]), Standing::Taken);
         assert_eq!(i.standing(&[]), Standing::Waiting);
         // (audit 7, P-N8) one that could not be sent it for want of a key shows why, and is tried again
-        i.record::<()>(&b, &Reach::Skipped("Enter your key.".into()));
+        i.record::<()>(&b, &Reach::Skipped(crate::choices::Withheld::NoKey));
         assert!(i.owed(&b));
-        assert_eq!(i.standing(&[b.clone()]), Standing::Refused(vec!["Enter your key.".into()]));
+        assert_eq!(i.standing(&[b.clone()]), Standing::Refused(vec![crate::choices::Withheld::NoKey.said()]));
         i.record::<()>(&b, &Reach::Refused("No.".into()));
         assert!(!i.owed(&b));
     }

@@ -123,9 +123,9 @@ fn a_computer_is_sent_the_key_only_when_it_has_none_of_its_own() {
     // it has none and the phone has one: the phone's is sent
     assert_eq!(wanted.body_for(Some("sk-1"), &offers(false)).map(|b| b.key), Ok("sk-1".to_string()));
     // neither has one: it is not sent, and why is said
-    assert_eq!(wanted.body_for(None, &offers(false)).map(|b| b.key), Err(crate::choices::NO_KEY.to_string()));
+    assert_eq!(wanted.body_for(None, &offers(false)).map(|b| b.key), Err(crate::choices::Withheld::NoKey));
     // one that does not offer it at all: the provider's own row says a key is needed
-    assert_eq!(wanted.body_for(None, &ReadsOffered::default()).map(|b| b.key), Err(crate::choices::NO_KEY.to_string()));
+    assert_eq!(wanted.body_for(None, &ReadsOffered::default()).map(|b| b.key), Err(crate::choices::Withheld::NoKey));
 }
 
 #[test]

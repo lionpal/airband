@@ -495,7 +495,7 @@ mod tests {
         }
         let l = crate::ears::live(offer).unwrap();
         // the key is turned into a pass the way the phone does it; WITHOUT_NAMES leaves out the names he is likely to say
-        let mut grant = crate::ears::pass_for(&with).unwrap();
+        let (mut grant, _) = crate::ears::pass_for(&with, Vec::new()).unwrap();
         if std::env::var("WITHOUT_NAMES").is_err() {
             grant.phrases = vec!["airband".into(), "shop two".into()];
         }

@@ -12,7 +12,7 @@ pub(crate) enum Reach<T> {
     /// It could not be reached, or had trouble that may pass: it is asked again when it is reached.
     Unreachable,
     /// It was not asked, because it could not take it as things are: why, in words for him.
-    Skipped(String),
+    Skipped(crate::choices::Withheld),
 }
 
 impl<T> Reach<T> {
@@ -35,9 +35,10 @@ impl<T> Reach<T> {
         }
     }
     /// Why it was not taken, in words for him, when it said no or could not be asked.
-    pub(crate) fn why_not(&self) -> Option<&str> {
+    pub(crate) fn why_not(&self) -> Option<String> {
         match self {
-            Reach::Refused(why) | Reach::Skipped(why) => Some(why),
+            Reach::Refused(why) => Some(why.clone()),
+            Reach::Skipped(why) => Some(why.said()),
             Reach::Done(_) | Reach::Unreachable => None,
         }
     }

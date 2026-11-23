@@ -122,7 +122,7 @@ impl Mouth {
         match self.using() {
             // a service is read to its end; what comes after he says stop is dropped
             Some(Own::Service(with)) => crate::voices::synth(&with)?.speak(text, &mut |pcm| if !stop() { sink(pcm) }, mark),
-            Some(Own::Model { held, voice }) => held.with(|m| m.speak(host, &voice, text, sink, stop))?,
+            Some(Own::Model { held, voice }) => held.run(|m| m.speak(host, &voice, text, sink, stop)).map_err(|fault| fault.told(&held.m.name)),
             other => Err(silent(other)),
         }
     }
@@ -198,9 +198,8 @@ impl Mouth {
             return Ok(());
         }
         fail(match made {
-            // a service's reason names it already; a model's is said as the voice not speaking
-            Err(why) if matches!(self.using(), Some(Own::Service(_))) => why,
-            Err(why) => format!("The voice you chose did not speak: {why}"),
+            // a service's reason names it, and a model's names the model: said as it is
+            Err(why) => why,
             Ok(_) => NO_SOUND.into(),
         })
     }
