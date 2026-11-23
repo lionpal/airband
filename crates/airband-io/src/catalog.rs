@@ -125,4 +125,23 @@ mod tests {
         assert!(!dir.join(KEPT).exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn the_published_copy_is_its_bytes_on_200_the_status_otherwise_and_nothing_where_nothing_answers() {
+        use std::io::{Read, Write};
+        let serve = |answer: &'static str| {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let at = format!("http://{}/catalog.json", listener.local_addr().unwrap());
+            std::thread::spawn(move || {
+                let (mut conn, _) = listener.accept().unwrap();
+                conn.read(&mut [0u8; 2048]).unwrap();
+                conn.write_all(answer.as_bytes()).unwrap();
+            });
+            at
+        };
+        assert_eq!(Published.get(&serve("HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}")), Ok(b"{}".to_vec()));
+        assert_eq!(Published.get(&serve("HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")), Err(NotFetched::Status(404)));
+        let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        assert_eq!(Published.get(&format!("http://{free}/catalog.json")), Err(NotFetched::Unreachable));
+    }
 }
