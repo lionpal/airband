@@ -31,6 +31,13 @@ pub(crate) use pass::*;
 /// Said when he opens the microphone with nothing chosen to listen with.
 /// What he is told when the listening service he chose is not one this build knows.
 pub(crate) const UNKNOWN_SERVICE: &str = "This version of airband does not know that listening service.";
+/// What he is told when what he chose to listen with is a service this build cannot listen through this way:
+/// the one wording ([`crate::senses::Cannot::ServiceNotUsed`]).
+pub(crate) fn cannot_listen() -> String {
+    crate::senses::Cannot::ServiceNotUsed(crate::senses::Sense::Listening).told()
+}
+/// What he is told when the live listening service or the line to it failed before anything was heard.
+const SERVICE_UNREACHED: &str = "The listening service you chose could not be reached. Nothing else listened in its place.";
 pub(crate) const NOTHING_CHOSEN: &str = "Nothing is chosen to listen with on this device. Choose it in Settings, under Listening.";
 
 /// How a dialect gets its pass: from the row, the service's name, his settings and his key.
@@ -155,7 +162,7 @@ impl Chosen {
 #[cfg(test)]
 pub(crate) fn pass_for(with: &Use) -> Result<Pass, String> {
     let (provider, offer) = with.offer(Job::Ears).ok_or(UNKNOWN_SERVICE)?;
-    let l = live(&offer).ok_or("That service does not listen live.")?;
+    let l = live(&offer).ok_or_else(cannot_listen)?;
     let set = with.settings(Job::Ears);
     Ok(Pass { dialect: l.is.name.into(), token: (l.pass)(&offer.by, &provider, &set, &with.key)?, set, phrases: Vec::new(), by: offer.by.clone() })
 }
@@ -200,8 +207,8 @@ pub(crate) struct Passes {
     /// The last pass, when, and what he had chosen it for (the service, its settings and his key): one is good
     /// for a few minutes, and only for that.
     pass: Mutex<Option<(Pass, Instant, Use)>>,
-    /// Why the last pass could not be had, in words for him: what he is told when listening could not start.
-    refused: Mutex<Option<String>>,
+    /// Held while a pass is looked for and asked for, so radios that want one at once ask the service once.
+    asking: Mutex<()>,
 }
 
 #[derive(Clone)]
@@ -235,34 +242,27 @@ impl Ears {
             Some(Own::Service(with)) => match with.offer(Job::Ears).map(|(_, o)| (live(&o), crate::hears::by_upload(&with))) {
                 Some((Some(l), _)) => Way::Mic(Mic::Live { with: l }),
                 Some((None, true)) => Way::Mic(Mic::OwnUpload { phrases: self.chosen.ears.phrases.lock().unwrap().clone(), with }),
-                _ => Way::Nothing("This version of airband cannot listen with the service you chose.".into()),
+                _ => Way::Nothing(cannot_listen()),
             },
         }
     }
 
     /// A pass for the live service he chose: the one kept for that choice while it is good, or a new one,
-    /// asked for now. None when there is none to be had; why is kept for telling him.
-    fn pass(&self) -> Option<Pass> {
-        let Some(Own::Service(with)) = self.chosen.ears.using() else { return None };
-        let (provider, offer) = with.offer(Job::Ears)?;
-        let l = live(&offer)?;
+    /// asked for now. Err says why there is none, in words for him.
+    fn pass(&self) -> Result<Pass, String> {
+        let Some(Own::Service(with)) = self.chosen.ears.using() else { return Err(NOTHING_CHOSEN.into()) };
+        let (provider, offer) = with.offer(Job::Ears).ok_or(UNKNOWN_SERVICE)?;
+        let l = live(&offer).ok_or_else(cannot_listen)?;
         let phrases = self.chosen.ears.phrases.lock().unwrap().clone();
+        let _asking = self.chosen.passes.asking.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(pass) = self.kept(&with) {
-            return Some(Pass { phrases, ..pass });
+            return Ok(Pass { phrases, ..pass });
         }
         let set = with.settings(Job::Ears);
-        match (l.pass)(&offer.by, &provider, &set, &with.key) {
-            Ok(token) => {
-                let pass = Pass { dialect: l.is.name.into(), token, set, phrases, by: offer.by.clone() };
-                self.keep(&pass, &with);
-                *self.chosen.passes.refused.lock().unwrap() = None;
-                Some(pass)
-            }
-            Err(why) => {
-                *self.chosen.passes.refused.lock().unwrap() = Some(why);
-                None
-            }
-        }
+        let token = (l.pass)(&offer.by, &provider, &set, &with.key)?;
+        let pass = Pass { dialect: l.is.name.into(), token, set, phrases, by: offer.by.clone() };
+        self.keep(&pass, &with);
+        Ok(pass)
     }
 
     /// Ask for the pass now, so it is there before he next opens the microphone. Nothing is asked of anyone
@@ -272,7 +272,8 @@ impl Ears {
         if let Way::Mic(Mic::Live { with }) = self.way()
             && !with.once
         {
-            let _ = self.pass();
+            // a pass that cannot be had now is asked for again when he opens the microphone, and he is told then
+            self.pass().ok();
         }
     }
 
@@ -333,7 +334,7 @@ impl Ears {
             }
             Mic::Live { with } => {
                 // a fresh pass whenever the connection asks for one: the same way, worked out again
-                let again: Arc<dyn Fn() -> Option<Pass> + Send + Sync> = {
+                let again: crate::ears_stream::PassFor = {
                     let ears = self.clone();
                     Arc::new(move || ears.pass())
                 };
@@ -346,12 +347,11 @@ impl Ears {
                         heard_well();
                         said(text)
                     }
-                    Err(_) => {
+                    Err(failed) => {
                         // the service or the line failed: ask for a fresh pass next time. When it was the pass he is
                         // told the service's reason
                         self.forget();
-                        let why = self.chosen.passes.refused.lock().unwrap().take();
-                        fail(host, why.unwrap_or_else(|| "The listening service you chose could not be reached. Nothing else listened in its place.".into()))
+                        fail(host, failed.why.unwrap_or_else(|| SERVICE_UNREACHED.into()))
                     }
                 }
             }
@@ -461,7 +461,7 @@ mod tests {
         let ears = Ears::new(senses);
         // nothing is asked of the service here: the pass is asked for once the microphone is open
         assert!(matches!(ears.way(), Way::Mic(Mic::Live { .. })));
-        assert!(ears.chosen.passes.refused.lock().unwrap().is_none());
+        assert!(ears.chosen.passes.pass.lock().unwrap().is_none());
     }
 
     #[test]

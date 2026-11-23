@@ -263,3 +263,24 @@ fn a_computer_paired_after_the_others_took_the_summary_choice_is_sent_it_and_an_
     assert_eq!(studio.asked_on::<at::Reads>(), 0, "a computer that had it was sent it again");
     assert_eq!(after, before);
 }
+
+#[test]
+fn the_main_computer_owed_the_choice_is_asked_once_what_it_reads_with() {
+    let dir = temp("once");
+    let studio = tower("studio", true);
+    studio.refuses::<at::Reads>(503, &Refusal::NotNow { reason: "Busy.".into() });
+    let desk = desk_with(&dir, vec![(link(1), studio.clone())]);
+    desk.set_links(vec![link(1)]);
+    assert!(all_answered(&desk, 1));
+    let id = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "anthropic").map(|c| c.id).unwrap();
+    let _ = desk.choose_for(ChoiceJob::Reads, id, None, HashMap::new(), false);
+    let studio_id = desk.shared.state.lock().unwrap().computers[0].id();
+    let epoch = desk.shared.state.lock().unwrap().computers[0].epoch;
+    let (offered, sent) = (studio.asked_on::<at::ReadsOffered>(), studio.asked_on::<at::Reads>());
+    // owed the choice, and the main one: one question about what it reads with serves both
+    crate::choices::tell_reads(&desk.shared, &studio_id, epoch, true);
+    let asked = (studio.asked_on::<at::ReadsOffered>() - offered, studio.asked_on::<at::Reads>() - sent);
+    desk.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(asked, (1, 1));
+}

@@ -75,20 +75,36 @@ fn drain(wire: &Wire, socket: &mut Socket, kept: &mut Vec<String>, ended: &mut b
     }
 }
 
+/// Asks for a pass for the service: Err says why there is none, in the service's words for him.
+pub(crate) type PassFor = Arc<dyn Fn() -> Result<Pass, String> + Send + Sync>;
+
+/// Listening over the streaming connection failed before anything was heard. `why` is the service's own reason
+/// when it gave one (it would not give a pass); nothing when the line or the service could not be reached.
+#[derive(Debug, PartialEq)]
+pub(crate) struct Failed {
+    pub(crate) why: Option<String>,
+}
+
 /// Listen over the streaming connection, telling `hearing` what he has said so far as it changes. Without
 /// `manual` it is one reply: it ends when he stops talking. With it he opened the microphone himself: all of it
 /// is sent, pauses and all, until the host closes the microphone, and if the service ends its turn before then
 /// (a long silence) a new one is opened and what he said so far is kept.
 /// Ok(None) is silence. Err is a failure of the service or the line before anything was heard; nothing else
 /// listens in its place, and he is told.
-pub(crate) fn live(wire: &'static Wire, pass: Arc<dyn Fn() -> Option<Pass> + Send + Sync>, host: &dyn RadioHost, rate: u32, header: Vec<u8>, manual: bool) -> Result<Option<String>, ()> {
+pub(crate) fn live(wire: &'static Wire, pass: PassFor, host: &dyn RadioHost, rate: u32, header: Vec<u8>, manual: bool) -> Result<Option<String>, Failed> {
     // what goes first on every connection: a recording's header, for a service that wants one
     let header: Vec<Vec<u8>> = if wire.header { vec![header] } else { Vec::new() };
     let request = random_hex(16);
     // The pass is asked for and the connection opened on a thread of their own, while the microphone is already
     // being read here: he does not wait for either before he can talk.
     let opening = connect(wire, &pass, &request);
-    let mut stream = Stream { wire, pass, host, waiting: VecDeque::from(header.clone()), header, request, opening, socket: None, kept: Vec::new(), ended: false, shown: String::new(), partial: None };
+    let mut stream = Stream { wire, pass, host, waiting: VecDeque::from(header.clone()), header_unsent: header.len(), header, request, opening, socket: None, kept: Vec::new(), ended: false, shown: String::new(), partial: None, refused: None };
+    let heard = listen(&mut stream, wire, host, rate, manual);
+    heard.map_err(|()| Failed { why: stream.refused.take() })
+}
+
+/// The listening itself, on a stream made ready.
+fn listen(stream: &mut Stream, wire: &'static Wire, host: &dyn RadioHost, rate: u32, manual: bool) -> Result<Option<String>, ()> {
     let mut end = Endpointer::new(rate);
     // a microphone he left open is closed for him after this long: what he said is kept, and nothing is sent
     let began = Instant::now();
@@ -109,7 +125,11 @@ pub(crate) fn live(wire: &'static Wire, pass: Arc<dyn Fn() -> Option<Pass> + Sen
         }
         let sending = manual || end.speaking;
         stream.keep(bytes, sending);
-        stream.connected()?;
+        if !stream.connected()? {
+            // what was heard before it went is what he said: he is told the rest was not heard
+            host.told(BROKE_OFF.into());
+            break;
+        }
         if sending {
             stream.send()?;
         }
@@ -137,13 +157,19 @@ pub(crate) fn live(wire: &'static Wire, pass: Arc<dyn Fn() -> Option<Pass> + Sen
     stream.finish()
 }
 
+/// What he is told when the listening service went partway through and could not be reached again.
+const BROKE_OFF: &str = "The listening service stopped partway. What it heard before that is sent.";
+
+/// A connection, or why there is none: the service's reason when it would not give a pass.
+type Opened = Result<Socket, Option<String>>;
+
 /// The pass asked for and the connection opened, on a thread of their own.
-fn connect(wire: &'static Wire, pass: &Arc<dyn Fn() -> Option<Pass> + Send + Sync>, request: &str) -> Receiver<Result<Socket, ()>> {
+fn connect(wire: &'static Wire, pass: &PassFor, request: &str) -> Receiver<Opened> {
     let (tx, rx) = channel();
     let (pass, request) = (pass.clone(), request.to_string());
     thread::spawn(move || {
-        // with no pass to be had there is nothing to connect with
-        tx.send(pass().ok_or(()).and_then(|grant| (wire.connect)(&grant, &request))).ok();
+        // with no pass to be had there is nothing to connect with, and the service's reason is kept
+        tx.send(pass().map_err(Some).and_then(|grant| (wire.connect)(&grant, &request).map_err(|()| None))).ok();
     });
     rx
 }
@@ -152,12 +178,14 @@ fn connect(wire: &'static Wire, pass: &Arc<dyn Fn() -> Option<Pass> + Send + Syn
 /// has been heard so far.
 struct Stream<'a> {
     wire: &'static Wire,
-    pass: Arc<dyn Fn() -> Option<Pass> + Send + Sync>,
+    pass: PassFor,
     host: &'a dyn RadioHost,
     /// What goes first on every connection.
     header: Vec<Vec<u8>>,
+    /// How many of the pieces at the front of `waiting` are the header, not yet sent on this connection.
+    header_unsent: usize,
     request: String,
-    opening: Receiver<Result<Socket, ()>>,
+    opening: Receiver<Opened>,
     socket: Option<Socket>,
     /// Audio from just before he was judged to be speaking, and whatever is said before the connection is up.
     waiting: VecDeque<Vec<u8>>,
@@ -167,20 +195,36 @@ struct Stream<'a> {
     shown: String,
     /// The stretch it had not finished yet, as it last said it, and how many finished ones there were then.
     partial: Option<(usize, String)>,
+    /// The service's reason for giving no pass, when that is why no connection was made.
+    refused: Option<String>,
 }
 
 impl Stream<'_> {
-    /// A new connection, under a new request, its header first.
+    /// A new connection, under a new request, its header first, then the sound the last one was never sent.
     fn reconnect(&mut self) {
         self.socket = None;
         self.request = random_hex(16);
         self.opening = connect(self.wire, &self.pass, &self.request);
-        self.waiting = VecDeque::from(self.header.clone());
+        let unsent = std::mem::take(&mut self.waiting).into_iter().skip(self.header_unsent);
+        self.waiting = self.header.iter().cloned().chain(unsent).collect();
+        self.header_unsent = self.header.len();
+    }
+
+    /// Send what waits, one piece at a time: a piece leaves the list only once it has gone, so what a failed
+    /// send did not get out is still there for the next connection.
+    fn send_waiting(&mut self) -> Result<(), ()> {
+        let Some(s) = self.socket.as_mut() else { return Ok(()) };
+        while let Some(chunk) = self.waiting.front() {
+            s.send((self.wire.audio)(&self.request, chunk)).map_err(|_| ())?;
+            self.waiting.pop_front();
+            self.header_unsent = self.header_unsent.saturating_sub(1);
+        }
+        Ok(())
     }
 
     /// Sound read from the microphone, kept until it can be sent.
     fn keep(&mut self, bytes: Vec<u8>, sending: bool) {
-        let lead = self.header.len();
+        let lead = self.header_unsent;
         self.waiting.push_back(bytes);
         // with no connection for a long while, the oldest sound goes: two minutes are kept
         while self.waiting.len() > 1200 {
@@ -194,26 +238,32 @@ impl Stream<'_> {
         }
     }
 
-    /// The connection, once it is up. Err when it failed with nothing heard yet. With something heard it is
-    /// kept, and the connection tried again.
-    fn connected(&mut self) -> Result<(), ()> {
+    /// The connection, once it is up: false when it could not be made. Err when it could not be made with
+    /// nothing heard yet. It is not dialled again at once: each try can cost a new pass, and one that just
+    /// failed is likely to fail again. A connection that was up and went is made again ([`Stream::reconnect`]).
+    fn connected(&mut self) -> Result<bool, ()> {
         if self.socket.is_none() {
             match self.opening.try_recv() {
                 Ok(Ok(s)) => self.socket = Some(s),
-                Ok(Err(())) if self.kept.is_empty() => return Err(()),
-                Ok(Err(())) => self.opening = connect(self.wire, &self.pass, &self.request),
+                Ok(Err(why)) if self.kept.is_empty() => {
+                    self.refused = why;
+                    return Err(());
+                }
+                Ok(Err(_)) => return Ok(false),
                 Err(_) => {}
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     /// What waits goes, and what has been heard comes back.
     fn send(&mut self) -> Result<(), ()> {
+        if self.socket.is_none() {
+            return Ok(());
+        }
+        let sent = self.send_waiting();
         let Some(s) = self.socket.as_mut() else { return Ok(()) };
-        let (wire, request) = (self.wire, &self.request);
-        let sent = self.waiting.drain(..).try_for_each(|chunk| s.send((wire.audio)(request, &chunk)).map_err(|_| ()));
-        match sent.and_then(|()| drain(wire, s, &mut self.kept, &mut self.ended)) {
+        match sent.and_then(|()| drain(self.wire, s, &mut self.kept, &mut self.ended)) {
             Ok(Some(now)) => self.tell(&now),
             Ok(None) => {}
             // the connection went with something heard: what it had not finished is kept as it last said it,
@@ -248,7 +298,7 @@ impl Stream<'_> {
 
     /// He has stopped: whatever was not sent yet goes now, then the end of the audio, then the last words come
     /// back. With something already heard, a failure at the very end loses only the last words, not all of them.
-    fn finish(mut self) -> Result<Option<String>, ()> {
+    fn finish(&mut self) -> Result<Option<String>, ()> {
         if self.last().is_err() && !self.salvage() {
             return Err(());
         }
@@ -259,7 +309,14 @@ impl Stream<'_> {
     fn last(&mut self) -> Result<(), ()> {
         let mut s = match self.socket.take() {
             Some(s) => s,
-            None => self.opening.recv_timeout(Duration::from_secs(12)).map_err(|_| ())??,
+            None => match self.opening.recv_timeout(Duration::from_secs(12)) {
+                Ok(Ok(s)) => s,
+                Ok(Err(why)) => {
+                    self.refused = why;
+                    return Err(());
+                }
+                Err(_) => return Err(()),
+            },
         };
         for chunk in self.waiting.drain(..) {
             s.send((self.wire.audio)(&self.request, &chunk)).map_err(|_| ())?;
@@ -341,8 +398,8 @@ mod tests {
     #[test]
     fn what_was_heard_is_kept_when_the_connection_goes() {
         let tape = Tape::of(&[], false);
-        let pass: Arc<dyn Fn() -> Option<Pass> + Send + Sync> = Arc::new(|| None);
-        let mut stream = Stream { wire: &NOWHERE, pass, host: &tape, waiting: VecDeque::new(), header: Vec::new(), request: String::new(), opening: channel().1, socket: None, kept: vec!["ship it".into()], ended: false, shown: String::new(), partial: None };
+        let pass: PassFor = Arc::new(|| Err(String::new()));
+        let mut stream = Stream { wire: &NOWHERE, pass, host: &tape, waiting: VecDeque::new(), header: Vec::new(), header_unsent: 0, request: String::new(), opening: channel().1, socket: None, kept: vec!["ship it".into()], ended: false, shown: String::new(), partial: None, refused: None };
         // the stretch it had not finished, as it last said it, is kept with the rest (audit 6, C-B4)
         stream.tell("and test");
         assert!(stream.salvage());
@@ -354,6 +411,41 @@ mod tests {
         assert_eq!(stream.kept, ["ship it", "and test", "again"]);
         // with the connection gone at the end, what was heard is what he said
         assert_eq!(stream.finish(), Ok(Some("ship it and test again".to_string())));
+    }
+
+    #[test]
+    fn a_service_that_gives_no_pass_is_told_by_its_own_reason_on_this_listening_alone() {
+        let tape = Tape::of(&[0u8; 32000], true);
+        let refused = live(&NOWHERE, Arc::new(|| Err("Scribe: that key is not valid.".to_string())), &tape, 16000, Vec::new(), true);
+        assert_eq!(refused, Err(Failed { why: Some("Scribe: that key is not valid.".into()) }));
+        // the next listening, whose pass was had and whose line failed, is not told the last one's reason (P-N9)
+        let grant = Pass { dialect: String::new(), token: String::new(), set: Default::default(), phrases: Vec::new(), by: serde_json::from_value(serde_json::json!({ "interface": "x" })).unwrap() };
+        let tape = Tape::of(&[0u8; 32000], true);
+        let failed = live(&NOWHERE, Arc::new(move || Ok(grant.clone())), &tape, 16000, Vec::new(), true);
+        assert_eq!(failed, Err(Failed { why: None }));
+    }
+
+    #[test]
+    fn sound_a_connection_was_never_sent_goes_on_the_next_one_after_its_header() {
+        let tape = Tape::of(&[], false);
+        let pass: PassFor = Arc::new(|| Err(String::new()));
+        let (h, a, b) = (vec![0u8], vec![1u8], vec![2u8]);
+        let mut stream = Stream { wire: &NOWHERE, pass, host: &tape, waiting: VecDeque::from([h.clone(), a.clone(), b.clone()]), header: vec![h.clone()], header_unsent: 1, request: String::new(), opening: channel().1, socket: None, kept: Vec::new(), ended: false, shown: String::new(), partial: None, refused: None };
+        // the header and the first piece went before the connection failed (C-B4)
+        stream.waiting.pop_front();
+        stream.header_unsent = 0;
+        stream.waiting.pop_front();
+        stream.reconnect();
+        assert_eq!(Vec::from(stream.waiting.clone()), [h.clone(), b.clone()]);
+        // failing again before the header went: it is not sent twice
+        stream.reconnect();
+        assert_eq!(Vec::from(stream.waiting.clone()), [h, b]);
+        // and what is kept while not speaking is trimmed behind the header, not into it
+        for _ in 0..10 {
+            stream.keep(a.clone(), false);
+        }
+        assert_eq!(stream.waiting.len(), 6);
+        assert_eq!(stream.waiting[0], [0u8]);
     }
 
     /// Against a real service, with a recording in place of the microphone. LISTEN_WITH is a provider's id in
@@ -379,7 +471,7 @@ mod tests {
         if std::env::var("WITHOUT_NAMES").is_err() {
             grant.phrases = vec!["airband".into(), "shop two".into()];
         }
-        let said = live(l.wire, Arc::new(move || Some(grant.clone())), &tape, 16000, crate::hears::wav_header(16000, None), std::env::var("MANUAL").is_ok())
+        let said = live(l.wire, Arc::new(move || Ok(grant.clone())), &tape, 16000, crate::hears::wav_header(16000, None), std::env::var("MANUAL").is_ok())
         .unwrap();
         println!("{:>5} ms  FINAL: {said:?} (the recording is {} ms long)", tape.began.elapsed().as_millis(), pcm.len() / 32);
         assert!(said.is_some_and(|s| !s.is_empty()));
