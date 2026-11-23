@@ -1,6 +1,5 @@
 //! The sessions Claude Code keeps a record of: which are open now, where their transcripts are, and the folders
 //! it has worked in.
-#![expect(clippy::disallowed_methods, reason = "lists, opens or removes files, or closes a channel, directly: to move to airband_io (audit 6)")]
 use super::*;
 
 /// Is the process a session's record names still that session? Its number alone could have been given to
@@ -39,7 +38,11 @@ pub(super) fn record(claude: &std::path::Path, pid: &str) -> Option<Value> {
 pub(super) fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> bool) -> Option<Vec<super::super::Open>> {
     let dir = claude.join(said("sessions"));
     let read = |path: &std::path::Path| airband_io::files::read_bytes(path).ok().flatten().and_then(|b| serde_json::from_slice::<Value>(&b).ok());
-    let files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir).ok()?.flatten().map(|f| f.path()).collect();
+    // no folder of records at all: Claude Code cannot say what is open
+    if !dir.is_dir() {
+        return None;
+    }
+    let files: Vec<std::path::PathBuf> = airband_io::files::entries(&dir).ok()?;
     let mut open = Vec::new();
     for path in files.iter().filter(|p| p.extension().is_some_and(|e| e == "json")) {
         let Some(v) = read(path) else { continue };
@@ -79,19 +82,19 @@ pub(super) fn transcript_of(claude: &std::path::Path, session: &str) -> Option<S
     if !super::file_safe(session) {
         return None;
     }
-    std::fs::read_dir(claude.join(said("projects"))).ok()?.flatten().map(|d| d.path().join(format!("{session}.jsonl"))).find(|p| p.is_file()).map(|p| p.display().to_string())
+    airband_io::files::entries(&claude.join(said("projects"))).ok()?.into_iter().map(|d| d.join(format!("{session}.jsonl"))).find(|p| p.is_file()).map(|p| p.display().to_string())
 }
 
 /// The folders Claude Code has had sessions in: it keeps a folder of transcripts for each, and a transcript
 /// says on its lines which folder the session was in. The newest transcript of each is asked, and only its
 /// first lines are read.
 pub(super) fn worked_in(claude: &std::path::Path) -> Vec<super::super::Worked> {
-    use std::io::BufRead;
-    let Ok(projects) = std::fs::read_dir(claude.join(said("projects"))) else { return Vec::new() };
-    let found = projects.flatten().filter_map(|project| {
-        let newest = std::fs::read_dir(project.path()).ok()?.flatten().map(|f| f.path()).filter(|p| p.extension().is_some_and(|e| e == "jsonl")).map(|p| (super::super::written(&p), p)).max_by_key(|(at, _)| *at)?;
-        let lines = std::io::BufReader::new(std::fs::File::open(&newest.1).ok()?).lines();
-        let folder = lines.take(40).map_while(Result::ok).find_map(|line| serde_json::from_str::<Value>(&line).ok()?["cwd"].as_str().filter(|c| !c.is_empty()).map(String::from))?;
+    let Ok(projects) = airband_io::files::entries(&claude.join(said("projects"))) else { return Vec::new() };
+    let found = projects.into_iter().filter_map(|project| {
+        // the newest by when each was last written, read as a time: one whose time cannot be read is not it
+        let newest = airband_io::files::entries(&project).ok()?.into_iter().filter(|p| p.extension().is_some_and(|e| e == "jsonl")).filter_map(|p| Some((super::super::written(&p)?, p))).max_by_key(|(at, _)| *at)?;
+        let lines = airband_io::files::first_lines(&newest.1, 40).ok()?;
+        let folder = lines.iter().find_map(|line| serde_json::from_str::<Value>(line).ok()?["cwd"].as_str().filter(|c| !c.is_empty()).map(String::from))?;
         Some(super::super::Worked { folder, at: newest.0 })
     });
     super::super::newest(found)

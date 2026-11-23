@@ -323,8 +323,8 @@ pub(crate) fn newest(found: impl IntoIterator<Item = Worked>) -> Vec<Worked> {
 }
 
 /// When a file was last written, in milliseconds since 1970.
-pub(crate) fn written(path: &std::path::Path) -> u64 {
-    std::fs::metadata(path).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0)
+pub(crate) fn written(path: &std::path::Path) -> Option<u64> {
+    crate::config::stamp_of(path).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64)
 }
 
 /// His words into a session of a tool's own, by that tool's way in. Blocks.
