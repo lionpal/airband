@@ -36,7 +36,7 @@ extension RadioModel {
     /// Send what he typed: to the message he picked if he picked one, else to whoever the desk and the tower
     /// work out from his words and where he is looking.
     /// Returns his words when nothing could take them yet, to put back where he typed them.
-    func send(_ text: String) -> String? {
+    @discardableResult func send(_ text: String) -> String? {
         let target = replyingTo
         replyingTo = nil
         // with nothing typed there is still something to send when files are attached: the core sends the files alone

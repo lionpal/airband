@@ -391,14 +391,14 @@ mod tests {
     use super::*;
 
     fn member(id: &str, state: AgentState, question: &str) -> DeskMember {
-        DeskMember { id: id.into(), callsign: id.into(), state, subagents: 0, doing: None, badge: id[..2].to_uppercase(), model: String::new(), effort: String::new(), number: String::new(), station: String::new(), held: true, terminal: false, ends: false, can_stop: false, move_to: Vec::new(), unread: 0, question: String::new(), question_id: question.into(), harness: "h".into(), tool_name: String::new() }
+        DeskMember { id: id.into(), callsign: id.into(), state, subagents: 0, doing: None, badge: id[..2].to_uppercase(), model: String::new(), effort: String::new(), number: String::new(), station: String::new(), held: true, terminal: false, ends: false, can_stop: false, move_to: Vec::new(), unread: 0, question: String::new(), question_id: question.into(), harness: "h".into(), tool_name: String::new(), take_over: false }
     }
     fn room(id: &str, members: Vec<DeskMember>) -> DeskRoom {
         let state = members.iter().map(|m| m.state).min_by_key(|s| CarState::of(*s)).unwrap_or(AgentState::Idle);
         DeskRoom { id: id.into(), name: id.into(), state, agents: members.len() as u32, subagents: 0, doing: None, members, colour: Some(1), unread: 0, working: false }
     }
     fn view(rooms: Vec<DeskRoom>, focus: Option<&str>) -> DeskView {
-        DeskView { paired: true, online: true, connecting: false, near: false, away: Vec::new(), feed: Vec::new(), rooms, unread: 0, several_computers: false, unread_elsewhere: 0, can_poke: false, quick: Vec::new(), sending: Vec::new(), takes: Vec::new(), stations: Vec::new(), colours: HashMap::new(), main_computer: None, choose_main: false, uploads: Vec::new(), asking: None, intents: Vec::new(), focus: DeskFocus { room: None, agent: focus.map(str::to_string) }, stoppable: Vec::new(), new_agent: NewAgentDefaults::default(), tools: Vec::new(), cannot_reach: "Can\u{2019}t reach your computer.".into() }
+        DeskView { paired: true, online: true, connecting: false, near: false, away: Vec::new(), feed: Vec::new(), rooms, unread: 0, several_computers: false, unread_elsewhere: 0, can_poke: false, quick: Vec::new(), sending: Vec::new(), takes: Vec::new(), stations: Vec::new(), colours: HashMap::new(), main_computer: None, choose_main: false, uploads: Vec::new(), asking: None, intents: Vec::new(), focus: DeskFocus { room: None, agent: focus.map(str::to_string) }, stoppable: Vec::new(), new_agent: NewAgentDefaults::default(), tools: Vec::new(), cannot_reach: "Can\u{2019}t reach your computer.".into(), no_way_in: None }
     }
     fn said(id: &str, agent: &str, at: u64) -> ChatMessage {
         ChatMessage { seq: at, id: id.into(), at, his: false, from: agent.into(), group: String::new(), team: String::new(), room: String::new(), to: Vec::new(), to_agents: Vec::new(), needs_you: false, fyi: false, unjudged: String::new(), stalled: false, text: format!("**{id}** said"), long: false, queued: false, seen: 0, options: Vec::new(), recommended: None, permission: false, pictures: Vec::new(), links: Vec::new(), agent: Some(agent.into()), station: String::new(), computer: String::new(), open: false, badge: String::new(), colour: None, read: None, own_session: false, answer_apart: false, not_read: String::new() }
