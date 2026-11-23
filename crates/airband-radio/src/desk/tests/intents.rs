@@ -233,11 +233,16 @@ fn a_computer_that_could_not_say_what_it_reads_with_is_asked_again_and_never_tol
 fn a_summary_choice_every_computer_refused_says_why_and_does_not_wait_for_good() {
     let dir = temp("all-no");
     let per = serde_json::json!({ station_id(&link(1)).as_str(): { "state": "refused", "reason": "Enter your API key." } });
-    let desk = desk_wanting(&dir, Vec::new(), wanted_haiku(per));
+    let desk = desk_wanting(&dir, vec![(link(1), tower("studio", true))], wanted_haiku(per));
+    // what a computer did counts only while it is paired (audit 7, P-N3)
+    let unpaired = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "anthropic").map(|c| c.state);
+    desk.set_links(vec![link(1)]);
     let state = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "anthropic").map(|c| c.state);
+    desk.stop();
     let _ = std::fs::remove_dir_all(&dir);
     // (audit 6, C-B2)
     assert_eq!(state, Some(ChoiceState::Failed { why: "Enter your API key.".into() }));
+    assert_eq!(unpaired, Some(ChoiceState::Waiting));
 }
 
 #[test]
@@ -274,6 +279,9 @@ fn the_main_computer_owed_the_choice_is_asked_once_what_it_reads_with() {
     assert!(all_answered(&desk, 1));
     let id = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "anthropic").map(|c| c.id).unwrap();
     let _ = desk.choose_for(ChoiceJob::Reads, id, None, HashMap::new(), false);
+    // what the desk asked when it first reached it is done with
+    assert!(until(|| studio.asked_on::<at::ReadsOffered>() >= 1));
+    thread::sleep(Duration::from_millis(200));
     let studio_id = desk.shared.state.lock().unwrap().computers[0].id();
     let epoch = desk.shared.state.lock().unwrap().computers[0].epoch;
     let (offered, sent) = (studio.asked_on::<at::ReadsOffered>(), studio.asked_on::<at::Reads>());
@@ -285,3 +293,4 @@ fn the_main_computer_owed_the_choice_is_asked_once_what_it_reads_with() {
     // the desk's own rounds may tell it too, meanwhile: each, like this one, asks once per choice it sends
     assert!(asked.1 >= 1 && asked.0 == asked.1, "{asked:?}");
 }
+

@@ -13,14 +13,10 @@ impl Desk {
     /// the system gave it. Every paired computer is told, now and whenever one is paired later. Call it each
     /// time the system gives the address; the same one again does nothing.
     pub fn set_push(&self, provider: PushService, token: String) {
-        let changed = {
-            let mut state = self.shared.state.lock().unwrap();
-            let (changed, lost) = state.intents.change(|i| i.want_push(PushTarget { provider, token }));
-            if let Some(lost) = lost {
-                self.shared.host.note(lost);
-            }
-            changed
-        };
+        let (changed, lost) = self.shared.state.lock().unwrap().intents.change(|i| i.want_push(PushTarget { provider, token }));
+        if let Some(lost) = lost {
+            self.shared.host.note(lost);
+        }
         if !changed {
             return;
         }
@@ -54,17 +50,26 @@ pub(super) fn tell_owed(shared: &Arc<Shared>, radio: &Arc<Radio>, station: &Stat
     tell_tools(shared, radio, station, epoch);
 }
 
-/// What `slot` wants, when that computer is still owed it on this connection: its rev and what is wanted.
-fn owed<T: Clone>(shared: &Shared, station: &StationId, epoch: u64, slot: fn(&Intents) -> &Option<Intent<T>>) -> Option<(u64, T)> {
+/// What `slot` wants, when that computer is still owed it on this connection and is not being sent it now: its
+/// rev and what is wanted. Asking and marking it as being sent are one step, so two rounds never send it
+/// twice; [`settle`] lets it go.
+pub(super) fn owed<T: Clone>(shared: &Shared, kind: IntentKind, station: &StationId, epoch: u64, slot: fn(&Intents) -> &Option<Intent<T>>) -> Option<(u64, T)> {
     let mut state = shared.state.lock().unwrap();
     state.live(station, epoch)?;
-    slot(&state.intents.now).as_ref().filter(|i| i.owed(station)).map(|i| (i.rev, i.wanted.clone()))
+    if state.telling.iter().any(|(k, s)| *k == kind && s == station) {
+        return None;
+    }
+    let owed = slot(&state.intents.now).as_ref().filter(|i| i.owed(station)).map(|i| (i.rev, i.wanted.clone()))?;
+    state.telling.push((kind, station.clone()));
+    Some(owed)
 }
 
-/// Keep what that computer did with `rev` of what `slot` wants. An answer to an older one changes nothing.
-fn settle<T, R>(shared: &Shared, station: &StationId, rev: u64, slot: fn(&mut Intents) -> &mut Option<Intent<T>>, reach: &Reach<R>) {
+/// Keep what that computer did with `rev` of what `slot` wants, and let it be sent again. An answer to an
+/// older one changes nothing.
+pub(super) fn settle<T, R>(shared: &Shared, kind: IntentKind, station: &StationId, rev: u64, slot: fn(&mut Intents) -> &mut Option<Intent<T>>, reach: &Reach<R>) {
     let lost = {
         let mut state = shared.state.lock().unwrap();
+        state.telling.retain(|(k, s)| !(*k == kind && s == station));
         state.intents.change(|i| if let Some(now) = slot(i).as_mut().filter(|n| n.rev == rev) { now.record(station, reach) }).1
     };
     if let Some(lost) = lost {
@@ -74,9 +79,9 @@ fn settle<T, R>(shared: &Shared, station: &StationId, rev: u64, slot: fn(&mut In
 
 /// Tell one computer where this device can be woken, if it has not taken it yet.
 pub(super) fn tell_push(shared: &Arc<Shared>, radio: &Arc<Radio>, station: &StationId, epoch: u64) {
-    let Some((rev, target)) = owed(shared, station, epoch, |i| &i.push) else { return };
+    let Some((rev, target)) = owed(shared, IntentKind::Push, station, epoch, |i| &i.push) else { return };
     let reach = Reach::of(radio.push_target(target.provider, &target.token));
-    settle(shared, station, rev, |i| &mut i.push, &reach);
+    settle(shared, IntentKind::Push, station, rev, |i| &mut i.push, &reach);
 }
 
 /// Tell one computer which coding tools he uses, if it has not taken them yet: a new agent he asks for without
@@ -91,7 +96,7 @@ pub(super) fn tell_tools(shared: &Arc<Shared>, radio: &Arc<Radio>, station: &Sta
     if let Some(lost) = lost {
         shared.host.note(lost);
     }
-    let Some((rev, tools)) = owed(shared, station, epoch, |i| &i.tools) else { return };
+    let Some((rev, tools)) = owed(shared, IntentKind::Tools, station, epoch, |i| &i.tools) else { return };
     let reach = Reach::of(radio.uses_tools(&tools));
-    settle(shared, station, rev, |i| &mut i.tools, &reach);
+    settle(shared, IntentKind::Tools, station, rev, |i| &mut i.tools, &reach);
 }

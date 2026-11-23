@@ -98,36 +98,58 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, session: Arc<Session>, store: Arc<
                     s.outbox.clone()
                 });
                 host.outbox(waiting, None);
-                match (e.retry(), next.stage) {
-                    // his computer has it, or the relay does: this was only asking after it
-                    (_, Stage::Taken) => {
-                        ask_at.insert(next.id.clone(), now + ASK_AGAIN);
-                    }
-                    (_, Stage::Left) => {
-                        ask_at.insert(next.id.clone(), now + ASK_AFTER_LEFT);
-                    }
-                    // it cannot be sent however often it is tried
-                    (Retry::Never, Stage::Trying) => {
+                match after_failure(e.retry(), next.stage) {
+                    AfterFailure::GiveUp => {
                         wait = 1;
                         gave_up(e.said());
                     }
-                    (Retry::Soon, Stage::Trying) => {
+                    AfterFailure::AskAfter(then) => {
+                        ask_at.insert(next.id.clone(), now + then);
+                    }
+                    AfterFailure::Soon => {
                         wake.wait_since(turn, Duration::from_secs(wait));
                         wait = (wait * 2).min(20);
                     }
-                    (Retry::Later, Stage::Trying) => wake.wait_since(turn, Duration::from_secs(60)),
+                    AfterFailure::Later => wake.wait_since(turn, Duration::from_secs(60)),
                 }
             }
         }
     }
 }
 
+/// What is done with a message after a try at it failed.
+#[derive(Debug, PartialEq)]
+enum AfterFailure {
+    /// It ends here, and he is told: it holds up nothing behind it.
+    GiveUp,
+    /// His computer has it, or the relay does: it is asked after again then.
+    AskAfter(Duration),
+    /// Tried again in a moment, a little later each time.
+    Soon,
+    /// Tried again in a minute.
+    Later,
+}
+
+/// By how the failure is to be retried and how far the message had got.
+fn after_failure(retry: Retry, stage: Stage) -> AfterFailure {
+    match (retry, stage) {
+        // it can never be sent or asked after, however often it is tried: one his computer took and then
+        // refuses for good (it no longer knows this phone, it says it is too old) ends too
+        (Retry::Never, _) => AfterFailure::GiveUp,
+        (_, Stage::Taken) => AfterFailure::AskAfter(ASK_AGAIN),
+        (_, Stage::Left) => AfterFailure::AskAfter(ASK_AFTER_LEFT),
+        (Retry::Soon, Stage::Trying) => AfterFailure::Soon,
+        (Retry::Later, Stage::Trying) => AfterFailure::Later,
+    }
+}
+
 /// It is not tried any more, and why: it stays in the list for him to send again or let go, and he is told.
 fn fail(store: &Store, host: &dyn RadioHost, id: &str, why: String) {
     let (text, waiting) = store.change(|s| {
+        // quoted as he saw it
         let text = s.outbox.iter_mut().find(|o| o.id == id).map(|o| {
             o.failed = Some(why.clone());
-            o.text.clone()
+            o.shown()
         });
         (text, s.outbox.clone())
     });
@@ -189,6 +211,26 @@ fn expired(trail: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_message_his_computer_took_and_then_refuses_for_good_ends_and_holds_up_nothing() {
+        // (audit 8, M6)
+        assert_eq!(after_failure(Retry::Never, Stage::Taken), AfterFailure::GiveUp);
+        assert_eq!(after_failure(Retry::Never, Stage::Left), AfterFailure::GiveUp);
+        assert_eq!(after_failure(Retry::Never, Stage::Trying), AfterFailure::GiveUp);
+        assert_eq!(after_failure(Retry::Soon, Stage::Taken), AfterFailure::AskAfter(ASK_AGAIN));
+        assert_eq!(after_failure(Retry::Later, Stage::Left), AfterFailure::AskAfter(ASK_AFTER_LEFT));
+        assert_eq!(LinkError::Refused(airband_core::radio::wire::Refusal::NotPaired).retry(), Retry::Never);
+    }
+
+    #[test]
+    fn a_quick_message_is_quoted_by_the_words_he_saw() {
+        // (audit 7, P-N4)
+        let mut o = Outgoing::new("a".into(), "Keep going with what you planned, and say when it is done.".into(), None, None, Some("Keep going".into()), Vec::new(), Vec::new());
+        assert_eq!(o.shown(), "Keep going");
+        o.label = None;
+        assert!(o.shown().starts_with("Keep going with"));
+    }
 
     #[test]
     fn a_try_is_told_a_sentence_for_each_way_it_failed() {

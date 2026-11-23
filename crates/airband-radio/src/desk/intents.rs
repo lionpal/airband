@@ -19,6 +19,9 @@ pub(crate) enum Delivery {
     /// It said no, or could not take it, with why in words for him. Not asked again until what is wanted
     /// changes.
     Refused { reason: String },
+    /// It could not be sent it as things are (it needs a key that neither it nor this phone has), with why in
+    /// words for him. Shown as a no, and tried again whenever it is reached, since that may have changed.
+    Held { reason: String },
 }
 
 /// Something every computer is to have, with how each stands with it, by the computer's id. A computer not
@@ -40,25 +43,28 @@ impl<T> Intent<T> {
     }
     /// That computer has not answered it yet: it is still to be sent.
     pub(crate) fn owed(&self, computer: &StationId) -> bool {
-        matches!(self.per.get(computer), None | Some(Delivery::Pending))
+        matches!(self.per.get(computer), None | Some(Delivery::Pending | Delivery::Held { .. }))
     }
     /// Keep what that computer did with it.
     pub(crate) fn record<R>(&mut self, computer: &StationId, reach: &Reach<R>) {
         let now = match reach {
             Reach::Done(_) => Delivery::Done,
             Reach::Unreachable => Delivery::Pending,
-            Reach::Refused(why) | Reach::Skipped(why) => Delivery::Refused { reason: why.clone() },
+            Reach::Refused(why) => Delivery::Refused { reason: why.clone() },
+            Reach::Skipped(why) => Delivery::Held { reason: why.clone() },
         };
         self.per.insert(computer.clone(), now);
     }
-    /// How it stands as a whole: taken by one computer at least, still waiting on one, or refused by every
-    /// computer it was put to, with each one's why.
-    pub(crate) fn standing(&self) -> Standing {
-        if self.per.values().any(|d| *d == Delivery::Done) {
+    /// How it stands as a whole among the computers paired now (`paired`, by id): taken by one at least, still
+    /// waiting on one, or refused by every one it was put to, with each one's why. What a computer since
+    /// unpaired did counts for nothing.
+    pub(crate) fn standing(&self, paired: &[StationId]) -> Standing {
+        let per: Vec<&Delivery> = self.per.iter().filter(|(c, _)| paired.contains(c)).map(|(_, d)| d).collect();
+        if per.iter().any(|d| **d == Delivery::Done) {
             return Standing::Taken;
         }
-        let refused: Vec<String> = self.per.values().filter_map(|d| match d { Delivery::Refused { reason } => Some(reason.clone()), _ => None }).collect();
-        if self.per.is_empty() || refused.len() < self.per.len() { Standing::Waiting } else { Standing::Refused(refused) }
+        let refused: Vec<String> = per.iter().filter_map(|d| match d { Delivery::Refused { reason } | Delivery::Held { reason } => Some(reason.clone()), _ => None }).collect();
+        if per.is_empty() || refused.len() < per.len() { Standing::Waiting } else { Standing::Refused(refused) }
     }
 }
 
@@ -99,6 +105,25 @@ impl Intents {
     }
 }
 
+impl crate::kept::Rejoin for Intents {
+    /// What was wanted since the file could not be read is what is wanted now, after anything the file
+    /// held, so an answer to the file's older one changes nothing; the answers it has had are kept.
+    fn rejoin(&mut self, since: Intents) {
+        fn slot<T: PartialEq>(found: &mut Option<Intent<T>>, since: Option<Intent<T>>) {
+            let Some(mut since) = since else { return };
+            match found {
+                Some(kept) if kept.wanted == since.wanted => kept.per.extend(since.per),
+                _ => {
+                    since.rev = since.rev.max(found.as_ref().map_or(0, |f| f.rev)) + 1;
+                    *found = Some(since);
+                }
+            }
+        }
+        slot(&mut self.push, since.push);
+        slot(&mut self.tools, since.tools);
+    }
+}
+
 /// The intents, as this device keeps them (`intents.json`). Kept nowhere in a test with no folder.
 #[derive(Default)]
 pub(crate) struct KeptIntents {
@@ -134,10 +159,47 @@ pub(super) fn lines<T>(intent: &Intent<T>, state: &State) -> Vec<DeskReachLine> 
             let id = c.id();
             let state_now = match intent.per.get(&id) {
                 Some(Delivery::Done) => return None,
-                Some(Delivery::Refused { reason }) => DeskDelivery::Refused { reason: reason.clone() },
+                Some(Delivery::Refused { reason } | Delivery::Held { reason }) => DeskDelivery::Refused { reason: reason.clone() },
                 Some(Delivery::Pending) | None => DeskDelivery::Waiting,
             };
             Some(DeskReachLine { computer: id.to_string(), name: state.computer_name(&id), state: state_now })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kept::Rejoin;
+
+    #[test]
+    fn what_was_wanted_while_the_file_could_not_be_read_is_what_is_wanted() {
+        // (audit 8, M4)
+        let target = |t: &str| PushTarget { provider: airband_core::relay::PushService::Apns, token: t.into() };
+        let mut found = Intents { push: Some(Intent { rev: 5, wanted: target("old"), per: BTreeMap::new() }), tools: Some(Intent { rev: 2, wanted: vec!["codex".into()], per: BTreeMap::from([(StationId::new("a"), Delivery::Done)]) }) };
+        let since = Intents { push: Some(Intent::after(None, target("new"))), tools: Some(Intent { rev: 1, wanted: vec!["codex".into()], per: BTreeMap::from([(StationId::new("b"), Delivery::Done)]) }) };
+        found.rejoin(since);
+        let push = found.push.unwrap();
+        assert_eq!((push.wanted.token.as_str(), push.rev), ("new", 6), "an answer to the file's older one would count for the new one");
+        let tools = found.tools.unwrap();
+        assert_eq!((tools.rev, tools.per.len()), (2, 2));
+    }
+
+    #[test]
+    fn only_computers_paired_now_count_and_one_that_needed_a_key_is_asked_again() {
+        let (a, b) = (StationId::new("a"), StationId::new("b"));
+        let mut i = Intent::after(None, ());
+        i.record::<()>(&a, &Reach::Done(()));
+        i.record::<()>(&b, &Reach::Refused("No.".into()));
+        // (audit 7, P-N3) a computer since unpaired that took it does not make it taken
+        assert_eq!(i.standing(&[b.clone()]), Standing::Refused(vec!["No.".into()]));
+        assert_eq!(i.standing(&[a.clone(), b.clone()]), Standing::Taken);
+        assert_eq!(i.standing(&[]), Standing::Waiting);
+        // (audit 7, P-N8) one that could not be sent it for want of a key shows why, and is tried again
+        i.record::<()>(&b, &Reach::Skipped("Enter your key.".into()));
+        assert!(i.owed(&b));
+        assert_eq!(i.standing(&[b.clone()]), Standing::Refused(vec!["Enter your key.".into()]));
+        i.record::<()>(&b, &Reach::Refused("No.".into()));
+        assert!(!i.owed(&b));
+    }
 }

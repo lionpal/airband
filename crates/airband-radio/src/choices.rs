@@ -185,10 +185,12 @@ impl Chooser {
     /// Change what is kept, and keep it. Err when it could not be kept: it holds until the app closes.
     fn change(&self, with: impl FnOnce(&mut Saved)) -> Result<(), RadioError> {
         let mut saved = self.saved.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(found) = self.keeper.read_again::<Option<Saved>>() {
-            *saved = found.flatten().unwrap_or_else(|| Saved::fresh(&self.device));
-        }
+        crate::kept::again_as::<Option<Saved>, Saved>(&self.keeper, &mut saved, |found| found.flatten().unwrap_or_else(|| Saved::fresh(&self.device)));
+        let before = saved.clone();
         with(&mut saved);
+        let mut touched = saved.touched;
+        touched.add(&before, &saved);
+        saved.touched = touched;
         crate::kept::said(self.keeper.save(&*saved)).map_err(|why| told(format!("{why} It holds until the app closes.")))
     }
 
@@ -255,7 +257,7 @@ impl Chooser {
         self.working.lock().unwrap_or_else(|e| e.into_inner()).clone().map(|w| (w.job, w.id, w.label, w.fetching.then(|| crate::models::local_model_progress() as f64 / 100.0)))
     }
 
-    fn choices(&self, job: ChoiceJob, host: &dyn DeskHost, senses: &Senses) -> Vec<Choice> {
+    fn choices(&self, job: ChoiceJob, host: &dyn DeskHost, senses: &Senses, paired: &[StationId]) -> Vec<Choice> {
         let saved = self.saved();
         let facts = Facts {
             models: crate::models::models(&self.device).collect(),
@@ -271,6 +273,7 @@ impl Chooser {
                 (ChoiceJob::Ears, Some((of, took))) => format!("Last heard {of:.1} s of speech in {took:.2} s"),
                 _ => String::new(),
             },
+            paired,
         };
         list(job, &saved, &facts)
     }
@@ -317,7 +320,7 @@ mod tests {
     use super::*;
 
     fn facts<'a>(here: &'a dyn Fn(&Model) -> (bool, bool), has_key: &'a dyn Fn(&str) -> bool) -> Facts<'a> {
-        Facts { models: crate::models::models(&phone()).collect(), here, has_key, failed: None, work: None, note: String::new() }
+        Facts { models: crate::models::models(&phone()).collect(), here, has_key, failed: None, work: None, note: String::new(), paired: &[] }
     }
     /// A phone whose host runs every engine the catalogue names.
     fn phone() -> HostDevice {

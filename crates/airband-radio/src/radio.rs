@@ -300,6 +300,12 @@ impl Radio {
     /// it. Keeps its own place, on the device, so nothing is fetched twice or missed between launches.
     /// Blocks: call it in a loop off the main thread.
     pub fn follow(&self, wait_seconds: u32) -> Result<ChatFeed, RadioError> {
+        self.followed(wait_seconds).map_err(Into::into)
+    }
+
+    /// The same, with what went wrong as it was: the desk tells a computer that refuses this phone from one
+    /// it cannot reach.
+    pub(crate) fn followed(&self, wait_seconds: u32) -> Result<ChatFeed, LinkError> {
         let (after, since) = {
             let saved = self.store.saved.lock().unwrap();
             (saved.after, saved.rev)

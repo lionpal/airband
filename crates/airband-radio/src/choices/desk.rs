@@ -21,7 +21,8 @@ impl Desk {
     /// Everything he can choose for a job, in the order to show it, each with how it stands. Cheap: nothing
     /// is asked of a network.
     pub fn choices(&self, job: ChoiceJob) -> Vec<Choice> {
-        self.shared.chooser.choices(job, &*self.shared.host, &self.shared.senses)
+        let paired: Vec<StationId> = self.shared.state.lock().unwrap().computers.iter().map(|c| c.id()).collect();
+        self.shared.chooser.choices(job, &*self.shared.host, &self.shared.senses, &paired)
     }
 
     /// What is chosen for a job, in a few words, for a row of a settings list.
@@ -116,6 +117,7 @@ impl Desk {
             // reached is sent it when it is, and the ones that took it keep it. It is kept after every computer
             // has it too, for a computer paired later.
             return done(chooser.change(|s| {
+                per.iter().for_each(|(c, r)| if let Reach::Done(o) = r { s.heard_from(c, o) });
                 let mut intent = Intent::after(s.reads.as_ref(), wanted.clone());
                 everyone.iter().for_each(|c| intent.record(c, per.get(c).unwrap_or(&Reach::Unreachable)));
                 s.reads = Some(intent);
@@ -269,10 +271,17 @@ pub(crate) fn tell_reads(shared: &Shared, station: &StationId, epoch: u64, ask_o
         (computer.radio.clone(), is_main)
     };
     let owed = chooser.saved().reads.filter(|i| i.owed(station));
-    if owed.is_none() && !(ask_offered && is_main) {
+    if owed.is_none() && !ask_offered {
         return;
     }
+    // what the main computer said can read is taken only if nothing newer was kept while this was asked
+    let asked_at = chooser.saved().offered;
     let asked = radio.reads_offered();
+    if let Ok(offered) = &asked
+        && let Err(e) = chooser.change(|s| s.heard_from(station, offered))
+    {
+        shared.host.note(e.said());
+    }
     let offered = match (owed, asked) {
         (Some(intent), Ok(offered)) => {
             let phone_key = kept_key(&*shared.host, &intent.wanted.id);
@@ -317,7 +326,11 @@ pub(crate) fn tell_reads(shared: &Shared, station: &StationId, epoch: u64, ask_o
     };
     if is_main
         && still_main()
-        && let Err(e) = chooser.change(|s| s.offered = Some(offered))
+        && let Err(e) = chooser.change(|s| {
+            if s.offered == asked_at {
+                s.offered = Some(offered);
+            }
+        })
     {
         shared.host.note(e.said());
     }

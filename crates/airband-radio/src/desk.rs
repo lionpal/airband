@@ -101,6 +101,9 @@ pub(crate) struct Computer {
     epoch: u64,
     name: String,
     pub(crate) online: bool,
+    /// It answered, and the answer was that it will not talk to this phone as things are (another version of
+    /// airband, or it no longer knows this phone): what he is to do, in words for him. Nothing while it talks.
+    refused: Option<String>,
     /// It has been asked at least once and has answered or failed.
     tried: bool,
     /// When it last answered, and how many times in a row it has not since.
@@ -177,6 +180,8 @@ pub(crate) struct State {
     pub(crate) colours: Colours,
     /// What every computer is to be told about this device, with how each stands with it.
     pub(crate) intents: intents::KeptIntents,
+    /// What is being sent to which computer now, so the same is never sent to it twice at once.
+    pub(crate) telling: Vec<(IntentKind, StationId)>,
     read: ReadMarks,
     /// What he is looking at: kept here so it stays valid as teams come and go ([`Desk::look`]).
     focus: Focus,
@@ -264,7 +269,7 @@ impl State {
         match self.computers.as_slice() {
             [] => None,
             [only] => Some(only),
-            _ => self.read.main.as_ref().and_then(|id| self.computer(id)),
+            _ => self.read.marks.main.as_ref().and_then(|id| self.computer(id)),
         }
     }
     /// A room on his screen ([`DeskRoom::id`]): the radio of the computer that has it, the team's id there,
@@ -407,6 +412,7 @@ impl Desk {
                 epoch,
                 name,
                 online: false,
+                refused: None,
                 tried: false,
                 answered_at: None,
                 fails: 0,

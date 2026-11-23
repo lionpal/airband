@@ -14,6 +14,8 @@ pub(super) struct Facts<'a> {
     pub(super) failed: Option<String>,
     pub(super) work: Option<(String, String, Option<f64>)>,
     pub(super) note: String,
+    /// The computers paired now, by id.
+    pub(super) paired: &'a [StationId],
 }
 
 pub(super) fn megabytes(m: &Model) -> u32 {
@@ -39,7 +41,7 @@ pub(super) fn service_id(provider: &str, offer: &str) -> String {
 pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> {
     let working = |id: &str| facts.work.as_ref().filter(|w| w.0 == id).map(|w| ChoiceState::Working { label: w.1.clone(), fraction: w.2 });
     let of_service = |s: Service, chosen: bool, has_key: bool, voice: String, state: ChoiceState| Choice {
-        line: line(&s, has_key && chosen),
+        line: line(&s, has_key),
         id: service_id(&s.kind, &s.offer),
         place: ChoicePlace::Service,
         provider: s.kind,
@@ -84,10 +86,11 @@ pub(super) fn list(job: ChoiceJob, saved: &Saved, facts: &Facts) -> Vec<Choice> 
             .chain(rest)
             .map(|(s, there)| {
                 let is = chosen.as_ref().is_some_and(|c| c.provider == s.kind && c.offer == s.offer);
-                let has_key = there || (facts.has_key)(&s.kind);
+                // he is asked for a key only when some paired computer has said it has none of its own
+                let has_key = (facts.has_key)(&s.kind) || (there && !saved.key_wanted(facts.paired, &s.kind));
                 let state = working(&service_id(&s.kind, &s.offer)).unwrap_or(match () {
                     // no computer has it yet: it waits, or every computer it was put to said no, and why
-                    _ if is && let Some(w) = &saved.reads && w.standing() != Standing::Taken => match w.standing() {
+                    _ if is && let Some(w) = &saved.reads && w.standing(facts.paired) != Standing::Taken => match w.standing(facts.paired) {
                         Standing::Refused(why) => ChoiceState::Failed { why: why.join(" ") },
                         _ => ChoiceState::Waiting,
                     },

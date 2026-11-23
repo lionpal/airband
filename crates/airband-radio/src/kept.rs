@@ -30,12 +30,28 @@ fn damaged(loaded: &Loaded, what: &str) -> Option<String> {
     }
 }
 
-/// A file that could not be read when it was opened, read again now that it may be: what it holds replaces
-/// `value` (the default when it has gone), so the change about to be made is made to it and nothing kept is
-/// written over. Called before each change of a bare [`Keeper`]'s value.
-pub(crate) fn again<T: DeserializeOwned + Default>(keeper: &Keeper, value: &mut T) {
-    if let Some(found) = keeper.read_again::<T>() {
-        *value = found.unwrap_or_default();
+/// How a kept value takes back what its file held once the file can be read again: `self` is what the file
+/// holds, `since` what was changed in memory while it could not be read. The one policy for every file the
+/// phone keeps: what the file held is taken, and nothing changed meanwhile is lost; each kind says how the
+/// two are put together.
+pub(crate) trait Rejoin: Default {
+    fn rejoin(&mut self, since: Self);
+}
+
+/// A file that could not be read when it was opened, read again now that it may be: what it holds is taken,
+/// with what changed meanwhile joined to it ([`Rejoin`]), so the change about to be made is made to both and
+/// nothing is written over. Called before each change of a bare [`Keeper`]'s value.
+pub(crate) fn again<T: DeserializeOwned + Rejoin>(keeper: &Keeper, value: &mut T) {
+    again_as::<T, T>(keeper, value, Option::unwrap_or_default);
+}
+
+/// The same, for a file kept as `F` and held as `T`: `read` makes what the file holds (nothing when it has
+/// gone) into the value it is held as.
+pub(crate) fn again_as<F: DeserializeOwned, T: Rejoin>(keeper: &Keeper, value: &mut T, read: impl FnOnce(Option<F>) -> T) {
+    if let Some(found) = keeper.read_again::<F>() {
+        let since = std::mem::take(value);
+        *value = read(found);
+        value.rejoin(since);
     }
 }
 

@@ -171,10 +171,7 @@ impl Link {
     fn keep(&self, line: Line) {
         let mut trail = self.trail.lines.lock().unwrap();
         // a file that could not be read when the app opened: once it can be, its lines come first
-        if let Some(Some(found)) = self.trail.keeper.read_again::<std::collections::VecDeque<Line>>() {
-            let since = std::mem::replace(&mut *trail, found);
-            trail.extend(since);
-        }
+        crate::kept::again(&self.trail.keeper, &mut *trail);
         trail.push_back(line);
         while trail.len() > TRAIL {
             trail.pop_front();

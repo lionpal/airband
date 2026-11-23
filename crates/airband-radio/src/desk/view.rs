@@ -6,8 +6,17 @@ const FEED_SHOWN: usize = 80;
 /// What he has read: for each agent, by its id, the time of the last thing it said that was on screen in
 /// front of him. Kept on the device in one small file, so it holds across launches. Something said after that
 /// time is unread, wherever he is looking now.
-#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub(super) struct ReadMarks {
+    pub(super) marks: Marks,
+    keeper: airband_io::kept::Keeper,
+    /// What he is to be told about the file when the desk opens: it could not be read.
+    pub(super) opened: Option<String>,
+}
+
+/// What `read.json` holds.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+pub(super) struct Marks {
     /// When this device began keeping count: what an agent said before then is not counted against him.
     pub(super) since: u64,
     pub(super) upto: HashMap<String, u64>,
@@ -15,36 +24,42 @@ pub(super) struct ReadMarks {
     /// computer they are for, by its [`DeskComputer::id`]. It works out who they are for and passes them on.
     #[serde(default)]
     pub(super) main: Option<StationId>,
-    #[serde(skip)]
-    keeper: airband_io::kept::Keeper,
-    /// What he is to be told about the file when the desk opens: it could not be read.
-    #[serde(skip)]
-    pub(super) opened: Option<String>,
 }
+
+impl Marks {
+    /// A device that has kept no count yet: it begins now.
+    fn begun() -> Marks {
+        Marks { since: airband_core::clock::now_ms(), ..Marks::default() }
+    }
+}
+
+impl crate::kept::Rejoin for Marks {
+    /// What was read since is kept over what the file held, and so is a main computer chosen since.
+    fn rejoin(&mut self, since: Marks) {
+        for (agent, at) in since.upto {
+            let mine = self.upto.entry(agent).or_insert(at);
+            *mine = (*mine).max(at);
+        }
+        self.since = self.since.min(since.since);
+        if since.main.is_some() {
+            self.main = since.main;
+        }
+    }
+}
+
 impl ReadMarks {
     pub(super) fn load(dir: &str) -> Self {
-        let (kept, keeper, opened) = crate::kept::open::<Option<ReadMarks>>(crate::kept::file(dir, "read.json"), "What you have read, and your default computer,");
-        ReadMarks { keeper, opened, ..kept.unwrap_or_else(|| ReadMarks { since: airband_core::clock::now_ms(), ..ReadMarks::default() }) }
+        let (kept, keeper, opened) = crate::kept::open::<Option<Marks>>(crate::kept::file(dir, "read.json"), "What you have read, and your default computer,");
+        ReadMarks { marks: kept.unwrap_or_else(Marks::begun), keeper, opened }
     }
     /// Keep them on the device. The words to tell him when they could not be kept.
     #[must_use]
     pub(super) fn keep(&mut self) -> Option<String> {
-        // the file could not be read when the app opened: once it can be, what it holds is taken, with what
-        // was read since and a main computer chosen since kept over it
-        if let Some(Some(Some(found))) = self.keeper.read_again::<Option<ReadMarks>>() {
-            for (agent, at) in found.upto {
-                let mine = self.upto.entry(agent).or_insert(at);
-                *mine = (*mine).max(at);
-            }
-            self.since = self.since.min(found.since);
-            if self.main.is_none() {
-                self.main = found.main;
-            }
-        }
-        crate::kept::told(self.keeper.save(self), "What you have read, and your main computer, are not kept if the app closes.")
+        crate::kept::again_as::<Option<Marks>, Marks>(&self.keeper, &mut self.marks, |found| found.flatten().unwrap_or_else(Marks::begun));
+        crate::kept::told(self.keeper.save(&self.marks), "What you have read, and your main computer, are not kept if the app closes.")
     }
     pub(super) fn unread(&self, m: &ChatMessage) -> bool {
-        !m.his && !m.fyi && m.at > self.upto.get(m.agent.as_deref().unwrap_or_default()).copied().unwrap_or(self.since)
+        !m.his && !m.fyi && m.at > self.marks.upto.get(m.agent.as_deref().unwrap_or_default()).copied().unwrap_or(self.marks.since)
     }
 }
 #[uniffi::export]
@@ -54,7 +69,7 @@ impl Desk {
     pub fn set_main_computer(&self, computer: String) {
         let lost = {
             let mut state = self.shared.state.lock().unwrap();
-            state.read.main = Some(StationId::new(computer));
+            state.read.marks.main = Some(StationId::new(computer));
             state.read.keep()
         };
         if let Some(lost) = lost {
@@ -89,7 +104,7 @@ impl Desk {
             let mut moved = false;
             for m in all.iter().filter(|m| room.as_ref().is_none_or(|r| m.room == *r) && agent.as_ref().is_none_or(|a| m.agent.as_ref() == Some(a))) {
                 if state.read.unread(m) {
-                    state.read.upto.insert(m.agent.clone().unwrap_or_default(), m.at);
+                    state.read.marks.upto.insert(m.agent.clone().unwrap_or_default(), m.at);
                     moved = true;
                 }
             }
@@ -137,7 +152,7 @@ impl Desk {
             focus: DeskFocus { room: room.clone(), agent: agent.clone() },
             new_agent: NewAgentDefaults { computer: (state.computers.len() == 1).then(|| state.computers[0].id().to_string()), tool: (used.len() == 1).then(|| used[0].clone()) },
             tools: used,
-            cannot_reach: if away.is_empty() { crate::UNREACHED.to_string() } else { format!("Can\u{2019}t reach {}.", away.join(", ")) },
+            cannot_reach: cannot_reach(&state),
             colours: state.colours.all(),
             paired: !state.computers.is_empty(),
             online: state.computers.iter().any(|s| s.online),
@@ -223,6 +238,20 @@ fn sending(state: &State) -> Vec<DeskOutgoing> {
         .collect()
 }
 
+/// What he is told of the computers that cannot be talked to: each that refuses this phone by what it said,
+/// and the ones that do not answer as out of reach.
+fn cannot_reach(state: &State) -> String {
+    let several = state.computers.len() > 1;
+    let refusing: Vec<String> = state.computers.iter().filter(|c| c.tried && !c.online).filter_map(|c| c.refused.as_ref().map(|why| if several { format!("{}: {why}", state.computer_name(&c.id())) } else { why.clone() })).collect();
+    let silent: Vec<String> = state.computers.iter().filter(|c| c.tried && !c.online && c.refused.is_none()).map(|c| state.computer_name(&c.id())).collect();
+    let silent = match (several, silent.is_empty()) {
+        (_, true) if !refusing.is_empty() => None,
+        (true, false) => Some(format!("Can\u{2019}t reach {}.", silent.join(", "))),
+        _ => Some(crate::UNREACHED.to_string()),
+    };
+    refusing.into_iter().chain(silent).collect::<Vec<_>>().join(" ")
+}
+
 /// Who his words that reached no agent may be for: the tower's guesses first, in its order; then everyone
 /// else, whoever spoke last first.
 fn asked(state: &State, agents: &[&ChatAgent], asking: &Asking) -> DeskAsk {
@@ -231,7 +260,7 @@ fn asked(state: &State, agents: &[&ChatAgent], asking: &Asking) -> DeskAsk {
     rest.sort_by_key(|a| std::cmp::Reverse(spoke(a)));
     let guessed = asking.guesses.iter().filter_map(|id| agents.iter().copied().find(|a| a.id == *id));
     DeskAsk {
-        text: asking.message.label.clone().unwrap_or_else(|| asking.message.text.clone()),
+        text: asking.message.shown(),
         choices: guessed.chain(rest).take(8).map(|a| DeskChoice { id: a.id.clone(), callsign: a.callsign.clone(), badge: a.badge.clone(), colour: state.colour(&a.room) }).collect(),
     }
 }
