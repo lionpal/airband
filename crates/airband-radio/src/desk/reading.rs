@@ -23,8 +23,8 @@ impl Desk {
     pub fn full(&self, message_id: String) -> Result<String, RadioError> {
         self.radio_of(&message_id).ok_or_else(|| RadioError::gone("message"))?.more(message_id, true)
     }
-    /// Read a question to him before he answers it: who is asking, its short form, and the answers it offers,
-    /// in the voice he chose on this device. Blocks until it has been heard or [`Desk::stop_reading`] is
+    /// Read a message to him, a question before he answers it or the latest an agent said: who said it, its
+    /// short form, and the answers it offers, in the voice he chose on this device. Blocks until it has been heard or [`Desk::stop_reading`] is
     /// called. False when it was not read.
     pub fn read_question(&self, message_id: String) -> bool {
         self.radio_of(&message_id).is_some_and(|radio| radio.read_question(&message_id))
