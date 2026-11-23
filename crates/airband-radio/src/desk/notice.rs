@@ -27,6 +27,8 @@ pub struct OpenedNotice {
     pub options: Vec<String>,
     /// It asks permission: the buttons are Allow and Deny, and words of his own refuse it.
     pub permission: bool,
+    /// The buttons it carries, as a set the host has registered under a name of its own.
+    pub buttons: NoticeButtonSet,
     /// Who it is from, the same for every notice of that agent on that computer: the thread it is grouped in,
     /// and the sender the system groups it under.
     pub thread: String,
@@ -58,35 +60,107 @@ impl Tapped {
         }
     }
 }
+/// Which set of buttons a notification carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(rename_all = "kebab-case")]
+pub enum NoticeButtonSet {
+    /// Allow (with the phone unlocked), Deny, and a reply box.
+    Permit,
+    /// A request for leave shown by its opening: Deny and a reply box, and no Allow under part of a command.
+    /// He opens it to read all of it and allow it.
+    PermitAfterReading,
+    /// The question's own answers, and a reply box.
+    Answers,
+    /// A reply box alone.
+    Reply,
+}
+
+/// Why a notification could not be opened on this device. It is then shown as the push service delivered it,
+/// in the same few words for every notification, and this is kept in the connection record.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(rename_all = "kebab-case", tag = "why")]
+pub enum NoticeTrouble {
+    /// No pairing is kept on this device.
+    NoPairings,
+    /// The pairings could not be read where they are kept (the host's error code).
+    KeysUnreadable { status: i32 },
+    /// It carried nothing sealed, or what it carried is not base64.
+    NotSealed,
+    /// None of the pairings kept here opens it.
+    NoPairingOpensIt,
+    /// It opened, but is not a notification of this version's shape.
+    NotANotice,
+}
+
+impl std::fmt::Display for NoticeTrouble {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NoticeTrouble::NoPairings => f.write_str("no computer is paired on this phone"),
+            NoticeTrouble::KeysUnreadable { status } => write!(f, "the pairings could not be read (error {status})"),
+            NoticeTrouble::NotSealed => f.write_str("it carried nothing this phone can open"),
+            NoticeTrouble::NoPairingOpensIt => f.write_str("none of the computers paired here sent it"),
+            NoticeTrouble::NotANotice => f.write_str("it is from a different version of airband"),
+        }
+    }
+}
+
+/// What came of a notification on this device.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+#[expect(clippy::large_enum_variant, reason = "made once for each notification and handed to the host as it is")]
+pub enum NoticeOpening {
+    Opened { notice: OpenedNotice },
+    /// Shown as delivered, with why.
+    Plain { why: NoticeTrouble },
+}
+
 /// Open a sealed notification with whichever pairing sealed it. `links` are the pairing links the host keeps;
-/// `sealed` is the notification as the push service delivered it. Nothing when none of them opens it. This
-/// needs no desk: a host calls it from wherever its system hands it a notification. `colours` is each team's
-/// colour as [`DeskView::colours`] last gave it, from the copy the host keeps; a team not in it has none.
+/// `sealed` is the notification as the push service delivered it, if it carried one. Why not, when none of
+/// them opens it. This needs no desk: a host calls it from wherever its system hands it a notification.
+/// `colours` is each team's colour as [`DeskView::colours`] last gave it, from the copy the host keeps; a team
+/// not in it has none.
 #[uniffi::export]
-pub fn open_notice(links: Vec<String>, sealed: String, colours: std::collections::HashMap<String, u8>) -> Option<OpenedNotice> {
-    let sealed = airband_core::encode::unbase64(&sealed)?;
+pub fn open_notice(links: Vec<String>, sealed: Option<String>, colours: std::collections::HashMap<String, u8>) -> NoticeOpening {
+    match opened(links, sealed, colours) {
+        Ok(notice) => NoticeOpening::Opened { notice },
+        Err(why) => NoticeOpening::Plain { why },
+    }
+}
+
+fn opened(links: Vec<String>, sealed: Option<String>, colours: std::collections::HashMap<String, u8>) -> Result<OpenedNotice, NoticeTrouble> {
+    let sealed = sealed.and_then(|s| airband_core::encode::unbase64(&s)).ok_or(NoticeTrouble::NotSealed)?;
+    let keys: Vec<Keys> = links.iter().filter_map(|link| match Pairing::parse(link).ok()? {
+        Pairing::Relay { secret, .. } => Keys::derive(&secret).ok(),
+        _ => None,
+    }).collect();
+    if keys.is_empty() {
+        return Err(NoticeTrouble::NoPairings);
+    }
     let several = links.len() > 1;
-    links.iter().find_map(|link| {
-        let Pairing::Relay { secret, .. } = Pairing::parse(link).ok()? else { return None };
-        let keys = Keys::derive(&secret).ok()?;
-        let n: airband_core::radio::Notice = serde_json::from_slice(&keys.open(Direction::Push, &sealed).ok()?).ok()?;
-        let room = n.team.as_ref().map(|t| room_id(&StationId::new(keys.channel.as_str()), t.as_ref())).unwrap_or_default();
-        let agent = n.agent.unwrap_or_default();
-        Some(OpenedNotice {
-            thread: format!("{}/{agent}", keys.channel),
-            colour: colours.get(&room).copied(),
-            room,
-            station: keys.channel,
-            message: n.id,
-            title: n.from.clone(),
-            subtitle: if several { n.station } else { String::new() },
-            body: n.text,
-            badge: n.badge,
-            agent,
-            question: n.kind == Some(Kind::NeedsYou),
-            options: if n.permission { Vec::new() } else { n.options },
-            permission: n.permission,
-        })
+    let (keys, plain) = keys.into_iter().find_map(|k| k.open(Direction::Push, &sealed).ok().map(|p| (k, p))).ok_or(NoticeTrouble::NoPairingOpensIt)?;
+    let n: airband_core::radio::Notice = serde_json::from_slice(&plain).map_err(|_| NoticeTrouble::NotANotice)?;
+    let room = n.team.as_ref().map(|t| room_id(&StationId::new(keys.channel.as_str()), t.as_ref())).unwrap_or_default();
+    let agent = n.agent.unwrap_or_default();
+    let buttons = match (n.permission, n.cut, n.options.is_empty()) {
+        (true, false, _) => NoticeButtonSet::Permit,
+        (true, true, _) => NoticeButtonSet::PermitAfterReading,
+        (false, _, true) => NoticeButtonSet::Reply,
+        (false, _, false) => NoticeButtonSet::Answers,
+    };
+    Ok(OpenedNotice {
+        thread: format!("{}/{agent}", keys.channel),
+        colour: colours.get(&room).copied(),
+        room,
+        station: keys.channel,
+        message: n.id,
+        title: n.from.clone(),
+        subtitle: if several { n.station } else { String::new() },
+        body: n.text,
+        badge: n.badge,
+        agent,
+        question: n.kind == Some(Kind::NeedsYou),
+        options: if n.permission { Vec::new() } else { n.options },
+        permission: n.permission,
+        buttons,
     })
 }
 

@@ -3,9 +3,10 @@
 //! service. The relay and the push service pass on bytes they cannot read.
 //!
 //! What deserves one: a message judged to need him or to be a report, a permission card, a question a harness
-//! puts to him. Never chatter, a stall, or his own words. One per message. Not to a radio that is on a call
-//! (it is read out there), and not to one that has the chat open: such a radio asks for what follows a message
-//! within a moment of getting it, which is how the tower knows.
+//! puts to him. Never chatter, a stall, or his own words. One per message. Not to a radio that has the chat
+//! open and has it: such a radio asks for what follows a message as soon as it gets it, and that request is
+//! how the tower knows. A report is not sent to a radio on a call either (it is read out there); something
+//! that needs him is, because a call can be held, or quiet, or in his pocket with the screen off.
 //!
 //! Nothing here knows which push service a phone uses: an address is a provider's name and a token, as the
 //! phone gave them. The log says when a notification was asked for and what came back, and never an address or
@@ -14,8 +15,11 @@ use super::*;
 use airband_core::radio::{Notice, PushTarget, deserves_notice};
 use airband_core::relay::{Direction, Keys, NotPushed, PUSH_MOST, PushAnswer, PushRequest, Route};
 
-/// How long after a message is ready the tower waits before deciding: long enough for a radio that is showing
-/// the chat to have asked for what follows.
+/// The longest the tower waits for a radio that says it is showing the chat to ask for what follows a message
+/// it was just handed. That request is the fact waited on: a radio that has it asks again at once (the phone's
+/// follow loop does not pause after an answer), so it comes within one round trip through the relay. A radio
+/// that does not ask by then is not showing it (its app was put away with the request open): it is woken.
+/// With no radio saying it shows the chat, nothing is waited for.
 const GRACE: Duration = Duration::from_secs(4);
 /// A message older than this when its short version is made is history, not news.
 const STALE_MS: u64 = 15 * 60 * 1000;
@@ -36,6 +40,11 @@ impl Wake {
     /// Is there any phone to wake at all?
     pub(super) fn any(&self) -> bool {
         !self.targets.lock().unwrap().is_empty()
+    }
+    /// Can a phone be woken now: one paired through the relay has said where it can be. Then a request for
+    /// leave has someone to be put to even with no radio there, because that phone will be told of it.
+    pub(super) fn can_wake(&self, cfg: &Config) -> bool {
+        cfg.relay.is_some() && self.targets.lock().unwrap().keys().any(|radio| cfg.pairings.iter().any(|p| channel_of(p).as_deref() == Some(radio.as_str())))
     }
 }
 
@@ -68,9 +77,30 @@ pub(super) fn deserves(e: &Entry, now_ms: u64) -> bool {
     !e.his && e.agent.is_some() && e.short.is_some() && deserves_notice(e.kind) && now_ms.saturating_sub(e.at) < STALE_MS
 }
 
-/// Does this radio already have the line (as of change count `rev`) in front of him?
-pub(super) fn there(call: Option<&Call>, rev: u64) -> bool {
-    call.is_some_and(|c| c.connected() || c.has >= rev)
+/// Why a radio is not woken for a line that deserves it, as the log says it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum NotWoken {
+    /// It asked for what follows the line while showing the chat.
+    HasIt,
+    /// It is on a call, which reads the report out.
+    OnCall,
+}
+
+/// Whether to wake this radio for the line (as of change count `rev`), and why not. It has the line in front of
+/// him when it asked for what follows it while showing the chat; a report is also had on a call, which reads it
+/// out. Something that needs him is not taken as had because a call is on.
+pub(super) fn wake(call: Option<&Call>, rev: u64, needs_him: bool) -> Result<(), NotWoken> {
+    match call {
+        Some(c) if c.has >= rev => Err(NotWoken::HasIt),
+        Some(c) if !needs_him && c.connected() => Err(NotWoken::OnCall),
+        _ => Ok(()),
+    }
+}
+
+/// Is this radio saying it shows the chat without yet having asked for what follows the line? Then the tower
+/// waits for it to ask (see [`GRACE`]).
+fn may_ask(call: Option<&Call>, rev: u64) -> bool {
+    call.is_some_and(|c| c.presence.showing_chat() && c.has < rev)
 }
 
 /// The notification for a line, as the phone will open it.
@@ -78,20 +108,21 @@ pub(super) fn notice(inner: &Inner, e: &Entry, station: &str) -> Notice {
     let m = inner.message(e);
     const MOST: usize = 400;
     let text = airband_core::prose::clip(&m.text, MOST);
-    // A request for leave that does not fit is shown by its opening and offers no answer from the lock screen:
-    // he opens it, reads all of what would run, and answers there.
+    // A request for leave that does not fit is still a request for leave, shown by its opening: it offers no
+    // Allow from the lock screen. He opens it, reads all of what would run, and answers there.
     let cut = m.permission && m.text.chars().count() > MOST;
-    Notice { id: m.id, from: m.from, agent: m.agent, badge: m.badge, group: m.group, team: m.team, station: station.into(), text, kind: m.kind, options: if cut { Vec::new() } else { m.options.iter().take(4).map(|o| airband_core::prose::clip(o, 40)).collect() }, permission: m.permission && !cut }
+    Notice { id: m.id, from: m.from, agent: m.agent, badge: m.badge, group: m.group, team: m.team, station: station.into(), text, kind: m.kind, options: if m.permission { Vec::new() } else { m.options.iter().take(4).map(|o| airband_core::prose::clip(o, 40)).collect() }, permission: m.permission, cut }
 }
 
 /// A line's short version has just been made, or a card was put to him: wake whichever phones should know.
-/// Decided after a moment, once: by then a radio that is showing the chat has asked for what follows the line.
+/// Decided once: at once when no radio says it is showing the chat, else once each that does has asked for what
+/// follows the line or [`GRACE`] has gone by.
 pub(super) fn consider(app: &Arc<App>, inner: &mut Inner, id: &str) {
     if !app.push.any() {
         return;
     }
     let Some(e) = inner.log.iter().find(|e| e.id == id).filter(|e| deserves(e, now_ms())) else { return };
-    let (rev, card) = (e.rev, e.permit.is_some());
+    let rev = e.rev;
     if !inner.pushed.insert(id.to_string()) {
         return;
     }
@@ -101,17 +132,42 @@ pub(super) fn consider(app: &Arc<App>, inner: &mut Inner, id: &str) {
     }
     let (app, id) = (app.clone(), id.to_string());
     tokio::spawn(async move {
-        tokio::time::sleep(GRACE).await;
+        let until = tokio::time::Instant::now() + GRACE;
+        let mut changes = app.watch_changes();
+        loop {
+            let waiting = {
+                let inner = app.read();
+                let targets = app.push.targets.lock().unwrap();
+                targets.keys().any(|radio| may_ask(inner.calls.get(radio), rev))
+            };
+            if !waiting || tokio::time::timeout_at(until, changes.changed()).await.is_err() {
+                break;
+            }
+        }
         let station = config::station(&app.cfg());
         let (note, to): (Notice, Vec<(String, Vec<PushTarget>)>) = {
             let inner = app.read();
             let Some(e) = inner.log.iter().find(|e| e.id == id).filter(|e| deserves(e, now_ms())) else { return };
-            // answered meanwhile, from another radio or at the keyboard: there is nothing left to tell him
-            if (card && e.permit.is_none()) || (e.kind == Some(Kind::NeedsYou) && !inner.open_ids().contains(&id)) {
-                return;
+            let needs_him = e.kind == Some(Kind::NeedsYou);
+            // answered meanwhile, from another radio or at the keyboard: there is nothing left to tell him. A
+            // card stands while its harness waits on it, whatever the agent has said since.
+            let over = match &e.permit {
+                Some(permit) => inner.permits.get(permit).is_none_or(|p| p.decided.is_some()),
+                None => needs_him && !inner.open_ids().contains(&id),
+            };
+            if over {
+                return log(format!("push: line {id} was answered before it was sent; no notification"));
             }
             let targets = app.push.targets.lock().unwrap();
-            (notice(&inner, e, &station), targets.iter().filter(|(radio, _)| !there(inner.calls.get(*radio), rev)).map(|(radio, t)| (radio.clone(), t.clone())).collect())
+            let mut to = Vec::new();
+            for (radio, t) in targets.iter() {
+                match wake(inner.calls.get(radio), rev, needs_him) {
+                    Ok(()) => to.push((radio.clone(), t.clone())),
+                    Err(NotWoken::HasIt) => log(format!("push: {} has line {id} on screen; not woken", radio_tag(radio))),
+                    Err(NotWoken::OnCall) => log(format!("push: {} is on a call, which reads line {id} out; not woken", radio_tag(radio))),
+                }
+            }
+            (notice(&inner, e, &station), to)
         };
         for (radio, targets) in to {
             let (app, note) = (app.clone(), note.clone());
@@ -138,10 +194,8 @@ fn send(app: &App, radio: &str, targets: &[PushTarget], mut note: Notice) {
             return log(format!("push: {what} is too long to send to {}", radio_tag(radio)));
         }
         note.text = airband_core::prose::clip(&note.text, keep);
-        // cut: never an Allow under part of a command
-        if note.permission {
-            (note.permission, note.options) = (false, Vec::new());
-        }
+        // cut: never an Allow under part of a command, and still a request for leave
+        note.cut |= note.permission;
     };
     let sealed = airband_core::encode::base64(&sealed);
     let client = airband_io::http::Client::new(Duration::from_secs(20));
@@ -236,19 +290,51 @@ mod tests {
     }
 
     #[test]
-    fn a_radio_that_has_it_or_is_on_a_call_is_left_alone() {
+    fn a_radio_that_has_it_is_left_alone_and_a_call_only_stands_in_for_a_report() {
         let mut inner = tower();
         let rev = line(&mut inner, "q", Some(Kind::NeedsYou), Some("Ship it?")).rev;
         // never heard from, or heard from before the line existed: wake it
-        assert!(!there(None, rev));
+        assert_eq!(wake(None, rev, true), Ok(()));
         inner.call("phone").has = rev - 1;
-        assert!(!there(inner.calls.get("phone"), rev));
+        assert_eq!(wake(inner.calls.get("phone"), rev, true), Ok(()));
         // it has asked for what follows the line: it is on his screen
         inner.call("phone").has = rev;
-        assert!(there(inner.calls.get("phone"), rev));
-        // on a call it is read out
+        assert_eq!(wake(inner.calls.get("phone"), rev, true), Err(NotWoken::HasIt));
+        assert_eq!(wake(inner.calls.get("phone"), rev, false), Err(NotWoken::HasIt));
+        // on a call a report is read out; a question or a request for leave still wakes it
         inner.call("car").presence.says(airband_core::radio::Presence { on_call: true, showing_chat: false });
-        assert!(there(inner.calls.get("car"), rev));
+        assert_eq!(wake(inner.calls.get("car"), rev, false), Err(NotWoken::OnCall));
+        assert_eq!(wake(inner.calls.get("car"), rev, true), Ok(()));
+    }
+
+    #[test]
+    fn only_a_radio_saying_it_shows_the_chat_and_not_yet_past_the_line_is_waited_for() {
+        let mut inner = tower();
+        let rev = line(&mut inner, "q", Some(Kind::NeedsYou), Some("Ship it?")).rev;
+        assert!(!may_ask(None, rev));
+        inner.call("pocket").presence.says(airband_core::radio::Presence { on_call: false, showing_chat: false });
+        assert!(!may_ask(inner.calls.get("pocket"), rev), "one that says the chat is not in front of him is woken at once");
+        inner.call("phone").presence.says(airband_core::radio::Presence { on_call: false, showing_chat: true });
+        assert!(may_ask(inner.calls.get("phone"), rev));
+        inner.call("phone").has = rev;
+        assert!(!may_ask(inner.calls.get("phone"), rev), "it asked: nothing more to wait for");
+    }
+
+    #[test]
+    fn a_long_request_for_leave_is_still_one_with_no_allow_from_the_lock_screen() {
+        let mut inner = tower();
+        let s = inner.sessions[0].clone();
+        let what = format!("cd /x && {}", "echo step; ".repeat(40));
+        let request = permit::Request { what: Some(what.clone()), at_keyboard: false };
+        inner.permits.insert("p".into(), permit::Permit { agent_id: s.agent.id.clone(), entry: "c".into(), decided: None, asked: Instant::now(), polled: Instant::now(), question: false });
+        inner.record(Entry { short: request.line(), options: vec![permit::ALLOW.into(), permit::DENY.into()], permit: Some("p".into()), leave: Some(request), ..Entry::said("c".into(), &s, Some(Kind::NeedsYou), what) });
+        let n = notice(&inner, inner.log.last().unwrap(), "mini");
+        assert!(n.permission && n.cut, "{n:?}");
+        assert!(n.options.is_empty());
+        // one that fits is whole
+        inner.log.last_mut().unwrap().short = Some("Wants to run `ls`. Allow?".into());
+        let n = notice(&inner, inner.log.last().unwrap(), "mini");
+        assert!(n.permission && !n.cut);
     }
 
     #[test]

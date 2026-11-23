@@ -3,6 +3,7 @@
 // address it answers on (AIRBAND_E2E_CONTROL): it makes a fresh pairing link, stops and starts the relay, and
 // says what the stand-in agent was given. Nothing here reaches a tower, relay or pairing of his.
 import UIKit
+import UserNotifications
 import XCTest
 @testable import Airband
 
@@ -92,6 +93,153 @@ final class PhoneEndToEndTests: XCTestCase {
     }
 }
 
+/// Notifications, as the phone shows them. tools/e2e-phone.py hands this simulator each push exactly as the relay
+/// handed it to the push service; the simulator shows it as Apple's own few words, since it does not run a
+/// notification extension for a push it is handed. The same payload is then opened here by the extension's own
+/// code (`Opening`, which the extension runs on a phone) and shown as it would show it, with the buttons it
+/// carries and how it was shown kept in the shared folder for the connection record.
+final class PhonePushTests: XCTestCase {
+    /// What the system presents while the app is in front, in order: what came as a push, and what was added
+    /// here. The system asks on the main thread, which the test runs on: waiting runs the main loop, so it can.
+    final class Shown: NSObject, UNUserNotificationCenterDelegate {
+        private(set) var pushed: [UNNotificationContent] = []
+        private(set) var added: [UNNotificationContent] = []
+        func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler done: @escaping (UNNotificationPresentationOptions) -> Void) {
+            if notification.request.trigger is UNPushNotificationTrigger { pushed.append(notification.request.content) } else { added.append(notification.request.content) }
+            done([.list])
+        }
+        /// Run the main loop until `fact` holds, up to `seconds`.
+        func until(_ seconds: Double, _ fact: () -> Bool) -> Bool {
+            let end = Date().addingTimeInterval(seconds)
+            while !fact() && Date() < end {
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
+            }
+            return fact()
+        }
+    }
+
+    func testEachKindOfNotificationIsShownWithItsWordsAndButtons() throws {
+        let tower = try Tower()
+        let pairing = try tower.pair()
+        // the extension finds the pairing where the app keeps it: in the Keychain group the two share
+        let before = Keychain.links()
+        XCTAssertTrue(Keychain.keepLinks([pairing.link]), "the pairing is kept where the extension can read it")
+        defer { if case .found(let links) = before { Keychain.keepLinks(links) } else { Keychain.keepLinks([]) } }
+        let folder = try XCTUnwrap(Together.folder, "the app has the folder it shares with the extension")
+        let center = UNUserNotificationCenter.current()
+        let shown = Shown()
+        center.delegate = shown
+        let allowed = expectation(description: "notifications allowed")
+        // quietly, so no question about them is put up on the simulator's screen
+        center.requestAuthorization(options: [.provisional, .alert, .sound]) { _, _ in allowed.fulfill() }
+        wait(for: [allowed], timeout: 20)
+        let registered = expectation(description: "buttons registered")
+        NoticeButtons.register { _ in registered.fulfill() }
+        wait(for: [registered], timeout: 20)
+
+        // the phone is following the chat with it out of sight, as with the phone in his pocket
+        let phone = Phone(front: false)
+        defer { phone.unpair() }
+        XCTAssertEqual(phone.desk.setLinks(links: [pairing.link]).links, [pairing.link])
+        _ = try phone.agentOnline()
+        let address = String(repeating: "ab", count: 32)
+        phone.desk.setPush(provider: .apns, token: address)
+        _ = try phone.until("the computer can wake the phone", seconds: 60) { _ in (try? tower.wakeable()) == true ? true : nil }
+
+        let kept = folder.notices().count
+        /// Ask for one kind: what the relay handed the push service for it, what the simulator showed of that
+        /// push, and what the extension's code showed of it and kept.
+        func ask(_ kind: String) throws -> (push: Tower.Push, plain: UNNotificationContent, content: UNNotificationContent, how: NoticeHow) {
+            let (pushes, plains, added) = (try tower.pushes().count, shown.pushed.count, shown.added.count)
+            try tower.ask(kind)
+            XCTAssertTrue(shown.until(60) { ((try? tower.pushes().count) ?? 0) > pushes }, "the tower woke the phone for the \(kind)")
+            let push = try tower.pushes()[pushes]
+            XCTAssertTrue(shown.until(30) { shown.pushed.count > plains }, "the simulator showed the push for the \(kind)")
+            let plain = try XCTUnwrap(shown.pushed.dropFirst(plains).first)
+            // as the extension is handed it: Apple's few words, and the payload as it came
+            let came = UNMutableNotificationContent()
+            (came.title, came.body, came.userInfo) = (push.payload.aps.alert.title, push.payload.aps.alert.body, try tower.payload(pushes))
+            var opened: (UNNotificationContent, NoticeHow)?
+            Opening.open(UNNotificationRequest(identifier: UUID().uuidString, content: came, trigger: nil)) { content, how in
+                Opening.keep(how)
+                opened = (content, how)
+                center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+            }
+            XCTAssertTrue(shown.until(30) { shown.added.count > added }, "what the extension made of the \(kind) is shown")
+            let (content, how) = try XCTUnwrap(opened)
+            XCTAssertEqual(folder.notices().dropFirst(kept).last?.how, how, "and how is kept for the connection record")
+            XCTAssertEqual(shown.added.dropFirst(added).first?.categoryIdentifier, content.categoryIdentifier)
+            return (push, plain, content, how)
+        }
+
+        let report = try ask("report")
+        XCTAssertEqual([report.plain.title, report.plain.body], ["airband", "New message"], "with no extension run, Apple's own words")
+        XCTAssertEqual([report.content.title, report.content.body], ["shop 1", "The checker passes on all twelve units."])
+        XCTAssertEqual(report.content.categoryIdentifier, NoticeButtons.reply)
+        XCTAssertEqual(report.how, .opened(message: report.content.userInfo["message"] as? String ?? "", buttons: .reply, permission: false))
+
+        let question = try ask("question")
+        XCTAssertEqual([question.plain.title, question.plain.body], ["airband", "An agent needs you"])
+        XCTAssertEqual(question.content.body, "Rewrite the two easy questions, or leave them?")
+        XCTAssertEqual(question.content.categoryIdentifier, NoticeButtons.reply)
+
+        let card = try ask("permission")
+        XCTAssertEqual([card.plain.title, card.plain.body], ["airband", "An agent needs you"])
+        XCTAssertEqual(card.content.body, "Wants to run `npm run deploy`. Allow?")
+        XCTAssertEqual(card.content.categoryIdentifier, NoticeButtons.permit)
+        guard case .opened(let message, .permit, true) = card.how else { return XCTFail("\(card.how)") }
+        XCTAssertEqual(card.content.userInfo["message"] as? String, message, "an answer from it goes to the request it shows")
+        let categories = try categoriesNow(center)
+        XCTAssertEqual(categories[NoticeButtons.permit], [noticeAllowId(), noticeDenyId(), NoticeButtons.typed])
+
+        let long = try ask("long-permission")
+        XCTAssertEqual(long.content.categoryIdentifier, NoticeButtons.permitAfterReading, "too long to allow unread: no Allow under part of it")
+        XCTAssertTrue(long.content.body.hasPrefix("Wants to run `cd /tmp/shop && echo step 1"), long.content.body)
+        guard case .opened(_, .permitAfterReading, true) = long.how else { return XCTFail("\(long.how)") }
+        XCTAssertEqual(categories[NoticeButtons.permitAfterReading], [noticeDenyId(), NoticeButtons.typed])
+
+        // what reached the push service, as Apple is handed it: an alert, at once, for this app, that the
+        // phone may change, carrying nothing readable but the same few words
+        // read again: the simulator was handed each after the relay had its answer
+        let pushes = try tower.pushes()
+        XCTAssertEqual(pushes.count, 4, "one each, and nothing else")
+        XCTAssertEqual(pushes.map(\.payload.aps.alert.body), [report.push, question.push, card.push, long.push].map(\.payload.aps.alert.body))
+        XCTAssertEqual(pushes.map(\.payload.aps.alert.body), ["New message", "An agent needs you", "An agent needs you", "An agent needs you"])
+        for push in pushes {
+            XCTAssertEqual([push.to, push.pushType, push.priority, push.topic], [address, "alert", "10", "dev.airband.app"])
+            XCTAssertTrue(push.delivered)
+            XCTAssertEqual(push.payload.aps.mutableContent, 1)
+            XCTAssertEqual(push.payload.aps.alert.title, "airband")
+        }
+
+        // one no pairing here opens is still shown, in the push service's few words, and why is kept
+        let unopenable = UNMutableNotificationContent()
+        (unopenable.title, unopenable.body, unopenable.userInfo) = ("airband", "An agent needs you", ["sealed": "c2VhbGVkIGJ5IG5vYm9keQ=="])
+        var plain: (UNNotificationContent, NoticeHow)?
+        Opening.open(UNNotificationRequest(identifier: UUID().uuidString, content: unopenable, trigger: nil)) { content, how in
+            Opening.keep(how)
+            plain = (content, how)
+        }
+        let (content, how) = try XCTUnwrap(plain)
+        XCTAssertEqual([content.title, content.body], ["airband", "An agent needs you"])
+        XCTAssertEqual(how, .plain(why: .noPairingOpensIt))
+        XCTAssertEqual(folder.notices().last?.how, .plain(why: .noPairingOpensIt))
+        XCTAssertTrue(phone.desk.diagnostics(notices: folder).contains("shown without its words: none of the computers paired here sent it"))
+    }
+
+    /// Each registered set of buttons, by its name: the ids of its buttons in order.
+    private func categoriesNow(_ center: UNUserNotificationCenter) throws -> [String: [String]] {
+        var have: [String: [String]] = [:]
+        let read = expectation(description: "categories read")
+        center.getNotificationCategories { all in
+            have = Dictionary(uniqueKeysWithValues: all.map { ($0.identifier, $0.actions.map(\.identifier)) })
+            read.fulfill()
+        }
+        wait(for: [read], timeout: 20)
+        return have
+    }
+}
+
 /// The computer's side, as tools/e2e-phone.py serves it.
 struct Tower {
     struct Pairing {
@@ -150,6 +298,48 @@ struct Tower {
         _ = try call("POST", at.string!)
     }
 
+    /// Have the stand-in agent report, ask, or ask for leave (`kind` as the script names them).
+    func ask(_ kind: String) throws { _ = try call("POST", "ask/" + kind) }
+
+    /// Can the tower wake the phone: its log says the phone gave it an address.
+    func wakeable() throws -> Bool {
+        struct Said: Decodable { let wakeable: Bool }
+        return try JSONDecoder().decode(Said.self, from: call("GET", "wakeable")).wakeable
+    }
+
+    /// The payload of the push at `index`, as the phone is handed it.
+    func payload(_ index: Int) throws -> [AnyHashable: Any] {
+        let all = try XCTUnwrap(JSONSerialization.jsonObject(with: call("GET", "pushes")) as? [[String: Any]])
+        return try XCTUnwrap(all[index]["payload"] as? [String: Any])
+    }
+
+    /// What the relay handed the push service, in order.
+    struct Push: Decodable {
+        struct Payload: Decodable {
+            struct Aps: Decodable {
+                struct Alert: Decodable { let title, body: String }
+                let alert: Alert
+                let mutableContent: Int
+                enum CodingKeys: String, CodingKey {
+                    case alert
+                    case mutableContent = "mutable-content"
+                }
+            }
+            let aps: Aps
+            let sealed: String
+        }
+        let to, pushType, priority, topic: String
+        let payload: Payload
+        let delivered: Bool
+        enum CodingKeys: String, CodingKey {
+            case to, priority, topic, payload, delivered
+            case pushType = "push_type"
+        }
+    }
+    func pushes() throws -> [Push] {
+        try JSONDecoder().decode([Push].self, from: call("GET", "pushes"))
+    }
+
     /// Everything the stand-in agent has been given, and what it answered each.
     func heard() throws -> [Heard] {
         try JSONDecoder().decode([Heard].self, from: call("GET", "heard"))
@@ -178,10 +368,12 @@ struct Tower {
 
 /// The phone: a Desk of its own in a throwaway folder, with a host that has no sound and keeps no keys.
 final class Phone {
-    let host = Host()
+    let host: Host
     let desk: Desk
 
-    init() {
+    /// `front`: whether the app says the chat is in front of him.
+    init(front: Bool = true) {
+        host = Host(front: front)
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("airband-e2e-" + UUID().uuidString)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         desk = Desk.open(dataDir: dir.path, host: host)
@@ -226,6 +418,8 @@ final class Phone {
 }
 
 final class Host: DeskHost, @unchecked Sendable {
+    private let front: Bool
+    init(front: Bool) { self.front = front }
     private let lock = NSCondition()
     private var notes: [String] = []
     private var changes = 0
@@ -248,7 +442,7 @@ final class Host: DeskHost, @unchecked Sendable {
     func note(text: String) { lock.lock(); notes.append(text); changes += 1; lock.broadcast(); lock.unlock() }
     func hearing(text: String) {}
     func words(text: String, starts: [UInt32], atMs: [UInt32]) {}
-    func watching() -> Bool { true }
+    func watching() -> Bool { front }
     func device() -> HostDevice {
         HostDevice(engines: [], os: "ios", osVersion: UInt32(ProcessInfo.processInfo.operatingSystemVersion.majorVersion), teamColours: UInt8(TeamColours.rgb.count))
     }

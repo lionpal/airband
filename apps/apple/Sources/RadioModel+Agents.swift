@@ -89,7 +89,7 @@ extension RadioModel {
     /// How each computer was last reached, as this phone saw it.
     func reach() -> [DeskReach] { desk.reach() }
     /// The record of failed requests, for him to copy. Made here and sent nowhere.
-    func diagnostics() -> String { desk.diagnostics() }
+    func diagnostics() -> String { desk.diagnostics(notices: Together.folder) }
 
     /// Take back something he said that is still waiting its turn.
     func unsend(_ m: ChatMessage) {

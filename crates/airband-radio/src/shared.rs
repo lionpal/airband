@@ -1,5 +1,6 @@
 //! What the app and its notification extension both keep that is no secret, in the folder they share (an iPhone
-//! App Group's container): each team's colour, and the sets of buttons a notification can carry. Keys and
+//! App Group's container): each team's colour, the sets of buttons a notification can carry, and what became
+//! of the latest notifications (for the connection record). Keys and
 //! pairing links stay where the host keeps secrets.
 //!
 //! Two processes write here. Each kind is changed under a lock on a file beside it, held across processes, so
@@ -31,6 +32,13 @@ impl SharedFolder {
     }
     fn answer_sets_now(&self) -> (AnswerSets, Keeper) {
         let (kept, keeper, loaded) = Keeper::open::<AnswerSets>(Some(self.at("answer-sets.json")));
+        if let Some(trouble) = loaded.trouble() {
+            eprintln!("airband: {trouble}");
+        }
+        (kept, keeper)
+    }
+    fn notices_now(&self) -> (Vec<NoticeShown>, Keeper) {
+        let (kept, keeper, loaded) = Keeper::open::<Vec<NoticeShown>>(Some(self.at("notices.json")));
         if let Some(trouble) = loaded.trouble() {
             eprintln!("airband: {trouble}");
         }
@@ -84,6 +92,26 @@ impl SharedFolder {
         }
     }
 
+    /// Keep what became of a notification, newest last, no more than [`KEPT_NOTICES`]. False when it was not kept.
+    pub fn keep_notice(&self, shown: NoticeShown) -> bool {
+        let Some(_held) = self.locked("notices.lock") else { return false };
+        let (mut kept, keeper) = self.notices_now();
+        kept.push(shown);
+        let extra = kept.len().saturating_sub(KEPT_NOTICES);
+        kept.drain(..extra);
+        keeper.save(&kept).into_result().map_err(|why| eprintln!("airband: {why}")).is_ok()
+    }
+
+    /// What became of the latest notifications, oldest first.
+    pub fn notices(&self) -> Vec<NoticeShown> {
+        self.notices_now().0
+    }
+
+    /// The same, as lines for the connection record.
+    pub fn notice_lines(&self) -> Vec<String> {
+        self.notices().iter().map(NoticeShown::line).collect()
+    }
+
     /// The number of the change last kept to the answer sets. None when they cannot be read.
     pub fn answer_sets_rev(&self) -> Option<u64> {
         let _held = self.locked("answer-sets.lock")?;
@@ -98,6 +126,52 @@ fn newest_first(kept: Vec<Vec<String>>, options: Vec<String>) -> Vec<Vec<String>
     sets.insert(0, options);
     sets.truncate(KEPT_ANSWER_SETS);
     sets
+}
+
+/// How many notifications' outcomes are kept.
+pub const KEPT_NOTICES: usize = 20;
+
+/// What the phone did with one notification: when, and what it showed. No words of it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct NoticeShown {
+    /// Milliseconds since 1970.
+    pub at: u64,
+    pub how: NoticeHow,
+}
+
+/// How a notification was shown.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(rename_all = "kebab-case", tag = "how")]
+pub enum NoticeHow {
+    /// Opened and shown with its sender, its words and these buttons. `message` is the line's id.
+    Opened { message: String, buttons: crate::NoticeButtonSet, permission: bool },
+    /// The answers it offered could not be registered as buttons: shown with its reply box alone.
+    AnswersNotRegistered { message: String },
+    /// Not opened: shown in the push service's few words, for this reason.
+    Plain { why: crate::NoticeTrouble },
+    /// The system's time for opening it ran out first: shown in the push service's few words.
+    OutOfTime,
+}
+
+impl NoticeShown {
+    fn line(&self) -> String {
+        let when = airband_core::clock::rfc3339(self.at);
+        match &self.how {
+            NoticeHow::Opened { message, buttons, permission } => {
+                let what = if *permission { "request for leave" } else { "notification" };
+                let with = match buttons {
+                    crate::NoticeButtonSet::Permit => "Allow and Deny",
+                    crate::NoticeButtonSet::PermitAfterReading => "Deny only (too long to allow unread)",
+                    crate::NoticeButtonSet::Answers => "its answers",
+                    crate::NoticeButtonSet::Reply => "a reply box",
+                };
+                format!("{when} {what} {message} shown with {with}")
+            }
+            NoticeHow::AnswersNotRegistered { message } => format!("{when} notification {message} shown with a reply box: its answers could not be made buttons"),
+            NoticeHow::Plain { why } => format!("{when} a notification shown without its words: {why}"),
+            NoticeHow::OutOfTime => format!("{when} a notification shown without its words: the phone ran out of time to open it"),
+        }
+    }
 }
 
 /// The sets of answer buttons, newest first, and the number of the change that kept them.
@@ -116,6 +190,24 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("airband-shared-{}", airband_core::encode::random_hex(6)));
         std::fs::create_dir_all(&dir).unwrap();
         (SharedFolder::new(dir.display().to_string()), dir)
+    }
+
+    #[test]
+    fn what_became_of_each_notification_is_kept_newest_last_and_only_so_many() {
+        let (shared, dir) = folder();
+        assert!(shared.notices().is_empty());
+        let plain = NoticeShown { at: 1_000, how: NoticeHow::Plain { why: crate::NoticeTrouble::KeysUnreadable { status: -25308 } } };
+        for n in 0..KEPT_NOTICES + 3 {
+            assert!(shared.keep_notice(NoticeShown { at: n as u64, how: NoticeHow::Opened { message: format!("m{n}"), buttons: crate::NoticeButtonSet::Permit, permission: true } }));
+        }
+        assert!(shared.keep_notice(plain.clone()));
+        let kept = shared.notices();
+        assert_eq!(kept.len(), KEPT_NOTICES);
+        assert_eq!(kept.last(), Some(&plain));
+        let lines = shared.notice_lines();
+        assert!(lines.last().unwrap().ends_with("shown without its words: the pairings could not be read (error -25308)"), "{lines:?}");
+        assert!(lines[0].ends_with("request for leave m4 shown with Allow and Deny"), "{lines:?}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

@@ -13,14 +13,24 @@ started meanwhile in a new team (one of them renamed) in its list at once, and w
 wait and go once the relay is back. The test asks this script for what only the
 computer's side can do (a new pairing link, the relay stopped and started, what the agent was given) over a small
 local HTTP server whose address it is handed in its environment.
+
+Notifications: the relay is given a signing key made for this run (never a real one) and a stand-in for the
+push service on this machine. What the relay hands that stand-in, headers and payload exactly as they would go
+to the push service, is delivered to the simulator with `xcrun simctl push`, and the test opens the same payload
+with the extension's own code (the simulator runs no extension for a push it is handed). It checks what was
+shown for a report, a question, a request for leave, a request for leave too long to allow unread, and one no
+pairing on the phone can open.
 """
 import http.server, json, os, shutil, socket, subprocess, sys, tempfile, threading, time, urllib.parse
 import wire
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TARGET = os.path.abspath(os.environ.get("CARGO_TARGET_DIR", os.path.join(ROOT, "target")))
 BIN, RELAY = os.path.join(TARGET, "release", "airband"), os.path.join(TARGET, "release", "airband-relay")
-RELAY_PORT, TOWER_PORT, CONTROL_PORT = wire.free_port(), wire.free_port(), wire.free_port()
+RELAY_PORT, TOWER_PORT, CONTROL_PORT, APNS_PORT = wire.free_port(), wire.free_port(), wire.free_port(), wire.free_port()
+APP = "dev.airband.app"
 # this computer's name as the phone is to show it: with a space, so how the link carries it is tried too
 COMPUTER = "Sim Desk"
 # the simulator this run makes for itself, of this kind (any iPhone the newest iOS runtime here supports)
@@ -32,10 +42,13 @@ home, data, project, heard = (os.path.join(work, d) for d in ("tower", "relay", 
 for d in (os.path.join(home, ".airband"), data, project):
     os.makedirs(d)
 json.dump({"port": TOWER_PORT, "token": "own", "radio_token": "radio", "name": "Charles", "station": COMPUTER, "relay": f"http://127.0.0.1:{RELAY_PORT}",
-           "summarizer": {"kind": "none"}, "lan": False}, open(os.path.join(home, ".airband", "config.json"), "w"))
+           "summarizer": {"kind": "none"}, "lan": False, "permission_wait": 60}, open(os.path.join(home, ".airband", "config.json"), "w"))
 # through the relay only, as in tools/e2e-relay.py: the phone is given no address of the tower's own
 tower_env = dict(os.environ, HOME=home, AIRBAND_STAND_IN_NO_PRIVATE_NETWORK="1")
-relay_env = dict(os.environ, PORT=str(RELAY_PORT), HOST="127.0.0.1", AIRBAND_RELAY_DATA=data)
+# a signing key made for this run alone, and the stand-in push service on this machine
+push_key = ec.generate_private_key(ec.SECP256R1()).private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
+relay_env = dict(os.environ, PORT=str(RELAY_PORT), HOST="127.0.0.1", AIRBAND_RELAY_DATA=data, APNS_KEY=push_key, APNS_KEY_ID="E2EKEY0001", APNS_TEAM_ID="E2ETEAM001",
+                 APNS_TOPIC=APP, APNS_HOST=f"http://127.0.0.1:{APNS_PORT}")
 tower_log, relay_log = os.path.join(work, "tower.log"), os.path.join(work, "relay.log")
 
 # The stand-in agent, as a delivery command: what it is given is kept in a file, and it answers "Done: " and the
@@ -87,6 +100,43 @@ model = subprocess.run(["sysctl", "-n", "hw.model"], capture_output=True, text=T
 rows = [json.load(open(os.path.join(ROOT, "catalog", "machines", f))) for f in sorted(os.listdir(os.path.join(ROOT, "catalog", "machines")))]
 shape = next((r["shape"] for r in rows if model in r["models"]), "")
 lock, radios = threading.Lock(), []
+# what the relay handed the push service, in order: its headers and payload, and what `simctl push` said
+pushes, sim = [], None
+
+
+class Apns(http.server.BaseHTTPRequestHandler):
+    """The push service, as the relay speaks to it: each notification is kept and handed to the simulator."""
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *args):
+        pass
+
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get("content-length", 0)))
+        path = os.path.join(work, f"push-{len(pushes)}.apns")
+        # as Apple would hand it to the phone; the app is named on the command line
+        open(path, "wb").write(body)
+        push = {"to": self.path.rsplit("/", 1)[-1], "push_type": self.headers.get("apns-push-type"), "priority": self.headers.get("apns-priority"),
+                "topic": self.headers.get("apns-topic"), "payload": json.loads(body), "delivered": False}
+        pushes.append(push)
+        # accepted at once, as Apple does; the simulator is handed it after
+        self.send_response(200)
+        self.send_header("content-length", "0")
+        self.end_headers()
+        self.wfile.flush()
+        done = subprocess.run(["xcrun", "simctl", "push", sim, APP, path], capture_output=True, text=True, timeout=120) if sim else None
+        push["delivered"] = bool(done and done.returncode == 0)
+        if done and done.returncode != 0:
+            print(f"simctl push: {done.stderr.strip()}", flush=True)
+
+
+apns = http.server.ThreadingHTTPServer(("127.0.0.1", APNS_PORT), Apns)
+threading.Thread(target=apns.serve_forever, daemon=True).start()
+# what an agent is to ask, by kind: a report, a question, and requests for leave. A request for leave waits for
+# his answer, so it is asked on a thread of its own.
+LONG = "cd /tmp/shop && " + " && ".join(f"echo step {n} of the long build" for n in range(1, 21))
+ASKS = {"report": ["said", "The checker passes on all twelve units."], "question": ["asked", "Rewrite the two easy questions, or leave them?"],
+        "permission": ["permission", "run `npm run deploy`"], "long-permission": ["permission", f"run `{LONG}`"]}
 
 
 class Control(http.server.BaseHTTPRequestHandler):
@@ -103,6 +153,10 @@ class Control(http.server.BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def do_GET(self):
+        if self.path == "/pushes":
+            return self.answer(pushes)
+        if self.path == "/wakeable":
+            return self.answer({"wakeable": "can be woken with a notification" in logged()})
         if self.path == "/heard":
             return self.answer([json.loads(l) for l in open(heard)] if os.path.exists(heard) else [])
         self.answer({"wrong": self.path}, 404)
@@ -115,8 +169,11 @@ class Control(http.server.BaseHTTPRequestHandler):
                 # on its next look at its settings, and says so
                 radio = f"sim-{len(radios) + 1}"
                 radios.append(radio)
-                out = subprocess.run([BIN, "pair", radio], env=tower_env, capture_output=True, text=True).stdout.split()
-                link = [w for w in out if w.startswith("airband:")][-1]
+                made = subprocess.run([BIN, "pair", radio], env=tower_env, capture_output=True, text=True)
+                links = [w for w in made.stdout.split() if w.startswith("airband:")]
+                if not links:
+                    return self.answer({"wrong": f"airband pair gave no link: {made.stdout} {made.stderr}"}, 500)
+                link = links[-1]
                 if not until(lambda: wire.serving(link) in logged(), 40):
                     return self.answer({"wrong": "the tower did not serve the new pairing"}, 500)
                 carried = dict(urllib.parse.parse_qsl(link.split("?", 1)[1]))
@@ -138,13 +195,17 @@ class Control(http.server.BaseHTTPRequestHandler):
             if self.path == "/relay/start":
                 relay = start_relay()
                 return self.answer({"listening": listening(RELAY_PORT)})
+            if self.path.startswith("/ask/") and self.path[5:] in ASKS:
+                words = ASKS[self.path[5:]]
+                ask = lambda: subprocess.run([BIN, "report", "--id", "a1", "--harness", "script", "--cwd", project, *words], env=tower_env, capture_output=True, timeout=120)
+                threading.Thread(target=ask, daemon=True).start()
+                return self.answer({"asked": self.path[5:]})
         self.answer({"wrong": self.path}, 404)
 
 
 control = http.server.ThreadingHTTPServer(("127.0.0.1", CONTROL_PORT), Control)
 threading.Thread(target=control.serve_forever, daemon=True).start()
 
-sim = None
 code = 1
 try:
     # the newest iOS this Xcode has, and a simulator of its own on it
@@ -167,6 +228,7 @@ try:
     code = r.returncode
 finally:
     control.shutdown()
+    apns.shutdown()
     for p in (tower, relay):
         p.terminate()
         try:

@@ -269,7 +269,7 @@ fn the_connection_record_he_can_copy_holds_nothing_said_and_nothing_secret() {
     state.computers[0].radio = radio.clone();
     state.computers[0].link = link;
     let desk = Desk { shared: Arc::new(Shared { state: Mutex::new(state), floor: Floor::default(), moved: Condvar::new(), host, chooser: crate::choices::Chooser::open("", HostDevice::default()), senses: Arc::default(), key_test: crate::keys::pretend, dial: None }), data_dir: dir.display().to_string() };
-    let record = desk.diagnostics();
+    let record = desk.diagnostics(None);
     // what is in it: which computer, each try, the way it went and how it ended, and what was told in passing and lost
     assert!(record.starts_with("airband ") && record.contains("\nmini\n"), "{record}");
     assert!(record.contains("POST /v1/radio/utterance by relay: there was no connection to the relay"), "{record}");
@@ -325,23 +325,39 @@ fn a_notification_is_opened_by_the_pairing_that_sealed_it_and_no_other() {
     let (mini, laptop, stranger) = (airband_core::relay::new_secret(), airband_core::relay::new_secret(), airband_core::relay::new_secret());
     let keys = Keys::derive(&laptop).unwrap();
     let seal = |n: &Notice| airband_core::encode::base64(&keys.seal(Direction::Push, &serde_json::to_vec(n).unwrap()));
-    let question = Notice { id: "m1".into(), from: "shop 3".into(), agent: Some("a3".into()), badge: "S3".into(), group: "shop".into(), team: Some(TeamId::new("/work/shop")), station: "laptop".into(), text: "Rewrite or leave?".into(), kind: Some(Kind::NeedsYou), options: vec!["Rewrite".into(), "Leave".into()], permission: false };
-    let got = open_notice(vec![link(&mini), link(&laptop)], seal(&question), [(format!("{}//work/shop", keys.channel), 2)].into()).unwrap();
+    let question = Notice { id: "m1".into(), from: "shop 3".into(), agent: Some("a3".into()), badge: "S3".into(), group: "shop".into(), team: Some(TeamId::new("/work/shop")), station: "laptop".into(), text: "Rewrite or leave?".into(), kind: Some(Kind::NeedsYou), options: vec!["Rewrite".into(), "Leave".into()], permission: false, cut: false };
+    let open = |links: Vec<String>, sealed: String, colours: HashMap<String, u8>| match open_notice(links, Some(sealed), colours) {
+        NoticeOpening::Opened { notice } => Ok(notice),
+        NoticeOpening::Plain { why } => Err(why),
+    };
+    let got = open(vec![link(&mini), link(&laptop)], seal(&question), [(format!("{}//work/shop", keys.channel), 2)].into()).unwrap();
+    assert_eq!(got.buttons, NoticeButtonSet::Answers);
     assert_eq!((got.title.as_str(), got.subtitle.as_str(), got.body.as_str(), got.badge.as_str(), got.colour), ("shop 3", "laptop", "Rewrite or leave?", "S3", Some(2)));
     assert_eq!((got.station.as_str(), got.message.as_str(), got.room.as_str(), got.agent.as_str(), got.question), (keys.channel.as_str(), "m1", format!("{}//work/shop", keys.channel).as_str(), "a3", true));
     // a team the phone has given no colour yet is drawn with none, not the first colour
-    assert_eq!(open_notice(vec![link(&laptop)], seal(&question), Default::default()).unwrap().colour, None);
+    assert_eq!(open(vec![link(&laptop)], seal(&question), Default::default()).unwrap().colour, None);
     assert_eq!(got.options, ["Rewrite", "Leave"]);
     // one computer: its name says nothing he does not know
-    assert_eq!(open_notice(vec![link(&laptop)], seal(&question), Default::default()).unwrap().subtitle, "");
+    assert_eq!(open(vec![link(&laptop)], seal(&question), Default::default()).unwrap().subtitle, "");
     // a permission card offers its own two answers, not the tower's list
-    let card = open_notice(vec![link(&laptop)], seal(&Notice { permission: true, options: vec!["Allow".into(), "Deny".into()], ..question.clone() }), Default::default()).unwrap();
+    let card = open(vec![link(&laptop)], seal(&Notice { permission: true, options: vec!["Allow".into(), "Deny".into()], ..question.clone() }), Default::default()).unwrap();
     assert!(card.permission && card.options.is_empty());
-    // not by another pairing, not as an ordinary answer from the tower, not when it is not base64 at all
-    assert!(open_notice(vec![link(&mini), link(&stranger)], seal(&question), Default::default()).is_none());
+    assert_eq!(card.buttons, NoticeButtonSet::Permit);
+    // one shown by its opening is still a request for leave, with no Allow under part of it
+    let long = open(vec![link(&laptop)], seal(&Notice { permission: true, cut: true, ..question.clone() }), Default::default()).unwrap();
+    assert!(long.permission);
+    assert_eq!(long.buttons, NoticeButtonSet::PermitAfterReading);
+    assert_eq!(open(vec![link(&laptop)], seal(&Notice { options: Vec::new(), ..question.clone() }), Default::default()).unwrap().buttons, NoticeButtonSet::Reply);
+    // not by another pairing, not as an ordinary answer from the tower, not when it is not base64 at all: each
+    // with its own reason
+    assert_eq!(open(vec![link(&mini), link(&stranger)], seal(&question), Default::default()), Err(NoticeTrouble::NoPairingOpensIt));
     let answer = airband_core::encode::base64(&keys.seal(Direction::ToRadio, &serde_json::to_vec(&question).unwrap()));
-    assert!(open_notice(vec![link(&laptop)], answer, Default::default()).is_none());
-    assert!(open_notice(vec![link(&laptop)], "not sealed".into(), Default::default()).is_none());
+    assert_eq!(open(vec![link(&laptop)], answer, Default::default()), Err(NoticeTrouble::NoPairingOpensIt));
+    assert_eq!(open(vec![link(&laptop)], "not sealed".into(), Default::default()), Err(NoticeTrouble::NotSealed));
+    assert_eq!(open_notice(vec![link(&laptop)], None, Default::default()), NoticeOpening::Plain { why: NoticeTrouble::NotSealed });
+    assert_eq!(open(Vec::new(), seal(&question), Default::default()), Err(NoticeTrouble::NoPairings));
+    let wrong = airband_core::encode::base64(&keys.seal(Direction::Push, b"{\"not\": 1}"));
+    assert_eq!(open(vec![link(&laptop)], wrong, Default::default()), Err(NoticeTrouble::NotANotice));
     assert_eq!(station_id(&link(&laptop)).as_str(), keys.channel);
 }
 

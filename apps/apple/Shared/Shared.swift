@@ -126,6 +126,8 @@ enum TeamColours {
 enum NoticeButtons {
     static let reply = "airband.reply"
     static let permit = "airband.permit"
+    /// A request for leave shown by its opening: Deny and the reply box, and no Allow under part of a command.
+    static let permitAfterReading = "airband.permit.read"
     static let failed = "airband.failed"
     static let typed = "reply"
 
@@ -140,8 +142,20 @@ enum NoticeButtons {
                 UNNotificationAction(identifier: noticeAllowId(), title: "Allow", options: [.authenticationRequired]),
                 UNNotificationAction(identifier: noticeDenyId(), title: "Deny", options: [.destructive]), type,
             ], intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: permitAfterReading, actions: [
+                UNNotificationAction(identifier: noticeDenyId(), title: "Deny", options: [.destructive]), type,
+            ], intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: failed, actions: [], intentIdentifiers: [], options: []),
         ]
+    }
+    /// The registered name of the set the core chose for a notification.
+    static func name(for set: NoticeButtonSet, options: [String]) -> String {
+        switch set {
+        case .permit: return permit
+        case .permitAfterReading: return permitAfterReading
+        case .answers: return name(for: options)
+        case .reply: return reply
+        }
     }
     /// The name for a set of answers: the same answers always get the same name.
     static func name(for options: [String]) -> String { noticeAnswersName(options: options) }

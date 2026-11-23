@@ -37,8 +37,9 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
         return nobody;
     }
     let mut inner = app.change();
-    // no radio is following the chat or on a call: there is nobody to ask
-    if !inner.following() && !inner.connected() {
+    // no radio is following the chat or on a call, and no phone can be woken to be told: there is nobody to ask
+    if !inner.following() && !inner.connected() && !app.push.can_wake(&app.cfg()) {
+        log(format!("{}: asks permission; no radio is there and no phone can be woken, so it is asked at the keyboard", short_id(&ask.agent.id)));
         return nobody;
     }
     if inner.check_in(&ask.agent).is_none() {
@@ -275,5 +276,24 @@ impl Inner {
             self.set_aloud(entry, Aloud::dropped(why));
         }
         self.touch(entry);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// With no radio heard from lately, a request for leave is put to him only when a phone can be woken.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_phone_that_can_be_woken_is_someone_to_ask_with_no_radio_there() {
+        let phone = config::PairedRadio { name: "phone".into(), secret: airband_core::relay::new_secret() };
+        let channel = push::channel_of(&phone).unwrap();
+        let app = super::super::http::tests::app_with("permit-wake", serde_json::json!({ "relay": "http://127.0.0.1:9", "pairings": [phone], "permission_wait": 30 }));
+        let ask = || PermissionAsk { schema: agent::SCHEMA.into(), agent: airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a1", "test") }, what: "run `ls`".into(), detail: String::new(), question: None };
+        assert_eq!(super::ask(&app, ask()).state, agent::Leave::Nobody, "nobody there and nothing to wake");
+        push::register(&app, &channel, airband_core::radio::PushTarget { provider: airband_core::relay::PushService::Apns, token: "ab".repeat(32) });
+        let asked = super::ask(&app, ask());
+        assert_eq!(asked.state, agent::Leave::Pending, "the phone is told of it");
+        assert!(app.read().log.iter().any(|e| e.permit.as_deref() == Some(asked.id.as_str())));
     }
 }

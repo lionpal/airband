@@ -377,7 +377,7 @@ to pass it on:
 | `POST /v1/channels/<channel>/push` | `{ provider, to, sealed, question }` → `{ sent, why }` | `to` is the phone's address, `sealed` the notification in base64 (2400 bytes at most before base64), `question` whether it is one. 200 sent; 400 not a request, or one of the wrong shape; 410 the address is no longer good and the tower forgets it; 429 more than 60 from this channel in ten minutes, or 240 from one internet address; 503 this relay has no such push service; 502 the service refused or could not be reached. `why` says which, as a fact (`NotPushed`: `refused` carries the service's status); the push service's own words stay in the relay's log. 403 and 404 (not this channel's tower, no such channel) carry no answer of this kind. |
 
 The relay holds the push service's key and adds the same visible words to every notification ("airband", "New
-message" or "A question for you"), which is what shows if the phone cannot open it. The relay and the push
+message" or "An agent needs you"), which is what shows if the phone cannot open it. The relay and the push
 service learn only that a notification was sent, when, to which phone, and whether it was a question. The phone
 opens it with `open_notice` in the radio core. An answer given on the notification is an ordinary
 `POST utterance` with `re` set to the notification's `id`.

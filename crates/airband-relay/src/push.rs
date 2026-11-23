@@ -156,7 +156,7 @@ impl Apns {
     async fn send(&self, to: &str, sealed: &str, question: bool) -> Outcome {
         // what shows if the phone cannot open it (the app's extension did not run): the same words every time
         let body = serde_json::json!({
-            "aps": { "alert": { "title": "airband", "body": if question { "A question for you" } else { "New message" } }, "sound": "default", "mutable-content": 1 },
+            "aps": { "alert": { "title": "airband", "body": if question { "An agent needs you" } else { "New message" } }, "sound": "default", "mutable-content": 1 },
             "sealed": sealed,
         })
         .to_string();

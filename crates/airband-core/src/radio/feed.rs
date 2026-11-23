@@ -75,6 +75,10 @@ pub struct Notice {
     /// It is a request for permission: the only answers are Allow, Deny, or his own words, which refuse it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub permission: bool,
+    /// `text` is the opening of something longer. On a request for permission it means no Allow is offered from
+    /// the lock screen: he reads all of what would run first.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cut: bool,
 }
 
 /// What deserves a notification: a message that needs him, a report, or one no model read. Never chatter, a

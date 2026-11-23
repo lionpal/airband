@@ -52,9 +52,10 @@ impl Desk {
     }
     /// What to copy when something is wrong with the connection: for each computer, every request that failed
     /// lately and every try at sending something he said, with the time, the way it went, how it ended and how
-    /// long it took. Nothing that he or an agent said is in it, and no key or address. It is made on this
-    /// device from what this device kept, and goes nowhere unless he pastes it somewhere.
-    pub fn diagnostics(&self) -> String {
+    /// long it took; and what became of the latest notifications, from the folder the host shares with what
+    /// opens them (`notices`). Nothing that he or an agent said is in it, and no key or address. It is made on
+    /// this device from what this device kept, and goes nowhere unless he pastes it somewhere.
+    pub fn diagnostics(&self, notices: Option<Arc<crate::SharedFolder>>) -> String {
         let radios = self.shared.state.lock().unwrap().named_radios();
         let mut out = vec![format!("airband {} connection record", env!("CARGO_PKG_VERSION"))];
         for (computer, radio) in radios {
@@ -70,6 +71,15 @@ impl Desk {
             if !lost.is_empty() {
                 out.push(format!("told in passing and not delivered, since the app was opened: {}", lost.iter().map(|(what, n)| format!("{what} {n}")).collect::<Vec<_>>().join(", ")));
             }
+        }
+        if let Some(folder) = notices {
+            out.push(String::new());
+            out.push("notifications".into());
+            let lines = folder.notice_lines();
+            if lines.is_empty() {
+                out.push("none has come since this was last installed".into());
+            }
+            out.extend(lines);
         }
         out.join("\n")
     }

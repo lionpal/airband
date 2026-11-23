@@ -6,9 +6,10 @@
 #   scripts/check.sh --full    those, then the end-to-end suites, side by side: the relay and its queue, the pull,
 #                              agents the tower runs itself, links, the paths the audits keep finding faults in
 #                              (e2e-scenarios), notifications (e2e-push), the phone's own core in a simulator of its
-#                              own (e2e-phone), the whole tower with real model calls (a few minutes, and it needs
-#                              `claude` signed in), and Antigravity CLI for real on Gemini 4 Neon (e2e-antigravity: it
-#                              needs `agy`, and a Gemini API key in GEMINI_API_KEY, which only agy is given)
+#                              own, with each kind of notification handed to it as the push service would (e2e-phone),
+#                              the whole tower with real model calls (a few minutes, and it needs `claude` signed in),
+#                              and Antigravity CLI for real on Gemini 4 Neon (e2e-antigravity: it needs `agy`, and a
+#                              Gemini API key in GEMINI_API_KEY, which only agy is given)
 #
 # `git push` runs the first form by itself (.githooks/pre-push, turned on once with
 # `git config core.hooksPath .githooks`). CI on GitHub runs on every push too: every system the tower is meant
