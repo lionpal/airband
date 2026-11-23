@@ -38,10 +38,11 @@ const USAGE: &str = "  airband catalog export [--expires-in-days 180]\n  airband
 /// whether a document would be taken by this build. `stamp` gives the rows a
 /// new number when they have changed. `scripts/publish-catalog.sh` and `scripts/catalog-stamp.sh` use them.
 pub(crate) fn command(args: &[String]) -> Result<(), String> {
-    let words = crate::words("catalog", args.get(1..).unwrap_or_default(), &["--expires-in-days", "--against"])?.rest;
+    let read = crate::words("catalog", args.get(1..).unwrap_or_default(), &["--expires-in-days", "--against"], &[])?;
+    let words = &read.rest;
     match args.first().map(String::as_str) {
         Some("export") => {
-            let days: u64 = crate::option(args, "--expires-in-days").map(|d| d.parse().map_err(|_| "--expires-in-days takes a number")).transpose()?.unwrap_or(180);
+            let days: u64 = read.flag("expires-in-days").map(|d| d.parse().map_err(|_| "--expires-in-days takes a number")).transpose()?.unwrap_or(180);
             let now = airband_core::clock::now_secs();
             println!("{}", catalog::built_in(now + days * 86400));
             Ok(())
@@ -75,8 +76,8 @@ pub(crate) fn command(args: &[String]) -> Result<(), String> {
             if !c.left_out.is_empty() || !unspoken.is_empty() {
                 return Err(format!("this build would leave rows of it out: {}", c.left_out.iter().chain(&unspoken).cloned().collect::<Vec<_>>().join("; ")));
             }
-            if let Some(before) = crate::option(args, "--against") {
-                let before = text_of(&before)?;
+            if let Some(before) = read.flag("against") {
+                let before = text_of(before)?;
                 catalog::would_take(text, &before)?;
                 println!("A build that has the copy published before would take it.");
             }

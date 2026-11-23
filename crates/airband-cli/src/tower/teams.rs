@@ -303,7 +303,7 @@ impl Inner {
             .teams
             .iter()
             .filter(|(id, t)| {
-                t.live_folder().is_none()
+                t.live_folder(&*self.disk).is_none()
                     && !self.sessions.iter().any(|s| s.team.as_ref() == Some(*id))
                     && !self.placed.values().any(|p| p.team == **id)
                     && !self.log.iter().any(|e| e.team.as_ref() == Some(*id))
@@ -320,7 +320,7 @@ impl Inner {
     /// His teams that have a folder, by what each is called, with the folder: what the configuration lists
     /// and wherever agents have been seen. A team whose folder has gone is not offered.
     pub(super) fn folder_teams(&self) -> BTreeMap<String, String> {
-        self.teams.values().filter_map(|t| t.live_folder().map(|f| (t.name.to_string(), f))).collect()
+        self.teams.values().filter_map(|t| t.live_folder(&*self.disk).map(|f| (t.name.to_string(), f))).collect()
     }
     /// What a folder is called in his lists: by the team that works there, or by the name one would have, and
     /// whether there is one. Nothing for a folder with no name to give a team.
@@ -347,7 +347,7 @@ impl Inner {
     /// The place of one of his teams, by its id, when it has a folder that is there.
     pub(super) fn team_place(&self, id: &TeamId) -> Option<Place> {
         let team = self.teams.get(id)?;
-        team.live_folder().map(|folder| Place { name: team.name.to_string(), folder })
+        team.live_folder(&*self.disk).map(|folder| Place { name: team.name.to_string(), folder })
     }
     /// The folders his coding tools have had sessions in, newest first, with his teams: one that has a team
     /// is called by it, and a team no tool has a record of comes last.

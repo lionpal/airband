@@ -195,7 +195,13 @@ impl Default for Pulling {
 impl Pulling {
     /// A tower that has just started: a new id, nothing got, nothing being answered.
     pub fn new() -> Pulling {
-        Pulling { tower: random_hex(8), got: None, answering: None, handings: 0 }
+        Pulling::of_tower(random_hex(8))
+    }
+    /// A tower that has just started under the id it keeps (made once on that computer and kept): a pull it made
+    /// before a restart, or under another spelling of the relay's address, is then its own, never another
+    /// computer's.
+    pub fn of_tower(tower: impl Into<String>) -> Pulling {
+        Pulling { tower: tower.into(), got: None, answering: None, handings: 0 }
     }
     /// The headers for the next pull: its version and tower, what the last pull got, and the kept message being
     /// answered for.
@@ -225,11 +231,14 @@ impl Pulling {
     }
     /// The work on one handing of a kept message ended, its answer sent or not. Called however it ended, a panic
     /// included: the next pull stops naming it, and if the relay did not hear the answer it hands the message
-    /// over again. The work on an earlier handing of the same message ending changes nothing.
-    pub fn answered(&mut self, handing: &Handing) {
-        if self.answering.as_ref() == Some(handing) {
+    /// over again. The work on an earlier handing of the same message ending changes nothing. Whether it was the
+    /// handing the pulls named, now let go.
+    pub fn answered(&mut self, handing: &Handing) -> bool {
+        let named = self.answering.as_ref() == Some(handing);
+        if named {
             self.answering = None;
         }
+        named
     }
     /// The tower opened its channel again: what the last pull got is not said again. A kept message whose work
     /// still runs is still answered for (the opening says so, and the relay keeps it in this tower's hands).
@@ -510,7 +519,7 @@ mod tests {
         // a radio's request handed meanwhile does not end the kept one's answer
         assert_eq!(p.handed("r1", false), None);
         assert_eq!((said(&p, GOT_HEADER).as_deref(), said(&p, ANSWERING_HEADER).as_deref()), (Some("r1"), Some("k1")));
-        p.answered(&k1);
+        assert!(p.answered(&k1), "the handing the pulls named is let go");
         assert_eq!(said(&p, ANSWERING_HEADER), None);
         // B-5: opened again while the work on k2 runs, it is still answered for; handed again meanwhile, the
         // first handing's work ending does not end the second's
@@ -518,9 +527,9 @@ mod tests {
         p.reopened();
         assert_eq!((said(&p, GOT_HEADER), said(&p, ANSWERING_HEADER).as_deref()), (None, Some("k2")));
         let k2_again = p.handed("k2", true).unwrap();
-        p.answered(&k2);
+        assert!(!p.answered(&k2), "an earlier handing's work ending lets go of nothing");
         assert_eq!(said(&p, ANSWERING_HEADER).as_deref(), Some("k2"));
-        p.answered(&k2_again);
+        assert!(p.answered(&k2_again));
         assert_eq!(said(&p, ANSWERING_HEADER), None);
     }
     #[test]

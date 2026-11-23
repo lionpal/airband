@@ -84,7 +84,7 @@ pub(super) async fn feed(State(app): State<Arc<App>>, RadioId(radio): RadioId, A
             let later = unjudged.split_off(unjudged.len().min(JUDGE_NOW));
             judge_later(&app, later);
             // marked as being judged, like every other judging: two readers of the feed pay for a line once
-            judge_marked(&app, unjudged.into_iter().map(|e| e.id).collect(), JUDGE_NOW).await;
+            judge_for_request(&app, unjudged.into_iter().map(|e| e.id).collect()).await;
         }
         let inner = app.read();
         // if the only changes since this answer was started are to the lines in it (their short versions were

@@ -34,16 +34,13 @@ fn agent_of(hook: &Value) -> Option<Agent> {
         meta.insert("model".into(), Value::String(model));
     }
     Some(Agent {
-        // What he says is queued for the session with Codex's own command (`deliver` below). The session takes
-        // it as a turn of his.
-        deliver: if env("AIRBAND_HELD").is_some() { Some(Deliver::Held) } else { Some(Deliver::Harness { name: NAME.into(), session: id.clone() }) },
-        id,
-        harness: NAME.into(),
+        // What he says is queued for the session with the tool's own command (`deliver` below). The session takes
+        // it as a turn of his. One the tower holds is reached through its holder (`super::as_held`).
+        deliver: Some(Deliver::Harness { name: NAME.into(), session: id.clone() }),
         cwd: text(hook, "cwd"),
         name: env("AIRBAND_NAME"),
-        title: None,
-        pid: None,
         meta,
+        ..super::agent_with(id, NAME)
     })
 }
 
@@ -74,8 +71,14 @@ fn deliver(session: &str, words: &str) -> Result<(), String> {
     let program = super::row_says(NAME, "program");
     let argv = super::tool_row(NAME).map(|t| t.command("deliver", &[("program", &program), ("session", session), ("words", words)])).unwrap_or_default();
     let (program, args) = argv.split_first().ok_or("its row gives no way to hand it words")?;
-    let done = std::process::Command::new(program).args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped()).output().map_err(|e| format!("{} could not be started: {e}", super::called(NAME).0))?;
-    if done.status.success() { Ok(()) } else { Err(format!("{} did not take it: {}", super::called(NAME).0, airband_core::prose::clip(String::from_utf8_lossy(&done.stderr).trim(), 200))) }
+    // what it writes on failing is its own, and can hold his words: never read to him or logged
+    let done = std::process::Command::new(program).args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map_err(|e| format!("{} could not be started: {e}", super::called(NAME).0))?;
+    if done.success() { Ok(()) } else { Err(didnt_take(&super::called(NAME).0, program)) }
+}
+
+/// What he is told when the tool's own command would not take his words: that it failed, and where to look.
+fn didnt_take(tool: &str, program: &str) -> String {
+    format!("{tool} did not take it: {program} stopped with an error. Running it in a terminal shows why.")
 }
 
 // ---- what Codex itself says is open, and where it has worked ----
@@ -157,7 +160,7 @@ fn open_of(thread: &Value) -> Option<super::Open> {
         meta.insert("model".into(), Value::String(model));
     }
     Some(super::Open {
-        agent: Agent { deliver: Some(Deliver::Harness { name: NAME.into(), session: id.clone() }), id, harness: NAME.into(), cwd: text(thread, "cwd"), name: None, title: None, pid: None, meta },
+        agent: Agent { deliver: Some(Deliver::Harness { name: NAME.into(), session: id.clone() }), cwd: text(thread, "cwd"), meta, ..super::agent_with(id, NAME) },
         idle: thread["status"]["type"] == "idle",
     })
 }
@@ -296,6 +299,8 @@ fn watch(tower: super::Tower) {
     let mut heard: std::collections::HashMap<String, Option<(String, bool)>> = Default::default();
     let asking: std::sync::Arc<std::sync::Mutex<super::Asking>> = Default::default();
     let asking_for_threads = asking.clone();
+    // the first look that reached the server: what it finds was said before the tower started
+    let mut first = true;
     loop {
         std::thread::sleep(std::time::Duration::from_secs(if control_socket().exists() { 2 } else { 20 }));
         let Some(mut server) = Server::connect() else { continue };
@@ -324,8 +329,9 @@ fn watch(tower: super::Tower) {
             let Some(was) = heard.get(&agent.id).cloned() else {
                 // A turn that was already over when the thread was first seen has been said, or was said
                 // before the tower started: nothing of it is said again. One under way is working.
-                let told = match &now {
-                    Some((_, false)) => (tower.event)(AgentEvent::new(agent.clone(), Event::Working)).then(|| now.clone()),
+                let told = match (first_seen(first, &now), turn_event(turn)) {
+                    (FirstSeen::Working, _) => (tower.event)(AgentEvent::new(agent.clone(), Event::Working)).then(|| now.clone()),
+                    (FirstSeen::Over, Some(event)) => (tower.event)(AgentEvent::new(agent.clone(), event)).then(|| now.clone()),
                     _ => Some(now.clone()),
                 };
                 if let Some(told) = told {
@@ -342,6 +348,26 @@ fn watch(tower: super::Tower) {
             }
         }
         heard.retain(|id, _| here.iter().any(|a| a.id == *id));
+        first = false;
+    }
+}
+
+/// What is said of a thread the first time it is seen, from its newest turn: whether it is over.
+#[derive(Debug, PartialEq, Eq)]
+enum FirstSeen {
+    /// Under way: it is working.
+    Working,
+    /// Over since the tower's first look (it began and ended between two looks): what it came to is said.
+    Over,
+    /// Nothing: there is no turn, or it was over on the first look, said before the tower started.
+    Nothing,
+}
+
+fn first_seen(first: bool, newest: &Option<(String, bool)>) -> FirstSeen {
+    match newest {
+        Some((_, false)) => FirstSeen::Working,
+        Some((_, true)) if !first => FirstSeen::Over,
+        _ => FirstSeen::Nothing,
     }
 }
 #[cfg(not(unix))]
@@ -417,6 +443,21 @@ impl super::Harness for Codex {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_thread_that_began_and_ended_between_two_looks_has_what_it_came_to_said() {
+        let over = Some(("t1".to_string(), true));
+        assert_eq!(first_seen(true, &over), FirstSeen::Nothing, "said before the tower started");
+        assert_eq!(first_seen(false, &over), FirstSeen::Over);
+        assert_eq!(first_seen(false, &Some(("t1".to_string(), false))), FirstSeen::Working);
+        assert_eq!(first_seen(false, &None), FirstSeen::Nothing);
+    }
+
+    #[test]
+    fn what_he_is_told_when_the_tool_will_not_take_his_words_never_holds_what_it_wrote() {
+        let said = didnt_take("the tool", "prog");
+        assert!(said.contains("stopped with an error") && said.contains("terminal"));
+    }
     use serde_json::json;
 
     #[test]

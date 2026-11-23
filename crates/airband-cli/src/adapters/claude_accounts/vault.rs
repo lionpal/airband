@@ -58,9 +58,7 @@ impl Vault for Keychain {
         Ok(Some(s))
     }
     fn write(&self, service: &str, account: &str, data: &str) -> Res<()> {
-        let hex = airband_core::encode::hex(data.as_bytes());
-        let on = stand_in_keychain().map(|k| format!(" \"{k}\"")).unwrap_or_default();
-        let line = format!("add-generic-password -U -a \"{account}\" -s \"{service}\" -X \"{hex}\"{on}\n");
+        let line = add_line(service, account, data, stand_in_keychain().as_deref())?;
         // On standard input, so the login is never in the process list. `security -i` takes a line of about 4 KB
         // at most. A longer one could only go as an argument, where any program on this computer can read it
         // while the command runs, so it is not handed over at all.
@@ -107,5 +105,34 @@ impl Vault for Memory {
     fn delete(&self, service: &str, account: &str) -> Res<()> {
         self.0.lock().unwrap().remove(&(service.to_string(), account.to_string()));
         Ok(())
+    }
+}
+
+/// The line that puts a login in the keychain, for `security -i` on standard input. The account and the service
+/// go inside quotes there, which nothing in them may end: one that holds a quote, a backslash or a control
+/// character is refused, never put on the line as it is (it could end the quotes and add words of its own).
+fn add_line(service: &str, account: &str, data: &str, on: Option<&str>) -> Result<String, String> {
+    let quotable = |s: &str| !s.chars().any(|c| c == '"' || c == '\\' || c.is_control());
+    if !quotable(account) || !quotable(service) || !on.is_none_or(quotable) {
+        return Err("This account's name has a character the keychain's command line cannot take, so nothing was changed.".into());
+    }
+    let hex = airband_core::encode::hex(data.as_bytes());
+    let on = on.map(|k| format!(" \"{k}\"")).unwrap_or_default();
+    Ok(format!("add-generic-password -U -a \"{account}\" -s \"{service}\" -X \"{hex}\"{on}\n"))
+}
+
+#[cfg(test)]
+mod line_tests {
+    #[test]
+    fn an_account_that_could_end_its_quotes_is_refused_never_put_on_the_line() {
+        assert!(super::add_line("svc", "a\" -X \"00", "{}", None).is_err());
+        assert!(super::add_line("svc", "a\nb", "{}", None).is_err());
+        assert!(super::add_line("svc", "a\\b", "{}", None).is_err());
+        let line = super::add_line("svc", "me@example.com", "{}", None).unwrap();
+        assert!(line.starts_with("add-generic-password -U -a \"me@example.com\" -s \"svc\""));
+        // a run's own keychain file is named last, quoted like the rest
+        let line = super::add_line("svc", "me@example.com", "{}", Some("/tmp/run.keychain")).unwrap();
+        assert!(line.ends_with(" \"/tmp/run.keychain\"\n"), "{line}");
+        assert!(super::add_line("svc", "me@example.com", "{}", Some("/tmp/a\" -X \"00")).is_err());
     }
 }

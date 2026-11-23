@@ -331,15 +331,44 @@ pub(crate) fn carry_asked() -> std::path::PathBuf {
 /// copy could not read what this one put there. It reads the sealed file instead, and puts the keys back in
 /// the keychain as its own (`settle`). Nothing is taken out of the keychain until the file gives the same
 /// keys back. Ok(false) when there was nothing in the keychain to move.
-pub(crate) fn carry() -> Result<bool, String> {
+pub(crate) fn carry() -> Result<bool, CarryFailed> {
     #[cfg(target_os = "macos")]
     if keychain() && !file::has() {
-        let kept = mac::get()?;
-        sealed_and_checked(&kept, file::get)?;
+        let kept = mac::get().map_err(CarryFailed::Keychain)?;
+        sealed_and_checked(&kept, file::get).map_err(CarryFailed::Sealing)?;
         mac::forget();
         return Ok(true);
     }
     Ok(false)
+}
+
+/// Why the keys could not be carried out of the keychain: the keychain could not be read from here (a run that
+/// can read it does the carrying), or the sealed file could not be made, which no other run would do better.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CarryFailed {
+    Keychain(String),
+    Sealing(String),
+}
+
+impl std::fmt::Display for CarryFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CarryFailed::Keychain(why) => write!(f, "the keychain could not be read ({why})"),
+            CarryFailed::Sealing(why) => write!(f, "the keys could not be sealed in a file ({why})"),
+        }
+    }
+}
+
+/// What `airband keys carry` does when carrying failed: one the keychain refused from here is left for the next
+/// run that can read it, and said; one whose sealing failed is an error, and nothing is left for later.
+pub(crate) fn after_failed_carry(why: &CarryFailed) -> Result<String, String> {
+    match why {
+        CarryFailed::Keychain(why) => {
+            airband_io::files::write_atomic(&carry_asked(), "").map_err(|e| e.to_string())?;
+            Ok(format!("The keychain cannot be read from here ({why}).\nairband moves the keys the next time it starts:  airband install"))
+        }
+        CarryFailed::Sealing(why) => Err(format!("The keys could not be sealed in a file, so they are where they were ({why}).")),
+    }
 }
 
 /// Seal `kept` in the file and read it back (`read`). However that fails, a written file is taken away again,
@@ -373,6 +402,18 @@ pub(crate) fn settle() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_keychain_that_cannot_be_read_from_here_is_left_for_the_next_run() {
+        let home = std::env::temp_dir().join(format!("airband-carry-{}", crate::config::random_hex(4)));
+        crate::config::tests_home::set(home.clone());
+        std::fs::create_dir_all(crate::config::dir()).unwrap();
+        assert!(after_failed_carry(&CarryFailed::Sealing("disk full".into())).unwrap_err().contains("sealed"));
+        assert!(!carry_asked().exists(), "a sealing that failed is not blamed on the keychain");
+        assert!(after_failed_carry(&CarryFailed::Keychain("locked".into())).unwrap().contains("keychain"));
+        assert!(carry_asked().exists());
+        let _ = std::fs::remove_dir_all(&home);
+    }
     use serde_json::json;
 
     #[test]

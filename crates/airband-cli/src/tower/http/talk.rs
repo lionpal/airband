@@ -176,7 +176,8 @@ pub(super) async fn utterance(State(app): State<Arc<App>>, RadioId(radio): Radio
         let written = tokio::task::spawn_blocking(move || written.saver.flush()).await.unwrap_or(false);
         let mut inner = app.change();
         // not yet on record (the saver keeps it and tries again): the same words sent again meanwhile are still
-        // told they are taken, never answered a second time
+        // told they are taken, never answered a second time. Once the saver has written it, the state lets go of
+        // the id itself (`Saver::written`), and a resend is given the answer on record
         if written {
             inner.answering.remove(&u.id);
         } else {

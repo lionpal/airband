@@ -149,7 +149,7 @@ pub(crate) struct Tower {
 }
 
 /// Something he said to an agent directly, at its keyboard.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Told {
     /// The harness's own id for it: the same words are never taken twice.
     pub(crate) id: String,
@@ -169,7 +169,7 @@ pub(crate) struct Told {
 pub(crate) struct Glance {
     /// What it is doing right now, in a few words.
     pub(crate) doing: Option<String>,
-    /// The model it runs on, as a person would say it: "Opus 4.7".
+    /// The model it runs on, as a person would say it, as its tool names it.
     pub(crate) model: Option<String>,
     /// How hard it is set to think: "high".
     pub(crate) effort: Option<String>,
@@ -351,6 +351,13 @@ pub(crate) fn agent_with(id: impl Into<String>, harness: impl Into<String>) -> A
     Agent { id: id.into(), harness: harness.into(), cwd: None, name: None, title: None, pid: None, deliver: None, meta: Default::default() }
 }
 
+/// His words are never in a Debug form: their length only.
+impl std::fmt::Debug for Told {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Told").field("id", &self.id).field("at", &self.at).field("text", &crate::unshown(&self.text)).field("images", &self.images.len()).field("his", &self.his).finish()
+    }
+}
+
 /// A variable this process was started with, empty taken as unset. A test never reads the real environment:
 /// it sees only what it put in its own (`test_env::set`), so a test run inside one of his sessions reads nothing
 /// of that session's.
@@ -412,7 +419,8 @@ pub(crate) fn hook(name: Option<&str>) -> Result<(), String> {
     std::io::stdin().read_to_string(&mut input).ok();
     let notification: Value = serde_json::from_str(&input).unwrap_or_default();
     // the harness is about to ask for permission at the keyboard: ask him on the radio first
-    if let Some(request) = adapter.permission(&notification) {
+    if let Some(mut request) = adapter.permission(&notification) {
+        as_held(&mut request.agent);
         if let Some((allow, reason)) = ask_him(&request) {
             println!("{}", adapter.permission_answer(&request, allow, &reason));
         }
@@ -420,16 +428,55 @@ pub(crate) fn hook(name: Option<&str>) -> Result<(), String> {
         return Ok(());
     }
     for mut event in adapter.events(&notification) {
-        // An agent the tower runs whose program was not started under the id the tower gave it is known by
-        // that id all the same, whatever its harness calls the session: its holder says so (`hold.rs`). True
-        // of any harness, so it is said here and not in each adapter.
-        if let Some(id) = env("AIRBAND_HELD_ID") {
-            event.agent.id = id;
-            event.agent.deliver = Some(airband_core::agent::Deliver::Held);
-        }
+        as_held(&mut event.agent);
         post(&event);
     }
     Ok(())
+}
+
+/// Set by a holder on the program it runs (`tower/held.rs`): this agent is one the tower holds.
+const HELD: &str = "AIRBAND_HELD";
+/// Set by a holder whose program was not started under the id the tower gave it: that id.
+const HELD_ID: &str = "AIRBAND_HELD_ID";
+
+/// Whether this hook runs inside an agent the tower holds. Decided here, once, for every harness.
+pub(crate) fn held() -> bool {
+    env(HELD).is_some() || env(HELD_ID).is_some()
+}
+
+/// An agent the tower holds, as it is reported: reached through the input its holder keeps and no other way,
+/// with no title of the harness's making (a session carried on in a new process comes with one he never gave
+/// it), and known by the id the tower gave it whatever its harness calls the session. True of any harness, so
+/// it is said here and not in each adapter.
+fn as_held(agent: &mut Agent) {
+    if !held() {
+        return;
+    }
+    agent.deliver = Some(airband_core::agent::Deliver::Held);
+    agent.title = None;
+    if let Some(id) = env(HELD_ID) {
+        agent.id = id;
+    }
+}
+
+#[cfg(test)]
+mod held_tests {
+    use super::*;
+
+    #[test]
+    fn an_agent_the_tower_holds_is_reported_as_held_whatever_its_harness_said() {
+        test_env::clear();
+        let mut agent = Agent { title: Some("made up by the tool".into()), deliver: Some(airband_core::agent::Deliver::Harness { name: "t".into(), session: "s".into() }), ..agent_with("s", "t") };
+        as_held(&mut agent);
+        assert_eq!((agent.id.as_str(), agent.title.as_deref()), ("s", Some("made up by the tool")), "not held: left as the harness said");
+        assert!(matches!(agent.deliver, Some(airband_core::agent::Deliver::Harness { .. })));
+        test_env::set(HELD, "1");
+        test_env::set(HELD_ID, "given");
+        as_held(&mut agent);
+        assert_eq!((agent.id.as_str(), agent.title.as_deref()), ("given", None));
+        assert!(matches!(agent.deliver, Some(airband_core::agent::Deliver::Held)));
+        test_env::clear();
+    }
 }
 
 #[cfg(test)]
@@ -483,7 +530,9 @@ mod finding {
             let (found, events, listed, marks) = (found.clone(), events.clone(), listed.clone(), listed.clone());
             Tower {
                 event: Box::new(move |e| {
-                    events.lock().unwrap().push(format!("{:?} {}", e.event, e.agent.id));
+                    // by the event's kind as it is written down, never its debug form
+                    let kind = serde_json::to_value(&e.event).ok().and_then(|v| v.get("type").and_then(|t| t.as_str()).map(String::from)).unwrap_or_default();
+                    events.lock().unwrap().push(format!("{kind} {}", e.agent.id));
                     true
                 }),
                 holds: Box::new(|session| session == "held"),
@@ -511,7 +560,7 @@ mod finding {
         look(&tool, &tower, &mut told);
         let mut gone = events.lock().unwrap().clone();
         gone.sort();
-        assert_eq!(gone, ["Signoff b", "Signoff from-before"]);
+        assert_eq!(gone, ["signoff b", "signoff from-before"]);
         // a tool that cannot say what is open just now has nothing signed off on its silence
         events.lock().unwrap().clear();
         *tool.0.lock().unwrap() = None;

@@ -2,7 +2,7 @@
 //! interface).
 //! Nothing a message says leaves the machine.
 //!
-//! The model is run by llama.cpp's server, a separate program the tower fetches once (a pinned build, checked
+//! The model is run by a server program a row of `catalog/servers/` names, a separate program the tower fetches once (a pinned build, checked
 //! against its hash: a row of `catalog/servers/`) and starts beside itself. The server fetches the model the first time it is asked for
 //! it. The tower then speaks to it over the loopback address by the same chat interface as any other service,
 //! held to the shape of the answer it wants, so everything else in the tower is unchanged.
@@ -101,7 +101,7 @@ fn ended(child: &mut Child) -> bool {
 
 fn healthy() -> bool {
     let client = airband_io::http::Client::new(Duration::from_secs(2));
-    address().is_ok_and(|at| client.send(airband_io::http::Ask::get(format!("{at}/health"))).is_ok_and(|r| r.status().as_u16() == 200))
+    address().is_ok_and(|at| crate::adapters::taken(client.send(airband_io::http::Ask::get(format!("{at}/health")))).is_some())
 }
 
 
@@ -117,18 +117,27 @@ fn end_the_last_one() {
     if let (Some(pid), Some(was)) = (lines.next().and_then(|p| p.trim().parse::<u32>().ok()), lines.next().and_then(at))
         && crate::platform::started(pid) == Some(was)
     {
-        terminate(pid);
-        std::thread::sleep(Duration::from_millis(600));
+        // gone, by looking: then its port is free for the one started next
+        if edges::procs::end_and_wait_here(&edges::procs::SystemProcs, pid).is_err() {
+            log("local model: the server a tower before this one started did not end when asked");
+        }
     }
     airband_io::files::remove(&note).ok();
+    if let Ok(port) = port()
+        && !port_free(port)
+    {
+        log(format!("local model: another program holds port {port}, so the server cannot listen there"));
+    }
+}
+
+/// Whether nothing is listening on the server's port: what a server starting there needs.
+fn port_free(port: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
 }
 
 /// Ask the server's keeper to end it, and wait until it has: asked, not killed, so the keeper can pass it on.
 fn end(keeper: &mut Child) {
-    terminate(keeper.id());
-    #[cfg(not(unix))]
-    let _ = keeper.kill();
-    keeper.wait().ok();
+    edges::procs::end_child(&edges::procs::SystemProcs, keeper);
 }
 
 /// Stop the server, when something else reads from now on.
@@ -213,6 +222,15 @@ pub(crate) fn ensure(model: &str, server: &str, patience: Patience) -> Result<St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_port_is_free_only_when_nothing_listens_there() {
+        let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = held.local_addr().unwrap().port();
+        assert!(!port_free(port));
+        drop(held);
+        assert!(port_free(port));
+    }
 
     #[test]
     fn a_caller_asking_only_whether_the_model_is_ready_is_never_kept_waiting_through_a_fetch() {

@@ -49,32 +49,49 @@ mod tower;
 mod vault;
 mod setup;
 
-/// The value given after an option on the command line (`--name value`), when it is there.
-pub(crate) fn option(args: &[String], name: &str) -> Option<String> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+/// What a Debug form shows of text that is his (his words, a task, an email): its length, never the text.
+pub(crate) fn unshown(text: &str) -> String {
+    format!("<{} characters>", text.chars().count())
 }
 
 /// A command's words, read by [`words`].
 pub(crate) struct Words {
     /// Each flag it was given, without its dashes, with the value after it.
     pub(crate) flags: std::collections::BTreeMap<String, String>,
+    /// Each switch it was given (a flag with no value), without its dashes.
+    pub(crate) on: std::collections::BTreeSet<String>,
     /// Every other word, in order.
     pub(crate) rest: Vec<String>,
     /// Everything after a lone `--`, as it is.
     pub(crate) after: Vec<String>,
 }
 
-/// Read a command's words: each flag of `takes` (as written, `--model`) with the value after it, everything
-/// after a lone `--` as it is, and every other word in order. A flag that is not one of `takes`, or one with no
-/// value, is refused: the one way a command's words are read.
-pub(crate) fn words(command: &str, args: &[String], takes: &[&str]) -> Result<Words, String> {
-    let mut read = Words { flags: Default::default(), rest: Vec::new(), after: Vec::new() };
+impl Words {
+    /// The value given after a flag, without its dashes.
+    pub(crate) fn flag(&self, name: &str) -> Option<&str> {
+        self.flags.get(name).map(String::as_str)
+    }
+    /// Whether a switch was given, without its dashes.
+    pub(crate) fn is_on(&self, name: &str) -> bool {
+        self.on.contains(name)
+    }
+}
+
+/// Read a command's words: each flag of `takes` (as written, `--model`) with the value after it, each switch of
+/// `switches` (`--once`), everything after a lone `--` as it is, and every other word in order. A flag that is
+/// neither, or one with no value, is refused, so a mistyped one is never passed over: the one way a command's
+/// words are read.
+pub(crate) fn words(command: &str, args: &[String], takes: &[&str], switches: &[&str]) -> Result<Words, String> {
+    let mut read = Words { flags: Default::default(), on: Default::default(), rest: Vec::new(), after: Vec::new() };
     let mut it = args.iter();
     while let Some(word) = it.next() {
         match word.as_str() {
             "--" => read.after = it.by_ref().cloned().collect(),
             flag if takes.contains(&flag) => {
                 read.flags.insert(flag[2..].to_string(), it.next().cloned().ok_or_else(|| format!("airband {command}: {flag} needs a value"))?);
+            }
+            switch if switches.contains(&switch) => {
+                read.on.insert(switch[2..].to_string());
             }
             flag if flag.starts_with("--") => return Err(format!("airband {command} does not take \"{flag}\"")),
             plain => read.rest.push(plain.to_string()),
@@ -137,7 +154,7 @@ fn main() {
         Some("lan") => commands::lan(config::load(), &args[1..]),
         Some("keys") => setup::keys(&args[1..]),
         Some("catalog") => catalog::command(&args[1..]),
-        Some("setup") => setup::setup(config::load(), !args.iter().any(|a| a == "--no-start")),
+        Some("setup") => words("setup", &args[1..], &[], &["--no-start"]).and_then(|w| setup::setup(config::load(), !w.is_on("no-start"))),
         Some("model") => commands::model(config::load(), &args[1..]),
         Some("radio") => terminal::run(&config::load(), &args[1..]),
         Some("launch") => terminal::launch(&config::load(), &args[1..]),
@@ -150,5 +167,22 @@ fn main() {
     if let Err(e) = result {
         eprintln!("airband: {e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod words_tests {
+    #[test]
+    fn a_debug_form_of_his_text_says_its_length_only() {
+        assert_eq!(super::unshown("buy milk"), "<8 characters>");
+    }
+
+    #[test]
+    fn a_mistyped_flag_is_refused_and_never_passed_over() {
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let read = super::words("feed", &args(&["--team", "shop", "--once", "rest"]), &["--team"], &["--once"]).unwrap();
+        assert_eq!((read.flag("team"), read.is_on("once"), read.rest.as_slice()), (Some("shop"), true, ["rest".to_string()].as_slice()));
+        assert!(super::words("model", &args(&["maker", "--key-evn", "V"]), &["--key-env"], &[]).map(|_| ()).unwrap_err().contains("--key-evn"));
+        assert!(super::words("radio", &args(&["--window"]), &["--window"], &[]).map(|_| ()).unwrap_err().contains("needs a value"));
     }
 }

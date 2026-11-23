@@ -7,14 +7,21 @@ use super::*;
 
 /// A new agent he asked for: where, on what, and to do what. The place is nothing until it is known; the model
 /// and effort are as he named them (`chosen`), or nothing for the tool's own defaults.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Clone, Default, PartialEq)]
 pub(super) struct Idea {
-    /// The harness he asked for by name ("a codex agent"), when he did and a launcher starts it.
+    /// The harness he asked for by name ("a <tool> agent"), when he did and a launcher starts it.
     pub(super) tool: Option<String>,
     pub(super) project: Option<Place>,
     pub(super) model: Option<Pick>,
     pub(super) effort: Option<Pick>,
     pub(super) task: String,
+}
+
+/// The task is his words: never in a Debug form, its length only.
+impl std::fmt::Debug for Idea {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Idea").field("tool", &self.tool).field("project", &self.project).field("model", &self.model).field("effort", &self.effort).field("task", &crate::unshown(&self.task)).finish()
+    }
 }
 
 /// A model or an effort he asked for, as it came to the tower.
@@ -137,8 +144,9 @@ pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Result
                 Ok(say(launched(app, place, &with, task, Some(id), line)))
             }
             Err(e) => {
+                // what the holder or its program said can be the tool's own words: the log has it, he is told where
                 log(format!("launch in {project} failed: {e}"));
-                Err(say(format!("Could not launch in {project}: {}", airband_core::prose::clip(&spoken(&e), 120))))
+                Err(say(format!("Could not launch in {project}: the agent did not start. This computer's airband log says why.")))
             }
         };
     }
@@ -149,23 +157,24 @@ pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Result
     let argv = launcher.command(model_id.as_deref(), effort_id.as_deref(), fill);
     let Some((program, args)) = argv.split_first() else { return Err(say("The launcher command is empty.".into())) };
     // AIRBAND_INTERNAL must not leak in: the new agent has to report to the tower
-    let run = tokio::process::Command::new(program).args(args).current_dir(&cwd).env_remove(INTERNAL_ENV).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).kill_on_drop(false).output();
-    match tokio::time::timeout(Duration::from_secs(20), run).await {
-        Ok(Ok(out)) if out.status.success() => {
+    // A launcher hands the agent off and ends: its ending is what says how it went, waited for as long as it
+    // takes. Never cut short on a clock while it goes on, which could start a second agent when he asks again.
+    let run = tokio::process::Command::new(program).args(args).current_dir(&cwd).env_remove(INTERNAL_ENV).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).output();
+    match run.await {
+        Ok(out) if out.status.success() => {
             log(format!("launched {named}{with} in {project} ({session}), with a task of {} characters", task.chars().count()));
             // handed off to a program of its own: nothing says which agent it becomes when it reports in
             Ok(say(launched(app, place, &with, task, None, line)))
         }
-        Ok(Ok(out)) => {
+        Ok(out) => {
             // what it wrote can hold its command line, and so his task: neither the log nor he is given it
             log(format!("launch in {project} failed: {program} ended with {} after writing {} bytes of errors", out.status, out.stderr.len()));
             Err(say(format!("Could not launch in {project}: {program} stopped with an error.")))
         }
-        Ok(Err(e)) => {
+        Err(e) => {
             log(format!("launch in {project} failed: cannot run {program}: {e}"));
             Err(say(format!("Could not launch in {project}: {program} did not start.")))
         }
-        Err(_) => Err(say(format!("Launching in {project} did not finish within twenty seconds."))),
     }
 }
 

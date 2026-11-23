@@ -13,9 +13,9 @@ pub(in crate::tower) struct Team {
     pub(in crate::tower) named: bool,
 }
 impl Team {
-    /// Its folder, when it has one that is still there.
-    pub(in crate::tower) fn live_folder(&self) -> Option<String> {
-        self.folder.clone().filter(|f| std::path::Path::new(f).is_dir())
+    /// Its folder, when it has one that is still there on `disk`.
+    pub(in crate::tower) fn live_folder(&self, disk: &dyn super::super::edges::folders::Folders) -> Option<String> {
+        self.folder.clone().filter(|f| disk.exists(f))
     }
 }
 #[derive(Serialize, Deserialize, Default)]

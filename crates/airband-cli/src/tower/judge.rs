@@ -10,7 +10,7 @@ mod chosen;
 mod later;
 mod models;
 use brief::*;
-pub(in crate::tower) use later::{JUDGE_NOW, judge_later, judge_marked};
+pub(in crate::tower) use later::{JUDGE_NOW, judge_for_request, judge_later, judge_marked};
 pub(in crate::tower) use chosen::*;
 pub(crate) use models::*;
 

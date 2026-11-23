@@ -1,11 +1,11 @@
-//! The live login: the keychain item Claude Code keeps it in (JSON, with the claude.ai login under
-//! the key its row names beside the MCP logins), the account record in its account file, and which account it is.
+//! The live login: the keychain item the tool keeps it in (JSON, with the maker's own login under
+//! the key its row names beside its other logins), the account record in its account file, and which account it is.
 use super::{login_key, saved, service, tool, Here, Res};
 use serde_json::{Map, Value};
 use std::path::Path;
 
 /// The live item, or nothing when Claude Code is not signed in. One that is there and cannot be read is an
-/// error: replacing it would lose the logins kept beside the claude.ai one.
+/// error: replacing it would lose the logins kept beside the maker's own one.
 pub(super) fn blob(here: &Here) -> Res<Option<Map<String, Value>>> {
     let Some(s) = here.vault.read(&here.live_service, here.user.as_ref().map_err(|e| e.clone())?)? else { return Ok(None) };
     match serde_json::from_str::<Value>(&s).map_err(|e| format!("{}'s login cannot be read ({e}), so nothing was changed.", tool()))? {
@@ -13,7 +13,7 @@ pub(super) fn blob(here: &Here) -> Res<Option<Map<String, Value>>> {
         _ => Err(format!("{}'s login is not in the form expected, so nothing was changed.", tool())),
     }
 }
-/// The claude.ai login in the live item, when there is one.
+/// The maker's own login in the live item, when there is one.
 fn oauth(blob: &Map<String, Value>) -> Option<&Value> {
     blob.get(&login_key())
 }
@@ -48,7 +48,7 @@ pub(super) fn write_account_file(file: &Path, text: String) -> Res<()> {
 }
 
 /// Which account the live login is.
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 pub(super) enum Live {
     /// Claude Code is not signed in to an account (nothing there, or an API key).
     Out,
@@ -69,4 +69,23 @@ pub(super) fn who(here: &Here, saved: &[String]) -> Res<Live> {
     }
     let Some(refresh) = field(o, "refreshToken") else { return Ok(Live::Unknown) };
     Ok(saved.iter().find(|e| saved::refresh_token_of(here, e).as_deref() == Some(refresh)).map_or(Live::Unknown, |e| Live::Known(e.clone())))
+}
+
+/// An account's email is never in a Debug form.
+impl std::fmt::Debug for Live {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Live::Out => f.write_str("Out"),
+            Live::Known(email) => write!(f, "Known({})", crate::unshown(email)),
+            Live::Unknown => f.write_str("Unknown"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod debug_tests {
+    #[test]
+    fn the_live_accounts_email_is_never_in_its_debug_form() {
+        assert!(!format!("{:?}", super::Live::Known("me@example.com".into())).contains("example"));
+    }
 }

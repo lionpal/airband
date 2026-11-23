@@ -146,7 +146,8 @@ pub(super) fn remote_control_line(line: &[u8]) -> Option<String> {
         return None;
     }
     let args = entry["commandRun"]["args"].as_str()?.trim();
-    (!args.is_empty() && args.len() <= 60).then(|| args.to_string())
+    // sixty characters, as he typed them: counted as characters, never as bytes
+    (!args.is_empty() && args.chars().count() <= 60).then(|| args.to_string())
 }
 
 /// A look at a session, from the end of its transcript: what it is doing right now, in its own words for its

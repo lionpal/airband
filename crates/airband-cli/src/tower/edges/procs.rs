@@ -1,5 +1,8 @@
 //! Processes on this computer, as the tower asks after them: whether one is still running, and asking one to
-//! end. The tower never kills a process; it asks, and waits.
+//! end. A process the tower did not start as its child (an agent, a server left by a tower that stopped) is
+//! never killed: it is asked, and waited for. A child the tower started for one job (a delivery's program, a
+//! model's command) is its own, and ends with that job (`kill_on_drop` where it is started). Every way the tower
+//! ends a process is here.
 use std::time::Duration;
 
 pub(in crate::tower) trait Procs: Sync {
@@ -102,6 +105,29 @@ pub(in crate::tower) async fn end_and_wait(procs: &dyn Procs, pid: u32) -> Resul
     Ok(())
 }
 
+/// [`end_and_wait`], for a thread that is not the runtime's.
+pub(in crate::tower) fn end_and_wait_here(procs: &dyn Procs, pid: u32) -> Result<(), ()> {
+    procs.terminate(pid);
+    let until = std::time::Instant::now() + ENDS_WITHIN;
+    while procs.alive(pid) {
+        if std::time::Instant::now() >= until {
+            return Err(());
+        }
+        std::thread::sleep(LOOKED_AT_EVERY);
+    }
+    Ok(())
+}
+
+/// Ask a child of the tower's to end, and collect it once it has: asked, not killed, so it can pass the word on
+/// to its own. Its ending is the system saying so, never a guess at how long it takes.
+pub(in crate::tower) fn end_child(procs: &dyn Procs, child: &mut std::process::Child) {
+    procs.terminate(child.id());
+    // no asking on this system: a child of its own is ended outright
+    #[cfg(not(unix))]
+    child.kill().ok();
+    child.wait().ok();
+}
+
 /// Processes that end when asked, after being looked at `lingers` more times; or never, when `lingers` is
 /// `None`.
 #[cfg(test)]
@@ -149,5 +175,12 @@ mod tests {
         assert!(ends.asked_to_end.load(std::sync::atomic::Ordering::SeqCst));
         let stays = FakeProcs::ending_after(None);
         assert_eq!(end_and_wait(&stays, 1).await, Err(()));
+    }
+
+    #[test]
+    fn a_process_asked_to_end_off_the_runtime_is_waited_for_by_looking() {
+        let ends = FakeProcs::ending_after(Some(2));
+        assert_eq!(end_and_wait_here(&ends, 1), Ok(()));
+        assert!(ends.asked_to_end.load(std::sync::atomic::Ordering::SeqCst));
     }
 }

@@ -1,4 +1,4 @@
-//! What Anthropic's account service is asked: whose a token is, how much of an account is used, and a new
+//! What the tool's maker's account service is asked: whose a token is, how much of an account is used, and a new
 //! access token for a saved login. Every answer is read by its status and its own fields; one that cannot be
 //! read is said to be so, never taken for an empty one.
 #![expect(clippy::disallowed_macros, reason = "the account service's own request bodies, and the tool's own records (oauthAccount, its login), field for field as the tool writes them")]
@@ -87,6 +87,16 @@ pub(super) fn account_record(v: &Value) -> Option<(String, Value)> {
     Some((a.email, record))
 }
 
+/// What a refresh asks for: the scopes the login has, and none named when it has none (an empty scope is a
+/// request for no scopes, not for the ones it had).
+fn refresh_body(refresh: &str, client: &str, scopes: &str) -> Value {
+    let mut body = json!({ "grant_type": "refresh_token", "refresh_token": refresh, "client_id": client });
+    if !scopes.is_empty() {
+        body["scope"] = json!(scopes);
+    }
+    body
+}
+
 /// A new login for a saved one, from its refresh token: the login as it was, with the new tokens and times.
 pub(super) fn refresh(here: &Here, o: &Value) -> Res<Value> {
     let refresh = o.get("refreshToken").and_then(|x| x.as_str()).filter(|x| !x.is_empty()).ok_or(ADD_AGAIN)?;
@@ -94,7 +104,7 @@ pub(super) fn refresh(here: &Here, o: &Value) -> Res<Value> {
     // the login says which client it was made by; one that does not was made by Claude Code's own, as its row has it
     let client = o.get("clientId").and_then(|x| x.as_str()).map(String::from).unwrap_or_else(|| super::row("oauth_client"));
     let mut res = http()
-        .send(Ask::post(&here.token_url).bytes("application/json", json!({ "grant_type": "refresh_token", "refresh_token": refresh, "client_id": client, "scope": scopes }).to_string().into_bytes()))
+        .send(Ask::post(&here.token_url).bytes("application/json", refresh_body(refresh, &client, &scopes).to_string().into_bytes()))
         .map_err(|_| format!("Could not reach {} to check it.", maker()))?;
     let status = res.status().as_u16();
     let body: Option<Value> = res.body_mut().read_to_string().ok().and_then(|t| serde_json::from_str(&t).ok());
@@ -108,7 +118,8 @@ pub(super) fn refresh(here: &Here, o: &Value) -> Res<Value> {
         500..=599 => return Err(format!("{} had trouble just now ({status}). Try again later.", maker())),
         n => return Err(format!("{} would not refresh this login ({n}).", maker())),
     };
-    let new_token = body.get("access_token").and_then(|x| x.as_str()).ok_or_else(|| format!("{}'s new login for this account came without a token. Try again later.", maker()))?;
+    // an empty token is no token: never sent on as "Bearer " with nothing after it
+    let new_token = body.get("access_token").and_then(|x| x.as_str()).filter(|t| !t.is_empty()).ok_or_else(|| format!("{}'s new login for this account came without a token. Try again later.", maker()))?;
     let mut n = o.clone();
     n["accessToken"] = json!(new_token);
     if let Some(r) = body.get("refresh_token").and_then(|x| x.as_str()) {
@@ -154,5 +165,14 @@ pub(super) fn usage(here: &Here, token: &str) -> Result<Vec<Limit>, Unchecked> {
         (200, text) => serde_json::from_str::<Value>(&text).map(|u| limits_in(&u)).map_err(|_| Unchecked::Said(format!("{}'s answer about how much is used could not be read.", maker()))),
         (401 | 403, _) => Err(Unchecked::Expired),
         (n, _) => Err(Unchecked::Said(format!("{} would not say how much is used ({n}).", maker()))),
+    }
+}
+
+#[cfg(test)]
+mod body_tests {
+    #[test]
+    fn a_login_with_no_scopes_asks_for_none_by_name_never_for_an_empty_one() {
+        assert!(super::refresh_body("r", "c", "").get("scope").is_none());
+        assert_eq!(super::refresh_body("r", "c", "a b")["scope"], "a b");
     }
 }

@@ -1,6 +1,6 @@
 //! Claude Code's accounts: the logins this computer has saved, which one every session is using, how much of
 //! each one's allowance is left, and switching between them. Nothing here leaves the computer except requests
-//! to Anthropic's own servers, and no token is ever printed, logged or sent to a radio.
+//! to the tool's maker's own servers (its row names them), and no token is ever printed, logged or sent to a radio.
 //!
 //! The live login is a keychain item (`live`). Every running session reads it again within 30 seconds and
 //! before a request, which is why a switch reaches sessions that are already running. `oauthAccount` in Claude
@@ -40,7 +40,7 @@ fn row(what: &str) -> String {
 }
 /// The arguments that start a sign-in, as the row lists them; nothing when it lists none, never the tool run bare.
 pub(super) fn sign_in_args() -> Option<Vec<String>> {
-    super::tool_row(HARNESS).and_then(|t| t.with.get("sign_in")).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect())
+    super::tool_row(HARNESS).and_then(|t| t.with.get("sign_in")).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect::<Vec<_>>()).filter(|a| !a.is_empty())
 }
 
 /// Where in the tool's login item, and in a saved copy of it, the account's login is kept: its row says.
@@ -85,12 +85,12 @@ fn login_item(moved: Option<&std::path::Path>) -> String {
     }
 }
 
-/// A stand-in the end-to-end suites put in place of the account service and the keychain items. Only a build made
-/// with the `stand-ins` feature reads these: the airband he installs never does, so nothing set in his shell can
-/// send his logins anywhere else.
 use super::stand_in;
 
 impl Here {
+    /// This computer's keychain, account service and files. The end-to-end suites put a stand-in in place of the
+    /// account service and the keychain items; only a build made with the `stand-ins` feature reads those: the
+    /// airband he installs never does, so nothing set in his shell can send his logins anywhere else.
     fn this_computer() -> Here {
         let place = |key: &str, default: String| stand_in(key).unwrap_or(default);
         let moved = super::moved_home(HARNESS);
@@ -165,7 +165,7 @@ fn saved_token(here: &Here, email: &str, may_refresh: bool) -> Res<String> {
         return Err(format!("Not checked: {} did not say which account is in use, so this login was not refreshed in case it is that one.", maker()));
     }
     let n = service::refresh(here, o)?;
-    let new_token = n["accessToken"].as_str().unwrap_or_default().to_string();
+    let new_token = n["accessToken"].as_str().filter(|t| !t.is_empty()).ok_or(ADD_AGAIN)?.to_string();
     // the account record it was saved with, or the real one fetched now with its own token
     let acct = entry.get("oauthAccount").filter(|a| a["accountUuid"].is_string()).cloned().or_else(|| service::profile(here, &new_token).map(|(_, a)| a)).ok_or(ADD_AGAIN)?;
     saved::keep(here, email, &n, &acct)?;
@@ -272,7 +272,7 @@ fn switch_in(here: &Here, id: &str) -> Res<std::thread::JoinHandle<()>> {
             }
             blob = again;
         }
-        // swap the claude.ai login inside the live item, keeping the MCP logins beside it
+        // swap the maker's own login inside the live item, keeping the other logins beside it
         let before = blob.clone().map(|b| Value::Object(b).to_string());
         let mut blob = blob.unwrap_or_default();
         blob.insert(login_key(), incoming);

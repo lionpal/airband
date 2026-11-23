@@ -208,7 +208,12 @@ pub(super) mod tests {
     }
 
     /// A tower with nothing in it, with these settings beside its tokens.
-    pub(in crate::tower) fn app_with(name: &str, mut settings: serde_json::Value) -> Arc<App> {
+    pub(in crate::tower) fn app_with(name: &str, settings: serde_json::Value) -> Arc<App> {
+        app_on(name, settings, Arc::new(edges::procs::SystemProcs), None)
+    }
+
+    /// A tower with nothing in it whose processes and ways to agents are these stand-ins.
+    pub(in crate::tower) fn app_on(name: &str, mut settings: serde_json::Value, procs: Arc<dyn edges::procs::Procs + Send>, deliverer: Option<Arc<dyn edges::deliver::Deliverer + Send>>) -> Arc<App> {
         settings["token"] = "own".into();
         settings["radio_token"] = "radio".into();
         let path = std::env::temp_dir().join(format!("airband-http-{name}-{}.db", std::process::id()));
@@ -217,7 +222,7 @@ pub(super) mod tests {
         let cfg: Config = serde_json::from_value(settings).unwrap();
         let push = push::Wake::load(&store, &[]).unwrap();
         let saver = saver::Saver::start(store.clone());
-        Arc::new(App { push, settings: Settings::held(cfg), store, saver, inner: Mutex::new(Inner::default()), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default(), reviving: Default::default(), listening: Default::default() })
+        Arc::new(App { push, settings: Settings::held(cfg), store, saver, inner: Mutex::new(Inner::default()), kick: Notify::new(), said: Mutex::new(HashMap::new()), accounts: accounts::Kept::default(), served: Default::default(), reviving: Default::default(), procs, deliverer, listening: Default::default() })
     }
 
     fn presence(radio: Option<RadioId>, header: Option<&str>) -> Request {
