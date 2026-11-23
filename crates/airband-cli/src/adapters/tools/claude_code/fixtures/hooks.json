@@ -1,0 +1,645 @@
+[
+ {
+  "file": {
+   "path": "home/.claude/projects/-x-shop/s1.jsonl",
+   "text": "{\"type\":\"queue-operation\",\"operation\":\"enqueue\",\"timestamp\":\"2026-11-19T17:30:00.000Z\"}\n{\"type\":\"user\",\"uuid\":\"a0\",\"cwd\":\"/x/shop\",\"timestamp\":\"2026-11-19T17:30:01.000Z\",\"origin\":{\"kind\":\"human\"},\"message\":{\"role\":\"user\",\"content\":\"look at the cart\"}}\n{\"type\":\"system\",\"subtype\":\"local_command\",\"content\":\"<local-command-stdout></local-command-stdout>\",\"commandRun\":{\"command\":\"remote-control\",\"args\":\"shop 2\"}}\n{\"type\":\"pr-link\",\"sessionId\":\"s1\",\"prNumber\":193,\"prUrl\":\"https://github.com/acme/shop/pull/193\",\"prRepository\":\"acme/shop\",\"timestamp\":\"2026-11-19T17:31:00.000Z\"}\n{\"type\":\"assistant\",\"isSidechain\":false,\"effort\":\"medium\",\"timestamp\":\"2026-11-19T17:32:00.000Z\",\"message\":{\"model\":\"claude-opus-4-7\",\"content\":[{\"type\":\"tool_use\",\"name\":\"Read\",\"input\":{\"file_path\":\"/x/shop/cart.ts\"}}]}}\n{\"type\":\"user\",\"timestamp\":\"2026-11-19T17:32:01.000Z\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"content\":\"…\"}]}}\n{\"type\":\"user\",\"uuid\":\"a1\",\"timestamp\":\"2026-11-19T17:37:34.021Z\",\"origin\":{\"kind\":\"human\"},\"message\":{\"role\":\"user\",\"content\":\"ok so how do i get a qr code\"}}\n{\"type\":\"user\",\"uuid\":\"a2\",\"timestamp\":\"2026-11-19T17:38:00.000Z\",\"origin\":{\"kind\":\"peer\",\"from\":\"uds:/tmp/x.sock\"},\"message\":{\"role\":\"user\",\"content\":\"Message from Charles, sent through Airband: a human said this\"}}\n{\"type\":\"user\",\"uuid\":\"a3\",\"timestamp\":\"2026-11-19T17:38:01.000Z\",\"origin\":{\"kind\":\"task-notification\"},\"message\":{\"role\":\"user\",\"content\":\"done\"}}\n{\"type\":\"user\",\"uuid\":\"a4\",\"timestamp\":\"2026-11-19T17:38:02.000Z\",\"message\":{\"role\":\"user\",\"content\":\"<command-name>/model</command-name>\"}}\n{\"type\":\"user\",\"uuid\":\"a5\",\"timestamp\":\"2026-11-19T17:38:03.000Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"content\":\"a \\\"human\\\" wrote this file\"}]}}\n{\"type\":\"user\",\"uuid\":\"a7\",\"timestamp\":\"2026-11-19T17:38:04.000Z\",\"promptSource\":\"sdk\",\"message\":{\"role\":\"user\",\"content\":\"given by whoever runs it\"}}\n{\"type\":\"user\",\"uuid\":\"a8\",\"timestamp\":\"2026-11-19T17:38:05.000Z\",\"isSidechain\":true,\"origin\":{\"kind\":\"human\"},\"message\":{\"role\":\"user\",\"content\":\"a subagent's\"}}\n{\"type\":\"assistant\",\"isSidechain\":false,\"effort\":\"high\",\"timestamp\":\"2026-11-19T17:39:00.000Z\",\"message\":{\"model\":\"claude-fable-5-2\",\"content\":[{\"type\":\"text\",\"text\":\"Now the tests.\"},{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{\"command\":\"cd /work/warehouse && cargo test\\nsecond line\",\"description\":\"Run the tests\"}}]}}\n{\"type\":\"assistant\",\"isSidechain\":true,\"effort\":\"low\",\"timestamp\":\"2026-11-19T17:39:10.000Z\",\"message\":{\"model\":\"claude-haiku-4-5-20251001\",\"content\":[{\"type\":\"tool_use\",\"name\":\"Read\",\"input\":{\"file_path\":\"/elsewhere/x\"}}]}}\n{\"type\":\"attachment\",\"uuid\":\"a6\",\"attachment\":{\"type\":\"queued_command\",\"prompt\":[{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"data\":\"aGVsbG8=\"}},{\"type\":\"text\",\"text\":\"Swiping on the pop-up should get rid of it.\"}],\"source_uuid\":\"q6\",\"origin\":{\"kind\":\"human\"},\"timestamp\":\"2026-11-19T17:40:46.000Z\"}}\n{\"type\":\"user\",\"uuid\":\"a9\",\"timestamp\":\"2026-11-19T17:40:50.000Z\",\"origin\":{\"kind\":\"human\"},\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"data\":\"aGVsbG8=\"}}]}}\n{\"type\":\"assistant\",\"isSidechain\":false,\"timestamp\":\"2026-11-19T17:41:00.000Z\",\"message\":{\"model\":\"claude-opus-4-7\",\"content\":[{\"type\":\"tool_use\",\"name\":\"Edit\",\"input\":{\"file_path\":\"/work/warehouse/src/stock.rs\"}}]}}\n{\"type\":\"assistant\",\"isSidechain\":false,\"timestamp\":\"2026-11-19T17:41:30.000Z\",\"message\":{\"model\":\"claude-opus-4-7\",\"content\":[{\"type\":\"tool_use\",\"name\":\"Edit\",\"input\":{\"file_path\":\"/work/warehouse/src/stock.rs\"}}]}}\n{\"type\":\"assistant\",\"isSidechain\":false,\"timestamp\":\"2026-11-19T17:42:00.000Z\",\"message\":{\"model\":\"claude-opus-4-7\",\"content\":[{\"type\":\"tool_use\",\"name\":\"WebFetch\",\"input\":{\"url\":\"https://docs.stripe.com/refunds\"}},{\"type\":\"tool_use\",\"name\":\"mcp__chrome-devtools__take_screenshot\",\"input\":{}}]}}\n{\"type\":\"assistant\",\"isSidechain\":false,\"timestamp\":\"2026-11-19T17:42:30.000Z\",\"message\":{\"model\":\"claude-opus-4-7\",\"content\":[{\"type\":\"tool_use\",\"name\":\"Agent\",\"input\":{\"description\":\"Map the Northway columns\",\"prompt\":\"…\"}},{\"type\":\"tool_use\",\"name\":\"Grep\",\"input\":{\"pattern\":\"charge_id\"}}]}}\n{\"type\":\"assistant\",\"isSidechain\":false,\"timestamp\":\"2026-11-19T17:43:00.000Z\",\"message\":{\"model\":\"<synthetic>\",\"content\":[{\"type\":\"tool_use\",\"name\":\"TodoWrite\",\"input\":{\"todos\":[]}}]}}\n{\"type\":\"user\",\"timestamp\":\"2026-11-19T17:43:01.000Z\",\"message\":{\"content\":\"it mentions \\\"tool_use\\\" in passing\"}}\n"
+  }
+ },
+ {
+  "file": {
+   "path": "work/shot.PNG",
+   "text": "x"
+  }
+ },
+ {
+  "file": {
+   "path": "work/notes.md",
+   "text": "x"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "SessionStart",
+   "source": "startup"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "UserPromptSubmit",
+   "prompt": "look at the cart"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PreToolUse",
+   "tool_name": "Agent",
+   "tool_input": {
+    "description": "map the columns",
+    "prompt": "…"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PostToolUse",
+   "tool_name": "Agent",
+   "tool_input": {
+    "description": "map the columns",
+    "prompt": "…"
+   },
+   "tool_response": {}
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PreToolUse",
+   "tool_name": "Task",
+   "tool_input": {
+    "prompt": "no description"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "$D/work",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PostToolUse",
+   "tool_name": "SendUserFile",
+   "tool_input": {
+    "files": [
+     "$D/work/shot.PNG",
+     "notes.md",
+     "gone.png"
+    ]
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "hook_event_name": "PostToolUse",
+   "tool_name": "SendUserFile",
+   "tool_input": {
+    "files": [
+     "shot.PNG"
+    ]
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PostToolUse",
+   "tool_name": "Artifact",
+   "tool_input": {
+    "file_path": "/x/shop/plan.html"
+   },
+   "tool_response": {
+    "url": "https://claude.ai/artifact/abc123",
+    "path": "/x/shop/plan.html",
+    "title": " Refund plan ",
+    "updated": false
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PostToolUse",
+   "tool_name": "Artifact",
+   "tool_input": {
+    "action": "publish",
+    "file_path": "/x/shop/plan.html"
+   },
+   "tool_response": {
+    "url": "https://claude.ai/artifact/abc124"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PostToolUse",
+   "tool_name": "Artifact",
+   "tool_input": {
+    "action": "read",
+    "url": "https://claude.ai/artifact/abc123"
+   },
+   "tool_response": {
+    "url": "https://claude.ai/artifact/abc123",
+    "title": "Refund plan"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PostToolUse",
+   "tool_name": "Artifact",
+   "tool_input": {
+    "url": "https://claude.ai/artifact/abc123",
+    "asset": true,
+    "file_path": "/x/a.png"
+   },
+   "tool_response": {
+    "url": "https://claude.ai/artifact/abc123/a"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PostToolUse",
+   "tool_name": "Artifact",
+   "tool_input": {
+    "file_path": "/x/shop/plan.html"
+   },
+   "tool_response": {
+    "url": "http://claude.ai/artifact/abc123"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PostToolUse",
+   "tool_name": "Artifact",
+   "tool_input": {
+    "file_path": "/x/shop/plan.html"
+   },
+   "tool_response": {
+    "error": "refused"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PostToolUse",
+   "tool_name": "Read",
+   "tool_input": {
+    "file_path": "shot.PNG"
+   },
+   "tool_response": {}
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "Notification",
+   "notification_type": "idle_prompt",
+   "message": "Claude is waiting for your input"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "Notification",
+   "notification_type": "auth_success",
+   "message": " Claude is waiting for your input "
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "Notification",
+   "notification_type": "permission_prompt"
+  }
+ },
+ {
+  "append": {
+   "path": "home/.claude/projects/-x-shop/s1.jsonl",
+   "line": {
+    "type": "pr-link",
+    "sessionId": "s1",
+    "prNumber": 194,
+    "prUrl": "https://github.com/acme/shop/pull/194",
+    "prRepository": "acme/shop",
+    "timestamp": "2026-11-22T00:47:59.530Z"
+   }
+  }
+ },
+ {
+  "append": {
+   "path": "home/.claude/projects/-x-shop/s1.jsonl",
+   "line": {
+    "type": "pr-link",
+    "sessionId": "s1",
+    "prNumber": 195,
+    "prUrl": "http://github.com/acme/shop/pull/195",
+    "prRepository": "acme/shop"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "Stop",
+   "last_assistant_message": " Done. ",
+   "stop_hook_active": false
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "Stop",
+   "last_assistant_message": "",
+   "turn_id": "turn-2"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "Stop",
+   "last_assistant_message": "Again.",
+   "turn_id": "turn-3"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "SessionEnd",
+   "reason": "exit"
+  }
+ },
+ {
+  "hook": {
+   "hook_event_name": "Stop",
+   "last_assistant_message": "no session"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PreCompact"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "SubagentStop",
+   "agent_type": "x"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "Bash",
+   "tool_input": {
+    "command": "npm run deploy",
+    "description": "Deploy"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "Write",
+   "tool_input": {
+    "file_path": "/x/shop/.env",
+    "content": "…"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "Edit",
+   "tool_input": {
+    "notebook_path": "/x/shop/a.ipynb"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "Read",
+   "tool_input": {
+    "file_path": "/x/shop/secret"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "WebFetch",
+   "tool_input": {
+    "url": "https://example.com/x"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "WebSearch",
+   "tool_input": {
+    "query": "refund rules"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "mcp__db__drop",
+   "tool_input": {
+    "table": "orders"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "Grep",
+   "tool_input": {
+    "pattern": "x",
+    "description": "its own words"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "AskUserQuestion",
+   "tool_input": {
+    "questions": [
+     {
+      "question": " Free space on which disk? ",
+      "options": [
+       {
+        "label": "The NAS"
+       },
+       {
+        "label": " "
+       },
+       {
+        "label": "The internal disk"
+       }
+      ]
+     }
+    ]
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "AskUserQuestion",
+   "tool_input": {
+    "questions": [
+     {
+      "question": "First?",
+      "options": [
+       {
+        "label": "a"
+       }
+      ]
+     },
+     {
+      "question": "Second?"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "AskUserQuestion",
+   "tool_input": {
+    "questions": []
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "Bash",
+   "tool_input": {
+    "command": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "Bash",
+   "tool_input": {
+    "command": "ls",
+    "big": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_input": {
+    "command": "ls"
+   }
+  }
+ },
+ {
+  "file": {
+   "path": "home/.claude/sessions/77.json",
+   "json": {
+    "pid": 77,
+    "sessionId": "s1",
+    "name": " shop removals ",
+    "nameSource": "user"
+   }
+  }
+ },
+ {
+  "env": {
+   "CLAUDE_PID": "77",
+   "AIRBAND_NAME": "barn one",
+   "CLAUDE_CODE_MESSAGING_SOCKET": "uds:/tmp/cc/77.sock",
+   "CLAUDE_CODE_MESSAGING_TOKEN": "tok-77"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "Stop",
+   "last_assistant_message": "Named."
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "Bash",
+   "tool_input": {
+    "command": "ls"
+   }
+  }
+ },
+ {
+  "env": {
+   "CLAUDE_PID": "78",
+   "CLAUDE_CODE_MESSAGING_SOCKET": "tcp:1.2.3.4"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "Stop",
+   "last_assistant_message": "Not named."
+  }
+ },
+ {
+  "env": {
+   "CLAUDE_CODE_ENTRYPOINT": "sdk-cli"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "Stop",
+   "last_assistant_message": "Headless."
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "Bash",
+   "tool_input": {
+    "command": "ls"
+   }
+  }
+ },
+ {
+  "env": {
+   "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+   "AIRBAND_INCLUDE_HEADLESS": "1"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "Stop",
+   "last_assistant_message": "Headless, asked to hear."
+  }
+ },
+ {
+  "env": {
+   "CLAUDE_CODE_ENTRYPOINT": "sdk-cli",
+   "AIRBAND_HELD": "1",
+   "AIRBAND_HELD_ID": "given"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "s1",
+   "cwd": "/x/shop",
+   "transcript_path": "$D/home/.claude/projects/-x-shop/s1.jsonl",
+   "hook_event_name": "Stop",
+   "last_assistant_message": "Held."
+  }
+ },
+ {
+  "env": {}
+ }
+]

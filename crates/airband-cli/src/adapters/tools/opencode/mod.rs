@@ -344,3 +344,6 @@ mod tests {
         assert_eq!(leave(&json!({ "id": "per_3", "sessionID": "ses_1", "action": "webfetch", "resources": [] }), None).unwrap().what, "webfetch");
     }
 }
+
+#[cfg(test)]
+mod golden;

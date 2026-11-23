@@ -1,0 +1,280 @@
+[
+ {
+  "hook": {
+   "session_id": "t1",
+   "cwd": "/x/shop",
+   "model": "gpt-6-luna",
+   "transcript_path": "$D/rollout.jsonl",
+   "hook_event_name": "SessionStart",
+   "source": "startup"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "cwd": "/x/shop",
+   "model": "gpt-6-luna",
+   "transcript_path": "$D/rollout.jsonl",
+   "hook_event_name": "UserPromptSubmit",
+   "prompt": "look",
+   "turn_id": "turn-1"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "cwd": "/x/shop",
+   "model": "gpt-6-luna",
+   "transcript_path": "$D/rollout.jsonl",
+   "hook_event_name": "Stop",
+   "turn_id": "turn-7",
+   "last_assistant_message": " Two boxes. ",
+   "stop_hook_active": false
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "cwd": "/x/shop",
+   "model": "gpt-6-luna",
+   "transcript_path": "$D/rollout.jsonl",
+   "hook_event_name": "Stop",
+   "turn_id": "turn-8",
+   "last_assistant_message": ""
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "hook_event_name": "Stop",
+   "last_assistant_message": "No model, no folder."
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "hook_event_name": "Stop",
+   "model": "  ",
+   "cwd": "",
+   "last_assistant_message": "Blank model."
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "cwd": "/x/shop",
+   "model": "gpt-6-luna",
+   "transcript_path": "$D/rollout.jsonl",
+   "hook_event_name": "SubagentStart",
+   "agent_type": " explorer "
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "cwd": "/x/shop",
+   "model": "gpt-6-luna",
+   "transcript_path": "$D/rollout.jsonl",
+   "hook_event_name": "SubagentStop",
+   "agent_type": "explorer"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "cwd": "/x/shop",
+   "model": "gpt-6-luna",
+   "transcript_path": "$D/rollout.jsonl",
+   "hook_event_name": "SubagentStart"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "cwd": "/x/shop",
+   "model": "gpt-6-luna",
+   "transcript_path": "$D/rollout.jsonl",
+   "hook_event_name": "SessionEnd"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "cwd": "/x/shop",
+   "model": "gpt-6-luna",
+   "transcript_path": "$D/rollout.jsonl",
+   "hook_event_name": "Notification",
+   "message": "x"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "cwd": "/x/shop",
+   "model": "gpt-6-luna",
+   "transcript_path": "$D/rollout.jsonl",
+   "hook_event_name": "PreToolUse",
+   "tool_name": "Agent",
+   "tool_input": {
+    "description": "x"
+   }
+  }
+ },
+ {
+  "hook": {
+   "hook_event_name": "Stop",
+   "last_assistant_message": "no session"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "cwd": "/x/shop",
+   "model": "gpt-6-luna",
+   "transcript_path": "$D/rollout.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "Bash",
+   "tool_input": {
+    "command": "npm run deploy"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "cwd": "/x/shop",
+   "model": "gpt-6-luna",
+   "transcript_path": "$D/rollout.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "shell",
+   "tool_input": {
+    "command": [
+     "bash",
+     "-lc",
+     "ls"
+    ]
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "cwd": "/x/shop",
+   "model": "gpt-6-luna",
+   "transcript_path": "$D/rollout.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "exec_command",
+   "tool_input": {
+    "command": "ls -la",
+    "description": "look around"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "cwd": "/x/shop",
+   "model": "gpt-6-luna",
+   "transcript_path": "$D/rollout.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "apply_patch",
+   "tool_input": {
+    "description": "add the refund route",
+    "patch": "…"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "cwd": "/x/shop",
+   "model": "gpt-6-luna",
+   "transcript_path": "$D/rollout.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "apply_patch",
+   "tool_input": {
+    "patch": "…"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "cwd": "/x/shop",
+   "model": "gpt-6-luna",
+   "transcript_path": "$D/rollout.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "web_search",
+   "tool_input": {
+    "query": "x",
+    "description": " its own words "
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "cwd": "/x/shop",
+   "model": "gpt-6-luna",
+   "transcript_path": "$D/rollout.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "web_search",
+   "tool_input": {
+    "query": "x"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "cwd": "/x/shop",
+   "model": "gpt-6-luna",
+   "transcript_path": "$D/rollout.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "Bash",
+   "tool_input": {
+    "command": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   }
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "cwd": "/x/shop",
+   "model": "gpt-6-luna",
+   "transcript_path": "$D/rollout.jsonl",
+   "hook_event_name": "PermissionRequest",
+   "tool_name": "AskUserQuestion",
+   "tool_input": {
+    "questions": [
+     {
+      "question": "Which?",
+      "options": [
+       {
+        "label": "a"
+       }
+      ]
+     }
+    ]
+   }
+  }
+ },
+ {
+  "env": {
+   "AIRBAND_NAME": "loft one"
+  }
+ },
+ {
+  "hook": {
+   "session_id": "t1",
+   "cwd": "/x/shop",
+   "model": "gpt-6-luna",
+   "transcript_path": "$D/rollout.jsonl",
+   "hook_event_name": "Stop",
+   "last_assistant_message": "Named."
+  }
+ },
+ {
+  "env": {}
+ }
+]

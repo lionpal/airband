@@ -1,0 +1,4 @@
+[
+ {"hook": {"session_id": "s1", "cwd": "/x/shop", "hook_event_name": "Stop", "last_assistant_message": "Done."}},
+ {"hook": {"session_id": "s1", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": {"command": "ls"}}}
+]

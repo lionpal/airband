@@ -534,3 +534,6 @@ mod tests {
         assert_eq!(step_in("nothing here"), None);
     }
 }
+
+#[cfg(test)]
+mod golden;

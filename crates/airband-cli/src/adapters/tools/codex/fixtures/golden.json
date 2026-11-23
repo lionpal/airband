@@ -1,0 +1,630 @@
+{
+  "reported": [
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "t1",
+            "harness": "codex",
+            "cwd": "/x/shop",
+            "deliver": {
+              "kind": "harness",
+              "name": "codex",
+              "session": "t1"
+            },
+            "meta": {
+              "model": "gpt-6-luna"
+            }
+          },
+          "event": {
+            "type": "checkin"
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "t1",
+            "harness": "codex",
+            "cwd": "/x/shop",
+            "deliver": {
+              "kind": "harness",
+              "name": "codex",
+              "session": "t1"
+            },
+            "meta": {
+              "model": "gpt-6-luna"
+            }
+          },
+          "event": {
+            "type": "working"
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "t1",
+            "harness": "codex",
+            "cwd": "/x/shop",
+            "deliver": {
+              "kind": "harness",
+              "name": "codex",
+              "session": "t1"
+            },
+            "meta": {
+              "model": "gpt-6-luna"
+            }
+          },
+          "event": {
+            "type": "said",
+            "text": "Two boxes.",
+            "turn": "turn-7"
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "t1",
+            "harness": "codex",
+            "deliver": {
+              "kind": "harness",
+              "name": "codex",
+              "session": "t1"
+            }
+          },
+          "event": {
+            "type": "said",
+            "text": "No model, no folder."
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "t1",
+            "harness": "codex",
+            "deliver": {
+              "kind": "harness",
+              "name": "codex",
+              "session": "t1"
+            }
+          },
+          "event": {
+            "type": "said",
+            "text": "Blank model."
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "t1",
+            "harness": "codex",
+            "cwd": "/x/shop",
+            "deliver": {
+              "kind": "harness",
+              "name": "codex",
+              "session": "t1"
+            },
+            "meta": {
+              "model": "gpt-6-luna"
+            }
+          },
+          "event": {
+            "type": "subagent",
+            "done": false,
+            "what": "explorer"
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "t1",
+            "harness": "codex",
+            "cwd": "/x/shop",
+            "deliver": {
+              "kind": "harness",
+              "name": "codex",
+              "session": "t1"
+            },
+            "meta": {
+              "model": "gpt-6-luna"
+            }
+          },
+          "event": {
+            "type": "subagent",
+            "done": true,
+            "what": "explorer"
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "t1",
+            "harness": "codex",
+            "cwd": "/x/shop",
+            "deliver": {
+              "kind": "harness",
+              "name": "codex",
+              "session": "t1"
+            },
+            "meta": {
+              "model": "gpt-6-luna"
+            }
+          },
+          "event": {
+            "type": "subagent",
+            "done": false,
+            "what": ""
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "t1",
+            "harness": "codex",
+            "cwd": "/x/shop",
+            "deliver": {
+              "kind": "harness",
+              "name": "codex",
+              "session": "t1"
+            },
+            "meta": {
+              "model": "gpt-6-luna"
+            }
+          },
+          "event": {
+            "type": "signoff"
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "t1",
+          "harness": "codex",
+          "cwd": "/x/shop",
+          "deliver": {
+            "kind": "harness",
+            "name": "codex",
+            "session": "t1"
+          },
+          "meta": {
+            "model": "gpt-6-luna"
+          }
+        },
+        "what": "run `npm run deploy`",
+        "detail": "Bash\n{\n  \"command\": \"npm run deploy\"\n}"
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone: use staging\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone.\"}}}"
+      }
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "t1",
+          "harness": "codex",
+          "cwd": "/x/shop",
+          "deliver": {
+            "kind": "harness",
+            "name": "codex",
+            "session": "t1"
+          },
+          "meta": {
+            "model": "gpt-6-luna"
+          }
+        },
+        "what": "run `bash -lc ls`",
+        "detail": "shell\n{\n  \"command\": [\n    \"bash\",\n    \"-lc\",\n    \"ls\"\n  ]\n}"
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone: use staging\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone.\"}}}"
+      }
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "t1",
+          "harness": "codex",
+          "cwd": "/x/shop",
+          "deliver": {
+            "kind": "harness",
+            "name": "codex",
+            "session": "t1"
+          },
+          "meta": {
+            "model": "gpt-6-luna"
+          }
+        },
+        "what": "run `ls -la`",
+        "detail": "exec_command\n{\n  \"command\": \"ls -la\",\n  \"description\": \"look around\"\n}"
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone: use staging\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone.\"}}}"
+      }
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "t1",
+          "harness": "codex",
+          "cwd": "/x/shop",
+          "deliver": {
+            "kind": "harness",
+            "name": "codex",
+            "session": "t1"
+          },
+          "meta": {
+            "model": "gpt-6-luna"
+          }
+        },
+        "what": "add the refund route",
+        "detail": "apply_patch\n{\n  \"description\": \"add the refund route\",\n  \"patch\": \"…\"\n}"
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone: use staging\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone.\"}}}"
+      }
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "t1",
+          "harness": "codex",
+          "cwd": "/x/shop",
+          "deliver": {
+            "kind": "harness",
+            "name": "codex",
+            "session": "t1"
+          },
+          "meta": {
+            "model": "gpt-6-luna"
+          }
+        },
+        "what": "change files",
+        "detail": "apply_patch\n{\n  \"patch\": \"…\"\n}"
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone: use staging\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone.\"}}}"
+      }
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "t1",
+          "harness": "codex",
+          "cwd": "/x/shop",
+          "deliver": {
+            "kind": "harness",
+            "name": "codex",
+            "session": "t1"
+          },
+          "meta": {
+            "model": "gpt-6-luna"
+          }
+        },
+        "what": "its own words",
+        "detail": "web_search\n{\n  \"query\": \"x\",\n  \"description\": \" its own words \"\n}"
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone: use staging\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone.\"}}}"
+      }
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "t1",
+          "harness": "codex",
+          "cwd": "/x/shop",
+          "deliver": {
+            "kind": "harness",
+            "name": "codex",
+            "session": "t1"
+          },
+          "meta": {
+            "model": "gpt-6-luna"
+          }
+        },
+        "what": "web_search {\"query\":\"x\"}",
+        "detail": "web_search\n{\n  \"query\": \"x\"\n}"
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone: use staging\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone.\"}}}"
+      }
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": {
+        "schema": "airband.agent/1",
+        "agent": {
+          "id": "t1",
+          "harness": "codex",
+          "cwd": "/x/shop",
+          "deliver": {
+            "kind": "harness",
+            "name": "codex",
+            "session": "t1"
+          },
+          "meta": {
+            "model": "gpt-6-luna"
+          }
+        },
+        "what": "AskUserQuestion {\"questions\":[{\"question\":\"Which?\",\"options\":[{\"label\":\"a\"}]}]}",
+        "detail": "AskUserQuestion\n{\n  \"questions\": [\n    {\n      \"question\": \"Which?\",\n      \"options\": [\n        {\n          \"label\": \"a\"\n        }\n      ]\n    }\n  ]\n}"
+      },
+      "answers": {
+        "allow": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
+        "deny": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone: use staging\"}}}",
+        "deny_bare": "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"deny\",\"message\":\"He said no from his phone.\"}}}"
+      }
+    },
+    {
+      "events": [
+        {
+          "schema": "airband.agent/1",
+          "via": "hook",
+          "agent": {
+            "id": "t1",
+            "harness": "codex",
+            "cwd": "/x/shop",
+            "name": "loft one",
+            "deliver": {
+              "kind": "harness",
+              "name": "codex",
+              "session": "t1"
+            },
+            "meta": {
+              "model": "gpt-6-luna"
+            }
+          },
+          "event": {
+            "type": "said",
+            "text": "Named."
+          }
+        }
+      ],
+      "ask": null,
+      "answers": null
+    }
+  ],
+  "installed_before_it_is_here": null,
+  "installed": {
+    "path": "<tmp>/home/.codex/hooks.json",
+    "changed": [
+      true,
+      false
+    ],
+    "file": {
+      "hooks": {
+        "SessionStart": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "\"/x/airband\" hook codex --put-there-by-airband",
+                "timeout": 5
+              }
+            ]
+          }
+        ],
+        "UserPromptSubmit": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "\"/x/airband\" hook codex --put-there-by-airband",
+                "timeout": 5
+              }
+            ]
+          }
+        ],
+        "Stop": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "\"/x/airband\" hook codex --put-there-by-airband",
+                "timeout": 5
+              }
+            ]
+          }
+        ],
+        "SubagentStart": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "\"/x/airband\" hook codex --put-there-by-airband",
+                "timeout": 5
+              }
+            ]
+          }
+        ],
+        "SubagentStop": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "\"/x/airband\" hook codex --put-there-by-airband",
+                "timeout": 5
+              }
+            ]
+          }
+        ],
+        "SessionEnd": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "\"/x/airband\" hook codex --put-there-by-airband",
+                "timeout": 2
+              }
+            ]
+          }
+        ],
+        "PermissionRequest": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "\"/x/airband\" hook codex --put-there-by-airband",
+                "timeout": 900
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "told": [
+      "Codex reports to airband once you allow it: open a new Codex session and trust airband’s hooks when it asks. (Set in <tmp>/home/.codex/hooks.json.)",
+      "Codex reports to airband (set in <tmp>/home/.codex/hooks.json)."
+    ],
+    "after_uninstall": {}
+  },
+  "looked": {
+    "glance": {
+      "doing": null,
+      "model": "gpt-6-luna",
+      "effort": null
+    },
+    "bare": {
+      "doing": null,
+      "model": null,
+      "effort": null
+    },
+    "touched": [],
+    "steps": [],
+    "told": 0
+  },
+  "worked": [
+    {
+      "folder": "/x/garden",
+      "at": 1500000
+    },
+    {
+      "folder": "/x/late",
+      "at": 100000
+    },
+    {
+      "folder": "/x/shop",
+      "at": 2000000
+    }
+  ],
+  "accounts": false,
+  "puts_away": false,
+  "put_away": {
+    "Err": "Only an agent airband runs can be ended from here."
+  },
+  "open": null
+}

@@ -1,0 +1,80 @@
+{
+  "reported": [
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    },
+    {
+      "events": [],
+      "ask": null,
+      "answers": null
+    }
+  ],
+  "installed": null,
+  "looked": {
+    "glance": {
+      "doing": null,
+      "model": null,
+      "effort": null
+    },
+    "touched": [],
+    "steps": [],
+    "told": 0
+  },
+  "worked": [],
+  "accounts": false,
+  "puts_away": true,
+  "put_away": {
+    "Err": "OpenCode is not running on this computer."
+  },
+  "deliver": {
+    "Err": "OpenCode is not running on this computer."
+  },
+  "open": null,
+  "leave": [
+    {
+      "schema": "airband.agent/1",
+      "agent": {
+        "id": "ses_1",
+        "harness": "opencode",
+        "cwd": "/x/shop",
+        "deliver": {
+          "kind": "harness",
+          "name": "opencode",
+          "session": "ses_1"
+        }
+      },
+      "what": "run `echo airband-probe`",
+      "detail": "shell\n{\n  \"id\": \"per_1\",\n  \"sessionID\": \"ses_1\",\n  \"action\": \"shell\",\n  \"resources\": [\n    \"echo airband-probe\"\n  ],\n  \"save\": [\n    \"echo *\"\n  ]\n}"
+    },
+    {
+      "schema": "airband.agent/1",
+      "agent": {
+        "id": "ses_1",
+        "harness": "opencode",
+        "deliver": {
+          "kind": "harness",
+          "name": "opencode",
+          "session": "ses_1"
+        }
+      },
+      "what": "edit: src/a.rs, src/b.rs",
+      "detail": "edit\n{\n  \"id\": \"per_2\",\n  \"sessionID\": \"ses_1\",\n  \"action\": \"edit\",\n  \"resources\": [\n    \"src/a.rs\",\n    \"src/b.rs\"\n  ]\n}"
+    },
+    {
+      "schema": "airband.agent/1",
+      "agent": {
+        "id": "ses_1",
+        "harness": "opencode",
+        "deliver": {
+          "kind": "harness",
+          "name": "opencode",
+          "session": "ses_1"
+        }
+      },
+      "what": "webfetch",
+      "detail": "webfetch\n{\n  \"id\": \"per_3\",\n  \"sessionID\": \"ses_1\",\n  \"action\": \"webfetch\",\n  \"resources\": []\n}"
+    }
+  ]
+}

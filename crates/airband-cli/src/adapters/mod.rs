@@ -13,6 +13,8 @@
 pub(crate) mod hooks;
 pub(crate) mod report;
 mod tools;
+#[cfg(test)]
+mod golden;
 use tools::*;
 mod accounts;
 mod tower_client;

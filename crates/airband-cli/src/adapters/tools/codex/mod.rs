@@ -577,3 +577,6 @@ mod tests {
         assert!(leave_of(agent, &json!({ "method": "item/commandExecution/requestApproval", "id": 2, "params": { "threadId": "01a1", "command": " " } })).is_none());
     }
 }
+
+#[cfg(test)]
+mod golden;
