@@ -37,7 +37,7 @@ pairing link carries, opens `/v1/radio/` only.
 |---|---|
 | `checkin` | The agent exists. Every other event also checks it in. |
 | `working` | It was given something to do; what it last said is stale and is dropped unheard. |
-| `said` | It finished a turn; `text` is what it wrote. Optional `kind`: `question` (blocked until answered) or `report`; left out, the tower works it out. |
+| `said` | It finished a turn; `text` is what it wrote. Optional `kind`: `needs-you` (blocked until answered; `question` is read as it too) or `report`; left out, the tower works it out. |
 | `notice` | It needs him at the keyboard (a login, a prompt the radio cannot answer). |
 | `picture` | A picture file on the tower's machine (`path`: PNG, JPEG, GIF or WebP). The tower copies it only with `shown: true`, which means the agent sent it to him, and attaches the copy to the next `said`. A picture file named in the text of a `said` is attached too, when it is in the agent's `cwd` or a temporary folder. |
 | `made` | Its tool made something that lives at a web address (`address`, and optionally `title` and `kind`, the id of a row in `catalog/links/`): a pull request, a published page. Shown as a card with the next thing the agent says. |
@@ -151,7 +151,7 @@ Chat mode and the rest:
 | Call | Body → answer | Meaning |
 |---|---|---|
 | `GET /v1/radio/feed?since=<rev>&wait=<s>` | `FeedQuery` → `Feed` | Every line new or changed after change count `since`, oldest change first; pass `rev` back next time. `since=0` gets the newest lines. `team=<id>` or `agent=<id>` narrows it to one team or one agent. `after=<seq>` with no `since`: the lines added after that position. Held open up to `wait` seconds, 25 at most. `roster=<roster_rev>`: also answer when the roster changes. `answers` holds what came of things this radio said (see "What he says"); one arriving ends the wait too. A query value that is not a number is refused (`bad_ask`). |
-| `GET /v1/radio/message/{id}?form=detail\|full\|spoken` | `{ text }` | The fuller spoken version, exactly what the agent wrote, or (`spoken`) the whole message as it is read aloud, for the radio to say in the voice he chose on it. |
+| `GET /v1/radio/message/{id}?form=detail\|full\|spoken` | `{ text }` | The fuller spoken version, exactly what the agent wrote, or (`spoken`) the whole message as it is read aloud, for the radio to say in the voice he chose on it. `part=asked`: only the question in it, as he would be asked it on a call. |
 | `GET /v1/radio/picture/{id}?from=<byte>` | `{ data, next, done }` | One part (120 KB at most, base64) of a picture's kept copy. |
 | `POST /v1/radio/attachment` | `{ id, name, from, data, total }` → `{ next }`, or a refusal | One part of a file he is attaching, 120 KB at most. `total` is how long the whole file is; the parts may come in any order, several at once, and `next` says how much of the file is whole from its start. |
 | `POST /v1/radio/dismiss` | `{ message }` → `Done`, or a refusal | He does not mean to answer this question. It stops being open. The agent is told nothing. |
@@ -357,7 +357,7 @@ hour in all; one refused by either is counted by neither, and an opening that op
 ### Notifications
 
 A radio that has given the tower an address (`POST push`) is woken for a message judged `needs-you` or
-`report`, a permission card, or a question a harness puts to him. Once per message, and not on a radio that is
+`report`, one no model read (`unjudged`), a permission card, or a question a harness puts to him. Once per message, and not on a radio that is
 on a call or showing the chat: such a radio asks for what follows a message within a moment of getting it, and
 one that follows without showing it says so (`showing_chat: false` in its `Presence`).
 

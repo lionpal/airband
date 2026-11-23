@@ -11,8 +11,9 @@ use serde_json::{Value, json};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// The DynamoDB operations the relay sends, each with the permissions it needs, in one place: the enum the
-/// relay sends by ([`Dynamo::call`] takes nothing else) and the list its role is given are made from this one
-/// table, and the test holds `infra/relay-dynamodb.json`, which the stack reads (`infra/cdk.mjs`), to it.
+/// relay sends by ([`Dynamo::call`] takes nothing else) is made from this table. The list its role is given is
+/// written in `infra/relay-dynamodb.json`, which the stack reads (`infra/cdk.mjs`), and a test holds that file to
+/// this table.
 macro_rules! operations {
     ($($op:ident => [$($needs:literal),+];)+) => {
         /// One DynamoDB operation the relay sends: the only ones it may.

@@ -17,7 +17,8 @@
 //! Those are call mode: one transmission at a time, spoken. Chat mode reads the same messages as a feed:
 //! - `GET feed?…` [`wire::FeedQuery`] → [`Feed`]: what was said, each cut to a line or two; all of it, one team's or
 //!   one agent's.
-//! - `GET message/<id>?form=detail|full` → [`wire::MessageText`]: the fuller spoken version, or exactly what the agent wrote.
+//! - `GET message/<id>?form=detail|full` → [`wire::MessageText`]: the fuller spoken version, or exactly what the agent wrote;
+//!   `part=asked` ([`Part::Asked`]): only the question in it, as he would be asked it on a call.
 //! - `POST utterance` is also how chat sends: leading `@tags` say who it is for (`@shop2`, `@shop`, `@all`).
 //! - Starting a new agent is `POST project` ([`NewProject`]), in a folder from `GET recent` or `POST folders`.
 use serde::{Deserialize, Serialize};

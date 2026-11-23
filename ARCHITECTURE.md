@@ -306,7 +306,7 @@ offer. All of it is worked out in the core, so every host shows the same thing.
 
 ## Notifications
 
-What deserves a notification is the tower's decision (`tower/push.rs`): a question, a report, a permission card,
+What deserves a notification is the tower's decision (`tower/push.rs`): a question, a report, a message no model read (`unjudged`), a permission card,
 when the phone is neither on a call nor showing the chat. The tower seals it and the relay hands it to the push
 service, so neither can read it. On the iPhone a notification extension (`apps/apple/Notify`) opens it with the
 radio core. An answer given there is sent in the background (`Desk.answer_now`), or kept and sent later.

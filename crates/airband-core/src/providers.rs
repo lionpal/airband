@@ -16,7 +16,7 @@
 //!   named here.
 //!
 //! Reading is done on his computer, and `airband setup` and `airband model` are driven by this table, as is
-//! the call itself (`tower/judge.rs`). Speaking and listening are done on the phone and nowhere else, with a
+//! the call itself (the readers' table in `tower/judge/models.rs`). Speaking and listening are done on the phone and nowhere else, with a
 //! key of his kept there: the phone reads the same table for what it can reach (`airband-radio/src/voices.rs`,
 //! `ears.rs`, `hears.rs`). Nothing else names a provider. A setting in use is a [`Use`]: the row's id, a key, and whatever was set differently
 //! from the row.
@@ -42,7 +42,7 @@ pub enum Job {
 
 /// How a service is reached: the name of an interface, and what that interface has to be told about this
 /// service that he is never asked (`with`). The interfaces themselves are code, in a table for each job:
-/// reading in the tower (`tower/judge.rs`), speaking and listening in the phone core (`airband-radio`'s
+/// reading in the tower (`tower/judge/models.rs`), speaking and listening in the phone core (`airband-radio`'s
 /// `voices.rs` and `ears.rs`). Nothing here lists them: a program that meets a name it has no code for
 /// leaves that offer out.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
