@@ -87,7 +87,6 @@ struct ServiceEntry: View {
                 } else {
                     SecureField(choice.keyName, text: $key).textContentType(.password).font(.system(size: 16)).focused($typing)
                         .padding(.horizontal, 12).frame(minHeight: 44).background(Palette.field, in: RoundedRectangle(cornerRadius: 10))
-                    if !choice.keysAt.isEmpty { Text("Get a key at \(choice.keysAt)").font(.system(size: 12)).foregroundStyle(Palette.quiet) }
                 }
             }
             let asks = choice.asks.filter { choice.voices.isEmpty || $0.field != voiceSetting() }

@@ -16,8 +16,8 @@ mod ptts;
 
 /// How an engine the host has is asked to run a model: the engine's name, the folder the model's files are
 /// in, the job, and what to work on. For listening that is a recording (16-bit little-endian mono PCM at 16
-/// kHz) and the answer is the words, as UTF-8. For a voice it is the words, as UTF-8, then a line feed and the
-/// name of the voice, and the answer is the sound (16-bit little-endian mono PCM at the rate the model's row
+/// kHz) and the answer is the words, as UTF-8. For a voice it is JSON, `{"text": the words, "voice": the
+/// voice's name}`, and the answer is the sound (16-bit little-endian mono PCM at the rate the model's row
 /// gives). Nothing when the host could not.
 pub(crate) type ByHost<'a> = &'a dyn Fn(&str, &str, ChoiceJob, Vec<u8>) -> Option<Vec<u8>>;
 

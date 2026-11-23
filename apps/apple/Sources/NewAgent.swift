@@ -83,9 +83,6 @@ struct NewAgentSheet: View {
                                 .font(.system(size: 16)).foregroundStyle(Palette.ink).padding(.horizontal, 14)
                                 .frame(minHeight: 48).background(Palette.field, in: RoundedRectangle(cornerRadius: 12))
                         }
-                        if place.make {
-                            Text("New folder inside \(place.shown), named after the team.").font(.system(size: 13)).foregroundStyle(Palette.quiet).lineSpacing(2)
-                        }
                     }
                     if let wrong { Text(wrong).font(.system(size: 14)).foregroundStyle(.red) }
                 }

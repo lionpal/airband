@@ -5,7 +5,7 @@
 //! - `radio`: one paired computer, and everything a host can ask of it
 //! - `chat`, `accounts`: what crosses to the host for the chat and for the coding-tool accounts
 //! - `link`: reaching the tower, directly or sealed through a relay
-//! - `net`: the HTTP agent
+//! - `net`: `airband_io::http`, the one HTTP client, under a short name
 //! - `desk`: every paired computer as one: the merged chat, what is waiting, where his messages go
 //! - `call`: the call-mode loop
 //! - `voice`: outbound, words said aloud by the voice he chose on this device

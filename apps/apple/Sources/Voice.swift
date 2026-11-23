@@ -292,7 +292,7 @@ final class Voice: NSObject, @unchecked Sendable {
             guard error == nil, out.frameLength > 0, let data = out.int16ChannelData else { return }
             let bytes = Data(bytes: data[0], count: Int(out.frameLength) * 2)
             self.recLock.lock()
-            // four minutes at most are held for a core that has not come for them: the oldest sound goes first
+            // four minutes at most are held for a core that has not come for them: past that, newer sound is not kept
             if self.recording, self.captured.count < 8_000_000 { self.captured.append(bytes); self.recLock.signal() }
             self.recLock.unlock()
         }

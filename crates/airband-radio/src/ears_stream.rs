@@ -106,7 +106,7 @@ pub(crate) fn live(wire: &'static Wire, pass: PassFor, host: &dyn RadioHost, rat
 /// The listening itself, on a stream made ready.
 fn listen(stream: &mut Stream, wire: &'static Wire, host: &dyn RadioHost, rate: u32, manual: bool) -> Result<Option<String>, ()> {
     let mut end = Endpointer::new(rate);
-    // a microphone he left open is closed for him after this long: what he said is kept, and nothing is sent
+    // a microphone he left open is closed for him after this long: what he said is kept and goes as said
     let began = Instant::now();
     const LEFT_OPEN: Duration = Duration::from_secs(240);
     loop {

@@ -235,7 +235,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         links = desk.setLinks(links: wanted)
         var wrong: String?
         if links.count < wanted.count { wrong = "One pairing link is not valid and was skipped." }
-        if linksRead && !Keychain.keepLinks(links) { wrong = "Couldn't save your pairings on this phone." }
+        if linksRead && !Keychain.keepLinks(links) { wrong = "Couldn\u{2019}t save your pairings on this phone." }
         if let wrong { problem = wrong }
         refresh()
         // paired: this is when notifications are worth asking for, and when a new computer needs the phone's address
