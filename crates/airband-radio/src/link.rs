@@ -103,8 +103,6 @@ fn unsent(e: &ureq::Error, way: Way) -> LinkError {
 
 pub(crate) use airband_core::clock::now_ms;
 
-/// The way an answer came: the last way its request was tried, as its steps were written down. Every way that
-/// brings an answer writes its step before handing the answer back, so an answer always has one.
 /// How a request is made of the tower.
 pub(crate) use airband_core::radio::wire::Method;
 
@@ -427,7 +425,6 @@ impl Link {
         kept.map(|_| ())
     }
 
-    /// Something he said. Where it stands with the tower, or what stopped it reaching it.
     /// The outbox says whether the relay still keeps something he said.
     pub(crate) fn keeps_at_relay(&self, kept: bool) {
         self.kept_at_relay.store(kept, std::sync::atomic::Ordering::SeqCst);

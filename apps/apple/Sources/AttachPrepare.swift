@@ -120,8 +120,7 @@ extension RadioModel {
     /// Everything attached has reached his computer.
     var trayReady: Bool { !tray.isEmpty && tray.allSatisfy { item in view.uploads.first { $0.id == item.attachment }?.state == .ready } }
 
-    /// He tapped one of his newest photos or videos: it goes the way a picked one does. Returns which item in
-    /// the tray it became.
+    /// He tapped one of his newest photos or videos: it goes the way a picked one does.
     func attach(_ asset: PHAsset) {
         let item = newItem(video: asset.mediaType == .video, asset: asset.localIdentifier)
         if item.video {

@@ -151,7 +151,6 @@ pub(crate) struct Chooser {
     pub(crate) opened: Mutex<Option<String>>,
 }
 
-/// What he chose that this build has no code for, said one way: what it cannot do, and where to choose again.
 /// The key kept on this phone for a provider, when there is one.
 pub(crate) fn kept_key(host: &dyn DeskHost, provider: &str) -> Option<String> {
     host.secret(provider.to_string()).filter(|k| !k.is_empty())

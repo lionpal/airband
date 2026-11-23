@@ -219,7 +219,7 @@ extension ChoiceJob {
 
 /// Everything he can choose for one job, as cards: the one chosen is marked, and tapping another chooses it.
 /// The same view is the body of that job's first-run screen and of its Settings page. It draws what the core
-/// lists (`RadioModel.choices`) and decides nothing itself.
+/// lists (`RadioModel.choices`); what it decides is only how a card opens.
 struct ChoicePicker: View {
     @EnvironmentObject var model: RadioModel
     let job: ChoiceJob

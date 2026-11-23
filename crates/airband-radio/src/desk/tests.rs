@@ -249,7 +249,7 @@ fn the_connection_record_he_can_copy_holds_nothing_said_and_nothing_secret() {
     // what is in it: which computer, each try, the way it went and how it ended, and what was told in passing and lost
     assert!(record.starts_with("airband ") && record.contains("\nmini\n"), "{record}");
     assert!(record.contains("POST /v1/radio/utterance by relay: there was no connection to the relay"), "{record}");
-    assert!(record.contains("told in passing and not delivered, since the app was opened: heard 1"), "{record}");
+    assert!(record.contains(&format!("told in passing and not delivered, since the app was opened: {} 1", <airband_core::radio::wire::at::Heard as airband_core::radio::wire::Endpoint>::PATH)), "{record}");
     // what is not: anything he or an agent said, an id of a message, the pairing's secret or anything made
     // from it, or an address
     let keys = Keys::derive(&secret).unwrap();

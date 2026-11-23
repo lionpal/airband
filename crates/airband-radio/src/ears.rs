@@ -28,7 +28,6 @@ mod usp;
 mod pass;
 pub(crate) use pass::*;
 
-/// Said when he opens the microphone with nothing chosen to listen with.
 /// What he is told when the listening service he chose is not one this build knows.
 pub(crate) const UNKNOWN_SERVICE: &str = "This version of airband does not know that listening service.";
 /// What he is told when what he chose to listen with is a service this build cannot listen through this way:
@@ -38,6 +37,7 @@ pub(crate) fn cannot_listen() -> String {
 }
 /// What he is told when the live listening service or the line to it failed before anything was heard.
 const SERVICE_UNREACHED: &str = "The listening service you chose could not be reached. Nothing else listened in its place.";
+/// Said when he opens the microphone with nothing chosen to listen with.
 pub(crate) const NOTHING_CHOSEN: &str = "Nothing is chosen to listen with on this device. Choose it in Settings, under Listening.";
 
 /// How a dialect gets its pass: from the row, the service's name, his settings and his key.
