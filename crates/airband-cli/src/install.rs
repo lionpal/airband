@@ -3,7 +3,7 @@ use crate::config;
 use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "macos")]
-const LABEL: &str = "dev.airband.tower";
+const LABEL: &str = crate::platform::MAC_NAME;
 
 fn installed_exe() -> PathBuf {
     config::dir().join("bin").join(if cfg!(windows) { "airband.exe" } else { "airband" })

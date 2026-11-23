@@ -21,7 +21,7 @@ impl Drop for Reading {
 /// A query with a number that is not one is refused, never read as none. `wait` is held to
 /// [`wire::FeedQuery::WAIT_MOST`].
 pub(super) async fn feed(State(app): State<Arc<App>>, RadioId(radio): RadioId, Ask(q): Ask<at::Feed>) -> Answer<at::Feed> {
-    let until = Instant::now() + q.wait_for();
+    let until = tokio::time::Instant::now() + q.wait_for();
     // all of it, or one team's (`team`, its id), or one agent's (`agent`, its id)
     let wire::FeedQuery { team, agent, since, after, limit, roster: roster_seen, .. } = q;
     // A radio that is showing the chat has everything up to the change count it asks from: nothing up to there
@@ -42,10 +42,12 @@ pub(super) async fn feed(State(app): State<Arc<App>>, RadioId(radio): RadioId, A
         Reading(app.clone())
     });
     let limit = limit.unwrap_or(if since.is_some() { 200 } else { 50 }).clamp(1, 200);
+    // agents that have gone are let go before the first look; after it, this waits on changes and only looks
+    app.reap();
+    let mut changes = app.watch_changes();
     loop {
         // the lines to send, and the change count this answer is good up to
         let (hits, upto, roster_same, settled): (Vec<Entry>, u64, bool, bool) = {
-            app.reap();
             let inner = app.read();
             let roster_same = roster_seen.is_none_or(|seen| seen == inner.roster_rev());
             let settled = !inner.settled_for(&radio, since).is_empty();
@@ -65,8 +67,8 @@ pub(super) async fn feed(State(app): State<Arc<App>>, RadioId(radio): RadioId, A
                 }
             }
         };
-        if hits.is_empty() && roster_same && !settled && Instant::now() < until {
-            tokio::time::sleep(Duration::from_millis(300)).await;
+        // nothing new: woken when the state changes, and only then looked at again, until the hold is over
+        if hits.is_empty() && roster_same && !settled && tokio::time::timeout_at(until, changes.changed()).await.is_ok() {
             continue;
         }
         // Someone is reading, so the short versions are worth making. This request waits for the ones that

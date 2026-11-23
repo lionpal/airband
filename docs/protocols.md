@@ -377,15 +377,16 @@ opens it with `open_notice` in the radio core. An answer given on the notificati
 
 ### When the tower is away
 
-A relay that has not heard from a tower for 45 seconds answers a call with 503. What he said is then left with
+A relay answers a call with 503 when its tower is not there: no pull of its is held open, and none was just
+answered that the tower is coming back from (or a call waited its whole 40 seconds and no pull came). What he said is then left with
 the relay: `POST …/queue`, the same sealed request, with the utterance's own id in `x-airband-id`. The relay
 keeps at most 200 per channel for a week, and one left twice under the same id is kept once; one left again
 after its week is kept again, as new. When the tower pulls again it is handed them oldest first, one at a time,
 each marked `x-airband-kept`; its reply, with the same header, takes that one off the relay. A tower pulls
-one at a time. Each pull says the version it speaks (`x-airband-pull: 3`; the relay takes 2 and 3) and names
+one at a time. Each pull says the version it speaks (`x-airband-pull: 3`, the only one the relay takes) and names
 the request its previous pull got and read whole (`x-airband-got`, said again until a pull is taken: 200 or
-204). A 3 also names the tower, a random id it makes each time it starts (`x-airband-tower`), and the kept
-request it is still answering for (`x-airband-answering`). A request handed over that the next pull does not
+204). It also names the tower, a random id made once on each computer and kept there, a new one made when
+its files are copied to another machine (`x-airband-tower`), and the kept request it is still answering for (`x-airband-answering`). A request handed over that the next pull does not
 name never reached the tower (its connection gone on the way, or the body cut off): it goes back to the front of
 the line while its radio still waits, and a kept one is handed over again. A kept one the tower got and a later
 pull no longer names as being answered is handed over again too: its answer did not reach the relay, and the
@@ -393,10 +394,10 @@ relay still keeps it. Nothing else kept is handed over meanwhile. An older pull 
 comes is answered 204 and takes nothing. The tower opens its channel again after it starts or loses its
 connection, saying the same headers as a pull: a request handed before and not named as got is handed again,
 and a kept one goes as on a pull (kept in its hands while the opening names it as being answered, handed again
-when it does not; a tower that does not say its version is handed it again). A pull, or an opening, the relay
+when it does not). A pull, or an opening, the relay
 does not take is answered with a `PullRefused` that says why: 426 `{"refused":"other_version","older":"tower"|"relay"}`
 names the side to update. While another tower's pull is held open (its own id in `x-airband-tower`), the first
-time is 409 `{"refused":"ask_again"}`: that pull is let go, and this tower asks again at once, telling him
+time is 409 `{"refused":"ask_again"}`: that pull is let go, and this tower asks again a second later, telling him
 nothing. A tower still there pulls again first, and then it is 409 `{"refused":"another_tower"}` (its settings
 copied to another computer), which takes nothing and lets go of nothing; a tower that is gone (one that
 restarted under a new id, its connection kept by a proxy) does not, and the asking again is taken. The tower takes a kept request only if it is an utterance with an id,

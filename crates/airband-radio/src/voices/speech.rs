@@ -11,7 +11,7 @@ pub(super) const VOICING: Voicing = Voicing { is: Interface { name: "speech", ca
 fn make(voice: &Use, by: &By, provider: &Provider) -> Made {
     let set = |field: &str| voice.get(Job::Voice, field);
     // the interface does not say the rate in a way every service agrees on, so the row or his setting does
-    // nothing given is said as that, never as an empty rate (audit 7, P-N11)
+    // nothing given is said as that, never as an empty rate
     let given = set(crate::models::field::RATE);
     let rate = match given.trim() {
         "" => super::rate_of(None),

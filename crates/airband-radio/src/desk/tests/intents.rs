@@ -214,7 +214,7 @@ fn a_computer_that_could_not_say_what_it_reads_with_is_asked_again_and_never_tol
     let desk = desk_wanting(&dir, vec![(link(1), studio.clone())], wanted_haiku(serde_json::json!({})));
     desk.set_links(vec![link(1)]);
     let id = station_id(&link(1));
-    // asked on each round while it owes it, as push and tools are (audit 6, P-B3, P-B5)
+    // asked on each round while it owes it, as push and tools are
     let again = until(|| studio.asked_on::<at::ReadsOffered>() >= 2);
     let meanwhile = standing_of(&desk, &id);
     // it comes back: the choice goes, and it has it
@@ -234,13 +234,12 @@ fn a_summary_choice_every_computer_refused_says_why_and_does_not_wait_for_good()
     let dir = temp("all-no");
     let per = serde_json::json!({ station_id(&link(1)).as_str(): { "state": "refused", "reason": "Enter your API key." } });
     let desk = desk_wanting(&dir, vec![(link(1), tower("studio", true))], wanted_haiku(per));
-    // what a computer did counts only while it is paired (audit 7, P-N3)
+    // what a computer did counts only while it is paired
     let unpaired = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "anthropic").map(|c| c.state);
     desk.set_links(vec![link(1)]);
     let state = desk.choices(ChoiceJob::Reads).into_iter().find(|c| c.provider == "anthropic").map(|c| c.state);
     desk.stop();
     let _ = std::fs::remove_dir_all(&dir);
-    // (audit 6, C-B2)
     assert_eq!(state, Some(ChoiceState::Failed { why: "Enter your API key.".into() }));
     assert_eq!(unpaired, Some(ChoiceState::Waiting));
 }
@@ -253,11 +252,10 @@ fn a_computer_paired_after_the_others_took_the_summary_choice_is_sent_it_and_an_
     let per = serde_json::json!({ station_id(&link(1)).as_str(): { "state": "done" } });
     let desk = desk_wanting(&dir, vec![(link(1), studio.clone()), (link(2), laptop.clone())], wanted_haiku(per));
     desk.set_links(vec![link(1), link(2)]);
-    // (audit 6, P-B4)
     let sent = until(|| laptop.asked_on::<at::Reads>() == 1);
     let laptop_id = station_id(&link(2));
     let took = until(|| standing_of(&desk, &laptop_id) == Some(super::super::intents::Delivery::Done));
-    // a connection that is no longer the computer's sends nothing (audit 6, C-B3)
+    // a connection that is no longer the computer's sends nothing
     let epoch = desk.shared.state.lock().unwrap().computer(&laptop_id).map(|c| c.epoch).unwrap();
     let before = laptop.asked_on::<at::ReadsOffered>();
     crate::choices::tell_reads(&desk.shared, &laptop_id, epoch + 100, true);

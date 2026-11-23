@@ -57,7 +57,7 @@ json.dump({
 RUN = os.urandom(4).hex()
 LIVE_ITEM, VAULT_ITEMS, STAND_IN = f"airband-e2e-live-{RUN}", f"airband-e2e-vault-{RUN}", 7392
 KEYCHAIN = os.path.join(work, "e2e.keychain-db")
-env = dict(os.environ, HOME=home, AIRBAND_TRACE="1", AIRBAND_STAND_IN_ACCOUNTS=f"http://127.0.0.1:{STAND_IN}", AIRBAND_STAND_IN_TOKENS=f"http://127.0.0.1:{STAND_IN}/token",
+env = dict(os.environ, HOME=home, AIRBAND_STAND_IN_ACCOUNTS=f"http://127.0.0.1:{STAND_IN}", AIRBAND_STAND_IN_TOKENS=f"http://127.0.0.1:{STAND_IN}/token",
            AIRBAND_STAND_IN_LIVE_ITEM=LIVE_ITEM, AIRBAND_STAND_IN_VAULT_ITEM=VAULT_ITEMS, AIRBAND_STAND_IN_KEYCHAIN=KEYCHAIN)
 env.pop("CLAUDE_CONFIG_DIR", None)
 

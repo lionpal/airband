@@ -142,7 +142,7 @@ mod tests {
     fn of_two_earlier_versions_the_one_made_whole_last_runs_whatever_their_names() {
         let dir = std::env::temp_dir().join(format!("airband-models-order-{}", random_hex(4)));
         let at = dir.display().to_string();
-        // "10" sorts before "9" as text; 10 was made whole after 9 (audit 6, C-A5)
+        // "10" sorts before "9" as text; 10 was made whole after 9
         for v in ["9", "10"] {
             put(&dir.join(format!("models/tiny/{v}")));
             std::fs::write(dir.join(format!("models/tiny/{v}/.whole")), "").unwrap();

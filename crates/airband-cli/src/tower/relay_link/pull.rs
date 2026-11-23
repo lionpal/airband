@@ -72,6 +72,11 @@ pub(super) fn refused_pull(relay: &str, why: Result<PullRefused, &str>) -> Strin
 struct Loop {
     open: bool,
     wait: u64,
+    /// How long to wait after a kept message was let go without its answer reaching the relay, before the pull
+    /// that has it handed over again: nothing the first time, longer each time in a row, and back to nothing
+    /// once a pull finds nothing waiting. An answer that keeps failing to get there is not handed and failed
+    /// again as fast as the two sides can go.
+    let_go: Duration,
     told: bool,
     /// Each reason a pull was refused, once told; `None` is a reason that could not be read.
     told_refused: Vec<Option<PullRefused>>,
@@ -82,9 +87,16 @@ impl Loop {
         std::thread::sleep(Duration::from_secs(self.wait));
         self.wait = (self.wait * 2).min(15);
     }
-    /// Asked to ask again ([`PullRefused::AskAgain`]): nothing for him, and no pause beyond the shortest.
+    /// Asked to ask again ([`PullRefused::AskAgain`]): nothing for him. The relay has let the other tower's pull
+    /// go, and only that tower pulling again says it is still there; nothing tells this one when it would have,
+    /// so it gives it a second, the one pause here that stands for no fact.
     fn again(&self) {
         std::thread::sleep(Duration::from_secs(1));
+    }
+    /// A kept message was let go without its answer reaching the relay: wait before it is handed over again.
+    fn let_go(&mut self) {
+        std::thread::sleep(self.let_go);
+        self.let_go = (self.let_go * 2).clamp(Duration::from_secs(1), Duration::from_secs(15));
     }
     /// A refusal, said once for each reason, then a pause. `None` is a reason that could not be read.
     fn refused(&mut self, relay: &str, why: Result<PullRefused, &str>) {
@@ -109,7 +121,7 @@ impl Serve {
         };
         let inbox = self.inbox.clone();
         let inbox = inbox.lock().unwrap_or_else(|e| e.into_inner());
-        let mut at = Loop { open: false, wait: 1, told: false, told_refused: Vec::new() };
+        let mut at = Loop { open: false, wait: 1, let_go: Duration::ZERO, told: false, told_refused: Vec::new() };
         // the number of the last pull made, and of the one in flight
         let (mut pulls, mut in_flight) = (0u64, None);
         while !self.stop.load(Ordering::SeqCst) {
@@ -139,8 +151,12 @@ impl Serve {
                     self.pulled(pull, &relay, &mut at);
                 }
                 // the kept message the pull in flight names was let go: a new pull, which does not name it, takes
-                // that one's place at once, and the relay hands it over again
-                Ok(Turn::LetGo) => in_flight = None,
+                // that one's place, and the relay hands it over again: the first time at once, and again in a
+                // row after a wait that grows
+                Ok(Turn::LetGo) => {
+                    at.let_go();
+                    in_flight = None;
+                }
                 Err(_) => return Ended::Stopped,
             }
         }
@@ -248,7 +264,8 @@ impl Serve {
             }
             Pull::Nothing => {
                 self.pulling.lock().unwrap_or_else(|e| e.into_inner()).taken();
-                at.wait = 1;
+                // nothing waiting, kept or not: whatever kept failing is over
+                (at.wait, at.let_go) = (1, Duration::ZERO);
             }
             // the relay restarted without its data, or the channel changed hands: open it again
             Pull::Gone(said) => {

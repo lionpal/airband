@@ -14,6 +14,11 @@
 #[cfg(feature = "ffi")]
 uniffi::setup_scaffolding!();
 
+/// A setting that is on unless it is written off: the one `#[serde(default = "...")]` for one.
+pub fn yes() -> bool {
+    true
+}
+
 pub mod agent;
 pub mod audio;
 pub mod catalog;

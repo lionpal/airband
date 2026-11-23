@@ -28,7 +28,7 @@ pub(crate) struct Config {
     /// Let a paired radio on the same network reach this tower straight, without the relay: faster, and it
     /// works when the relay does not. The tower then listens on this computer's local network addresses, for
     /// sealed requests only. `airband lan off` turns it off.
-    #[serde(default = "yes")]
+    #[serde(default = "airband_core::yes")]
     pub(crate) lan: bool,
     /// What cuts a long message down to a sentence or two: the one he chose, on his phone or in `airband
     /// setup`. Until he has chosen, nothing does, and he gets each message as it was written. When it does not
@@ -55,10 +55,10 @@ pub(crate) struct Config {
     /// `launcher`.
     #[serde(default, serialize_with = "his_own", skip_serializing_if = "none_his_own")]
     pub(crate) launchers: BTreeMap<String, Launcher>,
-    /// The launcher he has made the usual one, when he has: a new agent is started with it unless he asks for
-    /// another tool. Empty until he sets it; the coding tool he uses most (which his phone says) decides then.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub(crate) launcher: String,
+    /// His usual launcher, when he has one: a new agent is started with it when it can start what he asked for
+    /// (`launch::starter`). Set by his answer the first time he is asked which should start one, or by hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) launcher: Option<airband_core::ids::LauncherId>,
     /// Projects a new agent may be launched in, by spoken name, beyond the ones the tower has seen agents work
     /// in. Name to folder.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -120,22 +120,9 @@ impl Config {
             None => Ok(()),
         }
     }
-    /// The launcher for a new agent, or to carry one on. With no tool asked for, the one he set as usual, and
-    /// nothing when he has set none. For a tool: the usual one when that is the tool it starts; otherwise the
-    /// one that tool's own row lists first; and for a tool airband has no row for, the one launcher of his own
-    /// that starts it. Where he has written several for such a tool and made none the usual, none is picked.
-    pub(crate) fn launcher_for(&self, harness: Option<&str>) -> Option<(&String, &Launcher)> {
-        let usual = self.launchers.get_key_value(&self.launcher);
-        let Some(h) = harness else { return usual };
-        usual.filter(|(_, l)| l.harness == h).or_else(|| built_in().find(|l| l.harness == h).and_then(|l| self.launchers.get_key_value(&l.name))).or_else(|| {
-            let mut own = self.launchers.iter().filter(|(_, l)| l.harness == h);
-            own.next().filter(|_| own.next().is_none())
-        })
-    }
-    /// The key he gave for a provider. The one rule: a provider has one key here, found by the provider it is
-    /// for (a key kept by an older version under another name is still found by that).
+    /// The key he gave for a provider. The one rule: a provider has one key here, kept under the provider's id.
     pub(crate) fn key_of(&self, provider: &str) -> Option<String> {
-        self.keys.values().find(|k| k.provider == provider).map(|k| k.secret.clone())
+        self.keys.get(provider).map(|k| k.secret.clone())
     }
     /// Keep a provider's key, under the provider's own id. A new one takes the place of the one before, wherever
     /// that one was in use.
@@ -144,11 +131,10 @@ impl Config {
         if self.summarizer.kind == provider && Some(&self.summarizer.key) == was.as_ref() {
             self.summarizer.key = secret.clone();
         }
-        self.keys.retain(|_, k| k.provider != provider);
         self.keys.insert(provider.to_string(), StoredKey { provider: provider.to_string(), secret });
     }
-    /// The harnesses a new agent can be started with, each once, in the launchers' order. Which is usual is
-    /// `held::launcher_for`'s alone to say.
+    /// The harnesses a new agent can be started with, each once. Which starts one is `launch::starter`'s alone to
+    /// say, and never by where it stands here.
     pub(crate) fn tools(&self) -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
         self.launchers.values().for_each(|l| if !out.contains(&l.harness) { out.push(l.harness.clone()) });
@@ -255,10 +241,6 @@ pub(crate) mod tests_home {
 
 mod file;
 pub(crate) use file::*;
-
-fn yes() -> bool {
-    true
-}
 
 #[cfg(test)]
 mod tests {
@@ -380,24 +362,11 @@ mod tests {
     fn nothing_is_chosen_until_he_chooses_it() {
         let cfg = parse("{}", &file()).unwrap();
         // no model writes summaries and no launcher is the usual one
-        assert!(cfg.summarizer.is_none() && cfg.launcher.is_empty());
-        assert!(cfg.launcher_for(None).is_none());
-        // a tool he names is started the way its own row lists first, and a tool there is no row for is not started
-        let first = airband_core::catalog::built().tools.first().unwrap();
-        assert_eq!(cfg.launcher_for(Some(&first.id)).map(|(name, _)| name.clone()), first.launchers.first().map(|l| l.name.clone()));
-        assert!(cfg.launcher_for(Some("no-such-tool")).is_none());
-        // one of his own is used only by being made the usual one
-        let mut cfg = cfg;
-        cfg.launchers.insert("mine".into(), Launcher { name: "mine".into(), harness: first.id.clone(), ..Launcher::default() });
-        assert_eq!(cfg.launcher_for(Some(&first.id)).map(|(name, _)| name.clone()), first.launchers.first().map(|l| l.name.clone()));
-        // a tool airband has no row for is started by the one launcher he wrote for it, and by none of two
-        cfg.launchers.insert("other".into(), Launcher { name: "other".into(), harness: "his-own-tool".into(), ..Launcher::default() });
-        assert_eq!(cfg.launcher_for(Some("his-own-tool")).map(|(name, _)| name.as_str()), Some("other"));
-        cfg.launchers.insert("other-two".into(), Launcher { name: "other-two".into(), harness: "his-own-tool".into(), ..Launcher::default() });
-        assert!(cfg.launcher_for(Some("his-own-tool")).is_none());
-        cfg.launcher = "mine".into();
-        assert_eq!(cfg.launcher_for(Some(&first.id)).map(|(name, _)| name.as_str()), Some("mine"));
-        assert_eq!(cfg.launcher_for(None).map(|(name, _)| name.as_str()), Some("mine"));
+        assert!(cfg.summarizer.is_none() && cfg.launcher.is_none());
+        // his usual, once he has one, is read and written as its id
+        let cfg = parse(r#"{"launcher":"mine"}"#, &file()).unwrap();
+        assert_eq!(cfg.launcher, Some(airband_core::ids::LauncherId::new("mine")));
+        assert_eq!(serde_json::to_value(&cfg).unwrap()["launcher"], "mine");
     }
 
     #[test]

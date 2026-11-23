@@ -155,22 +155,27 @@ impl Serve {
         })
         .await;
         match sent {
-            Ok(Ok(RelaySaid::Nothing | RelaySaid::Done)) => true,
+            Ok(Ok(RelaySaid::Nothing | RelaySaid::Done)) => {
+                if self.replies_failing.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                    log(format!("answers for \"{}\" reach {relay} again", self.name));
+                }
+                true
+            }
             // the radio gave up waiting before the answer was ready: it asks again, and nothing is lost
             Ok(Ok(RelaySaid::Closed)) => {
                 log(format!("an answer for \"{}\" came after its radio stopped waiting (request {request_id})", self.name));
                 true
             }
-            Ok(Ok(said)) => {
-                log(format!("{relay} answered {said:?} to an answer for \"{}\" (request {request_id})", self.name));
-                false
-            }
-            Ok(Err(e)) => {
-                log(format!("an answer for \"{}\" did not reach {relay} (request {request_id}): {e}", self.name));
-                false
-            }
-            Err(_) => {
-                log(format!("an answer for \"{}\" was not sent: its sending failed (request {request_id})", self.name));
+            failed => {
+                // said once while answers keep failing, not for every one: a kept answer that keeps failing is
+                // handed over again and again
+                if !self.replies_failing.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    log(match failed {
+                        Ok(Ok(said)) => format!("{relay} answered {said:?} to an answer for \"{}\" (request {request_id}); said again once they get there", self.name),
+                        Ok(Err(e)) => format!("an answer for \"{}\" did not reach {relay} (request {request_id}): {e}; said again once they get there", self.name),
+                        Err(_) => format!("an answer for \"{}\" was not sent: its sending failed (request {request_id}); said again once they get there", self.name),
+                    });
+                }
                 false
             }
         }

@@ -33,10 +33,6 @@ pub(super) struct Document {
     retired: Vec<Value>,
 }
 
-pub(super) fn yes() -> bool {
-    true
-}
-
 /// A provider's row, but for its offers, which are read one at a time.
 #[derive(Deserialize)]
 pub(super) struct ProviderHead {
@@ -45,7 +41,7 @@ pub(super) struct ProviderHead {
     /// Present when it takes a key: what the key is called, and where keys are made.
     #[serde(default)]
     key: Option<KeyRow>,
-    #[serde(default = "yes")]
+    #[serde(default = "crate::yes")]
     offered: bool,
     #[serde(default)]
     offers: Vec<Value>,
@@ -83,7 +79,7 @@ pub(crate) fn hash_of(document: &str) -> Result<String, String> {
 include!("../catalog_hash.rs");
 
 pub(super) fn read(text: &str) -> Result<Catalog, String> {
-    let doc: Document = serde_json::from_str(text).map_err(|e| format!("the catalogue does not read: {e}"))?;
+    let doc: Document = serde_json::from_str(text).map_err(|e| format!("the catalog does not read: {e}"))?;
     let mut left_out = Vec::new();
     let mut providers = Vec::new();
     for row in doc.providers {

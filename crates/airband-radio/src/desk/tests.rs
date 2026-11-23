@@ -66,7 +66,6 @@ fn station(name: &str, port: u16, agents: &[(&str, &str)], messages: Vec<ChatMes
 }
 #[test]
 fn the_same_thing_is_never_sent_to_one_computer_twice_at_once() {
-    // (audit 7, P-N5)
     let desk = Desk::through("", Arc::new(Watching(std::sync::atomic::AtomicBool::new(true))), |_| Arc::default());
     let computer = station("studio", 1, &[], Vec::new());
     let (id, epoch) = (computer.id(), computer.epoch);
@@ -366,7 +365,7 @@ fn a_message_goes_to_the_computer_that_has_who_it_is_for() {
 
 #[test]
 fn a_tag_that_names_agents_on_two_computers_goes_to_both() {
-    // (audit 9, A-1): `@all` is for every agent, whichever computer has it; not only the first in his list
+    // `@all` is for every agent, whichever computer has it; not only the first in his list
     let desk = desk_of(two());
     assert_eq!(pick_station(&desk.shared.state.lock().unwrap(), "@all stop", None, None, None), None, "none of them is picked for him");
     desk.send("@all stop".into(), None, None, None);
@@ -820,7 +819,7 @@ fn radio_at(port: u16) -> Arc<Radio> {
 
 #[test]
 fn a_refusal_without_words_and_one_for_another_version_are_each_told_as_what_they_are() {
-    // a no with no reason is a no, said by its kind, never something that goes when it can (audit 6, P-B9)
+    // a no with no reason is a no, said by its kind, never something that goes when it can
     let gone = radio_at(tower_saying(404, r#"{"refusal":"gone"}"#));
     assert!(matches!(gone.recent(), Err(RadioError::Told { reason }) if reason == "Your computer no longer has what it names."));
     // a computer that speaks another version: he is asked to update
@@ -834,7 +833,6 @@ fn a_refusal_without_words_and_one_for_another_version_are_each_told_as_what_the
 #[test]
 fn trouble_that_may_pass_is_never_a_no() {
     // his computer's own trouble, and its "not now", are trouble with words: asked again, never kept as refused
-    // (audit 6, P-B2)
     let trouble = radio_at(tower_saying(503, "{}")).recent();
     assert!(matches!(&trouble, Err(RadioError::Trouble { reason }) if reason.contains("(503)")), "{trouble:?}");
     let not_now = radio_at(tower_saying(503, r#"{"refusal":"not_now","reason":"Busy starting up."}"#)).recent();
@@ -902,6 +900,7 @@ fn a_file_the_phone_cannot_read_is_not_told_as_his_computer_refusing() {
     assert!(matches!(&e, RadioError::Told { reason } if reason == "This phone could not read that file."), "{e:?}");
 }
 
+#[cfg(unix)]
 #[test]
 fn a_main_computer_the_phone_could_not_keep_is_told_once() {
     struct Noting(Mutex<Vec<String>>);
@@ -999,7 +998,7 @@ fn an_answer_takes_the_files_that_arrived_and_they_leave_the_tray() {
     let desk = desk_of(state);
     desk.shared.state.lock().unwrap().uploads.extend([upload_on(&mini, "f1", UploadState::Ready), upload_on(&mini, "f2", UploadState::Sending)]);
     desk.answer("q1".into(), "yes".into());
-    // (audit 6, P-B8): the one that arrived went with the answer; the one on its way stays
+    // the one that arrived went with the answer; the one on its way stays
     let left: Vec<String> = desk.shared.state.lock().unwrap().uploads.iter().map(|u| u.shown.id.clone()).collect();
     assert_eq!(left, ["f2"]);
 }
@@ -1011,7 +1010,6 @@ fn nothing_typed_with_files_still_on_their_way_sends_nothing() {
     let desk = desk_of(state);
     desk.shared.state.lock().unwrap().uploads.push(upload_on(&mini, "f1", UploadState::Sending));
     desk.send(String::new(), None, None, None);
-    // (audit 6, P-B7)
     let sent: usize = desk.shared.state.lock().unwrap().computers.iter().map(|s| s.radio.unsent().len()).sum();
     assert_eq!(sent, 0, "an empty message went ahead of its files");
 }
@@ -1019,7 +1017,6 @@ fn nothing_typed_with_files_still_on_their_way_sends_nothing() {
 #[test]
 fn what_the_phone_cannot_find_is_said_as_gone_and_never_as_his_computer_refusing() {
     let desk = desk_of(two());
-    // (audit 6, N32)
     let asked = desk.full("not-a-message".into());
     assert!(matches!(&asked, Err(RadioError::Told { reason }) if reason == "That message is no longer on any of your computers."), "{asked:?}");
 }
@@ -1027,7 +1024,7 @@ fn what_the_phone_cannot_find_is_said_as_gone_and_never_as_his_computer_refusing
 #[test]
 fn the_view_marks_nothing_read_and_shown_marks_what_it_shows() {
     let desk = desk_of(two());
-    // (audit 6: Desk::view is a pure getter)
+    // Desk::view is a pure getter
     let before = desk.view().unread;
     let again = desk.view().unread;
     desk.shown();
@@ -1041,14 +1038,13 @@ fn an_agent_moves_only_to_a_team_on_its_own_computer() {
     let state = two();
     let (agent, elsewhere) = (state.computers[0].agents[0].id.clone(), state.computers[1].agents[0].room.clone());
     let desk = desk_of(state);
-    // the two computers are told apart by id (audit 6, P-B6)
+    // the two computers are told apart by id
     let moved = desk.move_agent(agent, DeskTeamPick::Room { room: elsewhere });
     assert!(matches!(&moved, Err(RadioError::Told { reason }) if reason == "An agent can only move to a team on its own computer."), "{moved:?}");
 }
 
 #[test]
 fn what_he_and_his_agents_said_is_never_in_a_printed_record() {
-    // (audit 9, A-21)
     let words = "my secret plan for the shop";
     let out = Outgoing::of(words.into());
     let shown = format!("{out:?} {:?}", msg("m1", 1, "shop two", "shop", false));

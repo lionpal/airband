@@ -61,7 +61,7 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
     // a question of the agent's is put as the question it is, with its own answers; anything else as "may I"
     let (line, options, detail, more) = match &ask.question {
         Some(q) => {
-            log(format!("{}: asks him a question", session.callsign.text()));
+            log(format!("{}: asks him a question", short_id(&session.agent.id)));
             let choices: Vec<String> = q.choices.iter().filter(|c| c.chars().count() <= 28).take(4).cloned().collect();
             let all = if q.choices.is_empty() { q.text.clone() } else { format!("{}\n\n{}", q.text, q.choices.iter().map(|c| format!("- {c}")).collect::<Vec<_>>().join("\n")) };
             // a long question is shown by its opening; all of it is one tap away, as for any message
@@ -70,7 +70,7 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
             (line, if choices.len() == q.choices.len() { choices } else { Vec::new() }, all, more)
         }
         None => {
-            log(format!("{}: asks permission ({} characters)", session.callsign.text(), what.chars().count()));
+            log(format!("{}: asks permission ({} characters)", short_id(&session.agent.id), what.chars().count()));
             let line = Request { what: Some(what.to_string()), at_keyboard: false }.line().unwrap_or_default();
             let more = !ask.detail.trim().is_empty();
             let detail = if more { ask.detail.clone() } else { line.clone() };
@@ -88,22 +88,30 @@ pub(super) fn ask(app: &Arc<App>, ask: PermissionAsk) -> PermissionState {
 
 /// Where a request stands. Held open for up to `wait` seconds while there is no answer.
 pub(super) async fn state(app: &Arc<App>, id: &str, wait: u64) -> PermissionState {
-    let until = Instant::now() + Duration::from_secs(wait.min(airband_core::radio::wire::FeedQuery::WAIT_MOST as u64));
-    loop {
-        {
-            let mut inner = app.change();
-            let Some(permit) = inner.permits.get_mut(id) else { return PermissionState { id: id.into(), state: agent::Leave::Gone, ..PermissionState::default() } };
+    let until = tokio::time::Instant::now() + Duration::from_secs(wait.min(airband_core::radio::wire::FeedQuery::WAIT_MOST as u64));
+    // the harness is asking now, and again when this answers: that is what says it still waits on him
+    let polled = |app: &App| {
+        if let Some(permit) = app.change().permits.get_mut(id) {
             permit.polled = Instant::now();
-            if let Some((allow, message)) = permit.decided.clone() {
-                // handed over: the harness has its answer
-                inner.permits.remove(id);
-                return PermissionState { id: id.into(), state: if allow { agent::Leave::Allow } else { agent::Leave::Deny }, message, wait_seconds: 0 };
-            }
         }
-        if Instant::now() >= until {
+    };
+    polled(app);
+    let mut changes = app.watch_changes();
+    loop {
+        let decided = match app.read().permits.get(id) {
+            None => return PermissionState { id: id.into(), state: agent::Leave::Gone, ..PermissionState::default() },
+            Some(permit) => permit.decided.clone(),
+        };
+        if let Some((allow, message)) = decided {
+            // handed over: the harness has its answer
+            app.change().permits.remove(id);
+            return PermissionState { id: id.into(), state: if allow { agent::Leave::Allow } else { agent::Leave::Deny }, message, wait_seconds: 0 };
+        }
+        // woken when the state changes, and only then looked at again
+        if tokio::time::timeout_at(until, changes.changed()).await.is_err() {
+            polled(app);
             return PermissionState { id: id.into(), state: agent::Leave::Pending, message: String::new(), wait_seconds: app.cfg().permission_wait };
         }
-        tokio::time::sleep(Duration::from_millis(250)).await;
     }
 }
 
@@ -197,7 +205,7 @@ pub(super) fn answer(app: &App, text: &str, re: Option<&str>, verdict: Option<bo
     let (agent_id, entry) = (inner.permits[&id].agent_id.clone(), inner.permits[&id].entry.clone());
     inner.close_permit(&id, Ended::Answered(allow, reason.clone()));
     let Some(session) = inner.find(&agent_id).cloned() else { return say("That agent has gone.") };
-    log(format!("← radio: {} characters → {} is {} {}", text.chars().count(), session.callsign.text(), if question { "answered" } else if allow { "allowed" } else { "refused" }, if reason.is_empty() || question { String::new() } else { "with his reason".into() }));
+    log(format!("← radio: {} characters → {} is {} {}", text.chars().count(), short_id(&session.agent.id), if question { "answered" } else if allow { "allowed" } else { "refused" }, if reason.is_empty() || question { String::new() } else { "with his reason".into() }));
     let shown = if allow { ALLOW.to_string() } else if reason.is_empty() { DENY.into() } else { reason };
     inner.record(Entry::his(config::random_hex(8), std::slice::from_ref(&session), shown));
     inner.touch(&entry);

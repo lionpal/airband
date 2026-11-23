@@ -42,11 +42,12 @@ pub(super) fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> b
     if !dir.is_dir() {
         return None;
     }
-    let files: Vec<std::path::PathBuf> = airband_io::files::entries(&dir).ok()?;
+    // what each file is, by what it holds, never by how its name ends: a session's record says its kind, and the
+    // token for its socket is the one that holds a peer token
+    let files: Vec<(std::path::PathBuf, Value)> = airband_io::files::entries(&dir).ok()?.into_iter().filter_map(|p| read(&p).map(|v| (p, v))).collect();
     let mut open = Vec::new();
-    for path in files.iter().filter(|p| p.extension().is_some_and(|e| e == "json")) {
-        let Some(v) = read(path) else { continue };
-        let field = |k: &str| text(&v, k);
+    for (_, v) in &files {
+        let field = |k: &str| text(v, k);
         if v["kind"].as_str() != Some(said("session_kind").as_str()) || v["entrypoint"].as_str() != Some(said("session_entry").as_str()) {
             continue;
         }
@@ -55,7 +56,11 @@ pub(super) fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> b
             continue;
         }
         // the token its socket asks for: in a file of that process's, written when the same process started
-        let key = files.iter().filter(|p| p.extension().is_some_and(|e| e == "key") && p.file_name().is_some_and(|n| n.to_string_lossy().split('.').next() == Some(pid.to_string().as_str()))).find_map(|p| read(p).filter(|k| k["procStart"].as_str().and_then(crate::platform::lstart).is_some_and(|at| crate::platform::lstart(&started) == Some(at))));
+        let key = files
+            .iter()
+            .filter(|(p, k)| k["peerToken"].is_string() && p.file_name().is_some_and(|n| n.to_string_lossy().split('.').next() == Some(pid.to_string().as_str())))
+            .find(|(_, k)| k["procStart"].as_str().and_then(crate::platform::lstart).is_some_and(|at| crate::platform::lstart(&started) == Some(at)))
+            .map(|(_, k)| k);
         let token = key.and_then(|k| k["peerToken"].as_str().filter(|t| !t.is_empty()).map(String::from));
         let transcript = transcript_of(claude, &id);
         open.push(super::super::Open {
@@ -91,11 +96,15 @@ pub(super) fn transcript_of(claude: &std::path::Path, session: &str) -> Option<S
 pub(super) fn worked_in(claude: &std::path::Path) -> Vec<super::super::Worked> {
     let Ok(projects) = airband_io::files::entries(&claude.join(said("projects"))) else { return Vec::new() };
     let found = projects.into_iter().filter_map(|project| {
-        // the newest by when each was last written, read as a time: one whose time cannot be read is not it
-        let newest = airband_io::files::entries(&project).ok()?.into_iter().filter(|p| p.extension().is_some_and(|e| e == "jsonl")).filter_map(|p| Some((super::super::written(&p)?, p))).max_by_key(|(at, _)| *at)?;
-        let lines = airband_io::files::first_lines(&newest.1, 40).ok()?;
-        let folder = lines.iter().find_map(|line| serde_json::from_str::<Value>(line).ok()?["cwd"].as_str().filter(|c| !c.is_empty()).map(String::from))?;
-        Some(super::super::Worked { folder, at: newest.0 })
+        // newest first by when each was last written, read as a time: one whose time cannot be read is not it.
+        // A transcript is known by what its lines say (the folder the session was in), never by its name's ending
+        let mut files: Vec<(u64, std::path::PathBuf)> = airband_io::files::entries(&project).ok()?.into_iter().filter_map(|p| Some((super::super::written(&p)?, p))).collect();
+        files.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+        files.into_iter().find_map(|(at, file)| {
+            let lines = airband_io::files::first_lines(&file, 40).ok()?;
+            let folder = lines.iter().find_map(|line| serde_json::from_str::<Value>(line).ok()?["cwd"].as_str().filter(|c| !c.is_empty()).map(String::from))?;
+            Some(super::super::Worked { folder, at })
+        })
     });
     super::super::newest(found)
 }

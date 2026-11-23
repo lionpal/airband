@@ -85,6 +85,8 @@ struct Serve {
     pulls: airband_io::http::Client,
     /// The HTTP client answers go back through.
     replies: airband_io::http::Client,
+    /// The last answer sent did not reach the relay: said in the log once, until one does.
+    replies_failing: Arc<AtomicBool>,
     /// What the next pull says ([`Pulling`]): what the last one got, and the kept message being answered for. An
     /// answer to a kept message that does not reach the relay is not sent again from here: the work on it ends,
     /// the next pull stops naming it, and the relay, which still keeps it, hands it over again.
@@ -98,7 +100,7 @@ impl Serve {
     /// The link for one pairing, pulling under this computer's kept id. Why it cannot be served, when it cannot.
     fn new(app: &Arc<App>, relay: Option<String>, pairing: &PairedRadio, router: Router, handle: Handle) -> Result<Serve, String> {
         let keys = Keys::derive(&pairing.secret).map_err(|e| format!("its key is unusable ({e})"))?;
-        let tower = app.store.tower_id().map_err(|e| format!("the id this computer pulls under could not be read ({e})"))?;
+        let tower = app.store.tower_id(&crate::vault::machine_digest()).map_err(|e| format!("the id this computer pulls under could not be read ({e})"))?;
         let (turns, inbox) = mpsc::channel();
         Ok(Serve {
             app: app.clone(),
@@ -110,6 +112,7 @@ impl Serve {
             stop: Arc::new(AtomicBool::new(false)),
             pulls: airband_io::http::Client::new(Duration::from_secs(40)),
             replies: airband_io::http::Client::new(Duration::from_secs(15)),
+            replies_failing: Arc::new(AtomicBool::new(false)),
             pulling: Arc::new(Mutex::new(Pulling::of_tower(tower))),
             turns,
             inbox: Arc::new(Mutex::new(inbox)),

@@ -56,13 +56,13 @@ fn asking_a_computer_afresh_replaces_only_its_connection() {
     let (online, name, epoch) = desk.shared.state.lock().unwrap().computers.first().map(|s| (s.online, s.name.clone(), s.epoch)).unwrap();
     let after = radio_of(&desk, &link(1));
     // the old connection's host still speaks for the outbox both connections share: a message it found no one
-    // for is put to him, never dropped (audit 6, P-B1)
+    // for is put to him, never dropped
     let old = ComputerHost { shared: desk.shared.clone(), station };
     old.unplaced(Outgoing::of("late".into()), None, vec![]);
     let asking = desk.shared.state.lock().unwrap().asking.as_ref().map(|a| a.message.text.clone());
     desk.stop();
     assert!(!Arc::ptr_eq(&before, &after), "it was not asked afresh");
-    // one record of how requests went, for both connections: one writer of its file (audit 6, P-B10)
+    // one record of how requests went, for both connections: one writer of its file
     assert!(Arc::ptr_eq(&before.link.trail, &after.link.trail), "each connection kept a trail file of its own");
     assert_ne!(epoch, old_epoch);
     assert!(online && name == "studio", "what was seen of it was dropped with the old connection");
@@ -118,13 +118,13 @@ fn a_computer_that_refuses_this_phone_is_told_by_what_it_said_and_the_others_are
     desk.stop();
     assert!(asked >= 1, "the refusing computer was not asked through its own connection");
     assert_eq!(away, ["127.0.0.1"], "only the computer that refused is out of reach");
-    // he is told what it said, not that it cannot be reached (audit 8, M5)
+    // he is told what it said, not that it cannot be reached
     assert_eq!(told, format!("127.0.0.1: {}", crate::link::LinkError::Refused(airband_core::radio::wire::Refusal::OtherVersion { speaks: "airband.radio/9".into() }).said()));
 }
 
 #[test]
 fn a_computer_that_refuses_this_phone_is_not_asked_again_until_something_changes_and_then_is() {
-    // (audit 9, B-2): a refusal for good is not asked again every 300 ms; his asking afresh is a new try
+    // a refusal for good is not asked again every 300 ms; his asking afresh is a new try
     let refusing = Arc::new(FakeTower::default());
     refusing.refuses::<at::Feed>(426, &airband_core::radio::wire::Refusal::OtherVersion { speaks: "airband.radio/9".into() });
     let desk = desk_with(vec![(link(1), refusing.clone())]);
@@ -139,7 +139,7 @@ fn a_computer_that_refuses_this_phone_is_not_asked_again_until_something_changes
     let was_refused = refused();
     thread::sleep(Duration::from_millis(700));
     let once = refusing.asked_on::<at::Feed>();
-    // what needs the computer says what it said, not that it is out of reach (audit 9, B-37)
+    // what needs the computer says what it said, not that it is out of reach
     let folders = desk.station_radio(&StationId::new(""));
     desk.reconnect();
     let mut again = once;
@@ -159,7 +159,7 @@ fn a_computer_that_refuses_this_phone_is_not_asked_again_until_something_changes
 
 #[test]
 fn one_computer_paired_by_two_links_is_two_entries_with_names_of_their_own() {
-    // (audit 9, B-6): made at once with one secret, through the relay and straight on its network
+    // made at once with one secret, through the relay and straight on its network
     let secret = "ab".repeat(32);
     let relay = Pairing::Relay { relay: "https://relay.example".into(), secret: secret.clone() }.link();
     let near = Pairing::Near { at: vec!["http://192.168.1.20:7373".into()], secret }.link();

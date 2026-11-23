@@ -148,7 +148,7 @@ mod tests {
 
     #[test]
     fn his_words_and_his_email_are_never_in_a_debug_form() {
-        // A-21: derived debug forms printed what he said, the task he gave, what an agent wrote and his email
+        // derived debug forms printed what he said, the task he gave, what an agent wrote and his email
         let words = "ship the payments fix";
         let launch = crate::radio::Launch { team: crate::ids::TeamId::new("t1"), tool: None, model: None, effort: None, task: words.into() };
         let shown = [

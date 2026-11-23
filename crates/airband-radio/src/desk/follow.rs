@@ -36,7 +36,7 @@ pub(super) fn follow(shared: Arc<Shared>, radio: Arc<Radio>, station: StationId,
         }
         // It refused this phone for good: asking again gets the same no. Nothing more is asked of it on this
         // connection; a new one is made when something changes that can change the answer: he pairs again,
-        // asks for it afresh, or brings the app forward (audit 9, B-2). A newer app is a new launch.
+        // asks for it afresh, or brings the app forward. A newer app is a new launch.
         if round.refused {
             let state = shared.state.lock().unwrap();
             drop(shared.moved.wait_while(state, |s| s.live(&station, epoch).is_some()).unwrap());

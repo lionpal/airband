@@ -6,7 +6,8 @@
 //! - `chat`, `accounts`: what crosses to the host for the chat and for the coding-tool accounts
 //! - `link`: reaching the tower, directly or sealed through a relay
 //! - `net`: `airband_io::http`, the one HTTP client, under a short name
-//! - `desk`: every paired computer as one: the merged chat, what is waiting, where his messages go
+//! - `desk`: every paired computer as one: the merged chat, what is waiting, where his messages go (`fanout`:
+//!   one message to several computers)
 //! - `call`: the call-mode loop
 //! - `voice`: outbound, words said aloud by the voice he chose on this device
 //! - `ears`: inbound, his speech to text, by the model or the service he chose on this device
@@ -17,7 +18,8 @@
 //! - `senses`: why what he chose cannot be used, worded in one place
 //! - `mouth`, `voices`: the voice he chose, on the device or a service; `hears`, `ears_stream`: listening by
 //!   one upload or live
-//! - `models`, `engines`, `catalog`: the models that run on the device, what runs them, and the catalogue
+//! - `models`, `engines`, `catalog`: the models that run on the device, what runs them, and the catalog
+//! - `shared`: what the app and its notification extension both keep that is no secret
 //!
 //! A host (Swift on iPhone and Mac, Kotlin on Android, the terminal host in the `airband` command) implements
 //! [`RadioHost`]: speak this text, listen for a reply, show this status. The loop here decides everything
@@ -219,6 +221,10 @@ pub struct Outgoing {
     /// How far it has got.
     #[serde(default)]
     pub stage: Stage,
+    /// When his computer first said it had it ([`Stage::Taken`]), in milliseconds since 1970: what the outbox's
+    /// patience with a message his computer has and never settles is counted from. Nothing before then.
+    #[serde(default)]
+    pub taken_at: Option<u64>,
 }
 
 /// What an agent is doing.
@@ -263,7 +269,7 @@ pub enum Stage {
 impl Outgoing {
     /// Something he has just said, not yet tried.
     pub(crate) fn new(id: String, text: String, re: Option<String>, scope: Option<String>, label: Option<String>, attachments: Vec<String>, others: Vec<airband_core::radio::Other>) -> Outgoing {
-        Outgoing { id, text, re, at: now_ms(), scope, label, attachments, others, to: Vec::new(), act: None, answers: None, tries: 0, last_tried: 0, trail: Vec::new(), failed: None, stage: Stage::Trying }
+        Outgoing { id, text, re, at: now_ms(), scope, label, attachments, others, to: Vec::new(), act: None, answers: None, tries: 0, last_tried: 0, trail: Vec::new(), failed: None, stage: Stage::Trying, taken_at: None }
     }
     /// Words to send, under a new id, with nothing else yet: the rest is set by whoever sends them.
     pub(crate) fn of(text: String) -> Outgoing {
@@ -283,8 +289,8 @@ impl Outgoing {
     }
 }
 
-/// His words and an agent's are never printed: what is printed of each is its id and how long its words are
-/// (audit 9, A-21). Everything else about them is in the type.
+/// His words and an agent's are never printed: what is printed of each is its id and how long its words are.
+/// Everything else about them is in the type.
 macro_rules! words_hidden {
     ($t:ty, $name:literal, $id:ident, $($words:ident),+) => {
         impl std::fmt::Debug for $t {

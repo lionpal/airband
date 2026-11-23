@@ -17,6 +17,11 @@ pub(crate) const HOSTNAME: &str = "/bin/hostname";
 /// The login keychain (macOS).
 pub(crate) const SECURITY: &str = "/usr/bin/security";
 
+/// airband's own name on a Mac: the label the tower runs under in launchd, and the service its keys are kept
+/// under in the keychain.
+#[cfg(target_os = "macos")]
+pub(crate) const MAC_NAME: &str = "dev.airband.tower";
+
 /// When process `pid` started, in seconds since 1970 (UTC), as the system says: what tells it from a later
 /// process given the same number. None when there is no such process.
 pub(crate) fn started(pid: u32) -> Option<u64> {

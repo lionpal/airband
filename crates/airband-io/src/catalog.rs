@@ -41,12 +41,12 @@ pub fn load_kept(dir: &Path, speaks: &dyn Fn(&Offer) -> bool) -> Vec<String> {
     match (doc, sig) {
         (Ok(Some(doc)), Ok(Some(sig))) => match accept(&doc, &sig) {
             Ok(taken) => news(&taken, speaks),
-            Err(why) => vec![format!("catalogue: the copy kept here was not used ({why})")],
+            Err(why) => vec![format!("catalog: the copy kept here was not used ({why})")],
         },
         // none kept yet: nothing to say
         (Ok(None), Ok(None)) => Vec::new(),
-        (Err(e), _) | (_, Err(e)) => vec![format!("catalogue: the copy kept here could not be read, so the one built in is used ({e})")],
-        (Ok(_), Ok(_)) => vec!["catalogue: the copy kept here has no signature beside it (or a signature and no copy), so the one built in is used".to_string()],
+        (Err(e), _) | (_, Err(e)) => vec![format!("catalog: the copy kept here could not be read, so the one built in is used ({e})")],
+        (Ok(_), Ok(_)) => vec!["catalog: the copy kept here has no signature beside it (or a signature and no copy), so the one built in is used".to_string()],
     }
 }
 
@@ -60,7 +60,7 @@ pub fn refresh(dir: &Path, speaks: &dyn Fn(&Offer) -> bool) -> (bool, Vec<String
 pub fn refresh_from(from: &dyn Fetch, dir: &Path, speaks: &dyn Fn(&Offer) -> bool) -> (bool, Vec<String>) {
     let (doc, sig) = match (from.get(ADDRESS), from.get(&format!("{ADDRESS}.sig"))) {
         (Ok(doc), Ok(sig)) => (doc, sig),
-        (Err(NotFetched::Status(status)), _) | (_, Err(NotFetched::Status(status))) => return (false, vec![format!("catalogue: the published copy could not be had (the address answered {status})")]),
+        (Err(NotFetched::Status(status)), _) | (_, Err(NotFetched::Status(status))) => return (false, vec![format!("catalog: the published copy could not be had (the address answered {status})")]),
         _ => return (false, Vec::new()),
     };
     let sig = String::from_utf8_lossy(&sig).to_string();
@@ -73,12 +73,12 @@ pub fn refresh_from(from: &dyn Fetch, dir: &Path, speaks: &dyn Fn(&Offer) -> boo
                 let at = dir.join(KEPT);
                 let kept = crate::files::write_atomic(&at, &doc).and_then(|_| crate::files::write_atomic(&at.with_extension("json.sig"), sig));
                 if let Err(e) = kept {
-                    lines.push(format!("catalogue: the copy taken could not be kept for next time ({e})"));
+                    lines.push(format!("catalog: the copy taken could not be kept for next time ({e})"));
                 }
             }
             (taken.newer, lines)
         }
-        Err(why) => (false, vec![format!("catalogue: the published copy was not taken ({why})")]),
+        Err(why) => (false, vec![format!("catalog: the published copy was not taken ({why})")]),
     }
 }
 

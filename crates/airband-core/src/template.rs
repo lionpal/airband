@@ -59,6 +59,12 @@ pub fn word(word: &str, values: &[(&str, &str)]) -> String {
     }
 }
 
+/// Whether `word` has the place `{name}` in it, as its pieces read: asked of a row's word before anything is
+/// filled in, so a value never counts as a place.
+pub fn has_place(word: &str, name: &str) -> bool {
+    pieces(word).any(|piece| piece == Piece::Place(name))
+}
+
 /// `word` with each `{name}` that `values` has replaced by its value.
 pub fn filled(word: &str, values: &[(&str, &str)]) -> String {
     pieces(word)
@@ -75,7 +81,7 @@ mod tests {
 
     #[test]
     fn a_value_is_put_in_once_and_never_read_again_as_a_place() {
-        // A-N6: a video whose path had `{out}` in it was rewritten by the next replace
+        // a video whose path had `{out}` in it was rewritten by the next replace
         assert_eq!(filled("-i {video} {out}/%03d.png", &[("video", "/v/{out}.mov"), ("out", "/f")]), "-i /v/{out}.mov /f/%03d.png");
         assert_eq!(filled("{unknown} and {model}", &[("model", "opus")]), "{unknown} and opus");
         assert_eq!(filled("no places {", &[("x", "y")]), "no places {");

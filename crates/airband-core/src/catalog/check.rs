@@ -56,9 +56,9 @@ const MODELS_PATH: &str = "/models/";
 /// Is this document signed by airband's catalogue key?
 pub fn signed(document: &[u8], signature: &str) -> Result<(), String> {
     let key = VerifyingKey::from_bytes(&SIGNED_BY).map_err(|e| e.to_string())?;
-    let sig = crate::encode::unbase64(signature.trim()).ok_or("the catalogue's signature does not read")?;
-    let sig = Signature::from_slice(&sig).map_err(|_| "the catalogue's signature does not read")?;
-    key.verify(document, &sig).map_err(|_| "the catalogue is not signed by airband".to_string())
+    let sig = crate::encode::unbase64(signature.trim()).ok_or("the catalog's signature does not read")?;
+    let sig = Signature::from_slice(&sig).map_err(|_| "the catalog's signature does not read")?;
+    key.verify(document, &sig).map_err(|_| "the catalog is not signed by airband".to_string())
 }
 
 /// A document about to be published, read and checked the way a build would on taking it: it reads, it is
@@ -93,17 +93,17 @@ pub(super) fn weigh(text: &str, now: u64, have: &Catalog) -> Result<(Option<Cata
 
 /// The same, held to what `built` has in place of this build's own catalogue.
 pub(super) fn weigh_against(text: &str, now: u64, have: &Catalog, built: &Catalog) -> Result<(Option<Catalog>, Taken), String> {
-    let expires = serde_json::from_str::<Value>(text).map_err(|e| format!("the catalogue does not read: {e}"))?["expires"].as_u64().ok_or("this copy of the catalogue does not say until when it may be taken")?;
+    let expires = serde_json::from_str::<Value>(text).map_err(|e| format!("the catalog does not read: {e}"))?["expires"].as_u64().ok_or("this copy of the catalog does not say until when it may be taken")?;
     // a signed copy says until when it may be taken, so one that was replaced long ago cannot be served again
     if expires <= now {
-        return Err("this copy of the catalogue has run out".into());
+        return Err("this copy of the catalog has run out".into());
     }
     let mut newer = read(text)?;
     if newer.rev < have.rev {
         return Ok((None, Taken::default()));
     }
     if newer.rev == have.rev {
-        let note = (newer.hash != have.hash).then(|| format!("a catalogue with the same rev ({}) has different rows; the one in hand is kept", have.rev));
+        let note = (newer.hash != have.hash).then(|| format!("a catalog with the same rev ({}) has different rows; the one in hand is kept", have.rev));
         return Ok((None, Taken { note, ..Taken::default() }));
     }
     // A provider this build has never heard of may not bring a program to run: such an offer is left out, so
@@ -140,7 +140,7 @@ pub(super) fn weigh_against(text: &str, now: u64, have: &Catalog, built: &Catalo
         (t.launchers, t.with) = own_start(built, &t.id);
     }
     if newer.providers.is_empty() {
-        return Err("the catalogue has no providers in it".into());
+        return Err("the catalog has no providers in it".into());
     }
     // A provider or tool this build has compiled in is never lost by taking a copy: when the copy does not list it
     // (or lists it in a shape this build cannot read) and does not say it is retired, the compiled-in row
@@ -186,28 +186,28 @@ pub(super) fn allowed(newer: &Catalog, built: &Catalog) -> Result<(), String> {
             match known.offers.iter().find(|x| x.id == o.id) {
                 Some(was) => {
                     if o.by != was.by || o.job != was.job {
-                        return Err(format!("the catalogue would change how {} is reached", p.id));
+                        return Err(format!("the catalog would change how {} is reached", p.id));
                     }
                     if reach(o) != reach(was) {
-                        return Err(format!("the catalogue would change where {} is reached", p.id));
+                        return Err(format!("the catalog would change where {} is reached", p.id));
                     }
                 }
-                None if !known_way(known, o) => return Err(format!("the catalogue would have {} reached a new way", p.id)),
+                None if !known_way(known, o) => return Err(format!("the catalog would have {} reached a new way", p.id)),
                 None => {}
             }
         }
         if known.key != p.key {
-            return Err(format!("the catalogue would change whether {} takes a key", p.id));
+            return Err(format!("the catalog would change whether {} takes a key", p.id));
         }
         // testing a key sends it: where and how is this build's own for every provider it knows
         if known.check != p.check {
-            return Err(format!("the catalogue would change where a key for {} is sent to be tested", p.id));
+            return Err(format!("the catalog would change where a key for {} is sent to be tested", p.id));
         }
     }
     // the same for how a coding tool is started: only what this build came with
     for t in &newer.tools {
         if (t.launchers.clone(), t.with.clone()) != own_start(built, &t.id) {
-            return Err(format!("the catalogue would change the program run to start {}", t.id));
+            return Err(format!("the catalog would change the program run to start {}", t.id));
         }
     }
     for m in &newer.models {
@@ -215,10 +215,10 @@ pub(super) fn allowed(newer: &Catalog, built: &Catalog) -> Result<(), String> {
         // web addresses
         let ours = crate::links::web(&m.base).is_some_and(|u| u.scheme() == "https" && u.host_str() == Some(MODELS_HOST) && u.path().starts_with(MODELS_PATH));
         if !ours {
-            return Err(format!("the catalogue names a model that is not airband's to offer: {}", m.kind));
+            return Err(format!("the catalog names a model that is not airband's to offer: {}", m.kind));
         }
         if built.models.iter().any(|b| b.kind == m.kind && b.version == m.version && b.files != m.files) {
-            return Err(format!("the catalogue would change the files of {} without a new version", m.kind));
+            return Err(format!("the catalog would change the files of {} without a new version", m.kind));
         }
     }
     Ok(())

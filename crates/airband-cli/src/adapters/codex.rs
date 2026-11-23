@@ -378,8 +378,9 @@ fn watch(_tower: super::Tower) {}
 fn worked_in(codex: &std::path::Path) -> Vec<super::Worked> {
     // sessions/<year>/<month>/<day>/<one file per session>
     let inside = |dirs: Vec<PathBuf>| -> Vec<PathBuf> { dirs.iter().filter_map(|d| airband_io::files::entries(d).ok()).flatten().collect() };
-    // newest first by when each was last written, read as a time, never by how its path sorts as text
-    let mut files: Vec<(u64, PathBuf)> = inside(inside(inside(inside(vec![codex.join(super::row_says(NAME, "sessions"))])))).into_iter().filter(|p| p.extension().is_some_and(|e| e == "jsonl")).filter_map(|p| Some((super::written(&p)?, p))).collect();
+    // newest first by when each was last written, read as a time, never by how its path sorts as text. A
+    // session's file is known by its first line (`session_meta`), never by its name's ending
+    let mut files: Vec<(u64, PathBuf)> = inside(inside(inside(inside(vec![codex.join(super::row_says(NAME, "sessions"))])))).into_iter().filter_map(|p| Some((super::written(&p)?, p))).collect();
     files.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
     let found = files.iter().take(300).filter_map(|(at, file)| {
         let first = airband_io::files::first_lines(file, 1).ok()?.into_iter().next()?;
@@ -540,9 +541,10 @@ mod tests {
         std::fs::write(day.join("rollout-a.jsonl"), meta("/x/shop")).unwrap();
         std::fs::write(day.join("rollout-b.jsonl"), meta("/x/shop")).unwrap();
         std::fs::write(day.join("rollout-c.jsonl"), meta("/x/garden")).unwrap();
-        // one just opened has nothing in it yet, and something else's file is not a session
+        // one just opened has nothing in it yet, and a file whose first line is not a session's is not one,
+        // whatever its name
         std::fs::write(day.join("rollout-d.jsonl"), "").unwrap();
-        std::fs::write(day.join("notes.txt"), meta("/x/notes")).unwrap();
+        std::fs::write(day.join("rollout-e.jsonl"), format!("{}\n", json!({ "type": "event", "payload": { "cwd": "/x/notes" } }))).unwrap();
         let mut worked: Vec<String> = worked_in(&dir).into_iter().inspect(|w| assert!(w.at > 0)).map(|w| w.folder).collect();
         worked.sort();
         assert_eq!(worked, ["/x/garden", "/x/shop"]);

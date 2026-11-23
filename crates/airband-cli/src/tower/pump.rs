@@ -35,7 +35,7 @@ pub(super) async fn pump(app: &Arc<App>) {
     let say = next.line();
     let kind = next.kind.unwrap_or(Kind::Unjudged);
     // the line by its id and length: what agents say is never written in the log
-    log(format!("→ {}: {callsign} ({kind:?}): line {} ({} characters)", inner.radio_name(&radio), next.id, say.chars().count()));
+    log(format!("→ {}: ({kind:?}) line {} ({} characters)", inner.radio_name(&radio), next.id, say.chars().count()));
     let spoken_line = format!("{}. {say}", airband_core::prose::capital(&callsign));
     let waiting = inner.unheard().count() as u32 - 1;
     inner.set_aloud(&next.id, Aloud::Handed { radio: radio.clone(), at: now_ms() });
@@ -105,7 +105,7 @@ fn remind(app: &Arc<App>, inner: &mut Inner, radio: &str) {
     let first = !inner.offered.contains_key(&e.id);
     let say = e.line();
     let from = inner.sender_name(&e);
-    log(format!("→ {}: {from} ({}): line {} ({} characters)", inner.radio_name(radio), if first { "waiting" } else { "reminder" }, e.id, say.chars().count()));
+    log(format!("→ {}: ({}) line {} ({} characters)", inner.radio_name(radio), if first { "waiting" } else { "reminder" }, e.id, say.chars().count()));
     let spoken_line = if first { format!("{} is waiting. {say}", airband_core::prose::capital(&from)) } else { format!("Still waiting: {from}. {say}") };
     transmit(app, inner, radio, Transmission { id: e.id.clone(), agent: said_by(&e), callsign: from, kind: Kind::NeedsYou, say: spoken_line, waiting: 0 });
 }

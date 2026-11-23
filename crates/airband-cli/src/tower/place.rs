@@ -87,7 +87,7 @@ pub(super) async fn look(app: Arc<App>, agent_id: String) {
         "required": ["team", "new_team", "sure"],
         "additionalProperties": false
     });
-    let Ok(out) = judge::ask_json::<Out>(&app.settings, "placing", prompt, Some(shape)).await else { return };
+    let Ok(out) = judge::ask_json::<Out>(&app.settings, prompt, Some(shape)).await else { return };
     if !out.sure {
         return;
     }

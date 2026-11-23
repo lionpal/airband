@@ -9,8 +9,9 @@
 //! - `deliveries`: each attempt to hand his words to an agent, and how it went.
 //! - `replays`: the id of every sealed request a radio sent the tower, with when, for as long as one counts as
 //!   fresh: a copy played back is dropped, after a restart too.
-//! - `tower`: the id this computer pulls from the relay under, made once: its own pull from before a restart is
-//!   never taken for another computer's.
+//! - `tower_here`: the id this computer pulls from the relay under, kept with a digest of the machine it was made
+//!   on: its own pull from before a restart is never taken for another computer's, and a copy of `~/.airband` on
+//!   another machine (Migration Assistant, a backup) makes an id of its own there rather than pull as this one.
 //! - `state`: who is on the radio, his teams, the agents the tower holds, and (apart) where each phone can be
 //!   woken. Small, rewritten on change.
 //!
@@ -71,7 +72,8 @@ impl Store {
              create table if not exists deliveries (n integer primary key autoincrement, at integer not null, message text not null, callsign text not null, ok integer not null, error text, utterance text);
              create table if not exists state (key text primary key, value text not null);
              create table if not exists replays (id text primary key, at integer not null);
-             create table if not exists tower (one integer primary key check (one = 1), id text not null);",
+             drop table if exists tower;
+             create table if not exists tower_here (one integer primary key check (one = 1), id text not null, machine text not null);",
         )
         .map_err(|e| format!("cannot prepare {}: {e}", path.display()))?;
         // columns added since the table was first made: what a request for leave asked and where it stands,
@@ -332,11 +334,18 @@ impl Store {
         db.execute("insert into replays (id, at) values (?1, ?2) on conflict (id) do nothing", params![id, now as i64]).map(|n| n == 1).map_err(|e| e.to_string())
     }
 
-    /// The id this computer pulls from the relay under: made the first time it is asked for, and kept.
-    pub(super) fn tower_id(&self) -> Result<String, String> {
+    /// The id this computer pulls from the relay under: the one kept, when it was made on this machine
+    /// (`machine`, a digest of the machine's own id, [`crate::vault::machine_digest`]); else a new one, kept from
+    /// then on. Two computers with one copy of the database never pull under one id.
+    pub(super) fn tower_id(&self, machine: &str) -> Result<String, String> {
         let db = self.db.lock().unwrap();
-        db.execute("insert into tower (one, id) values (1, ?1) on conflict (one) do nothing", params![airband_core::encode::random_hex(8)]).map_err(|e| e.to_string())?;
-        db.query_row("select id from tower where one = 1", [], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())
+        let kept = db.query_row("select id, machine from tower_here where one = 1", [], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).optional().map_err(|e| e.to_string())?;
+        if let Some((id, _)) = kept.filter(|(_, made_on)| made_on == machine) {
+            return Ok(id);
+        }
+        let id = airband_core::encode::random_hex(8);
+        db.execute("insert into tower_here (one, id, machine) values (1, ?1, ?2) on conflict (one) do update set id = excluded.id, machine = excluded.machine", params![id, machine]).map_err(|e| e.to_string())?;
+        Ok(id)
     }
 
     /// `utterance` is the id the radio gave what he said, when it gave one.
@@ -462,10 +471,15 @@ mod tests {
     #[test]
     fn the_tower_pulls_under_one_id_kept_across_restarts() {
         let (s, path) = store("tower-id");
-        let id = s.tower_id().unwrap();
-        assert_eq!(s.tower_id().unwrap(), id);
+        let id = s.tower_id("this-mac").unwrap();
+        assert_eq!(s.tower_id("this-mac").unwrap(), id);
         drop(s);
-        assert_eq!(Store::open(&path).unwrap().tower_id().unwrap(), id);
+        let s = Store::open(&path).unwrap();
+        assert_eq!(s.tower_id("this-mac").unwrap(), id);
+        // the same database on another machine: an id of its own, kept there from then on
+        let there = s.tower_id("another-mac").unwrap();
+        assert_ne!(there, id);
+        assert_eq!(s.tower_id("another-mac").unwrap(), there);
         let _ = std::fs::remove_file(path);
     }
 

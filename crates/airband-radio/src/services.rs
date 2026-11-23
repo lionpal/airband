@@ -77,7 +77,7 @@ pub(crate) fn services(job: airband_core::providers::Job) -> Vec<Service> {
 }
 
 /// What his computer offers to read with, as a service he can choose: the one way one is made from its row
-/// in the computer's list (audit 9, A-16). It speaks no voices.
+/// in the computer's list. It speaks no voices.
 impl From<&airband_core::radio::ReadsOffer> for Service {
     fn from(r: &airband_core::radio::ReadsOffer) -> Service {
         Service {

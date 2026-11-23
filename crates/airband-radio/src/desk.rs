@@ -363,7 +363,7 @@ impl Desk {
 }
 /// The pass for the live listening service he chose is fetched before he first needs it, and again when the
 /// pass itself says it ends, so opening the microphone never waits on it: once for the device, whichever
-/// computers are paired (audit 6, C-B5). With no pass kept (nothing to fetch ahead, or none could be had) it
+/// computers are paired. With no pass kept (nothing to fetch ahead, or none could be had) it
 /// waits for him to choose again. It ends with the desk.
 fn warm_passes(shared: std::sync::Weak<Shared>) {
     thread::spawn(move || {

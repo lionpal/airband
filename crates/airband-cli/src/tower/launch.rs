@@ -90,18 +90,18 @@ fn heard(pick: Option<&Pick>) -> Option<&Heard> {
     }
 }
 
-/// Which launcher starts an agent on something he named, of those that offer it.
+/// Which launcher starts an agent, of those that can start what he asked for.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Starts {
     This(LauncherId),
-    /// None offers it.
+    /// None can.
     Nobody,
-    /// Several do and none is his usual: he is asked which.
+    /// Several can and none is his usual: he is asked which.
     Which(Vec<LauncherId>),
 }
 
-/// The rule, the same with a tool named or none: his usual launcher (for that tool, or at all) when it offers
-/// it; else the one launcher that does; else he is asked. Where a launcher stands in any list decides nothing.
+/// The rule, the same with a tool named or none: his usual launcher when it can start it; else the one launcher
+/// that can; else he is asked. Where a launcher stands in any list decides nothing.
 pub(super) fn which_launcher(usual: Option<&LauncherId>, offering: &[LauncherId]) -> Starts {
     if let Some(usual) = usual.filter(|u| offering.contains(u)) {
         return Starts::This(usual.clone());
@@ -117,9 +117,9 @@ pub(super) fn which_launcher(usual: Option<&LauncherId>, offering: &[LauncherId]
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Unsettled {
     Say(String),
-    /// Several offer what he named and none is his usual: `what` he named, and each launcher with the name he
-    /// can say it by.
-    Which { what: String, among: Vec<(LauncherId, String)> },
+    /// Several can start it and none is his usual: the model or effort he named, if he named one, and each
+    /// launcher with the name he can say it by.
+    Which { what: Option<String>, among: Vec<(LauncherId, String)> },
 }
 
 impl Unsettled {
@@ -127,7 +127,13 @@ impl Unsettled {
     pub(super) fn words(&self) -> String {
         match self {
             Unsettled::Say(said) => said.clone(),
-            Unsettled::Which { what, among } => format!("Which should start it on {what}: {}?", either(&among.iter().map(|(_, n)| n.as_str()).collect::<Vec<_>>())),
+            Unsettled::Which { what, among } => {
+                let names = either(&among.iter().map(|(_, n)| n.as_str()).collect::<Vec<_>>());
+                match what {
+                    Some(what) => format!("Which should start it on {what}: {names}?"),
+                    None => format!("Which should start it: {names}?"),
+                }
+            }
         }
     }
 }
@@ -153,42 +159,45 @@ pub(super) fn sayable(cfg: &config::Config, among: &[LauncherId]) -> Vec<(Launch
         .collect()
 }
 
-/// The launcher that starts the agent. One he chose when asked which (`chosen`) starts it when it offers what
-/// he named. Else, with nothing heard from his words to start it on: the launcher for the tool he named, else
-/// the usual one (`held::launcher_for`). With a model or an effort heard: of the launchers that offer all of it
-/// (only the named tool's, when he named one), by `which_launcher`. None offering it is said to him in words,
-/// several and none usual is a question, and nothing starts.
+/// The launcher that starts the agent, of those that can start what he asked for: (a) with a tool named, only
+/// that tool's launchers, and with none named, the launchers of the coding tools he uses (as his phone said,
+/// in no order that counts; all of them when it has said none); of those, only the ones that offer the model
+/// and effort he named. Then, by `which_launcher`: (b) his usual launcher when it is one of them, (c) else the
+/// only one, (d) else he is asked which, and his answer becomes his usual one (`route::named_launcher`). The
+/// one he chose when asked (`chosen`) starts it when it can. None that can is said to him in words.
 pub(super) fn starter(app: &App, idea: &Idea, chosen: Option<&LauncherId>) -> Result<(String, config::Launcher), Unsettled> {
     let say = Unsettled::Say;
     let wanted: Vec<&Heard> = [idea.model.as_ref(), idea.effort.as_ref()].into_iter().filter_map(heard).collect();
-    let usual = held::launcher_for(app, idea.tool.as_deref());
-    if wanted.is_empty() {
-        return usual.ok_or_else(|| say(match &idea.tool {
-            Some(tool) => format!("This computer is not set up to start {tool} agents."),
-            None => "Which coding agent should start it? Name one, or choose yours in Settings, under Coding agents.".to_string(),
-        }));
-    }
-    let what = wanted.iter().map(|h| h.said()).collect::<Vec<_>>().join(" at ");
+    let what = (!wanted.is_empty()).then(|| wanted.iter().map(|h| h.said()).collect::<Vec<_>>().join(" at "));
+    let his_tools = app.read().tools.clone();
     let cfg = app.cfg();
     let offering: Vec<LauncherId> = cfg
         .launchers
         .iter()
-        .filter(|(_, l)| idea.tool.as_ref().is_none_or(|tool| l.harness == *tool))
+        .filter(|(_, l)| match &idea.tool {
+            Some(tool) => l.harness == *tool,
+            None => his_tools.is_empty() || his_tools.contains(&l.harness),
+        })
         .map(|(name, _)| LauncherId::new(name.as_str()))
         .filter(|id| wanted.iter().all(|h| h.of(id).next().is_some()))
         .collect();
-    // the one he chose when asked, which must still offer it: the rule is not asked again
+    // the one he chose when asked, which must still be able to: the rule is not asked again
     let usual = match chosen {
-        Some(chosen) if offering.contains(chosen) => Some(chosen.clone()),
-        Some(_) => return Err(say(format!("That one does not start an agent on {what}."))),
-        None => usual.map(|(name, _)| LauncherId::new(name)),
+        Some(chosen) if offering.contains(chosen) => Some(chosen),
+        Some(_) => return Err(say(match &what {
+            Some(what) => format!("That one does not start an agent on {what}."),
+            None => "That one cannot start it here.".to_string(),
+        })),
+        None => cfg.launcher.as_ref(),
     };
-    let picked = match which_launcher(usual.as_ref(), &offering) {
+    let picked = match which_launcher(usual, &offering) {
         Starts::This(picked) => picked,
         Starts::Nobody => {
-            return Err(say(match &idea.tool {
-                Some(tool) => format!("{tool} agents cannot be started on {what}."),
-                None => format!("Nothing here starts an agent on {what}."),
+            return Err(say(match (&idea.tool, &what) {
+                (Some(tool), None) => format!("This computer is not set up to start {tool} agents."),
+                (Some(tool), Some(what)) => format!("{tool} agents cannot be started on {what}."),
+                (None, None) => "This computer is not set up to start a coding agent.".to_string(),
+                (None, Some(what)) => format!("Nothing here starts an agent on {what}."),
             }));
         }
         Starts::Which(several) => return Err(Unsettled::Which { what, among: sayable(&cfg, &several) }),
@@ -256,17 +265,17 @@ pub(super) async fn launch_by(app: &Arc<App>, place: &Place, idea: &Idea, by: Op
     let line = config::random_hex(8);
     if launcher.held.is_some() {
         return match held::start(app, &named, &cwd, model_id, effort_id, task, &line).await {
-            Ok(_) if task.is_empty() => {
-                log(format!("started {named}{with} in {project}, held by the tower, with nothing to do yet"));
+            Ok(id) if task.is_empty() => {
+                log(format!("started {} by {named}{with}, held by the tower, with nothing to do yet", short_id(&id)));
                 Ok(say(format!("A new agent is ready in {project}{with}.")))
             }
             Ok(id) => {
                 // the task is his words: the log has its length only
-                log(format!("started {named}{with} in {project}, held by the tower, with a task of {} characters", task.chars().count()));
+                log(format!("started {} by {named}{with}, held by the tower, with a task of {} characters", short_id(&id), task.chars().count()));
                 Ok(say(launched(app, place, &with, task, Some(id), line)))
             }
             Err(why) => {
-                log(format!("launch in {project} did not start: {why}"));
+                log(format!("a launch by {named} did not start: {why}"));
                 Err(say(not_started(project, &why)))
             }
         };
@@ -283,17 +292,17 @@ pub(super) async fn launch_by(app: &Arc<App>, place: &Place, idea: &Idea, by: Op
     let run = tokio::process::Command::new(program).args(args).current_dir(&cwd).env_remove(INTERNAL_ENV).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).output();
     match run.await {
         Ok(out) if out.status.success() => {
-            log(format!("launched {named}{with} in {project} ({session}), with a task of {} characters", task.chars().count()));
+            log(format!("launched by {named}{with}, with a task of {} characters", task.chars().count()));
             // handed off to a program of its own: nothing says which agent it becomes when it reports in
             Ok(say(launched(app, place, &with, task, None, line)))
         }
         Ok(out) => {
             // what it wrote can hold its command line, and so his task: neither the log nor he is given it
-            log(format!("launch in {project} failed: {program} ended with {} after writing {} bytes of errors", out.status, out.stderr.len()));
+            log(format!("a launch by {named} failed: {program} ended with {} after writing {} bytes of errors", out.status, out.stderr.len()));
             Err(say(format!("Could not launch in {project}: {program} stopped with an error.")))
         }
         Err(e) => {
-            log(format!("launch in {project} failed: cannot run {program}: {e}"));
+            log(format!("a launch by {named} failed: cannot run {program}: {e}"));
             Err(say(format!("Could not launch in {project}: {program} did not start.")))
         }
     }
@@ -321,7 +330,7 @@ fn launched(app: &App, place: &Place, with: &str, task: &str, agent: Option<Stri
     let project = &place.name;
     match inner.folder_team(&place.folder) {
         Some(team) => inner.record(Entry { id: line, from: HIM.into(), his: true, team: Some(team), to: vec![launch_label(project)], to_agents: agent.into_iter().collect(), short: Some(task.into()), full: task.into(), ..Entry::default() }),
-        None => log(format!("the task for the new agent in {project} is not written in the chat: its folder has no name to give a team")),
+        None => log("the task for a new agent is not written in the chat: its folder has no name to give a team"),
     }
     format!("Launching in {project}{with}.")
 }
@@ -425,6 +434,30 @@ mod tests {
         // nothing heard: the tool he named, else the usual
         assert_eq!(started(Idea { tool: Some("tool-two".into()), ..Idea::default() }), Ok("b".into()));
         assert_eq!(started(Idea { model: Some(Pick::Said("luna".into())), ..Idea::default() }), Ok("a".into()));
+    }
+
+    #[test]
+    fn with_nothing_named_his_usual_starts_it_else_the_one_of_his_tools_else_he_is_asked_once() {
+        let app = crate::tower::http::tests::app_with("nothing-named", serde_json::json!({ "launchers": {
+            "x": { "harness": "tool-one", "argv": ["true"] },
+            "y": { "harness": "tool-two", "argv": ["true"] },
+        } }));
+        let started = || starter(&app, &Idea::default(), None).map(|(name, _)| name);
+        // the coding tools he uses, in either order: none is first
+        for tools in [["tool-one", "tool-two"], ["tool-two", "tool-one"]] {
+            app.change().tools = tools.iter().map(|t| t.to_string()).collect();
+            assert!(matches!(started(), Err(Unsettled::Which { what: None, ref among }) if among.len() == 2));
+        }
+        assert!(starter(&app, &Idea::default(), None).is_err_and(|e| e.words().starts_with("Which should start it: ")));
+        // one tool of his: its one launcher
+        app.change().tools = vec!["tool-two".into()];
+        assert_eq!(started(), Ok("y".into()));
+        // his answer, kept as his usual, starts the next one with nothing asked
+        app.change().tools = vec!["tool-one".into(), "tool-two".into()];
+        app.settings.change(|cfg| cfg.launcher = Some(LauncherId::new("x"))).unwrap();
+        assert_eq!(started(), Ok("x".into()));
+        // a tool he names that his usual does not start: that tool's
+        assert_eq!(starter(&app, &Idea { tool: Some("tool-two".into()), ..Idea::default() }, None).map(|(n, _)| n), Ok("y".into()));
     }
 
     #[test]

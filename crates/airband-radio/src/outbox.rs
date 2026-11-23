@@ -42,6 +42,11 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, session: Arc<Session>, store: Arc<
             store.change(|s| {
                 if let Some(o) = s.outbox.iter_mut().find(|o| o.id == next.id) {
                     o.stage = stage;
+                    // when his computer first had it, not when he wrote it: a message that waited hours with
+                    // the relay is given its full half hour from when his computer took it
+                    if stage == Stage::Taken && o.taken_at.is_none() {
+                        o.taken_at = Some(now_ms());
+                    }
                 }
                 s.outbox.clone()
             })
@@ -52,10 +57,10 @@ pub(crate) fn deliver_outbox(link: Arc<Link>, session: Arc<Session>, store: Arc<
                 gave_up(expired(&next.trail));
                 continue;
             }
-            // His computer took it and, asked again and again, still says only that it has it: it ends, and holds
-            // up nothing behind it (audit 9, B-7). Sent again, it goes under the same id, so his computer
-            // never acts on it twice.
-            Stage::Taken if now_ms().saturating_sub(next.at) > OUTBOX_EXPIRY_MS => {
+            // His computer took it half an hour ago and, asked again and again, still says only that it has it: it
+            // ends, and holds up nothing behind it. Sent again, it goes under the same id, so his computer never
+            // acts on it twice.
+            Stage::Taken if next.taken_at.is_some_and(|taken| now_ms().saturating_sub(taken) > OUTBOX_EXPIRY_MS) => {
                 gave_up(NEVER_SETTLED.into());
                 continue;
             }
@@ -208,7 +213,7 @@ pub(crate) fn told(steps: &[Step]) -> Vec<String> {
 }
 
 /// What he is told of a message his computer took and, in half an hour, never said what came of.
-const NEVER_SETTLED: &str = "Your computer took it and in half an hour did not say what came of it.";
+pub(crate) const NEVER_SETTLED: &str = "Your computer took it and in half an hour did not say what came of it.";
 
 /// What he is told of a message that half an hour of trying did not send.
 fn expired(trail: &[String]) -> String {
@@ -224,7 +229,6 @@ mod tests {
 
     #[test]
     fn a_message_his_computer_took_and_then_refuses_for_good_ends_and_holds_up_nothing() {
-        // (audit 8, M6)
         assert_eq!(after_failure(Retry::Never, Stage::Taken), AfterFailure::GiveUp);
         assert_eq!(after_failure(Retry::Never, Stage::Left), AfterFailure::GiveUp);
         assert_eq!(after_failure(Retry::Never, Stage::Trying), AfterFailure::GiveUp);
@@ -235,7 +239,6 @@ mod tests {
 
     #[test]
     fn a_quick_message_is_quoted_by_the_words_he_saw() {
-        // (audit 7, P-N4)
         let mut o = Outgoing::new("a".into(), "Keep going with what you planned, and say when it is done.".into(), None, None, Some("Keep going".into()), Vec::new(), Vec::new());
         assert_eq!(o.shown(), "Keep going");
         o.label = None;

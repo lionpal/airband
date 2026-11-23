@@ -162,7 +162,7 @@ pub(in crate::tower) async fn route(app: &Arc<App>, radio: &str, rest: &str, re:
     // the other thing his words can be: a request for a new agent, on a model and at an effort he may name
     let starting = if can_start { starting(app, &menus, projects, room.as_deref()) } else { String::new() };
     let prompt = prompt(app, &lines, &last_said(&scene.focus, now), rest, &starting, can_start);
-    let Ok(judged) = judge::ask_json::<Out>(&app.settings, "routing", prompt, Some(out_shape())).await else {
+    let Ok(judged) = judge::ask_json::<Out>(&app.settings, prompt, Some(out_shape())).await else {
         return no_answer(app, &scene.all, can_start);
     };
     answered(judged, &scene, &listed, &menus, projects, can_start)
@@ -432,7 +432,7 @@ pub(super) async fn named_agents(app: &Arc<App>, first: &str, said: &str, scope:
         "required": ["to", "all"],
         "additionalProperties": false
     });
-    let judged: Out = judge::ask_json(&app.settings, "who he meant", prompt, Some(shape)).await?;
+    let judged: Out = judge::ask_json(&app.settings, prompt, Some(shape)).await?;
     let meant: Vec<Session> = if judged.all { all } else { judged.to.iter().filter_map(|n| judge::listed(Some(*n), &all).cloned()).collect() };
     Ok((!meant.is_empty()).then_some(meant))
 }

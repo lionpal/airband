@@ -323,7 +323,7 @@ pub fn call<E: airband_core::radio::wire::Endpoint>(client: &Client, base: &str,
 mod tests {
     #[test]
     fn an_error_never_carries_a_key_from_the_address() {
-        // A-22: the library's words for a bad address quote it whole
+        // the library's words for a bad address quote it whole
         let client = super::Client::new(std::time::Duration::from_secs(2));
         for url in ["http://exa mple.test/v1?key=SECRET-1", "http://user:SECRET-2@127.0.0.1:9/v1?key=SECRET-3", "ht!tp://nowhere?key=SECRET-4"] {
             if let Err(e) = client.send(super::Ask::get(url)) {

@@ -9,15 +9,15 @@ pub const KEPT: &str = "catalog.json";
 /// build cannot use, so an offer that vanished is never a mystery. `speaks` says whether this program has the
 /// code for an offer.
 pub fn news(taken: &Taken, speaks: &dyn Fn(&crate::providers::Offer) -> bool) -> Vec<String> {
-    let mut lines: Vec<String> = taken.note.iter().map(|n| format!("catalogue: {n}")).collect();
+    let mut lines: Vec<String> = taken.note.iter().map(|n| format!("catalog: {n}")).collect();
     if taken.newer {
         let now = current();
         let unspoken: Vec<String> = now.providers.iter().flat_map(|p| p.offers.iter().filter(|o| !speaks(o)).map(move |o| format!("{} by \"{}\"", p.id, o.by.interface))).collect();
         if !taken.left_out.is_empty() {
-            lines.push(format!("catalogue rev {}: left out {} rows this build cannot read ({})", now.rev, taken.left_out.len(), taken.left_out.join("; ")));
+            lines.push(format!("catalog rev {}: left out {} rows this build cannot read ({})", now.rev, taken.left_out.len(), taken.left_out.join("; ")));
         }
         if !unspoken.is_empty() {
-            lines.push(format!("catalogue rev {}: {} offers are for a newer build and are not offered here ({})", now.rev, unspoken.len(), unspoken.join(", ")));
+            lines.push(format!("catalog rev {}: {} offers are for a newer build and are not offered here ({})", now.rev, unspoken.len(), unspoken.join(", ")));
         }
     }
     lines

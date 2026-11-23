@@ -34,15 +34,10 @@ pub(super) fn json_of<T: serde::de::DeserializeOwned>(out: &str) -> Option<T> {
     serde_json::from_str(object).ok()
 }
 
-/// Ask the model and read its answer as JSON of one shape. `what` names the question for the trace: with
-/// `AIRBAND_TRACE` set, what was asked and what came back are logged. Err says why there is no answer.
-pub(super) async fn ask_json<T: serde::de::DeserializeOwned>(model: &dyn Model, what: &str, prompt: String, shape: Option<Value>) -> Result<T, String> {
-    let traced = crate::adapters::stand_in("AIRBAND_TRACE").is_some().then(|| prompt.clone());
-    let answer = model.ask(prompt, shape).await;
-    if let Some(prompt) = traced {
-        log(format!("{what} asked:\n{prompt}\nand was told: {answer:?}"));
-    }
-    json_of(&answer?).ok_or_else(|| "the answer was not JSON of the shape asked for".to_string())
+/// Ask the model and read its answer as JSON of one shape. What was asked and what came back hold his words, and
+/// are never logged, in any build. Err says why there is no answer.
+pub(super) async fn ask_json<T: serde::de::DeserializeOwned>(model: &dyn Model, prompt: String, shape: Option<Value>) -> Result<T, String> {
+    json_of(&model.ask(prompt, shape).await?).ok_or_else(|| "the answer was not JSON of the shape asked for".to_string())
 }
 
 /// What a list holds under the number a model answered with. The lists it is shown are numbered from one.
@@ -82,7 +77,7 @@ pub(super) async fn prepare(settings: &Settings, item: &Item) -> Judged {
     if item.notice {
         return Judged::as_written(item, Kind::NeedsYou);
     }
-    let parsed = ask_json::<Answer>(settings, "reading a message", reading(&settings.current(), item), Some(answer_shape())).await;
+    let parsed = ask_json::<Answer>(settings, reading(&settings.current(), item), Some(answer_shape())).await;
     match parsed {
         // a kind the model made up is no verdict: he gets the message as written, below
         Ok(o) if !o.say.trim().is_empty() && o.kind != Kind::Unknown => judged(item, o),
@@ -283,7 +278,7 @@ pub(super) async fn progress(model: &dyn Model, name: &str, steps: &[String]) ->
         "required": ["tell", "say"],
         "additionalProperties": false
     });
-    let out: Out = ask_json(model, "what to tell him of its progress", prompt, Some(shape)).await.ok()?;
+    let out: Out = ask_json(model, prompt, Some(shape)).await.ok()?;
     let said = out.say.trim();
     (out.tell && !said.is_empty() && said.chars().count() < 400).then(|| said.to_string())
 }
@@ -326,7 +321,7 @@ pub(super) async fn consent(model: &dyn Model, name: &str, said: &str) -> Option
         "additionalProperties": false
     });
     // anything that is not exactly this shape with one of these three values settles nothing
-    match ask_json::<Out>(model, "whether his words allow it", prompt, Some(shape)).await.ok()?.verdict {
+    match ask_json::<Out>(model, prompt, Some(shape)).await.ok()?.verdict {
         Verdict::Allow => Some(true),
         Verdict::Refuse => Some(false),
         Verdict::Unclear => None,

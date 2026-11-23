@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn a_request_one_limit_turns_away_is_counted_by_none_of_the_others() {
-        // B-8: the relay-wide hour refusing used up the address's day all the same
+        // the relay-wide hour refusing used up the address's day all the same
         let (mut address, mut everyone, t0) = (Limiter::<String>::new(2, 86_400), Limiter::<()>::new(1, 3600), Instant::now());
         let here = "a".to_string();
         assert_eq!(all_or_none(&mut [&mut (&mut address, &here), &mut (&mut everyone, &())], t0), Ok(()));

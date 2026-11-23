@@ -4,9 +4,6 @@ use super::*;
 /// How long a tower's pull is held open: the one hold every waiting request has.
 pub(super) const HOLD: Duration = airband_core::HOLD;
 
-/// A tower that has not pulled for this long is offline: radios are told at once instead of waiting.
-pub(super) const AIRBAND_GONE: Duration = Duration::from_secs(45);
-
 /// How long a radio's call waits for the tower's answer. Longer than the 25 s a tower's pull is held open ([`HOLD`]).
 pub(super) const ANSWER_WAIT: Duration = Duration::from_secs(40);
 
@@ -17,7 +14,11 @@ pub(super) struct Channel {
     pub(super) pull_hash: String,
     pub(super) queue: VecDeque<(String, Bytes)>,
     pub(super) waiting: HashMap<String, oneshot::Sender<Bytes>>,
-    pub(super) last_pull: Option<Instant>,
+    /// The tower's last pull was answered (it was handed something, or its hold ran out), and no pull has come
+    /// since: a tower pulls again as soon as it has its answer, so it is still there. Not so after a pull whose
+    /// connection went before it was answered, or once a radio's call waited its whole [`ANSWER_WAIT`] with no
+    /// pull coming.
+    pub(super) pulls_again: bool,
     pub(super) wake: Arc<Notify>,
     /// There may be messages kept for this tower from while it was away. Assumed after a restart, until looked.
     pub(super) has_held: bool,
@@ -51,22 +52,23 @@ impl Channel {
         Channel::from(store::Saved { pull_hash, radio_hash })
     }
     pub(super) fn from(saved: store::Saved) -> Channel {
-        Channel { pull_hash: saved.pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), last_pull: None, wake: Arc::new(Notify::new()), has_held: true, keeps: 0, holding: None, handed: Vec::new(), pulls: 0, live: None, let_go_for: None, radio_hash: saved.radio_hash, pushed: None }
+        Channel { pull_hash: saved.pull_hash, queue: VecDeque::new(), waiting: HashMap::new(), pulls_again: false, wake: Arc::new(Notify::new()), has_held: true, keeps: 0, holding: None, handed: Vec::new(), pulls: 0, live: None, let_go_for: None, radio_hash: saved.radio_hash, pushed: None }
     }
 }
 
 impl Channel {
-    /// Has its tower pulled lately ([`AIRBAND_GONE`])? A radio's call waits for it only then.
+    /// Is its tower there: a pull of its held open now, or one answered that it is coming back from
+    /// ([`Channel::pulls_again`])? A radio's call waits for it only then; otherwise he is told at once.
     pub(super) fn pulling(&self) -> bool {
-        self.last_pull.is_some_and(|t| t.elapsed() <= AIRBAND_GONE)
+        self.live.is_some() || self.pulls_again
     }
     /// Is a kept message to be handed to the tower now? The count of keeps seen so far, when it is: there may be
     /// one, and none is in the tower's hands.
     pub(super) fn kept_due(&self) -> Option<u64> {
         (self.has_held && self.holding.is_none()).then_some(self.keeps)
     }
-    /// A new pull from the tower, saying what it got from the one before and (in version 3) which kept message
-    /// it is still answering for. Every older pull is let go (the number this one goes by is returned). What was
+    /// A new pull from the tower, saying what it got from the one before and which kept message it is still
+    /// answering for. Every older pull is let go (the number this one goes by is returned). What was
     /// handed over and not got went to a pull whose connection died: a radio's request goes back to the front of
     /// the line while its radio still waits, and a kept message is handed over again. So is a kept message the
     /// tower got and no longer says it is answering for: its answer did not reach the relay, and the relay keeps
@@ -80,12 +82,12 @@ impl Channel {
         }
         match &mut self.holding {
             // named as got, or as being answered for (a tower that opened again while it still works on it)
-            Some((id, at)) if Some(id.as_str()) == said.got || said.answering == Some(Some(id.as_str())) => *at = Got::Got,
+            Some((id, at)) if Some(id.as_str()) == said.got || said.answering == Some(id.as_str()) => *at = Got::Got,
             Some((_, Got::Handed)) => self.holding = None,
             _ => {}
         }
-        if let (Some(answering), Some((id, Got::Got))) = (said.answering, &self.holding)
-            && answering != Some(id.as_str())
+        if let Some((id, Got::Got)) = &self.holding
+            && said.answering != Some(id.as_str())
         {
             self.holding = None;
         }
@@ -93,14 +95,10 @@ impl Channel {
         self.pulls
     }
     /// The tower opened its channel again. A radio's request handed to it before and not said to be got is
-    /// handed again. A kept message: a tower that says which one it is still answering for (`answering`, version
-    /// 3 and up) keeps it in its hands while it does, and has it handed again when it no longer names it, as on a
-    /// pull; one that does not say started over, and is handed it again.
-    pub(super) fn reopened(&mut self, answering: Option<Option<&str>>) {
+    /// handed again. A kept message it says it is still answering for (`answering`) stays in its hands while it
+    /// does, and is handed again when it no longer names it, as on a pull.
+    pub(super) fn reopened(&mut self, answering: Option<&str>) {
         self.pulled(Said { got: None, answering });
-        if answering.is_none() {
-            self.holding = None;
-        }
     }
     /// A pull or an opening from tower `this` (its [`airband_core::relay::TOWER_HEADER`]): may it go on? Not
     /// while another tower's pull is held open. The first time, that pull is let go and this one is told to ask
@@ -141,9 +139,8 @@ impl Channel {
 pub(super) struct Said<'a> {
     /// What the pull before it was handed and the tower read ([`airband_core::relay::GOT_HEADER`]).
     pub(super) got: Option<&'a str>,
-    /// The kept message the tower is still answering for ([`airband_core::relay::ANSWERING_HEADER`]). `None`
-    /// for a pull in version 2, which does not say.
-    pub(super) answering: Option<Option<&'a str>>,
+    /// The kept message the tower is still answering for ([`airband_core::relay::ANSWERING_HEADER`]), if any.
+    pub(super) answering: Option<&'a str>,
 }
 
 /// Where a kept message handed to the tower stands.
