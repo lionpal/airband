@@ -72,12 +72,12 @@ struct Hosted {
 
 impl Loaded for Hosted {
     fn speak(&mut self, host: ByHost, voice: &str, text: &str, sink: &mut dyn FnMut(&[u8]), _: &dyn Fn() -> bool) -> Result<(), String> {
-        let pcm = host(&self.engine, &self.folder, ChoiceJob::Voice, serde_json::to_vec(&HostVoice { text, voice }).expect("words write as JSON")).ok_or("this device could not run it")?;
+        let pcm = host(&self.engine, &self.folder, ChoiceJob::Voice, serde_json::to_vec(&HostVoice { text, voice }).expect("words write as JSON")).ok_or("it gave back nothing")?;
         sink(&pcm);
         Ok(())
     }
     fn hear(&mut self, host: ByHost, pcm: Vec<u8>) -> Result<String, String> {
-        let said = host(&self.engine, &self.folder, ChoiceJob::Ears, pcm).ok_or("this device could not run it")?;
+        let said = host(&self.engine, &self.folder, ChoiceJob::Ears, pcm).ok_or("it gave back nothing")?;
         String::from_utf8(said).map_err(|_| "what it heard was not words".into())
     }
 }
@@ -189,8 +189,8 @@ mod tests {
         // words with a line in them reach the host whole, beside the voice
         assert_eq!(serde_json::from_slice::<serde_json::Value>(&asked[1].3).unwrap(), serde_json::json!({ "text": "Hello.", "voice": "Zoey" }));
         // a host that cannot says so, and nothing is made up in its place
-        assert_eq!(held.run(|m| m.hear(&|_, _, _, _| None, vec![0, 0])), Err(Fault::Run("this device could not run it".into())));
+        assert_eq!(held.run(|m| m.hear(&|_, _, _, _| None, vec![0, 0])), Err(Fault::Run("it gave back nothing".into())));
         // said once, naming the model
-        assert_eq!(Fault::Run("this device could not run it".into()).told("Tiny"), "Tiny did not run on this phone: this device could not run it.");
+        assert_eq!(Fault::Run("it gave back nothing".into()).told("Tiny"), "Tiny did not run on this phone: it gave back nothing.");
     }
 }

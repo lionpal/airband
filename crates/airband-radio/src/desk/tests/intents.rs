@@ -107,7 +107,7 @@ fn a_computer_not_reached_is_sent_the_choice_when_it_is_and_then_it_is_kept_for_
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(waiting, [("laptop".to_string(), DeskDelivery::Waiting)]);
     assert_eq!(laptop.asked_on::<at::Reads>(), 1);
-    // every computer has it: nothing is left waiting, and it is kept for a computer paired later (P-B4)
+    // every computer has it: nothing is left waiting, and it is kept for a computer paired later
     assert!(after.is_empty(), "{after:?}");
     assert!(kept.is_some_and(|k| k.per.values().all(|d| *d == super::super::intents::Delivery::Done)));
 }
@@ -118,7 +118,7 @@ fn a_computer_is_sent_the_key_only_when_it_has_none_of_its_own() {
     let offers = |has_key: bool| ReadsOffered { offers: vec![ReadsOffer { provider: "anthropic".into(), offer: "haiku".into(), key: true, has_key, ..ReadsOffer::default() }], ..ReadsOffered::default() };
     // it keeps its own: none is sent from a phone that has none
     assert_eq!(wanted.body_for(None, &offers(true)).map(|b| b.key), Ok(String::new()));
-    // it keeps its own and the phone has one too: the computer's own is used, the phone's goes nowhere (C-B1)
+    // it keeps its own and the phone has one too: the computer's own is used, the phone's goes nowhere
     assert_eq!(wanted.body_for(Some("sk-1"), &offers(true)).map(|b| b.key), Ok(String::new()));
     // it has none and the phone has one: the phone's is sent
     assert_eq!(wanted.body_for(Some("sk-1"), &offers(false)).map(|b| b.key), Ok("sk-1".to_string()));

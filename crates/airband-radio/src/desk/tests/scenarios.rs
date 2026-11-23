@@ -1,6 +1,5 @@
-//! The paths the audits keep finding faults in: what the phone keeps across a reconnect, a relaunch and a
-//! computer going, what a send takes with it, and what a refusal or a delay is told as. Each test names the
-//! audit-5 finding it covers (scratchpad audit-5.md), so a failure says which one is back.
+//! What the phone keeps across a reconnect, a relaunch and a computer going, what a send takes with it, and
+//! what a refusal or a delay is told as.
 use super::*;
 
 /// A computer that is never there: nothing listens on port 9. `n` makes each link its own computer.
@@ -32,7 +31,7 @@ fn tower_saying(status: u16, body: &'static str) -> u16 {
     port
 }
 
-// N24 (and the part of BUG-14 it undoes): the files he attached and the question his computer asked him are
+// The files he attached and the question his computer asked him are
 // his until he says something; asking the computer afresh (`reconnect`, or `wake` after 32 seconds) is not that.
 #[test]
 fn n24_files_and_the_question_he_was_asked_outlast_a_reconnect() {
@@ -51,7 +50,7 @@ fn n24_files_and_the_question_he_was_asked_outlast_a_reconnect() {
     assert_eq!(sent, [(vec!["f1".to_string()], Some("q1".to_string()))], "what he said after the reconnect lost the files or the question");
 }
 
-// N25: what he typed that has not gone, or was given up on, is on his screen after a relaunch and after a
+// What he typed that has not gone, or was given up on, is on his screen after a relaunch and after a
 // reconnect, and he can still send it again or let it go.
 #[test]
 fn n25_what_did_not_go_is_still_shown_after_a_relaunch_and_can_be_let_go() {
@@ -77,7 +76,7 @@ fn n25_what_did_not_go_is_still_shown_after_a_relaunch_and_can_be_let_go() {
     assert_eq!(let_go.as_deref(), Some("given up on"), "letting go of one that was given up on did nothing");
 }
 
-// N26: a file on its way to a computer is known by that computer, never by its place in the list. When that
+// A file on its way to a computer is known by that computer, never by its place in the list. When that
 // computer is unpaired, sending does not crash and does not send to whichever computer now has its place.
 #[test]
 fn n26_an_attached_file_follows_its_computer_and_not_its_place_in_the_list() {
@@ -106,7 +105,7 @@ fn stalled() -> Desk {
     desk_of(state)
 }
 
-// N27: only what he says takes his files and answers his computer's question. A button, a poke, words sent
+// Only what he says takes his files and answers his computer's question. A button, a poke, words sent
 // again and the like leave both for the next thing he says.
 #[test]
 fn n27_a_poke_a_tap_and_words_sent_again_leave_his_files_and_question() {
@@ -123,7 +122,7 @@ fn n27_a_poke_a_tap_and_words_sent_again_leave_his_files_and_question() {
     assert_eq!(radio.session.take_question().as_deref(), Some("q9"));
 }
 
-// N28: opening the microphone to answer a question is not answering it: until he says something it is still
+// Opening the microphone to answer a question is not answering it: until he says something it is still
 // waiting.
 #[test]
 fn n28_a_question_is_still_waiting_while_the_microphone_is_open_for_it() {
@@ -133,7 +132,7 @@ fn n28_a_question_is_still_waiting_while_the_microphone_is_open_for_it() {
     assert!(!hidden, "the question was taken as answered when the microphone opened");
 }
 
-// N30: a refusal that gives his computer's reason in words is told as that reason, whatever status it came with.
+// A refusal that gives his computer's reason in words is told as that reason, whatever status it came with.
 #[test]
 fn n30_a_refusal_with_a_reason_is_told_as_that_reason() {
     let port = tower_saying(409, r#"{"refusal":"told","reason":"That folder is not there."}"#);
@@ -143,7 +142,7 @@ fn n30_a_refusal_with_a_reason_is_told_as_that_reason() {
     assert!(matches!(&got, Err(RadioError::Told { reason }) if reason == "That folder is not there."), "{got:?}");
 }
 
-// N31: an answer from a notification that his computer could not take yet (a 503) is kept and goes later: he
+// An answer from a notification that his computer could not take yet (a 503) is kept and goes later: he
 // is told it will go, never that his computer refused it.
 #[test]
 fn n31_a_notification_answer_kept_for_later_is_not_told_as_refused() {

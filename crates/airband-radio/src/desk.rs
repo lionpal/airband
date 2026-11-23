@@ -298,12 +298,15 @@ impl State {
     /// Every message, oldest first, each labelled with its computer when there are several.
     fn merged(&self) -> Vec<ChatMessage> {
         let several = self.computers.len() > 1;
+        let agents = self.everyone();
+        let apart = |m: &ChatMessage| m.own_session && agents.iter().any(|a| m.agent.as_ref() == Some(&a.id) && !a.held);
         let mut all: Vec<ChatMessage> = self
             .computers
             .iter()
             .flat_map(|s| {
                 s.messages.iter().map(move |m| {
                     ChatMessage {
+                        answer_apart: apart(m),
                         station: if several { s.id().to_string() } else { String::new() },
                         computer: if several { self.computer_name(&s.id()) } else { String::new() },
                         colour: self.colours.of(&m.room),

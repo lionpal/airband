@@ -459,7 +459,7 @@ mod tests {
         let pass: PassFor = Arc::new(|| Err(String::new()));
         let (h, a, b) = (vec![0u8], vec![1u8], vec![2u8]);
         let mut stream = Stream { wire: &NOWHERE, pass, host: &tape, waiting: VecDeque::from([h.clone(), a.clone(), b.clone()]), header: vec![h.clone()], header_unsent: 1, request: String::new(), opening: channel().1, socket: None, kept: Vec::new(), ended: false, shown: String::new(), partial: None, refused: None };
-        // the header and the first piece went before the connection failed (C-B4)
+        // the header and the first piece went before the connection failed
         stream.waiting.pop_front();
         stream.header_unsent = 0;
         stream.waiting.pop_front();

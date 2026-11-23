@@ -30,7 +30,7 @@ impl ChatAgent {
 }
 
 pub(crate) fn chat(m: airband_core::radio::Message) -> ChatMessage {
-    ChatMessage { seq: m.seq, id: m.id, at: m.at, his: m.his, from: m.from, badge: m.badge, to_agents: m.to_agents, group: m.group, team: m.team.map(|t| t.to_string()).unwrap_or_default(), room: String::new(), to: m.to, needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), unjudged: if m.kind == Some(Kind::Unjudged) { "Shown as the agent wrote it. No summary was made.".into() } else { String::new() }, long: m.long, text: m.text, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links.into_iter().map(chat_link).collect(), agent: m.agent, station: String::new(), computer: String::new(), open: m.open, colour: None, read: m.read, own_session: m.own_session, not_read: m.not_read.map(not_read).unwrap_or_default().to_string() }
+    ChatMessage { seq: m.seq, id: m.id, at: m.at, his: m.his, from: m.from, badge: m.badge, to_agents: m.to_agents, group: m.group, team: m.team.map(|t| t.to_string()).unwrap_or_default(), room: String::new(), to: m.to, needs_you: m.kind == Some(Kind::NeedsYou), fyi: m.kind == Some(Kind::Fyi) || m.cancelled, stalled: m.kind == Some(Kind::Stalled), unjudged: if m.kind == Some(Kind::Unjudged) { "Shown as the agent wrote it. No summary was made.".into() } else { String::new() }, long: m.long, text: m.text, queued: m.queued, seen: m.seen.unwrap_or(0), options: m.options, recommended: m.recommended, permission: m.permission, pictures: m.pictures.into_iter().map(|p| ChatPicture { id: p.id, width: p.width, height: p.height }).collect(), links: m.links.into_iter().map(chat_link).collect(), agent: m.agent, station: String::new(), computer: String::new(), open: m.open, colour: None, read: m.read, own_session: m.own_session, answer_apart: false, not_read: m.not_read.map(not_read).unwrap_or_default().to_string() }
 }
 
 pub(crate) fn chat_feed(feed: Feed) -> ChatFeed {
@@ -119,6 +119,10 @@ pub struct ChatMessage {
     /// The agent takes this answer only from him in its own session. If the tower does not run that agent,
     /// an answer from here will not count: say so, and offer to take it over.
     pub own_session: bool,
+    /// It is `own_session`, and the tower does not run the agent that asked: an answer from here would reach
+    /// it as a passed-on message, and it would ask again. Show why in place of the answers, and offer to take
+    /// it over. A [`Desk`] fills this in; false otherwise.
+    pub answer_apart: bool,
     /// It was to be read out to him while he had reading aloud on, and was not: why, in a sentence. Empty for
     /// every other line. Mark the line, and show the sentence when he asks.
     pub not_read: String,

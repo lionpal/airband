@@ -16,7 +16,6 @@ use airband_core::audio::{Endpointer, Heard, samples};
 use airband_core::providers::{By, Interface, Job, Offer, Provider, Use};
 use std::collections::BTreeMap;
 use std::sync::mpsc::sync_channel;
-use std::time::Instant;
 
 pub(crate) const RATE: u32 = 16000;
 
@@ -89,8 +88,6 @@ pub(crate) struct Chosen {
     using: Mutex<Option<Own>>,
     /// Why what he chose did not listen the last time it was tried. Cleared when it next does.
     failed: Mutex<Option<String>>,
-    /// How long the model took over the last thing it heard, and how long that recording was, in seconds.
-    last: Mutex<Option<(f32, f32)>>,
     /// The names he is likely to say: his agents and their projects, as the chat last listed them, and the
     /// words of the trade the catalogue lists. For a recogniser that can be told what to expect.
     phrases: Mutex<Vec<String>>,
@@ -159,11 +156,6 @@ impl Chosen {
     /// Why what he chose did not listen the last time, if it did not.
     pub(crate) fn failed(&self) -> Option<String> {
         self.failed.lock().unwrap_or_else(|e| e.into_inner()).clone()
-    }
-
-    /// What the model on the device last took: seconds of speech, and seconds to turn it into words.
-    pub(crate) fn last_heard(&self) -> Option<(f32, f32)> {
-        *self.last.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// What he chose could not listen. It stays chosen, and he is told: moving to something else is his to do.
@@ -321,7 +313,7 @@ impl Ears {
         match mic {
             Mic::Model(held) => {
                 let name = held.m.name.clone();
-                let heard = by_model(host, &held, &self.chosen.ears, manual);
+                let heard = by_model(host, &held, manual);
                 host.record_stop();
                 match heard {
                     Ok(text) => {
@@ -433,7 +425,7 @@ fn record_with(host: &dyn RadioHost, manual: bool, so_far: &mut dyn FnMut(&[i16]
 /// words while he talks the recording so far is read again about twice a second, on a thread of its own: the
 /// microphone is never kept waiting, and a reading that is still going when the next is due is let finish
 /// and the next one skipped. When he stops, all of it is read once more, and that is what he said.
-fn by_model(host: &dyn RadioHost, held: &crate::engines::Held, chosen: &Chosen, manual: bool) -> Result<Option<String>, crate::engines::Fault> {
+fn by_model(host: &dyn RadioHost, held: &crate::engines::Held, manual: bool) -> Result<Option<String>, crate::engines::Fault> {
     let read = |pcm: Vec<u8>| held.run(|m| m.hear(&|engine, folder, job, input| host.run_model(engine.into(), folder.into(), job, input), pcm));
     let bytes = |pcm: &[i16]| pcm.iter().flat_map(|s| s.to_le_bytes()).collect::<Vec<u8>>();
     let clip = thread::scope(|scope| {
@@ -457,12 +449,7 @@ fn by_model(host: &dyn RadioHost, held: &crate::engines::Held, chosen: &Chosen, 
     });
     let Some(pcm) = clip else { return Ok(None) };
     host.status(RadioStatus::Sending);
-    let began = Instant::now();
-    let heard = read(bytes(&pcm));
-    if heard.is_ok() {
-        *chosen.last.lock().unwrap_or_else(|e| e.into_inner()) = Some((pcm.len() as f32 / RATE as f32, began.elapsed().as_secs_f32()));
-    }
-    heard.map(|text| Some(text.trim().to_string()).filter(|t| !t.is_empty()))
+    read(bytes(&pcm)).map(|text| Some(text.trim().to_string()).filter(|t| !t.is_empty()))
 }
 
 #[cfg(test)]

@@ -15,7 +15,7 @@ fn radio_of(desk: &Desk, link: &str) -> Arc<Radio> {
     desk.shared.state.lock().unwrap().computers.iter().find(|s| s.link == link).map(|s| s.radio.clone()).unwrap()
 }
 
-// N27: only his own next words take the files he attached and the question he was asked; a button, a command
+// Only his own next words take the files he attached and the question he was asked; a button, a command
 // or words sent on to another agent go as they are and leave both for him.
 #[test]
 fn only_his_own_next_words_take_his_files_and_his_question() {
@@ -33,7 +33,7 @@ fn only_his_own_next_words_take_his_files_and_his_question() {
     assert_eq!((second.attachments, second.answers), (vec!["f1".to_string()], Some("q1".to_string())));
 }
 
-// N31, D-6: an answer from a notification goes to the computer the notification came from, by its id, and
+// An answer from a notification goes to the computer the notification came from, by its id, and
 // nowhere else; one whose computer is gone is told as that, and the question stays waiting on him.
 #[test]
 fn a_notification_answer_goes_only_to_the_computer_it_came_from() {

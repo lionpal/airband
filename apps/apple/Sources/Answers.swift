@@ -115,11 +115,10 @@ struct Answers: View {
         }
     }
 
-    /// The agent that asked, when it has said it takes this answer only in its own session and the computer
-    /// does not run it: an answer from here would reach it as a passed-on message, and it would ask again.
+    /// The agent that asked, when the core says an answer from here would not count (`answerApart`).
     private var apart: DeskMember? {
-        guard m.ownSession else { return nil }
-        return m.agent.flatMap { model.member($0)?.agent }.flatMap { $0.held ? nil : $0 }
+        guard m.answerApart else { return nil }
+        return m.agent.flatMap { model.member($0)?.agent }
     }
     @State private var taking: DeskMember?
 

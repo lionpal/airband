@@ -121,10 +121,6 @@ pub struct Choice {
     pub voices: Vec<VoiceChoice>,
     /// Which of those speaks now, by name.
     pub voice: String,
-    /// Who made it and under what licence, where that is to be shown.
-    pub credit: String,
-    /// Something worth a small line when it is the one chosen: how fast it last was.
-    pub note: String,
 }
 
 /// Something being done about a choice right now.
@@ -277,10 +273,6 @@ impl Chooser {
                 ChoiceJob::Reads => None,
             },
             work: self.at_work().filter(|w| w.0 == job).map(|w| (w.1, w.2, w.3)),
-            note: match (job, senses.ears.last_heard()) {
-                (ChoiceJob::Ears, Some((of, took))) => format!("Last heard {of:.1} s of speech in {took:.2} s"),
-                _ => String::new(),
-            },
             paired,
         };
         list(job, &saved, &facts)
@@ -332,7 +324,7 @@ mod tests {
     use super::*;
 
     fn facts<'a>(here: &'a dyn Fn(&Model) -> (bool, bool), has_key: &'a dyn Fn(&str) -> bool) -> Facts<'a> {
-        Facts { models: crate::models::models(&phone()).collect(), here, has_key, failed: None, work: None, note: String::new(), paired: &[] }
+        Facts { models: crate::models::models(&phone()).collect(), here, has_key, failed: None, work: None, paired: &[] }
     }
     /// A phone whose host runs every engine the catalogue names.
     fn phone() -> HostDevice {
@@ -469,7 +461,7 @@ mod tests {
 
     #[test]
     fn before_any_computer_summaries_follow_the_coding_tool_until_he_picks() {
-        // the offer each sign-in's row marks as the one to use (audit 6, C-A4)
+        // the offer each sign-in's row marks as the one to use
         let logins: Vec<Service> = crate::services::services(Job::Summary).into_iter().filter(|s| !s.login.is_empty() && !s.more).collect();
         let (one, two) = (logins[0].clone(), logins.iter().find(|s| s.login != logins[0].login).expect("two tools with a sign-in that reads").clone());
         let mut saved = Saved::default();
@@ -544,7 +536,7 @@ mod tests {
         desk.shared.chooser.apply(&*host, &desk.shared.senses);
         let why = desk.shared.senses.ears.cannot();
         let _ = std::fs::remove_dir_all(dir);
-        // he is told to enter the key, by its name (audit 6, C-A6)
+        // he is told to enter the key, by its name
         let key_name = airband_core::providers::provider("elevenlabs").map(|p| p.key_name.clone()).unwrap();
         assert_eq!(why, Some(format!("Enter your {key_name} in Settings, under Listening.")));
     }

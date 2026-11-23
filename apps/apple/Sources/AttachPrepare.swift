@@ -114,7 +114,7 @@ enum Prepare {
 extension RadioModel {
     /// He trimmed a video in the tray: what was on its way is dropped and the part he kept is sent in its place.
     /// Trimmed twice quickly, the second trim wins: the first one's clip is thrown away when it is done, and
-    /// only one is ever sent (audit 9, B-3).
+    /// only one is ever sent.
     @MainActor func trim(_ item: TrayItem, to range: ClosedRange<Double>?) {
         guard let i = tray.firstIndex(where: { $0.id == item.id }), let source = tray[i].source, tray[i].kept != range else { return }
         if let id = tray[i].attachment { dropUpload(id) }

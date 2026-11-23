@@ -362,7 +362,7 @@ mod tests {
         // one his computer got too late: it stays, with the reason, to send again or let go, and he is told
         settle(&store, &host, "e", Outcome::Rejected { why: Rejected::TooOld });
         let kept = store.saved.lock().unwrap().outbox.clone();
-        assert_eq!(kept[0].failed.as_deref(), Some("Your computer got it more than a week after you said it, and did nothing with it."));
+        assert_eq!(kept[0].failed, Some(LinkError::Rejected(Rejected::TooOld).said()));
         assert!(last().1.unwrap().starts_with("Not sent: “words of e”. Your computer got it more than a week"));
         // an outcome told twice, or for something this radio never typed, is nothing to do
         let before = host.0.lock().unwrap().len();

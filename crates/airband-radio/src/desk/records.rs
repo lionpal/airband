@@ -51,6 +51,9 @@ pub struct DeskMember {
     pub ends: bool,
     /// He can stop what it is doing now: it is at work, and run by its computer.
     pub can_stop: bool,
+    /// The teams it can be moved to, by their [`DeskRoom::id`], in the order they are shown: the others on its
+    /// computer.
+    pub move_to: Vec<String>,
     /// How many things it has said that he has not had in front of him.
     pub unread: u32,
     /// What it is waiting on him for: the short form of its newest question still open. Empty when it is
@@ -131,6 +134,8 @@ pub struct DeskView {
     pub intents: Vec<DeskIntent>,
     /// What he is looking at now.
     pub focus: DeskFocus,
+    /// The agents he can stop now, in what he is looking at: at work, and run by their computer.
+    pub stoppable: Vec<DeskMember>,
     /// What a new agent starts on when he is not asked.
     pub new_agent: NewAgentDefaults,
     /// The coding tools he uses, as the catalogue describes them, the one he uses most first.

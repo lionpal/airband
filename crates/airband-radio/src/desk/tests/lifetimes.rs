@@ -154,7 +154,7 @@ fn a_computer_that_refuses_this_phone_is_not_asked_again_until_something_changes
     assert!(was_refused);
     assert_eq!(once, 1, "a computer that refused this phone was asked again with nothing changed");
     assert_eq!(again, 2, "asking afresh did not ask it again");
-    assert!(matches!(folders, Err(RadioError::Told { reason }) if reason.contains("another version")));
+    assert_eq!(folders.err(), Some(RadioError::Told { reason: crate::link::LinkError::Refused(airband_core::radio::wire::Refusal::OtherVersion { speaks: "airband.radio/9".into() }).said() }));
 }
 
 #[test]

@@ -47,8 +47,9 @@ struct ChoiceCard<Extra: View>: View {
 }
 
 extension ChoiceCard where Extra == EmptyView {
-    init(title: String, subtitle: String, chosen: Bool, mark: String? = nil, tap: @escaping () -> Void) {
-        self.init(title: title, subtitle: subtitle, chosen: chosen, open: false, mark: mark, tap: tap) { EmptyView() }
+    /// A card with its name alone: a coding tool.
+    init(title: String, chosen: Bool, mark: String? = nil, tap: @escaping () -> Void) {
+        self.init(title: title, subtitle: "", chosen: chosen, open: false, mark: mark, tap: tap) { EmptyView() }
     }
 }
 
@@ -295,7 +296,6 @@ struct ChoicePicker: View {
             Fetching(label: label, progress: fraction)
         } else if c.chosen {
             if case .failed(let why) = c.state { Text(why).font(.system(size: 13)).foregroundStyle(.red) }
-            if case .waiting = c.state, mode == .settings { Text("It will be set up when your computer is paired.").font(.system(size: 13)).foregroundStyle(Palette.quiet) }
             if job == .reads {
                 ForEach(refused, id: \.computer) { line in
                     if case .refused(let reason) = line.state { Text("\(line.name): \(reason)").font(.system(size: 13)).foregroundStyle(.red) }
@@ -316,8 +316,6 @@ struct ChoicePicker: View {
             if case .stale(let megabytes) = c.state, mode == .settings {
                 Button("Get the newer version (\(megabytes) MB)") { choose(c) }.font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.ink).buttonStyle(.plain)
             }
-            if !c.note.isEmpty { Text(c.note).font(.system(size: 12)).foregroundStyle(Palette.quiet) }
-            if !c.credit.isEmpty { Text(c.credit).font(.system(size: 11)).foregroundStyle(Palette.quiet) }
         }
     }
 }
@@ -403,7 +401,7 @@ struct ToolsPicker: View {
         VStack(spacing: 10) {
             ForEach(codingTools(), id: \.id) { tool in
                 let on = model.tools.contains(tool.id)
-                ChoiceCard(title: tool.name, subtitle: tool.maker, chosen: on, mark: Marks.tool(tool.id)) {
+                ChoiceCard(title: tool.name, chosen: on, mark: Marks.tool(tool.id)) {
                     if single {
                         model.tools = [tool.id]
                     } else if on {
