@@ -70,6 +70,15 @@ impl Pg {
     }
 }
 
+/// A transaction on one channel, under the lock every change to a channel takes and held until it ends, and
+/// whether the channel is closed on record: the one way each change to a channel begins.
+async fn on_channel<'a>(db: &'a mut Client, channel: &str) -> Result<(tokio_postgres::Transaction<'a>, bool), String> {
+    let tx = db.transaction().await.map_err(|e| e.to_string())?;
+    tx.execute("select pg_advisory_xact_lock(hashtext($1))", &[&channel]).await.map_err(|e| e.to_string())?;
+    let closed = tx.query_opt("select 1 from relay_closed where channel = $1", &[&channel]).await.map_err(|e| e.to_string())?.is_some();
+    Ok((tx, closed))
+}
+
 #[async_trait::async_trait]
 impl ChannelStore for Pg {
     fn describe(&self) -> String {
@@ -105,8 +114,7 @@ impl ChannelStore for Pg {
         // the channel and what was kept for it, together or not at all
         // closed on record in the same transaction, under the lock keeping takes, so nothing is kept after it
         let mut db = self.connect(&self.name).await?;
-        let tx = db.transaction().await.map_err(|e| e.to_string())?;
-        tx.execute("select pg_advisory_xact_lock(hashtext($1))", &[&channel]).await.map_err(|e| e.to_string())?;
+        let (tx, _) = on_channel(&mut db, channel).await?;
         tx.execute("insert into relay_closed (channel) values ($1) on conflict (channel) do nothing", &[&channel]).await.map_err(|e| e.to_string())?;
         tx.execute("delete from relay_held where channel = $1", &[&channel]).await.map_err(|e| e.to_string())?;
         tx.execute("delete from relay_channels where channel = $1", &[&channel]).await.map_err(|e| e.to_string())?;
@@ -115,9 +123,8 @@ impl ChannelStore for Pg {
     async fn add(&self, channel: &str, pull_hash: &str, radio_hash: &str) -> Result<Added, String> {
         // one short connection per new channel: channels are opened rarely, and nothing is held open to go stale
         let mut db = self.connect(&self.name).await?;
-        let tx = db.transaction().await.map_err(|e| e.to_string())?;
-        tx.execute("select pg_advisory_xact_lock(hashtext($1))", &[&channel]).await.map_err(|e| e.to_string())?;
-        if tx.query_opt("select 1 from relay_closed where channel = $1", &[&channel]).await.map_err(|e| e.to_string())?.is_some() {
+        let (tx, closed) = on_channel(&mut db, channel).await?;
+        if closed {
             return Ok(Added::Closed);
         }
         tx.execute("insert into relay_channels (channel, pull_hash, radio_hash) values ($1, $2, $3) on conflict (channel) do nothing", &[&channel, &pull_hash, &radio_hash]).await.map_err(|e| e.to_string())?;
@@ -129,9 +136,8 @@ impl ChannelStore for Pg {
         // counted and kept in one transaction, under a lock on the channel held until it ends, so two at
         // once cannot both see room for one more and both be kept
         let mut db = self.connect(&self.name).await?;
-        let tx = db.transaction().await.map_err(|e| e.to_string())?;
-        tx.execute("select pg_advisory_xact_lock(hashtext($1))", &[&channel]).await.map_err(|e| e.to_string())?;
-        if tx.query_opt("select 1 from relay_closed where channel = $1", &[&channel]).await.map_err(|e| e.to_string())?.is_some() {
+        let (tx, closed) = on_channel(&mut db, channel).await?;
+        if closed {
             return Ok(Held::Closed);
         }
         // the same id past its time goes, and this one is kept as new, as every store does
