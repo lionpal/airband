@@ -46,6 +46,37 @@ fn chosen(asked: Option<&Pick>, launcher: &LauncherId, choices: &[airband_core::
     }
 }
 
+/// The launcher a listed pick (a model or an effort from the list the routing model was shown) is for.
+fn listed_launcher(pick: Option<&Pick>) -> Option<&LauncherId> {
+    match pick {
+        Some(Pick::Listed { launcher, .. }) => Some(launcher),
+        _ => None,
+    }
+}
+
+/// The launcher that starts the agent. A listed choice he picked is one launcher's, and that launcher starts it;
+/// a tool he named that it does not start, or a model and an effort of two launchers, is refused in words. With
+/// no listed choice: the launcher for the tool he named, else the usual one (`held::launcher_for`).
+fn starter(app: &App, idea: &Idea) -> Result<(String, config::Launcher), String> {
+    let (model, effort) = (listed_launcher(idea.model.as_ref()), listed_launcher(idea.effort.as_ref()));
+    let picked = match (model, effort) {
+        (Some(m), Some(e)) if m != e => return Err("That model and that effort are offered by two ways of starting an agent. Ask for one of them.".into()),
+        (m, e) => m.or(e),
+    };
+    let Some(picked) = picked else {
+        return held::launcher_for(app, idea.tool.as_deref()).ok_or_else(|| match &idea.tool {
+            Some(tool) => format!("This computer is not set up to start {tool} agents."),
+            None => "Which coding agent should start it? Choose the ones you use on your phone, in Settings, under Coding agents, or name one when you ask.".to_string(),
+        });
+    };
+    let cfg = app.cfg();
+    let Some(launcher) = cfg.launchers.get(picked.as_str()) else { return Err("The way of starting that agent is no longer set up here.".into()) };
+    match &idea.tool {
+        Some(tool) if *tool != launcher.harness => Err(format!("That is not offered for {tool} agents.")),
+        _ => Ok((picked.to_string(), launcher.clone())),
+    }
+}
+
 /// Start a new agent in `place`. `Ok` once it has started, with what to tell him; `Err` with why nothing started.
 pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Result<Reply, Reply> {
     let task = idea.task.as_str();
@@ -54,13 +85,7 @@ pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Result
     if !std::path::Path::new(&cwd).is_dir() {
         return Err(say(format!("The folder for {project} is gone.")));
     }
-    // the tool he asked for, when he named one; otherwise the usual launcher
-    let Some((named, launcher)) = held::launcher_for(app, idea.tool.as_deref()) else {
-        return Err(say(match &idea.tool {
-            Some(tool) => format!("This computer is not set up to start {tool} agents."),
-            None => "Which coding agent should start it? Choose the ones you use on your phone, in Settings, under Coding agents, or name one when you ask.".to_string(),
-        }));
-    };
+    let (named, launcher) = starter(app, idea).map_err(say)?;
     let launcher = &launcher;
     // An agent the tower runs can be started with nothing to do yet: it is there at once, waiting for his first
     // word. One that is handed off needs its task to start with.
@@ -105,7 +130,8 @@ pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Result
                 Ok(say(format!("A new agent is ready in {project}{with}.")))
             }
             Ok(id) => {
-                log(format!("started {named}{with} in {project}, held by the tower: {task}"));
+                // the task is his words: the log has its length only
+                log(format!("started {named}{with} in {project}, held by the tower, with a task of {} characters", task.chars().count()));
                 Ok(say(launched(app, place, &with, task, Some(id))))
             }
             Err(e) => {
@@ -116,20 +142,22 @@ pub(super) async fn launch(app: &Arc<App>, place: &Place, idea: &Idea) -> Result
     }
     let stamp = now_ms() / 1000 % 100_000;
     let session = format!("airband-{}-{stamp}", project.replace(' ', "-"));
-    let fill = |a: &String| a.replace("{cwd}", &cwd).replace("{task}", task).replace("{project}", project).replace("{session}", &session);
+    // one pass: a task with "{project}" in it stays as he said it
+    let fill = |a: &String| airband_core::template::filled(a, &[("cwd", &cwd), ("task", task), ("project", project), ("session", &session)]);
     let argv = launcher.command(model_id.as_deref(), effort_id.as_deref(), fill);
     let Some((program, args)) = argv.split_first() else { return Err(say("The launcher command is empty.".into())) };
     // AIRBAND_INTERNAL must not leak in: the new agent has to report to the tower
     let run = tokio::process::Command::new(program).args(args).current_dir(&cwd).env_remove(INTERNAL_ENV).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).kill_on_drop(false).output();
     match tokio::time::timeout(Duration::from_secs(20), run).await {
         Ok(Ok(out)) if out.status.success() => {
-            log(format!("launched {named}{with} in {project} ({session}): {task}"));
+            log(format!("launched {named}{with} in {project} ({session}), with a task of {} characters", task.chars().count()));
             // handed off to a program of its own: nothing says which agent it becomes when it reports in
             Ok(say(launched(app, place, &with, task, None)))
         }
         Ok(Ok(out)) => {
-            log(format!("launch in {project} failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
-            Err(say(format!("Could not launch in {project}: {}", airband_core::prose::clip(&spoken(String::from_utf8_lossy(&out.stderr).trim()), 120))))
+            // what it wrote can hold its command line, and so his task: neither the log nor he is given it
+            log(format!("launch in {project} failed: {program} ended with {} after writing {} bytes of errors", out.status, out.stderr.len()));
+            Err(say(format!("Could not launch in {project}: {program} stopped with an error.")))
         }
         Ok(Err(e)) => {
             log(format!("launch in {project} failed: cannot run {program}: {e}"));
@@ -194,6 +222,56 @@ mod tests {
         let line = inner.log.last().unwrap();
         assert_eq!(line.team, Some(TeamId::new(edges::folders::Folders::real(&edges::folders::Disk, &folder))));
         assert_eq!(line.team.as_ref().and_then(|t| inner.team_name(t)), Some("shop"));
+    }
+
+    fn with_launchers(name: &str, usual: &str, launchers: serde_json::Value) -> Arc<App> {
+        crate::tower::http::tests::app_with(name, serde_json::json!({ "launcher": usual, "launchers": launchers }))
+    }
+
+    #[test]
+    fn the_launcher_of_the_choice_he_picked_starts_the_agent_and_a_tool_it_does_not_start_is_refused() {
+        let app = with_launchers("starter", "a", serde_json::json!({
+            "a": { "harness": "tool-one", "argv": ["true"], "models": { "Sol": "sol-a" } },
+            "b": { "harness": "tool-two", "argv": ["true"], "models": { "Sol": "sol-b" }, "efforts": ["high"] },
+        }));
+        let (a, b) = (LauncherId::new("a"), LauncherId::new("b"));
+        let model = |launcher: &LauncherId| Some(Pick::Listed { name: "Sol".into(), launcher: launcher.clone(), id: "sol".into() });
+        let started = |idea: Idea| starter(&app, &idea).map(|(name, _)| name);
+        // no tool named: the picked choice's launcher, not the usual one
+        assert_eq!(started(Idea { model: model(&b), ..Idea::default() }), Ok("b".into()));
+        assert_eq!(started(Idea { tool: Some("tool-two".into()), model: model(&b), ..Idea::default() }), Ok("b".into()));
+        // a tool he named that the picked choice's launcher does not start: refused, nothing swapped
+        assert!(started(Idea { tool: Some("tool-one".into()), model: model(&b), ..Idea::default() }).is_err());
+        // a model of one launcher and an effort of another: refused
+        assert!(started(Idea { model: model(&a), effort: Some(Pick::Listed { name: "high".into(), launcher: b.clone(), id: "high".into() }), ..Idea::default() }).is_err());
+        // nothing listed picked: the tool he named, else the usual
+        assert_eq!(started(Idea { tool: Some("tool-two".into()), ..Idea::default() }), Ok("b".into()));
+        assert_eq!(started(Idea { model: Some(Pick::Said("luna".into())), ..Idea::default() }), Ok("a".into()));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "current_thread")]
+    async fn his_task_and_what_the_tool_wrote_are_never_in_the_log_and_the_task_is_put_in_as_he_said_it() {
+        let folder = std::env::temp_dir().display().to_string();
+        let place = Place { name: "shop".into(), folder };
+        // the task reaches the program whole: "{session}" in it is his, never filled in
+        let ok = with_launchers("launch-log-ok", "mine", serde_json::json!({
+            "mine": { "harness": "his-own-tool", "argv": ["sh", "-c", "case \"$1\" in *'{'session'}'*) exit 0;; *) exit 1;; esac", "sh", "{task}"] },
+        }));
+        crate::tower::logged::take();
+        let idea = Idea { task: "the secret plan, in {session}".into(), ..Idea::default() };
+        launch(&ok, &place, &idea).await.expect("started, with the task as he said it");
+        let lines = crate::tower::logged::take();
+        assert!(!lines.is_empty() && lines.iter().all(|l| !l.contains("secret plan")), "{lines:?}");
+        // a launcher that fails, writing his task among its errors
+        let failing = with_launchers("launch-log-failed", "mine", serde_json::json!({
+            "mine": { "harness": "his-own-tool", "argv": ["sh", "-c", "echo \"$1\" >&2; exit 3", "sh", "{task}"] },
+        }));
+        crate::tower::logged::take();
+        let refused = launch(&failing, &place, &idea).await.expect_err("the launcher failed");
+        let lines = crate::tower::logged::take();
+        assert!(!lines.is_empty() && lines.iter().all(|l| !l.contains("secret plan")), "{lines:?}");
+        assert!(!refused.say.contains("secret plan"), "{}", refused.say);
     }
 
     #[tokio::test]

@@ -34,7 +34,7 @@ enum Listed<'a> {
 /// settled after.
 struct Menus {
     tools: Vec<String>,
-    /// The launcher that starts an agent when he names no tool, whose choices are listed first.
+    /// The launcher that starts an agent when he names no tool and picks no listed choice (`held::launcher_for`).
     usual: Option<LauncherId>,
     models: Listing,
     efforts: Listing,
@@ -241,14 +241,10 @@ fn menus(app: &App) -> Menus {
     // found before the state is read below: finding it reads the state too
     let usual = held::launcher_for(app, None).map(|(name, _)| LauncherId::new(name));
     let inner = app.read();
-    let mut menus: Vec<(LauncherId, airband_core::tools::Offers)> = app.cfg().launchers.iter().map(|(name, l)| (LauncherId::new(name.as_str()), held::offers(&inner, name, l))).collect();
-    usual_first(&mut menus, usual.as_ref());
+    // in the settings' own order: the model picks by what he said, and the pick's launcher is the one that
+    // starts the agent (`launch::starter`), so no order here decides anything
+    let menus: Vec<(LauncherId, airband_core::tools::Offers)> = app.cfg().launchers.iter().map(|(name, l)| (LauncherId::new(name.as_str()), held::offers(&inner, name, l))).collect();
     Menus { tools: app.cfg().tools(), models: Listing::of(&menus, |m| &m.models), efforts: Listing::of(&menus, |m| &m.efforts), usual }
-}
-
-/// The usual launcher's choices first: the one a model he names with no tool is for. The others keep their order.
-fn usual_first<T>(menus: &mut [(LauncherId, T)], usual: Option<&LauncherId>) {
-    menus.sort_by_key(|(id, _)| Some(id) != usual);
 }
 
 /// A numbered list on one line, for the model to answer with a number from.
@@ -279,10 +275,10 @@ fn starting(app: &App, menus: &Menus, projects: &[Place], room: Option<&str>) ->
     };
     // what he named is passed on as he named it: one that cannot be had is refused in words, never quietly
     // swapped for another
-    // each choice is listed with the launcher it is for: the one picked is of the launcher that starts the agent
+    // each choice is listed with the launcher that offers it, and the launcher of the one picked starts the agent
     let whose = match &menus.usual {
-        Some(usual) => format!(", each listed with the tool it is for: pick one of the tool that starts the agent, the one he named, else {usual}"),
-        None => ", each listed with the tool it is for: pick one of the tool he named".to_string(),
+        Some(usual) => format!(", each listed with the launcher that offers it: pick one a launcher of the tool he named offers, else one {usual} offers"),
+        None => ", each listed with the launcher that offers it: pick one a launcher of the tool he named offers".to_string(),
     };
     let offered = |what: &str, names: &[String]| {
         if names.is_empty() {
@@ -458,17 +454,6 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         panic!("reading the menus did not finish");
-    }
-
-    #[test]
-    fn the_usual_launchers_choices_are_listed_first() {
-        let (a, b, c) = (LauncherId::new("claude-code"), LauncherId::new("claude-held"), LauncherId::new("test"));
-        let mut menus = vec![(a.clone(), 1), (b.clone(), 2), (c.clone(), 3)];
-        usual_first(&mut menus, Some(&c));
-        assert_eq!(menus, vec![(c, 3), (a.clone(), 1), (b.clone(), 2)]);
-        let mut unchanged = vec![(a.clone(), 1), (b.clone(), 2)];
-        usual_first(&mut unchanged, None);
-        assert_eq!(unchanged, vec![(a, 1), (b, 2)]);
     }
 
     #[test]

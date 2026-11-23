@@ -221,7 +221,7 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
         match route(app, radio, &rest, said.re.as_deref(), said.scope.as_deref(), &said.others, projects).await {
             Routed::Sure(t) => t,
             Routed::Elsewhere(other) => {
-                log(format!("← radio: \"{text}\" → {}, on another computer", other.callsign));
+                log(format!("← radio: {} characters → {}, on another computer", text.chars().count(), other.callsign));
                 return Err(Reply { elsewhere: Some(other.id), ..Reply::default() });
             }
             Routed::New(mut idea) => {
@@ -234,7 +234,7 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
                 let question = airband_core::ids::QuestionId::new(config::random_hex(8));
                 app.change().call(radio).ask(Asked { question: question.clone(), words: rest.clone(), files: files.clone() });
                 let names: Vec<String> = options.iter().map(|s| s.callsign.text()).collect();
-                log(format!("← radio: \"{text}\" → unsure; asking between {}", names.join(", ")));
+                log(format!("← radio: {} characters → unsure; asking between {}", text.chars().count(), names.join(", ")));
                 return Err(Reply { ask: options.iter().map(|s| s.agent.id.clone()).collect(), question: Some(question.to_string()), ..ask(format!("Who is that for? {}.", either(&names))) });
             }
         }
@@ -436,20 +436,38 @@ mod tests {
         assert!(app.store.load(10).unwrap().0.sessions.is_empty(), "written down as gone");
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn his_words_are_never_written_in_the_log() {
-        let app = crate::tower::http::tests::app("words-unlogged");
+    /// What the tower logged while he said `words` to it, with these agents checked in.
+    async fn logged_saying(app: &Arc<App>, agents: &[&str], words: &str, others: Vec<airband_core::radio::Other>) -> Vec<String> {
         {
             let mut inner = app.change();
-            let a = airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with("a", "test") };
-            inner.check_in(&a).unwrap();
+            for id in agents {
+                let a = airband_core::agent::Agent { cwd: Some("/x/shop".into()), ..crate::adapters::agent_with(*id, "test") };
+                inner.check_in(&a).unwrap();
+            }
         }
         crate::tower::logged::take();
+        let _ = on_utterance(app, "radio", words, &airband_core::radio::Utterance { text: words.into(), id: "u1".into(), others, ..Default::default() }).await;
+        crate::tower::logged::take()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn his_words_are_never_written_in_the_log() {
         let words = "please ship the secret plan";
-        let _ = on_utterance(&app, "radio", words, &airband_core::radio::Utterance { text: words.into(), id: "u1".into(), ..Default::default() }).await;
-        let lines = crate::tower::logged::take();
-        assert!(!lines.is_empty(), "the utterance is logged, by its length");
-        assert!(lines.iter().all(|l| !l.contains("secret plan")), "{lines:?}");
+        let unlogged = |lines: &[String]| !lines.is_empty() && lines.iter().all(|l| !l.contains("secret plan"));
+        // for the one agent there is
+        let lines = logged_saying(&crate::tower::http::tests::app("words-unlogged"), &["a"], words, Vec::new()).await;
+        assert!(unlogged(&lines), "{lines:?}");
+        // unsure, with two agents and no model: he is asked which
+        let lines = logged_saying(&crate::tower::http::tests::app("words-unlogged-ask"), &["a", "b"], words, Vec::new()).await;
+        assert!(lines.iter().any(|l| l.contains("unsure")) && unlogged(&lines), "{lines:?}");
+        // for an agent on another computer, as a reader of his own says
+        #[cfg(unix)]
+        {
+            let reader = serde_json::json!({ "summarizer": { "kind": "command", "offer": "own", "argv": ["sh", "-c", "cat >/dev/null; echo '{\"to\":[2],\"all\":false,\"sure\":true,\"new\":null}'"] } });
+            let other = airband_core::radio::Other { id: "far".into(), callsign: "far one".into(), group: "far".into(), ..Default::default() };
+            let lines = logged_saying(&crate::tower::http::tests::app_with("words-unlogged-far", reader), &["a"], words, vec![other]).await;
+            assert!(lines.iter().any(|l| l.contains("on another computer")) && unlogged(&lines), "{lines:?}");
+        }
     }
 
     fn answering(text: &str, question: &str) -> airband_core::radio::Utterance {

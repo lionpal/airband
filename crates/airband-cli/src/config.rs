@@ -141,9 +141,10 @@ impl Config {
         self.keys.retain(|_, k| k.provider != provider);
         self.keys.insert(provider.to_string(), StoredKey { provider: provider.to_string(), secret });
     }
-    /// The harnesses a new agent can be started with, the usual one first.
+    /// The harnesses a new agent can be started with, each once, in the launchers' order. Which is usual is
+    /// `held::launcher_for`'s alone to say.
     pub(crate) fn tools(&self) -> Vec<String> {
-        let mut out: Vec<String> = self.launchers.get(&self.launcher).map(|l| l.harness.clone()).into_iter().collect();
+        let mut out: Vec<String> = Vec::new();
         self.launchers.values().for_each(|l| if !out.contains(&l.harness) { out.push(l.harness.clone()) });
         out.retain(|h| !h.is_empty());
         out

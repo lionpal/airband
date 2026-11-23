@@ -45,7 +45,8 @@ pub(super) async fn unheard(State(app): State<Arc<App>>, RadioId(radio): RadioId
     let mut inner = app.change();
     let id = u.id.as_str();
     let who = inner.log.iter().find(|e| e.id == id).map(|e| inner.sender_name(e)).unwrap_or_else(|| "a line it no longer has".to_string());
-    log(format!("{radio} could not read {who} aloud ({}); it stays queued (line {id}), and nothing more goes to that radio for a minute", u.why));
+    // a speech service's words for why can echo what it was given: the log has their length only
+    log(format!("{radio} could not read {who} aloud ({} characters said why); it stays queued (line {id}), and nothing more goes to that radio for a minute", u.why.chars().count()));
     if inner.log.iter().any(|e| e.id == id && matches!(&e.aloud, Aloud::Handed { radio: r, .. } if *r == radio)) {
         inner.set_aloud(id, Aloud::Waiting);
     }
