@@ -2,12 +2,17 @@
 //! is renamed, moves between teams and leaves.
 use super::*;
 
+/// The team of a session kept before sessions had one: none yet, until the teams are settled.
+fn not_placed() -> TeamId {
+    TeamId::new("")
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Session {
     pub(super) agent: Agent,
     pub(super) callsign: Callsign,
     /// The team it is in, by the team's id ([`Inner::teams`]). Its callsign carries what that team is called.
-    #[serde(default)]
+    #[serde(default = "not_placed")]
     pub(super) team: TeamId,
     /// It finished a turn and is waiting on him.
     pub(super) waiting: bool,

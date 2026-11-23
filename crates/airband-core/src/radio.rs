@@ -143,7 +143,7 @@ pub struct Utterance {
     /// thing he said to that computer after it asked. With it the tower reads these words as the answer, and
     /// without it they answer nothing it asked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub answers: Option<String>,
+    pub answers: Option<crate::ids::QuestionId>,
 }
 
 /// Something he did with a button.
@@ -162,7 +162,7 @@ pub enum Act {
 }
 
 /// A new agent to start: where, with what, and on what. Each is an id from a list the tower gave.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Launch {
     /// The team it joins, by the team's id on that computer.
     pub team: crate::ids::TeamId,
@@ -272,7 +272,7 @@ pub struct Reply {
     /// The tower asked him something back ("Which project is that for?"): its id. The next thing he says to
     /// this computer carries it as `Utterance::answers`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub question: Option<String>,
+    pub question: Option<crate::ids::QuestionId>,
 }
 
 /// Which form of a message a radio asks for (`GET message/{id}`).
@@ -305,5 +305,18 @@ mod tests {
         assert_eq!(feed.messages[0].kind, Some(Kind::Unknown));
         let t: Transmission = serde_json::from_str(r#"{"id":"a","callsign":"shop one","kind":"celebration","say":"x"}"#).unwrap();
         assert_eq!(t.kind, Kind::Unknown);
+        // a team not said is no team, never an empty id standing in for one
+        assert_eq!(feed.roster[0].team, None);
+    }
+    #[test]
+    fn a_question_and_its_answer_are_one_typed_id_and_its_plain_string_on_the_wire() {
+        let asked: Reply = serde_json::from_str(r#"{"say":"Which project?","question":"q1"}"#).unwrap();
+        assert_eq!(asked.question, Some(crate::ids::QuestionId::new("q1")));
+        let answer = Utterance { text: "shop".into(), answers: asked.question.clone(), ..Default::default() };
+        let sent = serde_json::to_value(&answer).unwrap();
+        assert_eq!(sent["answers"], "q1");
+        assert_eq!(serde_json::from_value::<Utterance>(sent).unwrap().answers, asked.question);
+        let other: Other = serde_json::from_str(r#"{"id":"a","callsign":"shop one","group":"shop","team":"t1"}"#).unwrap();
+        assert_eq!(other.team, Some(crate::ids::TeamId::new("t1")));
     }
 }

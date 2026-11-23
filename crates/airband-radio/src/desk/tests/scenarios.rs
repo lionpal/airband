@@ -14,7 +14,7 @@ fn radio_at(desk: &Desk, i: usize) -> Arc<Radio> {
     desk.shared.state.lock().unwrap().computers[i].radio.clone()
 }
 fn asking(id: &str) -> Reply {
-    Reply { question: Some(id.into()), ..Reply::default() }
+    Reply { question: Some(airband_core::ids::QuestionId::new(id)), ..Reply::default() }
 }
 /// A computer on this machine that answers every request with `status` and `body`. Its port.
 fn tower_saying(status: u16, body: &'static str) -> u16 {

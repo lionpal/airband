@@ -38,7 +38,7 @@ pub(crate) fn chat_feed(feed: Feed) -> ChatFeed {
         seq: feed.seq,
         messages: feed.messages.into_iter().map(chat).collect(),
         agents: feed.roster.into_iter().map(|r| {
-            let mut agent = ChatAgent { id: r.id, callsign: String::new(), badge: String::new(), group: String::new(), team: r.team.to_string(), room: String::new(), number: String::new(), number_kept: String::new(), named: false, harness: r.harness, waiting: r.waiting, state: r.state.into(), subagents: r.subagents, doing: r.doing, held: r.held, terminal: r.terminal, ends: r.ends, model: r.model, effort: r.effort };
+            let mut agent = ChatAgent { id: r.id, callsign: String::new(), badge: String::new(), group: String::new(), team: r.team.map(String::from).unwrap_or_default(), room: String::new(), number: String::new(), number_kept: String::new(), named: false, harness: r.harness, waiting: r.waiting, state: r.state.into(), subagents: r.subagents, doing: r.doing, held: r.held, terminal: r.terminal, ends: r.ends, model: r.model, effort: r.effort };
             agent.call(r.callsign);
             agent
         }).collect(),

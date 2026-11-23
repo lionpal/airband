@@ -133,7 +133,7 @@ async fn new_agent(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
     // (a control, agents he picked), leave it held. So does a model that could not say: he is told, and can
     // answer again.
     // It is read here and let go only once his answer is settled, so nothing that fails on the way loses it.
-    let held_idea = (said.act.is_none() && said.to.is_empty()).then(|| app.change().call(radio).unplaced_for(said.answers.as_deref())).flatten();
+    let held_idea = (said.act.is_none() && said.to.is_empty()).then(|| app.change().call(radio).unplaced_for(said.answers.as_ref().map(airband_core::ids::QuestionId::as_str))).flatten();
     if let Some(Unplaced { question, idea }) = held_idea {
         match named_project(app, &idea.task, text, projects).await {
             Ok(Some(place)) => {
@@ -145,13 +145,13 @@ async fn new_agent(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
                         app.change().call(radio).resolve_unplaced(&question);
                         reply
                     }
-                    Err(refused) => Reply { listen: true, question: Some(question.to_string()), ..refused },
+                    Err(refused) => Reply { listen: true, question: Some(question.clone()), ..refused },
                 });
             }
             Ok(None) => app.change().call(radio).resolve_unplaced(&question),
             Err(why) => {
                 log(format!("which project he named could not be read: {why}"));
-                return Some(Reply { say: "That could not be read just now, so the idea is still waiting. Say the project again.".into(), listen: true, question: Some(question.to_string()), ..Reply::default() });
+                return Some(Reply { say: "That could not be read just now, so the idea is still waiting. Say the project again.".into(), listen: true, question: Some(question.clone()), ..Reply::default() });
             }
         }
     }
@@ -183,7 +183,7 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
         }
         let names = inner.sessions.iter().map(|s| s.callsign.text()).collect::<Vec<_>>();
         // only words that answer "Who is that for?" by its id read what it holds; it is let go once settled
-        let held = inner.call(radio).asked_for(said.answers.as_deref());
+        let held = inner.call(radio).asked_for(said.answers.as_ref().map(airband_core::ids::QuestionId::as_str));
         (parsed, named, inner.roster(), names, inner.unheard().count(), held)
     };
     let (mut rest, mut files) = (parsed.rest, files);
@@ -202,7 +202,7 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
                 Ok(None) => {}
                 Err(why) => {
                     log(format!("who he meant could not be read: {why}"));
-                    return Err(Reply { say: "That could not be read just now, so what you said first is still waiting. Say who it is for again.".into(), listen: true, question: Some(question.to_string()), ..Reply::default() });
+                    return Err(Reply { say: "That could not be read just now, so what you said first is still waiting. Say who it is for again.".into(), listen: true, question: Some(question.clone()), ..Reply::default() });
                 }
             }
         }
@@ -235,7 +235,7 @@ async fn addressed(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
                 app.change().call(radio).ask(Asked { question: question.clone(), words: rest.clone(), files: files.clone() });
                 let names: Vec<String> = options.iter().map(|s| s.callsign.text()).collect();
                 log(format!("← radio: \"{text}\" → unsure; asking between {}", names.join(", ")));
-                return Err(Reply { ask: options.iter().map(|s| s.agent.id.clone()).collect(), question: Some(question.to_string()), ..ask(format!("Who is that for? {}.", either(&names))) });
+                return Err(Reply { ask: options.iter().map(|s| s.agent.id.clone()).collect(), question: Some(question.clone()), ..ask(format!("Who is that for? {}.", either(&names))) });
             }
         }
     };
@@ -397,7 +397,7 @@ mod tests {
 
     #[test]
     fn say_more_with_several_agents_named_asks_which_and_never_takes_the_first() {
-        let one = |id: &str| Session::new(airband_core::agent::Agent { id: id.into(), ..crate::adapters::agent_with("", "t") }, airband_core::routing::Callsign { project: "shop".into(), number: id.into(), named: false }, Default::default());
+        let one = |id: &str| Session::new(airband_core::agent::Agent { id: id.into(), ..crate::adapters::agent_with("", "t") }, airband_core::routing::Callsign { project: "shop".into(), number: id.into(), named: false }, TeamId::new(""));
         assert!(one_named(&[]).is_err());
         assert_eq!(one_named(&[one("a")]).map(|s| s.agent.id.clone()), Ok("a".into()));
         assert!(one_named(&[one("a"), one("b")]).is_err());
@@ -453,7 +453,7 @@ mod tests {
     }
 
     fn answering(text: &str, question: &str) -> airband_core::radio::Utterance {
-        airband_core::radio::Utterance { text: text.into(), answers: Some(question.into()), ..Default::default() }
+        airband_core::radio::Utterance { text: text.into(), answers: Some(airband_core::ids::QuestionId::new(question)), ..Default::default() }
     }
 
     #[tokio::test]
@@ -465,7 +465,7 @@ mod tests {
         let places = [Place { name: "shop".into(), folder: "/w/shop".into() }, Place { name: "garden".into(), folder: "/w/garden".into() }];
         let reply = new_agent(&app, "radio", "the shop", &answering("the shop", "q1"), "", &places).await;
         let reply = reply.expect("he is told");
-        assert_eq!(reply.question.as_deref(), Some("q1"), "{}", reply.say);
+        assert_eq!(reply.question.as_ref().map(airband_core::ids::QuestionId::as_str), Some("q1"), "{}", reply.say);
         assert_eq!(app.change().call("radio").unplaced_for(Some("q1")), Some(Unplaced { question: QuestionId::new("q1"), idea }));
     }
 
@@ -483,7 +483,7 @@ mod tests {
         let app = crate::tower::http::tests::app("asked-kept");
         app.change().call("radio").ask(asked("q1"));
         let Err(reply) = addressed(&app, "radio", "the first one", &answering("the first one", "q1"), None, String::new(), &[]).await else { panic!("it is not sent anywhere") };
-        assert_eq!(reply.question.as_deref(), Some("q1"), "{}", reply.say);
+        assert_eq!(reply.question.as_ref().map(airband_core::ids::QuestionId::as_str), Some("q1"), "{}", reply.say);
         assert_eq!(app.change().call("radio").asked_for(Some("q1")), Some(asked("q1")));
     }
 

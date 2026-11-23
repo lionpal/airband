@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 macro_rules! ids {
     ($($(#[$doc:meta])* $name:ident;)*) => {$(
         $(#[$doc])*
-        #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
         #[serde(transparent)]
         pub struct $name(String);
 

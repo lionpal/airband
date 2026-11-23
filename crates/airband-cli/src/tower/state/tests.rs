@@ -164,7 +164,7 @@ fn a_renamed_team_keeps_its_lines_its_folder_and_its_id() {
     assert!(inner.taken_elsewhere(&[theirs]));
     let b = inner.find("b").unwrap();
     assert_eq!((b.team.as_str(), b.callsign.project.as_str()), (garden.as_str(), "laptop garden"));
-    assert_eq!(inner.roster_entries()[0].team, garden);
+    assert_eq!(inner.roster_entries()[0].team, Some(garden));
 }
 
 #[test]
@@ -191,7 +191,7 @@ fn a_configured_team_with_no_agents_is_one_team_and_can_be_renamed() {
 #[test]
 fn kept_agents_from_two_folders_in_one_team_go_back_to_their_own_folders_teams() {
     // as kept before teams went by folder: one name, two folders
-    let session = |id: &str, cwd: &str, number: &str| Session::new(agent(id, cwd, None), Callsign { project: "shop".into(), number: number.into(), named: false }, TeamId::default());
+    let session = |id: &str, cwd: &str, number: &str| Session::new(agent(id, cwd, None), Callsign { project: "shop".into(), number: number.into(), named: false }, TeamId::new(""));
     let old: BTreeMap<String, String> = [("shop".to_string(), "/a/work/shop".to_string()), ("garden".to_string(), "/g".to_string())].into();
     let mut inner = Inner { sessions: vec![session("a", "/a/work/shop", "one"), session("b", "/b/work/shop", "two")], ..Inner::default() };
     // a line kept under a team's name, and one he said to several teams
@@ -601,7 +601,7 @@ fn a_radio_that_only_reads_and_types_keeps_who_it_was_talking_to() {
 }
 
 fn kept_session(id: &str, cwd: Option<&str>, project: &str) -> Session {
-    Session::new(Agent { cwd: cwd.map(String::from), ..agent(id, "", None) }, Callsign { project: project.into(), number: "one".into(), named: false }, TeamId::default())
+    Session::new(Agent { cwd: cwd.map(String::from), ..agent(id, "", None) }, Callsign { project: project.into(), number: "one".into(), named: false }, TeamId::new(""))
 }
 
 #[test]

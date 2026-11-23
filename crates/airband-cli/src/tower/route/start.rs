@@ -51,7 +51,7 @@ pub(super) async fn start(app: &Arc<App>, radio: &str, text: &str, idea: Idea, p
             let question = airband_core::ids::QuestionId::new(config::random_hex(8));
             app.change().call(radio).hold_unplaced(Unplaced { question: question.clone(), idea });
             log(format!("← radio: {} characters → a new agent, project not clear", text.chars().count()));
-            return Reply { say: which_project(projects), listen: true, question: Some(question.to_string()), ..Reply::default() };
+            return Reply { say: which_project(projects), listen: true, question: Some(question.clone()), ..Reply::default() };
         }
     };
     log(format!("← radio: {} characters → launch in {}", text.chars().count(), place.name));

@@ -46,9 +46,9 @@ impl Session {
     /// His computer asked him something back: what he says next answers it. A question already asked is not
     /// asked again when the same answer is told a second time.
     pub(crate) fn asked(&self, reply: &Reply) {
-        let Some(question) = &reply.question else { return };
+        let Some(question) = reply.question.as_ref().map(|q| q.as_str().to_string()) else { return };
         let mut asked = self.asked.lock().unwrap();
-        if asked.contains(question) {
+        if asked.contains(&question) {
             return;
         }
         asked.push_back(question.clone());
@@ -84,7 +84,7 @@ mod tests {
     use super::*;
 
     fn asking(id: &str) -> Reply {
-        Reply { question: Some(id.into()), ..Reply::default() }
+        Reply { question: Some(airband_core::ids::QuestionId::new(id)), ..Reply::default() }
     }
 
     #[test]

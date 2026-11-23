@@ -26,15 +26,16 @@ pub enum NotRead {
 }
 
 /// An agent on another of his computers, as his screen shows it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Other {
     /// The agent's id on the computer that has it: what the tower answers with when the words are for it.
     pub id: String,
     pub callsign: String,
     pub group: String,
     /// Its team's id on the computer that has it: what is kept and sent about the team. `group` is only shown.
+    /// None from a radio that does not say.
     #[serde(default)]
-    pub team: crate::ids::TeamId,
+    pub team: Option<crate::ids::TeamId>,
     /// Its two characters, as that computer gave them.
     #[serde(default)]
     pub badge: String,
@@ -257,9 +258,9 @@ pub struct RosterEntry {
     /// (a number the tower handed out, or a name he gave it). Every form it is shown in is made from these.
     pub callsign: crate::routing::Callsign,
     /// Its team's id on this computer: what views, colours, moves and renames go by. The callsign's team name
-    /// is only shown.
+    /// is only shown. None from a tower that does not say.
     #[serde(default)]
-    pub team: crate::ids::TeamId,
+    pub team: Option<crate::ids::TeamId>,
     pub harness: String,
     /// Finished a turn and waiting on him.
     pub waiting: bool,

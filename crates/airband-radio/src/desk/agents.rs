@@ -45,7 +45,7 @@ impl Desk {
             Some(tool) => format!("New {} agent in {name}", tool.name),
             None => format!("New agent in {name}"),
         };
-        let launch = airband_core::radio::Launch { team: airband_core::ids::TeamId::new(team), tool: tool.map(|t| t.id), ..Default::default() };
+        let launch = airband_core::radio::Launch { team: airband_core::ids::TeamId::new(team), tool: tool.map(|t| t.id), model: None, effort: None, task: String::new() };
         radio.queue_as(Outgoing::of(shown).with_act(Some(&Act::Launch(launch))), Carry::Nothing);
     }
     /// Every paired computer's accounts, in the order the computers were paired. A computer that cannot be

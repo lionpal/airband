@@ -266,7 +266,7 @@ impl Outgoing {
     }
     /// What the tower is sent for it: the one place an utterance is made from something he said.
     pub(crate) fn utterance(&self) -> Utterance {
-        Utterance { text: self.text.clone(), id: self.id.clone(), re: self.re.clone(), scope: self.scope.clone(), label: self.label.clone(), attachments: self.attachments.clone(), others: self.others.clone(), to: self.to.clone(), act: self.act.clone(), answers: self.answers.clone() }
+        Utterance { text: self.text.clone(), id: self.id.clone(), re: self.re.clone(), scope: self.scope.clone(), label: self.label.clone(), attachments: self.attachments.clone(), others: self.others.clone(), to: self.to.clone(), act: self.act.clone(), answers: self.answers.clone().map(airband_core::ids::QuestionId::new) }
     }
 }
 

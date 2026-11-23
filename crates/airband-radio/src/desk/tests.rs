@@ -160,7 +160,7 @@ fn a_computer_is_never_picked_for_him() {
     assert_eq!((unsent(0), unsent(1)), (0, 1));
     assert_eq!(*host.0.lock().unwrap(), ["That computer is no longer paired.", "That computer is no longer paired."]);
     // the same for anything else asked of a computer he did not name
-    assert!(matches!(desk.station_radio(&StationId::default()), Err(RadioError::Told { .. })));
+    assert!(matches!(desk.station_radio(&StationId::new("")), Err(RadioError::Told { .. })));
     // a computer this phone does not have is gone, never out of reach; one it has that is not answering is
     assert!(matches!(desk.station_radio(&StationId::new("laptop")), Err(RadioError::Told { reason }) if reason == UNPAIRED), "unknown");
     let macbook = desk.shared.state.lock().unwrap().computers[1].id();
@@ -193,7 +193,7 @@ fn a_button_is_sent_as_what_it_stands_for_and_never_as_words_to_be_read() {
             ("Allow".to_string(), Some("q1".to_string()), act(Act::Verdict { allow: true }), vec![]),
             ("Leave".to_string(), Some("q1".to_string()), act(Act::Option { index: 1 }), vec![]),
             ("Keep going.".to_string(), None, act(Act::Control { control: airband_core::routing::Control::Poke }), vec![]),
-            ("New agent in shop".to_string(), None, act(Act::Launch(airband_core::radio::Launch { team: TeamId::new("shop"), ..Default::default() })), vec![]),
+            ("New agent in shop".to_string(), None, act(Act::Launch(airband_core::radio::Launch { team: TeamId::new("shop"), tool: None, model: None, effort: None, task: String::new() })), vec![]),
             ("ship it".to_string(), None, None, vec!["shop two".to_string()]),
         ]
     );
@@ -652,7 +652,7 @@ fn what_he_attached_and_the_question_he_was_asked_outlive_a_reconnect() {
     desk.set_links(vec!["airband://pair?url=http%3A%2F%2F127.0.0.1%3A9&token=t".into()]);
     let radio = desk.shared.state.lock().unwrap().computers[0].radio.clone();
     radio.arm("f1".into());
-    radio.session.asked(&Reply { question: Some("q1".into()), ..Reply::default() });
+    radio.session.asked(&Reply { question: Some(airband_core::ids::QuestionId::new("q1")), ..Reply::default() });
     desk.reconnect();
     let radio = desk.shared.state.lock().unwrap().computers[0].radio.clone();
     assert_eq!(radio.armed(), ["f1"]);
@@ -700,7 +700,7 @@ fn a_button_a_poke_or_words_sent_on_leave_his_files_and_his_question_for_his_own
     let radio = state.computers[0].radio.clone();
     let desk = desk_of(state);
     radio.arm("f1".into());
-    radio.session.asked(&Reply { question: Some("q9".into()), ..Reply::default() });
+    radio.session.asked(&Reply { question: Some(airband_core::ids::QuestionId::new("q9")), ..Reply::default() });
     desk.tap("q1".into(), Tapped::Allow);
     desk.resend("d1".into(), agent.clone()).unwrap();
     desk.shared.state.lock().unwrap().computers[0].agents[0].state = AgentState::Stalled;
@@ -720,7 +720,7 @@ fn unplaced_words_he_places_still_answer_what_they_answered() {
     let agent = state.computers[0].agents[0].id.clone();
     let radio = state.computers[0].radio.clone();
     let desk = desk_of(state);
-    radio.session.asked(&Reply { question: Some("q8".into()), ..Reply::default() });
+    radio.session.asked(&Reply { question: Some(airband_core::ids::QuestionId::new("q8")), ..Reply::default() });
     desk.choose(agent);
     assert_eq!(radio.unsent().pop().unwrap().answers.as_deref(), Some("q7"));
     // the newer question is still his to answer

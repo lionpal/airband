@@ -24,7 +24,7 @@ fn only_his_own_next_words_take_his_files_and_his_question() {
     let radio = radio_of(&desk, &link(1));
     desk.stop();
     radio.session.arm("f1".into());
-    radio.session.asked(&Reply { question: Some("q1".into()), ..Reply::default() });
+    radio.session.asked(&Reply { question: Some(airband_core::ids::QuestionId::new("q1")), ..Reply::default() });
     radio.queue_as(Outgoing::of("Keep going.".into()), Carry::Nothing);
     let first = radio.unsent().last().cloned().unwrap();
     assert!(first.attachments.is_empty() && first.answers.is_none(), "a command took his files or his question");
