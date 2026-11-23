@@ -213,15 +213,19 @@ mod file {
         if machine().is_empty() {
             return Err("this computer gave no id of its own, so airband cannot keep keys on it safely".into());
         }
+        // a new salt only where there is none: one that cannot be read now is not written over, or the
+        // sealed file it opens could never be opened again
         let salt = match airband_io::files::read_bytes(&salt_at()) {
             Ok(Some(salt)) if salt.len() == 32 => salt,
-            _ if make_salt => {
+            Ok(None) if make_salt => {
                 let mut salt = vec![0u8; 32];
                 getrandom::fill(&mut salt).map_err(|e| e.to_string())?;
                 crate::config::write_private(&salt_at(), &salt).map_err(|e| format!("cannot write the keys' salt: {e}"))?;
                 salt
             }
-            _ => return Err("the sealed keys have lost their salt and cannot be opened".into()),
+            Ok(None) => return Err("the sealed keys have lost their salt and cannot be opened".into()),
+            Ok(Some(_)) => return Err("the sealed keys' salt is damaged, so they cannot be opened".into()),
+            Err(e) => return Err(format!("cannot read the keys' salt: {e}")),
         };
         let mut key = [0u8; 32];
         hkdf::Hkdf::<sha2::Sha256>::new(Some(&salt), machine().as_bytes()).expand(BOUND, &mut key).map_err(|e| e.to_string())?;
@@ -233,7 +237,7 @@ mod file {
     }
 
     pub(crate) fn get() -> Result<Map<String, Value>, String> {
-        let sealed = airband_io::files::read_bytes(&sealed_at()).ok().flatten().ok_or_else(|| "airband's keys are not on this computer".to_string())?;
+        let sealed = airband_io::files::read_bytes(&sealed_at()).map_err(|e| format!("cannot read airband's sealed keys: {e}"))?.ok_or_else(|| "airband's keys are not on this computer".to_string())?;
         if sealed.len() < 12 + 16 {
             return Err("the sealed keys are cut short".into());
         }
@@ -249,9 +253,11 @@ mod file {
         crate::config::write_private(&sealed_at(), [nonce.as_slice(), &sealed].concat()).map_err(|e| format!("cannot write the sealed keys: {e}"))
     }
 
-    pub(crate) fn forget() {
-        airband_io::files::remove(&sealed_at()).ok();
-        airband_io::files::remove(&salt_at()).ok();
+    /// Take the sealed file away. One left behind would be read in place of the keychain (`get` prefers it), so
+    /// a file that cannot be removed is an error; the salt only goes with it.
+    pub(crate) fn forget() -> Result<(), String> {
+        airband_io::files::remove(&sealed_at()).map_err(|e| format!("cannot remove the old sealed keys: {e}"))?;
+        airband_io::files::remove(&salt_at()).map_err(|e| format!("cannot remove the old keys' salt: {e}"))
     }
     #[cfg(test)]
     pub(crate) mod tests_folder {
@@ -302,11 +308,17 @@ pub(crate) fn get() -> Result<Map<String, Value>, String> {
 pub(crate) fn put(kept: &Map<String, Value>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     if keychain() {
-        mac::put(kept).map_err(|why| format!("{why}. Run this at the computer itself, logged in, and not over SSH."))?;
-        file::forget();
-        return Ok(());
+        return kept_then_forgotten(|kept| mac::put(kept).map_err(|why| format!("{why}. Run this at the computer itself, logged in, and not over SSH.")), kept);
     }
     file::put(kept)
+}
+
+/// Keep the keys where `keep` puts them, then take the sealed file away. A sealed file that stays would shadow
+/// the newer keys (`get` reads it first, `settle` puts it back), so one that cannot be removed is an error.
+#[cfg(any(target_os = "macos", test))]
+fn kept_then_forgotten(keep: impl FnOnce(&Map<String, Value>) -> Result<(), String>, kept: &Map<String, Value>) -> Result<(), String> {
+    keep(kept)?;
+    file::forget().map_err(|why| format!("The keys are kept, but {why}; remove it, or the older keys are read in their place."))
 }
 
 /// Where a request to carry the keys waits for a tower that can read the keychain (a shell over SSH cannot).
@@ -325,7 +337,7 @@ pub(crate) fn carry() -> Result<bool, String> {
         let kept = mac::get()?;
         file::put(&kept)?;
         if file::get()? != kept {
-            file::forget();
+            file::forget().ok();
             return Err("the sealed file did not give the keys back; they are still in the keychain".into());
         }
         mac::forget();
@@ -341,8 +353,8 @@ pub(crate) fn settle() -> bool {
     if keychain() && file::has()
         && let Ok(kept) = file::get()
             && mac::put(&kept).is_ok() && mac::get().is_ok_and(|back| back == kept) {
-                file::forget();
-                return true;
+                // moved only when the file is gone too: one left would be read again in place of the keychain
+                return file::forget().is_ok();
             }
     false
 }
@@ -370,6 +382,36 @@ mod tests {
         std::fs::write(dir.join("keys.sealed"), &on_disk).unwrap();
         std::fs::write(dir.join("keys.salt"), [7u8; 32]).unwrap();
         assert!(file::get().is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_sealed_file_that_cannot_be_removed_after_the_keys_move_is_an_error_never_left_to_shadow_them() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("airband-vault-{}", crate::config::random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        file::tests_folder::set(dir.clone());
+        let kept: Map<String, Value> = serde_json::from_value(json!({"pairing:phone": "OLD"})).unwrap();
+        file::put(&kept).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let moved = kept_then_forgotten(|_| Ok(()), &kept);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(moved.is_err(), "the stale file stays, so this must not say the keys are kept");
+        assert!(kept_then_forgotten(|_| Ok(()), &kept).is_ok());
+        assert!(!file::has());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_salt_that_cannot_be_read_is_never_written_over() {
+        let dir = std::env::temp_dir().join(format!("airband-vault-{}", crate::config::random_hex(4)));
+        std::fs::create_dir_all(dir.join("keys.salt")).unwrap();
+        file::tests_folder::set(dir.clone());
+        let kept: Map<String, Value> = serde_json::from_value(json!({"pairing:phone": "S"})).unwrap();
+        // a folder where the salt goes cannot be read as one: an error, and nothing is made in its place
+        assert!(file::put(&kept).is_err());
+        assert!(dir.join("keys.salt").is_dir());
         let _ = std::fs::remove_dir_all(dir);
     }
 
