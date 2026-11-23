@@ -155,6 +155,27 @@ async fn new_agent(app: &Arc<App>, radio: &str, text: &str, said: &airband_core:
             }
         }
     }
+    // the answer to "Which should start it?", the same way
+    let unstarted = (said.act.is_none() && said.to.is_empty()).then(|| app.change().call(radio).unstarted_for(said.answers.as_ref().map(airband_core::ids::QuestionId::as_str))).flatten();
+    if let Some(Unstarted { question, asked, place, idea, among }) = unstarted {
+        match named_launcher(app, &asked, text, &among).await {
+            Ok(Some(chosen)) => {
+                log(format!("← radio: {} characters → launch in {} by {chosen}", text.chars().count(), place.name));
+                return Some(match launch::launch_by(app, &place, &idea, Some(&chosen)).await {
+                    Ok(reply) => {
+                        app.change().call(radio).resolve_unstarted(&question);
+                        reply
+                    }
+                    Err(refused) => Reply { listen: true, question: Some(question.clone()), ..refused },
+                });
+            }
+            Ok(None) => app.change().call(radio).resolve_unstarted(&question),
+            Err(why) => {
+                log(format!("which launcher he named could not be read: {why}"));
+                return Some(Reply { say: "That could not be read just now, so the idea is still waiting. Say which again.".into(), listen: true, question: Some(question.clone()), ..Reply::default() });
+            }
+        }
+    }
     let Some(Act::Launch(new)) = &said.act else { return None };
     // the team he picked, by its id, and the folder it works in
     let Some(place) = app.read().team_place(&new.team) else {

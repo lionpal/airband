@@ -1,5 +1,5 @@
-// What the app and its notification extension both need: the pairing links in the Keychain, the team colours,
-// and the buttons a notification can carry. Nothing here decides anything.
+// What the app and its notification extension both need: the pairing links in the Keychain, the team colours
+// and the buttons a notification can carry in the folder they share. Nothing here decides anything.
 import Foundation
 import Security
 import UIKit
@@ -13,8 +13,8 @@ enum KeychainRead<T> {
     case failed(OSStatus)
 }
 
-/// The pairing links and team colours are kept in a Keychain group the app and its notification extension share,
-/// so the extension can open a sealed notification while the app is not running. His service keys are kept in a
+/// The pairing links are kept in a Keychain group the app and its notification extension share, so the
+/// extension can open a sealed notification while the app is not running. His service keys are kept in a
 /// group only the app can read. Everything is kept on this phone only: never in a backup, never restored elsewhere.
 enum Keychain {
     /// The shared group, from the Info.plist (the team's prefix is filled in when the app is built).
@@ -55,17 +55,50 @@ enum Keychain {
         guard status == errSecSuccess, let data = out as? Data, let text = String(data: data, encoding: .utf8) else { return .failed(status) }
         return .found(text)
     }
+    /// Removes what is kept under `key`. True once it is not there.
+    @discardableResult
+    static func remove(_ key: String, in place: Place) -> Bool {
+        guard let name = named(place) else { return false }
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: key, kSecAttrAccessGroup as String: name]
+        let status = SecItemDelete(query as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
+    }
     /// Every computer's pairing link.
     static func links() -> KeychainRead<[String]> { Stored.load("airband.links", in: .shared) }
     @discardableResult
     static func keepLinks(_ links: [String]) -> Bool { Stored.keep("airband.links", links, in: .shared) }
-    /// Each team's colour as the phone chose it, kept where the notification extension can read it. Not a secret:
-    /// it is here because this is the one store the app and its extension share.
+}
+
+/// The folder the app and its extension share (the App Group's container), through the core: each team's colour
+/// and the sets of buttons a notification can carry. Nothing secret is kept there. None in a build that names no
+/// group, or is not signed with it: then no colours are shown and a question carries only its reply box.
+enum Together {
+    static let folder: SharedFolder? = {
+        guard let group = Bundle.main.object(forInfoDictionaryKey: "AirbandAppGroup") as? String, !group.isEmpty,
+              let dir = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return nil }
+        return SharedFolder(dir: dir.path)
+    }()
+    /// Each team's colour as the phone chose it, for the extension to show the same.
     static func teamColours() -> [String: UInt8] {
-        if case .found(let colours) = Stored.load("airband.teamColours", in: .shared) as KeychainRead<[String: UInt8]> { return colours }
-        return [:]
+        guard let folder else { return [:] }
+        // colours an older version kept in the Keychain come here first, once
+        _ = folder.moveColours(old: KeychainColours())
+        return folder.colours()
     }
-    static func keepTeamColours(_ colours: [String: UInt8]) { Stored.keep("airband.teamColours", colours, in: .shared) }
+    static func keepTeamColours(_ colours: [String: UInt8]) { _ = folder?.keepColours(colours: colours) }
+}
+
+/// Where an older version kept the team colours: a Keychain item, read and removed for the core's one move.
+final class KeychainColours: OldColours, @unchecked Sendable {
+    private static let key = "airband.teamColours"
+    func read() -> OldRead {
+        switch Keychain.read(Self.key, in: .shared) {
+        case .found(let text): return .found(text: text)
+        case .none: return .nothing
+        case .failed: return .failed
+        }
+    }
+    func forget() -> Bool { Keychain.remove(Self.key, in: .shared) }
 }
 
 /// Something kept as JSON text, in the Keychain or in the app's own settings. The one way either is read and
@@ -140,22 +173,29 @@ enum NoticeButtons {
         let buttons = options.prefix(3).enumerated().map { UNNotificationAction(identifier: noticeOptionId(index: UInt32($0.offset)), title: $0.element, options: []) }
         return UNNotificationCategory(identifier: name(for: options), actions: buttons + [type], intentIdentifiers: [], options: [])
     }
-    /// Add these sets to the ones registered. Answer sets of questions no longer shown are let go; the rest are
-    /// kept. Calls back once the system has them, as read back from it. The app and its extension both
-    /// register: one that finds its sets gone (the other wrote over them) writes them again.
-    static func register(_ more: [UNNotificationCategory], then done: @escaping () -> Void = {}, tries: Int = 3) {
+    /// Register the fixed sets and the answer sets kept in the shared folder, newest first, with `adding` put
+    /// first among them. The app and its extension both register, each the whole of what is kept. Nothing is
+    /// locked while the system is asked: once it has them, the number of the last change kept says whether the
+    /// other kept one meanwhile, and then they are registered again as they are now. Calls back with whether
+    /// `adding` is registered; with no shared folder nothing of it is.
+    static func register(adding options: [String]? = nil, then done: @escaping (Bool) -> Void = { _ in }) {
+        guard let folder = Together.folder, let kept = folder.answerSets(adding: options) else {
+            UNUserNotificationCenter.current().setNotificationCategories(Set(fixed))
+            return done(options == nil)
+        }
+        let wanted = Set((options.map { [name(for: $0)] } ?? []) + fixed.map(\.identifier))
+        set(kept, in: folder, wanted: wanted, then: done)
+    }
+    /// Hands the system these sets and reads them back; again, as they are now, while another change has been
+    /// kept since or they are not all there.
+    private static func set(_ kept: AnswerSets, in folder: SharedFolder, wanted: Set<String>, tries: Int = 3, then done: @escaping (Bool) -> Void) {
         let center = UNUserNotificationCenter.current()
-        let names = Set(more.map(\.identifier))
+        center.setNotificationCategories(Set(fixed + kept.sets.map(category(for:))))
         center.getNotificationCategories { have in
-            if names.isSubset(of: Set(have.map(\.identifier))) { return done() }
-            center.getDeliveredNotifications { shown in
-                // a question's answers are needed while its notification is up, and not after
-                let showing = Set(shown.map(\.request.content.categoryIdentifier))
-                let kept = have.filter { !names.contains($0.identifier) && (!noticeIsAnswers(name: $0.identifier) || showing.contains($0.identifier)) }
-                center.setNotificationCategories(kept.union(more))
-                guard tries > 0 else { return done() }
-                register(more, then: done, tries: tries - 1)
-            }
+            let registered = wanted.isSubset(of: Set(have.map(\.identifier)))
+            let current = folder.answerSetsRev() == kept.rev
+            guard !(registered && current), tries > 1, let now = folder.answerSets(adding: nil) else { return done(registered) }
+            set(now, in: folder, wanted: wanted, tries: tries - 1, then: done)
         }
     }
 }

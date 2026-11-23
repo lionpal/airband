@@ -27,7 +27,7 @@ final class Push: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
         #endif
         let center = UNUserNotificationCenter.current()
         center.delegate = self
-        NoticeButtons.register(NoticeButtons.fixed)
+        NoticeButtons.register()
         center.getNotificationSettings { settings in
             switch settings.authorizationStatus {
             case .notDetermined:
