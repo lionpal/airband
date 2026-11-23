@@ -250,7 +250,7 @@ final class RadioModel: ObservableObject, DeskHost, @unchecked Sendable {
         let now = desk.view()
         if now != view {
             // a team given its colour just now: the notification extension shows it the same
-            if now.colours != view.colours { Keychain.keepTeamColours(now.colours) }
+            if now.colours != view.colours { Together.keepTeamColours(now.colours) }
             view = now
         }
         // what has gone with a message has left the desk's list: it leaves the tray too

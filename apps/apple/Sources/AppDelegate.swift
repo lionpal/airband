@@ -6,6 +6,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         // before the launch ends, so an answer given on a notification while the app was not running is handled
         UNUserNotificationCenter.current().delegate = Push.shared
+        // the team colours an older version kept in the Keychain move to the shared folder, once
+        _ = Together.teamColours()
         return true
     }
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {

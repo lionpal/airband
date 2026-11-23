@@ -309,7 +309,11 @@ offer. All of it is worked out in the core, so every host shows the same thing.
 What deserves a notification is the tower's decision (`tower/push.rs`): a question, a report, a permission card,
 when the phone is neither on a call nor showing the chat. The tower seals it and the relay hands it to the push
 service, so neither can read it. On the iPhone a notification extension (`apps/apple/Notify`) opens it with the
-radio core. An answer given there is sent in the background (`Desk.answer_now`), or kept and sent later.
+radio core. An answer given there is sent in the background (`Desk.answer_now`), or kept and sent later. The app
+and the extension share a folder (the App Group `group.dev.airband`) for what both keep that is no secret, through
+the core (`airband-radio/src/shared.rs`): each team's colour, and the sets of a question's answer buttons, newest
+first, the newest 32 kept. Both register the buttons with iOS, each the whole of what is kept and under a lock on
+a file there, so neither writes over the other. Pairing links and keys stay in the Keychain.
 
 ## Accounts
 

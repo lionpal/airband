@@ -12,7 +12,7 @@ final class NotificationService: UNNotificationServiceExtension {
     override func didReceive(_ request: UNNotificationRequest, withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void) {
         deliver = contentHandler
         plain = request.content
-        guard let sealed = request.content.userInfo["sealed"] as? String, case .found(let links) = Keychain.links(), let note = openNotice(links: links, sealed: sealed, colours: Keychain.teamColours()),
+        guard let sealed = request.content.userInfo["sealed"] as? String, case .found(let links) = Keychain.links(), let note = openNotice(links: links, sealed: sealed, colours: Together.teamColours()),
               let content = request.content.mutableCopy() as? UNMutableNotificationContent else { return contentHandler(request.content) }
         content.title = note.title
         content.subtitle = note.subtitle
@@ -27,8 +27,13 @@ final class NotificationService: UNNotificationServiceExtension {
             self?.deliver?(shown)
             self?.deliver = nil
         }
-        // a question's own answers have to be registered as buttons before it is shown
-        if note.permission || note.options.isEmpty { show() } else { NoticeButtons.register([NoticeButtons.category(for: note.options)], then: show) }
+        // a question's own answers have to be registered as buttons before it is shown. Where they could not
+        // be, it carries the reply box alone: no button there stands for an answer it does not give
+        if note.permission || note.options.isEmpty { return show() }
+        NoticeButtons.register(adding: note.options) { registered in
+            if !registered { content.categoryIdentifier = NoticeButtons.reply }
+            show()
+        }
     }
 
     override func serviceExtensionTimeWillExpire() {

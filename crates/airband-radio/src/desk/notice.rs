@@ -136,12 +136,6 @@ pub fn notice_button(action: String, options: Vec<String>) -> Option<AnswerButto
 pub fn notice_answers_name(options: Vec<String>) -> String {
     format!("{ANSWERS}{}", crate::desk::same_name(0xcbf2_9ce4_8422_2325, options.join("\u{1}").as_bytes()))
 }
-/// The set of buttons is one made for a question's answers ([`notice_answers_name`]): one of those the host
-/// lets go of once there are many.
-#[uniffi::export]
-pub fn notice_is_answers(name: String) -> bool {
-    name.strip_prefix(ANSWERS).is_some_and(|h| !h.is_empty() && u64::from_str_radix(h, 16).is_ok())
-}
 /// The ids notification buttons are made with.
 #[uniffi::export]
 pub fn notice_allow_id() -> String {
@@ -182,7 +176,6 @@ mod tests {
         assert_eq!(notice_tap("option.x".into()), None);
         let name = notice_answers_name(vec!["Yes".into(), "No".into()]);
         assert_eq!(name, notice_answers_name(vec!["Yes".into(), "No".into()]));
-        assert!(notice_is_answers(name));
-        assert!(!notice_is_answers("airband.reply".into()));
+        assert_ne!(name, notice_answers_name(vec!["No".into(), "Yes".into()]));
     }
 }

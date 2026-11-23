@@ -19,6 +19,9 @@
 # One thing has to be ticked by hand, once, for a notification to carry the agent's badge as its picture:
 # developer.apple.com → Certificates, Identifiers & Profiles → Identifiers → dev.airband.app → Communication
 # Notifications. This script sees whether it is on and builds accordingly.
+# And once, for the folder the app and its extension share: developer.apple.com → Identifiers → App Groups → +
+# → group.dev.airband, then tick it under App Groups on dev.airband.app and on dev.airband.app.notify. Apple's
+# API cannot do either. This script stops when a profile does not carry it.
 #
 # The signing profiles are regenerated each time against whichever distribution certificate this Mac holds, so the
 # script does not depend on a profile made on one particular machine.
@@ -93,8 +96,13 @@ echo "✓ $PROFILE"
 echo "✓ $NOTIFY_PROFILE"
 # what the app's profile grants, read as the entitlement it is (its key under Entitlements), never found in its text
 security cms -D -i "$BUILD/profiles/airband_appstore.mobileprovision" > "$BUILD/profiles/airband_appstore.plist"
-entitled() { /usr/libexec/PlistBuddy -c "Print :Entitlements:$1" "$BUILD/profiles/airband_appstore.plist" >/dev/null 2>&1; }
+security cms -D -i "$BUILD/profiles/airband_notify_appstore.mobileprovision" > "$BUILD/profiles/airband_notify_appstore.plist"
+entitled() { /usr/libexec/PlistBuddy -c "Print :Entitlements:$1" "$BUILD/profiles/${2:-airband_appstore}.plist" >/dev/null 2>&1; }
 entitled aps-environment || { echo "✗ the app's profile has no push notifications"; exit 1; }
+# the shared folder: the group the entitlements name, as one of the profile's groups (read as the list it is)
+in_group() { python3 -c 'import plistlib, sys; sys.exit("group.dev.airband" not in plistlib.load(open(sys.argv[1], "rb")).get("Entitlements", {}).get("com.apple.security.application-groups", []))' "$BUILD/profiles/$1.plist"; }
+in_group airband_appstore || { echo "✗ the app's profile does not have the App Group group.dev.airband (see the top of this script)"; exit 1; }
+in_group airband_notify_appstore || { echo "✗ the notification extension's profile does not have the App Group group.dev.airband (see the top of this script)"; exit 1; }
 # the car's screen: the capability is a tick box on the identifier at developer.apple.com (Capability Requests)
 entitled com.apple.developer.carplay-voice-based-conversation || { echo "✗ the app's profile has no CarPlay voice conversation capability"; exit 1; }
 if entitled com.apple.developer.usernotifications.communication; then
