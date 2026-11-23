@@ -28,7 +28,14 @@ pub(super) fn record(claude: &std::path::Path, pid: &str) -> Option<Value> {
     if !pid.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    airband_io::files::read_bytes(&claude.join(said("sessions")).join(format!("{pid}.json"))).ok().flatten().and_then(|b| serde_json::from_slice(&b).ok())
+    airband_io::files::read_bytes(&claude.join(said("sessions")).join(format!("{pid}.json"))).ok().flatten().and_then(|b| first_object(&b))
+}
+
+/// A session record or key file as Claude Code left it: the one JSON object it starts with. Claude Code rewrites
+/// these in place, and a rewrite shorter than the one before can leave the old file's last bytes after the object
+/// (seen: one stray `}`). Those bytes are no part of the record; a record that is not one whole object is no record.
+fn first_object(bytes: &[u8]) -> Option<Value> {
+    serde_json::Deserializer::from_slice(bytes).into_iter::<Value>().next()?.ok().filter(Value::is_object)
 }
 
 /// The sessions he has open in a terminal, from the record Claude Code keeps of each while it runs
@@ -37,7 +44,7 @@ pub(super) fn record(claude: &std::path::Path, pid: &str) -> Option<Value> {
 /// have a record too, with another `entrypoint`: those are not his to talk to and are left out.
 pub(super) fn open_in(claude: &std::path::Path, running: &dyn Fn(u32, &str) -> bool) -> Option<Vec<crate::adapters::Open>> {
     let dir = claude.join(said("sessions"));
-    let read = |path: &std::path::Path| airband_io::files::read_bytes(path).ok().flatten().and_then(|b| serde_json::from_slice::<Value>(&b).ok());
+    let read = |path: &std::path::Path| airband_io::files::read_bytes(path).ok().flatten().and_then(|b| first_object(&b));
     // no folder of records at all: Claude Code cannot say what is open
     if !dir.is_dir() {
         return None;

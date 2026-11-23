@@ -332,11 +332,20 @@ mod tests {
         record(13, "one-off", serde_json::json!({ "entrypoint": "sdk-cli" }));
         record(14, "gone", serde_json::json!({}));
         record(15, "no-way-in", serde_json::json!({ "messagingSocketPath": "" }));
+        // one Claude Code rewrote shorter in place, leaving the old file's last byte after the object: still found;
+        // and one cut short: no record
+        record(16, "rewritten", serde_json::json!({}));
+        let rewritten = sessions.join("16.json");
+        std::fs::write(&rewritten, format!("{}}}", std::fs::read_to_string(&rewritten).unwrap())).unwrap();
+        record(17, "cut-short", serde_json::json!({}));
+        let cut = sessions.join("17.json");
+        let whole = std::fs::read_to_string(&cut).unwrap();
+        std::fs::write(&cut, &whole[..whole.len() / 2]).unwrap();
         let running = |pid: u32, started: &str| pid != 14 && started == format!("Sun Nov 22 10:00:{pid:02} 2026");
         let mut open = open_in(&claude, &running).unwrap();
         open.sort_by(|a, b| a.agent.id.cmp(&b.agent.id));
         let ids: Vec<&str> = open.iter().map(|o| o.agent.id.as_str()).collect();
-        assert_eq!(ids, ["open-one", "open-two"]);
+        assert_eq!(ids, ["open-one", "open-two", "rewritten"]);
         let one = &open[0].agent;
         assert_eq!((one.harness.as_str(), one.cwd.as_deref(), one.pid, one.title.as_deref()), ("claude-code", Some("/x/shop"), Some(11), None));
         assert_eq!(one.deliver, Some(Deliver::Socket { path: "/tmp/cc-socks/11.sock".into(), token: Some("tok-11".into()) }));
